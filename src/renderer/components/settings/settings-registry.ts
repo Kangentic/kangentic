@@ -1,5 +1,9 @@
 import { NAMED_THEMES } from '../../../shared/types';
+import { AUTO_FETCH_INTERVAL_MS, PR_REFRESH_INTERVAL_MS } from '../../../shared/refresh-intervals';
 import type { SettingScope } from './setting-scope';
+
+/** A cadence in whole minutes, as the copy below names it. */
+const minutesOf = (milliseconds: number): number => Math.round(milliseconds / 60_000);
 
 export interface SettingDefinition {
   /** Unique key matching config path, e.g. 'terminal.fontSize' */
@@ -21,7 +25,7 @@ export interface SettingDefinition {
 /** Flat registry array. All settings in display order. */
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── General ──
-  { id: 'project.location', tabId: 'general', label: 'Project Location', description: 'Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it.', scope: 'project', keywords: ['path', 'folder', 'directory', 'move', 'relocate', 'change directory', 'locate'] },
+  { id: 'project.location', tabId: 'general', label: 'Project location', description: 'Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it.', scope: 'project', keywords: ['path', 'folder', 'directory', 'move', 'relocate', 'change directory', 'locate'] },
 
   // ── Theme ──
   { id: 'themeFollowsSystem', tabId: 'theme', label: 'Follow system appearance', description: 'Use one theme when the system is light and another when it is dark.', scope: 'project', keywords: ['os', 'auto', 'automatic', 'dark mode', 'light mode', 'match'] },
@@ -30,115 +34,115 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Hover a tile to try it on the whole app, click to keep it.', scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
 
   // ── Board ──
-  { id: 'columnWidth', tabId: 'board', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
+  { id: 'columnWidth', tabId: 'board', label: 'Column width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
 
-  // ── Board > Config Sync ──
-  { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-Apply Board Config Changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config Sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+  // ── Board > Config sync ──
+  { id: 'skipBoardConfigConfirm', tabId: 'board', label: 'Auto-apply board config changes', description: 'Apply a detected kangentic.json change immediately instead of asking to confirm.', scope: 'global', section: 'Config sync', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
 
-  // ── Board > Window ──
-  { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Window', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
-  { id: 'statusBarVisible', tabId: 'board', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Window', keywords: ['bottom', 'bar', 'hide', 'visible'] },
+  // ── Board > Board layout ──
+  { id: 'terminalPanelVisible', tabId: 'board', label: 'Terminal panel', description: 'Show the terminal panel below the board', scope: 'global', section: 'Board layout', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
+  { id: 'statusBarVisible', tabId: 'board', label: 'Status bar', description: 'Show the status bar at the bottom of the window', scope: 'global', section: 'Board layout', keywords: ['bottom', 'bar', 'hide', 'visible'] },
 
   // ── Task ──
-  { id: 'cardDensity', tabId: 'task', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
-  { id: 'cardPreview', tabId: 'task', label: 'Card Preview', description: "What each card shows under its title: the agent's latest message, its recent messages, or the task description.", scope: 'global', keywords: ['preview', 'messages', 'description', 'trail', 'excerpt', 'agent', 'latest'] },
-  { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket Numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
+  { id: 'cardDensity', tabId: 'task', label: 'Card density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
+  { id: 'cardPreview', tabId: 'task', label: 'Card preview', description: "What each card shows under its title: the agent's latest message, its recent messages, or the task description.", scope: 'global', keywords: ['preview', 'messages', 'description', 'trail', 'excerpt', 'agent', 'latest'] },
+  { id: 'showTaskNumbers', tabId: 'task', label: 'Ticket numbers', description: "Show each task's #N number on its card", scope: 'global', keywords: ['ticket', 'number', 'id', 'display', 'card', 'display_id', 'hash'] },
 
   // ── Task > Context Bar ──
-  { id: 'contextBar.showShell', tabId: 'task', label: 'Shell Name', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showVersion', tabId: 'task', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showElapsed', tabId: 'task', label: 'Elapsed Time', description: 'Ticking session duration', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
+  { id: 'contextBar.showShell', tabId: 'task', label: 'Shell name', description: 'Detected shell name', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showVersion', tabId: 'task', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showElapsed', tabId: 'task', label: 'Elapsed time', description: 'Ticking session duration', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'duration', 'timer'] },
   // Note: model and effort are intentionally NOT in the registry. Those
   // pills double as the in-place picker triggers, so a "hide" toggle would
   // silently disable a feature, not just declutter chrome. They're a
   // permanent fixture of the context bar.
-  { id: 'contextBar.showCost', tabId: 'task', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
-  { id: 'contextBar.showToolCalls', tabId: 'task', label: 'Tool Calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
-  { id: 'contextBar.showAgentActive', tabId: 'task', label: 'Agent Active', description: 'Agent active time', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'active'] },
-  { id: 'contextBar.showTokens', tabId: 'task', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showContextFraction', tabId: 'task', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showProgressBar', tabId: 'task', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showRateLimits', tabId: 'task', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
+  { id: 'contextBar.showCost', tabId: 'task', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'price'] },
+  { id: 'contextBar.showToolCalls', tabId: 'task', label: 'Tool calls', description: 'Cumulative tool invocations', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'tool', 'invocations'] },
+  { id: 'contextBar.showAgentActive', tabId: 'task', label: 'Agent active', description: 'Agent active time', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'active'] },
+  { id: 'contextBar.showTokens', tabId: 'task', label: 'Token counts', description: 'Input / output totals', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showContextFraction', tabId: 'task', label: 'Context window', description: 'Used / total tokens', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showProgressBar', tabId: 'task', label: 'Progress bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showRateLimits', tabId: 'task', label: 'Rate limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Changes ──
-  { id: 'diffViewMode', tabId: 'changes', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
-  { id: 'diffDefaultScope', tabId: 'changes', label: 'Default Diff Scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
-  { id: 'diffIgnoreWhitespace', tabId: 'changes', label: 'Ignore Whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
-  { id: 'diffCollapseUnchanged', tabId: 'changes', label: 'Collapse Unchanged Regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
-  { id: 'diffWrapLines', tabId: 'changes', label: 'Wrap Long Lines', description: 'Soft-wrap long lines onto the next row instead of scrolling the diff horizontally.', scope: 'global', keywords: ['wrap', 'word wrap', 'wordwrap', 'soft wrap', 'long lines', 'horizontal', 'scroll', 'diff', 'changes', 'markdown', 'prose'] },
-  { id: 'diffUseInlineWhenNarrow', tabId: 'changes', label: 'Inline When Narrow', description: 'Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns.', scope: 'global', keywords: ['inline', 'unified', 'narrow', 'side by side', 'side-by-side', 'split', 'width', 'diff', 'changes'] },
-  { id: 'diffFileSort', tabId: 'changes', label: 'File Sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension.', scope: 'global', keywords: ['sort', 'order', 'name', 'status', 'size', 'extension', 'ext', 'files', 'diff', 'changes'] },
-  { id: 'diffFlatList', tabId: 'changes', label: 'Flat File List', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
+  { id: 'diffViewMode', tabId: 'changes', label: 'Layout', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['diff view', 'split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
+  { id: 'diffDefaultScope', tabId: 'changes', label: 'Default diff scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
+  { id: 'diffIgnoreWhitespace', tabId: 'changes', label: 'Ignore whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
+  { id: 'diffCollapseUnchanged', tabId: 'changes', label: 'Collapse unchanged regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
+  { id: 'diffWrapLines', tabId: 'changes', label: 'Wrap long lines', description: 'Soft-wrap long lines onto the next row instead of scrolling the diff horizontally.', scope: 'global', keywords: ['wrap', 'word wrap', 'wordwrap', 'soft wrap', 'long lines', 'horizontal', 'scroll', 'diff', 'changes', 'markdown', 'prose'] },
+  { id: 'diffUseInlineWhenNarrow', tabId: 'changes', label: 'Inline when narrow', description: 'Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns.', scope: 'global', keywords: ['inline', 'unified', 'narrow', 'side by side', 'side-by-side', 'split', 'width', 'diff', 'changes'] },
+  { id: 'diffFileSort', tabId: 'changes', label: 'File sort', description: 'How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension.', scope: 'global', keywords: ['sort', 'order', 'name', 'status', 'size', 'extension', 'ext', 'files', 'diff', 'changes'] },
+  { id: 'diffFlatList', tabId: 'changes', label: 'Flat file list', description: 'Show changed files as a flat list of full paths instead of a nested directory tree.', scope: 'global', keywords: ['flat', 'list', 'tree', 'directory', 'folder', 'nested', 'files', 'diff', 'changes'] },
 
   // ── Terminal (global-only; see the doc comments on AppConfig['terminal'] in shared/types.ts) ──
   { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'global', keywords: ['bash', 'powershell', 'zsh', 'fish'] },
-  { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font Size', description: 'Terminal text size in pixels', scope: 'global', keywords: ['px', 'text size'] },
-  { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font Family', description: 'CSS font-family for the terminal', scope: 'global', keywords: ['monospace', 'typeface'] },
-  { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor Style', description: 'Terminal cursor appearance', scope: 'global', keywords: ['block', 'underline', 'bar'] },
+  { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font size', description: 'Terminal text size in pixels', scope: 'global', keywords: ['px', 'text size'] },
+  { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font family', description: 'CSS font-family for the terminal', scope: 'global', keywords: ['monospace', 'typeface'] },
+  { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor style', description: 'Terminal cursor appearance', scope: 'global', keywords: ['block', 'underline', 'bar'] },
   { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'global', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
 
   // ── Terminal > Colors ──
-  { id: 'terminal.colors', tabId: 'terminal', label: 'Terminal Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Colors', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
+  { id: 'terminal.colors', tabId: 'terminal', label: 'Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Terminal', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },
 
-  // ── Agent > Project Defaults ──
-  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project Defaults', keywords: ['agent', 'claude', 'default'] },
-  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['model', 'opus', 'sonnet', 'default'] },
-  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', section: 'Project Defaults', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
-  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project Defaults', keywords: ['allowlist', 'bypass', 'approve'] },
+  // ── Agent > Project defaults ──
+  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', section: 'Project defaults', keywords: ['agent', 'claude', 'default'] },
+  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', section: 'Project defaults', keywords: ['model', 'opus', 'sonnet', 'default'] },
+  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', section: 'Project defaults', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
+  { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project defaults', keywords: ['allowlist', 'bypass', 'approve'] },
 
   // ── Agent > Agent CLI ──
-  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI Paths', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', section: 'Agent CLI', keywords: ['binary', 'executable'] },
+  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI path', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', section: 'Agent CLI', keywords: ['binary', 'executable'] },
   // Keywords stay agent-agnostic: these rows render for ANY adapter that
   // declares `remoteExecution`, so naming one agent here would go stale the
   // moment a second one does (agent-adapters-boundary.md).
   { id: 'agent.executionMode', tabId: 'agent', label: 'Execution', description: 'Run this agent locally, or attach to a server you run elsewhere', scope: 'project', section: 'Agent CLI', keywords: ['remote', 'local', 'server', 'attach'] },
   { id: 'agent.executionServerUrl', tabId: 'agent', label: 'Server URL', description: 'Address of the running server (e.g. http://10.0.0.5:4096)', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'url', 'server', 'host'] },
   { id: 'agent.executionServerAuth', tabId: 'agent', label: 'Authentication', description: 'Leave blank if the server does not require credentials', scope: 'global', section: 'Agent CLI', keywords: ['remote', 'auth', 'username', 'password', 'basic', 'optional'] },
-  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server Working Directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', section: 'Agent CLI', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
+  { id: 'agent.executionWorkingDirectory', tabId: 'agent', label: 'Server working directory', description: "Path on the server for this project's tasks. Leave blank to use the server's own default directory", scope: 'project', section: 'Agent CLI', keywords: ['remote', 'directory', 'path', 'worktree', 'cwd', 'optional'] },
   // One registry entry backs the rows of EVERY adapter that declares
   // `launchOptions`; no agent name appears here, so the row never branches on
   // one (agent-adapters-boundary.md). The concrete per-option label/description
   // is adapter-authored and rendered as-is. The keywords below are seeded from
   // today's sole option (Codex's ChatGPT Apps hang) so users can search for the
   // symptom - revisit and generalize them when a second adapter adds one.
-  { id: 'agent.launchOptions', tabId: 'agent', label: 'Launch Options', description: 'Optional startup features this agent CLI can turn off', scope: 'global', section: 'Agent CLI', keywords: ['apps', 'feature', 'flag', 'disable', 'startup', 'hang', 'mcp', 'boot', 'connector'] },
+  { id: 'agent.launchOptions', tabId: 'agent', label: 'Launch options', description: 'Optional startup features this agent CLI can turn off', scope: 'global', section: 'Agent CLI', keywords: ['apps', 'feature', 'flag', 'disable', 'startup', 'hang', 'mcp', 'boot', 'connector'] },
 
   // ── Git ──
-  { id: 'git.worktreesEnabled', tabId: 'git', label: 'Enable Worktrees', description: 'Create git worktrees for agent tasks', scope: 'project', keywords: ['branch', 'isolate'] },
-  { id: 'git.autoCleanup', tabId: 'git', label: 'Auto-cleanup', description: 'Remove worktrees when tasks complete', scope: 'project', keywords: ['remove', 'delete'] },
-  { id: 'git.defaultBaseBranch', tabId: 'git', label: 'Default Base Branch', description: 'Branch to create worktrees from', scope: 'project', keywords: ['main', 'master'] },
-  { id: 'git.copyFiles', tabId: 'git', label: 'Copy Files', description: 'Additional files copied into each worktree', scope: 'project', keywords: ['env', 'dotfiles'] },
-  { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.', scope: 'project', keywords: ['install', 'setup', 'hook'] },
-  { id: 'git.linkNodeModules', tabId: 'git', label: 'Link node_modules', description: 'Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let the Post-Worktree Script install dependencies in the worktree itself.', scope: 'project', keywords: ['symlink', 'junction', 'deps', 'install', 'node_modules'] },
-  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state and merge readiness in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale', 'mergeable', 'ready', 'conflicts'] },
-  { id: 'git.autoFetchIntervalMinutes', tabId: 'git', label: 'Auto-fetch remote', description: 'How often to fetch remote-tracking refs in the background so behind counts stay current', scope: 'project', keywords: ['fetch', 'remote', 'origin', 'behind', 'stale', 'refresh', 'poll'] },
-  { id: 'git.prEvaluateBranchPolicies', tabId: 'git', label: 'Evaluate branch policies', description: 'Check Azure DevOps branch policies before a PR shows ready, at one extra az call per open PR per refresh.', scope: 'project', keywords: ['azure', 'devops', 'policy', 'policies', 'ready', 'mergeable', 'reviewers', 'build validation', 'pull request', 'pr'] },
-  { id: 'git.prBypassCountsAsReady', tabId: 'git', label: 'Count merge bypass as ready', description: 'Show a PR awaiting a required review as ready when your bypass would merge it, stale base or not, never past a failing or unfinished check.', scope: 'project', keywords: ['github', 'admin', 'bypass', 'review', 'ready', 'blocked', 'behind', 'stale', 'out of date', 'branch protection', 'pull request', 'pr'] },
+  // Card order on the tab: Branches, Worktrees, Pull requests.
+  { id: 'git.defaultBaseBranch', tabId: 'git', label: 'Default base branch', description: 'The branch new worktrees start from.', scope: 'project', keywords: ['main', 'master', 'branches'] },
+  { id: 'git.autoFetch', tabId: 'git', label: 'Auto-fetch remote', description: `Fetches every ${minutesOf(AUTO_FETCH_INTERVAL_MS)} minutes so behind counts stay current; creating a worktree always fetches first.`, scope: 'project', keywords: ['fetch', 'remote', 'origin', 'behind', 'stale', 'refresh', 'poll', 'branches'] },
+  { id: 'git.worktreesEnabled', tabId: 'git', label: 'Worktrees', description: 'Gives tasks the option to run in their own git worktree.', scope: 'project', keywords: ['branch', 'isolate', 'enable', 'project folder'] },
+  { id: 'git.autoCleanup', tabId: 'git', label: 'Auto-cleanup', description: "Remove a task's worktree when the task completes.", scope: 'project', keywords: ['remove', 'delete', 'worktree'] },
+  { id: 'git.linkNodeModules', tabId: 'git', label: 'Link node_modules', description: 'Symlink the root node_modules into each worktree so agents skip a fresh install.', scope: 'project', keywords: ['symlink', 'junction', 'deps', 'install', 'node_modules', 'worktree'] },
+  { id: 'git.copyFiles', tabId: 'git', label: 'Copy files', description: 'Files copied into each new worktree, such as .env.', scope: 'project', keywords: ['env', 'dotfiles', 'worktree'] },
+  { id: 'git.initScript', tabId: 'git', label: 'Post-worktree script', description: 'Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.', scope: 'project', keywords: ['install', 'setup', 'hook', 'init', 'worktree'] },
+  { id: 'git.prAutoRefresh', tabId: 'git', label: 'Auto-refresh PRs', description: `Checks each open PR about every ${minutesOf(PR_REFRESH_INTERVAL_MS)} minutes; off, it checks only when you open the project.`, scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale', 'mergeable', 'ready', 'conflicts'] },
+  { id: 'git.prBypassCountsAsReady', tabId: 'git', label: 'Count merge bypass as ready', description: 'Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check.', scope: 'project', keywords: ['github', 'admin', 'bypass', 'review', 'ready', 'blocked', 'behind', 'stale', 'out of date', 'branch protection', 'policy', 'policies', 'azure', 'pull request', 'pr'] },
 
   // ── Browser ──
-  { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers, and let agents open the pane themselves. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security', 'agent'] },
+  { id: 'browser.enabled', tabId: 'browser', label: 'Browser pane', description: 'Embed a Browser pane in task windows that agents can open.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security', 'agent'] },
   { id: 'browser.defaultUrl', tabId: 'browser', label: 'Default URL', description: 'Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane.', scope: 'project', keywords: ['webview', 'preview', 'localhost', 'dev server', 'url'] },
-  { id: 'browser.clearStorage', tabId: 'browser', label: 'Clear Browser Data', description: 'Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept.', scope: 'global', keywords: ['cookies', 'cache', 'reset', 'logout', 'sign out', 'storage', 'privacy', 'wipe'] },
+  { id: 'browser.clearStorage', tabId: 'browser', label: 'Clear browser data', description: 'Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept.', scope: 'global', keywords: ['cookies', 'cache', 'reset', 'logout', 'sign out', 'storage', 'privacy', 'wipe'] },
 
   // ── Browser Automation (global policy: agent control of the Browser pane) ──
-  { id: 'browserAutomation.enabled', tabId: 'browserAutomation', label: 'Enable Browser Automation', description: 'Let agents drive the embedded Browser pane via the kangentic_browser_* tools (screenshot, click, type, navigate, and more). Master switch - turn off to disable all agent browser control.', scope: 'global', keywords: ['agent', 'mcp', 'automation', 'playwright', 'drive', 'control', 'webview', 'screenshot', 'click'] },
-  { id: 'browserAutomation.allowInteraction', tabId: 'browserAutomation', label: 'Allow Interaction', description: 'Let agents click, type, press keys, and drag in the pane. Turn off for observe-only (screenshots and DOM reads still work).', scope: 'global', keywords: ['click', 'type', 'keypress', 'drag', 'observe', 'read only', 'interact'] },
-  { id: 'browserAutomation.allowNavigation', tabId: 'browserAutomation', label: 'Allow Navigation', description: 'Let agents point the pane at other URLs. Turn off to confine agents to the page you have loaded.', scope: 'global', keywords: ['navigate', 'url', 'loadurl', 'goto'] },
-  { id: 'browserAutomation.allowEval', tabId: 'browserAutomation', label: 'Allow Eval', description: 'Let agents run arbitrary JavaScript in the loaded page (kangentic_browser_eval). Off by default - this is the one unbounded primitive and runs with the page cookies.', scope: 'global', keywords: ['eval', 'javascript', 'execute', 'runtime', 'arbitrary', 'security'] },
-  { id: 'browserAutomation.restrictNavigationToLocalhost', tabId: 'browserAutomation', label: 'Restrict Navigation to Localhost', description: 'Only allow agents to navigate the pane to localhost / private hosts, never public sites. Off by default (any http(s) URL allowed).', scope: 'global', keywords: ['localhost', 'private', 'restrict', 'security', 'navigate', 'lan'] },
+  { id: 'browserAutomation.enabled', tabId: 'browserAutomation', label: 'Browser automation', description: 'Let agents drive the Browser pane.', scope: 'global', keywords: ['agent', 'mcp', 'automation', 'playwright', 'drive', 'control', 'webview', 'screenshot', 'click', 'enable', 'kangentic_browser'] },
+  { id: 'browserAutomation.allowInteraction', tabId: 'browserAutomation', label: 'Allow interaction', description: 'Click, type and drag. Off is read-only.', scope: 'global', keywords: ['click', 'type', 'keypress', 'drag', 'observe', 'read only', 'interact'] },
+  { id: 'browserAutomation.allowNavigation', tabId: 'browserAutomation', label: 'Allow navigation', description: 'Open other URLs. Off keeps agents on the page you loaded.', scope: 'global', keywords: ['navigate', 'url', 'loadurl', 'goto'] },
+  { id: 'browserAutomation.restrictNavigationToLocalhost', tabId: 'browserAutomation', label: 'Only localhost', description: 'Only localhost and private hosts, never public sites.', scope: 'global', keywords: ['localhost', 'private', 'restrict', 'security', 'navigate', 'lan'] },
+  { id: 'browserAutomation.allowEval', tabId: 'browserAutomation', label: 'Allow eval', description: 'Run any JavaScript in the page, with its cookies.', scope: 'global', keywords: ['eval', 'javascript', 'execute', 'runtime', 'arbitrary', 'security', 'kangentic_browser_eval'] },
 
   // ── Shortcuts ──
   { id: 'shortcuts', tabId: 'shortcuts', label: 'Shortcuts', description: 'Custom commands accessible from the task detail dialog', scope: 'project', keywords: ['command', 'shortcut', 'tool', 'open', 'launch', 'tortoisegit', 'vscode', 'terminal', 'explorer', 'quick action'] },
 
   // ── MCP Server ──
-  { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'Kangentic MCP Server', description: 'Give agents tools to interact with your board', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query', 'session', 'stats'] },
+  { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'MCP server', description: 'Give agents tools to work with your board.', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query', 'session', 'stats', 'kangentic', 'available tools', 'how it works'] },
 
   // ── Behavior > Sessions ──
-  { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit'] },
-  { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Sessions', keywords: ['overflow', 'queue', 'reject', 'limit'] },
-  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
-  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
-  { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
+  { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max concurrent sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit'] },
+  { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When max sessions are reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Sessions', keywords: ['overflow', 'queue', 'reject', 'limit'] },
+  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-focus idle sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
+  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-resume agents on restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
+  { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
 
   // ── Performance ──
   // Graphics acceleration is a plain boolean and never a tri-state: an
@@ -151,64 +155,83 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'animationsEnabled', tabId: 'performance', label: 'Animations', description: 'Transition and motion effects.', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility', 'animation', 'performance'] },
 
   // ── Behavior > Windows ──
-  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
-  { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
+  { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on outside click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
+  { id: 'restoreWindowPosition', tabId: 'behavior', label: 'Restore window position', description: 'Remember window size and position between launches', scope: 'global', section: 'Windows', keywords: ['size', 'bounds', 'remember'] },
 
   // ── Notifications > Events ──
-  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent finishes its turn or needs permission', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
-  { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent Crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
-  { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan Complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
-  { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn Stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
+  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent idle', description: 'When an agent finishes its turn or needs permission', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
+  { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
   // ── Notifications > Delivery ──
-  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast Auto-Dismiss', description: 'How long toasts remain visible', scope: 'global', section: 'Delivery', keywords: ['timeout', 'seconds'] },
-  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max Visible Toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', section: 'Delivery', keywords: ['limit', 'count'] },
+  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: 'Toast auto-dismiss', description: 'How long toasts remain visible', scope: 'global', section: 'Toasts', keywords: ['timeout', 'seconds'] },
+  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max visible toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', section: 'Toasts', keywords: ['limit', 'count'] },
 
   // ── Hotkeys ──
   { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Rebind keyboard hotkeys', scope: 'global', keywords: ['keyboard', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },
 
   // ── Dictation ──
-  { id: 'dictation.enabled', tabId: 'dictation', label: 'Voice dictation', description: 'Hold a key to dictate into the focused terminal or text field. On-device by default; choose a Cloud refinement model to use your own endpoint.', scope: 'global', section: 'Transcription', keywords: ['enable', 'off', 'disable', 'on', 'toggle', 'engine', 'streaming', 'live', 'whisper', 'parakeet', 'sherpa', 'remote', 'cloud', 'on-device', 'local', 'model', 'voice', 'dictation', 'speech', 'microphone', 'mic', 'transcribe', 'stt', 'push to talk'] },
-  { id: 'dictation.language', tabId: 'dictation', label: 'Language', description: 'The language you speak. The models below adapt to your choice.', scope: 'global', section: 'Transcription', keywords: ['language', 'locale', 'multilingual', 'spanish', 'portuguese', 'french', 'italian', 'german', 'english', 'voice', 'dictation'] },
-  { id: 'dictation.punctuation', tabId: 'dictation', label: 'Punctuation and Capitalization', description: 'Add punctuation and capitalization to your dictated text.', scope: 'global', section: 'Transcription', keywords: ['punctuation', 'capitalization', 'casing', 'voice', 'dictation'] },
-  { id: 'dictation.autoSubmit', tabId: 'dictation', label: 'Auto-submit', description: 'Press Enter automatically after inserting, or leave the text in the input for you to review and send.', scope: 'global', section: 'Input', keywords: ['send', 'submit', 'enter', 'auto', 'release', 'commit', 'voice', 'dictation'] },
-  { id: 'dictation.releaseBufferMs', tabId: 'dictation', label: 'Release buffer', description: 'Keep capturing briefly after release so the last word is not clipped.', scope: 'global', section: 'Input', keywords: ['release', 'buffer', 'tail', 'trailing', 'capture', 'delay', 'grace', 'clip', 'cutoff', 'word', 'voice', 'dictation'] },
-  { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud Backend', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when the Refinement model is set to Cloud. The live preview still streams on-device; only the final clip is sent to this server.', scope: 'global', section: 'Cloud backend', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation'] },
+  { id: 'dictation.enabled', tabId: 'dictation', label: 'Voice dictation', description: 'Hold push-to-talk to speak into a terminal or text field.', scope: 'global', section: 'Voice dictation', keywords: ['enable', 'off', 'disable', 'on', 'toggle', 'engine', 'streaming', 'live', 'whisper', 'parakeet', 'sherpa', 'remote', 'cloud', 'on-device', 'local', 'model', 'voice', 'dictation', 'speech', 'microphone', 'mic', 'transcribe', 'stt', 'push to talk'] },
+  { id: 'dictation.language', tabId: 'dictation', label: 'Language', description: 'The language you speak. The models adapt to your choice.', scope: 'global', section: 'Transcription', keywords: ['language', 'locale', 'multilingual', 'spanish', 'portuguese', 'french', 'italian', 'german', 'english', 'voice', 'dictation'] },
+  { id: 'dictation.punctuation', tabId: 'dictation', label: 'Punctuation and capitalization', description: 'Add punctuation and capitalization to your dictated text.', scope: 'global', section: 'Transcription', keywords: ['punctuation', 'capitalization', 'casing', 'voice', 'dictation'] },
+  { id: 'dictation.autoSubmit', tabId: 'dictation', label: 'Auto-submit', description: 'Press Enter after inserting, or leave the text for you to review and send.', scope: 'global', section: 'Voice dictation', keywords: ['send', 'submit', 'enter', 'auto', 'release', 'commit', 'voice', 'dictation'] },
+  { id: 'dictation.releaseBufferMs', tabId: 'dictation', label: 'Release buffer', description: 'Keep capturing briefly after release so the last word is not clipped.', scope: 'global', section: 'Voice dictation', keywords: ['release', 'buffer', 'tail', 'trailing', 'capture', 'delay', 'grace', 'clip', 'cutoff', 'word', 'voice', 'dictation', 'push to talk'] },
+  { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud endpoint', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine.', scope: 'global', section: 'Transcription', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation', 'refinement', 'custom'] },
 
-  // ── Memory (conversation search + recall) ──
-  { id: 'memory.indexingEnabled', tabId: 'memory', label: 'Index conversations for search', description: 'Locally index agent conversation transcripts so you can search and recall them. Runs offline with no API key. Turn off to stop indexing and hide conversation search results.', scope: 'global', keywords: ['index', 'conversation', 'transcript', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history'] },
-  { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Match conversations by meaning, not just keywords. Downloads a small local model once, then runs fully offline. Requires conversation indexing.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download'] },
-  { id: 'memory.embeddingModel', tabId: 'memory', label: 'Search quality', description: 'Faster and smaller, or slower and more accurate. The model is downloaded once and runs offline; switching re-indexes in the background.', scope: 'global', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'balanced', 'bge', 'tier', 'download'] },
+  // ── Knowledge Graph (tab id `knowledgeGraph`; the index, the local model that finds by meaning, the agent that answers) ──
+  { id: 'knowledgeGraph.indexingEnabled', tabId: 'knowledgeGraph', label: 'Index', description: 'What Quick Find and the Knowledge Graph search.', scope: 'global', keywords: ['index', 'conversation', 'conversations', 'transcript', 'tasks', 'commits', 'sources', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history', 'rebuild'] },
+  { id: 'knowledgeGraph.enabled', tabId: 'knowledgeGraph', label: 'Knowledge Graph', description: 'Finds your work by meaning and answers questions.', scope: 'global', keywords: ['knowledge graph', 'graph', 'semantic', 'semantic search', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'local model', 'offline', 'memory', 'download', 'ask'] },
+  { id: 'knowledgeGraph.localModel', tabId: 'knowledgeGraph', label: 'Search quality', description: 'The local model that finds by meaning and draws the map; changing it re-indexes in the background.', scope: 'global', section: 'Knowledge Graph', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'balanced', 'bge', 'tier', 'download'] },
   // "Model acceleration", not "Hardware acceleration": Performance now owns a
   // row called Graphics acceleration, and two settings a user would read as
   // the same thing is worse than one slightly longer label. It stays HERE
   // rather than moving to Performance because "Search quality" above is the
   // other half of the same speed-versus-accuracy decision, and someone
-  // troubleshooting slow semantic search comes to this tab.
-  { id: 'memory.acceleration', tabId: 'memory', label: 'Model acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload', 'model'] },
+  // troubleshooting a slow Knowledge Graph comes to this tab.
+  { id: 'knowledgeGraph.acceleration', tabId: 'knowledgeGraph', label: 'Model acceleration', description: 'Where the local model runs. Auto uses the GPU when there is one.', scope: 'global', section: 'Knowledge Graph', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload', 'model'] },
+  { id: 'knowledgeGraph.agent', tabId: 'knowledgeGraph', label: 'Agent', description: 'Which agent answers your questions and writes the task summaries.', scope: 'global', section: 'Knowledge Graph', keywords: ['answering', 'answer', 'ask', 'agent', 'memory', 'knowledge', 'graph', 'question', 'claude', 'codex', 'recall', 'semantic', 'cite', 'answers', 'summaries'] },
+  { id: 'knowledgeGraph.model', tabId: 'knowledgeGraph', label: 'Model', description: 'A mid-size model is usually enough for reading your history; the smallest ones invent details in summaries.', scope: 'global', section: 'Knowledge Graph', keywords: ['answering', 'model', 'answer', 'ask', 'memory', 'knowledge', 'graph', 'cost', 'cheap', 'haiku', 'sonnet', 'opus', 'tokens', 'budget', 'summary', 'summaries'] },
+  { id: 'knowledgeGraph.effort', tabId: 'knowledgeGraph', label: 'Effort', description: 'Higher effort answers slower and counts across many tasks better; summaries always use the agent\'s default.', scope: 'global', section: 'Knowledge Graph', keywords: ['answering', 'effort', 'reasoning', 'answer', 'ask', 'memory', 'knowledge', 'graph', 'speed', 'fast', 'cost', 'low', 'high'] },
+  { id: 'knowledgeGraph.taskSummaries', tabId: 'knowledgeGraph', label: 'Task summaries', description: 'A sentence or two per Done task, so questions find it.', scope: 'global', section: 'Index', keywords: ['summary', 'summaries', 'summarize', 'finished', 'done', 'task', 'memory', 'knowledge', 'graph', 'search', 'cost', 'background'] },
+  { id: 'knowledgeGraph.sourceCode', tabId: 'knowledgeGraph', label: 'Source code', description: 'The project\'s code and docs, so answers can explain it.', scope: 'global', section: 'Index', keywords: ['code', 'source', 'codebase', 'repository', 'files', 'docs', 'branch', 'ask', 'answer', 'knowledge', 'graph', 'embed', 'index'] },
   // ── Privacy (synthetic) ──
-  { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
+  { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out', 'knowledge graph', 'agent'] },
 
   // ── Developer ──
-  { id: 'developer.activityDebugOverlay', tabId: 'developer', label: 'Activity Engine Debug Overlay', description: 'Show a floating panel with live activity-engine state for every running session. Useful for diagnosing spinner / idle bugs.', scope: 'global', keywords: ['debug', 'overlay', 'diagnostic', 'engine', 'activity', 'thinking', 'idle', 'subagent', 'background', 'shell', 'reason'] },
+  { id: 'developer.activityDebugOverlay', tabId: 'developer', label: 'Activity engine debug overlay', description: "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug.", scope: 'global', keywords: ['debug', 'overlay', 'diagnostic', 'engine', 'activity', 'thinking', 'idle', 'subagent', 'background', 'shell', 'reason', 'spinner'] },
+  { id: 'developer.persistConsoleLogs', tabId: 'developer', label: 'Persistent console logs', description: 'Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept.', scope: 'global', keywords: ['console', 'logs', 'log', 'debug', 'info', 'ndjson', 'diagnostic', 'tail', 'persist'] },
+  // Synthetic: crash capture is always on, so there is no config key behind it.
+  { id: 'developer.crashReports', tabId: 'developer', label: 'Crash reports', description: 'Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on.', scope: 'global', keywords: ['crash', 'exception', 'rejection', 'stack', 'gpu', 'renderer', 'preload', 'diagnostic', 'error'] },
+  { id: 'developer.recordIpcTraffic', tabId: 'developer', label: 'Record IPC traffic', description: 'Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview.', scope: 'global', keywords: ['ipc', 'traffic', 'record', 'channel', 'log', 'diagnostic', 'preview', 'redact'] },
+  // The dev-only cards (src/devtools/renderer/DevToolsSections.tsx). Gated like
+  // the cards, so a production build never finds a row it does not render.
+  ...(__KANGENTIC_DEV__ ? ([
+    { id: 'developer.previewInspectionServer', tabId: 'developer', label: 'Inspection bridge', description: 'Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth.', scope: 'global', section: 'Dev inspection bridge', keywords: ['inspection', 'bridge', 'devtools', 'mcp', 'screenshot', 'dom', 'react', 'preview', 'localhost'] },
+    { id: 'developer.previewEvalEnabled', tabId: 'developer', label: 'Allow unsafe operations', description: 'Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input.', scope: 'global', section: 'Dev inspection bridge', keywords: ['eval', 'unsafe', 'javascript', 'inject', 'event', 'pty', 'input', 'devtools', 'stress'] },
+    { id: 'developer.stallProfiler', tabId: 'developer', label: 'Stall profiler', description: "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on.", scope: 'global', section: 'Dev inspection bridge', keywords: ['stall', 'profiler', 'profile', 'event loop', 'lag', 'cpu', 'main process', 'jank'] },
+    // Synthetic: the Dev triggers card holds buttons, not settings.
+    { id: 'developer.devTriggers', tabId: 'developer', label: 'Dev triggers', description: 'Open the surfaces a dev session cannot reach on its own.', scope: 'global', keywords: ['trigger', 'release notes', 'modal', 'whats new', 'announcements', 'feed', 'onboarding', 'checklist', 'dev'] },
+  ] satisfies SettingDefinition[]) : []),
 
   // ── Mobile Devices ──
-  { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile Bridge', description: 'Let a paired phone connect to this desktop through an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
+  { id: 'mobileBridge.enabled', tabId: 'mobile', label: 'Mobile bridge', description: 'Connect a phone over an end-to-end encrypted relay.', scope: 'global', keywords: ['mobile', 'phone', 'companion', 'pair', 'pairing', 'qr', 'relay', 'bridge', 'remote'] },
   // 'cloud' and 'kangentic cloud' are deliberate back-compat aliases, not
-  // stray cruft: the hosted preset was labelled "Kangentic Cloud" until it was
-  // renamed to "Kangentic Relay", and settings search indexes registry fields
-  // only (never the rendered <option> text), so these keywords are the only
-  // thing that still finds this row for a user searching from muscle memory.
-  { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Where this desktop connects for mobile pairing. The relay forwards encrypted traffic and never holds your keys.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'official', 'mobile', 'kangentic relay', 'cloud', 'kangentic cloud'] },
-  // Search-index only: this row has no SettingRow of its own. The relay address
+  // stray cruft: the hosted preset was labelled "Kangentic Cloud", then
+  // "Kangentic Relay", and now "Kangentic" under the Relay card. Settings search
+  // indexes registry fields only (never the rendered option labels), so these
+  // keywords are the only thing that still finds this row for a user searching
+  // from muscle memory.
+  { id: 'mobileBridge.relayMode', tabId: 'mobile', label: 'Relay', description: 'Forwards encrypted traffic and never holds your keys.', scope: 'global', keywords: ['relay', 'server', 'hosted', 'local', 'custom', 'self-host', 'official', 'mobile', 'kangentic relay', 'cloud', 'kangentic cloud'] },
+  // Search-index only: this row has no settings row of its own. The relay address
   // is an unlabelled field inside the Relay section (the picker directly above it
   // says which relay it addresses), so this entry exists to put "websocket",
   // "self-host", and "address" into the index. MobileDevicesTab's RELAY_SEARCH_IDS
   // lists it beside mobileBridge.relayMode, and a match on either reveals the
   // whole section. Do not go looking for its settingProps() call site.
-  { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom Relay Address', description: 'The self-hosted relay to dial when Relay above is set to Custom Relay.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
-  { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a Device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
-  { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Paired Devices', description: 'Phones paired to this desktop, identified by key fingerprint. Rename or revoke a device here.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
+  { id: 'mobileBridge.relayUrl', tabId: 'mobile', label: 'Custom relay address', description: 'The self-hosted relay to dial when Relay is set to Custom.', scope: 'global', keywords: ['relay', 'server', 'url', 'address', 'self-host', 'websocket', 'mobile', 'custom'] },
+  { id: 'mobileBridge.pairing', tabId: 'mobile', label: 'Pair a device', description: 'Scan a QR code with the Kangentic mobile app to pair a new phone.', scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
+  { id: 'mobileBridge.devices', tabId: 'mobile', label: 'Phones', description: 'Phones paired to this desktop, identified by key fingerprint.', scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
   { id: 'mobileBridge.getApp', tabId: 'mobile', label: 'Kangentic Mobile', description: 'The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live.', scope: 'global', keywords: ['install', 'download', 'get the app', 'app', 'mobile', 'phone', 'android', 'ios', 'docs', 'play', 'store'] },
 ];
 
@@ -250,7 +273,7 @@ export const TAB_LABELS: Record<string, string> = {
   behavior: 'Behavior',
   performance: 'Performance',
   dictation: 'Dictation',
-  memory: 'Memory',
+  knowledgeGraph: 'Knowledge Graph',
   hotkeys: 'Hotkeys',
   mcpServer: 'MCP Server',
   browserAutomation: 'Agent Browser',
@@ -260,7 +283,7 @@ export const TAB_LABELS: Record<string, string> = {
   developer: 'Developer',
 };
 
-/** Helper to get props for a SettingRow from the registry. */
+/** A registry entry as props for a `SettingsCard` or a card row (`CardRow`, `CardToggleRow`, `CardChoiceRow`). */
 export function settingProps(id: string): { searchId: string; label: string; description: string } {
   const entry = SETTINGS_BY_ID[id];
   if (!entry) throw new Error(`Unknown setting ID: ${id}`);

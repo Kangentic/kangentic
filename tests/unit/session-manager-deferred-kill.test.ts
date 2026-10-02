@@ -370,37 +370,110 @@ describe('killAll() and the parked PTYs', () => {
   });
 });
 
-describe('the spawn flow onData guard once remove() has cleared the row', () => {
-  it('feeds the session-id scanner before remove(), and stops once the row is gone', async () => {
-    // kill() parks a young session's PTY on the deferred-kill grace: the row
-    // is deleted by remove(), but the PTY the spawn flow attached onData to
-    // is still alive and can still emit a chunk before the force-kill timer
-    // fires. session-spawn-flow.ts computes rowStillRegistered once per chunk
-    // (context.registry.has(id)) and gates four consumers behind it - the
-    // transcript writer, this session-id scanner, the stream-telemetry block,
-    // and the PTY activity-detection block - so none of them re-create
-    // per-session state under an id clearSessionCaches already cleared. The
-    // scanner is the cleanest of the four to spy on: it needs no
-    // agentParser fixture and no transcript repository, and it is gated by
-    // the exact same rowStillRegistered read as the other three. The next
-    // test in this describe covers the remaining two (stream telemetry and
-    // PTY activity detection), which this one does not touch.
+describe('killAll() and dispose() with a utility pty host', () => {
+  /** The manager's transport, made to look like a utility host with a pid. */
+  function asUtilityHost(manager: SessionManager, hostPid: number) {
+    const transport = (manager as unknown as { host: { transport: { hostPid: number | null; shutdown: (exitWaitMs?: number) => void } } }).host.transport;
+    Object.defineProperty(transport, 'hostPid', { value: hostPid });
+    return vi.spyOn(transport, 'shutdown');
+  }
+
+  it('adds the host to the drain as one more kill, and bounds its wait inside the extended deadline', async () => {
     const manager = new SessionManager();
-    const { session, feedData } = await spawnSession(manager, 'task-post-remove-data');
-    const sessionIdManager = (manager as unknown as {
-      sessionIdManager: { onData: (sessionId: string, data: string, agentParser: unknown) => void };
-    }).sessionIdManager;
-    const onDataSpy = vi.spyOn(sessionIdManager, 'onData');
+    await spawnSession(manager, 'task-young', 2222);
+    const shutdown = asUtilityHost(manager, 9999);
 
-    feedData('before-remove-chunk');
-    expect(onDataSpy).toHaveBeenCalledWith(session.id, 'before-remove-chunk', undefined);
+    const report = manager.killAll({ allowGrace: true });
+    manager.dispose();
 
-    onDataSpy.mockClear();
+    expect(report).toEqual({ pids: [2222, 9999], killedCount: 2, deferredCount: 1 });
+    // Drain deadline 1500 + the 1500 grace, less the 200 margin.
+    expect(shutdown).toHaveBeenCalledWith(2800);
+  });
+
+  it('bounds the host\'s wait inside the base deadline when nothing was deferred', async () => {
+    const manager = new SessionManager();
+    await spawnSession(manager, 'task-mature', 1111);
+    await vi.advanceTimersByTimeAsync(YOUNG_SINCE_SPAWN_MS);
+    const shutdown = asUtilityHost(manager, 9999);
+
+    const report = manager.killAll({ allowGrace: true });
+    manager.dispose();
+
+    expect(report).toEqual({ pids: [1111, 9999], killedCount: 2, deferredCount: 0 });
+    expect(shutdown).toHaveBeenCalledWith(1300);
+  });
+
+  it('leaves the report alone when nothing was killed, so a quit with no terminals is not held', () => {
+    const manager = new SessionManager();
+    asUtilityHost(manager, 9999);
+    expect(manager.killAll({ allowGrace: true })).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+});
+
+describe('the spawn flow onData guard once remove() has cleared the row', () => {
+  /** An adapter that reports an agent session id it finds in the output. */
+  function idCapturingParser(): AgentParser {
+    return {
+      detectFirstOutput: () => false,
+      removeHooks: () => {},
+      runtime: {
+        sessionId: { fromOutput: (text: string) => text.match(/session=(\S+)/)?.[1] ?? null },
+      },
+    } as unknown as AgentParser;
+  }
+
+  it('captures an agent session id from the output of a registered session', async () => {
+    // The counterpart that keeps the next test from passing vacuously: the
+    // same adapter and chunk shape DO reach the capture while the row exists.
+    const manager = new SessionManager();
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-id-capture',
+      command: '',
+      cwd: tmpDir,
+      exitSequence: EXIT_SEQUENCE,
+      agentParser: idCapturingParser(),
+    });
+    const telemetry = (manager as unknown as {
+      telemetry: { notifyAgentSessionId: (sessionId: string, capturedId: string) => void };
+    }).telemetry;
+    const notifySpy = vi.spyOn(telemetry, 'notifyAgentSessionId');
+
+    mock.feedData('session=captured-id\r\n');
+
+    expect(notifySpy).toHaveBeenCalledWith(session.id, 'captured-id');
+    manager.killAll();
+  });
+
+  it('ignores a session id the parked PTY prints after remove() cleared the row', async () => {
+    // kill() parks a young session's PTY on the deferred-kill grace: the row
+    // is deleted by remove(), but the PTY is still alive and can still emit a
+    // chunk before the force-kill timer fires. The pty host drops its own
+    // state for the session at remove() (removeSession), and main drops every
+    // event that would re-create per-session state for an id the registry no
+    // longer holds, so nothing captures an id under it.
+    const manager = new SessionManager();
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-post-remove-data',
+      command: '',
+      cwd: tmpDir,
+      exitSequence: EXIT_SEQUENCE,
+      agentParser: idCapturingParser(),
+    });
+    const telemetry = (manager as unknown as {
+      telemetry: { notifyAgentSessionId: (sessionId: string, capturedId: string) => void };
+    }).telemetry;
+    const notifySpy = vi.spyOn(telemetry, 'notifyAgentSessionId');
+
     manager.kill(session.id);
     manager.remove(session.id);
-    feedData('after-remove-chunk');
+    mock.feedData('session=after-remove-id\r\n');
 
-    expect(onDataSpy).not.toHaveBeenCalled();
+    expect(notifySpy).not.toHaveBeenCalled();
     manager.killAll();
   });
 

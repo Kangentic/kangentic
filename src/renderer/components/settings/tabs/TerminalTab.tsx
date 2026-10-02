@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, SquareTerminal } from 'lucide-react';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
 import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
 import { useConfigStore } from '../../../stores/config-store';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { ColorPickerPopover, PRESET_COLORS } from '../../backlog/manage-labels/ColorPickerPopover';
 import { Pill } from '../../Pill';
@@ -92,7 +93,7 @@ const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: string }[] = [
  * preferences, and shell in particular was never reliably project-scoped at
  * the PTY-spawn level (SessionManager caches a single configuredShell keyed
  * to whichever project is currently focused). `config` is still needed
- * read-only for the theme choice, which drives the Colors section's
+ * read-only for the theme choice, which drives the Colors row's
  * theme-match swatch - that must track whichever theme is actually painted
  * (project override or global, and the OS side when following the system),
  * not just the global default.
@@ -115,86 +116,92 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
   // `terminal` block rather than deep-merging DEFAULT_CONFIG.
   const terminalColors = globalConfig.terminal.colors ?? {};
   return (
-    <>
-      <SettingRow {...settingProps('terminal.shell')}>
-        <Select
-          value={globalConfig.terminal.shell || ''}
-          onChange={(event) => updateGlobal({ terminal: { shell: event.target.value || null } })}
-        >
-          <option value="">Auto-detect</option>
-          {shells.map((shell) => (
-            <option key={shell.path} value={shell.path}>{shell.name}</option>
-          ))}
-        </Select>
-      </SettingRow>
-      <SettingRow {...settingProps('terminal.fontSize')}>
-        <input
-          type="number"
-          value={globalConfig.terminal.fontSize ?? DEFAULT_CONFIG.terminal.fontSize}
-          onChange={(event) => {
-            if (event.target.value === '') return;
-            const value = Number(event.target.value);
-            if (!Number.isNaN(value)) updateGlobal({ terminal: { fontSize: value } });
-          }}
-          min={8}
-          max={32}
-          placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
-          className={INPUT_CLASS}
-        />
-      </SettingRow>
-      <SettingRow {...settingProps('terminal.fontFamily')}>
-        <FontCombobox
-          value={globalConfig.terminal.fontFamily ?? ''}
-          onChange={(value) => updateGlobal({ terminal: { fontFamily: value } })}
-          fonts={fonts}
-          placeholder={DEFAULT_CONFIG.terminal.fontFamily}
-          testId="terminal-font-family"
-        />
-      </SettingRow>
-      <SettingRow {...settingProps('terminal.cursorStyle')}>
-        <Select
-          value={globalConfig.terminal.cursorStyle}
-          onChange={(event) => updateGlobal({ terminal: { cursorStyle: event.target.value as 'block' | 'underline' | 'bar' } })}
-        >
-          <option value="block">Block</option>
-          <option value="underline">Underline</option>
-          <option value="bar">Bar</option>
-        </Select>
-      </SettingRow>
-      <SettingToggleRow
-        {...settingProps('terminal.backspaceSendsCtrlH')}
-        checked={globalConfig.terminal.backspaceSendsCtrlH}
-        onChange={(value) => updateGlobal({ terminal: { backspaceSendsCtrlH: value } })}
-      />
-
-      <SectionHeader label="Colors" searchIds={['terminal.colors']} />
-      <SettingRow
-        {...settingProps('terminal.colors')}
-        trailing={
-          <Pill
-            size="sm"
-            onClick={() => updateGlobal({ terminal: { colors: {} } })}
-            className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
-            data-testid="terminal-colors-reset-all"
-          >
-            <RotateCcw size={14} /> Reset to default
-          </Pill>
-        }
+    <div className="space-y-4">
+      <SettingsCard
+        icon={<SquareTerminal size={16} />}
+        label="Terminal"
+        description="The shell, font, cursor and colors every terminal uses."
+        searchIds={['terminal.shell', 'terminal.fontSize', 'terminal.fontFamily', 'terminal.cursorStyle', 'terminal.backspaceSendsCtrlH', 'terminal.colors']}
       >
-        <div className="flex flex-wrap gap-x-2 gap-y-3">
-          {TERMINAL_COLOR_FIELDS.map(({ key, label }) => (
-            <ColorSwatchField
-              key={key}
-              colorKey={key}
-              label={label}
-              value={terminalColors[key] || TERMINAL_DEFAULT_COLORS[key]}
-              defaultColor={TERMINAL_DEFAULT_COLORS[key]}
-              themeMatchColor={getThemeMatchColor(key, resolvedTheme)}
-              onChange={(color) => updateGlobal({ terminal: { colors: { ...terminalColors, [key]: color } } })}
-            />
-          ))}
-        </div>
-      </SettingRow>
-    </>
+        <CardRow {...settingProps('terminal.shell')}>
+          <Select
+            value={globalConfig.terminal.shell || ''}
+            onChange={(event) => updateGlobal({ terminal: { shell: event.target.value || null } })}
+          >
+            <option value="">Auto-detect</option>
+            {shells.map((shell) => (
+              <option key={shell.path} value={shell.path}>{shell.name}</option>
+            ))}
+          </Select>
+        </CardRow>
+        <CardRow {...settingProps('terminal.fontSize')}>
+          <input
+            type="number"
+            value={globalConfig.terminal.fontSize ?? DEFAULT_CONFIG.terminal.fontSize}
+            onChange={(event) => {
+              if (event.target.value === '') return;
+              const value = Number(event.target.value);
+              if (!Number.isNaN(value)) updateGlobal({ terminal: { fontSize: value } });
+            }}
+            min={8}
+            max={32}
+            placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
+            className={INPUT_CLASS}
+          />
+        </CardRow>
+        <CardRow {...settingProps('terminal.fontFamily')}>
+          <FontCombobox
+            value={globalConfig.terminal.fontFamily ?? ''}
+            onChange={(value) => updateGlobal({ terminal: { fontFamily: value } })}
+            fonts={fonts}
+            placeholder={DEFAULT_CONFIG.terminal.fontFamily}
+            testId="terminal-font-family"
+          />
+        </CardRow>
+        <CardChoiceRow
+          {...settingProps('terminal.cursorStyle')}
+          options={[
+            { value: 'block', label: 'Block' },
+            { value: 'underline', label: 'Underline' },
+            { value: 'bar', label: 'Bar' },
+          ]}
+          value={globalConfig.terminal.cursorStyle}
+          onChange={(value) => updateGlobal({ terminal: { cursorStyle: value } })}
+          testId="terminal-cursor-style-choice"
+        />
+        <CardToggleRow
+          {...settingProps('terminal.backspaceSendsCtrlH')}
+          checked={globalConfig.terminal.backspaceSendsCtrlH}
+          onChange={(value) => updateGlobal({ terminal: { backspaceSendsCtrlH: value } })}
+        />
+        <CardRow
+          {...settingProps('terminal.colors')}
+          trailing={
+            <Pill
+              size="sm"
+              onClick={() => updateGlobal({ terminal: { colors: {} } })}
+              className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
+              data-testid="terminal-colors-reset-all"
+            >
+              <RotateCcw size={14} /> Reset to default
+            </Pill>
+          }
+        >
+          <div className="flex flex-wrap gap-x-2 gap-y-3">
+            {TERMINAL_COLOR_FIELDS.map(({ key, label }) => (
+              <ColorSwatchField
+                key={key}
+                colorKey={key}
+                label={label}
+                value={terminalColors[key] || TERMINAL_DEFAULT_COLORS[key]}
+                defaultColor={TERMINAL_DEFAULT_COLORS[key]}
+                themeMatchColor={getThemeMatchColor(key, resolvedTheme)}
+                onChange={(color) => updateGlobal({ terminal: { colors: { ...terminalColors, [key]: color } } })}
+              />
+            ))}
+          </div>
+        </CardRow>
+      </SettingsCard>
+    </div>
   );
 }

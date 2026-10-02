@@ -21,8 +21,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { getBySessionType: vi.fn() },
 }));
 
-import { resolveTaskTranscript } from '../../src/main/agent/transcript-service';
+import { resolveTaskTranscript, setIndexedChunkReaderForTests } from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+
+// The index fallback reads through the retrieval worker in the app; here the
+// worker's own read runs in process over the fake database.
+setIndexedChunkReaderForTests(async (db, docId) => new RetrievalStore(db).getChunksForDoc('conversation', docId));
 import { parseCodexTranscript } from '../../src/main/agent/adapters/codex/transcript-parser';
 
 function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {

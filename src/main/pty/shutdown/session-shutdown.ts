@@ -1,4 +1,4 @@
-import type * as pty from 'node-pty';
+import type { PtyDisposable, PtyHandle } from '../host/pty-host-client';
 import type { SessionStatus } from '../../../shared/types';
 import type { SessionQueue } from '../session-queue';
 import type { SessionFileManager } from '../lifecycle/session-file-manager';
@@ -13,7 +13,7 @@ import { isYoungSession, type DeferredKillRegistry } from '../lifecycle/deferred
  * command is attempted independently and errors are swallowed - the
  * caller's next step is to force-kill anyway.
  */
-export function writeExitSequence(ptyRef: pty.IPty, exitSequence: string[]): void {
+export function writeExitSequence(ptyRef: PtyHandle, exitSequence: string[]): void {
   for (const command of exitSequence) {
     try {
       ptyRef.write(command);
@@ -27,7 +27,7 @@ export function writeExitSequence(ptyRef: pty.IPty, exitSequence: string[]): voi
 export interface ShutdownSession {
   id: string;
   taskId: string;
-  pty: pty.IPty | null;
+  pty: PtyHandle | null;
   status: SessionStatus;
   startedAt: string;
   exitSequence: string[];
@@ -37,7 +37,7 @@ export interface ShutdownSession {
    *  stops invoking our callbacks after the session dir is deleted. See
    *  ManagedSession.ptyDisposables for the full contract: only set on the
    *  normal-spawn path, left undefined for placeholder/queued sessions. */
-  ptyDisposables?: pty.IDisposable[];
+  ptyDisposables?: PtyDisposable[];
 }
 
 export interface ShutdownContext<S extends ShutdownSession = ShutdownSession> {
@@ -45,7 +45,7 @@ export interface ShutdownContext<S extends ShutdownSession = ShutdownSession> {
   sessionQueue: SessionQueue;
   sessionFiles: SessionFileManager;
   firstOutputTracker: FirstOutputTracker;
-  killPty: (ptyRef: pty.IPty) => boolean;
+  killPty: (ptyRef: PtyHandle) => boolean;
 }
 
 /**
@@ -69,7 +69,7 @@ export async function suspendAllSessions<S extends ShutdownSession>(
   timeoutMs = 2000,
 ): Promise<string[]> {
   const taskIds: string[] = [];
-  const ptysToKill: pty.IPty[] = [];
+  const ptysToKill: PtyHandle[] = [];
   const freshSessionThresholdMs = 10_000;
   const now = Date.now();
   let hasLongRunningSession = false;

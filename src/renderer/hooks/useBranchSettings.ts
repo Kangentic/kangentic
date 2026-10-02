@@ -5,12 +5,13 @@ import type { ReactNode } from 'react';
 import { computeBranchHint, resolveWorktreeBlocker, type WorktreeBlocker } from '../utils/worktree-placement';
 import { isValidGitBranchName } from '../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
+import { taskUsesWorktree } from '../../shared/worktree-choice';
 import type { ProjectPathProbe } from '../../shared/types';
 
 export interface BranchSettingsInitial {
   baseBranch: string;
   customBranchName: string;
-  /** Tri-state: null inherits the project's `worktreesEnabled`. */
+  /** Tri-state: null means Worktree while the project's Worktrees switch is on. */
   useWorktree: boolean | null;
 }
 
@@ -49,7 +50,9 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
   const [knownBranches, setKnownBranches] = useState<Set<string>>(new Set());
   const [probe, setProbe] = useState<ProjectPathProbe | null>(null);
 
-  const effectiveWorktree = useWorktree ?? worktreesEnabled;
+  // The same rule `ensureWorktree` applies, so the hint never promises a
+  // worktree the spawn will skip.
+  const effectiveWorktree = taskUsesWorktree(worktreesEnabled, useWorktree);
   const effectiveBaseBranch = baseBranch.trim() || defaultBaseBranch || 'main';
 
   useEffect(() => {
@@ -117,6 +120,8 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
     useWorktree,
     setUseWorktree,
     effectiveWorktree,
+    /** The project's Worktrees switch. Off, the Worktree | Project choice is hidden. */
+    worktreesEnabled,
     effectiveBaseBranch,
     defaultBaseBranch,
     branchPlaceholder,

@@ -51,6 +51,11 @@ export interface ResolvedPR {
  * hands the same object to every tier; it never knows which provider will
  * answer, and a connector never reads config itself.
  *
+ * Branch policies are not an option: a connector whose verdict needs a call of
+ * its own to include them (Azure DevOps) always makes it, so "ready" means the
+ * same thing on every host. It was once `git.prEvaluateBranchPolicies`, off by
+ * default for the cost, and an Azure PR then never read ready at all.
+ *
  * Only `resolveForBranch` and `resolveByNumber` take them. `resolveByCommit`
  * does not, deliberately: the commit tier cannot judge merge readiness on any
  * shipped connector (Azure's `pullrequestquery` matches completed PRs only and
@@ -59,14 +64,6 @@ export interface ResolvedPR {
  * it to that method when a connector can use it, not before.
  */
 export interface PRResolveOptions {
-  /**
-   * Spend an extra provider call per PR to evaluate branch policies when
-   * judging readiness. `git.prEvaluateBranchPolicies`, default off. Azure
-   * DevOps is the connector that pays for it (one `az rest` per open PR per
-   * sweep); a connector whose verdict already carries policy (GitHub, via
-   * `mergeStateStatus`) ignores it.
-   */
-  evaluateBranchPolicies?: boolean;
   /**
    * Count the viewer's own merge bypass as `ready`. `git.prBypassCountsAsReady`,
    * default on. GitHub is the connector that pays for it: one `gh api graphql`

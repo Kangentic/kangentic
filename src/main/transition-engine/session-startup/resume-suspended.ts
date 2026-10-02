@@ -8,11 +8,13 @@ import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, SessionRecord, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
+import { isAbortError } from '../../../shared/abort-utils';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
+import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
@@ -52,6 +54,13 @@ export async function resumeSuspendedSessions(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task resumes on the same rung it spawned under. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
+  /**
+   * Recover these session records and nothing else: the pty host's crash
+   * path, mid-run, where the gather below would also find sessions the host
+   * never held (an agent that exited non-zero on its own, one suspended
+   * earlier this run) and wake them. Startup omits it.
+   */
+  onlySessionIds?: ReadonlySet<string>,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -64,12 +73,16 @@ export async function resumeSuspendedSessions(
   //    SKIP records whose task already has a live PTY session -- this prevents
   //    re-entrant calls (Vite hot-reload, duplicate PROJECT_OPEN) from
   //    orphaning sessions that were JUST created and are actively running.
+  //    A scoped recovery skips it: its sessions' exits were already recorded,
+  //    and every other 'running' record belongs to a live session.
   const liveTaskIds = new Set(
     sessionManager.listSessions()
       .filter((session) => session.status === 'running' || session.status === 'queued')
       .map((session) => session.taskId),
   );
-  if (liveTaskIds.size > 0) {
+  if (onlySessionIds) {
+    // Nothing to orphan.
+  } else if (liveTaskIds.size > 0) {
     sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds);
   } else {
     sessionRepo.markAllRunningAsOrphaned();
@@ -82,13 +95,14 @@ export async function resumeSuspendedSessions(
   const suspended = sessionRepo.getResumable();
   const orphaned = sessionRepo.getOrphaned();
   const interruptedExited = sessionRepo.getInterruptedExited();
-  const allRecords = [...suspended, ...orphaned, ...interruptedExited];
+  const gathered = [...suspended, ...orphaned, ...interruptedExited];
+  const allRecords = onlySessionIds
+    ? gathered.filter((record) => onlySessionIds.has(record.id))
+    : gathered;
   if (allRecords.length === 0) {
     done(0);
     return;
   }
-
-  const now = new Date().toISOString();
 
   // Resolve tasks and lanes once: needed for isolation targeting (3b) and the
   // auto_spawn / deleted / paused filters below.
@@ -114,6 +128,55 @@ export async function resumeSuspendedSessions(
       findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id }),
       allLanes,
     ) ?? lane;
+  };
+
+  /**
+   * Keep a record this pass will not resume resumable: 'suspended' (system),
+   * shown as a paused card with Resume, and gathered again by the next launch.
+   * Never retired, so no fresh agent takes its task over: the auto-spawn pass
+   * skips a task with a session row, and the placeholder is one. Clears
+   * `task.session_id` too, which SESSION_RESUME needs clear to spawn rather than
+   * hand back a stale ref. False when the CAS lost (the record moved on).
+   */
+  const keepResumable = (record: SessionRecord, task: Task): boolean => {
+    if ((record.status === 'orphaned' || record.status === 'exited')
+        && !markRecordSuspended(sessionRepo, record.id, 'system')) {
+      return false;
+    }
+    sessionManager.registerSuspendedPlaceholder({ taskId: record.task_id, projectId, cwd: record.cwd });
+    if (task.session_id) taskRepo.update({ id: task.id, session_id: null });
+    return true;
+  };
+
+  /**
+   * `keepResumable` for a record whose preparation awaited the shell and agent
+   * detection, so a move, a Resume or a reset may own the task by now. Run under
+   * the task's lock, against the task and record as they are now: nothing is
+   * kept when the record's status or the task's `session_id` moved on, or a
+   * live session holds the task. A Resume retires the record, and the CAS
+   * would otherwise take it from exited back to suspended under a live agent.
+   * A task moved meanwhile is kept only in a column that starts no agent and
+   * shows Resume; a column that starts agents is the move's own to spawn into.
+   */
+  const keepResumableIfUnchanged = (record: SessionRecord, task: Task): boolean => {
+    const current = taskRepo.getById(task.id);
+    const recordNow = sessionRepo.findByAnyId(record.id);
+    if (
+      !current
+      || !recordNow
+      || recordNow.id !== record.id
+      || recordNow.status !== record.status
+      || current.session_id !== task.session_id
+      || sessionManager.findLiveSessionByTaskId(task.id)
+    ) {
+      return false;
+    }
+    if (current.swimlane_id !== task.swimlane_id) {
+      const lane = laneForTask(current);
+      const hidesResume = lane?.role != null && RESUME_HIDDEN_ROLES.has(lane.role);
+      if (!lane || lane.auto_spawn || hidesResume) return false;
+    }
+    return keepResumable(recordNow, current);
   };
 
   // 3a. Deduplicate PER (task_id, isolated_swimlane_id): keep only the most recent
@@ -264,23 +327,7 @@ export async function resumeSuspendedSessions(
     // atomically transition to 'suspended' so we don't re-process them on next
     // startup. If the CAS fails (concurrent retire), skip quietly.
     if (!autoResumeSessionsOnRestart) {
-      if (record.status === 'orphaned' || record.status === 'exited') {
-        const upgraded = markRecordSuspended(sessionRepo, record.id, 'system');
-        if (!upgraded) {
-          skipped++;
-          continue;
-        }
-      }
-      sessionManager.registerSuspendedPlaceholder({
-        taskId: record.task_id,
-        projectId,
-        cwd: record.cwd,
-      });
-      // Ensure task.session_id is null so SESSION_RESUME's precondition
-      // passes when the user clicks the Resume button.
-      if (task.session_id) {
-        taskRepo.update({ id: task.id, session_id: null });
-      }
+      keepResumable(record, task);
       skipped++;
       continue;
     }
@@ -323,6 +370,27 @@ export async function resumeSuspendedSessions(
   const spawnInputs: Array<PreparedSpawn & { record: SessionRecord; task: Task }> = [];
 
   for (const { record, task } of toProcess) {
+    // Whether the record has a conversation to resume: read in the try below,
+    // and false until then, so a preparation that throws ahead of it retires.
+    let canResume = false;
+    // A resume that cannot be prepared keeps its conversation: the card shows
+    // Resume and the next launch tries again, rather than a fresh agent
+    // replacing it (`keepResumableIfUnchanged`). A record with none (no agent
+    // session id yet) is retired as before, and the auto-spawn pass starts the
+    // task fresh, which is all a resume of it could have done.
+    const giveUpPreparation = async (): Promise<void> => {
+      if (!canResume) {
+        retireRecord(sessionRepo, record.id);
+        return;
+      }
+      const kept = await withTaskLock(task.id, async () => keepResumableIfUnchanged(record, task));
+      if (!kept) {
+        console.log(`[SESSION_RECOVERY] Left session ${record.id} (task ${task.id}) as it is: it changed while its resume was prepared`);
+      }
+    };
+    // Says only what was done: a preparation that throws before the check above
+    // retires without knowing whether the record had a conversation.
+    const giveUpOutcome = (): string => (canResume ? 'keeping its session resumable' : 'retiring its record');
     try {
       if (!fs.existsSync(record.cwd)) {
         if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
@@ -341,7 +409,7 @@ export async function resumeSuspendedSessions(
       // structurally impossible. The adapter isn't known yet - we use the record's
       // session_type (captured at spawn, agent-specific) and its isolation.
       const typeMatch = sessionRepo.getLatestForTaskByTypeAndIsolation(record.task_id, record.session_type, record.isolated_swimlane_id);
-      const canResume = isResumeEligible(typeMatch);
+      canResume = isResumeEligible(typeMatch);
       // recordId enables prepareAgentSpawn's resume-time id reconcile against
       // the matched record's own status.json (a /clear fork right before the
       // shutdown suspend can leave agent_session_id one id behind); recordCwd
@@ -377,12 +445,9 @@ export async function resumeSuspendedSessions(
       });
 
       if (!prep.ok) {
-        if (prep.reason === 'unknown-agent') {
-          console.warn(`[SESSION_RECOVERY] Unknown agent for task ${task.id.slice(0, 8)} -- skipping`);
-        } else {
-          console.warn(`[SESSION_RECOVERY] CLI not found for task ${task.id.slice(0, 8)} -- skipping`);
-        }
-        retireRecord(sessionRepo, record.id);
+        const cause = prep.reason === 'unknown-agent' ? 'Unknown agent' : 'CLI not found';
+        console.warn(`[SESSION_RECOVERY] ${cause} for task ${task.id.slice(0, 8)}; ${giveUpOutcome()}`);
+        await giveUpPreparation();
         skipped++;
         continue;
       }
@@ -390,14 +455,15 @@ export async function resumeSuspendedSessions(
       spawnInputs.push({ record, task, ...prep.data });
     } catch (err) {
       console.error(
-        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}):`,
+        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); ${giveUpOutcome()}:`,
         err,
       );
       try {
-        retireRecord(sessionRepo, record.id);
+        await giveUpPreparation();
       } catch (updateErr) {
-        console.error(`[SESSION_RECOVERY] Failed to mark session ${record.id} as exited:`, updateErr);
+        console.error(`[SESSION_RECOVERY] Failed to settle session ${record.id} after its preparation failed:`, updateErr);
       }
+      skipped++;
     }
   }
 
@@ -410,8 +476,45 @@ export async function resumeSuspendedSessions(
     return;
   }
 
+  // Each resume and its DB writes run under the task's lifecycle lock, after a
+  // re-check: the preparation above awaited the shell and every agent's
+  // detection, and a move, a Resume or a reset in that time owns the task now.
+  // The check is for a LIVE session, not any row: the pty host's crash path
+  // leaves the lost row registered, exited, for exactly the task it resumes.
+  // A reset deletes no record (it marks the latest exited, which an exited or
+  // suspended one already is); what it changes is the task's `session_id`,
+  // which it clears. A user's Resume retires the record, so a Resume then a
+  // Pause, which leaves no live session, still shows as the record's status.
+  // A skipped task keeps what its preparation wrote (see auto-spawn.ts).
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map(async (input) => {
+    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+      const current = taskRepo.getById(input.task.id);
+      const recordNow = sessionRepo.findByAnyId(input.record.id);
+      const recordUnchanged = recordNow?.id === input.record.id && recordNow.status === input.record.status;
+      if (
+        !current
+        || current.swimlane_id !== input.task.swimlane_id
+        || current.session_id !== input.task.session_id
+        || !recordUnchanged
+        || sessionManager.findLiveSessionByTaskId(input.task.id)
+      ) {
+        // Moved, in the preparation, into a column that starts no agent. That
+        // move had no session to suspend, so without a placeholder the card
+        // would offer no Resume until the next launch. Kept resumable as the
+        // gather keeps a record found in such a column; a column that starts
+        // agents is the move's own to spawn into. Any other change keeps nothing.
+        keepResumableIfUnchanged(input.record, input.task);
+        // Logged and counted, so a task this pass left alone leaves a trace.
+        console.log(
+          `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,
+        );
+        skipped++;
+        return null;
+      }
+      // Stamped inside the lock, as the auto-spawn's is, so a record another
+      // holder wrote while this one waited never sorts after the one written here.
+      const now = new Date().toISOString();
+
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,
         taskId: input.task.id,
@@ -434,16 +537,6 @@ export async function resumeSuspendedSessions(
         resuming: true,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
-      return { input, newSession };
-    }),
-  );
-
-  // --- DB update pass (sequential): process results ---
-  let recovered = 0;
-  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
-    const result = spawnResults[resultIndex];
-    if (result.status === 'fulfilled') {
-      const { input, newSession } = result.value;
 
       retireRecord(sessionRepo, input.record.id);
 
@@ -472,13 +565,31 @@ export async function resumeSuspendedSessions(
       });
 
       taskRepo.update({ id: input.task.id, session_id: newSession.id });
-      recovered++;
+      return newSession;
+    })),
+  );
+
+  let recovered = 0;
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      if (result.value) recovered++;
     } else {
       const input = spawnInputs[resultIndex];
-      console.error(
-        `[SESSION_RECOVERY] Spawn failed for session ${input.record.id} (task ${input.record.task_id}):`,
-        result.reason,
-      );
+      if (isAbortError(result.reason)) {
+        // A teardown (a move, a reset, a project close) ended the session while
+        // it spawned: the canceller took the task over, not a failure. The record
+        // is retired all the same; a later resume finds it by its agent session
+        // id, which retiring keeps.
+        console.log(
+          `[SESSION_RECOVERY] Spawn cancelled for session ${input.record.id} (task ${input.record.task_id}): the session was ended while it spawned`,
+        );
+      } else {
+        console.error(
+          `[SESSION_RECOVERY] Spawn failed for session ${input.record.id} (task ${input.record.task_id}):`,
+          result.reason,
+        );
+      }
       try {
         retireRecord(sessionRepo, input.record.id);
       } catch (updateErr) {

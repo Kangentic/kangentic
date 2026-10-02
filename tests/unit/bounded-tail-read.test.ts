@@ -21,24 +21,24 @@ function writeFile(name: string, content: string): string {
 }
 
 describe('readBoundedTail', () => {
-  it('returns the whole file untruncated when under the cap', () => {
+  it('returns the whole file untruncated when under the cap', async () => {
     const content = 'line one\nline two\nline three';
     const filePath = writeFile('small.jsonl', content);
 
-    const result = readBoundedTail(filePath, 1024);
+    const result = await readBoundedTail(filePath, 1024);
 
     expect(result.content).toBe(content);
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(Buffer.byteLength(content));
   });
 
-  it('returns the tail window with the leading partial line dropped when over the cap', () => {
+  it('returns the tail window with the leading partial line dropped when over the cap', async () => {
     const lines = Array.from({ length: 100 }, (_, index) => `{"event":"E${index}","pad":"${'x'.repeat(40)}"}`);
     const content = lines.join('\n');
     const filePath = writeFile('big.jsonl', content);
     const cap = 500;
 
-    const result = readBoundedTail(filePath, cap);
+    const result = await readBoundedTail(filePath, cap);
 
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(Buffer.byteLength(content));
@@ -54,27 +54,27 @@ describe('readBoundedTail', () => {
     expect(returnedLines[returnedLines.length - 1]).toBe(lines[lines.length - 1]);
   });
 
-  it('does not truncate a file exactly at the cap', () => {
+  it('does not truncate a file exactly at the cap', async () => {
     const content = 'a'.repeat(64);
     const filePath = writeFile('exact.txt', content);
 
-    const result = readBoundedTail(filePath, 64);
+    const result = await readBoundedTail(filePath, 64);
 
     expect(result.truncated).toBe(false);
     expect(result.content).toBe(content);
   });
 
-  it('returns the raw window when the tail contains no newline', () => {
+  it('returns the raw window when the tail contains no newline', async () => {
     const content = 'b'.repeat(200);
     const filePath = writeFile('one-line.txt', content);
 
-    const result = readBoundedTail(filePath, 50);
+    const result = await readBoundedTail(filePath, 50);
 
     expect(result.truncated).toBe(true);
     expect(result.content).toBe('b'.repeat(50));
   });
 
-  it('throws on a missing file (callers keep their own error semantics)', () => {
-    expect(() => readBoundedTail(path.join(tempDir, 'nope.jsonl'), 1024)).toThrow();
+  it('throws on a missing file (callers keep their own error semantics)', async () => {
+    await expect(readBoundedTail(path.join(tempDir, 'nope.jsonl'), 1024)).rejects.toThrow();
   });
 });

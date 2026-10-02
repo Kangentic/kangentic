@@ -156,7 +156,7 @@ describe('settings tab/scope parity: registry to rendered parity', () => {
       dead,
       `These tab components reference a setting id that has no SETTINGS_REGISTRY entry (renamed, `
         + `typo\'d, or the entry was deleted?). A dead id here means the row is unsearchable / a `
-        + `SectionHeader never hides during search:\n${dead.join('\n')}`,
+        + `SettingsCard never hides during search:\n${dead.join('\n')}`,
     ).toEqual([]);
   });
 });
@@ -240,10 +240,10 @@ describe('settings tab/scope parity: notification config to registry parity', ()
 
   it('desktop and toasts declare the same event key set', () => {
     // NotifyChannelRow reads and writes config.desktop[eventKey] and
-    // config.toasts[eventKey] together from one dropdown. A key present on
-    // only one channel makes the other read `undefined`, which
+    // config.toasts[eventKey] together from one segmented choice. A key
+    // present on only one channel makes the other read `undefined`, which
     // notifyChannelValue silently renders as a wrong-but-plausible value
-    // ('Desktop only' / 'Toast only') instead of an error.
+    // ('Desktop' / 'Toast') instead of an error.
     expect(notificationEventKeys('desktop')).toEqual(notificationEventKeys('toasts'));
   });
 
@@ -309,7 +309,7 @@ describe('settings tab/scope parity: notification config to registry parity', ()
     // Pins searchIdAttributePattern itself. The dead-id check above only flags
     // ids that ARE collected and are not real, so deleting that regex would
     // silently stop scanning every NotifyChannelRow and leave the suite green.
-    // Asserting that a given id was collected pins nothing: SectionHeader's
+    // Asserting that a given id was collected pins nothing: SettingsCard's
     // searchIds={[...]} array names the same four ids, so the array alone
     // satisfies any presence check even with the attribute regex removed
     // (verified by deleting it - a presence-based version stayed green).

@@ -106,19 +106,20 @@ async function closeSettings(page: Page): Promise<void> {
 }
 
 /**
- * Select an Execution mode for `agentId`. The real fix for the CI flake
+ * Pick an Execution mode for `agentId`. The real fix for the CI flake
  * lives in `openAgentSettingsTabAs` (it now asserts the store actually
  * resynced to the requested agent before this ever runs); this helper is a
- * secondary, cheap settle so a call site never resolves the select's
- * element handle mid-paint, right after the "Agent" tab click. Every caller
- * in this file targets an agent whose Execution mode select always renders
+ * secondary, cheap settle so a call site never clicks the segmented control
+ * mid-paint, right after the "Agent" tab click. Every caller in this file
+ * targets an agent whose Execution mode control always renders
  * (opencode), so waiting for visibility here is safe and agent-generic - it
  * never hangs on a non-capable agent because no test calls this for one.
  */
 async function selectExecutionMode(page: Page, agentId: string, mode: 'local' | 'remote'): Promise<void> {
-  const modeSelect = page.locator(`[data-testid="execution-mode-${agentId}"]`);
-  await expect(modeSelect).toBeVisible();
-  await modeSelect.selectOption(mode);
+  const modeControl = page.getByTestId(`execution-mode-${agentId}`);
+  await expect(modeControl).toBeVisible();
+  await page.getByTestId(`execution-mode-${agentId}-${mode}`).click();
+  await expect(page.getByTestId(`execution-mode-${agentId}-${mode}`)).toHaveAttribute('aria-checked', 'true');
 }
 
 test.describe('AgentTab - Remote Execution fields', () => {
@@ -136,9 +137,8 @@ test.describe('AgentTab - Remote Execution fields', () => {
     // No standalone "Execution" tab exists anymore.
     await expect(page.getByRole('button', { name: 'Execution', exact: true })).toHaveCount(0);
 
-    const modeSelect = page.locator('[data-testid="execution-mode-opencode"]');
-    await expect(modeSelect).toBeVisible();
-    await expect(modeSelect).toHaveValue('local');
+    await expect(page.getByTestId('execution-mode-opencode')).toBeVisible();
+    await expect(page.getByTestId('execution-mode-opencode-local')).toHaveAttribute('aria-checked', 'true');
 
     // Remote-only fields are not rendered while mode is local.
     await expect(page.locator('[data-testid="execution-server-url-opencode"]')).toHaveCount(0);

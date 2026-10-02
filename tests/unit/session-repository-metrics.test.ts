@@ -16,6 +16,7 @@
  * inside `getSummaryForTask`.
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
@@ -675,7 +676,7 @@ describe('SessionRepository.setTaskGitStats', () => {
           return { changes: 1 };
         }),
       })),
-      transaction: vi.fn((fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => fn(...args)),
+      transaction: vi.fn(passThroughTransaction),
     } as unknown as Database.Database;
     return { db, runCalls };
   }

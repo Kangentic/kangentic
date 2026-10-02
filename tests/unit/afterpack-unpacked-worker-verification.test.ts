@@ -52,6 +52,10 @@ interface FakeFlipFusesCall {
 interface FakeVerifyUnpackedWorkerCall {
   unpackedRoot: string;
   moduleNames?: string[];
+  /** Set on the retrieval load probe's call: the Electron binary it runs. */
+  loadProbeBinary?: string;
+  /** Set on the pty host load probe's call: the Electron binary it runs. */
+  ptyHostProbeBinary?: string;
 }
 
 /** electron-builder's AfterPackContext, narrowed to the fields afterPack.js
@@ -129,7 +133,7 @@ function installFakeElectronFuses(): {
  *  actually computed and passed in; `throwError`, when given, makes the fake
  *  throw it instead of returning, so a caller can prove afterPack.js
  *  propagates the verifier's failure rather than swallowing it. */
-function installFakeVerifyUnpackedWorker(throwError?: Error): {
+function installFakeVerifyUnpackedWorker(throwError?: Error, loadProbeError?: Error): {
   calls: FakeVerifyUnpackedWorkerCall[];
   restore: () => void;
 } {
@@ -139,12 +143,23 @@ function installFakeVerifyUnpackedWorker(throwError?: Error): {
       calls.push(moduleNames ? { unpackedRoot, moduleNames } : { unpackedRoot });
       if (throwError) throw throwError;
     },
+    verifyRetrievalWorkerLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
+      calls.push({ unpackedRoot, loadProbeBinary: electronBinaryPath });
+      if (loadProbeError) throw loadProbeError;
+    },
+    verifyPtyHostLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
+      calls.push({ unpackedRoot, ptyHostProbeBinary: electronBinaryPath });
+    },
     // afterPack.js destructures these alongside verifyUnpackedWorkerModules
-    // for its dictation-worker call; a fake missing them would silently pass
-    // `moduleNames: undefined` and make the second call indistinguishable
-    // from the first in the recorded calls below.
+    // for its dictation and retrieval calls; a fake missing them would
+    // silently pass `moduleNames: undefined` and make those calls
+    // indistinguishable from the first in the recorded calls below.
     DICTATION_WORKER_EXTERNALS: ['sherpa-onnx-node'],
     DICTATION_WORKER_PROBE_DEPENDENCIES: [],
+    RETRIEVAL_WORKER_EXTERNALS: ['better-sqlite3'],
+    RETRIEVAL_WORKER_PROBE_DEPENDENCIES: ['bindings', 'file-uri-to-path'],
+    PTY_HOST_EXTERNALS: ['node-pty'],
+    PTY_HOST_PROBE_DEPENDENCIES: [],
   };
 
   const originalCacheEntry = require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH];
@@ -243,12 +258,21 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         'Resources',
         'app.asar.unpacked',
       );
-      // Two gates now run against the same unpackedRoot: the embed worker
-      // (default moduleNames) and the dictation worker (DESKTOP-X).
+      // Every gate runs against the same unpackedRoot: the embed worker
+      // (default moduleNames), the dictation worker (DESKTOP-X), the
+      // retrieval worker's resolution probe and load probe, and the pty
+      // host's. The load probes run under the packaged binary, before its
+      // fuses are flipped.
+      const binary = path.join(appOutDir, 'Kangentic.app', 'Contents', 'MacOS', 'Kangentic');
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
+        { unpackedRoot, moduleNames: ['better-sqlite3'] },
+        { unpackedRoot, loadProbeBinary: binary },
+        { unpackedRoot, moduleNames: ['node-pty'] },
+        { unpackedRoot, ptyHostProbeBinary: binary },
       ]);
+      expect(fakeFuses.calls).toEqual([{ electronBinaryPath: binary }]);
       // The spawn-helper replacement targets the same tree on the same platform.
       expect(fakeSpawnHelper.calls).toEqual([{ unpackedRoot, platform: 'darwin' }]);
       // Both verifiers passed, so packaging must still proceed to flipFuses.
@@ -273,6 +297,10 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
+        { unpackedRoot, moduleNames: ['better-sqlite3'] },
+        { unpackedRoot, loadProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
+        { unpackedRoot, moduleNames: ['node-pty'] },
+        { unpackedRoot, ptyHostProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
       ]);
       // Called on every platform so it can log that it does not apply; the
       // platform it receives is what makes it a no-op off darwin.
@@ -325,6 +353,27 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot: path.join(appOutDir, 'resources', 'app.asar.unpacked') },
       ]);
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  it('propagates a failed retrieval load probe and never reaches flipFuses, so a build whose worker cannot open a database cannot ship', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const loadError = new Error("[afterPack] the retrieval worker's native modules do not load");
+    const fakeVerify = installFakeVerifyUnpackedWorker(undefined, loadError);
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      const appOutDir = path.join('afterpack-fake-out', 'win-out-no-sqlite');
+      await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(loadError);
+      expect(fakeVerify.calls.at(-1)).toEqual({
+        unpackedRoot: path.join(appOutDir, 'resources', 'app.asar.unpacked'),
+        loadProbeBinary: path.join(appOutDir, 'Kangentic.exe'),
+      });
       expect(fakeFuses.calls).toEqual([]);
     } finally {
       fakeFuses.restore();

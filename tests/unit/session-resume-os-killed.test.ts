@@ -22,8 +22,9 @@
  * resume-suspended.ts and the hard-kill cases stop resuming (no spawn).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type { SessionRecord, Task } from '../../src/shared/types';
+import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 
 // Incident agent_session_id for task #172 ($8.82, 145 tools) - used verbatim so
 // this unit test is the empirical red-green for the recovered conversation.
@@ -104,6 +105,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getUserPausedTaskIds = () => new Set<string>();
     insert = (...args: unknown[]) => sessionRepoInsert(...args);
     updateAppliedSettings = vi.fn();
+    // The resume pass confirms under the task lock that its record still exists.
+    findByAnyId = (id: string) => dbRecords.find((record) => record.id === id);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -117,7 +120,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => {
       return taskRepoList();
     };
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
-    getById = vi.fn(() => null);
+    // The spawn pass re-reads its task under the task lock.
+    getById = vi.fn((id: string) => taskRepoList().find((task: Task) => task.id === id));
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -226,6 +230,7 @@ function makeSessionManager() {
     spawn: vi.fn(async (input: { id: string }) => ({ id: input.id })),
     getShell: vi.fn(async () => '/bin/sh'),
     hasSessionForTask: vi.fn(() => false),
+    findLiveSessionByTaskId: vi.fn(() => undefined),
   };
 }
 
@@ -505,5 +510,390 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
     expect(sessionManager.spawn.mock.calls[0][0].agentSessionId).toBe('agent-orphan');
+  });
+});
+
+describe('resumeSuspendedSessions: scoped to the sessions a pty host crash took down (onlySessionIds)', () => {
+  // The pty host's crash path runs this mid-run. Its gather would otherwise
+  // also find sessions the host never held (an agent that exited non-zero on
+  // its own, one suspended earlier this run) and wake them, and its orphan
+  // marking would flip every OTHER live session's 'running' record.
+  //
+  // Red-green: drop the `onlySessionIds ? gathered.filter(...)` narrowing and
+  // the unlisted record is resumed too; drop the `if (onlySessionIds)` arm
+  // ahead of the orphan marking and the marking mocks fire.
+
+  /** The positional signature: ids sit behind six optional parameters. */
+  function resumeScoped(
+    sessionManager: ReturnType<typeof makeSessionManager>,
+    onlySessionIds: ReadonlySet<string> | undefined,
+  ) {
+    return resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      makeConfigManager(true) as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onlySessionIds,
+    );
+  }
+
+  function interruptedByHostLoss(recordId: string, taskId: string): SessionRecord {
+    return makeExitedRecord({
+      id: recordId,
+      task_id: taskId,
+      exit_code: PTY_HOST_LOST_EXIT_CODE,
+      agent_session_id: `agent-${taskId}`,
+    });
+  }
+
+  function seedTwoInterruptedSessions(): void {
+    const lost = interruptedByHostLoss('rec-lost', 'task-lost');
+    const unrelated = interruptedByHostLoss('rec-unrelated', 'task-unrelated');
+    sessionRepoGetInterruptedExited.mockReturnValue([lost, unrelated]);
+    dbRecords = [lost, unrelated];
+    taskRepoList.mockReturnValue([
+      makeTask({ id: 'task-lost', swimlane_id: 'lane-exec' }),
+      makeTask({ id: 'task-unrelated', swimlane_id: 'lane-exec' }),
+    ]);
+    wirePrepareAgentSpawnEcho();
+  }
+
+  it('resumes only the listed record and leaves the other interrupted one untouched', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, new Set(['rec-lost']));
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    const spawnArg = sessionManager.spawn.mock.calls[0][0];
+    expect(spawnArg.taskId).toBe('task-lost');
+    expect(spawnArg.agentSessionId).toBe('agent-task-lost');
+    // The unlisted record was filtered out before every step: not retired, not
+    // upgraded to suspended, not prepared.
+    expect(retireRecordMock.mock.calls.map((call) => call[1])).not.toContain('rec-unrelated');
+    expect(markRecordSuspendedMock.mock.calls.map((call) => call[1])).not.toContain('rec-unrelated');
+    expect(vi.mocked(prepareAgentSpawn).mock.calls.map((call) => call[0].task.id)).toEqual(['task-lost']);
+  });
+
+  it('without ids the same gather resumes both, which is what makes the narrowing observable', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, undefined);
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('an empty set resumes nothing instead of falling back to everything', async () => {
+    seedTwoInterruptedSessions();
+    const sessionManager = makeSessionManager();
+
+    await resumeScoped(sessionManager, new Set<string>());
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('never marks running records orphaned, whether or not another session is live', async () => {
+    seedTwoInterruptedSessions();
+
+    await resumeScoped(makeSessionManager(), new Set(['rec-lost']));
+    expect(sessionRepoMarkAllRunningAsOrphaned).not.toHaveBeenCalled();
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).not.toHaveBeenCalled();
+
+    const sessionManagerWithLiveTask = makeSessionManager();
+    sessionManagerWithLiveTask.listSessions.mockReturnValue([{ taskId: 'task-live', status: 'running' }] as never);
+    await resumeScoped(sessionManagerWithLiveTask, new Set(['rec-lost']));
+    expect(sessionRepoMarkAllRunningAsOrphaned).not.toHaveBeenCalled();
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).not.toHaveBeenCalled();
+  });
+
+  it('a startup recovery (no ids) still marks leftover running records orphaned', async () => {
+    seedTwoInterruptedSessions();
+
+    await resumeScoped(makeSessionManager(), undefined);
+    expect(sessionRepoMarkAllRunningAsOrphaned).toHaveBeenCalledTimes(1);
+
+    const sessionManagerWithLiveTask = makeSessionManager();
+    sessionManagerWithLiveTask.listSessions.mockReturnValue([{ taskId: 'task-live', status: 'running' }] as never);
+    await resumeScoped(sessionManagerWithLiveTask, undefined);
+    expect(sessionRepoMarkRunningAsOrphanedExcluding).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The preparation awaits the shell and each agent's detection, and the user
+ * can act on the task meanwhile. The resume re-reads its task and its record
+ * under the task's lifecycle lock and leaves one a user action took over. It
+ * looks for a LIVE session there, not any row: the pty host's crash path leaves
+ * the lost row registered, exited, for the very task it resumes.
+ *
+ * Red-green: drop the re-check and the last three fail; check any row
+ * (`hasSessionForTask`) instead of a live one and the first fails.
+ */
+describe('resumeSuspendedSessions: the resume re-checks its task under the task lock', () => {
+  interface RegistryRow {
+    id: string;
+    taskId: string;
+    status: string;
+  }
+
+  function managerOver(rows: RegistryRow[]) {
+    const manager = makeSessionManager();
+    manager.listSessions.mockImplementation(() => rows as never);
+    manager.hasSessionForTask.mockImplementation(((taskId: string) => rows.some((row) => row.taskId === taskId)) as never);
+    manager.findLiveSessionByTaskId.mockImplementation(((taskId: string) => rows.find(
+      (row) => row.taskId === taskId && (row.status === 'running' || row.status === 'queued'),
+    )) as never);
+    return manager;
+  }
+
+  function seedLostSession(duringPreparation: () => void = () => undefined): void {
+    const lost = makeExitedRecord({
+      id: 'rec-lost',
+      task_id: 'task-lost',
+      exit_code: PTY_HOST_LOST_EXIT_CODE,
+      agent_session_id: 'agent-task-lost',
+    });
+    sessionRepoGetInterruptedExited.mockReturnValue([lost]);
+    dbRecords = [lost];
+    taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-exec' })]);
+    wirePrepareAgentSpawnEcho();
+    const echo = vi.mocked(prepareAgentSpawn).getMockImplementation();
+    if (!echo) throw new Error('prepareAgentSpawn is not wired');
+    vi.mocked(prepareAgentSpawn).mockImplementation(async (input) => {
+      duringPreparation();
+      return echo(input);
+    });
+  }
+
+  function resumeLost(sessionManager: ReturnType<typeof makeSessionManager>) {
+    return resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      makeConfigManager(true) as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new Set(['rec-lost']),
+    );
+  }
+
+  it('resumes the lost task while its only row is the exited one the host loss left', async () => {
+    seedLostSession();
+    const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+    await resumeLost(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resume over a session the user started during the preparation', async () => {
+    const rows: RegistryRow[] = [{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }];
+    seedLostSession(() => {
+      rows.push({ id: 'session-user', taskId: 'task-lost', status: 'running' });
+    });
+    const sessionManager = managerOver(rows);
+
+    await resumeLost(sessionManager);
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('does not resume a task moved to another column during the preparation', async () => {
+    seedLostSession(() => {
+      taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-todo' })]);
+    });
+    const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+    await resumeLost(sessionManager);
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  describe('a task moved during the preparation', () => {
+    // The move had no session to suspend, so in a column that starts no agent
+    // the card offered no Resume until the next launch. The resume keeps the
+    // record resumable with a paused placeholder there, as the gather keeps a
+    // record it finds in such a column. A column that starts agents is the
+    // move's own to spawn into.
+    //
+    // Red-green: drop the placeholder branch from the re-check in
+    // resume-suspended.ts and the first test goes red.
+    const lanes = (movedTo: { id: string; auto_spawn: boolean; role?: 'todo' | 'done' }) => [
+      { id: 'lane-exec', auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+      { id: movedTo.id, auto_spawn: movedTo.auto_spawn, role: movedTo.role ?? null, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    ];
+
+    it('into a column that starts no agent keeps its record resumable, with a paused placeholder', async () => {
+      swimlaneListMock.mockReturnValue(lanes({ id: 'lane-manual', auto_spawn: false }));
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-manual' })]);
+      });
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost', 'system');
+      expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-lost', projectId: 'proj-1', cwd: '/project/cwd' });
+      expect(retireRecordMock).not.toHaveBeenCalled();
+    });
+
+    it('into a column that starts agents is left to the move, with no placeholder', async () => {
+      swimlaneListMock.mockReturnValue(lanes({ id: 'lane-review', auto_spawn: true }));
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-review' })]);
+      });
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    });
+
+    // To Do and Done start no agent (auto_spawn off) but both hide Resume
+    // (RESUME_HIDDEN_ROLES), and a To Do card relies on having no session so it
+    // opens straight into the edit form. A placeholder there is a regression, so
+    // the move into either is not kept, though `auto_spawn` alone would allow it.
+    //
+    // Red-green: drop the `hidesResume` clause from the moved-column check in
+    // keepResumableIfUnchanged (resume-suspended.ts). Both cases then take the
+    // keep path: markRecordSuspended is called with 'system' and a placeholder is
+    // registered, so the first two assertions go red.
+    it.each(['done', 'todo'] as const)(
+      'into a %s column that starts no agent keeps nothing: no record kept, no placeholder, no spawn',
+      async (role) => {
+        swimlaneListMock.mockReturnValue(lanes({ id: 'lane-hidden', auto_spawn: false, role }));
+        seedLostSession(() => {
+          taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-hidden' })]);
+        });
+        const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+        await resumeLost(sessionManager);
+
+        expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+        expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+        expect(sessionManager.spawn).not.toHaveBeenCalled();
+        // The pass reached the re-check: the preparation ran, and the record was
+        // left as it is rather than retired.
+        expect(vi.mocked(prepareAgentSpawn)).toHaveBeenCalledTimes(1);
+        expect(retireRecordMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it('does not resume a session the user reset during the preparation', async () => {
+    seedLostSession(() => {
+      dbRecords = [];
+    });
+    const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+    await resumeLost(sessionManager);
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  describe('a reset that only clears the task\'s session_id', () => {
+    // A Reset leaves the record row and the task's lane unchanged and starts no
+    // live session, so the record, lane and live-session checks all still pass.
+    // What it changes is `task.session_id`, which it clears to null.
+    //
+    // Red-green: drop `current.session_id !== input.task.session_id` from the
+    // re-check in resume-suspended.ts and the first test spawns over the reset.
+    const gatheredTask = () => makeTask({ id: 'task-lost', swimlane_id: 'lane-exec', session_id: 'rec-lost' });
+
+    it('does not resume a task whose session_id was cleared during the preparation, and writes nothing', async () => {
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([{ ...gatheredTask(), session_id: null }]);
+      });
+      // The row the gather read still points at the lost session.
+      taskRepoList.mockReturnValue([gatheredTask()]);
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(vi.mocked(prepareAgentSpawn)).toHaveBeenCalledTimes(1);
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+      expect(sessionRepoInsert).not.toHaveBeenCalled();
+      expect(retireRecordMock).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    });
+
+    it('still resumes a task whose non-null session_id is unchanged, so the check is not just refusing every such task', async () => {
+      seedLostSession();
+      taskRepoList.mockReturnValue([gatheredTask()]);
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      // The write spies are wired: the resume records the new session on the task.
+      expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-lost', session_id: 'new-task-lost' });
+      expect(sessionRepoInsert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a spawn a teardown cancelled', () => {
+    // A teardown that ends a session while it spawns (a move, a reset, a project
+    // close) rejects the spawn with an AbortError: the canceller took the task
+    // over. The pass logs that as a cancellation. "Spawn failed" read as a crash.
+    // The record is retired either way, as before.
+    //
+    // Red-green: drop the `isAbortError` branch in resume-suspended.ts and the
+    // first test sees console.error.
+    let consoleError: MockInstance<typeof console.error>;
+    let consoleLog: MockInstance<typeof console.log>;
+
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      consoleError.mockRestore();
+      consoleLog.mockRestore();
+    });
+
+    it('logs a resume a teardown cancelled as cancelled, not as a failure, and still retires its record', async () => {
+      seedLostSession();
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+      sessionManager.spawn.mockImplementation(async () => {
+        throw new DOMException('The session was ended while it was being spawned', 'AbortError');
+      });
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(consoleLog).toHaveBeenCalledWith(expect.stringContaining('Spawn cancelled for session rec-lost'));
+      expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost');
+      expect(sessionRepoInsert).not.toHaveBeenCalled();
+    });
+
+    it('still reports any other rejection as a failure', async () => {
+      seedLostSession();
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+      const failure = new Error('the pty host refused the spawn');
+      sessionManager.spawn.mockImplementation(async () => {
+        throw failure;
+      });
+
+      await resumeLost(sessionManager);
+
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Spawn failed for session rec-lost'), failure);
+      expect(retireRecordMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost');
+    });
   });
 });

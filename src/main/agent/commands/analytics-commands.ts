@@ -7,21 +7,27 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
-import { ConversationUsageStore } from '../../retrieval/conversation/conversation-usage-store';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
-import type { Task } from '../../../shared/types';
+import type { SessionSummary, SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
 /** Fan-out rows printed before collapsing the tail into a "+N more" line. The
  *  rows are heaviest-first, so the cap keeps the expensive ones. */
 const MAX_FAN_OUT_LINES = 5;
 
-export const handleGetTaskStats: CommandHandler = (
+/** Every task's session summary: from the retrieval worker where the context
+ *  offers it (it aggregates every session row), read here in a test context. */
+function sessionSummariesFor(context: CommandContext, sessionRepo: SessionRepository): Promise<Record<string, SessionSummary>> {
+  return context.listSessionSummaries ? context.listSessionSummaries() : Promise.resolve(sessionRepo.listAllSummaries());
+}
+
+export const handleGetTaskStats: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const taskId = params.taskId as string | null;
   const query = (params.query as string | null)?.toLowerCase() ?? null;
   const sortBy = (params.sortBy as string) || 'tokens';
@@ -53,14 +59,20 @@ export const handleGetTaskStats: CommandHandler = (
     // tokens again would double count. On a /code-review or /test task this is
     // most of the traffic, and it is the only place the board can answer which
     // subagent was expensive.
-    const usageStore = new ConversationUsageStore(db);
-    const bySubagentType = usageStore.getSubagentTotalsByType(null, null, task.id);
-    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
-    // Grouped by the driver turn that STARTED each fan-out, which the per-type
-    // rollup above cannot express: a /code-review task spawns the same
+    //
+    // The fan-outs are grouped by the driver turn that STARTED each one, which
+    // the per-type rollup cannot express: a /code-review task spawns the same
     // `review-finder` type from several different turns, and "what did this one
-    // fan-out cost" is the question that distinguishes them.
-    const fanOuts = subagentTurns > 0 ? usageStore.getTaskFanOuts(task.id) : [];
+    // fan-out cost" is the question that distinguishes them. Both are read in
+    // the retrieval worker, which owns the ledger.
+    let bySubagentType: SubagentUsageTotals[] = [];
+    let fanOuts: TaskFanOut[] = [];
+    try {
+      ({ bySubagentType, fanOuts } = await retrievalClient.call('usage.taskSubagents', { projectId: context.projectId, taskId: task.id }));
+    } catch {
+      // The index is restarting: the stats print without the subagent lines.
+    }
+    const subagentTurns = bySubagentType.reduce((total, row) => total + row.turnCount, 0);
 
     const lines = [
       `Stats for "${task.title}":`,
@@ -113,7 +125,7 @@ export const handleGetTaskStats: CommandHandler = (
 
   // Aggregate stats across completed tasks (optionally filtered by query)
   const archivedTasks = taskRepo.listArchived();
-  const allSummaries = sessionRepo.listAllSummaries();
+  const allSummaries = await sessionSummariesFor(context, sessionRepo);
 
   const allSwimlanes = listActiveSwimlanes(db);
   const activeTasks: Task[] = [];
@@ -128,6 +140,7 @@ export const handleGetTaskStats: CommandHandler = (
     task.description.toLowerCase().includes(query);
 
   const taskStats: Array<{
+    displayId: number;
     title: string;
     status: string;
     totalTokens: number;
@@ -151,6 +164,7 @@ export const handleGetTaskStats: CommandHandler = (
     const isCompleted = task.archived_at !== null;
 
     taskStats.push({
+      displayId: task.display_id,
       title: task.title,
       status: isCompleted ? 'completed' : 'active',
       totalTokens: tokens,
@@ -194,7 +208,7 @@ export const handleGetTaskStats: CommandHandler = (
   for (const stat of taskStats.slice(0, 20)) {
     const statusTag = stat.status === 'completed' ? '[done]' : '[active]';
     lines.push(
-      `- ${stat.title} ${statusTag}: ${stat.totalTokens.toLocaleString()} tokens, $${stat.cost.toFixed(4)}, ${Math.round(stat.duration / 1000)}s, ${stat.toolCalls} tool calls, ${stat.linesChanged} lines changed`,
+      `- #${stat.displayId} ${stat.title} ${statusTag}: ${stat.totalTokens.toLocaleString()} tokens, $${stat.cost.toFixed(4)}, ${Math.round(stat.duration / 1000)}s, ${stat.toolCalls} tool calls, ${stat.linesChanged} lines changed`,
     );
   }
   if (taskStats.length > 20) {
@@ -298,10 +312,10 @@ export function formatLabelVocabulary(
   return lines;
 }
 
-export const handleBoardSummary: CommandHandler = (
+export const handleBoardSummary: CommandHandler = async (
   _params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
   const sessionRepo = new SessionRepository(db);
@@ -313,7 +327,7 @@ export const handleBoardSummary: CommandHandler = (
   // column it can see as the finish line.
   const allSwimlanes = listBoardColumns(db);
   const archivedTasks = taskRepo.listArchived();
-  const allSummaries = sessionRepo.listAllSummaries();
+  const allSummaries = await sessionSummariesFor(context, sessionRepo);
   const backlogTasks = backlogRepo.list();
 
   let totalActiveTasks = 0;
@@ -556,7 +570,7 @@ export async function handleGetSessionHistory(
   // Read the file, truncating from the beginning if too large
   let content: string;
   try {
-    const tailResult = readBoundedTail(filePath, MAX_SESSION_HISTORY_BYTES);
+    const tailResult = await readBoundedTail(filePath, MAX_SESSION_HISTORY_BYTES);
     content = tailResult.truncated
       ? `[Truncated - showing last ${Math.round(MAX_SESSION_HISTORY_BYTES / 1024)}KB of ${Math.round(tailResult.totalBytes / 1024)}KB]\n${tailResult.content}`
       : tailResult.content;

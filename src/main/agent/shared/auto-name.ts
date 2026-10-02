@@ -1,4 +1,9 @@
-import { spawn } from 'node:child_process';
+import { parseJsonLine, pickStringField, runCliPrint, type RunCliPrintOptions } from './cli-print';
+
+/**
+ * The TITLE shape of a headless CLI run (`cli-print.ts`): auto-name asks an
+ * agent for a short task title from its description.
+ */
 
 const PROMPT_BUDGET = 4000; // characters of input we forward to the CLI
 const OUTPUT_BUDGET = 2048; // bytes of stdout we accept before terminating
@@ -85,19 +90,6 @@ export function extractFinalAssistantText(stdout: string): string {
   return stdout;
 }
 
-function parseJsonLine(rawLine: string): Record<string, unknown> | null {
-  const line = rawLine.trim();
-  if (!line.startsWith('{')) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  return parsed as Record<string, unknown>;
-}
-
 function pickAssistantText(record: Record<string, unknown>): string | null {
   return (
     pickStringField(record, 'text')
@@ -106,11 +98,6 @@ function pickAssistantText(record: Record<string, unknown>): string | null {
     ?? pickStringField(record, 'delta')
     ?? pickAssistantMessage(record)
   );
-}
-
-function pickStringField(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 function pickAssistantMessage(record: Record<string, unknown>): string | null {
@@ -123,170 +110,16 @@ function pickAssistantMessage(record: Record<string, unknown>): string | null {
   return null;
 }
 
-export interface RunCliPrintOptions {
-  cliPath: string;
-  /** Fixed CLI args (subcommand, flags). When `promptVia: 'arg'`, the prompt is appended
-   *  to this list as the final positional argument. */
-  args: string[];
-  /** Wrapped prompt text (call buildSummarizePrompt first). */
-  prompt: string;
-  cwd: string;
-  timeoutMs?: number;
-  /**
-   * How the prompt is delivered to the CLI:
-   *   - 'stdin' (default): piped via the child's stdin, args are unchanged.
-   *   - 'arg': appended to args as the final positional argument; stdin is closed empty.
-   * Use 'arg' for CLIs whose non-interactive mode requires the prompt directly on the
-   * command line (Cursor `agent -p "<prompt>"`, Copilot `copilot -p "<prompt>"`).
-   */
-  promptVia?: 'stdin' | 'arg';
-  /**
-   * Optional pre-cleanup transform: receives raw stdout, returns the candidate title text
-   * to feed into `cleanSummarizeOutput`. Useful when the CLI emits NDJSON / stream-json:
-   * the adapter parses each line, picks the final assistant message, and returns its
-   * `text` field. Returning empty string (or throwing) marks the run as a failure.
-   */
-  extractRaw?: (stdout: string) => string;
-  /**
-   * Optional environment variables merged into the spawn. Adapters that need to disable
-   * a TUI banner via env var (e.g. `NO_COLOR=1`, custom analytics opt-out) supply them here.
-   */
-  env?: Record<string, string>;
-}
-
 /**
- * Spawns the agent's CLI in non-interactive mode, writes the prompt to stdin, captures up
- * to OUTPUT_BUDGET bytes of stdout, optionally runs an adapter-specific extractor, then
- * cleans the result into a single-line title. Throws on non-zero exit, timeout, or empty
- * output.
+ * A one-shot run shaped for a TITLE: the title's budgets, and its output
+ * cleaned to a single line unless the caller passes another `shape`. Throws on
+ * a non-zero exit, a timeout, or empty output.
  */
-export async function runCliPrintSummarize(options: RunCliPrintOptions): Promise<string> {
-  const {
-    cliPath,
-    args,
-    prompt,
-    cwd,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
-    promptVia = 'stdin',
-    extractRaw,
-    env,
-  } = options;
-
-  return new Promise<string>((resolve, reject) => {
-    const finalArgs = promptVia === 'arg' ? [...args, prompt] : args;
-    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath);
-    // When useShell is true, args are interpolated into a single command string and
-    // parsed by cmd.exe. We single-quote-wrap the prompt as a defensive measure: any
-    // embedded double quotes have been replaced upstream (see buildSummarizePrompt
-    // doesn't insert any), and arbitrary user description text could otherwise be
-    // mis-parsed by the shell. For non-shell spawns (macOS/Linux/Windows .exe) Node
-    // passes args literally to the child without shell interpretation.
-    const shellArgs = useShell ? finalArgs.map(quoteForCmdShell) : finalArgs;
-    const command = useShell ? `"${cliPath}" ${shellArgs.join(' ')}` : cliPath;
-    const spawnArgs = useShell ? [] : finalArgs;
-
-    const mergedEnv = env ? { ...process.env, ...env } : process.env;
-
-    const child = spawn(command, spawnArgs, {
-      cwd,
-      shell: useShell,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: mergedEnv,
-    });
-
-    let stdoutSize = 0;
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let terminated = false;
-
-    const timer = setTimeout(() => {
-      terminated = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
-      }, 1000).unref();
-      reject(new Error('summarize timed out'));
-    }, timeoutMs);
-    timer.unref();
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutSize += chunk.length;
-      if (stdoutSize > OUTPUT_BUDGET) {
-        terminated = true;
-        child.kill('SIGTERM');
-      } else {
-        stdoutChunks.push(chunk);
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-    });
-
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-
-    const finish = (rawStdout: string, code: number | null, partial: boolean): void => {
-      let candidate = rawStdout;
-      if (extractRaw) {
-        try {
-          candidate = extractRaw(rawStdout);
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-          return;
-        }
-      }
-      const cleaned = cleanSummarizeOutput(candidate);
-      if (cleaned) {
-        resolve(cleaned);
-        return;
-      }
-      if (partial) {
-        reject(new Error('summarize terminated before producing output'));
-        return;
-      }
-      if (code !== 0) {
-        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim().slice(0, 200);
-        reject(new Error(`summarize CLI exited ${code}${stderr ? `: ${stderr}` : ''}`));
-        return;
-      }
-      reject(new Error('summarize produced empty output'));
-    };
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
-      finish(stdout, code, terminated);
-    });
-
-    try {
-      if (promptVia === 'stdin') {
-        child.stdin.end(prompt);
-      } else {
-        child.stdin.end();
-      }
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
+export function runCliPrintSummarize(options: RunCliPrintOptions): Promise<string> {
+  return runCliPrint({
+    ...options,
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    outputBudget: options.outputBudget ?? OUTPUT_BUDGET,
+    shape: options.shape ?? cleanSummarizeOutput,
   });
-}
-
-/**
- * Quote an arbitrary argument for cmd.exe parsing when invoking via `shell: true` on
- * Windows. Wraps the value in double quotes and escapes:
- *   - embedded double quotes by doubling them ("" is the cmd convention)
- *   - percent signs by doubling them (cmd expands %VAR% inside any string, even
- *     inside double quotes; %% prevents expansion when the prompt contains
- *     env-var-like text such as a user pasting a Windows path with %APPDATA%)
- * We never run our prompt through cmd-builtin redirection or pipes, so backticks
- * and `^` need no special handling.
- * @internal Exported for unit tests only; not part of the public API.
- */
-export function quoteForCmdShell(value: string): string {
-  if (!/[\s"&<>|^()%]/.test(value) && value.length > 0) return value;
-  const escaped = value.replace(/"/g, '""').replace(/%/g, '%%');
-  return `"${escaped}"`;
 }

@@ -1,71 +1,85 @@
 import type Database from 'better-sqlite3';
 
-export interface TranscriptRecord {
-  session_id: string;
-  transcript: string;
-  size_bytes: number;
-  created_at: string;
-  updated_at: string;
-}
+/**
+ * A session's raw terminal transcript: the ANSI-stripped PTY output
+ * `TranscriptWriter` captures, kept whole and never trimmed. It outlives its
+ * session row on purpose (agent CLIs clean up their own session files, so this
+ * is Kangentic's durable copy), which is why no trigger deletes it.
+ *
+ * Stored as ordered pieces in `session_transcript_chunks`, one row per flush,
+ * so a flush is one INSERT. It used to be one growing TEXT value in
+ * `session_transcripts`, where each flush rewrote the whole value: 127 to 164
+ * ms for a 19 MB transcript. Rows still in that legacy table are read as the
+ * oldest part of the transcript until the retrieval worker converts them to
+ * pieces (negative `seq`, so they sort ahead of anything written since).
+ */
+/** The append statement, prepared once per connection: a heavy terminal
+ *  flushes about 30 times a second. */
+const appendStatements = new WeakMap<Database.Database, Database.Statement>();
 
 export class TranscriptRepository {
   constructor(private db: Database.Database) {}
 
   /**
-   * Create an empty transcript row for a new session.
-   * Call before any data arrives so appendChunk has a row to update.
-   */
-  create(sessionId: string): void {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT OR IGNORE INTO session_transcripts (session_id, transcript, size_bytes, created_at, updated_at)
-      VALUES (?, '', 0, ?, ?)
-    `).run(sessionId, now, now);
-  }
-
-  /**
-   * Append a chunk of ANSI-stripped text to the session's transcript.
-   * Uses SQLite string concatenation for efficient append.
+   * Append one flush of ANSI-stripped text as the session's next piece. The
+   * seq never goes below 0: a legacy row's conversion writes its pieces below
+   * 0 one at a time, and a flush that landed between two of them took the seq
+   * the conversion wrote next.
    */
   appendChunk(sessionId: string, chunk: string): void {
-    const sizeBytes = Buffer.byteLength(chunk);
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      UPDATE session_transcripts
-      SET transcript = transcript || ?, size_bytes = size_bytes + ?, updated_at = ?
-      WHERE session_id = ?
-    `).run(chunk, sizeBytes, now, sessionId);
+    let append = appendStatements.get(this.db);
+    if (!append) {
+      append = this.db.prepare(`
+        INSERT INTO session_transcript_chunks (session_id, seq, chars, bytes, created_at, text)
+        VALUES (?, (SELECT MAX(COALESCE(MAX(seq), -1), -1) + 1 FROM session_transcript_chunks WHERE session_id = ?), ?, ?, ?, ?)
+      `);
+      appendStatements.set(this.db, append);
+    }
+    append.run(sessionId, sessionId, chunk.length, Buffer.byteLength(chunk), new Date().toISOString(), chunk);
+  }
+
+  /** A legacy row's size and dates, without its text. */
+  private legacyRow(sessionId: string): { chars: number; sizeBytes: number; createdAt: string; updatedAt: string } | null {
+    const row = this.db.prepare(`
+      SELECT length(transcript) AS chars, size_bytes AS sizeBytes, created_at AS createdAt, updated_at AS updatedAt
+      FROM session_transcripts WHERE session_id = ?
+    `).get(sessionId) as { chars: number; sizeBytes: number; createdAt: string; updatedAt: string } | undefined;
+    return row ?? null;
   }
 
   /**
-   * Get the full transcript for a session.
-   * Returns null if no transcript exists.
+   * Which pieces a reader takes. While a legacy row is still here, its
+   * conversion may have written some of its pieces (below seq 0, each stamped
+   * with the row's first or last write time) and the row is still read whole,
+   * so those pieces are left out until the conversion deletes the row. Read
+   * the row before the pieces: if the conversion finishes in between, every
+   * piece it wrote is still left out of a read that already has the row's
+   * text. Pieces moved here from another project's row carry that row's
+   * times, and live pieces are never below 0, so both are read.
    */
-  getBySessionId(sessionId: string): TranscriptRecord | null {
-    return this.db.prepare(
-      'SELECT * FROM session_transcripts WHERE session_id = ?',
-    ).get(sessionId) as TranscriptRecord | null;
+  private pieceFilter(legacy: { createdAt: string; updatedAt: string } | null): { clause: string; params: string[] } {
+    if (!legacy) return { clause: '', params: [] };
+    return { clause: ' AND NOT (seq < 0 AND created_at IN (?, ?))', params: [legacy.createdAt, legacy.updatedAt] };
   }
 
-  /**
-   * Get just the transcript text for a session.
-   * More efficient than getBySessionId when you only need the content.
-   */
+  /** The whole transcript, oldest first, or null when none was captured. */
   getTranscriptText(sessionId: string): string | null {
-    const row = this.db.prepare(
-      'SELECT transcript FROM session_transcripts WHERE session_id = ?',
-    ).get(sessionId) as { transcript: string } | undefined;
-    return row?.transcript ?? null;
+    const legacy = this.db.prepare('SELECT transcript, created_at AS createdAt, updated_at AS updatedAt FROM session_transcripts WHERE session_id = ?')
+      .get(sessionId) as { transcript: string; createdAt: string; updatedAt: string } | undefined;
+    const filter = this.pieceFilter(legacy ?? null);
+    const pieces = (this.db.prepare(`SELECT text FROM session_transcript_chunks WHERE session_id = ?${filter.clause} ORDER BY seq`)
+      .all(sessionId, ...filter.params) as Array<{ text: string }>).map((row) => row.text);
+    if (!legacy && pieces.length === 0) return null;
+    return (legacy?.transcript ?? '') + pieces.join('');
   }
 
   /**
-   * Get the last `maxChars` characters of a session's transcript plus the
-   * total character length, WITHOUT materializing the full transcript in JS.
-   * SQLite computes the substring internally (`substr`), so a multi-MB
-   * transcript stays on the C side and only the tail crosses into the JS heap.
-   * Used by the raw `get_transcript` MCP path, which only ever shows the tail -
-   * loading the whole blob there blocked the main loop for tens to hundreds of
-   * ms on a verbose session. Returns null when no transcript row exists.
+   * The last `maxChars` characters of a session's transcript, its total
+   * length, size and dates, without reading the whole transcript: the newest
+   * pieces are read until the budget is met (an index seek and a few rows),
+   * then a legacy row's own tail if the budget still wants more. Used by the
+   * raw `get_transcript` MCP path, which only ever shows the tail. Null when
+   * nothing was captured.
    */
   getTranscriptTail(sessionId: string, maxChars: number): {
     tail: string;
@@ -74,39 +88,50 @@ export class TranscriptRepository {
     createdAt: string;
     updatedAt: string;
   } | null {
-    // substr(X, -N) returns the last N characters (or the whole string when
-    // it is shorter). Bind the negative start directly.
-    const row = this.db.prepare(`
-      SELECT substr(transcript, ?) AS tail,
-             length(transcript) AS full_length,
-             size_bytes, created_at, updated_at
-      FROM session_transcripts
-      WHERE session_id = ?
-    `).get(-Math.max(0, maxChars), sessionId) as {
-      tail: string | null;
-      full_length: number | null;
-      size_bytes: number | null;
-      created_at: string;
-      updated_at: string;
-    } | undefined;
-    if (!row) return null;
+    const budget = Math.max(0, maxChars);
+    const legacy = this.legacyRow(sessionId);
+    const filter = this.pieceFilter(legacy);
+    // `text` is the last column, so the totals read no overflow pages.
+    const totals = this.db.prepare(`
+      SELECT COUNT(*) AS pieces, COALESCE(SUM(chars), 0) AS chars, COALESCE(SUM(bytes), 0) AS bytes,
+             MIN(created_at) AS firstAt, MAX(created_at) AS lastAt
+      FROM session_transcript_chunks WHERE session_id = ?${filter.clause}
+    `).get(sessionId, ...filter.params) as { pieces: number; chars: number; bytes: number; firstAt: string | null; lastAt: string | null };
+    if (totals.pieces === 0 && !legacy) return null;
+
+    const newestFirst: string[] = [];
+    let collected = 0;
+    if (totals.pieces > 0 && budget > 0) {
+      const newest = this.db.prepare(`SELECT text FROM session_transcript_chunks WHERE session_id = ?${filter.clause} ORDER BY seq DESC`);
+      for (const row of newest.iterate(sessionId, ...filter.params) as IterableIterator<{ text: string }>) {
+        newestFirst.push(row.text);
+        collected += row.text.length;
+        if (collected >= budget) break;
+      }
+    }
+    let tail = newestFirst.reverse().join('');
+    if (collected < budget && legacy && legacy.chars > 0) {
+      // substr(X, -N) returns the last N characters, or all of X when shorter.
+      const legacyTail = this.db.prepare('SELECT substr(transcript, ?) AS tail FROM session_transcripts WHERE session_id = ?')
+        .get(-(budget - collected), sessionId) as { tail: string | null } | undefined;
+      tail = (legacyTail?.tail ?? '') + tail;
+    }
+    if (tail.length > budget) tail = tail.slice(tail.length - budget);
     return {
-      tail: row.tail ?? '',
-      fullLength: row.full_length ?? 0,
-      sizeBytes: row.size_bytes ?? 0,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      tail,
+      fullLength: totals.chars + (legacy?.chars ?? 0),
+      sizeBytes: totals.bytes + (legacy?.sizeBytes ?? 0),
+      createdAt: legacy?.createdAt ?? totals.firstAt ?? '',
+      updatedAt: totals.lastAt ?? legacy?.updatedAt ?? '',
     };
   }
 
-  /**
-   * Get the transcript size without loading the content.
-   * Useful for UI display.
-   */
+  /** The transcript's size without its content. */
   getSizeBytes(sessionId: string): number {
-    const row = this.db.prepare(
-      'SELECT size_bytes FROM session_transcripts WHERE session_id = ?',
-    ).get(sessionId) as { size_bytes: number } | undefined;
-    return row?.size_bytes ?? 0;
+    const legacy = this.legacyRow(sessionId);
+    const filter = this.pieceFilter(legacy);
+    const pieces = this.db.prepare(`SELECT COALESCE(SUM(bytes), 0) AS bytes FROM session_transcript_chunks WHERE session_id = ?${filter.clause}`)
+      .get(sessionId, ...filter.params) as { bytes: number };
+    return pieces.bytes + (legacy?.sizeBytes ?? 0);
   }
 }

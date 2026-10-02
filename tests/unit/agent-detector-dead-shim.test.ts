@@ -407,6 +407,35 @@ describe('describeProbeError - the non-numeric-code branches', () => {
     expect(failureLine).toContain('its --version probe failed (timed out (SIGTERM))');
   });
 
+  it('retries a timed-out probe once with a longer timeout, and keeps a slow agent', async () => {
+    // The reported case: a CLI answering in 1.3 s alone timed out at 5 s among
+    // every other agent's boot probe, and dropped out of the agent list.
+    whichState.matches = [plainCmdPath];
+    execVersionMock.mockImplementation(async (_candidatePath: string, timeout?: number) => {
+      if (timeout === undefined) {
+        throw Object.assign(new Error('Command timed out'), { killed: true, signal: 'SIGTERM' });
+      }
+      return { stdout: '1.18.31\n', stderr: '' };
+    });
+
+    const result = await makeDetector().detect();
+
+    expect(result).toEqual({ found: true, path: plainCmdPath, version: '1.18.31' });
+    expect(execVersionMock).toHaveBeenCalledTimes(2);
+    expect(execVersionMock.mock.calls[1][1]).toBeGreaterThan(5000);
+  });
+
+  it('does not retry a probe that failed for any other reason', async () => {
+    whichState.matches = [plainCmdPath];
+    execVersionMock.mockImplementation(async () => {
+      throw Object.assign(new Error('Command failed'), { code: 1, stderr: 'not compatible' });
+    });
+
+    await makeDetector().detect();
+
+    expect(execVersionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('describes a spawn failure by its string error code', async () => {
     whichState.matches = [plainCmdPath, liveShimPath];
     execVersionMock.mockImplementation(async (candidatePath: string) => {

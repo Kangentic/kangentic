@@ -5,10 +5,12 @@ import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, Remote
 import { DOCS_URLS } from '../../../../shared/docs-links';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { formatDate, formatDateTime, formatShortDateTime } from '../../../lib/datetime';
-import { INPUT_CLASS, SectionHeader, Select, SettingToggleRow, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingsCard, CardTile } from '../settings-card';
+import { SegmentedControl } from '../../SegmentedControl';
+import type { SegmentedControlOption } from '../../SegmentedControl';
 import { Pill } from '../../Pill';
 import { settingProps } from '../settings-registry';
-import { useAnySettingVisible } from '../settings-search';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { QrImage } from '../../QrImage';
 import { ExternalLinkButton } from '../../ExternalLinkButton';
@@ -33,11 +35,21 @@ const MOBILE_DOCS_URL = DOCS_URLS.mobile;
  *  Mobile, which is the same split this tab draws between Relay and Mobile. */
 const RELAY_DOCS_URL = DOCS_URLS.relay;
 
-/** The ids each section's heading advertises. Declared once and passed to BOTH
- *  the SectionHeader's `searchIds` and the body's `useAnySettingVisible` gate,
- *  so the two cannot answer the search differently: a body gated on a subset
- *  hides the very row the query matched and leaves the heading orphaned. */
+/** The ids each card's heading advertises. Declared once and passed to BOTH
+ *  its own card's `searchIds` and the master card's, so the two cannot answer
+ *  the search differently: a master card listing a subset hides the very card
+ *  the query matched while the bridge is off. */
 const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
+
+/**
+ * The relay choices, short because the card is titled Relay. Local is a dev
+ * build's loopback relay and never ships.
+ */
+const RELAY_MODE_OPTIONS: SegmentedControlOption<'hosted' | 'local' | 'custom'>[] = [
+  ...(__KANGENTIC_DEV__ ? [{ value: 'local' as const, label: 'Local', testId: 'mobile-relay-mode-local' }] : []),
+  { value: 'hosted', label: 'Kangentic', title: 'The Kangentic relay', testId: 'mobile-relay-mode-hosted' },
+  { value: 'custom', label: 'Custom', title: 'A relay you run', testId: 'mobile-relay-mode-custom' },
+];
 
 /** The relay address field's classes, authored in full rather than layered onto
  *  the shared INPUT_CLASS. Two of its states need to override a property
@@ -99,39 +111,18 @@ function connectionStateDisplay(state: MobileDeviceConnectionState): { label: st
 export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const enabled = globalConfig.mobileBridge?.enabled ?? false;
-  // resolveRelayMode, not inferRelayMode: the Select below only offers 'local'
-  // in a dev build, but the persisted value can still BE 'local' in production
-  // (mobileBridge.* is global config in a shared configDir). Binding the raw
-  // stored mode would give a controlled <select> a value matching no <option>,
-  // which renders blank - above a pill showing the hosted URL it resolved to.
+  // resolveRelayMode, not inferRelayMode: the relay choice below only offers
+  // 'local' in a dev build, but the persisted value can still BE 'local' in
+  // production (mobileBridge.* is global config in a shared configDir). Binding
+  // the raw stored mode would give the segmented control a value matching no
+  // option, which selects nothing - above a pill showing the hosted URL it
+  // resolved to.
   const relayMode = resolveRelayMode(globalConfig.mobileBridge);
   const resolvedRelayUrl = resolveRelayUrl(globalConfig.mobileBridge);
 
-  /** Every control in a section dims and stops taking clicks with the bridge
-   *  off; each section's docs tail sits outside this wrapper (see the comment
-   *  in the JSX below). */
-  const gatedSectionClass = enabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none';
-  /** The relay controls used to be a SettingRow, which hid itself on a search
-   *  miss. Now that its heading is a SectionHeader, the controls have to honor
-   *  the same search filtering explicitly or they render under a hidden header.
-   *  Gated on the WHOLE id list the heading advertises, not just relayMode:
-   *  SectionHeader shows when ANY of its ids match, so a relayUrl-only query
-   *  ("websocket", "address") kept the heading and hid the custom relay address
-   *  field the user was searching for.
-   *
-   *  This is now the ONLY gate on that address field, which is a fix rather than
-   *  a loss of precision. The field had a SettingRow with its own per-row gate,
-   *  so the mirror-image bug was live in the other direction: a relayMode-only
-   *  query while in custom mode hid the address field and left the Select reading
-   *  "Custom Relay" above the gap, a picker pointing at a control that was not
-   *  rendered. One any-of gate for the whole section cannot desynchronize. */
-  const relaySectionVisible = useAnySettingVisible(RELAY_SEARCH_IDS);
-  /** Same rule for the Mobile section. Applied as a class rather than an
-   *  `&&` wrapper only to avoid adding a JSX nesting level around ~190 lines:
-   *  the pairing flow and device list would all have to shift one indent, and
-   *  the resulting whitespace hunk would bury the real change. `hidden` is
-   *  display:none, so the content is out of the accessibility tree too. */
-  const mobileSectionVisible = useAnySettingVisible(MOBILE_SEARCH_IDS);
+  // Search visibility is each card's own (`SettingsCard`'s searchIds), gated
+  // on the WHOLE id list its section advertises: a relayUrl-only query
+  // ("websocket", "address") must keep the relay card, address field and all.
   /** Via settingProps, not a raw SETTINGS_BY_ID index: a future rename of the
    *  id then fails with "Unknown setting ID: ..." instead of a bare "cannot
    *  read properties of undefined". */
@@ -354,51 +345,46 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
   return (
     <div className="space-y-4">
-      <SettingToggleRow
+      {/* Three cards: the bridge's switch, then where it connects (Relay) and
+          which phones may use it (Phones), both shown only with it on. With the
+          bridge off, its card keeps the two docs links: that is exactly when
+          someone is deciding whether to turn it on, which is why they stayed
+          visible in the old layout too. */}
+      <SettingsCard
+        icon={<Smartphone size={16} />}
         {...settingProps('mobileBridge.enabled')}
-        icon={<Smartphone className="size-5" />}
+        // The Relay and Phones cards' settings only while those cards are not
+        // rendered (bridge off), so a search for one of them finds this switch.
+        // With the bridge on they answer for themselves, and listing them here
+        // showed this card, empty, above the match.
+        searchIds={enabled ? [] : [...RELAY_SEARCH_IDS, ...MOBILE_SEARCH_IDS]}
         checked={enabled}
         onChange={(value) => updateGlobal({ mobileBridge: { enabled: value } })}
-      />
+      >
+        {enabled ? null : (
+          <CardTile className="flex flex-wrap items-center gap-2" testId="mobile-bridge-docs">
+            <ExternalLinkButton label="How the relay works" url={RELAY_DOCS_URL} testId="mobile-relay-docs-link" />
+            <ExternalLinkButton label="How to install and pair" url={MOBILE_DOCS_URL} testId="mobile-get-app-docs-link" />
+          </CardTile>
+        )}
+      </SettingsCard>
 
-      {/* The tab below the master switch is two independent sections, Relay and
-          Mobile: where this desktop connects, and which phones may use it.
-          They are peers, so both are SectionHeaders - the relay controls used
-          to sit in a SettingRow whose own label was also "Relay", which put two
-          different headings for the same thing on one tab.
-
-          Each section ends in an UNGATED documentation tail. Everything else in
-          a section is inside the enabled-gate, but the docs are exactly what a
-          user with the bridge still off needs: someone deciding whether to
-          route agent traffic through our relay has by definition not flipped
-          the toggle, and someone who has not installed the app yet has not
-          either. Parent opacity cannot be undone by a child, so the link has to
-          live outside the gated wrapper rather than opt out of it. */}
-      <SectionHeader
-        label={relayHeading.label}
-        description={relayHeading.description}
-        searchIds={RELAY_SEARCH_IDS}
-      />
-      {relaySectionVisible && (
-        <>
-          <div className={gatedSectionClass}>
-            {/* ONE grid, not two stacked flex columns. The address field and the
-                probe verdict belong to different
-                COLUMNS of the same grid ROW, so a single `items-center` centers
-                both of them in one shared row box and their vertical centers
-                cannot drift. As two independent flex columns they each carried
-                their own rhythm (a gap-2 stack beside a gap-1 stack), which put
-                the two chips' centers 5px apart with nothing in the layout
-                tying them together. `justify-items` stays at its `stretch`
-                default so the Select fills column 1; the button opts out with
-                `justify-self-start` so it keeps its natural width rather than
-                stretching if a result chip ever drives column 2 wider than
-                itself. A test pins that today's verdict does not, since a wider
-                column 2 would narrow the Select on every completed probe. */}
+      {enabled ? (
+        <SettingsCard
+          icon={<Signal size={16} />}
+          label={relayHeading.label}
+          description={relayHeading.description}
+          searchIds={RELAY_SEARCH_IDS}
+          testId="mobile-relay-card"
+        >
+          {/* One tile: the relay choice, its address, and the docs link that
+              explains it, so the link sits inside a tile as the Phones one does. */}
+          <CardTile className="flex flex-col gap-3">
             <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-              <Select
+              <SegmentedControl
+                options={RELAY_MODE_OPTIONS}
                 value={relayMode}
-                onChange={(event) => {
+                onChange={(nextMode) => {
                   // A stale reachability result from the previous mode must not
                   // linger next to a mode/URL it was never actually run against.
                   // Bumping the ref also discards a probe still in flight for
@@ -411,19 +397,18 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   // rejected draft left its red text under the resolved address
                   // of a relay it was never about.
                   setRelayDraftError(null);
-                  updateGlobal({ mobileBridge: { relayMode: event.target.value as 'hosted' | 'local' | 'custom' } });
+                  updateGlobal({ mobileBridge: { relayMode: nextMode } });
                 }}
-                disabled={!enabled}
-                data-testid="mobile-relay-mode"
-              >
-                {__KANGENTIC_DEV__ && <option value="local">Local</option>}
-                <option value="hosted">Kangentic Relay</option>
-                <option value="custom">Custom Relay</option>
-              </Select>
+                ariaLabel="Relay"
+                testId="mobile-relay-mode"
+                quiet
+                // Fills its grid column, so it lines up with the address field below.
+                fullWidth
+              />
               <button
                 type="button"
                 onClick={() => void handleTestRelay()}
-                disabled={testingRelay || !enabled || (relayMode === 'custom' && relayDraft.trim().length === 0)}
+                disabled={testingRelay || (relayMode === 'custom' && relayDraft.trim().length === 0)}
                 className="justify-self-start flex items-center gap-1.5 px-3 py-1.5 text-sm rounded border border-edge-input bg-surface-hover text-fg-secondary hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="mobile-relay-test-connection"
               >
@@ -462,9 +447,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   whose text could be selected and copied, and a disabled input
                   can be neither focused nor selected - it would take away the
                   ability to copy the relay address for no gain. readOnly also
-                  announces itself correctly to a screen reader. `disabled` is
-                  still wired, but to the MASTER TOGGLE, which is a different
-                  question ("is the bridge on") from mode.
+                  announces itself correctly to a screen reader. The whole card only
+                  renders with the bridge on, so there is no disabled state to wire.
 
                   The editable form used to live in its own SettingRow BELOW this
                   whole row, which read backwards: the probe verdict and its
@@ -513,7 +497,6 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   placeholder="wss://relay.example.com"
                   readOnly={!isCustomRelay}
                   aria-label={showHostedRelayShield ? 'Relay address, the Kangentic-operated relay' : 'Relay address'}
-                  disabled={!enabled}
                   data-testid="mobile-relay-url-input"
                   onChange={(event) => {
                     setRelayDraft(event.target.value);
@@ -621,99 +604,36 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                 </p>
               )}
             </div>
-          </div>
+            <ExternalLinkButton
+              label="How the relay works"
+              url={RELAY_DOCS_URL}
+              testId="mobile-relay-docs-link"
+            />
+          </CardTile>
+        </SettingsCard>
+      ) : null}
 
-          <ExternalLinkButton
-            label="How the relay works"
-            url={RELAY_DOCS_URL}
-            testId="mobile-relay-docs-link"
-          />
-        </>
-      )}
-
-      {/* ── Mobile ── the phones allowed to use the relay above. Named for the
-          device, not the ceremony: "Pairing" over a "Pair a device" button and
-          a "Paired Devices" list stacked three "pair"s deep, and the thing this
-          section is actually about is your phone.
-
-          Label and description are literals here, where Relay's come from the
-          registry: this heading spans THREE registry rows (pairing, devices,
-          getApp), so there is no single entry to source them from. Relay maps
-          1:1 onto mobileBridge.relayMode and reads it directly. */}
-      <SectionHeader
-        label="Mobile"
-        description="Phones paired to this desktop, and the app they run. Each paired phone is identified here by key fingerprint."
-        searchIds={MOBILE_SEARCH_IDS}
-      />
-      <div className={mobileSectionVisible ? gatedSectionClass : 'hidden'}>
+      {/* Phones: the ones allowed to use the relay above, then pairing a new
+          one, then where the app and its install steps live. Label and
+          description are literals, where Relay's come from the registry: this
+          card spans THREE registry rows (pairing, devices, getApp), so there is
+          no single entry to source them from. */}
+      {enabled ? (
+        <SettingsCard
+          icon={<Smartphone size={16} />}
+          label="Phones"
+          description="Phones paired to this desktop, identified by key fingerprint."
+          searchIds={MOBILE_SEARCH_IDS}
+          testId="mobile-phones-card"
+        >
+        {/* Two tiles: the phones and pairing a new one, then the app docs. */}
+        <CardTile className="flex flex-col gap-2.5" testId="mobile-phones-tile">
         {status && !status.secureStorageAvailable && (
           <p className="text-xs text-danger">
             Secure storage is unavailable on this system, so a device identity cannot be created.
           </p>
         )}
 
-        {!qrUri && !pairingConfirmed ? (
-          <div className="space-y-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors disabled:opacity-50"
-              onClick={() => void handleStartPairing()}
-              disabled={loading || !status?.secureStorageAvailable}
-              data-testid="mobile-pair-start"
-            >
-              <QrCode size={16} />
-              Pair a device
-            </button>
-            {pairingEndedReason && <p className="text-xs text-danger">{pairingEndedReason}</p>}
-          </div>
-        ) : pairingConfirmed ? (
-          <div className="rounded-md border border-edge bg-surface-hover/40 p-4 flex items-center gap-2 text-sm text-fg">
-            <Check size={16} className="text-green-400" />
-            Paired: {pairingConfirmed.displayName}
-          </div>
-        ) : pairingSas ? (
-          <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-waiting">
-            <p className="text-sm text-fg-secondary">Waiting for your phone…</p>
-            <span className="text-lg font-mono tracking-widest text-fg" data-testid="mobile-pair-sas-digits">
-              {pairingSas.digits}
-            </span>
-            <p className="text-xs text-fg-faint">Your phone shows this code too. Confirm there to finish pairing.</p>
-            <button
-              type="button"
-              className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
-              onClick={() => void handleCancelPairing()}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-qr">
-            <p className="text-sm text-fg-secondary">Scan this code with the Kangentic app on your phone.</p>
-            {qrUri && <QrImage value={qrUri} alt="Pairing QR code" />}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
-                onClick={() => void handleCopyLink()}
-              >
-                {linkCopied ? <Check size={14} /> : <Copy size={14} />}
-                {linkCopied ? 'Copied' : 'Copy pairing link'}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
-                onClick={() => void handleCancelPairing()}
-              >
-                Cancel
-              </button>
-            </div>
-            <p className="text-xs text-fg-faint">No camera? Copy the link and paste it into the app.</p>
-          </div>
-        )}
-
-        {/* A sub-label, not a SectionHeader: the device list belongs to Mobile
-            rather than sitting beside it as a third peer section. */}
-        <div className="text-sm font-medium text-fg-secondary pt-1">Paired Devices</div>
         {devices.length === 0 ? (
           <p className="text-sm text-fg-faint">No devices paired yet.</p>
         ) : (
@@ -827,23 +747,82 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
             })}
           </ul>
         )}
-      </div>
+        {!qrUri && !pairingConfirmed ? (
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors disabled:opacity-50"
+              onClick={() => void handleStartPairing()}
+              disabled={loading || !status?.secureStorageAvailable}
+              data-testid="mobile-pair-start"
+            >
+              <QrCode size={16} />
+              Pair a device
+            </button>
+            {pairingEndedReason && <p className="text-xs text-danger">{pairingEndedReason}</p>}
+          </div>
+        ) : pairingConfirmed ? (
+          <div className="rounded-md border border-edge bg-surface-hover/40 p-4 flex items-center gap-2 text-sm text-fg">
+            <Check size={16} className="text-green-400" />
+            Paired: {pairingConfirmed.displayName}
+          </div>
+        ) : pairingSas ? (
+          <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-waiting">
+            <p className="text-sm text-fg-secondary">Waiting for your phone…</p>
+            <span className="text-lg font-mono tracking-widest text-fg" data-testid="mobile-pair-sas-digits">
+              {pairingSas.digits}
+            </span>
+            <p className="text-xs text-fg-faint">Your phone shows this code too. Confirm there to finish pairing.</p>
+            <button
+              type="button"
+              className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
+              onClick={() => void handleCancelPairing()}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-qr">
+            <p className="text-sm text-fg-secondary">Scan this code with the Kangentic app on your phone.</p>
+            {qrUri && <QrImage value={qrUri} alt="Pairing QR code" />}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
+                onClick={() => void handleCopyLink()}
+              >
+                {linkCopied ? <Check size={14} /> : <Copy size={14} />}
+                {linkCopied ? 'Copied' : 'Copy pairing link'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
+                onClick={() => void handleCancelPairing()}
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="text-xs text-fg-faint">No camera? Copy the link and paste it into the app.</p>
+          </div>
+        )}
+        </CardTile>
 
-      {/* Mobile's documentation tail, the counterpart to the relay's. Outside
-          the gate for the same reason, and NOT conditioned on the device list
-          being empty: the target is a docs landing page rather than an install
-          page, so a paired user is most of its audience, and pairing one phone
-          does not mean the next device is installed. */}
-      <div className={mobileSectionVisible ? 'space-y-3' : 'hidden'} data-testid="mobile-get-app">
-        <p className="text-sm text-fg-muted">
-          Installing the app, pairing a phone, and push notifications.
-        </p>
-        <ExternalLinkButton
-          label="How to install and pair"
-          url={MOBILE_DOCS_URL}
-          testId="mobile-get-app-docs-link"
-        />
-      </div>
+          {/* Not conditioned on the device list being empty: the target is a
+              docs landing page rather than an install page, so a paired user is
+              most of its audience, and pairing one phone does not mean the next
+              device is installed. */}
+          <CardTile className="space-y-2" testId="mobile-get-app">
+            <p className="text-xs text-fg-muted">
+              Installing the app, pairing a phone, and push notifications.
+            </p>
+            <ExternalLinkButton
+              label="How to install and pair"
+              url={MOBILE_DOCS_URL}
+              testId="mobile-get-app-docs-link"
+            />
+          </CardTile>
+        </SettingsCard>
+      ) : null}
 
       {revokeTarget && (
         <ConfirmDialog

@@ -21,6 +21,7 @@ import type {
   SessionTarget,
   SessionSpawnStrategy,
 } from '../../../shared/types';
+import { writeTransaction } from '../../db/transaction';
 
 /** The defaults a brand-new column starts at, matching the two NOT NULL column DEFAULTs. */
 const DEFAULT_SESSION_TARGET: SessionTarget = 'main';
@@ -371,7 +372,7 @@ export const handleCreateColumn: CommandHandler = (
   // The shift and the insert are one transaction: a create that throws after the
   // shift would otherwise leave every later column bumped a slot with nothing
   // filling the gap.
-  const created = db.transaction(() => {
+  const created = writeTransaction(db, () => {
     if (input.position !== undefined) {
       db.prepare('UPDATE swimlanes SET position = position + 1 WHERE position >= ?').run(input.position);
     }

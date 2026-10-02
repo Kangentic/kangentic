@@ -79,7 +79,10 @@ const MARKER_WALK_CAP = 60;
 function markerPattern(markerName: string): RegExp {
   const escaped = markerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const horizontalGap = '[^\\S\\r\\n]*';
-  return new RegExp(`(?:^|\\s)(?://|\\{/\\*+|/\\*+|\\*+)${horizontalGap}${escaped}:${horizontalGap}\\S`);
+  // The reason's first character may not open the comment's own closer: in
+  // `{/* name-ok: */}` the `*` of the closer is a non-space, so without the
+  // lookahead an empty block-comment marker read as justified.
+  return new RegExp(`(?:^|\\s)(?://|\\{/\\*+|/\\*+|\\*+)${horizontalGap}${escaped}:${horizontalGap}(?!\\*+/)\\S`);
 }
 
 /**

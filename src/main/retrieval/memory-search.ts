@@ -3,9 +3,10 @@ import { getProjectDb } from '../db/database';
 import { agentRegistry } from '../agent/agent-registry';
 import type { Project } from '../../shared/types';
 import { RetrievalStore } from './retrieval-store';
+import { CONVERSATION_CORPUS } from './corpora';
 import { escapeFtsMatchQuery } from './fts-query';
 import { reciprocalRankFusion } from './fusion';
-import { trackFeatureUsed } from '../analytics/usage';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import type { Embedder, StoredChunk } from './types';
 
 /** Per-list candidate depth before fusion. */
@@ -41,7 +42,7 @@ export interface TranscriptSearchHit {
 export interface SearchConversationMemoryInput {
   /** Already-trimmed query. Empty short-circuits to []. */
   query: string;
-  projects: Project[];
+  projects: ReadonlyArray<Pick<Project, 'id' | 'name'>>;
   /** Total hits across all projects. Defaults to 20. */
   k?: number;
   /** Max ms to wait for a query embedding before falling back to lexical-only
@@ -109,13 +110,14 @@ export async function searchConversationMemory(
       queryVector = null;
     }
   }
-  // Adoption signal for the vector path only: a search that fell back to
-  // lexical (no embedder, or an embed that failed or timed out) is not a use
-  // of semantic memory. Main dedups to once per day.
-  if (queryVector) trackFeatureUsed('semantic_memory');
+  // The adoption signal for the vector path is main's to send: it made the
+  // query vector (`retrieval-queries.ts`), and this runs in the worker.
 
   const allHits: TranscriptSearchHit[] = [];
-  for (const project of input.projects) {
+  for (const [projectIndex, project] of input.projects.entries()) {
+    // Each project's scans are synchronous and a large index costs a few hundred
+    // ms, so queued IPC runs between projects rather than after all of them.
+    if (projectIndex > 0) await yieldToEventLoop();
     let store: RetrievalStore;
     try {
       store = new RetrievalStore(getDb(project.id));
@@ -132,9 +134,11 @@ export async function searchConversationMemory(
       if (taskChunkIds.size === 0) continue;
     }
 
-    const lexical = matchQuery ? safeLexical(store, matchQuery, input.taskId) : [];
+    const lexical = matchQuery ? timeSyncWork('search:lexical', () => safeLexical(store, matchQuery, input.taskId)) : [];
     let semantic = queryVector
-      ? relevantSemantic(store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT)
+      ? timeSyncWork('search:semantic', () => relevantSemantic(
+        store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT,
+      ))
       : [];
     if (taskChunkIds) {
       semantic = semantic
@@ -212,9 +216,16 @@ export async function searchConversationMemory(
   return [...bestBySession.values()].sort((a, b) => b.score - a.score).slice(0, k);
 }
 
+/** Let queued I/O and IPC run before the next synchronous database step. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Conversation search: every hit here opens a transcript at a turn, which only
+// the conversation corpus has.
 function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string) {
   try {
-    return store.searchLexical(matchQuery, PER_LIST_LIMIT, taskId);
+    return store.searchLexical(matchQuery, PER_LIST_LIMIT, CONVERSATION_CORPUS, taskId);
   } catch {
     // A malformed MATCH slips through, or the FTS table is missing on an old DB.
     return [];
@@ -223,7 +234,7 @@ function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string)
 
 function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: number) {
   try {
-    return store.searchSemantic(queryVector, limit);
+    return store.searchSemantic(queryVector, limit, CONVERSATION_CORPUS);
   } catch {
     return [];
   }
@@ -238,7 +249,7 @@ function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: n
  * constant (no user knob): these models are meant to be used by relative ranking,
  * not an absolute cosine threshold.
  */
-const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
+export const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
 
 /** Semantic hits whose CALIBRATED relevance clears the cutoff, re-ranked densely
  *  so RRF sees contiguous ranks. Embeddings are normalized and the vec table uses
@@ -259,22 +270,4 @@ function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, nois
       return (cosine - noiseFloor) / denom >= SEMANTIC_RELEVANCE_CUTOFF;
     })
     .map((hit, index) => ({ ...hit, rank: index + 1 }));
-}
-
-/**
- * Expand a matched chunk into its neighboring chunks (for the MCP recall tool's
- * context window). Corpus-scoped to conversations.
- */
-export function expandChunk(
-  projectId: string,
-  chunkId: number,
-  radius: number,
-  getDb: (projectId: string) => Database.Database = getProjectDb,
-): StoredChunk[] {
-  try {
-    const store = new RetrievalStore(getDb(projectId));
-    return store.getNeighbors(chunkId, radius);
-  } catch {
-    return [];
-  }
 }

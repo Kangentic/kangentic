@@ -32,7 +32,7 @@ class MockSessionManager extends EventEmitter {
   }
 
   emitOutput(sessionId: string): void {
-    this.emit('data-tap', sessionId, 'bytes');
+    this.emit('output-seen', sessionId);
   }
 }
 

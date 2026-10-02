@@ -6,6 +6,7 @@ import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { runAutomationsMigration } from './automations-migration';
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { SWIMLANE_ROLES } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -230,7 +231,7 @@ export function runProjectMigrations(db: Database.Database): void {
     ).all() as Array<{ to_swimlane_id: string; action_id: string; execution_order: number }>;
 
     if (existing.length > 0) {
-      const tx = db.transaction(() => {
+      const tx = writeTransaction(db, () => {
         db.prepare('DELETE FROM swimlane_transitions').run();
         const insert = db.prepare(
           'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
@@ -543,7 +544,7 @@ export function runProjectMigrations(db: Database.Database): void {
     // Backfill existing tasks with sequential display IDs ordered by creation time
     const existingTasks = db.prepare('SELECT id FROM tasks ORDER BY created_at ASC').all() as Array<{ id: string }>;
     const updateDisplayId = db.prepare('UPDATE tasks SET display_id = ? WHERE id = ?');
-    const backfillTransaction = db.transaction(() => {
+    const backfillTransaction = writeTransaction(db, () => {
       let counter = 1;
       for (const task of existingTasks) {
         updateDisplayId.run(counter, task.id);
@@ -586,7 +587,7 @@ export function runProjectMigrations(db: Database.Database): void {
     // and the column is write-once, so a task whose worktree_path is later nulled
     // by a Done move would lose its folder name permanently. Same reasoning, and
     // the same shape, as the run_mode migration further down this file.
-    const addWorktreeFolderTransaction = db.transaction(() => {
+    const addWorktreeFolderTransaction = writeTransaction(db, () => {
       db.exec('ALTER TABLE tasks ADD COLUMN worktree_folder TEXT DEFAULT NULL');
       const tasksWithWorktree = db
         .prepare('SELECT id, worktree_path FROM tasks WHERE worktree_path IS NOT NULL')
@@ -707,7 +708,7 @@ export function runProjectMigrations(db: Database.Database): void {
   // Migration: session_transcripts table for agent-agnostic PTY output capture.
   // No FK on session_id - the transcript row may be created before the sessions
   // row exists (PTY data arrives during spawn, before executeSpawnAgent inserts
-  // the DB record). Cleanup is handled by a DELETE trigger on sessions instead.
+  // the DB record).
   //
   // If the table already exists with a FK (from an earlier migration), drop and
   // recreate it without the FK. Safe because the table is new and has no
@@ -731,13 +732,26 @@ export function runProjectMigrations(db: Database.Database): void {
       updated_at TEXT NOT NULL
     )
   `);
+  // A raw transcript is now written as ordered pieces, one row per flush
+  // (`TranscriptRepository`). The one growing value above was rewritten whole
+  // on every flush, 127 to 164 ms at 19 MB; its rows are converted to pieces
+  // by the retrieval worker and read as the oldest part until then. `text` is
+  // the last column, so a size or count read never touches its overflow pages.
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_sessions_delete_transcript
-    AFTER DELETE ON sessions
-    BEGIN
-      DELETE FROM session_transcripts WHERE session_id = OLD.id;
-    END
+    CREATE TABLE IF NOT EXISTS session_transcript_chunks (
+      session_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      chars INTEGER NOT NULL,
+      bytes INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      text TEXT NOT NULL,
+      PRIMARY KEY (session_id, seq)
+    )
   `);
+  // A raw transcript outlives its session row: agent CLIs clean up their own
+  // session files, so it is Kangentic's durable copy of what the terminal
+  // showed. The trigger that deleted it with its session is dropped.
+  db.exec('DROP TRIGGER IF EXISTS trg_sessions_delete_transcript');
 
   // Migration: handoffs table for cross-agent context transfer provenance
   db.exec(`
@@ -798,16 +812,18 @@ export function runProjectMigrations(db: Database.Database): void {
   // retrieval store over the STRUCTURED transcript (TranscriptEntry-derived
   // chunks), NOT the raw session_transcripts scrollback blob.
   //
-  // `memory_chunks` is corpus-generic (a `corpus` column) so the same store can
-  // later index repo files/docs. `session_id`/`task_id` are nullable for that
-  // future reuse; the conversation corpus always sets them.
+  // `memory_chunks` is corpus-generic (a `corpus` column): conversations, task
+  // records, session changes, commits and source code share it. `session_id`
+  // and `task_id` are nullable for the corpora that have neither; the
+  // conversation corpus always sets them.
   //
-  // The vector table (`memory_chunks_vec`, USING vec0) is deliberately NOT
-  // created here: it needs the sqlite-vec extension loaded, which may be
-  // unavailable on a platform/build. It is created at runtime by
-  // RetrievalStore.ensureVecTable() only when the extension loaded. No trigger
-  // may reference it (a missing-module trigger body would break every
-  // `DELETE FROM sessions`), so vec rows are cleaned by application code.
+  // The vector tables (one vec0 table per embedded corpus) are deliberately
+  // NOT created here: they need the sqlite-vec extension, which only the
+  // retrieval worker loads. The worker creates them at runtime
+  // (RetrievalStore.ensureVecTable()) when the extension loaded. No trigger
+  // may reference them: main and the pty host never load the extension, so a
+  // trigger body naming vec0 would fail every write that fires it there. Vec
+  // rows are cleaned by the worker's own code.
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_chunks (
       id INTEGER PRIMARY KEY,
@@ -831,14 +847,20 @@ export function runProjectMigrations(db: Database.Database): void {
       UNIQUE(corpus, doc_id, seq)
     )
   `);
-  db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_doc ON memory_chunks(corpus, doc_id, seq)');
+  // A document's chunks in seq order come from the table's own UNIQUE(corpus,
+  // doc_id, seq) index. `idx_memory_chunks_doc` on the same three columns
+  // duplicated it (every read kept the same plan and time without it) at the
+  // cost of a second index write per chunk, so it is dropped. The indexes over
+  // this table added since are built by the retrieval worker, not here
+  // (`retrieval/index-builds.ts`): each reads the whole table, and a migration
+  // runs on main.
+  db.exec('DROP INDEX IF EXISTS idx_memory_chunks_doc');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedded ON memory_chunks(embedded_model)');
 
   // FTS5 external-content index over memory_chunks.text. FTS5 is compiled into
   // the shipped better-sqlite3, so this is always safe. External content (not
-  // contentless) so snippet()/highlight() can return text and the sessions
-  // DELETE cascade stays simple.
+  // contentless) so snippet()/highlight() can return text.
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
       text,
@@ -847,18 +869,32 @@ export function runProjectMigrations(db: Database.Database): void {
       tokenize='unicode61 remove_diacritics 2'
     )
   `);
+  // Source code stays out of the full-text index. Code is found by meaning:
+  // over 17 code questions keyword search put the answer file in the top five
+  // 12 times against 16 by meaning, even for questions naming an identifier.
+  // And the FTS table is shared, so every keyword search walks every corpus's
+  // matches before filtering: 12k code chunks full of common identifiers would
+  // slow every conversation search. All three triggers skip code alike; a
+  // 'delete' for a row the index never held would corrupt an external-content
+  // index. The old unconditional triggers are replaced under new names.
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_ai');
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_ad');
+  db.exec('DROP TRIGGER IF EXISTS trg_memory_chunks_au');
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_ai AFTER INSERT ON memory_chunks
+    WHEN new.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(rowid, text) VALUES (new.id, new.text);
     END
   `);
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_ad AFTER DELETE ON memory_chunks
+    WHEN old.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
     END
   `);
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_au AFTER UPDATE OF text ON memory_chunks BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_fts_au AFTER UPDATE OF text ON memory_chunks
+    WHEN old.corpus <> 'code' BEGIN
       INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
       INSERT INTO memory_chunks_fts(rowid, text) VALUES (new.id, new.text);
     END
@@ -879,11 +915,113 @@ export function runProjectMigrations(db: Database.Database): void {
       chunk_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'ok',
       indexed_at TEXT NOT NULL,
+      resume_point TEXT,
       PRIMARY KEY (corpus, doc_id)
     )
   `);
+  // Where the next walk of a growing conversation transcript starts, as JSON
+  // (`ResumePoint` in `conversation-indexer.ts`). Added in place: ADD COLUMN
+  // changes only the schema, whatever the table holds.
+  const hasResumePoint = (db.pragma('table_info(memory_index_state)') as Array<{ name: string }>)
+    .some((column) => column.name === 'resume_point');
+  if (!hasResumePoint) db.exec('ALTER TABLE memory_index_state ADD COLUMN resume_point TEXT');
 
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+
+  // Per-document vector sums for the Knowledge Graph's projection pass, so a
+  // rebuild reads only what changed (`graph/projection-engine.ts`). `full_sum`
+  // is every folded vector of the document; `prefix_sum` is those at or below
+  // `prefix_through_seq`, a run no later write can change, so a document whose
+  // tail grew is read again from there only. Both are Float64 bytes. The counts,
+  // `indexed_at` and `text_bytes` are what the pass compares against the live
+  // index to decide a row still holds, and `version` moves on every write and
+  // every invalidation, so a pass that read a row writes it back only if nothing
+  // touched it in between. Replaces the `graph_projection_sums_v1` meta blob,
+  // which was 19 MB rewritten whole on every rebuild.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_doc_sums (
+      corpus TEXT NOT NULL,
+      doc_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      model_tag TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      chunk_count INTEGER NOT NULL,
+      embedded_count INTEGER NOT NULL,
+      indexed_at TEXT,
+      text_bytes INTEGER NOT NULL,
+      folded_count INTEGER NOT NULL,
+      full_sum BLOB,
+      prefix_through_seq INTEGER NOT NULL DEFAULT -1,
+      prefix_count INTEGER NOT NULL DEFAULT 0,
+      prefix_text_bytes INTEGER NOT NULL DEFAULT 0,
+      prefix_sum BLOB,
+      PRIMARY KEY (corpus, doc_id)
+    )
+  `);
+  // A chunk deleted, or its vector lost or replaced, clears the document's
+  // `full_sum`, and empties the prefix when the chunk is in it, whatever wrote
+  // it: the store's own writes, the record sweep's purge of a deleted
+  // session's conversation, or anything written later. Triggers rather than
+  // store code, so no path can be missed. The full sum has to go even for a
+  // chunk above the prefix: a vector
+  // replaced under a new model of the same width moves no count and no index
+  // time, so nothing else would tell the pass. The pass then reads the document
+  // again from what is left of its prefix. Every right-hand side of an UPDATE
+  // reads the row as it was, so each CASE tests the prefix before this write.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_ad AFTER DELETE ON memory_chunks BEGIN
+      UPDATE memory_doc_sums
+         SET full_sum = NULL,
+             prefix_through_seq = CASE WHEN prefix_through_seq >= old.seq THEN -1 ELSE prefix_through_seq END,
+             prefix_count = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_count END,
+             prefix_text_bytes = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_text_bytes END,
+             prefix_sum = CASE WHEN prefix_through_seq >= old.seq THEN NULL ELSE prefix_sum END,
+             version = version + 1
+       WHERE corpus = old.corpus AND doc_id = old.doc_id
+         AND (full_sum IS NOT NULL OR prefix_through_seq >= old.seq);
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_memory_chunks_doc_sums_au AFTER UPDATE OF embedded_model ON memory_chunks
+    WHEN old.embedded_model IS NOT NULL AND (new.embedded_model IS NULL OR new.embedded_model <> old.embedded_model) BEGIN
+      UPDATE memory_doc_sums
+         SET full_sum = NULL,
+             prefix_through_seq = CASE WHEN prefix_through_seq >= old.seq THEN -1 ELSE prefix_through_seq END,
+             prefix_count = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_count END,
+             prefix_text_bytes = CASE WHEN prefix_through_seq >= old.seq THEN 0 ELSE prefix_text_bytes END,
+             prefix_sum = CASE WHEN prefix_through_seq >= old.seq THEN NULL ELSE prefix_sum END,
+             version = version + 1
+       WHERE corpus = old.corpus AND doc_id = old.doc_id
+         AND (full_sum IS NOT NULL OR prefix_through_seq >= old.seq);
+    END
+  `);
+
+  // Task summaries: one or two sentences per finished task, written by the
+  // Knowledge Graph's agent (`src/main/retrieval/summary/`). `input_hash` is
+  // what the summary was written from, so a task whose input moved is
+  // rewritten; an empty one marks a summary the user asked to rewrite. `agent`,
+  // `model` and `effort` record what wrote it, so Settings can say so and a
+  // rewrite with a new choice skips the ones already written with it. Keyed by
+  // task and removed with it by the summary sweep, the only delete: a summary
+  // is text an agent wrote, not something the index can re-derive, so Rebuild
+  // marks summaries for rewriting instead of dropping them.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_task_summaries (
+      task_id TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  // Migration: the effort a summary was written at, for a table made before it.
+  const hasSummaryEffortColumn = (db.pragma('table_info(memory_task_summaries)') as Array<{ name: string }>)
+    .some((column) => column.name === 'effort');
+  if (!hasSummaryEffortColumn) {
+    db.exec('ALTER TABLE memory_task_summaries ADD COLUMN effort TEXT DEFAULT NULL');
+  }
 
   // Durable per-turn token-usage ledger. Each assistant turn that reported usage
   // gets one row, keyed by the turn's own uuid. This is the long-lived record that
@@ -1106,15 +1244,12 @@ export function runProjectMigrations(db: Database.Database): void {
   // ended_ms IS NULL) without holding row ids in memory across a restart.
   db.exec('CREATE INDEX IF NOT EXISTS idx_activity_intervals_open ON session_activity_intervals(session_id, ended_ms)');
 
-  // Cascade cleanup when a session is deleted (mirrors trg_sessions_delete_transcript).
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_sessions_delete_memory
-    AFTER DELETE ON sessions
-    BEGIN
-      DELETE FROM memory_chunks WHERE session_id = OLD.id;
-      DELETE FROM memory_index_state WHERE session_id = OLD.id;
-    END
-  `);
+  // A deleted session's conversation used to leave the index by trigger,
+  // inside main's own delete transaction: every chunk row and its full-text
+  // rows, which for a long conversation held main (and the write lock) for as
+  // long as that took. The retrieval worker's record sweep deletes such
+  // conversations a page at a time instead (`orphanedConversationDocIds`).
+  db.exec('DROP TRIGGER IF EXISTS trg_sessions_delete_memory');
 
   // Hot-path indices for session lookups.
   // - sessions(task_id, started_at): getLatestForTask, cost summaries, per-task history
@@ -1218,7 +1353,7 @@ export function runProjectMigrations(db: Database.Database): void {
            lines_added, lines_removed, files_changed, agent, effort)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const transaction = db.transaction(() => {
+      const transaction = writeTransaction(db, () => {
         for (const row of sourceRows) {
           insertBackfill.run(
             uuidv4(),
@@ -1279,7 +1414,7 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasUsageHistoryConversationId = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
     .some((column) => column.name === 'conversation_id');
   if (!hasUsageHistoryConversationId) {
-    const addLineageColumns = db.transaction(() => {
+    const addLineageColumns = writeTransaction(db, () => {
       db.exec('ALTER TABLE usage_history ADD COLUMN conversation_id TEXT');
       db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_cost_usd REAL');
       db.exec('ALTER TABLE usage_history ADD COLUMN cumulative_duration_ms INTEGER');
@@ -1431,7 +1566,7 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasTaskRunMode = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((column) => column.name === 'run_mode');
   if (!hasTaskRunMode) {
-    const addRunModeTransaction = db.transaction(() => {
+    const addRunModeTransaction = writeTransaction(db, () => {
       db.exec("ALTER TABLE tasks ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'column_settings'");
       db.exec(`UPDATE tasks SET run_mode = 'agent_override'
         WHERE profile_id IS NULL

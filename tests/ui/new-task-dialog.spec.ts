@@ -220,6 +220,37 @@ test.describe('Worktree placement', () => {
   // the same quiet tone as every other hint. The old copy ("Agent will work
   // directly on main") named no folder and guessed the branch, which is how a
   // user filed two issues without finding the control.
+  // Settings > Git > Worktrees is the feature switch, not a default: off, the
+  // choice is not offered at all and the hint says where the agent runs.
+  test('with Worktrees off in the project settings, the dialog offers no placement choice', async () => {
+    // Flipped through Settings > Git, the path a user takes, so the write lands
+    // in the project override the dialog reads.
+    const flipWorktrees = async (expected: 'true' | 'false') => {
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+      await page.getByTestId('settings-tab-git').click();
+      const toggle = page.getByRole('switch', { name: 'Worktrees' });
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-checked', expected);
+      await page.keyboard.press('Escape');
+      await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 3000 });
+    };
+    await flipWorktrees('false');
+    try {
+      await openNewTaskDialog();
+      const hint = page.locator('[data-testid="task-branch-row"] ~ [data-testid="field-hint"]');
+      await expect(hint).toHaveText('Runs in the project folder on main');
+      await expect(page.locator('[data-testid="worktree-placement"]')).toHaveCount(0);
+      await closeDialog();
+    } finally {
+      // The page is shared by the file: a failure above leaves the dialog open
+      // over the settings button, and Worktrees would stay off for every test
+      // after this one.
+      if (await page.locator('input[placeholder="Task title"]').isVisible()) await closeDialog();
+      await flipWorktrees('true');
+    }
+  });
+
   test('choosing Project states the project folder and its checked-out branch', async () => {
     await openNewTaskDialog();
 

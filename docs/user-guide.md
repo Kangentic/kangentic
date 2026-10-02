@@ -250,7 +250,7 @@ Each file also remembers where you had scrolled it. Open a file for the first ti
 
 The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
 
-The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
+The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits. When the commit git recorded as the branch's starting point is newer, the panel diffs from that instead. That keeps a branch cut before the base branch's history was rewritten from showing the rewritten history as its own changes. The same fork point measures the lines and files a task changed.
 
 When the dialog is open, it claims the terminal session and the bottom panel drops that task's tab. Any other running session keeps its tab and its live terminal; the panel only collapses once nothing is left in it. Closing the dialog returns the tab, still selected.
 
@@ -379,7 +379,9 @@ Press **Ctrl+Shift+F** (Cmd+Shift+F on macOS) or **Ctrl+F** (Cmd+F) to open the 
 - Backlog items by title and description
 - Session events (tool calls, agent activity from `events.jsonl`)
 - Registered projects by name and path
-- Past agent conversations, by keyword or by meaning (Smart mode, when semantic search is enabled in Settings > Memory) - see [Conversation Memory](#conversation-memory)
+- Past agent conversations, by the words in them - see [Conversation Memory](#conversation-memory)
+
+Quick Find matches words only, and it is instant: it starts no embedding model. Its last row, **Ask the Knowledge Graph: "what you typed"**, hands the query to the [Knowledge Graph](#knowledge-graph), which answers by meaning. A typed question usually has no keyword matches, and then that row is selected, so Enter asks it.
 
 Type `#<number>` (e.g. `#42`) to search by **ticket number**: the palette matches tasks whose display ID (`#N`) prefix-matches the number (`#4` matches #4, #40, #41, ...) and shows only those, skipping the other result kinds. The board search box (Ctrl+F on the board) accepts the same `#<number>` syntax to filter the board by ticket number.
 
@@ -489,7 +491,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Dictation through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ### Moving a project
 
@@ -557,7 +559,7 @@ Applies to every project (Settings > Task, not a per-project override). These de
 | Card Preview | The text under each card's title: the latest agent message (default), recent agent messages one line each, or the task description |
 | Ticket Numbers | Show each task's `#N` number as a muted badge on its card (on by default) |
 
-With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. Recent agent messages prints the newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
+With Card Preview at its default, a card whose agent is running prints that agent's newest message in place of the description, in a shaded terminal panel, wrapped to three lines at default density, five at comfortable, one at compact. **Recent** prints the agent's newest messages one line each and newest last in those same lines, for a sense of the agent's last few steps instead of one whole thought. The text updates live as the agent works. The panel appears exactly when the card's activity glyph does, including while the agent is waiting on you, and the moment the session pauses or ends the card goes back to showing the task description. A task with no session, or whose agent has not said anything yet, shows its description too. The Agent Monitor's cards honor the same setting and render it the same way. The Task tab also holds the Context Bar toggles below.
 
 ### Context Bar
 
@@ -591,17 +593,21 @@ All permission modes are available in both the global App Settings dropdown and 
 
 ### Git Settings
 
-| Setting | Description |
-|---------|-------------|
-| Worktrees Enabled | Create isolated branches per task |
-| Auto Cleanup | Delete branches when worktrees are removed |
-| Default Base Branch | Branch to create worktrees from (default: main) |
-| Copy Files | Files to copy from repo root into worktrees |
-| Post-Worktree Script | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
-| Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
-| Auto-refresh PRs | How often the background sweep refreshes linked PRs' state and merge readiness (every 2, 5, 10, or 15 minutes, or off; the on-open sweep still runs) |
-| Evaluate branch policies | Off by default. Ask Azure DevOps to evaluate a PR's branch policies (reviewer minimums, required builds, work-item linking) so a clean PR can read `ready` instead of plain `open`, at one extra `az` call per open PR per refresh. GitHub already reports policy in its normal call and ignores this |
-| Count merge bypass as ready | On by default. On GitHub, a PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per refresh. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass. Azure DevOps ignores this |
+Three cards: **Branches**, **Worktrees**, and **Pull requests**.
+
+| Setting | Card | Description |
+|---------|------|-------------|
+| Default base branch | Branches | Branch new worktrees start from (default: main) |
+| Auto-fetch remote | Branches | On by default. Fetches all remotes 5 minutes after the project's last full fetch, so "behind" counts stay current. Any full fetch resets that clock: opening the Changes panel, the Done check, or this sweep. Creating a worktree always fetches its base branch first, even with this off. Off, the project still fetches when it opens |
+| Worktrees | Worktrees | On by default. Gives tasks the option to run in their own git worktree: the New Task dialog then offers Worktree or Project, starting on Worktree. Off, the dialog does not offer the choice and tasks run in the project folder, including one created earlier with Worktree picked. A task that already has a worktree keeps it. The rows below show only while this is on |
+| Auto-cleanup | Worktrees | Remove a task's worktree when the task completes |
+| Link node_modules | Worktrees | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-worktree script install the worktree's own dependencies |
+| Copy files | Worktrees | Files to copy from repo root into each new worktree, such as `.env` |
+| Post-worktree script | Worktrees | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
+| Auto-refresh PRs | Pull requests | On by default. Checks each open PR about 2 minutes after its own last check, one call at a time and at least 10 s apart, so at most 360 calls an hour however many PRs are open. Any check resets a PR's clock: this queue, the 30 s re-poll while CI runs, an agent's `gh pr create`, or a manual refresh. Past 12 open PRs each PR's interval stretches instead of the cost growing. Off, PRs are checked when the project opens and nothing re-polls one whose checks are running |
+| Count merge bypass as ready | Pull requests | On by default, GitHub only. Ready means you could merge the PR now. A PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per check. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass |
+
+Azure DevOps PRs always get their branch policies checked (reviewer minimums, required builds, work-item linking), so a clean Azure PR reads `ready` or `blocked` the same way a GitHub one does. Kangentic does not read Azure DevOps bypass permissions yet.
 
 ### Shortcuts
 
@@ -732,7 +738,7 @@ Desktop notifications are for when you are away: they fire only when the window 
 
 Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 
-The Settings > Notifications panel exposes four configurable events: **Agent Idle**, **Agent Crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop only, Toast only, or Both. Toast duration and max visible count are also configurable.
+The Settings > Notifications panel exposes four configurable events: **Agent idle**, **Agent crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan complete**, and **Spawn stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Off, Desktop, Toast, or Both. Toast duration and max visible count are also configurable.
 
 ### Announcements
 
@@ -756,7 +762,7 @@ mechanics.
 
 The Mobile Devices tab is the desktop half of the mobile companion app's pairing link - global (applies to this desktop installation, not any one project) and off by default. Below the **Mobile Bridge** toggle it splits into two sections: **Relay** (where this desktop connects) and **Mobile** (which phones may use it). Each ends in a documentation link that stays usable with the bridge off, since someone still deciding whether to enable it is exactly the person who has not.
 
-Enable the toggle, then pick a **Relay**: *Kangentic Relay* (the default, the one Kangentic operates) or *Custom Relay* (your own self-hosted address). Dev builds also offer a *Local* option pointing at a relay on localhost. The address being dialed always sits in the field directly beneath the picker, read-only for the presets and editable for a custom relay, so there is one place to look regardless of which you chose; a shield in front of it marks the Kangentic-operated relay and appears for nothing else. **Test connection** probes that address before you pair: it reports whether the relay answered and how long it took, or prints why it did not. The relay forwards encrypted traffic and never holds your keys; **How the relay works** opens the relay documentation, which covers what it does, what an operator can still observe, and how to run your own. A custom address must use `wss://`, or `ws://` for localhost only, since the phone refuses to pair over an untrusted transport.
+Enable the toggle, then pick a **Relay**: *Kangentic* (the default, the one Kangentic operates) or *Custom* (your own self-hosted address). Dev builds also offer a *Local* option pointing at a relay on localhost. The address being dialed always sits in the field directly beneath the picker, read-only for the presets and editable for a custom relay, so there is one place to look regardless of which you chose; a shield in front of it marks the Kangentic-operated relay and appears for nothing else. **Test connection** probes that address before you pair: it reports whether the relay answered and how long it took, or prints why it did not. The relay forwards encrypted traffic and never holds your keys; **How the relay works** opens the relay documentation, which covers what it does, what an operator can still observe, and how to run your own. A custom address must use `wss://`, or `ws://` for localhost only, since the phone refuses to pair over an untrusted transport.
 
 Click **Pair a device** to display a QR code; scanning it with the Kangentic mobile app starts an end-to-end encrypted pairing handshake. Once the handshake completes, both the desktop and the phone show the same short code - compare them, then tap **Confirm** on the phone. The desktop auto-enrolls the device as soon as it hears back; there is no second confirmation to make on the desktop. This catches a photographed or relayed QR, since an attacker cannot make both sides show the same code. To back out, cancel on the phone (or close the desktop's pairing panel) before confirming.
 
@@ -838,12 +844,12 @@ or a shutdown, not a failure. When the graphics process could not be started at 
 there is no such record: Chromium never reports a failed start to the app, and only the fallback
 itself is recorded.
 
-Unrelated, despite the similar name: **Model acceleration** in Settings > Memory controls where the
-semantic search model runs, not app rendering. The two are independent.
+Unrelated, despite the similar name: **Model acceleration** in Settings > Knowledge Graph controls where
+the local search model runs, not app rendering. The two are independent.
 
 ## Conversation Memory
 
-Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Memory.
+Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Knowledge Graph.
 
 ### What Gets Indexed
 
@@ -851,13 +857,15 @@ The structured transcript of each session: user turns, assistant replies, thinki
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once (three quality tiers from the `bge` family, the **Search quality** row) and then runs fully offline. The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 
-- The [Search Palette](#search-palette) shows a **Conversations** group; a hit opens the viewer at the matched turn.
+- The [Search Palette](#search-palette) shows a **Conversations** group of keyword matches; a hit opens the viewer at the matched turn.
 - The **View conversation** pill in the [Task Detail Dialog](#task-detail-dialog) opens the task's newest session directly, no search needed.
-- Agents can recall past conversations themselves via the `kangentic_search` MCP tool (`mode: "hybrid"` for semantic) and drill into a cited turn with `kangentic_get_transcript` - see [mcp-server.md](mcp-server.md).
+- Agents read what the Knowledge Graph knows over MCP - see [mcp-server.md](mcp-server.md):
+  - `kangentic_search` recalls past conversations by meaning (the default) and finds the commits a query matches, each with the task it came from. It ranks tasks by a topic (`groupBy: "task"`, with each task's facts and summary) or by how like one task they are (`relatedToTask`). An agent drills into a cited turn with `kangentic_get_transcript`.
+  - `kangentic_find_task` and `kangentic_get_current_task` carry a finished task's summary, the commits linked to it, and the files its sessions changed.
 
 ### The Conversation Viewer
 
@@ -908,6 +916,282 @@ Totals are read from the durable usage ledgers, so they survive task and session
 
 Two things the numbers do NOT mean, both said on the tiles themselves. Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed, so a subscription session can report $0. And tokens are counted per turn and kept apart by type (fresh input, output, cache write, cache read) because cache reads are far larger and far cheaper than fresh input; per-turn counting started later than cost did, so a long range covers less of it, and the Tokens tile says from when.
 
+## Knowledge Graph
+
+Open it from the brain icon in the title bar or with `Mod+Shift+A`. It answers "what does this
+project's conversation index actually know, and how much of my history has it reached" - a question
+neither the Knowledge Graph settings tab (switches, counts and a Rebuild button) nor Quick Find (a flat list of keyword matches)
+can answer.
+
+**The map.** Every indexed conversation is a point in 3D space, placed by the meaning of its
+embeddings, so conversations about the same thing cluster together. Links join each conversation to
+its nearest neighbours. Regions are named automatically from what the conversations in them are
+about, so the map reads as a topic atlas of the project rather than an anonymous scatter. The names
+come from the conversations' task titles, and with **Task summaries** on, from each task's summary too,
+counted a little lower than its title: a region then reads as what its work touched ("alt screen /
+wheel scroll") rather than how its titles happened to be worded ("code / quit / exit"). As summaries
+are written the regions are renamed in place, at most every few minutes and once more when the
+summaries have caught up; no conversation moves. Switching summaries off puts the title-only names back.
+
+**Flying it.** Drag to orbit, right-drag to pan, scroll to zoom in and out. Click the map and use
+**W** / **S** to fly forward and back, **A** / **D** to slide left and right, and **Q** / **E** to
+rise and drop - you can fly right into a cluster and out the other side. The camera toolbar at the
+bottom centre of the map holds **Reset view**, which frames the whole map again so it is always
+possible to get un-lost, and **Controls**, which shows these keys. With regions switched off, Reset
+view frames what is left rather than the regions you hid, so resetting a scoped map fills the view
+instead of pulling it back out. With no chat open, Reset view also clears the selected conversation
+and its panel, and centres the map in the space the panel leaves. While a chat is open the selection
+stays, since its panel's Back is the way back to the chat.
+
+Every change to what the map shows moves the camera by flying, never by a cut: narrowing a filter
+or landing an answer flies to what is lit, clearing it or ending the chat flies back to the whole
+map, and adding or removing a project flies from where you were to the new map. Three things still
+reframe at once: resizing the window (a fly would fight the drag), opening the graph, and switching
+the open project.
+
+**Clicking around.** Hover a point for its title and size; click it for a detail panel. With a
+chat open, the panel's **Back** control returns to it. With **Task summaries** on, the panel shows the
+conversation's task summary under its title: what the task set out to do and did, in a sentence or
+two.
+
+The panel lists **Closest conversations**, its strongest links, ordered rather than scored: the
+embeddings sit in a narrow similarity band where a percentage reads "99%" on every row and tells
+you nothing, so the ordering is the signal.
+
+Two actions: **Open conversation** (or a double-click on the point) opens the full transcript in a
+movable window over the map, so it stays where you are reading rather than opening behind the
+graph - the same when the graph is detached into its own window. **Explore from here** re-scopes
+the map to that conversation and everything it links to, with a breadcrumb at the top of the map to
+take it back.
+
+The left panel holds four cards, and each one collapses: **Filter** (projects, time and status),
+**Regions** (detail and the region list), **Display** (colour and what shows), and **Index**, which
+opens beside the panel.
+
+**Colour** switches what the points encode:
+
+- **Topic** - the region each conversation belongs to.
+- **Recency** - warm is recent, cool is old. Shows where your attention has moved, and which
+  areas have gone quiet.
+- **Status** - green is Done, amber is still open on the board, grey is a conversation with no
+  task. Offered only when the less common status covers at least a twentieth of the index: on a
+  healthy board almost everything gets done (642 of 648 on a real one), and a map that is uniformly
+  green with six specks in it is a question for the status FILTER rather than a thing colour can
+  show.
+- **Length** - how much transcript the conversation holds, from deep indigo for the shortest through
+  blue and teal to a warm yellow for the longest.
+- **Duration** - how long it ran in wall time, on the same ramp.
+- **Cost** - what it cost to run, on the same ramp.
+
+Those last three are three different questions, not three readings of one: measured on a real index
+their rank correlations are 0.507 (length to duration), 0.560 (length to cost) and 0.664 (duration
+to cost), so a long conversation is not reliably a slow one and a slow one is not reliably an
+expensive one. Duration and Cost are hidden on an index that records neither, and a conversation
+missing one draws at the low end rather than disappearing.
+
+**Show** turns the region labels and the similarity links on and off.
+
+**Detail** cuts the map into more or fewer regions: **Coarse**, **Balanced** (the default) or
+**Fine**. All three are computed with the map, so switching between them is instant and never
+rebuilds anything. There is no measurement that can pick this for you - every way of scoring a
+clustering prefers the fewest regions on a cloud this continuous - so it is simply how much detail
+you want to read. How finely the map CAN be cut is bounded by the index: on a small one every
+setting produces the same regions, and the control hides itself rather than offering choices that
+repaint the identical picture.
+
+**Filter** scopes the map by time (Any, 30 days, 90 days) and by status (Any, Done, Open), each a
+row of buttons so every choice shows and takes one click. Done is a task in the Done column (or
+archived, which only moving to Done does), and Open is every other task on the board. Both rows
+always show their three choices, lined up in columns, so changing the scope never moves the panel.
+A choice that cannot narrow this index is disabled, and its tooltip says why: both time windows
+when nothing is older than 30 days, a status no task has, and the one status every task has.
+Unlike the colour mode, the status row survives a lopsided board, which is the point of it -
+scoping to the handful still open is exactly the question a green map cannot answer.
+
+**Projects.** The graph opens on the project you have open. The Filter card's first row names the
+scope and picks which projects the map shows: any of them, or **All**. It is there however many
+projects are indexed, so it never comes and goes, and the header does not repeat it. **None** goes back to the open project
+alone, since an empty map would leave nothing to pick from. Each project draws as its own island, labelled with its name and sized by how much it
+holds, and the Regions list groups each project's regions under its name. A project with nothing
+indexed is listed but cannot be picked. One the graph has never shown builds its map the first time
+it is picked, which takes about a minute on a large project, and its island appears when that
+finishes.
+
+Asking follows the same scope. The box reads "Ask across 3 projects", every project's tasks go into
+one table and one search, and the agent's own searches can reach each project. Ticket numbers repeat
+between projects, so the reply names another project's task with its project, like **Mobile #88**,
+and every row names its project. A row opens its conversation from its own project, and **Open
+task** switches to that project to show it.
+
+The **Regions** section below it lists every region with its colour and how many conversations it
+holds, each independently switchable, plus **All** and **None**. A large index can carry dozens of
+regions, so past a dozen the list gains a **Find a region** box. That narrows the LIST only - All
+and None still act on every region, which is what the "N of M shown" count above them reports.
+
+Position and links are not equally precise, and the surface says so rather than letting you assume:
+**links are exact** (computed in the embedding's full dimensionality), while **position is
+approximate** - reducing 1024 dimensions to three loses information, so "nearby" is a strong hint
+rather than a guarantee. Follow the links when you want certainty.
+
+**Asking.** Type a question in the box and press Enter: "what was the most expensive task?", "why
+did we drop the sphere fit?", "which tasks touched the relay?". The question moves into a chat on
+the right and the box goes. Follow-ups go in the chat's own box, and the **X** in its header ends
+the chat and brings the box back. The chat is not saved, and it also ends when you switch projects.
+
+**Set first, answer on top.** Before the agent starts, Kangentic searches every indexed conversation
+and every task's own record (its title, labels, description and summary) for the question, locally
+and in under a second, and rolls the matches up per task. A task's record can bring it in even when
+none of its conversations was indexed, as long as the map is not filtered. The map lights
+that related set at once, brighter where a task matches more strongly, and the chat reads "Reading
+14 related tasks" while the agent works. When the answer lands, the map narrows to the tasks it is
+about and nothing else: eleven tasks for an answer that names eleven, one conversation for an answer
+about one. The rest fades out and the camera flies in, so a follow-up that narrows the answer
+narrows the map with it, and clicking an earlier turn brings its tasks back the same way. If none of
+the answer's tasks has a conversation of its own (tasks found by their records alone), the related
+set stays, dimmed, so the map still points at the work the answer drew on. An answer that names no
+task, such as "nothing here covers that", lights nothing and leaves the plain map. The filters in the left panel are the scope of the
+question: a filtered map means a filtered table and a filtered search, so the chat never repeats
+them.
+
+**How it answers.** The agent is handed the related tasks with their strongest passages, facts and
+summaries, a complete table of every task in scope, and the chat so far. The table holds every task on the
+board, including ones with no indexed conversation, and settles factual questions exactly: what
+each task cost, how long it ran, its tokens, how many sessions it took, how many files and lines
+its branch changed, which pull request it opened and whether that merged, when it was last active,
+which region it sits in, and what agent and model ran it, with the totals computed before the agent
+sees them.
+A task with no indexed conversation has nothing to open over the map, so its row opens the task on
+the board instead. An agent that can use a tool also gets ONE: the same `kangentic_search` every agent gets,
+scoped to this project (or to each project in a scope that spans several), for when the related
+work misses something. Each search shows as a step in
+the chat, and the conversations it found get a white ring on the map. Nothing else loads: no other
+tool, none of your other MCP servers, and not the project's own instructions.
+
+**The reply** is a few sentences that name tasks by their board ticket, drawn as small **#561**
+marks. Under it are rows of one kind, a ticket and a title for each task the reply is about: five,
+then **Show all**, which folds back with **Show fewer**. A row or a mark opens that task's most relevant conversation over the map,
+scrolled to the passage the answer used, and that window's **Open task** closes the graph and opens
+the task on the board. When you ask a follow-up, the earlier reply's rows fold into **Show N
+tasks**. Asked something neither the table nor the conversations cover, it says so rather than
+guessing. If the agent fails, its reason is shown as it came, with **Try again**.
+
+It knows what the board and the conversations recorded, and, with **Source code** on, the code on
+the project's default branch. With it on, the passages of code that read closest to a question go to
+the agent beside the related tasks, so "how does the embedding drain pace itself?" is answered from
+the code, naming the files, and the reply's rows stay tasks. A board question gets no code: code is
+handed only when it reads close enough to the question. With it off, "how many agents does the app
+support?" is a question about the repository that nothing here holds. Work done outside a board task
+leaves nothing to find either way, and the box's placeholder says "tasks, conversations and code" only
+while code is indexed.
+
+Each question costs one agent call, and the glyph at the end of the box names the agent before you
+press Enter.
+
+**Which agent answers** is its own setting, because the agent that runs your tasks and the agent
+that reads their history are different choices. The **Knowledge Graph** card in Settings >
+Knowledge Graph holds the switch that turns the feature on, then the local model that finds work by
+meaning, then the agent that answers: its **Agent** and **Model**, one choice for the whole app.
+Nothing picks them for you: until both are set, pressing Enter in the box opens Settings > Knowledge
+Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
+task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
+cheaper model is usually enough. Every agent that has a headless read-only mode can answer; Warp
+cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
+at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
+across many tasks: at Claude's `max`, a count that `low` got wrong came out right, at about ten
+times the wait. Effort is for answers only: summaries always write at the recommended level, where
+a higher one changed nothing.
+
+The **Index** card below it lists what the index searches, one line per source:
+**Conversations**, **Tasks** and **Commits** are always indexed while the index is on, on switches
+that cannot be turned off, each with its count and a check once caught up. **Task summaries** and
+**Source code** have their own switches and are on by default. A running source keeps its line and
+shows the share done and the time left over a progress track ("22%, 3 min left"). Switched off, a
+line shows what switching it on would cover ("674 tasks", "1,488 files"). The figures are the open
+project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
+so ("Needs the Knowledge Graph", "Needs an agent"): the agent writes the summaries, and only its
+answers read the code. Their switches still work while they wait, so you can turn one off before
+choosing the agent that would start it.
+
+**Task summaries** start once the Knowledge Graph has an agent and a model. The agent writes a
+sentence or two about each Done task: what it set out to do and what it ended up doing, from the
+task's title and description, the files its sessions changed, the commits it landed on the default
+branch, and how its last sessions ended. A summary is searched with the task and handed to the
+agent beside it, so a question finds a task by what it did, not only by what its title says.
+Summaries are written in the background, ten tasks to a call, three calls at a time (at Sonnet,
+about $0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done
+gets one on the next pass. Caught up, the line shows the count with a check, or how many the agent
+passed over ("670 of 673, 3 skipped", tried again on the next launch). A failed call reads **A call
+failed** in yellow, with when it is retried. Switching summaries off stops new calls and keeps the
+summaries already written, so they go on helping search. A new model applies to new and changed
+tasks, and the line loses its check until **Rebuild** rewrites the rest; Rebuild asks first when it
+will rewrite summaries, and says how many and about how many calls. Measured on this project's own
+tasks, a mid-size model at low effort (Sonnet) wrote as well as a larger one and higher effort
+changed nothing; the larger models (Opus, Fable) add a little detail at two to seven times the
+cost, and the smallest (Haiku) invented details.
+
+**Source code** starts once the Knowledge Graph has an agent. It reads the project's default branch as committed:
+`origin/main` (or whatever the project's base branch is), else the local branch of that name, else
+the remote's own default, else the branch you have checked out. Any branch works; it reads source
+files and docs, not tests, fixtures, data files, lock files, build output or anything over 256 KB.
+Each file is split into passages at its top-level declarations and embedded in the background by
+the Knowledge Graph's local model. Off, its line shows the files it would read, or "Nothing committed yet"
+in a repository with no commit. This repository took about half an hour on a GPU and would take a
+couple of hours on a CPU. When the branch moves, only the files whose content changed are read
+again. Switching it off clears the open project's code index at once and another project's the
+next time you open it; switching it back on reads the branch again. Switching the Knowledge Graph
+off, or clearing its agent, keeps the code index as it is, so turning it back on costs nothing.
+
+The **Index** card at the bottom of the left panel opens to its side into the Index card that
+Settings > Knowledge Graph shows, without its switches. Each source is a line: its count with a
+check once caught up, its share while it is still being embedded, and a tag while it waits for
+something (the Knowledge Graph, an agent, a model). The sources are **Conversations** (what the map
+draws), **Tasks** (each task's and backlog item's own text), **Commits** (the commits on the
+project's default branch, each tied to the task whose conversation wrote it), **Task summaries**
+(how many Done tasks have one) and **Source code** (the default branch's files). A source with
+nothing in it yet says **Not yet indexed**. Session changes are kept as text for the task summaries
+and never searched, so they have no line.
+
+Below the sources is what only the map has. **Links** counts the similarity links, computed in full
+embedding dimensionality, so they are exact; a dot's position is an approximate reduction.
+**Transcript gone** counts conversations whose agent transcript file was deleted (a pruned
+worktree, a cleaned CLI cache) while their indexed text and embeddings still answer queries. On a
+mature project that is most of the index, and it is not a problem. **Not yet indexed** counts
+conversations the background sweep has not reached, **Failed to index** any it could not read, and
+**Size on disk** covers every source. **Open Settings** opens Settings > Knowledge Graph, where the
+sources change, the index is rebuilt, and its model and agent are set.
+
+The panel opens to the side and stays inside the window whatever the left panel holds: with every
+card expanded it rises until its bottom clears the window's edge, and in a window too short for it
+the panel scrolls inside itself.
+
+The index holds what the board and its conversations recorded, plus your repository's committed
+files while Source code is on.
+
+The map is drawn on the GPU. On a machine that cannot provide a 3D drawing context (a blocklisted
+driver, some remote sessions) it says so, and the coverage numbers and Ask keep working.
+
+**Building the map.** The first time a project opens the graph, Kangentic reads every embedding in
+the index to place the dots. On a large project that takes a few minutes, runs in the background,
+and only happens once; after that it updates in about a second as new conversations are indexed.
+While it builds, a card says how many conversations it is placing and how many embeddings it reads,
+and the Index panel opens beside it. It needs the Knowledge Graph switched on (Settings > Knowledge
+Graph). Without embeddings there is no meaningful notion of "near", so with it off the graph shows
+an Off card with an **Open Settings** button rather than drawing a map that would imply a meaning
+it does not have. The Index panel's counts are accurate either way.
+
+Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
+its header.
+
+### Prior work on a task
+
+The map is somewhere you go. This is the same recall coming to you: open a task and, if the index
+holds earlier conversations near it, a line appears under the description reading
+**"3 earlier conversations about this"**. Expand it to see them, click one to open its transcript.
+
+The task's own title and description are the query, so there is nothing to type, and the task's own
+history is excluded (that is already one click away in the header). When there is no earlier work
+near a task, nothing is shown at all.
+
 ## Agent Monitor
 
 Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
@@ -943,13 +1227,14 @@ General:
 
 - **Mod+Shift+S** - Toggle the settings panel
 - **Mod+Shift+U** - Toggle the Usage Stats dashboard
+- **Mod+Shift+A** - Toggle the Knowledge Graph (a map of what this project's conversation index has learned)
 - **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
-- **Mod+F** - Find on Board (focuses board search; opens Quick Find when not on the board)
+- **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board)
 - **Mod+N** - New Task on the board
 - **Escape** - Close any open dialog or the search palette
 

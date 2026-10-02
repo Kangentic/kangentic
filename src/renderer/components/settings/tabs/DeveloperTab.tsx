@@ -1,7 +1,10 @@
-import { Bug, FileText, AlertTriangle, Activity } from 'lucide-react';
+import { Bug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
-import { Code, Description, GroupHeading, ToggleRow } from './dev-tab-primitives';
+import { SettingsCard, CardToggleRow, SettingTag } from '../settings-card';
+import { settingProps } from '../settings-registry';
+import { effectiveCombo } from '../../../../shared/keybindings';
+import { formatCombo } from '../../../utils/keybindings';
 import { DevToolsSections } from '../../../../devtools/renderer/DevToolsSections';
 
 /**
@@ -11,10 +14,9 @@ import { DevToolsSections } from '../../../../devtools/renderer/DevToolsSections
  * `src/devtools/renderer/DevToolsSections.tsx` and are rendered here only
  * when `__KANGENTIC_DEV__` is true at compile time.
  *
- * Each setting renders as a tight toggle row + a single 1-2 sentence
- * description. The verbose explanations that used to live here moved to
- * `docs/configuration.md` and the MCP tool descriptions; this surface is
- * for skim + flip-toggle, not learn-everything-about-each-flag.
+ * One card of switches, each explained in its info tooltip. The verbose
+ * explanations live in `docs/configuration.md` and the MCP tool descriptions;
+ * this surface is for skim + flip-toggle, not learn-everything-about-each-flag.
  */
 export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
@@ -32,95 +34,42 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
   // bounding growth), not the long-running npm start dogfooding session.
   const recordIpcTrafficEnabled =
     developerConfig.recordIpcTraffic ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
+  // Read from the registry, so it says Cmd on macOS and follows a rebind.
+  const overlayCombo = effectiveCombo('debug.toggleOverlay', globalConfig.hotkeyOverrides);
 
   return (
-    <div className="space-y-3" data-testid="developer-tab">
-      <GroupHeading>Diagnostics</GroupHeading>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={Bug}
-          title="Activity Engine Debug Overlay"
-          subtitle="Floating panel with live state per session"
+    <div className="space-y-4" data-testid="developer-tab">
+      <SettingsCard
+        icon={<Bug size={16} />}
+        label="Diagnostics"
+        description="Debug overlays and logs for diagnosing sessions."
+        searchIds={['developer.activityDebugOverlay', 'developer.persistConsoleLogs', 'developer.crashReports', 'developer.recordIpcTraffic']}
+      >
+        <CardToggleRow
+          {...settingProps('developer.activityDebugOverlay')}
+          labelTrailing={overlayCombo ? <SettingTag>{formatCombo(overlayCombo)}</SettingTag> : undefined}
           checked={overlayEnabled}
           onChange={(value) => updateGlobal({ developer: { activityDebugOverlay: value } })}
         />
-        <KbdHint prefix="Toggle anywhere with" keys={['Ctrl', 'Shift', 'D']} />
-        <Description>
-          Shows current activity, dominant reason, counters, and the last 10 transitions per session.
-          The overlay polls every 2s while open. Independently, with this on the engine writes a
-          per-session snapshot to <Code>.kangentic/debug/&lt;sessionId&gt;.json</Code> on every state
-          change for post-mortem reads.
-        </Description>
-      </section>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={FileText}
-          title="Persistent Console Logs"
-          subtitle="Capture info / debug / log output to .kangentic/logs/"
+        <CardToggleRow
+          {...settingProps('developer.persistConsoleLogs')}
           checked={persistConsoleLogsEnabled}
           onChange={(value) => updateGlobal({ developer: { persistConsoleLogs: value } })}
         />
-        <Description>
-          Errors and warnings are <strong>always</strong> persisted; this toggle additionally captures
-          info / debug / log levels. NDJSON, one file per day at{' '}
-          <Code>.kangentic/logs/&lt;YYYY-MM-DD&gt;.log</Code>. Read via <Code>kangentic_tail_logs</Code>.
-          {__KANGENTIC_DEV__ && ' On by default in dev builds (npm start / /preview) - the write path is async, so it has no measurable performance cost.'}
-        </Description>
-      </section>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={AlertTriangle}
-          title="Crash Reports"
-          subtitle="Always on - captures fatal errors and crash stacks"
+        <CardToggleRow
+          {...settingProps('developer.crashReports')}
           checked
           disabled
           onChange={() => {}}
         />
-        <Description>
-          Every uncaught exception, unhandled rejection, renderer or GPU process crash, and preload error
-          writes one record to <Code>.kangentic/logs/crashes/&lt;ts&gt;.json</Code> with timestamp, kind,
-          source-mapped stack, and version info. Read via <Code>kangentic_get_recent_crashes</Code>.
-        </Description>
-      </section>
-
-      <section className="space-y-2">
-        <ToggleRow
-          icon={Activity}
-          title="Record IPC Traffic"
-          subtitle="Log every IPC call to .kangentic/logs/ipc-<date>.jsonl"
+        <CardToggleRow
+          {...settingProps('developer.recordIpcTraffic')}
           checked={recordIpcTrafficEnabled}
           onChange={(value) => updateGlobal({ developer: { recordIpcTraffic: value } })}
         />
-        <Description>
-          Records channel, args, result, durationMs, and any thrown errors. Mutating channels
-          (settings writes, MCP config, attachments) are stored as{' '}
-          <Code>{'{ redacted: true, channel }'}</Code> to keep secrets out of disk logs. Non-trivial
-          disk impact, so it is off by default - except in <Code>/preview</Code>, where it defaults
-          on since that instance's data (including its logs) is wiped on close. Read via{' '}
-          <Code>kangentic_get_ipc_log</Code>.
-        </Description>
-      </section>
+      </SettingsCard>
 
       {__KANGENTIC_DEV__ && <DevToolsSections globalConfig={globalConfig} />}
-    </div>
-  );
-}
-
-function KbdHint({ prefix, keys }: { prefix: string; keys: string[] }) {
-  return (
-    <div className="flex items-center gap-1.5 text-xs text-fg-muted px-1">
-      <span>{prefix}</span>
-      {keys.map((key, index) => (
-        <span key={key} className="flex items-center gap-1.5">
-          <kbd className="px-1.5 py-0.5 bg-surface-raised border border-edge rounded text-[11px] font-mono">
-            {key}
-          </kbd>
-          {index < keys.length - 1 && <span className="text-fg-disabled">+</span>}
-        </span>
-      ))}
     </div>
   );
 }

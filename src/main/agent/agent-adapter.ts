@@ -1,3 +1,4 @@
+import type { AnswerStreamEvent } from './shared/cli-answer';
 import type {
   SessionRecord,
   AgentPermissionEntry,
@@ -18,6 +19,7 @@ import type {
   ResolvedExecutionTarget,
   RemoteServerStatus,
   AgentLaunchOptionInfo,
+  AnswerCapabilities,
 } from '../../shared/types';
 
 /**
@@ -208,6 +210,87 @@ export interface CommandOptions {
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */
 export type SpawnCommandOptions = Omit<CommandOptions, 'cliPath'> & { agentPath: string };
 
+/**
+ * What an answering agent may reach beyond its prompt, and how to watch it work.
+ *
+ * `retrieval` hands the agent ONE tool - the conversation search Kangentic's MCP
+ * server already exposes to every spawned agent - so a question the board facts
+ * cannot answer is settled by the agent searching the transcripts itself, with
+ * whatever query it judges right, and searching again if the first miss. The
+ * alternative, retrieving passages for it before it sees the question, gave it
+ * no way to recover from a bad retrieval. Absent means no tool: the agent
+ * answers from the prompt alone.
+ *
+ * `onEvent` is how the renderer shows progress while a multi-turn answer runs.
+ * Text arrives as it is written; a tool call is announced as it starts. The
+ * final answer is still returned whole, so nothing structural is parsed off a
+ * partial stream.
+ */
+export interface AnswerFromContextOptions {
+  retrieval?: {
+    /** The MCP server's project-scoped URL, from `mcpServerHandle.urlForProject`. */
+    url: string;
+    /** The per-launch token the server requires as `X-Kangentic-Token`. */
+    token: string;
+  };
+  onEvent?: (event: AnswerStreamEvent) => void;
+  /** Adapter-specific effort level, passed as the CLI's own effort flag. Only
+   *  sent to an adapter declaring `answerCapabilities.effort`; absent leaves the
+   *  CLI's default in place. */
+  effort?: string | null;
+  /**
+   * A fresh directory this run owns, removed when it ends: where it writes
+   * anything it passes by path (a prompt file, an MCP config with the live
+   * token). The run's `cwd` is the shared answer home, so nothing per-run
+   * belongs there (see `answer-run-directory.ts`). Absent for a caller that
+   * has none; the adapter then makes its own.
+   */
+  runDirectory?: string;
+}
+
+/** What an answer session is started with. It is fixed for the session's life:
+ *  a different model, effort or search URL is a different session. */
+export interface AnswerSessionInput {
+  cliPath: string;
+  /** The shared answer home the process starts in (see `answer-run-directory.ts`). */
+  cwd: string;
+  /** A directory the session owns for its life, for the files it passes by path. */
+  runDirectory: string;
+  model?: string | null;
+  effort?: string | null;
+  retrieval?: AnswerFromContextOptions['retrieval'];
+}
+
+/**
+ * A warm answering process: started before the question, asked turn by turn.
+ *
+ * Measured on a 143k-character answer prompt at Sonnet: first text 2.2 s from a
+ * fresh spawn, 1.3 s from a process that was already up, and 0.8 s for a
+ * follow-up in that same process, which also skips resending the task table.
+ * An idle process makes no model call, so starting one early costs nothing but
+ * the process.
+ */
+export interface AnswerSession {
+  /** Resolves once the process is up; rejects if it could not start. */
+  readonly ready: Promise<void>;
+  /** Resolves once the process is gone (or never started). A live process
+   *  holds its working directory on Windows, so that is removed after this. */
+  readonly exited: Promise<void>;
+  /** False once the process has exited or been disposed. */
+  readonly alive: boolean;
+  /** True while a turn is in flight. A session takes one turn at a time. */
+  readonly busy: boolean;
+  /**
+   * One user turn. Resolves with the turn's answer, streaming its events to
+   * `onEvent` as they arrive. Rejects on an agent error, a timeout, or the
+   * process exiting mid-turn; `AnswerSessionError.beforeText` says whether any
+   * text had streamed, which is when a caller may retry elsewhere unseen.
+   */
+  ask(prompt: string, onEvent?: (event: AnswerStreamEvent) => void): Promise<string>;
+  /** Ends the process. Synchronous, so the quit path can call it. Idempotent. */
+  dispose(): void;
+}
+
 /** Interface that every agent adapter must implement. */
 export interface AgentAdapter {
   /** Unique identifier for this agent type (e.g. 'claude', 'codex', 'aider'). */
@@ -290,6 +373,17 @@ export interface AgentAdapter {
   readonly remoteExecution?: {
     readonly info: AgentRemoteExecutionInfo;
     probeServer(server: AgentExecutionServer): Promise<RemoteServerStatus>;
+    /**
+     * The remote servers this adapter's spawns ran against, by the cwd each
+     * spawn passed, for an adapter whose transcript reads branch on them.
+     * Main's copy of the adapter learns them at spawn; the retrieval worker
+     * holds its own copy of every adapter, which is handed them with each
+     * index job (`adoptTargets`) so it reads a remote session's transcript
+     * from the same server.
+     */
+    knownTargets?(): Array<[cwd: string, target: ResolvedExecutionTarget]>;
+    /** Take the targets another copy of this adapter learned (`knownTargets`). */
+    adoptTargets?(targets: ReadonlyArray<[cwd: string, target: ResolvedExecutionTarget]>): void;
   };
 
   /**
@@ -489,6 +583,21 @@ export interface AgentAdapter {
    * answer for an agent with no subagent concept.
    */
   readonly subagentSpawnToolName?: string;
+
+  /**
+   * The agent's file-changing tools, and the input field that names the file:
+   * what the memory index's `change` corpus reads to list the files a session
+   * changed (Claude: `Edit`, `Write`, `MultiEdit` by `file_path`, `NotebookEdit`
+   * by `notebook_path`).
+   *
+   * Read from the conversation chunks' text, where the chunker writes each tool
+   * call as `Tool: <name> <json input, cut at 200 characters>`. That text
+   * survives the agent pruning its transcript, which is the state of most
+   * indexed conversations, so the changes of an old session are still found.
+   * Measured on 998 real conversations: 90.7% of 47,318 edit calls kept their
+   * whole path inside the cut. An adapter that omits this indexes no changes.
+   */
+  readonly fileChangeTools?: ReadonlyArray<{ tool: string; pathField: string }>;
 
   /**
    * Optional: parse CUMULATIVE lifetime token usage for a session from the
@@ -798,6 +907,66 @@ export interface AgentAdapter {
    *   converts thrown errors to `{ ok: false, reason }`.
    */
   summarize?(prompt: string, cliPath: string, cwd: string): Promise<string>;
+
+  /**
+   * What this adapter's `answerFromContext` run can do beyond the base, declared
+   * beside it. Read generically by the answer handler and the Knowledge Graph settings tab,
+   * never by agent name. Every flag is a promise the run keeps: `streaming`
+   * means `onEvent` sees text as it is written, `search` means `retrieval` is
+   * honoured, `model` means the run takes the Knowledge Graph Model setting, which makes
+   * that setting required, and `effort` means it passes `options.effort` as the
+   * CLI's own effort flag.
+   */
+  readonly answerCapabilities?: AnswerCapabilities;
+
+  /**
+   * Optional one-shot question answering over supplied context.
+   *
+   * The same non-interactive spawn `summarize` uses, shaped for prose instead of
+   * a title: the Knowledge Graph's Ask retrieves conversation passages, builds a
+   * prompt around them, and hands the whole thing here. The adapter's job is the
+   * CLI's flags and output format, nothing else - the prompt, the rules and the
+   * retrieval budget all belong upstream, so an adapter can never quietly change
+   * what the answer is allowed to draw on.
+   *
+   * Implementations should:
+   * - Use the adapter's read-only / no-edit mode. The prompt is pure reading,
+   *   and an agent given a repo and a question will otherwise start editing.
+   * - Pass `model` through as the CLI's own model flag when present, and omit
+   *   the flag entirely when it is not. The id is adapter-specific, so the
+   *   caller never builds the argument.
+   * - Call `runCliPrintAnswer`, which carries the answer budgets and cleanup.
+   *   `runCliPrintSummarize` would flatten the answer to its first line.
+   * - Throw on failure rather than returning placeholder text.
+   *
+   * - Keep the prompt OFF the command line. An answer prompt runs to about 50k
+   *   characters, and Windows caps a command line at 32,767 (8,191 through
+   *   cmd.exe), so a prompt passed as an argument cannot answer a real question
+   *   there. Use stdin, or `promptVia: 'file'` for a CLI that reads a file.
+   *
+   * Absent means this agent cannot answer; the renderer gates on
+   * `supportsAnswerFromContext` rather than on the agent's name. An adapter
+   * that implements it also declares `answerCapabilities`.
+   */
+  answerFromContext?(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    /** Adapter-specific model id, or undefined for the agent's own default.
+     *  Each adapter owns the flag; nothing upstream knows the syntax. */
+    model?: string | null,
+    options?: AnswerFromContextOptions,
+  ): Promise<string>;
+
+  /**
+   * Optional: a warm answering process the Knowledge Graph starts when it opens
+   * and keeps for a chat, so a question skips the CLI's start-up and a
+   * follow-up skips resending the task table. Present only for a CLI that
+   * reads turns from a long-lived process and keeps the same read-only
+   * guarantee as `answerFromContext`. Absent means every question is a fresh
+   * `answerFromContext` run carrying the chat so far.
+   */
+  openAnswerSession?(input: AnswerSessionInput): AnswerSession;
 
   /**
    * Optional: notify the adapter that per-cwd data must move from `oldPath` to

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import type { TranscriptEntry } from '../../shared/types';
 import { touchBounded } from './shared/bounded-lru';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 
 /** Per-block/content clamp so a multi-MB transcript never ships whole over IPC
  *  into React state. Individual spans over this are truncated with a marker.
@@ -45,27 +46,48 @@ export function clampSpan(text: string): string {
   return `${text.slice(0, MAX_SPAN_CHARS)}\n[truncated ${text.length - MAX_SPAN_CHARS} chars]`;
 }
 
-/** Apply the per-span clamp across every entry's text/blocks/content. A
- *  tool_use block's `input` is deliberately left untouched (the diff/tool-use
- *  renderer needs it intact). */
-export function truncateEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  return entries.map((entry) => {
-    switch (entry.kind) {
-      case 'user':
-        return { ...entry, text: clampSpan(entry.text) };
-      case 'assistant':
-        return {
+/**
+ * Each parsed entry's clamped form, keyed by the parsed entry. A parser never
+ * changes an entry after emitting it (Claude's incremental parse appends new
+ * ones to the same array), so a re-parse that kept an entry gets back the SAME
+ * clamped object. That stability is what lets the stitch, the revision and the
+ * delta sent to a viewer skip entries that did not change.
+ */
+const clampedByParsed = new WeakMap<TranscriptEntry, TranscriptEntry>();
+
+function clampEntry(entry: TranscriptEntry): TranscriptEntry {
+  const known = clampedByParsed.get(entry);
+  if (known) return known;
+  let clamped: TranscriptEntry = entry;
+  switch (entry.kind) {
+    case 'user':
+    case 'system':
+      if (entry.text.length > MAX_SPAN_CHARS) clamped = { ...entry, text: clampSpan(entry.text) };
+      break;
+    case 'tool_result':
+      if (entry.content.length > MAX_SPAN_CHARS) clamped = { ...entry, content: clampSpan(entry.content) };
+      break;
+    case 'assistant':
+      if (entry.blocks.some((block) => block.type !== 'tool_use' && block.text.length > MAX_SPAN_CHARS)) {
+        clamped = {
           ...entry,
           blocks: entry.blocks.map((block) =>
             block.type === 'tool_use' ? block : { ...block, text: clampSpan(block.text) },
           ),
         };
-      case 'tool_result':
-        return { ...entry, content: clampSpan(entry.content) };
-      case 'system':
-        return { ...entry, text: clampSpan(entry.text) };
-    }
-  });
+      }
+      break;
+  }
+  clampedByParsed.set(entry, clamped);
+  return clamped;
+}
+
+/** Apply the per-span clamp across every entry's text/blocks/content. A
+ *  tool_use block's `input` is deliberately left untouched (the diff/tool-use
+ *  renderer needs it intact). An entry with nothing to clamp is returned as
+ *  is, and one already clamped returns its earlier result. */
+export function truncateEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return entries.map(clampEntry);
 }
 
 interface CacheRecord {
@@ -132,7 +154,7 @@ export async function getCachedTranscript(
   }
 
   const parsed = await parse();
-  const truncatedEntries = truncateEntries(parsed.entries);
+  const truncatedEntries = timeSyncWork('transcript:truncate', () => truncateEntries(parsed.entries));
 
   if (parsed.sourcePath) {
     try {

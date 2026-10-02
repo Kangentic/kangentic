@@ -376,7 +376,7 @@ const ANNOUNCEMENT_HISTORY = ANNOUNCEMENTS.map((announcement) => ({ announcement
  */
 // The settings panel docks to the right of the frame rather than centring, so each alt opens with
 // the tab and then reads the panel top to bottom. Every line below was checked against the
-// rendered tab in both themes; a row that only shows once a switch is on (the Memory tab's model
+// rendered tab in both themes; a row that only shows once a switch is on (the Knowledge Graph tab's model
 // picker, the Mobile tab's connection test) is left out rather than described. An entry may carry
 // `config` to show its tab in use: Dictation is switched on, because off it greys out every row
 // below the switch and reads as a feature that is not there.
@@ -386,9 +386,9 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
   // figure's subject, and both rows mount in the same commit.
   theme: { ready: '[data-testid="setting-row-theme"]', alt: 'Settings on the Theme tab: a Follow system appearance switch, then twelve theme tiles in Dark and Light groups, each painted in its own colors, with the current theme outlined.' },
   agent: { ready: '[data-testid="setting-row-project.defaultAgent"]', alt: 'Settings on the Agent tab: the project\'s default agent, its model and effort, the permission mode, and the path to the agent\'s CLI.' },
-  git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab: worktrees on or off, automatic cleanup, the default base branch, files and a script for each new worktree, and how often PRs and the remote are refreshed.' },
+  git: { ready: '[data-testid="setting-row-git.worktreesEnabled"]', alt: 'Settings on the Git tab in three cards: Branches with the default base branch and auto-fetch, Worktrees with its switch, cleanup, node_modules linking, and files and a script for each new worktree, and Pull requests with auto-refresh and merge bypass.' },
   browser: { ready: '[data-testid="setting-row-browser.enabled"]', alt: 'Settings on the Browser tab: the Browser pane toggle, the default URL a task opens, and a control to clear the browser\'s data.' },
-  shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add Shortcut and Presets controls.' },
+  shortcuts: { ready: '[data-testid="add-shortcut"]', alt: 'Settings on the Shortcuts tab: the project\'s command shortcuts, none configured here, with Add shortcut and Presets controls.' },
   board: { ready: '[data-testid="setting-row-columnWidth"]', alt: 'Settings on the Board tab: column width, automatic board config sync, and switches for the terminal panel and the status bar.' },
   task: { ready: '[data-testid="setting-row-cardDensity"]', alt: 'Settings on the Task tab: card density, card preview, ticket numbers, and a switch for each pill the context bar shows.' },
   changes: { ready: '[data-testid="setting-row-diffViewMode"]', alt: 'Settings on the Changes tab: the diff layout, the default scope a Changes panel opens on, the whitespace, folding, wrapping, and narrow-pane options, and file sorting.' },
@@ -403,14 +403,14 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
   // never shot on the empty model selects of the first render.
   dictation: {
     ready: '[data-testid="dictation-model-ready"]',
-    alt: 'Settings on the Dictation tab with voice dictation on: English, the Best accuracy mode with Streaming Zipformer as the live model and Parakeet TDT 0.6B to refine, marked Ready, then punctuation, the push-to-talk key, and the release buffer.',
+    alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best accuracy mode, a Models row naming its two models with a check, and punctuation.',
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
   },
-  memory: { ready: '[data-testid="setting-row-memory.indexingEnabled"]', alt: 'Settings on the Memory tab: conversation indexing for search, semantic search, and a control to rebuild the index.' },
-  mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: the server toggle and the available tools as pills grouped by area: tasks, board, sessions, and more.' },
-  browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: whether agents may drive the embedded browser, and which actions they get: interaction, navigation, eval, and a localhost restriction.' },
-  mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile Bridge toggle, the relay it connects through, the Pair a device button, and the paired devices list, empty here.' },
+  knowledgeGraph: { ready: '[data-testid="setting-row-knowledgeGraph.indexingEnabled"]', alt: 'Settings on the Knowledge Graph tab: the Knowledge Graph card with its switch, then an Index card with one line per source, conversations, tasks and commits always on and task summaries and source code as switches, and a Rebuild control.' },
+  mcpServer: { ready: '[data-testid="setting-row-mcpServer.enabled"]', alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, the available tools as pills grouped by area: tasks, board, sessions, and more.' },
+  browserAutomation: { ready: '[data-testid="setting-row-browserAutomation.enabled"]', alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.' },
+  mobile: { ready: '[data-testid="setting-row-mobileBridge.enabled"]', alt: 'Settings on the Mobile Devices tab: the Mobile bridge switch, off here, with links to how the relay works and how to install and pair.' },
   privacy: { ready: '[data-testid="privacy-contact-email"]', alt: 'Settings on the Privacy tab: what anonymous analytics are collected and what is not, how they work, and how to opt out.' },
   developer: { ready: '[data-testid="developer-tab"]', alt: 'Settings on the Developer tab: the activity debug overlay, persistent console logs, crash reports, and IPC recording.' },
 };

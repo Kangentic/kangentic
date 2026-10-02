@@ -22,7 +22,7 @@ import {
   setProjectDefaultAgent,
   waitForScrollback,
   waitForRunningSession,
-  waitForNoRunningSession,
+  waitForTaskSessionNotRunning,
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
@@ -201,8 +201,9 @@ test.describe('Cursor Agent - Session Lifecycle', () => {
     await waitForRunningSession(page);
     await waitForScrollback(page, 'MOCK_CURSOR_SESSION:');
 
-    // Move to Done - should suspend the session
+    // Move to Done - should suspend the session. Scoped to this task: earlier
+    // tests in this file leave their sessions running in the same app.
     await moveTaskIpc(page, taskId, swimlaneIds.done);
-    await waitForNoRunningSession(page);
+    await waitForTaskSessionNotRunning(page, taskId);
   });
 });

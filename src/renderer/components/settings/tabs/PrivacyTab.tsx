@@ -1,75 +1,114 @@
-import { ShieldAlert } from 'lucide-react';
-import { Pill } from '../../Pill';
-import { SectionHeader } from '../shared';
+import type { ReactNode } from 'react';
+import { ChartColumn, HardDrive, Mail, ToggleLeft } from 'lucide-react';
+import { SettingsCard, CardTile } from '../settings-card';
+import { SETTING_LABEL_CLASS } from '../../SettingText';
 
 const PRIVACY_CONTACT_EMAIL = 'support@kangentic.com';
 const PRIVACY_CONTACT_MAILTO = `mailto:${PRIVACY_CONTACT_EMAIL}`;
 
+/** A tile's heading, the same weight a setting row's label has. */
+function TileHeading({ children }: { children: ReactNode }) {
+  return <div className={`${SETTING_LABEL_CLASS} mb-1.5`}>{children}</div>;
+}
+
 export function PrivacyTab() {
   return (
     <div className="space-y-4">
-      <Pill as="div" size="lg" className="bg-surface-hover">
-        <ShieldAlert className="size-5 text-fg-muted shrink-0" />
-        <span className="text-[1em] text-fg-secondary">Anonymous analytics only. No personal data collected.</span>
-      </Pill>
+      <SettingsCard
+        icon={<ChartColumn size={16} />}
+        label="Analytics"
+        description="Anonymous analytics only. No personal data collected."
+        searchIds={['privacy.info']}
+      >
+        <CardTile>
+          <TileHeading>What we collect</TileHeading>
+          <ul className="list-disc pl-4 text-sm text-fg-muted space-y-1">
+            <li>App launches, platform, and architecture</li>
+            <li>App crashes and errors (stack traces with machine-specific paths removed from app code)</li>
+            <li>Task and project creation counts</li>
+            <li>Agent session starts, exit codes, and duration</li>
+            <li>Which features get used, as daily counts (never their content)</li>
+          </ul>
+        </CardTile>
+        <CardTile>
+          <TileHeading>What we don&apos;t collect</TileHeading>
+          <ul className="list-disc pl-4 text-sm text-fg-muted space-y-1">
+            <li>Task titles, descriptions, or any user-generated content</li>
+            <li>File paths, project names, or code</li>
+            <li>Usernames, emails, or any personally identifiable information</li>
+          </ul>
+        </CardTile>
+        <CardTile className="space-y-2">
+          <TileHeading>How it works</TileHeading>
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Usage analytics are powered by Aptabase, a privacy-first platform.
+            No cookies. IP addresses are used for geographic lookup only, then
+            discarded. A single anonymous, non-reversible install id counts unique
+            installs; it contains no personal data. GDPR-compliant by design.
+          </p>
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Crash and error reports go to Sentry so bugs can be diagnosed and
+            fixed. Stack traces are recorded with machine-specific paths removed
+            from app code; no task content, code, or personal data is attached.
+          </p>
+        </CardTile>
+      </SettingsCard>
 
-      <SectionHeader label="What We Collect" />
-      <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
-        <li>App launches, platform, and architecture</li>
-        <li>App crashes and errors (stack traces with machine-specific paths removed from app code)</li>
-        <li>Task and project creation counts</li>
-        <li>Agent session starts, exit codes, and duration</li>
-        <li>Which features get used, as daily counts (never their content)</li>
-      </ul>
+      <SettingsCard
+        icon={<HardDrive size={16} />}
+        label="Knowledge Graph"
+        description="What runs on this device, and what goes to the agent you choose."
+        searchIds={['privacy.info']}
+      >
+        <CardTile>
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Indexing and the local model that finds by meaning live in the{' '}
+            <span className="text-fg-secondary">Knowledge Graph</span> tab, and run on your device with
+            no API key. When you ask a question, the agent you choose there receives it with the
+            board&apos;s task list, the conversation passages and code found for it, and the chat so far.
+            To write a task summary, it receives that task&apos;s title, description, commits, changed
+            files and closing messages.
+          </p>
+        </CardTile>
+      </SettingsCard>
 
-      <SectionHeader label="What We Don't Collect" />
-      <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
-        <li>Task titles, descriptions, or any user-generated content</li>
-        <li>File paths, project names, or code</li>
-        <li>Usernames, emails, or any personally identifiable information</li>
-      </ul>
+      <SettingsCard
+        icon={<ToggleLeft size={16} />}
+        label="Opting out"
+        description="Environment variables that turn telemetry off."
+        searchIds={['privacy.info']}
+      >
+        <CardTile>
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to
+            disable all telemetry (analytics and error reporting). Set{' '}
+            <code className="font-mono">KANGENTIC_ERROR_REPORTING=0</code> to disable only error
+            reporting while keeping anonymous analytics.
+          </p>
+        </CardTile>
+      </SettingsCard>
 
-      <SectionHeader label="How It Works" />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Usage analytics are powered by Aptabase, a privacy-first platform.
-        No cookies. IP addresses are used for geographic lookup only, then
-        discarded. A single anonymous, non-reversible install id counts unique
-        installs; it contains no personal data. GDPR-compliant by design.
-      </p>
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Crash and error reports go to Sentry so bugs can be diagnosed and
-        fixed. Stack traces are recorded with machine-specific paths removed
-        from app code; no task content, code, or personal data is attached.
-      </p>
-
-      <SectionHeader label="Conversation Search" />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Local conversation indexing and semantic search settings live in the{' '}
-        <span className="text-fg-secondary">Memory</span> tab. All of it runs on your device with no
-        API key; nothing leaves your machine.
-      </p>
-
-      <SectionHeader label="How to Opt Out" />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to
-        disable all telemetry (analytics and error reporting). Set{' '}
-        <code className="font-mono">KANGENTIC_ERROR_REPORTING=0</code> to disable only error
-        reporting while keeping anonymous analytics.
-      </p>
-
-      <SectionHeader label="Questions" />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Ask us anything about what Kangentic collects at{' '}
-        <button
-          type="button"
-          data-testid="privacy-contact-email"
-          onClick={() => void window.electronAPI.shell.openExternal(PRIVACY_CONTACT_MAILTO)}
-          className="text-fg-secondary underline underline-offset-2 hover:text-fg transition-colors cursor-pointer"
-        >
-          {PRIVACY_CONTACT_EMAIL}
-        </button>
-        .
-      </p>
+      <SettingsCard
+        icon={<Mail size={16} />}
+        label="Questions"
+        description="Ask us anything about what Kangentic collects."
+        searchIds={['privacy.info']}
+      >
+        <CardTile>
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Write to{' '}
+            <button
+              type="button"
+              data-testid="privacy-contact-email"
+              onClick={() => void window.electronAPI.shell.openExternal(PRIVACY_CONTACT_MAILTO)}
+              className="text-fg-secondary underline underline-offset-2 hover:text-fg transition-colors cursor-pointer"
+            >
+              {PRIVACY_CONTACT_EMAIL}
+            </button>
+            .
+          </p>
+        </CardTile>
+      </SettingsCard>
     </div>
   );
 }

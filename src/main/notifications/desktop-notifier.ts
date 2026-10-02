@@ -36,6 +36,7 @@
  */
 import { requiresUserInteraction } from '../../shared/activity-state';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../shared/notification-constants';
+import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../../shared/pty-host';
 import type { ActivityReason, ActivityState, NotificationConfig, NotificationInput } from '../../shared/types';
 import type { SessionManager } from '../pty/session-manager';
 
@@ -56,6 +57,9 @@ export class DesktopNotifier {
   /** Last-notified wall-clock ms, keyed `<trigger>:<sessionId>` so a crash is
    *  never suppressed by this session's recent idle notification. */
   private readonly cooldowns = new Map<string, number>();
+  /** When the last pty host crash was considered for a notification, so the
+   *  burst of exits one crash produces collapses to one. */
+  private lastHostLostNoticeAt = 0;
   private started = false;
   private disposed = false;
 
@@ -123,6 +127,21 @@ export class DesktopNotifier {
     // Transient (Command Terminal) sessions are ephemeral - skip, matching the renderer.
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session || session.transient) return;
+
+    // The pty host died and took every terminal with it: one notification for
+    // the crash, not one per session, since the agents resume a moment later.
+    if (exitCode === PTY_HOST_LOST_EXIT_CODE) {
+      const now = Date.now();
+      if (now - this.lastHostLostNoticeAt < PTY_HOST_LOST_NOTICE_WINDOW_MS) return;
+      // Stamped only when the notice goes out: an exit the focus gate holds
+      // back (the project on screen) must not swallow a background project's
+      // exit from the same crash, or the outcome would depend on exit order.
+      if (!this.shouldNotify('pty-host-lost', session.projectId)) return;
+      this.lastHostLostNoticeAt = now;
+      this.notify('pty-host-lost', 'Terminals restarted', 'Running agents are resuming.', session.projectId, session.taskId);
+      return;
+    }
+
     if (!this.shouldNotify(`crash:${sessionId}`, session.projectId)) return;
 
     const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';

@@ -1,11 +1,13 @@
+import path from 'node:path';
 import { AgentDetector } from '../../shared/agent-detector';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -194,4 +196,90 @@ export class AiderAdapter implements AgentAdapter {
   requiresAgentSessionIdForVerification(): boolean {
     return false;
   }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * `--message-file` sends one message from a file and exits, so a prompt of
+   * any size stays off the command line. `--chat-mode ask` is Aider's own
+   * read-only mode: it answers without editing.
+   *
+   * The rest keeps a headless run from stopping to ask something it cannot
+   * answer, or touching anything: `--no-git` (the scratch directory is not a
+   * repository, and Aider would otherwise offer to create one), `--yes` for any
+   * other confirmation, `--no-auto-commits`, no update check, no model
+   * warnings, and plain unstreamed output.
+   *
+   * Its history files go in the run directory, not the working directory: the
+   * working directory is the answer home every question shares, and Aider
+   * APPENDS to `.aider.chat.history.md` and `.aider.input.history` there, so
+   * every answer's prompt would pile up in one file. `--no-restore-chat-history`
+   * keeps an earlier answer out of this one.
+   *
+   * From Aider's published options; not yet run against an installed Aider on
+   * the machine this was written on, which is why `extractAiderAnswer` strips
+   * the status lines Aider is documented to print rather than parsing a format.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+    options?: AnswerFromContextOptions,
+  ): Promise<string> {
+    const runDirectory = options?.runDirectory ?? cwd;
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: [
+        '--chat-mode', 'ask',
+        '--no-git',
+        '--no-auto-commits',
+        '--yes',
+        '--no-pretty',
+        '--no-stream',
+        '--no-check-update',
+        '--no-show-model-warnings',
+        '--no-suggest-shell-commands',
+        '--no-restore-chat-history',
+        '--chat-history-file', path.join(runDirectory, '.aider.chat.history.md'),
+        '--input-history-file', path.join(runDirectory, '.aider.input.history'),
+        ...(model ? ['--model', model] : []),
+      ],
+      prompt,
+      cwd,
+      promptVia: 'file',
+      promptFileFlag: '--message-file',
+      promptDirectory: runDirectory,
+      extractRaw: extractAiderAnswer,
+    });
+  }
+}
+
+/**
+ * The lines Aider prints before an answer: its version banner, the model and
+ * repo summary, and any startup notice.
+ */
+const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odel: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
+/** The line Aider prints after one: `Tokens: 2.3k sent, 145 received. Cost: ...`. */
+const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
+
+/**
+ * The answer between Aider's banner and its token line. Only the ends are
+ * trimmed: filtering every line dropped an answer's own "Cost: $136.74 across
+ * three sessions", and an answer about task costs writes lines like that.
+ */
+export function extractAiderAnswer(stdout: string): string {
+  const lines = stdout.split(/\r?\n/);
+  let start = 0;
+  while (start < lines.length && (lines[start].trim() === '' || AIDER_BANNER_LINE.test(lines[start].trim()))) start += 1;
+  let end = lines.length;
+  while (end > start && (lines[end - 1].trim() === '' || AIDER_TOKENS_LINE.test(lines[end - 1].trim()))) end -= 1;
+  return lines.slice(start, end).join('\n').trim();
 }

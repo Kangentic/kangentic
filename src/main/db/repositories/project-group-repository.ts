@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
 import type { ProjectGroup, ProjectGroupCreateInput } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 interface ProjectGroupRow {
   id: string;
@@ -46,7 +47,7 @@ export class ProjectGroupRepository {
 
   delete(id: string): void {
     const db = getGlobalDb();
-    const tx = db.transaction(() => {
+    const tx = writeTransaction(db, () => {
       // Move all projects in this group to ungrouped
       db.prepare('UPDATE projects SET group_id = NULL WHERE group_id = ?').run(id);
       // Delete the group
@@ -63,7 +64,7 @@ export class ProjectGroupRepository {
 
   reorder(ids: string[]): void {
     const db = getGlobalDb();
-    const tx = db.transaction(() => {
+    const tx = writeTransaction(db, () => {
       const stmt = db.prepare('UPDATE project_groups SET position = ? WHERE id = ?');
       ids.forEach((id, index) => {
         stmt.run(index, id);

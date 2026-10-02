@@ -903,8 +903,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
   });
 
   // Each guard names its reason instead of returning a bare null, so the task
-  // row can record why its agent runs in the shared checkout. A per-task
-  // `use_worktree` can override 'disabled' but never the structural reasons.
+  // row can record why its agent runs in the shared checkout.
   it('reports disabled when worktreesEnabled is false', async () => {
     const mgr = new WorktreeManager('/project');
     const result = await mgr.ensureWorktree(
@@ -912,6 +911,19 @@ describe('WorktreeManager -- ensureWorktree', () => {
       { ...gitConfig, worktreesEnabled: false },
     );
     expect(result).toEqual({ skipped: true, reason: 'disabled' });
+  });
+
+  // worktreesEnabled is the feature switch, not a default: a task created with
+  // Worktree picked still runs in the project folder once the switch is off.
+  it('reports disabled when worktreesEnabled is false even if the task picked Worktree', async () => {
+    const mgr = new WorktreeManager('/project');
+    const createSpy = vi.spyOn(mgr, 'createWorktree');
+    const result = await mgr.ensureWorktree(
+      { id: 'abcd1234', title: 'Test', display_id: 7, worktree_path: null, use_worktree: 1 },
+      { ...gitConfig, worktreesEnabled: false },
+    );
+    expect(result).toEqual({ skipped: true, reason: 'disabled' });
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it('reports disabled when the task opts out despite worktreesEnabled', async () => {

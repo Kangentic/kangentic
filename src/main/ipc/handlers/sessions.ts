@@ -2,6 +2,8 @@ import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
@@ -303,11 +305,11 @@ export function registerSessionHandlers(context: IpcContext): void {
     return sessionRepo.getSummaryForTask(taskId);
   });
 
-  ipcMain.handle(IPC.SESSION_LIST_SUMMARIES, () => {
+  // Read in the retrieval worker: aggregating every session row took 66 to
+  // 71 ms on a long history.
+  ipcMain.handle(IPC.SESSION_LIST_SUMMARIES, async () => {
     if (!context.currentProjectId) return {};
-    const db = getProjectDb(context.currentProjectId);
-    const sessionRepo = new SessionRepository(db);
-    return sessionRepo.listAllSummaries();
+    return retrievalClient.call('sessions.summaries', { projectId: context.currentProjectId });
   });
 
   // Live per-tool breakdown for an active session. Unlike the summary handlers
@@ -538,7 +540,11 @@ export function registerSessionHandlers(context: IpcContext): void {
         return null;
       }
     },
-    resolveAdapter: (sessionType) => agentRegistry.getBySessionType(sessionType),
+    // Parsed in the retrieval worker: main reads no transcript.
+    readTrail: (facts, cursor) => retrievalClient.call(
+      'transcript.trailRead',
+      { facts, cursor, remoteTargets: collectRemoteTargets(agentRegistry) },
+    ),
   });
   messageTrailTracker.on('trail', (sessionId: string, entries: AssistantMessageTrailEntry[], projectId: string) => {
     if (context.mainWindow.isDestroyed()) return;
@@ -687,14 +693,22 @@ export function registerSessionHandlers(context: IpcContext): void {
     const exitAgentName = context.sessionManager.getSessionAgentName(exitedSession.id);
     const adapter = exitAgentName ? agentRegistry.get(exitAgentName) : undefined;
     if (!adapter?.describeStartupFailure) return;
-    const startupFailure = adapter.describeStartupFailure(context.sessionManager.getRawScrollback(exitedSession.id), exitCode);
-    if (!startupFailure) return;
-    try {
-      const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
-      if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
-    } catch {
-      // DB may be closed during shutdown; the notice is best-effort.
-    }
+    const describeStartupFailure = adapter.describeStartupFailure.bind(adapter);
+    // The ring lives in the pty host. The read is posted now, ahead of any
+    // kill that follows, so it sees the CLI's last words.
+    void context.sessionManager.getRawScrollback(exitedSession.id).then((rawScrollback) => {
+      const startupFailure = describeStartupFailure(rawScrollback, exitCode);
+      if (!startupFailure) return;
+      try {
+        const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
+        if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
+      } catch {
+        // DB may be closed during shutdown; the notice is best-effort.
+      }
+    }).catch(() => {
+      // The host is gone (a quit or a crash) and there is nothing to read, or
+      // the adapter's parser threw on what was there: the notice is best-effort.
+    });
   };
 
   // The agent-absence sweep found a running session whose CLI is gone and is

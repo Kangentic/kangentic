@@ -59,14 +59,32 @@
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
   let searchHits = [];
-  // Conversation memory (Phase 2/3). `memoryStatus` feeds the palette's
-  // Smart-mode degraded notice and the Privacy tab status line. Seeded via
+  // The conversation index. `memoryStatus` feeds the Knowledge Graph
+  // settings tab's index and model status. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryStatus = {
     indexingEnabled: true,
     semantic: 'disabled',
     model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
   };
+  // Knowledge Graph fixture. null means "no projection cached yet", which is the
+  // first-open state the surface must handle without looking broken. Seeded via
+  // __mockPreConfigure (mirrors searchHits).
+  let knowledgeGraphSnapshot = null;
+  // The Projects picker's list. Empty by default, which reads as a list not yet
+  // loaded and leaves the picker out (the real app always lists at least the
+  // open project); seeded via __mockPreConfigure.
+  let knowledgeGraphProjects = [];
+  // Task summaries by task id, for the selected conversation's panel. Empty by
+  // default, the same as summaries switched off.
+  let memoryTaskSummaries = {};
+  // Per-project snapshots for a multi-project scope, keyed by project id.
+  // A project missing here falls back to knowledgeGraphSnapshot.
+  let knowledgeGraphSnapshotsByProject = {};
+  let knowledgeGraphAnswerResult = null;
+  // Proactive-recall fixture for task detail; empty means the panel renders
+  // nothing at all, which is the common case and must stay silent.
+  let memoryRelatedToTask = null;
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
   // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
   // ConversationSessionMeta[] the session picker offers. Both seeded via
@@ -124,7 +142,7 @@
    * mirror is only here to keep the fake API self-consistent with listOpen().
    */
   function popOutKeyOf(kind, params) {
-    if (kind === 'stats' || kind === 'monitor') return kind;
+    if (kind === 'stats' || kind === 'monitor' || kind === 'knowledge-graph') return kind;
     const taskKey = kind + ':' + (params && params.projectId) + ':' + (params && params.taskId);
     if (kind === 'changes-file') return taskKey + ':' + (params && params.filePath);
     return taskKey;
@@ -228,9 +246,8 @@
       copyFiles: [],
       initScript: null,
       linkNodeModules: true,
-      prRefreshIntervalMinutes: 5,
-      autoFetchIntervalMinutes: 5,
-      prEvaluateBranchPolicies: false,
+      prAutoRefresh: true,
+      autoFetch: true,
       prBypassCountsAsReady: true,
     },
     mcpServer: {
@@ -471,9 +488,8 @@
       copyFiles: git.copyFiles ? git.copyFiles.slice() : undefined,
       initScript: git.initScript,
       linkNodeModules: git.linkNodeModules,
-      prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
-      autoFetchIntervalMinutes: git.autoFetchIntervalMinutes,
-      prEvaluateBranchPolicies: git.prEvaluateBranchPolicies,
+      prAutoRefresh: git.prAutoRefresh,
+      autoFetch: git.autoFetch,
       prBypassCountsAsReady: git.prBypassCountsAsReady,
     });
     if (pickedGit) result.git = pickedGit;
@@ -538,6 +554,15 @@
   }
 
   function noop() {}
+
+  // `config.onChanged` subscribers. A REAL list rather than a stub: the
+  // Knowledge Graph re-reads its snapshot on this signal, so a no-op made that
+  // path untestable and any spec asserting live refresh would pass without
+  // exercising it. Tests fire it with `window.__mockEmitConfigChanged()`.
+  const mockConfigChangedListeners = [];
+  window.__mockEmitConfigChanged = function () {
+    mockConfigChangedListeners.slice().forEach(function (listener) { listener(); });
+  };
 
   // What config.set / setProjectOverrides / setProjectOverridesByPath resolve with.
   // Defaults to a write that reached disk; a test forces the failure path by setting
@@ -2866,7 +2891,13 @@
       syncDefaultToProjects: async function () {
         return 0;
       },
-      onChanged: function (/* callback() */) { return noop; },
+      onChanged: function (callback) {
+        mockConfigChangedListeners.push(callback);
+        return function () {
+          const index = mockConfigChangedListeners.indexOf(callback);
+          if (index >= 0) mockConfigChangedListeners.splice(index, 1);
+        };
+      },
       onWriteFailed: function (callback) {
         // Tests fire this via window.__mockFireConfigWriteFailed(message).
         if (!window.__mockConfigWriteFailedListeners) window.__mockConfigWriteFailedListeners = [];
@@ -2943,6 +2974,13 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Knowledge
+            // Graph's Ask on the capability rather than on the agent's name.
+            supportsAnswerFromContext: true,
+            // KEEP IN SYNC with ClaudeAdapter.answerCapabilities. `model: true` is
+            // what makes the Answering model setting required for Claude, and
+            // `defaultEffort` is the level the Answering effort row shows unset.
+            answerCapabilities: { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' },
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
@@ -3118,6 +3156,11 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with GrokAdapter.answerFromContext / answerCapabilities:
+            // a second answering agent with its own effort levels, so a spec can
+            // switch agents by marking it found.
+            supportsAnswerFromContext: true,
+            answerCapabilities: { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' },
           },
           {
             name: 'antigravity', displayName: 'Antigravity CLI', found: false, path: null, version: null,
@@ -4531,25 +4574,160 @@
       },
     },
 
-    memory: {
+    knowledgeGraph: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
-      // Fire-and-forget worker warm-up on a Smart-mode Quick Find open. Recorded
-      // (one timestamp per call) so a UI test can assert it fires at least once
-      // per open, never in keyword mode, and no further as the user types. Not
-      // an exact count: StrictMode double-invokes the mount effect, and the
+      // Fire-and-forget worker warm-up on a Knowledge Graph open. Recorded (one
+      // timestamp per call) so a UI test can assert Quick Find never sends it.
+      // Not an exact count: StrictMode double-invokes a mount effect, and the
       // second send is a no-op against the worker's memoized init.
-      prewarm: function () {
+      // A prewarm that names a chat also warms that chat's answering session;
+      // those are recorded as their own list, chat ids and all.
+      prewarm: function (chat) {
         if (typeof window !== 'undefined') {
           if (!window.__mockMemoryPrewarmCalls) window.__mockMemoryPrewarmCalls = [];
           window.__mockMemoryPrewarmCalls.push(Date.now());
+          if (chat && chat.chatId) {
+            if (!window.__mockAnswerPrewarms) window.__mockAnswerPrewarms = [];
+            window.__mockAnswerPrewarms.push({ chatId: chat.chatId, projectId: chat.projectId });
+          }
         }
       },
-      rebuildIndex: function (projectId) {
+      // The chat's warm session is released; recorded so a UI test can assert
+      // X and closing the graph both let it go.
+      endChat: function (chatId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockEndChatCalls) window.__mockEndChatCalls = [];
+          window.__mockEndChatCalls.push(chatId);
+        }
+      },
+      // The summaries Rebuild would rewrite: those in the seeded status written
+      // some other way, which is what main would count and mark.
+      rebuildPlan: function () {
+        var summaries = memoryStatus && memoryStatus.summaries;
+        var summariesToRewrite = 0;
+        if (summaries && summaries.choice && summaries.writtenWith) {
+          summaries.writtenWith.forEach(function (entry) {
+            var same = entry.agent === summaries.choice.agent && entry.model === summaries.choice.model && entry.effort === summaries.choice.effort;
+            if (!same) summariesToRewrite += entry.count;
+          });
+        }
+        return Promise.resolve({ summariesToRewrite: summariesToRewrite });
+      },
+      // Recorded for the Rebuild spec. Global, so it carries no project.
+      rebuildIndex: function () {
         if (typeof window !== 'undefined') {
           if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
-          window.__mockRebuildIndexCalls.push({ projectId: projectId === undefined ? null : projectId });
+          window.__mockRebuildIndexCalls.push(Date.now());
+        }
+        return this.rebuildPlan();
+      },
+      taskSummary: function (projectId, taskId) {
+        // Seeded per task id via __mockPreConfigure's memoryTaskSummaries; null
+        // otherwise, which is what main answers with summaries switched off.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockTaskSummaryCalls) window.__mockTaskSummaryCalls = [];
+          window.__mockTaskSummaryCalls.push({ projectId: projectId, taskId: taskId });
+        }
+        return Promise.resolve(Object.prototype.hasOwnProperty.call(memoryTaskSummaries, taskId) ? memoryTaskSummaries[taskId] : null);
+      },
+      graphSnapshot: function (projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockGraphSnapshotCalls) window.__mockGraphSnapshotCalls = [];
+          window.__mockGraphSnapshotCalls.push({ projectId: projectId === undefined ? null : projectId });
+        }
+        var keyed = projectId ? knowledgeGraphSnapshotsByProject[projectId] : undefined;
+        var source = keyed || knowledgeGraphSnapshot;
+        return Promise.resolve(source ? JSON.parse(JSON.stringify(source)) : null);
+      },
+      graphProjects: function () {
+        if (typeof window !== 'undefined') {
+          window.__mockGraphProjectsCalls = (window.__mockGraphProjectsCalls || 0) + 1;
+        }
+        return Promise.resolve(JSON.parse(JSON.stringify(knowledgeGraphProjects)));
+      },
+      refreshGraph: function (projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRefreshGraphCalls) window.__mockRefreshGraphCalls = [];
+          window.__mockRefreshGraphCalls.push({ projectId: projectId === undefined ? null : projectId });
         }
         return Promise.resolve();
+      },
+      answerFromGraph: function (question, projectId, granularity, requestId, context) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockGraphAnswerCalls) window.__mockGraphAnswerCalls = [];
+          window.__mockGraphAnswerCalls.push({
+            question: question,
+            projectId: projectId === undefined ? null : projectId,
+            granularity: granularity === undefined ? null : granularity,
+            requestId: requestId === undefined ? null : requestId,
+            context: context === undefined ? null : JSON.parse(JSON.stringify(context)),
+          });
+        }
+        // Defaults to a FAILURE, deliberately. Ask spawns a real CLI, so a spec
+        // that has not said what the agent returns has not set up the case it is
+        // testing, and a plausible default answer would let it pass anyway.
+        // A spec may set `window.__mockAnswerResultQueue` to answer successive
+        // questions differently (a failure, then a retry that works).
+        var queued = typeof window !== 'undefined' && Array.isArray(window.__mockAnswerResultQueue)
+          ? window.__mockAnswerResultQueue.shift()
+          : undefined;
+        var settled = queued || knowledgeGraphAnswerResult;
+        var result = settled
+          ? JSON.parse(JSON.stringify(settled))
+          : { ok: false, reason: 'no agent configured' };
+        // A spec that sets `window.__mockHoldAnswer` gets the answer held open
+        // until it calls `window.__mockReleaseAnswer()`, so it can drive the
+        // stream (the related set, searches, text) through
+        // `__mockFireAnswerStream` in between, as main does.
+        if (typeof window !== 'undefined' && window.__mockHoldAnswer) {
+          return new Promise(function (resolve) {
+            window.__mockReleaseAnswer = function () { resolve(result); };
+          });
+        }
+        return Promise.resolve(result);
+      },
+      relatedToTask: function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRelatedToTaskCalls) window.__mockRelatedToTaskCalls = [];
+          window.__mockRelatedToTaskCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve(memoryRelatedToTask ? JSON.parse(JSON.stringify(memoryRelatedToTask)) : []);
+      },
+      onGraphChanged: function (callback) {
+        if (!window.__mockGraphChangedListeners) window.__mockGraphChangedListeners = [];
+        window.__mockGraphChangedListeners.push(callback);
+        if (!window.__mockFireGraphChanged) {
+          // Drives the push path from a spec: window.__mockFireGraphChanged(id).
+          window.__mockFireGraphChanged = function (projectId) {
+            var listeners = (window.__mockGraphChangedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) listeners[i](projectId);
+          };
+        }
+        return function () {
+          var listeners = window.__mockGraphChangedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      onAnswerStream: function (callback) {
+        if (!window.__mockAnswerStreamListeners) window.__mockAnswerStreamListeners = [];
+        window.__mockAnswerStreamListeners.push(callback);
+        if (!window.__mockFireAnswerStream) {
+          // Drives the streaming path from a spec. A spec that wants to see text
+          // arrive before the answer settles fires text events, then resolves
+          // the answer: window.__mockFireAnswerStream({ requestId, kind, text }).
+          // The requestId is what the store minted; read it back off the last
+          // answerFromGraph call.
+          window.__mockFireAnswerStream = function (event) {
+            var listeners = (window.__mockAnswerStreamListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) listeners[i](event);
+          };
+        }
+        return function () {
+          var listeners = window.__mockAnswerStreamListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index >= 0) listeners.splice(index, 1);
+        };
       },
     },
 
@@ -5030,6 +5208,24 @@
     }
     if (result && result.memoryStatus && typeof result.memoryStatus === 'object') {
       memoryStatus = result.memoryStatus;
+    }
+    if (result && result.knowledgeGraphSnapshot && typeof result.knowledgeGraphSnapshot === 'object') {
+      knowledgeGraphSnapshot = result.knowledgeGraphSnapshot;
+    }
+    if (result && Array.isArray(result.knowledgeGraphProjects)) {
+      knowledgeGraphProjects = result.knowledgeGraphProjects;
+    }
+    if (result && result.memoryTaskSummaries && typeof result.memoryTaskSummaries === 'object') {
+      memoryTaskSummaries = result.memoryTaskSummaries;
+    }
+    if (result && result.knowledgeGraphSnapshotsByProject && typeof result.knowledgeGraphSnapshotsByProject === 'object') {
+      knowledgeGraphSnapshotsByProject = result.knowledgeGraphSnapshotsByProject;
+    }
+    if (result && result.knowledgeGraphAnswerResult && typeof result.knowledgeGraphAnswerResult === 'object') {
+      knowledgeGraphAnswerResult = result.knowledgeGraphAnswerResult;
+    }
+    if (result && Array.isArray(result.memoryRelatedToTask)) {
+      memoryRelatedToTask = result.memoryRelatedToTask;
     }
     if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
       Object.assign(transcriptSeeds, result.transcriptSeeds);

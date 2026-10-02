@@ -1,8 +1,5 @@
-import { execFile, exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../utility-process/off-main-exec';
 
-const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 
 /**
  * Run `candidatePath --version` and return { stdout, stderr }.

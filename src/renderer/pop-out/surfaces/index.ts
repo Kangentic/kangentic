@@ -4,6 +4,7 @@ import { changesSurface } from './changes-surface';
 import { changesFileSurface } from './changes-file-surface';
 import { browserSurface } from './browser-surface';
 import { monitorSurface } from './monitor-surface';
+import { knowledgeGraphSurface } from './knowledge-graph-surface';
 
 // Side-effect registration: importing this module (once, from PopOutSurfaceRoot)
 // populates the surface registry before any pop-out window's getSurface() call.
@@ -12,3 +13,4 @@ registerSurface(changesSurface);
 registerSurface(changesFileSurface);
 registerSurface(browserSurface);
 registerSurface(monitorSurface);
+registerSurface(knowledgeGraphSurface);

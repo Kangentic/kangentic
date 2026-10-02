@@ -162,6 +162,8 @@ instead of letting three platform builds run and skip every upload.
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push to main, PRs | Typecheck, unit tests, UI tests |
+| `package-smoke.yml` | PRs touching packaging, the pty host, the retrieval worker or their clients; `workflow_dispatch` | `npm run package` on Windows, macOS (ad-hoc signed) and Linux, then `scripts/package-smoke.mjs` runs the packaged app: a terminal, a Knowledge Graph read, a user's quit, and a fail on any crash or fallback log line. Not a required check |
+| `macos-spawn-helper.yml` | PRs touching the spawn-helper, its gates or `package-lock.json` | Compiles and proves Kangentic's macOS spawn-helper on a real Mac. Not a required check |
 | `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret is absent, create one draft Release, build + sign on all 3 platforms into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) |
 
 ### CI Build Matrix
@@ -197,6 +199,7 @@ Test the packaged app locally before releasing:
 | Command | What it does |
 |---------|-------------|
 | `npm run make` | Creates platform installers in `out/make/` |
+| `npm run package`, then `node scripts/package-smoke.mjs` | Runs the unpacked app in `out/` isolated (scratch data, user data and project) and checks a terminal, a Knowledge Graph read and a clean quit, as the `package-smoke` workflow does. Run the package with `KANGENTIC_SENTRY_TOKEN=` and `SENTRY_AUTH_TOKEN=` empty, or the build uploads symbols |
 | `npm run publish -- --dry-run` | Builds installers + simulates publishing (no upload) |
 | `npm run publish -- --from-dry-run` | Uploads previously dry-run artifacts |
 

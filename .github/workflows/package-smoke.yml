@@ -1,0 +1,125 @@
+name: Package smoke
+
+# Packages the app on Windows, macOS and Linux exactly as `npm run package`
+# does locally (electron-builder --dir: no installer, nothing published), then
+# runs scripts/package-smoke.mjs against the result. The script launches the
+# packaged app isolated, runs a terminal (the pty host), reads the Knowledge
+# Graph snapshot (the retrieval worker), quits the way a user does, and fails
+# on any log line saying a forked process crashed or fell back.
+#
+# Every other tier starts the app from the repo, so before this workflow a
+# packaged build first ran on macOS and Linux on the release matrix, after the
+# tag existed. The afterPack gates (build/afterPack.js) run here too, on all
+# three platforms: they load each forked process's native modules from the
+# unpacked tree before the fuses flip.
+#
+# macOS: electron-builder skips signing on a pull request, and an unsigned
+# arm64 binary whose fuses were flipped after packing is killed at launch. So
+# this signs ad-hoc (`mac.identity: "-"`, no certificate) and allows it on pull
+# requests with CSC_FOR_PULL_REQUEST. The job holds no secrets, which is what
+# electron-builder's warning about that variable is about. build/afterSign.js
+# then runs its spawn-helper gate on the hardened-runtime binary and skips
+# notarization (no Apple credentials).
+#
+# Path-filtered and deliberately NOT a required check, like
+# macos-spawn-helper.yml: ci.yml runs at its 21-job concurrency ceiling (see the
+# note at the top of that file), so these three jobs queue rather than fail
+# when they overlap a CI run. The filter covers what decides whether a packaged
+# build launches: the packaging config and scripts, the forked processes'
+# entries and their clients, and the code they share.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'electron-builder.yml'
+      - 'build/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/build.js'
+      - 'scripts/copy-external-scripts.js'
+      - 'scripts/rebuild-native.js'
+      - 'scripts/package-smoke.mjs'
+      - 'src/main/pty/host/**'
+      - 'src/main/pty/spawn/**'
+      - 'src/main/pty/shutdown/**'
+      - 'src/main/shutdown.ts'
+      - 'src/main/retrieval/worker/**'
+      - 'src/main/retrieval/retrieval-client.ts'
+      - 'src/main/retrieval/vec-support.ts'
+      - 'src/main/retrieval/vec-extension.ts'
+      - 'src/main/utility-process/**'
+      - 'src/main/shared/**'
+      - 'src/main/db/database.ts'
+      - 'src/main/config/paths.ts'
+      - '.github/workflows/package-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Package smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            package: npm run package -- --publish never
+            smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+          - os: windows-latest
+            package: npm run package -- --publish never
+            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+          - os: macos-latest
+            package: npm run package -- --publish never --config.mac.identity=-
+            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install dependencies (npm ci)
+        run: npm ci
+      # Sentry tokens empty on purpose: a local-shaped build, and build.js
+      # prints that it skipped the symbol upload.
+      - name: Package (electron-builder --dir)
+        shell: bash
+        run: ${{ matrix.package }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          KANGENTIC_SENTRY_TOKEN: ''
+          SENTRY_AUTH_TOKEN: ''
+          CSC_FOR_PULL_REQUEST: 'true'
+      - name: Verify the ad-hoc signature (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(out/mac*/Kangentic.app)
+          if [ ${#apps[@]} -ne 1 ]; then
+            echo "::error::Expected one out/mac*/Kangentic.app, found ${#apps[@]}."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+          echo "Signature verified on ${apps[0]}."
+      - name: Run the packaged app
+        shell: bash
+        run: ${{ matrix.smoke }}
+      - name: Upload the smoke scratch on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-smoke-${{ matrix.os }}
+          path: ${{ runner.temp }}/package-smoke
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

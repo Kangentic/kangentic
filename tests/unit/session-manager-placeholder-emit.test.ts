@@ -41,10 +41,9 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 import type { Session } from '../../src/shared/types';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
-import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
+import type { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import type { FirstOutputTracker } from '../../src/main/pty/lifecycle/first-output-tracker';
-import type { ResizeManager } from '../../src/main/pty/lifecycle/resize-manager';
 import type { SessionFileManager } from '../../src/main/pty/lifecycle/session-file-manager';
 import type { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manager';
 
@@ -196,17 +195,17 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     } as ManagedSession);
 
     const privateManager = manager as unknown as {
-      bufferManager: PtyBufferManager;
+      host: PtyHostClient;
       telemetry: SessionTelemetry;
       firstOutputTracker: FirstOutputTracker;
-      resizeManager: ResizeManager;
       sessionFiles: SessionFileManager;
       sessionIdManager: SessionIdManager;
     };
-    const bufferRemoveSpy = vi.spyOn(privateManager.bufferManager, 'removeSession');
+    // The ring, the transcript, the host's first-output latch and the redraw
+    // filter's state live in the pty host; one removeSession drops them all.
+    const hostPostSpy = vi.spyOn(privateManager.host, 'post');
     const telemetryRemoveSpy = vi.spyOn(privateManager.telemetry, 'removeSession');
     const firstOutputRemoveSpy = vi.spyOn(privateManager.firstOutputTracker, 'removeSession');
-    const resizeRemoveSpy = vi.spyOn(privateManager.resizeManager, 'removeSession');
     const sessionFilesRemoveSpy = vi.spyOn(privateManager.sessionFiles, 'removeSession');
     const sessionIdRemoveSpy = vi.spyOn(privateManager.sessionIdManager, 'removeSession');
 
@@ -218,10 +217,9 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
 
     expect(placeholder).not.toBeNull();
     expect(placeholder!.status).toBe('suspended');
-    expect(bufferRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
+    expect(hostPostSpy).toHaveBeenCalledWith({ type: 'removeSession', sessionId: exitedSessionId });
     expect(telemetryRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(firstOutputRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
-    expect(resizeRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(sessionFilesRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
     expect(sessionIdRemoveSpy).toHaveBeenCalledWith(exitedSessionId);
   });

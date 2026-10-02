@@ -110,6 +110,7 @@ describe('assertVendorChunksLazy', () => {
     // recharts chunk exists but is NOT referenced by the entry's imports, so
     // step (b) passes and the walk reaches the monaco scan.
     writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
     writeAsset('chunk-with-monaco.js', 'some code ... editorViewZones ... more code\n');
     writeManifest({
       'src/renderer/index.tsx': {
@@ -128,6 +129,7 @@ describe('assertVendorChunksLazy', () => {
 
   it('(d) throws "gone blind" when no chunk anywhere contains a monaco marker', () => {
     writeAsset('entry-abc123.js', 'plain entry code, no vendor markers\n');
+    writeAsset('three-def456.js');
     writeAsset('recharts-xyz789.js');
     writeManifest({
       'src/renderer/index.tsx': {
@@ -142,6 +144,7 @@ describe('assertVendorChunksLazy', () => {
 
   it('(e) falls back to the index.html check when the manifest is missing, and throws if it references the recharts chunk', () => {
     writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
     // No .vite/manifest.json written at all.
     writeIndexHtml('<html><body><script type="module" src="./assets/recharts-xyz789.js"></script></body></html>');
 
@@ -152,6 +155,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('entry-abc123.js', 'plain entry code, no vendor markers\n');
     // recharts chunk exists but the entry does not statically import it.
     writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
     // A monaco-bearing chunk exists (proves the marker scan is not blind)
     // but is likewise not in the entry's static closure - only reachable via
     // a dynamic import, exactly the shape a correctly lazy-split build
@@ -170,5 +174,51 @@ describe('assertVendorChunksLazy', () => {
     });
 
     expect(() => assertVendorChunksLazy(tempDir)).not.toThrow();
+  });
+
+  it('(g) throws when no three-*.js chunk exists in assets/', () => {
+    // three is the most exposed of the three lazy vendors: PopOutKnowledgeGraphRoot is
+    // statically reachable from the entry via the pop-out surface registry, so
+    // the ONLY thing keeping three lazy is that it goes through
+    // LazyKnowledgeGraph. A missing named chunk means that check cannot run.
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeManifest({
+      'src/renderer/index.tsx': {
+        file: 'assets/entry-abc123.js',
+        isEntry: true,
+        imports: [],
+      },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/No three-\*\.js chunk/);
+  });
+
+  it('(h) throws when the three chunk is in the entry STATIC import closure', () => {
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeManifest({
+      'src/renderer/index.tsx': {
+        file: 'assets/entry-abc123.js',
+        isEntry: true,
+        // Reached one hop in, which is the realistic shape: the pop-out surface
+        // registry is statically imported, and a root under it imports the
+        // scene directly instead of through LazyKnowledgeGraph.
+        imports: ['popout-root-key'],
+      },
+      'popout-root-key': {
+        file: 'assets/popout-root.js',
+        imports: ['three-chunk-key'],
+      },
+      'three-chunk-key': {
+        file: 'assets/three-def456.js',
+        imports: [],
+      },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/STATIC import closure/);
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/three-def456\.js/);
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyKnowledgeGraph/);
   });
 });

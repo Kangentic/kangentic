@@ -68,7 +68,12 @@ class MockSessionManager extends EventEmitter {
   }
 
   emitOutput(id: string): void {
+    this.emit('output-seen', id);
     this.emit('data-tap', id, 'x');
+  }
+
+  subscribeDataTap(): () => void {
+    return () => undefined;
   }
 }
 

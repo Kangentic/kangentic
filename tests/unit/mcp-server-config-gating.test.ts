@@ -60,7 +60,8 @@ vi.mock('../../src/devtools/mcp/register', () => ({ registerDevtoolsMcpTools: vi
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { buildConfiguredMcpServer } from '../../src/main/agent/mcp-http-server';
+import { buildAnswerMcpServer, buildConfiguredMcpServer, parseMcpRequestPath } from '../../src/main/agent/mcp-http-server';
+import { appendAnswerCaller, isAnswerCaller } from '../../src/main/agent/mcp-http/caller-url';
 import { buildServerInstructions } from '../../src/main/agent/mcp-http/server-instructions';
 import { PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
@@ -161,6 +162,38 @@ describe('project-selector description dedup', () => {
     const instructions = buildServerInstructions(makeResolver());
     expect(instructions).toContain('PROJECT ROUTING RULE');
     expect(instructions).toContain("X's backlog");
+  });
+});
+
+describe('buildAnswerMcpServer - a Knowledge Graph answer run sees one tool', () => {
+  // The probes that qualified each answering CLI used a one-tool server. The
+  // real one carries create, move and delete tools, and several CLIs cannot be
+  // limited to one MCP tool from outside (Cursor's --force approves every call;
+  // OpenCode called an MCP tool without asking). So the server decides.
+  it('lists exactly kangentic_search', async () => {
+    const server = buildAnswerMcpServer(makeResolver());
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'guard', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    await client.close();
+    await server.close();
+
+    expect(tools.map((tool) => tool.name)).toEqual(['kangentic_search']);
+  });
+
+  it('is what an answer URL routes to, and nothing else is', () => {
+    // The URL an answer run is handed must parse back to a caller the server
+    // recognizes, or the one-tool server is never selected.
+    const url = appendAnswerCaller('http://127.0.0.1:1/mcp/p1', 'chat-7');
+    const parsed = parseMcpRequestPath(new URL(url).pathname);
+    expect(parsed).toEqual({ projectId: 'p1', callerSessionId: 'answer-chat-7' });
+    expect(isAnswerCaller(parsed?.callerSessionId)).toBe(true);
+
+    // A task session's own caller id, and no caller at all, keep the full server.
+    expect(isAnswerCaller('0f3c2a1e-session-id')).toBe(false);
+    expect(isAnswerCaller(undefined)).toBe(false);
   });
 });
 

@@ -9,15 +9,17 @@ import { relaunchApp, devRestartFileFrom } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
+import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
-import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
 import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
+import { registerSeedKnowledgeGraphDevIpc } from '../devtools/main/seed-knowledge-graph';
+import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-knowledge-graph-real';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -74,14 +76,14 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
-import { setProjectDbInitializer } from './db/database';
+import { retrievalClient } from './retrieval/retrieval-client';
+import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
-import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed, isEmbeddedBrowserPermissionAllowed } from './permission-policy';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
@@ -207,6 +209,7 @@ if (__KANGENTIC_DEV__) {
     getIpcContext: () => getOptionalIpcContext() ?? null,
     getInspectionServerEnabled: () => safeReadDeveloperFlag('previewInspectionServer'),
     getEvalEnabled: () => safeReadDeveloperFlag('previewEvalEnabled'),
+    getStallProfilerEnabled: () => safeReadDeveloperFlag('stallProfiler'),
   });
 }
 
@@ -908,6 +911,10 @@ if (!isEphemeral && !isE2ETest) {
   }
 }
 
+// Before any PTY exists: node-pty's Windows kill would otherwise fork a second
+// Kangentic.exe, which lands in the 'second-instance' handler above.
+skipConsoleListHelper();
+
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
 let mcpServerHandle: McpHttpServerHandle | null = null;
@@ -1433,10 +1440,6 @@ const createWindow = () => {
           // registered in ephemeral preview, the one place its safety guard
           // (preview-projects root) has clones to operate on.
           registerSeedGitChangesDevIpc();
-          // Seed-embedding-backlog dev IPC for the TestHarness "Seed Embedding
-          // Backlog" button - a realistic pending-chunk count for exercising the
-          // central embedding engine's drain loop under sustained real-worker load.
-          registerSeedEmbeddingBacklogDevIpc(getOptionalIpcContext);
           // Seed-large-conversation dev IPC for the TestHarness "Seed Large
           // Conversation" button - a throwaway task/session backed by a real
           // synthetic multi-thousand-turn Claude transcript file, for
@@ -1447,6 +1450,13 @@ const createWindow = () => {
           // real capture repositories, so the usage dashboard has rich charts
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
+          // The TestHarness "Seed Knowledge Graph" button: the REAL-index mirror
+          // (the parent project's actual conversations, titles and vectors), and
+          // the synthetic cluster corpus it falls back to on a machine with no
+          // real index. Either can leave its chunks pending for the embedding
+          // drain instead of writing vectors.
+          registerSeedKnowledgeGraphRealDevIpc(getOptionalIpcContext);
+          registerSeedKnowledgeGraphDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"
@@ -1486,7 +1496,7 @@ const createWindow = () => {
       // prior session - the engine's drain loop is alive but stays parked on
       // an empty dirty-set until something marks this project dirty, and nothing
       // else does for THIS specific path (getStatus()'s self-heal only fires if
-      // the user happens to open Quick Find or Settings -> Memory).
+      // the user happens to open Settings -> Knowledge Graph).
       //
       // This call site fires exactly ONCE per app launch (preloadPromise is a
       // one-shot IIFE inside createWindow, structurally separate from the
@@ -1617,10 +1627,11 @@ Menu.setApplicationMenu(
 app.whenReady().then(async () => {
   mark('app_ready');
 
-  // Load the sqlite-vec extension into every project DB as it opens (after
-  // migrations). Registered before any project opens so the semantic search
-  // layer is available; a load failure degrades to lexical-only.
-  setProjectDbInitializer(loadVecExtension);
+  // sqlite-vec is loaded by the retrieval worker alone, the only process that
+  // reads or writes the index. While the worker is up it also checkpoints the
+  // project databases' WAL, and main's own auto-checkpoint is off (see
+  // checkpoint-driver.ts).
+  attachCheckpointDriver();
 
   // Let agent adapters drop per-directory state for a worktree Kangentic just
   // deleted (Codex records directory trust in ~/.codex/config.toml keyed by
@@ -2364,6 +2375,10 @@ function getShutdownDependencies() {
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();
+      // Synchronously kill the retrieval worker (if spawned). Its in-flight
+      // calls reject as unavailable, and an index write it was making is left
+      // for the next open to finish, as a crash mid-write already is.
+      retrievalClient.dispose();
       // Synchronously kill the line-count worker (if spawned); in-flight
       // counts abandon and their callers fall back to inline counting.
       lineCountClient.dispose();

@@ -247,23 +247,7 @@ export async function fetchIfStale(
  */
 export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchAllRemotesOptions): Promise<void> {
   const env = options?.nonInteractive ? nonInteractiveGitEnv() : undefined;
-  let repoIdentityPath = checkPath;
-  try {
-    const commonDirOutput = (
-      await runGitWithTimeout(checkPath, ['rev-parse', '--git-common-dir'], {
-        timeoutMs: PROBE_FETCH_TIMEOUT_MS,
-        env,
-      })
-    ).stdout.trim();
-    if (commonDirOutput) {
-      // `--git-common-dir` can be relative (e.g. ".git"); resolve against the
-      // probed path so worktrees of the same repo share one identity.
-      repoIdentityPath = path.resolve(checkPath, commonDirOutput);
-    }
-  } catch {
-    // Fall back to checkPath: the throttle degrades to per-worktree, still correct.
-  }
-
+  const repoIdentityPath = await resolveRepoIdentity(checkPath, env);
   const cacheKey = fetchCacheKey(repoIdentityPath, ALL_REMOTES_SENTINEL);
   const lastFetch = fetchCache.get(cacheKey);
   if (lastFetch && Date.now() - lastFetch < FETCH_THROTTLE_MS) {
@@ -295,4 +279,37 @@ export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchA
 
   inFlightAllRemoteFetches.set(cacheKey, fetchPromise);
   return fetchPromise;
+}
+
+/**
+ * The repo identity every worktree of one repository shares: its git common
+ * dir, falling back to `checkPath` when git cannot say. `--git-common-dir` can
+ * be relative (e.g. ".git"), so it resolves against the probed path.
+ */
+async function resolveRepoIdentity(checkPath: string, env: NodeJS.ProcessEnv | undefined): Promise<string> {
+  try {
+    const commonDirOutput = (
+      await runGitWithTimeout(checkPath, ['rev-parse', '--git-common-dir'], {
+        timeoutMs: PROBE_FETCH_TIMEOUT_MS,
+        env,
+      })
+    ).stdout.trim();
+    if (commonDirOutput) return path.resolve(checkPath, commonDirOutput);
+  } catch {
+    // Fall back to checkPath: the throttle degrades to per-worktree, still correct.
+  }
+  return checkPath;
+}
+
+/**
+ * When the repo that owns `checkPath` last completed a fetch of all remotes,
+ * or null if it has not this session. Every caller of `fetchAllRemotesIfStale`
+ * stamps the same entry whichever worktree it passed (opening the Changes
+ * panel, the Done check, the drag prefetch, the scheduler itself), because the
+ * key is the shared git common dir. The auto-fetch scheduler reads this to
+ * count its 5 minutes from the last fetch anyone made, not from its own.
+ */
+export async function lastAllRemotesFetchAt(checkPath: string): Promise<number | null> {
+  const repoIdentityPath = await resolveRepoIdentity(checkPath, nonInteractiveGitEnv());
+  return fetchCache.get(fetchCacheKey(repoIdentityPath, ALL_REMOTES_SENTINEL)) ?? null;
 }

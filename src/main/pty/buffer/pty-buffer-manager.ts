@@ -325,6 +325,10 @@ interface PtyBufferManagerCallbacks {
    *  post-boot geometry re-assert on it. Fires on EVERY entry (a TUI can
    *  leave and re-enter); the listener's own arming makes repeats no-ops. */
   onAltScreenEnter?(sessionId: string): void;
+  /** Fired when the stream leaves the alternate screen (a TUI exiting, or an
+   *  RIS). With `onAltScreenEnter` it lets a process that does not own this
+   *  buffer (main, while the pty host owns it) mirror the current state. */
+  onAltScreenExit?(sessionId: string): void;
 }
 
 interface BufferState {
@@ -561,6 +565,8 @@ export class PtyBufferManager {
       updateModeState(state, combined);
       if (!wasInAltScreen && state.inAltScreen) {
         this.callbacks.onAltScreenEnter?.(sessionId);
+      } else if (wasInAltScreen && !state.inAltScreen) {
+        this.callbacks.onAltScreenExit?.(sessionId);
       }
       // The TUI-takeover clear of a fresh session: the first NORMAL-buffer
       // full clear PRECEDED by printable output (ConPTY's escape-only startup
@@ -1441,5 +1447,10 @@ export class PtyBufferManager {
     const state = this.buffers.get(sessionId);
     if (!state) return null;
     return { pendingBytes: state.buffer.length, scrollbackBytes: state.scrollback.length };
+  }
+
+  /** Every session with a ring, for diagnostics. */
+  sessionIds(): string[] {
+    return [...this.buffers.keys()];
   }
 }

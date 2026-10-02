@@ -4,7 +4,7 @@
  * (e.g. `git.initScript`), not by the top-level config key (`git`).
  *
  * Nearly every setting lives under a nested parent, so a top-level-key bucket would silence a
- * whole tab after its first failure: a failed `git.worktreesEnabled` would suppress a DIFFERENT
+ * whole tab after its first failure: a failed `git.autoFetch` would suppress a DIFFERENT
  * setting under the same `git` key (`git.initScript`) failing moments later, which is the exact
  * silence the per-setting cooldown exists to remove (Sentry DESKTOP-1C). This mirrors
  * settings-write-failure-toast.spec.ts's shape, but drives two DIFFERENT leaves under the SAME
@@ -47,7 +47,7 @@ test.describe('settings write failure toast - per-leaf cooldown', () => {
       // Both settings below write under the SAME top-level `git` key. Reverting
       // settingCooldownKey to `Object.keys(partial)[0]` would bucket BOTH of these to
       // "git", so the second failure would be silently suppressed by the first's cooldown.
-      await page.getByTestId('setting-row-git.worktreesEnabled').click();
+      await page.getByTestId('setting-row-git.autoFetch').click();
       await expect(failureToasts(page)).toHaveCount(1, { timeout: 5000 });
 
       const initScript = page.getByTestId('setting-row-git.initScript').locator('input');

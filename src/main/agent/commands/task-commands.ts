@@ -383,22 +383,24 @@ export const handleUpdateTask: CommandHandler = (
   context: CommandContext,
 ): CommandResponse => {
   const taskId = params.taskId as string;
-  const newTitle = params.title as string | null;
-  const newDescription = params.description as string | null;
+  // Every field gated on `!== null` below is normalized to null, so an omitted
+  // key reads the same as the explicit `null` the MCP tool layer forwards,
+  // matching handleCreateTask. A caller that omits one (a direct handler call,
+  // a devtools command, a mobile-bridge payload) otherwise passes the gate as
+  // `undefined`: the title became the string 'undefined', and an omitted
+  // priority wrote NaN, which SQLite stores as NULL and the NOT NULL column
+  // refuses, failing the whole update.
+  const newTitle = (params.title as string | null | undefined) ?? null;
+  const newDescription = (params.description as string | null | undefined) ?? null;
   const newDescriptionEdits = (params.descriptionEdits ?? null) as DescriptionEdit[] | null;
   const newAppendDescription = (params.appendDescription ?? null) as string | null;
-  // Normalized to null so an omitted key reads the same as the explicit `null`
-  // the MCP tool layer forwards, matching handleCreateTask. Without it a caller
-  // that passes neither key (a direct handler call, or a mobile-bridge payload
-  // that omits them) writes the literal string 'undefined' into pr_url and NaN
-  // into pr_number, since `undefined !== null` passes the gates below.
   const newPrUrl = (params.prUrl as string | null | undefined) ?? null;
   const newPrNumber = (params.prNumber as number | null | undefined) ?? null;
-  const newAgent = params.agent as string | null;
-  const newPriority = params.priority as number | null;
-  const newLabels = params.labels as string[] | null;
-  const newBaseBranch = params.baseBranch as string | null;
-  const newUseWorktree = params.useWorktree as boolean | null;
+  const newAgent = (params.agent as string | null | undefined) ?? null;
+  const newPriority = (params.priority as number | null | undefined) ?? null;
+  const newLabels = (params.labels as string[] | null | undefined) ?? null;
+  const newBaseBranch = (params.baseBranch as string | null | undefined) ?? null;
+  const newUseWorktree = (params.useWorktree as boolean | null | undefined) ?? null;
   const newModel = params.model as string | null | undefined;
   const newEffort = params.effort as string | null | undefined;
   const newPermissionMode = params.permissionMode as PermissionMode | null | undefined;

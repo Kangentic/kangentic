@@ -1,8 +1,9 @@
-import { FolderInput } from 'lucide-react';
+import { FolderInput, FolderOpen } from 'lucide-react';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useProjectRelocation } from '../../../hooks/useProjectRelocation';
-import { SettingRow, INPUT_CLASS } from '../shared';
+import { INPUT_CLASS } from '../shared';
+import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 /**
@@ -29,35 +30,42 @@ export function GeneralTab() {
   });
 
   return (
-    <>
+    <div className="space-y-4">
       {project && (
-        <SettingRow {...settingProps('project.location')}>
-          <div className="flex items-center gap-2">
-            {/* `INPUT_CLASS` rather than a hand-rolled shell: this is read-only,
-                but it is still a value FIELD sitting in a row with a button, and
-                it was the last control left on the pre-unification `bg-surface`
-                + `border-edge` pairing. Borrowing the shared class means it
-                cannot drift again. The focus utilities in it are inert on a div. */}
-            <div
-              className={`${INPUT_CLASS} flex-1 min-w-0 truncate`}
-              title={project.path}
-              data-testid="project-location-path"
-            >
-              {project.path}
+        <SettingsCard
+          icon={<FolderOpen size={16} />}
+          label="Project"
+          description="Where this project lives on disk."
+          searchIds={['project.location']}
+        >
+          <CardRow {...settingProps('project.location')}>
+            <div className="flex items-center gap-2">
+              {/* `INPUT_CLASS` rather than a hand-rolled shell: this is read-only,
+                  but it is still a value FIELD sitting in a row with a button, and
+                  it was the last control left on the pre-unification `bg-surface`
+                  + `border-edge` pairing. Borrowing the shared class means it
+                  cannot drift again. The focus utilities in it are inert on a div. */}
+              <div
+                className={`${INPUT_CLASS} flex-1 min-w-0 truncate`}
+                title={project.path}
+                data-testid="project-location-path"
+              >
+                {project.path}
+              </div>
+              <button
+                type="button"
+                onClick={() => requestMove(project)}
+                data-testid="project-location-move"
+                className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-edge-input text-fg-muted hover:text-fg hover:border-edge-hover transition-colors"
+              >
+                <FolderInput size={14} />
+                <span>Move...</span>
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => requestMove(project)}
-              data-testid="project-location-move"
-              className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-edge-input text-fg-muted hover:text-fg hover:border-edge-hover transition-colors"
-            >
-              <FolderInput size={14} />
-              <span>Move...</span>
-            </button>
-          </div>
-        </SettingRow>
+          </CardRow>
+        </SettingsCard>
       )}
       {relocationDialog}
-    </>
+    </div>
   );
 }

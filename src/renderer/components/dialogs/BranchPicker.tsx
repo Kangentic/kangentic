@@ -194,7 +194,7 @@ export function BranchPicker({
       // its edge, so an outline is clipped on every side. Without the ring the
       // shell's `focus-within:border-accent` lights up identically for the name
       // input and this button alike, so a keyboard user cannot tell which has
-      // focus. Same pattern as `CompactToggleList`.
+      // focus.
       className={`flex w-full max-w-[170px] shrink-0 cursor-pointer items-center gap-1.5 bg-surface-control/40 px-3 text-xs transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
         open ? 'text-accent-fg' : 'text-fg-secondary'
       }`}

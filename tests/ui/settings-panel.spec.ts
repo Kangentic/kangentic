@@ -110,7 +110,7 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Behavior' }).click();
     await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
-    await expect(page.locator('text=When Max Sessions Reached')).toBeVisible();
+    await expect(page.getByText('When max sessions are reached', { exact: true })).toBeVisible();
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
     await expect(page.locator('text=Auto-Resume Agents on Restart')).toBeVisible();
     // Idle Timeout moved here from the Agent tab: it is a flat, agent-agnostic
@@ -126,12 +126,12 @@ test.describe('Settings Panel', () => {
   test('shows Board tab with width and config sync settings, and no longer Animations', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Board' }).click();
-    await expect(page.locator('text=Column Width')).toBeVisible();
+    await expect(page.getByText('Column width', { exact: true })).toBeVisible();
     // Config Sync section: moved here from Behavior - it is board data
     // reconciliation (kangentic.json), not session/window behavior.
     await expect(page.locator('text=Auto-Apply Board Config Changes')).toBeVisible();
-    await expect(page.getByText('Terminal Panel', { exact: true })).toBeVisible();
-    await expect(page.getByText('Status Bar', { exact: true })).toBeVisible();
+    await expect(page.getByText('Terminal panel', { exact: true })).toBeVisible();
+    await expect(page.getByText('Status bar', { exact: true })).toBeVisible();
     // Animations LEFT for the Performance tab: it toggles .no-motion on <html>,
     // so it is app-wide rendering and never was board chrome. Asserted absent
     // here as well as present there, so a half-done move fails on one side.
@@ -154,11 +154,11 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
     await expect(page.locator('text=Card Density')).toBeVisible();
-    // Card Preview select (cardPreview) - goes RED if its SettingRow is removed
-    // from TaskTab.tsx, while leaving all other assertions green.
+    // Card Preview choice (cardPreview) - goes RED if its row is removed from
+    // TaskTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Card Preview')).toBeVisible();
-    await expect(page.getByTestId('setting-row-cardPreview').locator('select')).toHaveValue('agent-latest-message');
-    // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
+    await expect(page.getByTestId('card-preview-choice').getByRole('radio', { name: 'Latest' })).toHaveAttribute('aria-checked', 'true');
+    // Ticket Numbers toggle row (showTaskNumbers) - goes RED if its CardToggleRow is
     // removed from TaskTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Ticket Numbers')).toBeVisible();
     await expect(page.getByText('Context Bar')).toBeVisible();
@@ -175,7 +175,7 @@ test.describe('Settings Panel', () => {
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Changes' }).click();
     await expect(page.locator('text=Default Diff Scope')).toBeVisible();
     await expect(page.locator('text=Ignore Whitespace')).toBeVisible();
-    // Collapse Unchanged Regions toggle row - goes RED if the SettingToggleRow
+    // Collapse Unchanged Regions toggle row - goes RED if the CardToggleRow
     // is removed from ChangesTab.tsx, while leaving all other assertions green.
     await expect(page.locator('text=Collapse Unchanged Regions')).toBeVisible();
     await expect(page.locator('text=File Sort')).toBeVisible();
@@ -216,13 +216,13 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('Agent Crash notification dropdown writes to notifications.desktop/toasts.onAgentCrash in global config, not the project override', async () => {
+  test('Agent Crash notification choice writes to notifications.desktop/toasts.onAgentCrash in global config, not the project override', async () => {
     // NotifyChannelRow (NotificationsTab.tsx) is the write path shared by all
     // four Events rows; Agent Crash is the row this change added, so it is
     // the natural row to pin the shared behavior against. The structural
     // parity checks in settings-tab-scope-parity.test.ts (e/f/g) are pure
     // regex scans over NotificationsTab.tsx - they never execute the
-    // component, so none of them prove the dropdown actually writes the
+    // component, so none of them prove the choice actually writes the
     // config path it claims, that it writes to GLOBAL config (not the
     // project override, per settings-tab-scope.md), or that it leaves the
     // other three event rows' values untouched. This is UI-tier coverage
@@ -232,8 +232,8 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Notifications' }).click();
 
-    const row = page.locator('[data-testid="setting-row-notifications.onAgentCrash"]');
-    const select = row.locator('select');
+    // A four-option segmented control (Off / Desktop / Toast / Both).
+    const option = (value: string) => page.getByTestId(`notify-channel-onAgentCrash-${value}`);
 
     type NotificationsConfig = {
       notifications: {
@@ -247,24 +247,24 @@ test.describe('Settings Panel', () => {
     };
 
     // mock-electron-api.js seeds onAgentCrash true on both channels, so the
-    // dropdown starts on "Both". Capture the full baseline (including the
+    // choice starts on "Both". Capture the full baseline (including the
     // three sibling event rows and the Delivery numbers) before mutating,
     // so a shallow-merge bug that wipes siblings has something to be caught
     // against.
     const baseline = await readGlobalNotifications();
     expect(baseline.desktop.onAgentCrash).toBe(true);
     expect(baseline.toasts.onAgentCrash).toBe(true);
-    await expect(select).toHaveValue('both');
+    await expect(option('both')).toHaveAttribute('aria-checked', 'true');
 
-    // "Desktop only": desktop stays true, toasts flips to false. Asserting
-    // both channels (not just one) rules out a handler that sets both from
-    // a single-channel selection.
-    await select.selectOption('desktop');
+    // "Desktop": desktop stays true, toasts flips to false. Asserting both
+    // channels (not just one) rules out a handler that sets both from a
+    // single-channel selection.
+    await option('desktop').click();
     await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
     await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(false);
-    // Read direction: the Select must reflect the new committed value, not
+    // Read direction: the control must reflect the new committed value, not
     // just the write succeeding underneath it.
-    await expect(select).toHaveValue('desktop');
+    await expect(option('desktop')).toHaveAttribute('aria-checked', 'true');
 
     const afterWrite = await readGlobalNotifications();
     expect(afterWrite.desktop.onAgentIdle).toBe(baseline.desktop.onAgentIdle);
@@ -282,7 +282,7 @@ test.describe('Settings Panel', () => {
     expect((projectOverrides as { notifications?: { desktop?: { onAgentCrash?: boolean } } } | null)?.notifications?.desktop?.onAgentCrash).toBeUndefined();
 
     // Restore so later tests in this shared-page file are unaffected.
-    await select.selectOption('both');
+    await option('both').click();
     await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
     await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(true);
 
@@ -295,18 +295,18 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
 
-    await expect(page.getByText('Terminal shell used for agent sessions')).toBeVisible();
-    await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
-    await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
-    await expect(page.getByText('Cursor Style')).toBeVisible();
+    await expect(page.getByTestId('setting-row-terminal.shell')).toBeVisible();
+    await expect(page.getByText('Font size', { exact: true })).toBeVisible();
+    await expect(page.getByText('Font family', { exact: true })).toBeVisible();
+    await expect(page.getByText('Cursor style', { exact: true })).toBeVisible();
     // Word delete on Backspace (terminal.backspaceSendsCtrlH) - goes RED if the
-    // SettingToggleRow is removed from TerminalTab.tsx, while leaving all other
+    // CardToggleRow is removed from TerminalTab.tsx, while leaving all other
     // assertions here green.
     await expect(page.getByText('Word delete on Backspace')).toBeVisible();
     // Scrollback Lines was removed (the live xterm scrollback cap is now a
     // fixed internal constant, TERMINAL_SCROLLBACK_LINES in useTerminal.ts,
     // not a user setting). Pin the row's absence by testid so a re-added
-    // SettingRow/registry entry is caught even if the label text changes.
+    // row or registry entry is caught even if the label text changes.
     await expect(page.locator('[data-testid="setting-row-terminal.scrollbackLines"]')).toHaveCount(0);
 
     await closeSettings();
@@ -542,9 +542,10 @@ test.describe('Settings Panel', () => {
   test('Task tab Context Bar section exposes Rate Limits toggle', async () => {
     await openSettings();
     await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Task', exact: true }).click();
-    await expect(page.getByText('Context Bar')).toBeVisible();
-    await expect(page.getByText('Rate Limits', { exact: true })).toBeVisible();
-    await expect(page.getByText('Claude 5h / weekly quota bars')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Context bar', exact: true })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Rate limits', exact: true })).toBeVisible();
+    // The row's description sits behind its info icon.
+    await expect(page.getByRole('button', { name: 'About Rate limits: Claude 5h / weekly quota bars' })).toBeVisible();
     await closeSettings();
   });
 
@@ -586,17 +587,17 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git' }).click();
 
-    await expect(page.locator('text=Enable Worktrees')).toBeVisible();
-    await expect(page.locator('text=Default Base Branch')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
+    await expect(page.getByText('Default base branch', { exact: true })).toBeVisible();
 
     await closeSettings();
   });
 
-  test('toggling Evaluate branch policies persists git.prEvaluateBranchPolicies to the project override', async () => {
-    // DEFAULT_CONFIG.git.prEvaluateBranchPolicies is false (src/shared/types.ts).
+  test('toggling Auto-refresh PRs persists git.prAutoRefresh to the project override', async () => {
+    // DEFAULT_CONFIG.git.prAutoRefresh is true (src/shared/types.ts).
     // Project creation seeds a full overridable-settings snapshot (see
     // pickOverridableSubset), so this shared-page project already carries an
-    // explicit `false` for this key - the switch starts unchecked either way.
+    // explicit `true` for this key - the switch starts checked either way.
     // GitTab is a PROJECT tab: the write goes through updateProject -> the
     // project override, not global config. This pins the actual write path,
     // not just the UI copy - settings-tab-scope-parity.test.ts only proves the
@@ -609,24 +610,24 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git' }).click();
 
-    const toggle = page.getByRole('switch', { name: 'Evaluate branch policies' });
-    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    const toggle = page.getByRole('switch', { name: 'Auto-refresh PRs' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
 
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
     await expect.poll(async () => {
       const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
-      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
-    }, { timeout: 3000 }).toBe(true);
+      return (overrides as { git?: { prAutoRefresh?: boolean } } | null)?.git?.prAutoRefresh;
+    }, { timeout: 3000 }).toBe(false);
 
     // Restore so later tests in this shared-page file are unaffected (this
     // file resets nothing between tests, unlike browser-settings.spec.ts).
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
     await expect.poll(async () => {
       const overrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
-      return (overrides as { git?: { prEvaluateBranchPolicies?: boolean } } | null)?.git?.prEvaluateBranchPolicies;
-    }, { timeout: 3000 }).toBe(false);
+      return (overrides as { git?: { prAutoRefresh?: boolean } } | null)?.git?.prAutoRefresh;
+    }, { timeout: 3000 }).toBe(true);
 
     await closeSettings();
   });
@@ -813,9 +814,9 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'MCP Server' }).click();
 
-    // Banner with toggle should be visible
-    await expect(page.getByText('Kangentic MCP Server')).toBeVisible();
-    await expect(page.getByText('Give agents tools to interact with your board')).toBeVisible();
+    // The card header: its switch and one line saying what the server does
+    await expect(page.getByRole('switch', { name: 'MCP server' })).toBeVisible();
+    await expect(page.getByText('Give agents tools to work with your board.')).toBeVisible();
 
     // No user-tunable task-creation cap anymore (it is now a fixed internal backstop).
     await expect(page.getByText('Max Tasks Per Session')).toHaveCount(0);
@@ -833,7 +834,8 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Delete Task')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible();
     await expect(page.getByText('List Backlog')).toBeVisible();
-    await expect(page.getByText('Search', { exact: true })).toBeVisible();
+    // Scoped to the tool list: "Search" also appears elsewhere in the panel.
+    await expect(page.getByTestId('mcp-tool-list').getByText('Search', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
     await expect(page.getByText('Session History')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Browser Automation', exact: true })).toBeVisible();
@@ -870,8 +872,8 @@ test.describe('Settings Panel', () => {
       };
     });
 
-    // How It Works section
-    await expect(page.getByText('How It Works')).toBeVisible();
+    // "How it works" is the card header's info tooltip now, not a section.
+    await expect(page.getByRole('button', { name: /^About MCP server: Each agent session gets a local MCP server/ })).toBeVisible();
 
     await closeSettings();
   });
@@ -879,12 +881,12 @@ test.describe('Settings Panel', () => {
   test('reopens to the last viewed tab after closing', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git', exact: true }).click();
-    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
     await closeSettings();
 
     // Reopening returns to Git, not the first tab.
     await openSettings();
-    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
 
     // Reset to General so later tests start from a known tab.
     await page.getByRole('button', { name: 'General', exact: true }).click();
@@ -967,8 +969,8 @@ test.describe('Settings Search', () => {
     await searchInput.fill('font');
 
     // Should show Terminal tab group header and font settings
-    await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
-    await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
+    await expect(page.getByText('Font size', { exact: true })).toBeVisible();
+    await expect(page.getByText('Font family', { exact: true })).toBeVisible();
 
     // Should NOT show unrelated settings like Theme
     await expect(page.getByTestId('setting-row-theme')).not.toBeVisible();
@@ -982,9 +984,9 @@ test.describe('Settings Search', () => {
     await searchInput.fill('context bar');
 
     // Context bar toggles should be visible
-    await expect(page.getByText('Detected shell name')).toBeVisible();
-    await expect(page.getByText('Agent CLI version')).toBeVisible();
-    await expect(page.getByText('Usage bar and percentage')).toBeVisible();
+    await expect(page.getByTestId('setting-row-contextBar.showShell')).toBeVisible();
+    await expect(page.getByTestId('setting-row-contextBar.showVersion')).toBeVisible();
+    await expect(page.getByTestId('setting-row-contextBar.showProgressBar')).toBeVisible();
 
     await closeSettings();
   });
@@ -997,7 +999,7 @@ test.describe('Settings Search', () => {
     await expect(page.getByTestId('setting-row-theme')).toBeVisible();
 
     // Should NOT show terminal settings
-    await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
+    await expect(page.getByTestId('setting-row-terminal.fontSize')).toHaveCount(0);
 
     await closeSettings();
   });
@@ -1010,7 +1012,7 @@ test.describe('Settings Search', () => {
     // Every theme's name is a keyword on the Theme row, so the row is the one hit.
     await expect(page.getByTestId('setting-row-theme')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Theme 1' })).toBeVisible();
-    await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
+    await expect(page.getByTestId('setting-row-terminal.fontSize')).toHaveCount(0);
 
     await closeSettings();
   });
@@ -1020,7 +1022,7 @@ test.describe('Settings Search', () => {
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('worktree');
 
-    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
     await expect(page.getByText('Auto-cleanup')).toBeVisible();
 
     await closeSettings();
@@ -1042,14 +1044,14 @@ test.describe('Settings Search', () => {
 
     // Search for something
     await searchInput.fill('font');
-    await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
+    await expect(page.getByText('Font size', { exact: true })).toBeVisible();
 
     // Clear search
     await searchInput.fill('');
 
     // Should return to normal view (General tab is default but font search
     // was in Terminal only, so auto-switch should land on Terminal)
-    await expect(page.getByText('Terminal shell used for agent sessions')).toBeVisible();
+    await expect(page.getByTestId('setting-row-terminal.shell')).toBeVisible();
 
     await closeSettings();
   });
@@ -1100,7 +1102,7 @@ test.describe('Settings Search', () => {
     await expect(searchInput).toBeVisible();
 
     await searchInput.fill('worktree');
-    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
 
     await closeSettings();
   });

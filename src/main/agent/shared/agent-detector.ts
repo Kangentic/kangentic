@@ -296,7 +296,18 @@ export class AgentDetector {
       try {
         output = await execVersion(candidatePath);
       } catch (error) {
-        return { ok: false, reason: 'probe-failed', detail: describeProbeError(error) };
+        // A timeout says the binary is slow, not that it is the wrong one, and
+        // every agent is probed at once at boot: a CLI answering in 1.3 s alone
+        // timed out at 5 s among the rest and vanished from the agent list.
+        // So once more with room, by which point the rest have mostly finished.
+        if (!isProbeTimeout(error)) {
+          return { ok: false, reason: 'probe-failed', detail: describeProbeError(error) };
+        }
+        try {
+          output = await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS);
+        } catch (retryError) {
+          return { ok: false, reason: 'probe-failed', detail: describeProbeError(retryError) };
+        }
       }
       const raw = output.stdout.trim() || output.stderr.trim();
       if (!raw) return { ok: false, reason: 'unrecognized-output', detail: 'empty output' };
@@ -332,6 +343,17 @@ function describeProbeFailure(probe: Extract<VersionProbe, { ok: false }>): stri
     case 'unrecognized-output':
       return 'its --version output did not match this agent (likely a different tool publishing the same name)';
   }
+}
+
+/** The second, lone `--version` attempt after a timeout. */
+const SLOW_PROBE_TIMEOUT_MS = 15_000;
+
+/** Whether `execVersion` rejected because its timeout killed the probe. */
+function isProbeTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const killed: unknown = Object.getOwnPropertyDescriptor(error, 'killed')?.value;
+  const signal: unknown = Object.getOwnPropertyDescriptor(error, 'signal')?.value;
+  return killed === true && typeof signal === 'string';
 }
 
 /**

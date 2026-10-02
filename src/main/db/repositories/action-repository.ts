@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Action, ActionCreateInput, ActionUpdateInput, SwimlaneTransition } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /** Raw row shape returned by better-sqlite3 for the actions table. */
 interface ActionRow {
@@ -101,7 +102,7 @@ export class ActionRepository {
   }
 
   setTransitions(fromId: string, toId: string, actionIds: string[]): void {
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       this.db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? AND to_swimlane_id = ?').run(fromId, toId);
       const insert = this.db.prepare(
         'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'

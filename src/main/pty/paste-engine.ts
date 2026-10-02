@@ -360,6 +360,9 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         if (offIdx > onIdx) pasteModeOff = true;
         else if (onIdx > offIdx) pasteModeOff = false;
       };
+      // The pty host forwards this session's raw output for the whole call:
+      // the paste-mode monitor, the settle and the evidence wait all read it.
+      const releaseTap = sessionManager.subscribeDataTap(sessionId);
       sessionManager.on('data-tap', monitorPasteMode);
 
       try {
@@ -436,6 +439,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         throw caughtError;
       } finally {
         sessionManager.off('data-tap', monitorPasteMode);
+        releaseTap();
         clearTimeout(timeoutTimer);
         disposeLink();
       }

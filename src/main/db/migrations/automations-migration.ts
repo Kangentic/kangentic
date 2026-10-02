@@ -4,6 +4,7 @@ import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../../shared/task-template-var
 import { isRetiredActionType } from '../../../shared/automation-manifest';
 import type { AutomationConfig, AutomationTrigger, AutomationType, AutoCommandMode } from '../../../shared/types';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
+import { writeTransaction } from '../transaction';
 
 /**
  * One-way migration from named actions plus transitions to per-column
@@ -301,7 +302,7 @@ export function runAutomationsMigration(db: Database.Database): AutomationsMigra
   );
   const flag = db.prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)');
 
-  db.transaction(() => {
+  writeTransaction(db, () => {
     for (const automation of plan.automations) {
       insert.run(
         randomUUID(),

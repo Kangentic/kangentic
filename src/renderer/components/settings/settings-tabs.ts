@@ -20,9 +20,7 @@
 export type SettingsTabTier = 'core' | 'advanced' | 'other';
 
 /** Sidebar header text for each tier. 'core' is intentionally absent: it is
- *  the first, unlabeled group directly under the System header, mirroring
- *  the unsectioned-first-group convention used within individual tabs (e.g.
- *  Terminal's shell/font rows before the "Colors" SectionHeader). Privacy and
+ *  the first, unlabeled group directly under the System header. Privacy and
  *  Developer share the 'other' tier rather than each getting a single-tab
  *  tier of their own: a tier header that just repeats its lone tab's name
  *  reads as redundant. 'other' also avoids implying Privacy is a power-user
@@ -76,14 +74,16 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // Animations lived under Board > Window despite toggling .no-motion on
   // <html>, and graphics acceleration (Sentry DESKTOP-18/DESKTOP-W) had
   // nowhere at all. Core rather than Advanced because Advanced is opt-in
-  // subsystems (Dictation, Memory, MCP Server, Agent Browser, Mobile), and
+  // subsystems (Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile), and
   // because a recovery toast sends users straight here.
   { id: 'performance', label: 'Performance', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // -- Shared settings: Advanced tier --
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
-  { id: 'memory', label: 'Memory', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
+  // Every card here serves the Knowledge Graph; the index also feeds Quick Find
+  // and `kangentic_search`.
+  { id: 'knowledgeGraph', label: 'Knowledge Graph', category: 'system', tier: 'advanced', tooltip: 'The Knowledge Graph and the index it reads. Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'mobile', label: 'Mobile Devices', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },

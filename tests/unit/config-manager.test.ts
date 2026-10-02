@@ -632,6 +632,161 @@ describe('Config Manager -- terminal.scrollbackLines global migration', () => {
   });
 });
 
+describe('Config Manager - retired git refresh keys', () => {
+  // The refresh intervals became the `prAutoRefresh` / `autoFetch` switches (both
+  // default ON). The pure rewrite is tested in legacy-git-keys.test.ts; these pin
+  // that load() and loadProjectOverrides() call it, hand it the right "explicit"
+  // object, and persist the result. The cases use values that differ from the
+  // defaults, so a migration that never ran cannot pass by accident.
+  function projectOverridesPath(projectDir: string): string {
+    return path.join(projectDir, '.kangentic', 'config.json');
+  }
+
+  function writeProjectOverrides(projectDir: string, overrides: Record<string, unknown>): void {
+    fs.mkdirSync(path.join(projectDir, '.kangentic'), { recursive: true });
+    fs.writeFileSync(projectOverridesPath(projectDir), JSON.stringify(overrides));
+  }
+
+  it('reads a saved "off" PR interval as the switch off, and drops the retired keys from the file', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      git: { prRefreshIntervalMinutes: null, prEvaluateBranchPolicies: true },
+    }));
+
+    const configManager = await createConfigManager();
+    const config = configManager.load();
+
+    expect(config.git.prAutoRefresh).toBe(false);
+    expect(config.git).not.toHaveProperty('prRefreshIntervalMinutes');
+    expect(config.git).not.toHaveProperty('prEvaluateBranchPolicies');
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.git.prAutoRefresh).toBe(false);
+    expect(raw.git).not.toHaveProperty('prRefreshIntervalMinutes');
+    expect(raw.git).not.toHaveProperty('prEvaluateBranchPolicies');
+  });
+
+  it('reads a live interval as on and a zero interval as off, and drops both retired keys', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      git: { autoFetchIntervalMinutes: 10, prRefreshIntervalMinutes: 0 },
+    }));
+
+    const configManager = await createConfigManager();
+    const config = configManager.load();
+
+    expect(config.git.autoFetch).toBe(true);
+    // Zero minutes was never a live interval, so it reads as off.
+    expect(config.git.prAutoRefresh).toBe(false);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.git).not.toHaveProperty('autoFetchIntervalMinutes');
+    expect(raw.git).not.toHaveProperty('prRefreshIntervalMinutes');
+  });
+
+  it('keeps a switch the file already set over the retired interval beside it', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      git: { autoFetchIntervalMinutes: 5, autoFetch: false },
+    }));
+
+    const configManager = await createConfigManager();
+    const config = configManager.load();
+
+    expect(config.git.autoFetch).toBe(false);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.git.autoFetch).toBe(false);
+    // The retired key goes even though it lost: the file is rewritten clean.
+    expect(raw.git).not.toHaveProperty('autoFetchIntervalMinutes');
+  });
+
+  it('rewrites a project override once: the interval becomes a switch and the retired key is gone', async () => {
+    const projectDir = path.join(tmpDir, 'proj-git-keys');
+    writeProjectOverrides(projectDir, {
+      git: { autoFetchIntervalMinutes: null, prRefreshIntervalMinutes: 10, worktreesEnabled: true },
+    });
+
+    const configManager = await createConfigManager();
+    const overrides = configManager.loadProjectOverrides(projectDir);
+
+    expect(overrides?.git).toEqual({ autoFetch: false, prAutoRefresh: true, worktreesEnabled: true });
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect(raw.git).toEqual({ autoFetch: false, prAutoRefresh: true, worktreesEnabled: true });
+    // What the schedulers read: the project's "off" beats the global default (on).
+    expect(configManager.getEffectiveConfig(projectDir).git.autoFetch).toBe(false);
+  });
+
+  it('does not rewrite a project override that already uses the switches', async () => {
+    const projectDir = path.join(tmpDir, 'proj-git-keys-clean');
+    writeProjectOverrides(projectDir, { git: { autoFetch: false } });
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(projectOverridesPath(projectDir), backdated, backdated);
+    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+
+    const configManager = await createConfigManager();
+    configManager.loadProjectOverrides(projectDir);
+
+    expect(fs.statSync(projectOverridesPath(projectDir)).mtimeMs).toBe(before);
+  });
+});
+
+describe('Config Manager - retired memory block', () => {
+  // The `memory` block became `knowledgeGraph`, and two keys took their Settings
+  // rows' names. The pure move is tested in legacy-memory-keys.test.ts; these pin
+  // that load() reads the FILE (not the merged copy, which already carries the
+  // new block's defaults) and persists the result. The defaults differ from every
+  // value below (`enabled` false, `localModel` 'bge-base', `indexingEnabled` true).
+
+  it('moves a retired memory block onto knowledgeGraph under the renamed keys, and drops the block from the file', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      memory: { semanticEnabled: true, embeddingModel: 'bge-small', indexingEnabled: false },
+    }));
+
+    const configManager = await createConfigManager();
+    const config = configManager.load();
+
+    expect(config.knowledgeGraph.enabled).toBe(true);
+    expect(config.knowledgeGraph.localModel).toBe('bge-small');
+    expect(config.knowledgeGraph.indexingEnabled).toBe(false);
+    expect(config).not.toHaveProperty('memory');
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw).not.toHaveProperty('memory');
+    expect(raw.knowledgeGraph.enabled).toBe(true);
+    expect(raw.knowledgeGraph.localModel).toBe('bge-small');
+    expect(raw.knowledgeGraph.indexingEnabled).toBe(false);
+  });
+
+  it('keeps a knowledgeGraph value the file already set over the retired one', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      memory: { semanticEnabled: false, embeddingModel: 'bge-small' },
+      knowledgeGraph: { enabled: true },
+    }));
+
+    const configManager = await createConfigManager();
+    const config = configManager.load();
+
+    // `enabled` was set explicitly, so the retired `semanticEnabled: false`
+    // loses. The model had no current key in the file, so the retired one lands.
+    expect(config.knowledgeGraph.enabled).toBe(true);
+    expect(config.knowledgeGraph.localModel).toBe('bge-small');
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw).not.toHaveProperty('memory');
+    expect(raw.knowledgeGraph.enabled).toBe(true);
+  });
+
+  it('does not bring the block back on a later load of the rewritten file', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      memory: { semanticEnabled: true, embeddingModel: 'bge-small' },
+    }));
+    const firstManager = await createConfigManager();
+    firstManager.load();
+
+    const secondManager = await createConfigManager();
+    const config = secondManager.load();
+
+    expect(config).not.toHaveProperty('memory');
+    expect(config.knowledgeGraph.enabled).toBe(true);
+    expect(config.knowledgeGraph.localModel).toBe('bge-small');
+  });
+});
+
 describe('Config Manager -- windowLightDismiss `single` to `focused` default migration', () => {
   // The default flipped from 'single' to 'focused' when click-outside close became a
   // denylist. save() writes the whole merged blob and load() lets a persisted value

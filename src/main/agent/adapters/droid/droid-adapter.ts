@@ -5,6 +5,7 @@ import { droidTranscriptFilePath, parseDroidTranscript } from './transcript-pars
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -232,6 +233,38 @@ export class DroidAdapter implements AgentAdapter {
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
+    });
+  }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * `droid exec` is already non-interactive and makes no edits without an
+   * explicit auto level, so there is no separate read-only flag to pass (the
+   * probe's file write and shell command both ended "insufficient permission").
+   *
+   * The prompt is PIPED, which `droid exec` documents. An answer prompt runs to
+   * about 50k characters, past the Windows command-line limit, so the
+   * positional form `summarize` uses cannot carry one.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: ['exec', '-o', 'text', ...(model ? ['--model', model] : [])],
+      prompt,
+      cwd,
     });
   }
 

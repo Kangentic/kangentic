@@ -47,13 +47,13 @@ test.describe('Hotkeys settings tab', () => {
     await openHotkeys();
     const tab = page.getByTestId('hotkeys-tab');
     await expect(page.getByTestId('os-hotkey-banner')).toBeVisible();
-    // Group headers (SectionHeader renders the label text). Scoped to the tab so
-    // the sidebar's "Terminal" tab button doesn't collide.
-    await expect(tab.getByText('General', { exact: true })).toBeVisible();
-    await expect(tab.getByText('Task Detail', { exact: true })).toBeVisible();
-    await expect(tab.getByText('Terminal', { exact: true })).toBeVisible();
+    // One card per group, titled by its heading. Scoped to the tab so the
+    // sidebar's "Terminal" tab button doesn't collide.
+    await expect(tab.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
+    await expect(tab.getByRole('heading', { name: 'Task detail', exact: true })).toBeVisible();
+    await expect(tab.getByRole('heading', { name: 'Terminal', exact: true })).toBeVisible();
     // Browser shortcuts are registered but hidden from the panel.
-    await expect(tab.getByText('Browser', { exact: true })).toHaveCount(0);
+    await expect(tab.getByRole('heading', { name: 'Browser', exact: true })).toHaveCount(0);
     await closeSettings();
   });
 

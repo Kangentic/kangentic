@@ -35,7 +35,7 @@ import {
   setProjectDefaultAgent,
   waitForScrollback,
   waitForRunningSession,
-  waitForNoRunningSession,
+  waitForTaskSessionNotRunning,
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
@@ -184,7 +184,9 @@ test.describe('Agent suspend/resume pipeline', () => {
       }
 
       await moveTaskIpc(page, taskId, swimlaneIds.done);
-      await waitForNoRunningSession(page);
+      // This task's session, not the whole app: the earlier cases' resumed
+      // sessions are still running in this shared app.
+      await waitForTaskSessionNotRunning(page, taskId);
 
       // Wait until move-to-Done has committed AND the session-id was
       // persisted before unarchiving, so resume picks up the captured UUID.

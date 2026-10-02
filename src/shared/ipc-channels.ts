@@ -24,9 +24,10 @@ export const IPC = {
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
-  DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
   DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
   DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
+  DEV_SEED_KNOWLEDGE_GRAPH: 'dev:seedKnowledgeGraph',
+  DEV_SEED_KNOWLEDGE_GRAPH_REAL: 'dev:seedKnowledgeGraphReal',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',
@@ -548,14 +549,46 @@ export const IPC = {
   TRANSCRIPT_GET: 'transcript:get',
   TRANSCRIPT_LIST_SESSIONS: 'transcript:listSessions',
 
-  // Conversation-memory semantic-layer status (Smart-mode palette UI).
-  MEMORY_STATUS: 'memory:status',
-  // Spawn + init the embedding worker ahead of the first Smart query (Quick
-  // Find open); fire-and-forget, embeds nothing.
-  MEMORY_PREWARM: 'memory:prewarm',
-  // Purge the current project's conversation index and re-run the backfill sweep
-  // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
-  MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
+  // Conversation-memory semantic-layer status (the Knowledge Graph settings tab).
+  KNOWLEDGE_GRAPH_STATUS: 'knowledgeGraph:status',
+  // Spawn + init the embedding worker ahead of the first question (Knowledge
+  // Graph open); fire-and-forget, embeds nothing. With a chat, also starts the
+  // answering agent's warm session.
+  KNOWLEDGE_GRAPH_PREWARM: 'knowledgeGraph:prewarm',
+  /** Fire-and-forget: a chat's warm answering session is no longer needed. */
+  KNOWLEDGE_GRAPH_END_CHAT: 'knowledgeGraph:graphEndChat',
+  // The Index card's Rebuild: read every source again in every project,
+  // keeping what is indexed, and rewrite the task summaries written with
+  // another agent or model.
+  KNOWLEDGE_GRAPH_REBUILD_INDEX: 'knowledgeGraph:rebuildIndex',
+  // What that Rebuild would spend (summaries to rewrite), read before it asks.
+  KNOWLEDGE_GRAPH_REBUILD_PLAN: 'knowledgeGraph:rebuildPlan',
+  // One task's summary, for the Knowledge Graph's selected conversation. Null
+  // while summaries are switched off or the task has none.
+  KNOWLEDGE_GRAPH_TASK_SUMMARY: 'knowledgeGraph:taskSummary',
+  /** Cheap read of the cached Knowledge Graph projection plus its coverage and
+   *  index counts. Never runs the projection pass - see graph-service. */
+  KNOWLEDGE_GRAPH_SNAPSHOT: 'knowledgeGraph:graphSnapshot',
+  /** Every project with its indexed conversation count, for the Knowledge
+   *  Graph's Projects picker. An index-only count per project, so it stays in
+   *  single-digit milliseconds across a machine's projects. */
+  KNOWLEDGE_GRAPH_PROJECTS: 'knowledgeGraph:graphProjects',
+  /** Ask for a background refresh of one project's projection. Returns
+   *  immediately; completion arrives via KNOWLEDGE_GRAPH_CHANGED. */
+  KNOWLEDGE_GRAPH_REFRESH: 'knowledgeGraph:graphRefresh',
+  /** Push: a projection pass finished for a project. Declared in that surface's
+   *  POP_OUT_SURFACES `channels` too, or a detached window never updates. */
+  KNOWLEDGE_GRAPH_CHANGED: 'knowledgeGraph:graphChanged',
+  KNOWLEDGE_GRAPH_ANSWER: 'knowledgeGraph:graphAnswer',
+  /** Push: progress on an answer in flight - text as the agent writes it, a
+   *  tool call as it starts, and a terminal `done`. Keyed by the renderer's
+   *  `requestId` so a late delta from an abandoned question is dropped.
+   *  Declared in the surface's POP_OUT_SURFACES `channels` too, or a detached
+   *  window never sees a word. */
+  KNOWLEDGE_GRAPH_ANSWER_STREAM: 'knowledgeGraph:graphAnswerStream',
+  /** Earlier conversations semantically near a task, for proactive recall in
+   *  task detail. The index finding you, rather than waiting to be searched. */
+  KNOWLEDGE_GRAPH_RELATED_TO_TASK: 'knowledgeGraph:relatedToTask',
 
   // Diagnostics (product, all builds): renderer console + window error
   // forwarding to main, where they are persisted to .kangentic/logs/.

@@ -209,7 +209,6 @@ function makeContext(overrides: Partial<{
       writeRaw: vi.fn(),
       findLiveSessionByTaskId: vi.fn(() => undefined),
       hasSessionForTask: vi.fn(() => false),
-      setTranscriptRepository: vi.fn(),
       on: vi.fn(),
       off: vi.fn(),
       emit: vi.fn(),

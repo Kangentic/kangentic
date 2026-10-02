@@ -1,3 +1,4 @@
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { PATHS, ensureDirs } from '../config/paths';
 import { runGlobalMigrations, runProjectMigrations } from './migrations';
@@ -6,10 +7,65 @@ let globalDb: Database.Database | null = null;
 const projectDbs = new Map<string, Database.Database>();
 
 /**
+ * How this process opens project databases. Main opens, creates and migrates
+ * them (the default). The retrieval worker (`src/main/retrieval/worker/`) opens
+ * a second connection to a database main has already opened: the file must
+ * exist, and it runs no migrations, which are unversioned check-then-ALTER
+ * steps that two processes opening one file at once would race on ("duplicate
+ * column"). Main also names the projects directory, since a worker is forked
+ * with no arguments and so cannot see a `--data-dir` override.
+ */
+interface ProjectDbAccess {
+  projectsDir: string | null;
+  migrate: boolean;
+}
+
+let projectDbAccess: ProjectDbAccess = { projectsDir: null, migrate: true };
+
+/**
+ * The WAL auto-checkpoint this process's project connections use, in pages,
+ * or null for SQLite's default (1000). SQLite runs an auto-checkpoint on the
+ * connection that commits, so on main it puts checkpoint I/O and its sync on
+ * the main thread. While the retrieval worker is up it checkpoints for both
+ * processes (PASSIVE, which never blocks a writer), and main sets 0 here.
+ */
+let walAutoCheckpointPages: number | null = null;
+
+/** How large a WAL file is left after a checkpoint resets it, so one grown
+ *  in a burst of writes shrinks again. */
+const JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
+
+function applyWalAutoCheckpoint(db: Database.Database): void {
+  try {
+    db.pragma(`wal_autocheckpoint = ${walAutoCheckpointPages ?? 1000}`);
+  } catch {
+    // A connection that cannot take it keeps checkpointing as it did.
+  }
+}
+
+/** Set the auto-checkpoint on every open project connection and on those
+ *  opened later. */
+export function setWalAutoCheckpoint(pages: number | null): void {
+  walAutoCheckpointPages = pages;
+  for (const db of projectDbs.values()) applyWalAutoCheckpoint(db);
+}
+
+export function configureProjectDbAccess(access: ProjectDbAccess): void {
+  projectDbAccess = access;
+}
+
+function projectDbPath(projectId: string): string {
+  return projectDbAccess.projectsDir
+    ? path.join(projectDbAccess.projectsDir, `${projectId}.db`)
+    : PATHS.projectDb(projectId);
+}
+
+/**
  * Optional per-project-DB initializer, run once per connection right after
- * migrations. Injected (rather than imported) so the sqlite-vec loader - which
- * pulls electron + the native extension - stays out of this module's static
- * graph, which the unit tests traverse. Registered from `src/main/index.ts`.
+ * migrations. Injected (rather than imported) so the sqlite-vec loader stays
+ * out of this module's static graph, which main, the pty host and the unit
+ * tests all share. Registered only by the retrieval worker
+ * (`retrieval/worker/retrieval-worker.ts`): main never loads sqlite-vec.
  */
 let projectDbInitializer: ((db: Database.Database) => void) | null = null;
 
@@ -61,6 +117,14 @@ export function getGlobalDb(): Database.Database {
       // Kangentic instances sharing a config dir (the main checkout plus a
       // non-ephemeral worktree dev run) now both open this file eagerly at
       // boot, so the WAL switch is exactly where they can collide.
+      //
+      // `synchronous` is deliberately NOT set, here or below. better-sqlite3
+      // compiles SQLite with SQLITE_DEFAULT_WAL_SYNCHRONOUS=1, so a connection
+      // in WAL mode already runs at NORMAL (thirty commits 0.4 ms, against 26 ms
+      // at FULL). The switch to WAL fails silently where the filesystem cannot
+      // support it (it returns the old mode, it does not throw), and such a
+      // database keeps the FULL default, the safe setting for a rollback
+      // journal. An explicit NORMAL would take that fallback away.
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
@@ -92,15 +156,17 @@ export function resetGlobalDb(): void {
 export function getProjectDb(projectId: string): Database.Database {
   let db = projectDbs.get(projectId);
   if (!db) {
-    ensureDirs();
-    db = new Database(PATHS.projectDb(projectId));
+    if (projectDbAccess.migrate) ensureDirs();
+    db = new Database(projectDbPath(projectId), { fileMustExist: !projectDbAccess.migrate });
     try {
       // busy_timeout before the WAL switch, for the same reason as the global
       // database above.
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
-      runProjectMigrations(db);
+      db.pragma(`journal_size_limit = ${JOURNAL_SIZE_LIMIT_BYTES}`);
+      applyWalAutoCheckpoint(db);
+      if (projectDbAccess.migrate) runProjectMigrations(db);
       // Load optional extensions (sqlite-vec) after migrations. Never throws:
       // the initializer swallows a load failure and the engine falls back to
       // lexical-only search.
@@ -121,9 +187,22 @@ export function getProjectDb(projectId: string): Database.Database {
 export function closeProjectDb(projectId: string): void {
   const db = projectDbs.get(projectId);
   if (db) {
-    db.close();
     projectDbs.delete(projectId);
+    closeQuietly(db);
   }
+}
+
+/** The project databases this process has open, by id: what a checkpoint pass
+ *  walks. Opens nothing. */
+export function openProjectDbIds(): string[] {
+  return [...projectDbs.keys()];
+}
+
+/** A project's database only if this process already has it open. Never opens,
+ *  creates or migrates one, so a caller that must not resurrect a deleted
+ *  project's file (a late transcript flush) can use it safely. */
+export function getOpenProjectDb(projectId: string): Database.Database | null {
+  return projectDbs.get(projectId) ?? null;
 }
 
 export function closeAll(): void {

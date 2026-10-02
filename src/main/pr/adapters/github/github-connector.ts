@@ -367,15 +367,15 @@ function classifyRollup(rollup: GhStatusCheckRollupItem[] | undefined): RollupVe
  * outstanding is blocked by something the bypass is not being asked about -
  * which is why an already-approved BEHIND PR does not fold either.
  *
- * Never one probe per open PR per sweep, which is why the setting can default
- * on where `prEvaluateBranchPolicies` defaults off. What bounds it is the
- * review-plus-green gate, NOT the merge-state value: admitting BEHIND beside
- * BLOCKED does not add a population, it stops the same PRs dropping out of the
- * gate each time a sibling lands. The probe is uncached, so the cost is one
- * `gh api graphql` per qualifying linked PR per sweep
- * (`git.prRefreshIntervalMinutes`, default 5; the 60 s `RESOLVE_TTL_MS`
- * coalesce is shorter than any selectable interval, so it does not lower that
- * rate). If that rate ever matters, the mitigation is a per-base-ref memo of
+ * Never one probe per open PR per check, which is why the setting can default
+ * on. What bounds it is the review-plus-green gate, NOT the merge-state value:
+ * admitting BEHIND beside BLOCKED does not add a population, it stops the same
+ * PRs dropping out of the gate each time a sibling lands. The probe is
+ * uncached, so the cost is one `gh api graphql` per qualifying linked PR per
+ * check: about every 2 minutes per PR with `git.prAutoRefresh` on, inside the
+ * refresh queue's one-call-per-10-s cap (the 60 s `RESOLVE_TTL_MS` coalesce is
+ * shorter than that interval, so it does not lower the rate). If that rate
+ * ever matters, the mitigation is a per-base-ref memo of
  * `requiredStatusCheckContexts`; `viewerCanMergeAsAdmin` is per-PR and would
  * still cost a call.
  */
@@ -688,10 +688,9 @@ export const gitHubPRConnector: PRConnector = {
     return lastMatch;
   },
 
-  // Of the two `options`, only `bypassCountsAsReady` is read here (see
-  // `bypassFor`). `evaluateBranchPolicies` is accepted for contract parity and
-  // ignored: GitHub's verdict already carries policy through `mergeStateStatus`
-  // and `reviewDecision` on the same call, so there is nothing extra to spend.
+  // `options.bypassCountsAsReady` is read in `bypassFor`. Branch policy needs
+  // nothing extra here: GitHub's verdict already carries it through
+  // `mergeStateStatus` and `reviewDecision` on the same call.
   async resolveForBranch(
     repoCwd: string,
     branchName: string,

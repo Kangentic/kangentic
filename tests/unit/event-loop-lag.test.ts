@@ -222,8 +222,8 @@ describe('event-loop-lag monitor', () => {
 
 /**
  * `timeSyncWork` is the attribution half: the drift sampler above says WHEN
- * the loop blocked, and the labelled spans say WHAT. The threshold is 50ms and
- * the ring holds 60 entries. Recording is skipped entirely while the monitor
+ * the loop blocked, and the labelled spans say WHAT. The threshold is 16ms and
+ * the ring holds 200 entries. Recording is skipped entirely while the monitor
  * is not running, which is what keeps a production build at one boolean check.
  */
 describe('timeSyncWork attribution ring', () => {
@@ -263,22 +263,40 @@ describe('timeSyncWork attribution ring', () => {
   it('records a span at or over the threshold with its label, and skips a fast one', async () => {
     const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
       await loadMonitor();
-    // Every clock read advances 30ms: start -> end of one span is 30ms (skipped).
-    stepClock(30);
+    // Every clock read advances 10ms: start -> end of one span is 10ms (skipped).
+    stepClock(10);
     startEventLoopLagMonitor();
     expect(timeSyncWork('fast', () => 'ok')).toBe('ok');
     expect(getEventLoopLagReport().recentSlowSyncWork).toHaveLength(0);
 
-    // Two clock reads per span at 30ms each puts a nested read past the threshold.
     stepClock(60);
     timeSyncWork('slow', () => undefined);
     const report = getEventLoopLagReport();
     stopEventLoopLagMonitor();
-    expect(report.slowSyncThresholdMs).toBe(50);
+    expect(report.slowSyncThresholdMs).toBe(16);
     expect(report.recentSlowSyncWork).toHaveLength(1);
     expect(report.recentSlowSyncWork[0].label).toBe('slow');
     expect(report.recentSlowSyncWork[0].ms).toBe(60);
     expect(report.recentSlowSyncWork[0].at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('counts every span per label, fast ones included, by the duration edges it reached', async () => {
+    const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
+      await loadMonitor();
+    stepClock(10);
+    startEventLoopLagMonitor();
+    timeSyncWork('db:transaction', () => undefined);
+    stepClock(40);
+    timeSyncWork('db:transaction', () => undefined);
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+
+    expect(report.syncWorkByLabel['db:transaction']).toEqual({
+      count: 2,
+      totalMs: 50,
+      maxMs: 40,
+      atLeastMs: { 4: 2, 8: 2, 16: 1, 32: 1, 64: 0, 128: 0, 256: 0 },
+    });
   });
 
   it('still records a span whose work throws, and rethrows it', async () => {
@@ -292,16 +310,46 @@ describe('timeSyncWork attribution ring', () => {
     expect(report.recentSlowSyncWork.map((span) => span.label)).toEqual(['throwing']);
   });
 
-  it('evicts the oldest span once the ring exceeds 60 entries', async () => {
+  it('evicts the oldest span once the ring exceeds 200 entries', async () => {
     const { startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, getEventLoopLagReport } =
       await loadMonitor();
     stepClock(50);
     startEventLoopLagMonitor();
-    for (let index = 0; index < 61; index++) timeSyncWork(`span-${index}`, () => undefined);
+    for (let index = 0; index < 201; index++) timeSyncWork(`span-${index}`, () => undefined);
     const report = getEventLoopLagReport();
     stopEventLoopLagMonitor();
-    expect(report.recentSlowSyncWork).toHaveLength(60);
+    expect(report.recentSlowSyncWork).toHaveLength(200);
     expect(report.recentSlowSyncWork[0].label).toBe('span-1');
-    expect(report.recentSlowSyncWork[59].label).toBe('span-60');
+    expect(report.recentSlowSyncWork[199].label).toBe('span-200');
+  });
+
+  it('relays slow spans with no monitor running, as a worker does, and counts every span locally', async () => {
+    const { timeSyncWork, recordSyncSpan, relaySlowSyncSpans, getSyncWorkByLabel } = await loadMonitor();
+    const relayed: Array<[string, number]> = [];
+    relaySlowSyncSpans((label, elapsedMs) => relayed.push([label, elapsedMs]));
+    try {
+      stepClock(10);
+      timeSyncWork('fast', () => undefined);
+      stepClock(20);
+      expect(timeSyncWork('graph:vectors', () => 'value')).toBe('value');
+      recordSyncSpan('search:knn', 120);
+      recordSyncSpan('search:fast', 3);
+    } finally {
+      relaySlowSyncSpans(null);
+    }
+    // Only the slow ones cross to main...
+    expect(relayed).toEqual([['graph:vectors', 20], ['search:knn', 120]]);
+    // ...and the worker's own counters hold all of them, for the dev report.
+    const counted = getSyncWorkByLabel();
+    expect(Object.keys(counted).sort()).toEqual(['fast', 'graph:vectors', 'search:fast', 'search:knn']);
+    expect(counted['search:fast']).toMatchObject({ count: 1, maxMs: 3 });
+    expect(counted['graph:vectors'].atLeastMs['16']).toBe(1);
+  });
+
+  it('counts nothing while neither monitoring nor relaying', async () => {
+    const { timeSyncWork, getSyncWorkByLabel } = await loadMonitor();
+    stepClock(20);
+    timeSyncWork('graph:vectors', () => undefined);
+    expect(getSyncWorkByLabel()).toEqual({});
   });
 });

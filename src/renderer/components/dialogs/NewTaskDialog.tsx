@@ -426,6 +426,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               defaultBaseBranch={defaultBaseBranch}
               effectiveWorktree={effectiveWorktree}
               setUseWorktree={setUseWorktree}
+              showWorktree={worktreesEnabled}
               worktreeBlocker={worktreeBlocker}
             />
 

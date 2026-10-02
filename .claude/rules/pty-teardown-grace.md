@@ -33,7 +33,11 @@ session is what `kill()` now gives a young one.
   row and no respawn or reset can cut its grace short. Do not add a direct `pty.kill()` /
   `safeKillPty()` on a session PTY anywhere else, and do not add a caller that knows better
   without the `immediate` option and a reason (the agent-absence sweep is the one that exists:
-  its agent is already gone, and it stamps `exited` at once).
+  its agent is already gone, and it stamps `exited` at once). The PTY itself lives in the pty host
+  ([[pty-host-out-of-process]]): `session.pty` is a `RemotePty` handle, a kill is a command the
+  host carries out, and the grace timer stays on main. The host's own `kill` handling is the one
+  allowlisted `.kill()` in `pty-host-core.ts`, and its `shutdown` kills nothing, so a parked
+  PTY's grace is never cut short there.
 - **A caller that touches the session's cwd or process tree after a kill waits for the process,
   not for the call.** `kill(id)`, then capture `awaitExit(id)`, THEN `remove(id)` (the row must
   still exist when the promise is made), then await it before any `rmSync`, `removeWorktree`, or
@@ -79,5 +83,8 @@ Session PTY teardown in the main process (`src/main/pty/**` and its callers unde
 `src/main/transition-engine/**`, `src/main/agent/**`), the Claude adapter's probe PTY, and the
 Claude adapter's `~/.claude.json` writers. The respawn sibling drain in `session-spawn-flow.ts`
 keeps its direct kill: it only ever finds a row whose `pty` is already null, since every kill path
-nulls it first. Not covered: a dev restart that terminates Electron without `before-quit`, which no
+nulls it first. Two more direct kills in that file kill with no grace for one reason: a spawn
+abandoned because a teardown overtook its host round trip (`abandonCancelledSpawn`), and one
+overtaken by the quit. The host started that PTY one round trip ago, before the agent reaches its
+boot canary. Not covered: a dev restart that terminates Electron without `before-quit`, which no
 app-side code can reach.

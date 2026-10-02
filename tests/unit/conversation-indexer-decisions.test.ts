@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
@@ -157,7 +158,7 @@ function makeFakeDb(state: FakeDbState): Database.Database {
     },
     // better-sqlite3 transaction(fn) returns a callable that runs fn and
     // returns its value; the fake collapses to calling fn directly.
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 
@@ -750,16 +751,17 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
           }
           if (sql.includes('UPDATE memory_chunks SET session_id')) {
             // The diff-upsert's ownership re-point over the untouched leading
-            // prefix: WHERE corpus = ? AND doc_id = ? AND seq < ?.
-            const [sessionId, taskId, corpus, docId, divergence] = args as [
+            // prefix: WHERE corpus = ? AND doc_id = ? AND seq >= ? AND seq < ?.
+            const [sessionId, taskId, corpus, docId, fromSeq, divergence] = args as [
               string | null,
               string | null,
               string,
               string,
               number,
+              number,
             ];
             for (const chunk of state.chunks) {
-              if (chunk.corpus === corpus && chunk.docId === docId && chunk.seq < divergence) {
+              if (chunk.corpus === corpus && chunk.docId === docId && chunk.seq >= fromSeq && chunk.seq < divergence) {
                 chunk.sessionId = sessionId;
                 chunk.taskId = taskId;
               }
@@ -770,7 +772,7 @@ function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 
@@ -920,7 +922,7 @@ function makeSweepFakeDb(state: SweepFakeDbState): Database.Database {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

@@ -1,9 +1,120 @@
 import { ipcMain } from 'electron';
+import { createHash } from 'node:crypto';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
-import type { SearchHit, SearchRequest, MemoryStatus, Project } from '../../../shared/types';
+import { getProjectDb } from '../../db/database';
+import { TaskRepository } from '../../db/repositories/task-repository';
+import { graphService } from '../../retrieval/graph-facade';
+import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
+import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
+import { AnswerSessionError } from '../../agent/shared/answer-session/stdin-json-session';
+import { runCliForChat, stopCliRunsForChat } from '../../agent/shared/cli-print';
+import type { AnswerStreamEvent } from '../../agent/shared/cli-answer';
+import {
+  refPrefixFor,
+  taskRef,
+  type AnswerTaskRow,
+  type AnswerTaskTable,
+} from '../../retrieval/answer-tasks';
+import type { ProjectRelatedWorkTask } from '../../retrieval/related-work';
+import { searchDocKeys, watchAnswerSearches } from '../../agent/mcp-http/answer-search-trace';
+import { estimateTokens } from '../../retrieval/token-estimate';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { broadcast } from '../../pop-out/window-broadcast';
+import { resolveEmbeddingModel } from '../../../shared/embedding-models';
+import { codeIndexOn, taskSummariesOn } from '../../../shared/answer-agent';
+import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory';
+import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
+import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
+import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
+import { findPriorWork, INDEX_RESTARTING, searchConversations } from '../../retrieval/retrieval-queries';
+import { embedQueryTexts } from '../../retrieval/query-vectors';
+import { passageKey, PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
+import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
+import type { PreparedAnswer } from '../../retrieval/worker/answer-prepare';
+import type {
+  SearchHit,
+  SearchRequest,
+  KnowledgeGraphStatus,
+  KnowledgeGraphSnapshotWire,
+  KnowledgeGraphProjectSummary,
+  KnowledgeGraphRebuildPlan,
+  KnowledgeGraphQueryHit,
+  KnowledgeGraphAnswerResult,
+  KnowledgeGraphAnswerContext,
+  KnowledgeGraphAnswerPrewarm,
+  KnowledgeGraphAnswerStreamEvent,
+  KnowledgeGraphRelatedTask,
+  Project,
+} from '../../../shared/types';
+
+/** Earlier turns a follow-up carries. More than this and the prompt pays for
+ *  history the question almost never needs. */
+const HISTORY_TURNS = 3;
+/** How long a question waits for its embedding before searching by keyword alone. */
+const RELATED_EMBED_WAIT_MS = 5_000;
+/** Ask's reads in the retrieval worker: one conversation scan per query vector
+ *  and project (340 to 370 ms each on a large index), so a question across
+ *  several projects runs past the default interactive budget. */
+const ANSWER_PREPARE_TIMEOUT_MS = 30_000;
+
+/** A chat or request id goes into the answer run's MCP URL path
+ *  (`appendAnswerCaller`), so only an id's shape passes. The renderer mints UUIDs. */
+function isCallerSegment(value: unknown): value is string {
+  return typeof value === 'string' && /^[\w-]{1,64}$/.test(value);
+}
+
+/** Characters of the task's title + description used as the recall query.
+ *  Enough to carry the task's meaning; past this the embedding blurs. */
+const RELATED_QUERY_BUDGET = 1200;
+/** Fetched before this task's own conversations are dropped. */
+const RELATED_OVERFETCH = 24;
+/** Shown. Short enough to read at a glance while reading the task. */
+const RELATED_RESULT_COUNT = 5;
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * The chat's warm session under this run, or null when the agent has none.
+ * A prewarm passes the chat's end generation from before it awaited, so a
+ * chat that ended meanwhile gets nothing.
+ */
+function takeAnswerSession(chatId: string, run: AnswerRun, endGeneration?: number): PooledAnswerSession<PrimedAnswerChat> | null {
+  const openSession = run.adapter.openAnswerSession?.bind(run.adapter);
+  if (!openSession) return null;
+  try {
+    return answerSessionPool.take(chatId, run.sessionKey, (directory) => openSession({
+      cliPath: run.cliPath,
+      cwd: run.answerHome,
+      runDirectory: directory,
+      model: run.model,
+      effort: run.effort,
+      retrieval: run.retrieval,
+    }), { endGeneration });
+  } catch (error) {
+    // A session that cannot start costs the warm path, not the answer.
+    console.warn('[knowledge-graph] answer session did not start, answering with a fresh run:', error);
+    return null;
+  }
+}
+
+/**
+ * What a question's task table depends on besides the data: the projects in
+ * scope, whose tickets stand bare, the region granularity, and the map filter.
+ * A follow-up under the same signature reuses its session's table.
+ */
+function answerScopeSignature(
+  projectIds: string[],
+  homeProjectId: string,
+  granularity: string,
+  scopeDocKeys: string[] | null,
+  codeIndexed: boolean,
+): string {
+  const filter = scopeDocKeys ? createHash('sha1').update([...scopeDocKeys].sort().join('\n')).digest('hex') : null;
+  // Whether code is indexed changes the rules the first turn sent, which a
+  // follow-up does not resend.
+  return JSON.stringify([projectIds, homeProjectId, granularity, filter, codeIndexed]);
+}
 
 /**
  * IPC handler for the renderer-side global search palette (Ctrl+Shift+F).
@@ -25,8 +136,8 @@ export function registerSearchHandlers(context: IpcContext): void {
       : allProjects.filter((project) => project.id === request.currentProjectId);
     if (projects.length === 0) return [];
 
-    const memoryConfig = context.configManager.load().memory;
-    const indexingEnabled = memoryConfig?.indexingEnabled !== false;
+    const knowledgeGraphConfig = context.configManager.load().knowledgeGraph;
+    const indexingEnabled = knowledgeGraphConfig?.indexingEnabled !== false;
     // Smart mode adds the semantic/hybrid path; the embedder is null when the
     // semantic layer is off or unavailable, so the search stays lexical.
     const embedder = request.mode === 'smart' ? retrievalService.getEmbedder(context) : null;
@@ -36,29 +147,583 @@ export function registerSearchHandlers(context: IpcContext): void {
       projects,
       includeProjectHits: request.scope === 'all',
       projectsForProjectHits: allProjects,
-      conversationSearch: { enabled: indexingEnabled, embedder },
+      conversationSearch: { enabled: indexingEnabled, embedder, search: searchConversations },
     });
   });
 
-  ipcMain.handle(IPC.MEMORY_STATUS, async (): Promise<MemoryStatus> => {
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_STATUS, async (): Promise<KnowledgeGraphStatus> => {
     return retrievalService.getStatus(context);
   });
 
-  // The Quick Find open is the precursor gesture for a Smart query: spawn +
+  // Opening the Knowledge Graph is the precursor gesture for a question: spawn +
   // init the embedding worker now so the typing that follows covers its cold
-  // start. Fire-and-forget; embeds nothing.
-  ipcMain.on(IPC.MEMORY_PREWARM, () => {
+  // start. Fire-and-forget; embeds nothing. With a chat, the answering agent's
+  // warm session starts too, for an agent that has one. An idle session makes
+  // no model call, so this costs a process and nothing else.
+  ipcMain.on(IPC.KNOWLEDGE_GRAPH_PREWARM, (_event, chat?: KnowledgeGraphAnswerPrewarm) => {
     retrievalService.prewarmEmbedWorker(context);
+    if (!chat || !isCallerSegment(chat.chatId)) return;
+    const homeProjectId = chat.projectId ?? context.currentProjectId;
+    if (!homeProjectId) return;
+    // A pop-out can still hold a deleted project's id, and a warm agent pointed
+    // at it would search a project that is gone.
+    if (!context.projectRepo.list().some((entry) => entry.id === homeProjectId)) return;
+    // Read before the await: a chat that ends while its agent is resolved must
+    // not get a session afterwards.
+    const endGeneration = answerSessionPool.endGeneration(chat.chatId);
+    void resolveAnswerRun(context, homeProjectId, chat.chatId)
+      .then((resolved) => {
+        if (resolved.ok) takeAnswerSession(chat.chatId, resolved.run, endGeneration);
+      })
+      .catch((error: unknown) => console.warn('[knowledge-graph] answer prewarm failed:', error));
+  });
+
+  // The chat's warm session is no longer needed: the chat ended, or its graph
+  // closed. The next question in a kept chat opens a fresh one carrying the
+  // chat so far. A one-shot run still answering for it stops too: the renderer
+  // ends a chat with a turn in flight only on X or a project switch, both of
+  // which clear the thread, so nobody is waiting for that answer. Closing the
+  // graph mid-turn keeps the chat and sends this only once the turn lands.
+  ipcMain.on(IPC.KNOWLEDGE_GRAPH_END_CHAT, (_event, chatId: string) => {
+    if (!isCallerSegment(chatId)) return;
+    answerSessionPool.end(chatId);
+    stopCliRunsForChat(chatId);
+  });
+
+  // The Index card's Rebuild, for every source in every project. Global, like
+  // the tab it lives in, so it takes no project.
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_REBUILD_PLAN, (): Promise<KnowledgeGraphRebuildPlan> => retrievalService.rebuildPlan(context));
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_REBUILD_INDEX, (): Promise<KnowledgeGraphRebuildPlan> => retrievalService.rebuildEverything(context));
+
+  // The selected conversation's task summary, read from the node's OWN project
+  // (the map may show several), and only while summaries are switched on.
+  ipcMain.handle(
+    IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY,
+    async (_event, projectId: string, taskId: string): Promise<string | null> => {
+      if (typeof projectId !== 'string' || typeof taskId !== 'string') return null;
+      if (!context.projectRepo.list().some((entry) => entry.id === projectId)) return null;
+      return retrievalService.taskSummary(context, projectId, taskId);
+    },
+  );
+
+  // A projection pass finishing is pushed rather than polled: the pass can take
+  // a minute on a cold corpus, and KnowledgeGraphTab already polls the index status on an
+  // interval - a second poller for the same subsystem is what this avoids.
+  // `broadcast`, not webContents.send, or a detached pop-out never updates.
+  graphService.setOnChanged((projectId: string) => {
+    if (context.mainWindow.isDestroyed()) return;
+    broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_CHANGED, projectId);
   });
 
   ipcMain.handle(
-    IPC.MEMORY_REBUILD_INDEX,
+    IPC.KNOWLEDGE_GRAPH_SNAPSHOT,
+    async (_event, projectId?: string | null, knownProjectionKey?: string | null): Promise<KnowledgeGraphSnapshotWire | null> => {
+      const resolvedProjectId = projectId ?? context.currentProjectId;
+      if (!resolvedProjectId) return null;
+      // A scope or a pop-out can still hold a deleted project's id, and asking
+      // for its map would only fail.
+      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return null;
+      const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
+      // Read in the retrieval worker, which never runs the pass for it. The map
+      // comes back as JSON, and only when the reader's key is stale; main
+      // passes the string through without parsing it.
+      return graphService.getSnapshotWire(resolvedProjectId, model.modelTag, typeof knownProjectionKey === 'string' ? knownProjectionKey : null);
+    },
+  );
+
+  /**
+   * Ask: find the work a question is about, show it, and have an agent answer.
+   *
+   * The pipeline the user watches:
+   * 1. The answering agent is resolved and checked first, so a question that
+   *    cannot run costs no retrieval.
+   * 2. The related work is found locally (`searchRelatedWork`, well under a
+   *    second) inside the map's filters, and pushed as a `set` event BEFORE the
+   *    agent starts, so the map lights while the CLI is still booting.
+   * 3. The agent reads the whole board, the related work and the chat so far,
+   *    answers in prose, and may search again; each search is pushed as a
+   *    `search` event from the server side of the tool.
+   * 4. The refs it wrote come back as source rows, resolved here because the
+   *    ref-to-task mapping is this table's and nothing else should know it.
+   *
+   * Deliberately NOT routed through `spawnAgent`: this never touches
+   * `executeTransition`, `resumeSuspendedSession` or `sessionManager.spawn`, so
+   * it creates no PTY and no `sessions` row, and needs no spawn-parity allowlist
+   * entry. It is the headless runner auto-name uses (`cli-print.ts`), with the
+   * answer's output shape.
+   */
+  ipcMain.handle(
+    IPC.KNOWLEDGE_GRAPH_ANSWER,
+    async (
+      _event,
+      question: string,
+      projectId?: string | null,
+      // The granularity the user is LOOKING at, so a region named in the answer
+      // is a region they can see. Defaulted rather than required: a caller that
+      // does not care gets the same default the map opens on.
+      granularity = 'balanced',
+      // Minted by the renderer, so deltas from a question the user has already
+      // moved past are dropped rather than appended to the next one. Defaulted
+      // for callers that do not stream (the harness, an older renderer).
+      requestId: string = '',
+      answerContext: KnowledgeGraphAnswerContext = {},
+    ): Promise<KnowledgeGraphAnswerResult> => {
+      try {
+        const trimmed = (question ?? '').trim();
+        if (!trimmed) return { ok: false, reason: 'ask a question first' };
+
+        // The projects the question is asked across: the map's Projects filter
+        // when the renderer sends one, else the one project the call names.
+        const openProjectId = projectId ?? context.currentProjectId;
+        const requestedIds = answerContext.projectIds && answerContext.projectIds.length > 0
+          ? answerContext.projectIds
+          : (openProjectId ? [openProjectId] : []);
+        const registered = context.projectRepo.list();
+        const scopeProjects = requestedIds.flatMap((id) => {
+          const entry = registered.find((candidate) => candidate.id === id);
+          return entry ? [entry] : [];
+        });
+        if (scopeProjects.length === 0) return { ok: false, reason: 'no project open' };
+        const acrossProjects = scopeProjects.length > 1;
+        // Whose tickets stand bare, and whose index a search covers by default:
+        // the open project when it is in scope.
+        const homeProject = scopeProjects.find((entry) => entry.id === openProjectId) ?? scopeProjects[0];
+
+        // The chat id as END_CHAT will accept it: a warm session pooled under
+        // an id that check refuses could never be ended.
+        const chatId = isCallerSegment(answerContext.chatId) ? answerContext.chatId : null;
+        // Read before the first await, as the prewarm does: END_CHAT stops only
+        // what exists when it lands, and the searches below can take seconds,
+        // so a chat ended meanwhile must start no session and no paid run.
+        const endGeneration = chatId ? answerSessionPool.endGeneration(chatId) : 0;
+        const chatEnded = (): boolean => chatId !== null && answerSessionPool.endGeneration(chatId) !== endGeneration;
+        const callerChat = [chatId, requestId].find(isCallerSegment) ?? 'oneshot';
+        const resolvedRun = await resolveAnswerRun(context, homeProject.id, callerChat);
+        if (!resolvedRun.ok) return resolvedRun.failure;
+        const { adapter, answerFromContext, cliPath, model: configuredModel, effort, retrieval } = resolvedRun.run;
+
+        // The chat's warm session, when the agent has one. Under the scope its
+        // first turn was asked in, a follow-up reuses that turn's table (the
+        // session already holds it) and sends only what is new; any other
+        // scope, or no primed turn yet, sends the whole prompt.
+        // Source code, when indexed, is searched beside the tasks and handed as
+        // passages; the setting, not what a question finds, decides the rules.
+        const codeIndexed = codeIndexOn(context.configManager.load().knowledgeGraph);
+        const scopeSignature = answerScopeSignature(
+          scopeProjects.map((entry) => entry.id),
+          homeProject.id,
+          granularity,
+          answerContext.scopeDocKeys ?? null,
+          codeIndexed,
+        );
+        let pooled = chatId ? takeAnswerSession(chatId, resolvedRun.run, endGeneration) : null;
+        // A session primed under another scope holds another table. Sending this
+        // one after it would leave two in its context, so it starts over.
+        if (chatId && pooled?.primed && pooled.primed.scopeSignature !== scopeSignature) {
+          answerSessionPool.discard(pooled);
+          pooled = takeAnswerSession(chatId, resolvedRun.run, endGeneration);
+        }
+        let primedTable = pooled?.primed?.table ?? null;
+
+        const takenPrefixes = new Set<string>();
+        // Across projects EVERY ticket carries its project, the open one's too.
+        // With the open project's left bare, an agent read a Kangentic task
+        // about the mobile app as "mobile#432": the prefix looked like a topic.
+        // A ref that always names its project leaves nothing to infer.
+        const projectsInScope = scopeProjects.map((entry) => {
+          const refPrefix = acrossProjects ? refPrefixFor(entry.name, takenPrefixes) : null;
+          if (refPrefix) takenPrefixes.add(refPrefix);
+          return { id: entry.id, name: entry.name, refPrefix };
+        });
+
+        // A desktop edit of a task's text, and a live conversation's latest
+        // changes, reach the index here, for the next question; nothing waits.
+        for (const entry of scopeProjects) retrievalService.refreshRecords(context, entry.id);
+
+        // A follow-up searches the same subject (the earlier questions ride
+        // along) and keeps the tasks the turn before was about, or "of those"
+        // has no referent.
+        const history = (answerContext.history ?? []).slice(-HISTORY_TURNS);
+        const previousTurn = history[history.length - 1];
+        const anchorQuestions = history.map((turn) => turn.question);
+        // Only main embeds (the embed engine lives here), so the question's
+        // vectors go to the worker with the call.
+        const queryVectors = await embedQueryTexts(
+          retrievalService.getEmbedder(context),
+          relatedQueryTexts(trimmed, anchorQuestions),
+          RELATED_EMBED_WAIT_MS,
+        );
+
+        // The board, the conversations inside the map's filters, the related
+        // work and the handed tasks' summaries, read in the retrieval worker.
+        // The board is EVERY task inside the filters, not a retrieved subset:
+        // that is what makes "what was the most expensive" answerable at all.
+        // Across projects each project's table is built on its own and the
+        // tables merged. It stops before searching when no map in scope is
+        // built yet, or when there is nothing to answer from.
+        let prepared: PreparedAnswer;
+        try {
+          prepared = await retrievalClient.call('answer.prepare', {
+            projects: projectsInScope,
+            granularity,
+            scopeDocKeys: answerContext.scopeDocKeys ?? null,
+            question: trimmed,
+            anchorQuestions,
+            pinnedKeys: previousTurn?.taskKeys ?? [],
+            queryVectors,
+            code: codeIndexed,
+            primed: primedTable !== null,
+            summaryNamesOn: taskSummariesOn(context.configManager.load().knowledgeGraph),
+          }, { timeoutMs: ANSWER_PREPARE_TIMEOUT_MS });
+        } catch (error) {
+          if (error instanceof RetrievalUnavailableError) return { ok: false, reason: INDEX_RESTARTING };
+          throw error;
+        }
+        if (prepared.status === 'map-building') return { ok: false, reason: 'the map is still building' };
+        // Nobody is waiting for this answer: the renderer cleared the turn.
+        if (chatEnded()) return { ok: false, reason: 'the chat ended' };
+        // Built every turn, for the facts: a follow-up that read them from the
+        // session's first table showed a running task's cost as it was then.
+        const freshTable = prepared.table;
+        // The refs are the table the session was primed with, the one in its
+        // context: rows sort by cost, so a fresh build numbers `C<n>` differently
+        // while an agent runs.
+        let taskTable = primedTable ?? freshTable;
+        const projectNameById = new Map(scopeProjects.map((entry) => [entry.id, entry.name]));
+        /** The project fields a wire task carries. The name only across projects,
+         *  where it is what a row shows. */
+        const projectFields = (taskProjectId: string | undefined): Pick<KnowledgeGraphRelatedTask, 'projectId' | 'projectName'> => {
+          const id = taskProjectId ?? homeProject.id;
+          const name = acrossProjects ? projectNameById.get(id) : undefined;
+          return { projectId: id, ...(name ? { projectName: name } : {}) };
+        };
+
+        // Answered WITHOUT spawning when there is genuinely nothing to answer
+        // from. Nothing was sent, so zero tokens is the truth, not a gap.
+        if (taskTable.rows.length === 0) {
+          return {
+            ok: true,
+            answer: NO_SOURCES_ANSWER,
+            rows: [],
+            related: [],
+            handedCount: 0,
+            promptTokens: 0,
+            agentName: adapter.displayName,
+          };
+        }
+
+        // Refs as the prompt writes them, both ways.
+        const indexRefs = (table: AnswerTaskTable): { refByKey: Map<string, string>; keyByRef: Map<string, string> } => {
+          const refs = new Map<string, string>();
+          const keys = new Map<string, string>();
+          table.rows.forEach((row, index) => {
+            const ref = taskRef(row, index);
+            refs.set(row.key, ref);
+            keys.set(ref, row.key);
+          });
+          // A bare ticket still means the open project's task, as it does
+          // everywhere else in the app, so an answer that drops the prefix on one
+          // of those still resolves. Never another project's: that ticket is theirs.
+          table.rows.forEach((row) => {
+            if (!acrossProjects || row.projectId !== openProjectId || row.displayId == null) return;
+            const bare = `#${row.displayId}`;
+            if (!keys.has(bare)) keys.set(bare, row.key);
+          });
+          return { refByKey: refs, keyByRef: keys };
+        };
+        let { refByKey, keyByRef } = indexRefs(taskTable);
+        const rowByKey = new Map<string, AnswerTaskRow>(freshTable.rows.map((row) => [row.key, row]));
+
+        const emit = (event: KnowledgeGraphAnswerStreamEvent): void => {
+          if (context.mainWindow.isDestroyed()) return;
+          broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, { requestId, ...event });
+        };
+
+        // The related work, found before the agent starts, and the
+        // conversations inside the filters, for the search trace below.
+        const related = prepared.related;
+        const nodesInScope = prepared.nodesInScope;
+        // A task created since the session's first turn has no ref in the
+        // table it holds, so the related work could not name it and it was
+        // dropped. Start the session over on this turn's table instead.
+        if (primedTable && chatId && related.handed.some((task) => !refByKey.has(task.key) && rowByKey.has(task.key))) {
+          if (pooled) answerSessionPool.discard(pooled);
+          pooled = takeAnswerSession(chatId, resolvedRun.run, endGeneration);
+          primedTable = null;
+          taskTable = freshTable;
+          ({ refByKey, keyByRef } = indexRefs(taskTable));
+        }
+        const toWire = (task: ProjectRelatedWorkTask): KnowledgeGraphRelatedTask => ({
+          key: task.key,
+          taskId: task.taskId,
+          displayId: task.displayId,
+          title: task.title,
+          strength: task.strength,
+          docKeys: task.docKeys,
+          passage: task.sessionId ? { sessionId: task.sessionId, turnUuid: task.turnUuid } : null,
+          ...projectFields(task.projectId),
+          ...(refByKey.has(task.key) ? { ref: refByKey.get(task.key) } : {}),
+        });
+        const handedWire = related.handed.map(toWire);
+        emit({ kind: 'set', related: handedWire, handedCount: related.handed.length });
+
+        // Each handed task's summary, read with the related work.
+        const summaryByTask = prepared.summaries;
+        const relatedForPrompt = related.handed.flatMap((task, index) => {
+          const ref = refByKey.get(task.key);
+          if (!ref) return [];
+          return [{
+            ref,
+            title: task.title,
+            strength: task.strength,
+            matches: task.matches,
+            firstMs: task.firstMs,
+            lastMs: task.lastMs,
+            passage: index < PASSAGES_SHOWN && task.bestChunkId !== null
+              ? related.passages.get(passageKey(task.projectId, task.bestChunkId)) ?? null
+              : null,
+            facts: rowByKey.get(task.key) ?? null,
+            summary: task.taskId ? summaryByTask.get(`${task.projectId}:${task.taskId}`) ?? null : null,
+          }];
+        });
+        const canSearch = retrieval !== undefined;
+        const codeForPrompt = codeIndexed
+          ? related.code.map((passage) => {
+            const project = acrossProjects ? projectNameById.get(passage.projectId) : undefined;
+            return { path: passage.path, text: passage.text, ...(project ? { project } : {}) };
+          })
+          : undefined;
+        // The whole prompt: table, rules, related work and the chat so far. What
+        // a fresh run gets, and what a session's first turn gets.
+        const buildFullPrompt = (): string => timeSyncWork('answer:prompt', () => buildAnswerPrompt(trimmed, {
+          tasks: taskTable,
+          nowMs: Date.now(),
+          related: relatedForPrompt,
+          code: codeForPrompt,
+          history: history.map((turn) => ({
+            question: turn.question,
+            answer: turn.answer,
+            refs: turn.taskKeys.flatMap((key) => {
+              const ref = refByKey.get(key);
+              return ref ? [ref] : [];
+            }),
+          })),
+          canSearch,
+          ...(acrossProjects
+            ? { projects: { names: scopeProjects.map((entry) => entry.name), searchDefault: homeProject.name } }
+            : {}),
+        }));
+        const prompt = primedTable
+          ? buildFollowUpPrompt(trimmed, { related: relatedForPrompt, canSearch, code: codeForPrompt })
+          : buildFullPrompt();
+        // What this question cost to ask, reported rather than estimated after
+        // the fact, with the same estimator the chunker sizes text with.
+        const promptTokens = estimateTokens(prompt);
+
+        // The agent's own searches, shown as they happen: a step line in the
+        // chat and rings on the map.
+        const docKeysBySession = new Map<string, string[]>();
+        const docKeysByTask = new Map<string, string[]>();
+        for (const node of nodesInScope) {
+          if (node.sessionId) {
+            const list = docKeysBySession.get(node.sessionId) ?? [];
+            list.push(node.docKey);
+            docKeysBySession.set(node.sessionId, list);
+          }
+          if (node.taskId) {
+            const list = docKeysByTask.get(node.taskId) ?? [];
+            list.push(node.docKey);
+            docKeysByTask.set(node.taskId, list);
+          }
+        }
+        const stopTrace = retrieval
+          ? watchAnswerSearches(`${ANSWER_CALLER_PREFIX}${callerChat}`, (search) => {
+            emit({
+              kind: 'search',
+              query: search.query,
+              docKeys: searchDocKeys(search, docKeysBySession, docKeysByTask),
+            });
+          }, scopeProjects.map((entry) => entry.id))
+          : () => {};
+
+        const onEvent = (event: AnswerStreamEvent): void => {
+          if (event.kind === 'text') emit({ kind: 'text', text: event.text });
+          else emit({ kind: 'tool', name: event.name });
+        };
+        // A fresh run starts in the answer home, never the project (whose
+        // instruction files cost 18,700 tokens a question on this repo), and
+        // writes what it passes by path into a run directory of its own that
+        // goes when it ends. See `answer-run-directory.ts` for why the two differ.
+        const runFreshInDirectory = (freshPrompt: string): Promise<string> => withAnswerRunDirectory((runDirectory) => (
+          answerFromContext(freshPrompt, cliPath, resolvedRun.run.answerHome, configuredModel, { retrieval, effort, onEvent, runDirectory })
+        ));
+        // Recorded as the chat's, so ending the chat stops it (`stopCliRunsForChat`),
+        // or, when the end lands before the CLI has spawned, keeps it from starting.
+        const chatOfRun = chatId;
+        const runFresh = (freshPrompt: string): Promise<string> => (
+          chatOfRun ? runCliForChat(chatOfRun, () => runFreshInDirectory(freshPrompt), chatEnded) : runFreshInDirectory(freshPrompt)
+        );
+        let raw: string;
+        try {
+          if (pooled) {
+            try {
+              raw = await pooled.session.ask(prompt, onEvent);
+              pooled.primed = { scopeSignature, table: taskTable };
+              answerSessionPool.touch(pooled);
+            } catch (error) {
+              // A failed turn leaves the session in a state not worth reusing.
+              answerSessionPool.discard(pooled);
+              // A process that died before writing anything (it crashed, or
+              // lost its connection at start) is retried once as a fresh run,
+              // which the reader never sees. Anything else is the answer's
+              // real failure and is shown as one. A session the chat's end
+              // disposed is not retried: nobody is waiting for that answer.
+              if (!(error instanceof AnswerSessionError && error.failure === 'exited' && error.beforeText) || chatEnded()) throw error;
+              raw = await runFresh(primedTable ? buildFullPrompt() : prompt);
+            }
+          } else {
+            raw = await runFresh(prompt);
+          }
+        } finally {
+          stopTrace();
+          // The stream ends whether the call succeeded or threw, so the renderer
+          // is never left holding a partial answer it thinks is still growing.
+          emit({ kind: 'done' });
+        }
+        if (!raw) return { ok: false, reason: 'the agent returned nothing' };
+
+        // Rows: the tasks the prose names, in the order named, then the rest of
+        // the selection by strength. A bare `#2` counts only when it resolves to
+        // a task the answer could be about (see `parseAnswerRefs`).
+        const relatedByKey = new Map(related.handed.map((task) => [task.key, task]));
+        const { selected, mentioned, text: answer } = parseAnswerRefs(
+          raw,
+          keyByRef,
+          new Set(relatedByKey.keys()),
+        );
+        const orderedKeys = [
+          ...mentioned,
+          ...selected
+            .filter((key) => !mentioned.includes(key))
+            .sort((left, right) => (relatedByKey.get(right)?.strength ?? 0) - (relatedByKey.get(left)?.strength ?? 0)),
+        ];
+        const rows = orderedKeys.flatMap((key): KnowledgeGraphRelatedTask[] => {
+          const relatedTask = relatedByKey.get(key);
+          if (relatedTask) return [toWire(relatedTask)];
+          // Selected without the search finding it: a board question ("the
+          // longest task") answered from the table alone.
+          const row = rowByKey.get(key);
+          if (!row) return [];
+          return [{
+            key: row.key,
+            taskId: row.taskId,
+            displayId: row.displayId,
+            title: row.title,
+            strength: 1,
+            docKeys: row.docKeys,
+            passage: null,
+            ...projectFields(row.projectId),
+            ...(refByKey.has(row.key) ? { ref: refByKey.get(row.key) } : {}),
+          }];
+        });
+
+        return {
+          ok: true,
+          answer,
+          rows,
+          related: handedWire,
+          handedCount: related.handed.length,
+          promptTokens,
+          agentName: adapter.displayName,
+        };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  );
+
+  /**
+   * Proactive recall: earlier conversations near THIS task.
+   *
+   * The graph as built is a place you have to remember to visit. This is the
+   * same retrieval pointed the other way - the index finding you while you are
+   * reading a task, which is the moment "have I already worked this out?"
+   * actually matters.
+   *
+   * The task's own title and description ARE the query, so there is nothing to
+   * type. Its own conversations are excluded: a task's own history is already
+   * one click away in the header, and leaving it in would crowd out the prior
+   * work this exists to surface.
+   */
+  ipcMain.handle(
+    IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK,
+    async (_event, taskId: string, projectId?: string | null): Promise<KnowledgeGraphQueryHit[]> => {
+      const resolvedProjectId = projectId ?? context.currentProjectId;
+      if (!taskId || !resolvedProjectId) return [];
+      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
+      if (!project) return [];
+
+      const task = new TaskRepository(getProjectDb(resolvedProjectId)).getById(taskId);
+      if (!task) return [];
+
+      const query = `${task.title}\n${task.description ?? ''}`.trim().slice(0, RELATED_QUERY_BUDGET);
+      if (query.length === 0) return [];
+
+      // The search runs in the retrieval worker; the query is embedded here.
+      return findPriorWork({
+        project,
+        taskId,
+        query,
+        embedder: retrievalService.getEmbedder(context),
+        overfetch: RELATED_OVERFETCH,
+        rows: RELATED_RESULT_COUNT,
+      });
+    },
+  );
+
+  /**
+   * Every project, for the Knowledge Graph's Projects picker: its name, how many
+   * conversations its map would draw, and when its index last took one in.
+   *
+   * The retrieval worker reads an index-only count from each project's
+   * database (12ms across 19 real projects, warm). A project whose database
+   * cannot be read, or every project while the worker is down, lists as
+   * having nothing indexed rather than failing the whole list.
+   */
+  ipcMain.handle(IPC.KNOWLEDGE_GRAPH_PROJECTS, async (): Promise<KnowledgeGraphProjectSummary[]> => {
+    const projects = context.projectRepo.list();
+    let summaries: Array<ProjectIndexSummaryRow | null> = [];
+    try {
+      summaries = await retrievalClient.call('projects.summaries', { projectIds: projects.map((project) => project.id) });
+    } catch {
+      // Listed with nothing indexed, below.
+    }
+    return projects.map((project, index) => {
+      const summary = summaries[index] ?? null;
+      if (!summary) return { id: project.id, name: project.name, conversations: 0, taskRecords: 0, lastActivityMs: null };
+      const lastActivityMs = summary.lastIndexedAt ? Date.parse(summary.lastIndexedAt) : Number.NaN;
+      return {
+        id: project.id,
+        name: project.name,
+        conversations: summary.conversations,
+        taskRecords: summary.taskRecords,
+        lastActivityMs: Number.isNaN(lastActivityMs) ? null : lastActivityMs,
+      };
+    });
+  });
+
+  ipcMain.handle(
+    IPC.KNOWLEDGE_GRAPH_REFRESH,
     async (_event, projectId?: string | null): Promise<void> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       if (!resolvedProjectId) return;
-      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-      if (!project) return;
-      retrievalService.rebuildProjectIndex(context, project);
+      // A scope or a pop-out can still hold a deleted project's id, and opening
+      // its store would create an empty database for it again.
+      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return;
+      const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
+      // Returns immediately. The pass is self-paced in the background, so a
+      // handler never performs the scan or the vector math itself.
+      graphService.markDirty(resolvedProjectId, model.modelTag, model.dimensions);
     },
   );
 }

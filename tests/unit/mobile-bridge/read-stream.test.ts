@@ -6,9 +6,16 @@ vi.mock('../../../src/main/db/database', () => ({
 }));
 
 const resolveTaskTranscriptMock = vi.fn();
-vi.mock('../../../src/main/agent/transcript-service', () => ({
+vi.mock('../../../src/main/agent/transcript-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/agent/transcript-service')>()),
   resolveTaskTranscript: (...args: unknown[]) => resolveTaskTranscriptMock(...args),
 }));
+
+// The transcript diff and window run in the retrieval worker; this runs the
+// worker's own handlers in-process, over the stub above.
+vi.mock('../../../src/main/retrieval/retrieval-client', async () => (
+  (await import('../helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
 import type { BrowserWindow } from 'electron';
@@ -64,6 +71,17 @@ class FakeSessionManager extends EventEmitter {
   getDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
   parkRestingGridForMobileSubscriber = vi.fn();
   isSessionTeardownInFlight = vi.fn(() => false);
+  /** Raw-output subscriptions held, by session (the pty host forwards a
+   *  session's bytes only while one is held). */
+  readonly tapSubscriptions = new Map<string, number>();
+  subscribeDataTap = vi.fn((sessionId: string) => {
+    this.tapSubscriptions.set(sessionId, (this.tapSubscriptions.get(sessionId) ?? 0) + 1);
+    return () => {
+      const remaining = (this.tapSubscriptions.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.tapSubscriptions.set(sessionId, remaining);
+      else this.tapSubscriptions.delete(sessionId);
+    };
+  });
 }
 
 describe('handleReadStream', () => {
@@ -77,6 +95,22 @@ describe('handleReadStream', () => {
     // label left behind by one test would leak into another's session-ended
     // assertions.
     __resetSpawnProgressForTest();
+  });
+
+  it('subscribes to a live session with no owning project without opening a database', async () => {
+    // A Command Terminal session carries no project. The subscription used to
+    // open the database named '', which creates a stray `projects/.db` file.
+    const { getProjectDb } = await import('../../../src/main/db/database');
+    vi.mocked(getProjectDb).mockClear();
+    sessionManager.getSessionProjectId.mockReturnValue(undefined as never);
+    const context = { sessionManager, projectRepo: { list: () => [] } } as unknown as IpcContext;
+
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+    await flushProbe();
+
+    expect(response.ok).toBe(true);
+    expect(getProjectDb).not.toHaveBeenCalled();
+    expect(resolveTaskTranscriptMock).not.toHaveBeenCalled();
   });
 
   it('rejects when the session does not exist', async () => {
@@ -219,6 +253,7 @@ describe('handleReadStream', () => {
     expect(response.ok).toBe(false);
     expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.tapSubscriptions.size).toBe(0);
     expect(sessionManager.listenerCount('exit')).toBe(0);
   });
 
@@ -242,6 +277,8 @@ describe('handleReadStream', () => {
 
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
     expect(sessionManager.listenerCount('data-tap')).toBe(1);
+    // The pty host forwards the session's raw bytes only while a tap is held.
+    expect(sessionManager.tapSubscriptions.get('sess-1')).toBe(1);
     expect(sessionManager.listenerCount('pty-resize')).toBe(1);
     expect(sessionManager.listenerCount('activity')).toBe(1);
     expect(sessionManager.listenerCount('usage')).toBe(1);
@@ -250,6 +287,7 @@ describe('handleReadStream', () => {
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'unsubscribe' }), fakeSession(), context, subscriptions);
     expect(response.ok).toBe(true);
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    expect(sessionManager.tapSubscriptions.has('sess-1')).toBe(false);
     expect(sessionManager.listenerCount('pty-resize')).toBe(0);
     expect(sessionManager.listenerCount('activity')).toBe(0);
     expect(sessionManager.listenerCount('usage')).toBe(0);
@@ -276,6 +314,8 @@ describe('handleReadStream', () => {
 
     expect((response.payload as { scrollback: string }).scrollback).toBe('');
     expect(sessionManager.listenerCount('data-tap')).toBe(0);
+    // No tap, so the pty host never sends this session's bytes to main.
+    expect(sessionManager.tapSubscriptions.size).toBe(0);
     expect(sessionManager.listenerCount('pty-resize')).toBe(0);
     // Everything the list actually renders still flows.
     expect(sessionManager.listenerCount('activity')).toBe(1);
@@ -619,33 +659,57 @@ describe('handleReadStream', () => {
   });
 
   it('a session event pushes only the changed entries as an indexed delta, and only when the revision increased', async () => {
-    resolveTaskTranscriptMock
-      .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // subscribe-time seed (no push)
-      .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // unchanged revision - no push
-      .mockResolvedValueOnce(liveTranscript(2, [userEntry, assistantEntry]));
-    const session = fakeSession();
-    const context = { sessionManager } as unknown as IpcContext;
-    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(transcriptPushesOf(session)).toHaveLength(0);
+    vi.useFakeTimers();
+    try {
+      resolveTaskTranscriptMock
+        .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // subscribe-time seed (no push)
+        .mockResolvedValueOnce(liveTranscript(1, [userEntry])) // unchanged revision - no push
+        .mockResolvedValueOnce(liveTranscript(2, [userEntry, assistantEntry]));
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(transcriptPushesOf(session)).toHaveLength(0);
 
-    sessionManager.emit('event', 'sess-1', { ts: 1, type: 'tool_start' });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(transcriptPushesOf(session)).toHaveLength(0); // unchanged revision
+      sessionManager.emit('event', 'sess-1', { ts: 1, type: 'tool_start' });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(transcriptPushesOf(session)).toHaveLength(0); // unchanged revision
 
-    sessionManager.emit('event', 'sess-1', { ts: 2, type: 'tool_end' });
-    await Promise.resolve();
-    await Promise.resolve();
-    const transcriptPushes = transcriptPushesOf(session);
-    expect(transcriptPushes).toHaveLength(1);
-    expect((transcriptPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
-      mode: 'delta',
-      revision: 2,
-      totalEntries: 2,
-      upserts: [{ index: 1, entry: assistantEntry }],
-    });
+      sessionManager.emit('event', 'sess-1', { ts: 2, type: 'tool_end' });
+      await vi.advanceTimersByTimeAsync(300);
+      const transcriptPushes = transcriptPushesOf(session);
+      expect(transcriptPushes).toHaveLength(1);
+      expect((transcriptPushes[0][0] as { event: { payload: unknown } }).event.payload).toEqual({
+        mode: 'delta',
+        revision: 2,
+        totalEntries: 2,
+        upserts: [{ index: 1, entry: assistantEntry }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a burst of session events reads the transcript once, a quarter second after the burst', async () => {
+    vi.useFakeTimers();
+    try {
+      resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(1, [userEntry]));
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      await vi.advanceTimersByTimeAsync(0);
+      const readsAfterSeed = resolveTaskTranscriptMock.mock.calls.length;
+
+      for (let event = 0; event < 5; event += 1) {
+        sessionManager.emit('event', 'sess-1', { ts: event, type: 'tool_start' });
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(resolveTaskTranscriptMock.mock.calls.length).toBe(readsAfterSeed);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(resolveTaskTranscriptMock.mock.calls.length).toBe(readsAfterSeed + 1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('transcript-window returns the newest slice with its absolute start index', async () => {

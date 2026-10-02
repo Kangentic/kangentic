@@ -244,7 +244,6 @@ const AZ_BASE_ITEM = {
   projectId: '00000000-0000-4000-8000-000000000001',
 };
 
-const EVALUATE_POLICIES: PRResolveOptions = { evaluateBranchPolicies: true };
 const BYPASS_COUNTS_AS_READY: PRResolveOptions = { bypassCountsAsReady: true };
 
 /**
@@ -259,7 +258,6 @@ const BYPASS_COUNTS_AS_READY: PRResolveOptions = { bypassCountsAsReady: true };
 type GhBypassAnswer = { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null;
 const GH_OPTION_ROWS: Array<{ options: PRResolveOptions | undefined; bypassAnswer: GhBypassAnswer }> = [
   { options: undefined, bypassAnswer: null },
-  { options: EVALUATE_POLICIES, bypassAnswer: null },
   { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: null } },
   { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: ['ci'] } },
   { options: BYPASS_COUNTS_AS_READY, bypassAnswer: null },
@@ -286,8 +284,7 @@ const GH_ROLLUPS: unknown[] = [
 /**
  * Every combination of GitHub's three raw fields and the rollup, with
  * `undefined` meaning "key absent", each run under every option row: without
- * options, with the branch-policy option (which GitHub must ignore), and with
- * the bypass option under each answer its probe can give.
+ * options, and with the bypass option under each answer its probe can give.
  */
 function gitHubRows(): ReadinessRow[] {
   const mergeStateStatuses = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BLOCKED', 'BEHIND', 'DRAFT', 'DIRTY', 'UNKNOWN', 'SOMETHING_NEW', undefined];
@@ -321,11 +318,10 @@ function azEvaluation(status: string, typeId = AZ_BUILD_TYPE, isBlocking = true)
 }
 
 /**
- * Every answer the policy evaluations call can give, with `undefined` meaning
- * "the setting is off, so the call is never made".
+ * Every answer the policy evaluations call can give. There is no "off" row:
+ * the connector always asks wherever its gate lets the call through.
  */
 const AZ_POLICY_ANSWERS: unknown[] = [
-  undefined,
   null,
   [],
   [azEvaluation('approved')],
@@ -345,13 +341,13 @@ function azureRows(): ReadinessRow[] {
     const item = { ...AZ_BASE_ITEM, ...(mergeStatus === undefined ? {} : { mergeStatus }) };
     return {
       item,
-      options: policyAnswer === undefined ? undefined : EVALUATE_POLICIES,
+      options: undefined,
       stub: () => {
         vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item as never);
         // Stubbed on every row, including the ones whose gate never reaches
         // it (see the suite comment): the real method would spawn `az`.
         vi.spyOn(AzureDevOpsImporter.prototype, 'resolvePolicyEvaluations').mockResolvedValue(
-          (policyAnswer ?? null) as never,
+          policyAnswer as never,
         );
       },
     };

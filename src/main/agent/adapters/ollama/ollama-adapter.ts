@@ -3,6 +3,7 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { discoverOllamaCapabilities } from './capability-discovery';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -162,5 +163,38 @@ export class OllamaAdapter implements AgentAdapter {
     // Ollama has no hooks or structured verification signals.
     // Callers fall back to time-based settle.
     return null;
+  }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * `ollama run <model>` with the prompt PIPED: it reads a prompt from stdin
+   * when one is piped in, answers, and exits. Read-only by nature, since a
+   * plain model run has no tools to write or execute with.
+   *
+   * The model is REQUIRED here, unlike the spawn path's `DEFAULT_OLLAMA_MODEL`
+   * fallback: the Knowledge Graph Model setting is mandatory for this agent
+   * (`answerCapabilities.model`), and a question never falls back to a model
+   * nobody chose, which here would also mean pulling one.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    const chosenModel = model?.trim();
+    if (!chosenModel) throw new Error('choose a model for Ollama in Settings > Knowledge Graph');
+    return runCliPrintAnswer({
+      cliPath,
+      args: ['run', chosenModel],
+      prompt,
+      cwd,
+    });
   }
 }

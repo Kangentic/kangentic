@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles } from 'lucide-react';
+import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles, Brain, CornerDownLeft } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useBacklogStore } from '../../stores/backlog-store';
-import { useConfigStore } from '../../stores/config-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useToastStore } from '../../stores/toast-store';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
-import type { SearchHit, SearchHitKind, MemoryStatus } from '../../../shared/types';
+import { usePopOut } from '../../pop-out/usePopOut';
+import type { SearchHit, SearchHitKind } from '../../../shared/types';
 
 const SEARCH_DEBOUNCE_MS = 200;
-/** Smart mode embeds the query before searching, which is costlier than the
- *  lexical path, so it waits a little longer before firing. */
-const SMART_SEARCH_DEBOUNCE_MS = 350;
 
 // Stable empty list so the grouping memo keeps a referentially constant input
 // while there is nothing to show.
@@ -21,7 +19,6 @@ const SMART_SEARCH_DEBOUNCE_MS = 350;
 const EMPTY_HITS: SearchHit[] = [];
 
 type Scope = 'current' | 'all';
-type Mode = 'keyword' | 'smart';
 
 interface SearchPaletteProps {
   onClose: () => void;
@@ -47,12 +44,11 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [scope, setScope] = useState<Scope>('current');
-  // No per-search toggle: the mode follows the global Memory setting - Smart
-  // (hybrid) when semantic search is enabled, otherwise keyword. Smart already
-  // degrades to keyword when the model is missing/slow, so this is safe.
-  const semanticOn = useConfigStore((state) => state.config.memory?.semanticEnabled ?? false);
-  const mode: Mode = semanticOn ? 'smart' : 'keyword';
-  const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
+  // Keyword only, and instant: Quick Find matches the words in tasks, ticket
+  // numbers, backlog, and conversations. Meaning-based search lives in the
+  // Knowledge Graph, which the last row hands a query to. Opening Quick Find
+  // starts no embedding model.
+  const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
   // The last search that settled, stamped with the key it ran for. `results`
   // and `isSearching` derive from it against the current key, so a new query
   // reads as searching at once and a cleared one as empty, with no effect
@@ -74,44 +70,24 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     inputRef.current?.focus();
   }, []);
 
-  // Fetch the semantic-layer status on open and on each mode flip, so the
-  // Smart-mode degraded notice reflects the current backend state. In Smart
-  // mode the open is also the moment to start the embedding worker: it is
-  // released after a long idle, and the typing that follows is exactly the
-  // window its cold start needs.
   useEffect(() => {
-    let cancelled = false;
-    if (mode === 'smart') window.electronAPI.memory.prewarm();
-    window.electronAPI.memory
-      .getStatus()
-      .then((status) => {
-        if (!cancelled) setMemoryStatus(status);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
-
-  useEffect(() => {
-    const debounceMs = mode === 'smart' ? SMART_SEARCH_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS;
     if (debounceTimer.current !== null) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       debounceTimer.current = null;
       setDebouncedQuery(query);
-    }, debounceMs);
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       if (debounceTimer.current !== null) {
         clearTimeout(debounceTimer.current);
         debounceTimer.current = null;
       }
     };
-  }, [query, mode]);
+  }, [query]);
 
   // A search runs for a non-empty (debounced) query with a project to search from.
   const debouncedTrimmed = debouncedQuery.trim();
   const searchKey = debouncedTrimmed && currentProjectId
-    ? JSON.stringify([debouncedTrimmed, scope, currentProjectId, mode])
+    ? JSON.stringify([debouncedTrimmed, scope, currentProjectId])
     : null;
   const results: SearchHit[] = searchKey === null ? EMPTY_HITS : (search?.hits ?? EMPTY_HITS);
   const isSearching = searchKey !== null && search?.key !== searchKey;
@@ -120,7 +96,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     if (searchKey === null || !currentProjectId) return;
     const seq = ++requestSeq.current;
     window.electronAPI.search
-      .everything({ query: debouncedTrimmed, scope, currentProjectId, mode })
+      .everything({ query: debouncedTrimmed, scope, currentProjectId, mode: 'keyword' })
       .then((hits) => {
         if (seq !== requestSeq.current) return;
         setSearch({ key: searchKey, hits });
@@ -132,7 +108,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
         useToastStore.getState().addToast({ message, variant: 'error' });
         setSearch({ key: searchKey, hits: [] });
       });
-  }, [searchKey, debouncedTrimmed, scope, currentProjectId, mode]);
+  }, [searchKey, debouncedTrimmed, scope, currentProjectId]);
 
   const grouped = useMemo(() => {
     const buckets: Partial<Record<SearchHitKind, SearchHit[]>> = {};
@@ -243,6 +219,27 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     requestClose();
   }, [requestClose]);
 
+  const trimmedQuery = query.trim();
+  const hasQuery = trimmedQuery.length > 0;
+  // The Ask row follows the last hit. A question usually matches no keywords,
+  // so with no hits it is row 0, which is where selection lands when a search
+  // settles: Enter then asks it.
+  const askRowIndex = hasQuery ? grouped.flat.length : -1;
+  const rowCount = grouped.flat.length + (hasQuery ? 1 : 0);
+
+  /** Hand what was typed to the Knowledge Graph, which asks it. */
+  const askKnowledgeGraph = useCallback(() => {
+    if (!trimmedQuery) return;
+    if (knowledgeGraphPopOut.isOpen) {
+      // The detached graph is its own window with its own store, so the
+      // question cannot be handed across; bring that window forward instead.
+      knowledgeGraphPopOut.focus();
+    } else {
+      useKnowledgeGraphStore.getState().askInGraph(trimmedQuery, currentProjectId);
+    }
+    requestClose();
+  }, [trimmedQuery, knowledgeGraphPopOut, currentProjectId, requestClose]);
+
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -256,9 +253,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setSelectedIndex((currentIndex) =>
-        grouped.flat.length === 0 ? 0 : Math.min(currentIndex + 1, grouped.flat.length - 1),
-      );
+      setSelectedIndex((currentIndex) => (rowCount === 0 ? 0 : Math.min(currentIndex + 1, rowCount - 1)));
       return;
     }
     if (event.key === 'ArrowUp') {
@@ -268,10 +263,14 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     }
     if (event.key === 'Enter') {
       event.preventDefault();
+      if (selectedIndex === askRowIndex) {
+        askKnowledgeGraph();
+        return;
+      }
       const hit = grouped.flat[selectedIndex];
       if (hit) activate(hit);
     }
-  }, [grouped.flat, selectedIndex, activate, requestClose]);
+  }, [grouped.flat, selectedIndex, activate, requestClose, rowCount, askRowIndex, askKnowledgeGraph]);
 
   // Scroll selected row into view
   useEffect(() => {
@@ -281,17 +280,12 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     if (row) row.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex, results]);
 
-  const trimmedQuery = query.trim();
-  const hasQuery = trimmedQuery.length > 0;
   const showEmpty = !hasQuery;
   // A search is pending while the debounce is still catching up to the live query
   // (query !== debouncedQuery) or while the IPC search is in flight. Show
   // "Searching..." during that window rather than a premature "No matches".
   const searching = isSearching || (hasQuery && trimmedQuery !== debouncedQuery.trim());
   const hasResults = grouped.flat.length > 0;
-  // Results always render (the backend falls back to lexical); the notice only
-  // explains the degraded semantic state in Smart mode.
-  const degradedNotice = mode === 'smart' ? semanticDegradedNotice(memoryStatus) : null;
 
   return (
     <div
@@ -340,15 +334,6 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
             </button>
           </div>
 
-          {degradedNotice ? (
-            <div
-              className="px-3 py-1.5 text-xs text-fg-muted border-b border-edge"
-              data-testid="search-degraded-notice"
-            >
-              {degradedNotice}
-            </div>
-          ) : null}
-
           <div ref={listRef} className="max-h-[60vh] overflow-y-auto">
             {showEmpty ? (
               <EmptyState />
@@ -374,14 +359,62 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
                 Searching...
               </div>
             ) : (
-              <div className="px-4 py-6 text-sm text-fg-muted text-center">
-                No matches in {scope === 'all' ? 'any project' : 'this project'}.
+              <div className="px-4 py-6 text-sm text-fg-muted text-center" data-testid="search-no-matches">
+                No keyword matches in {scope === 'all' ? 'any project' : 'this project'}.
               </div>
             )}
+            {hasQuery ? (
+              <AskRow
+                question={trimmedQuery}
+                rowIndex={askRowIndex}
+                isSelected={selectedIndex === askRowIndex}
+                onHover={() => setSelectedIndex(askRowIndex)}
+                onClick={askKnowledgeGraph}
+              />
+            ) : null}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+interface AskRowProps {
+  question: string;
+  rowIndex: number;
+  isSelected: boolean;
+  onHover: () => void;
+  onClick: () => void;
+}
+
+/**
+ * The last row: hand what was typed to the Knowledge Graph, which answers by
+ * meaning. Quick Find itself matches words only, so a question lands here.
+ */
+function AskRow({ question, rowIndex, isSelected, onHover, onClick }: AskRowProps) {
+  return (
+    <button
+      type="button"
+      data-row-index={rowIndex}
+      data-testid="search-palette-ask"
+      aria-selected={isSelected}
+      onMouseEnter={onHover}
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 border-t border-edge px-3 py-2.5 text-left transition-colors ${
+        isSelected ? 'bg-surface-hover' : 'hover:bg-surface-hover/60'
+      }`}
+    >
+      <Brain size={16} className="flex-shrink-0 text-accent" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-sm text-fg">
+        Ask the Knowledge Graph: <span className="text-fg-secondary">{`"${question}"`}</span>
+      </span>
+      {isSelected ? (
+        <span className="flex flex-shrink-0 items-center gap-1 text-xs text-fg-muted">
+          <CornerDownLeft size={12} aria-hidden="true" />
+          Enter
+        </span>
+      ) : null}
+    </button>
   );
 }
 
@@ -447,26 +480,6 @@ function ScopeButton({ label, active, onClick }: { label: string; active: boolea
       {label}
     </button>
   );
-}
-
-/** One-line notice explaining a degraded semantic state in Smart mode. Returns
- *  null when the hybrid layer is live (no notice) or status is not yet known. */
-function semanticDegradedNotice(status: MemoryStatus | null): string | null {
-  if (!status) return null;
-  switch (status.semantic) {
-    case 'hybrid':
-      return null;
-    case 'downloading':
-      return `Preparing semantic search... (${Math.round((status.modelProgress ?? 0) * 100)}%)`;
-    case 'lexical':
-      return 'Semantic search unavailable on this platform - showing keyword matches.';
-    case 'disabled':
-      return 'Smart search is off. Enable it in Settings -> Memory.';
-    case 'error':
-      return 'Semantic search failed - showing keyword matches.';
-    default:
-      return null;
-  }
 }
 
 function EmptyState() {

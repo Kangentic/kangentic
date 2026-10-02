@@ -209,7 +209,7 @@ only in the six general-purpose finders; small.
   sessions instead, which is outside this audit's scope but worth its own look.
 - **Retrieval ground truth** (for section 6): the only live corpus is `'conversation'`; there
   is no repo-file corpus; `kangentic_search` is semantic only for conversations, and
-  `memory.semanticEnabled` defaults off, degrading to FTS5 keyword search that tokenizes
+  `knowledgeGraph.enabled` defaults off, degrading to FTS5 keyword search that tokenizes
   `getUserById` as one token. No finder in this run called any MCP tool at all; the gated
   auditors could not have (Read/Glob/Grep rosters).
 
@@ -807,6 +807,14 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 734, pre-PR | 36f +1490 plus 1 new file | 248KB, 4510 lines | 9 (6) | 28 | 0 | 10 | 3 of 9 pack-carrying | 31 / 27 |
 | task 734, second pass | 32f +1824 plus 2 new files | 260KB, 4765 lines | 9 (5) | 25 | 0 | 10 | 6 of 9 pack-carrying | 31 / 20 |
 | task 734, third pass | 37f +2922 plus 2 new files | 317KB, 5814 lines | 7 (2) | 32 | 0 | 9 | 16 of 8 pack-carrying | 35 / 28 |
+| task 529, whole branch, pre-PR | 357f +51373 -3763 | 3508KB, 61990 lines | 4 (0) | 353 | 1 | 13, sharded by area | about 47 of 12 pack-carrying | about 94 / 38 applied |
+| task 529, whole branch, second pass | 364f +53178 -3804 | 3607KB, 63938 lines | 3 (0) | 361 | 1 | 17, sharded by area, 4 over tests | about 68 of 16 pack-carrying | about 106 / 53 applied |
+| task 529, whole branch, third pass | 367f +54593 -3815 | 3692KB, 65439 lines | 4 (0) | 363 | 1 | 17, sharded by area, 4 over tests | about 97 of 16 pack-carrying | about 85 / 55 applied |
+| task 529, whole branch, fourth pass | 658f +76565 -7547 | 5536KB, 99303 lines | 3 (0) | 655 | 1 | 24, sharded by area and process boundary, 7 over tests | about 150 of 23 pack-carrying | about 85 / 52 applied |
+| task 529, whole branch, fifth pass | 663f +79405 -7559 | 5702KB, 102379 lines | 3 (0) | 660 | 1 | 29, one shard file each, 9 over tests | about 195 of 28 pack-carrying | about 77 / 44 applied |
+| task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
+| task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 29 applied, 2 refuted |
+| task 529, whole branch, eighth pass | 676f +86115 -7734 | 5974KB, 107091 lines | 4 (0) | 672 | 2 | 31, one shard file each, 10 over tests, none resumed | about 110 of 30 pack-carrying | 23 raised, 22 distinct / 19 applied, 3 refuted |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -953,3 +961,182 @@ conversion never ran. The driver dropped 7 of 35 candidates: two duplicates of a
 write already self-healing on read, a speculative ASCII glyph fallback, a forced-probe cost that
 predates the change, a documented cold-start pass-through, an informational mock note, and a
 `closeMenu` extraction the effect deps rule out.
+
+The task 529 row is the first pack no finder could load. It reviewed a whole feature branch against
+`main`, and at 61,990 lines a full load is 31 Read calls at the skill's 2000-line sizing, several
+times what a finder's context holds. So the driver departed from the skill and sharded by AREA
+instead of by dimension. Eight area finders each applied every universal criterion, plus the
+removed-surface and red-green checks, to their own list of `offset`/`limit` ranges taken from the
+pack's table of contents (2,700 to 6,200 pack lines each). The four gated auditors got only the
+ranges their globs matched, and the integration finder got the signature delta as usual. The one
+stubbed file, `KnowledgeGraphCanvas.tsx` at 1,963 new lines, went to one area finder as a disk read
+counted inside its shard. Two things were lost, and both are worth knowing before this happens
+again. Coverage was answered by grepping `tests/` rather than by loading the roughly 22,000 lines of
+changed test sections, so the changed test files were not themselves reviewed line by line. And no
+finder saw the whole change, so a cross-area interaction reached review only through the
+integration finder's delta; it found nothing, and verification found none either. The reads
+column is a hand tally over twelve reports and is approximate. Most of the 47 were gaps in
+hunk-tier files that a finder's criterion needed (a sweep's timer lifetimes, a handler's dispose
+path), and one was a range outside the finder's own list, read by mistake and unused. Of about 94
+raised findings, 38 were applied, with tests written for each behavior fix. The rest were skipped
+with a reason or refuted; two refutations were a summary-pass retry loop that converges and a
+schema comment that contradicted a deliberate delete. The skill has no path for a pack this size,
+and the sharding here was improvised; a threshold (about 6,000 pack lines per finder) and the
+TOC-driven shard lists are the part worth writing into the skill.
+
+The task 529 second pass re-reviewed the same branch after the first pass's fixes landed. It
+closed the gap that row named: the roughly 25,000 lines of changed tests went to four test shards
+of 5,981 to 6,611 pack lines, each with test-specific criteria, and they raised 23 of the 106
+findings. Those included two assertions on test ids that no longer exist in the renderer, a
+fixture two rows short of the count it claimed, a guard test whose only discriminating assertion
+never touched the skip list it named, and a client name in a comment. The eight source shards ran
+2,726 to 6,070 lines, with the stubbed `KnowledgeGraphCanvas.tsx` read from disk inside its shard.
+Two mechanics changed. The finders loaded their ranges in 600-line calls, and none reported the
+25,000-token cap failing. The shared criteria went into three brief files that every finder read
+first, so the driver no longer wrote the criteria out once per finder prompt. The one High finding
+came from `platform-guard`. The one-shot CLI runner wrote answer prompts of tens of thousands of
+characters to stdin with no `error` listener, so a CLI that exited early would have thrown an
+uncaught EPIPE in main. The driver refuted three findings. Two asks racing in one chat are
+impossible, because the store refuses a question while a turn is in flight. A warm session cannot
+cross projects, because its key carries the search URL. A queued question already stays in the
+draft. The main-process and renderer test-builders ran in parallel on disjoint files. One
+reverted shared source briefly while the other ran, so the driver re-ran every touched unit file
+and UI spec afterwards.
+
+The task 529 third pass kept the second pass's layout and added one input. Before the fan-out the
+driver wrote the working-tree line ranges changed since the last review began (its own fix commit
+and the four commits after it) to a short file every finder read after its ranges, so the lines no
+independent reviewer had seen got the closest look. The pack was built once and never re-based, so
+the preexisting-dirty list it writes stayed valid. The signature delta came from a script over the
+pack's marked lines, 139KB of it, well past "a few hundred tokens"; a 367-file branch has that many
+exported signatures, and the integration finder read it in 600-line calls. Of about 85 raised
+findings, 55 were applied and 2 refuted: a store that pins its instance and keeps a dispose stash
+(the documented `session-store` shape), and a settings change asking for a rebuild of a stale map,
+which is the user's own act. The rest were skipped with a reason, most of them performance work
+that needs a measurement first. The highest-value finds sat in code the earlier passes had read:
+closing the graph mid-answer killed the warm session and failed the kept turn, a node selection
+kept by array position showed another conversation after a rebuild, and a multi-chunk change
+record listed its own header as a changed file. Two side effects are worth knowing. On Windows the
+new process-tree stop ran a real `taskkill` against a fake child's pid in an existing test (pinned
+to the POSIX path since), and a test-builder's first red run printed `process.env` through a
+matcher over spawn options, so the neighbouring assertions now read single fields.
+
+The task 529 fourth pass ran on a pack half again the third's size, because the branch had since
+moved every PTY into a `kangentic-pty-host` utility process and the index into a retrieval worker.
+Shards were cut along those two process boundaries rather than by folder, so one finder held both
+sides of each protocol, and each shard's brief named the rule files for its area, since rules do not
+auto-load in a subagent. The focus file covered `e01fbbff` onward, the third pass's own fix commit
+included, and the removed-surface list was scripted from that range's diff with removed class
+methods added (`purgeAll`, `purgeProjectIndex`), which an export-only scan missed. Two practical
+limits showed. The session allows 20 concurrent subagents, so four of the 24 finders started as
+slots freed. And the signature delta, built from the changes since the last pass rather than the
+whole pack, came to 1,515 lines instead of 139KB. Of five High findings, four were fixed and one
+was refuted by experiment: freeing the old vec0 table writes to its shadow table, which better-sqlite3's
+defensive mode was said to refuse, and a probe under Electron's better-sqlite3 with sqlite-vec
+0.1.9 deleted the block and dropped the table without error. The fixed ones were a summary pass
+whose failure backoff any board change bypassed, a rejected host spawn that left a promoted queue row
+`queued` for good, a live transcript flush that took the seq the legacy conversion wrote next, and a
+legacy row whose session lived in an unmigrated project, which stopped the whole storage upkeep.
+Two test-builders ran in parallel on disjoint files and were barred from touching `src/`, so red-green
+was argued from the code rather than toggled; one of them found the host-loss notice stamped before
+its focus gate, fixed in this pass. The two POSIX-only tests for `~/.claude.json`'s mode and symlink
+have not run on Windows and get their first run on CI.
+
+The task 529 fifth pass kept the fourth pass's layout and changed how a finder got its shard. A script
+copied each shard's pack sections into one file, with the focus ranges at its top, so a finder read
+one contiguous file in 600-line calls rather than a list of offsets. Each gated auditor got a file
+built from its own glob. The migration auditor's took the whole `src/main/db/migrations/` folder,
+since the skill's gate still names the single `migrations.ts` the schema has since outgrown. The
+session allows 20 concurrent subagents, so 9 of the 29 started as slots freed. The scripted
+removed-surface list caught 2 of the focus range's real removals; the driver found the rest (a
+protocol field, a worker event, five reshaped methods) in the diff's removed lines and grepped them
+itself before the fan-out. Four finders independently found the Medium the spawn-cancel commit
+missed: the MCP task delete dropped the promise `removeByTaskId` now returns, so a worktree could
+go while a cancelled spawn's PTY still held it. The other fixed Mediums were a question queued from
+Quick Find that the map's first snapshot wiped, an Ask that still ran a paid answer after its chat
+ended during the prepare, a retrieval worker that died before ready and so never announced its
+replacement, a summary backoff that any Knowledge Graph setting ended, a code index that stored its
+head over a failed file, and a closed-project guard the record sweeps bypassed. One test-builder
+found two gaps in the driver's own fixes (the mean pool still wrote a NaN row, and a prepare failure
+went unflagged), both fixed in this pass. The skipped Mediums are four performance claims that need
+a measurement first, a camera fix that needs a look in `/preview`, and recovery for a host crash
+that takes a session before its agent id is known, which is a design question.
+
+The task 529 sixth pass kept the fifth pass's layout. A script rebuilt each shard file from the
+fifth pass's file lists, the 11 files new since then were placed by hand, and the pty shard was
+split into its host and session halves (3,748 and 3,443 lines), since at 6,926 lines it was past
+the roughly 6,000-line ceiling. The focus range ran from `0537ddd1` to HEAD, the fifth pass's own
+fix commit included. The UI spec holding most of the range's new test code was stubbed in the pack
+for size, so its finder read the focus ranges from disk. Two finders read less than their shard and
+said so: the second cross-platform auditor stopped at 1,400 of 6,234 lines and one source shard at
+2,400 of 5,393, each after its focus ranges. The Mediums all sat in the newest code. The pty host's
+crash recovery, which the fifth pass's follow-up added, ignored every exited row when it chose the
+lost tasks to start fresh, so a resume whose spawn failed got a fresh agent over it; its locked
+re-check also missed a Reset, which deletes no record, and a Resume then a Pause. It now counts
+every row but the lost ones, and compares the task's `session_id` and the record's status. Two
+finders reported the first independently, one as Low and one as Medium. The others were a Quick
+Find question asked while reopening the map on another project, which went to the old project and
+was then dropped; an Ask one-shot run that still started when the chat ended between the last check
+and the spawn; overlapping settings reconciles that each ended the summary backoff; a request that
+timed out while the pty host was down and still ran on its replacement; a `~/.claude.json`
+fallback write that deleted the only complete copy when it failed; and a deferred orbit pivot that
+re-pointed a fly at the whole map. Two findings were refuted: a package-smoke entry check said to
+miss a path in another letter case (Node derives the entry URL from the same `realpathSync` of
+`argv[1]`), and a trust-manager coverage hole that the existing test file already covered. The
+fifth pass's skipped host-crash question above was resolved by the commit that followed it.
+
+The orbit fix was then checked in `/preview` on a mirrored real index (1,008 nodes), with the
+scene hook's own `frameNodes` and `setOrbitAnchor` called from its fiber so the race was exact:
+fly to one subset, anchor mid-flight, fly to another before the camera rests. With the pre-fix
+hook restored the pivot came to rest 3.63 world units off the second fly's target, on the default
+view's centre; with the fix it stayed on it. The first reading said both versions passed, because
+camera-controls reports rest some frames before it emits `sleep`, which is when the stale listener
+fires; a measurement of this listener has to wait for `sleep` itself. A UI test now runs the same
+race and waits the same way; against the pre-fix hook it fails at 38 units. The two Low findings left for
+a decision were then fixed: a PTY whose program is the app's own executable is refused like a
+one-shot run, and the startup auto-spawn skips a task whose worktree is no longer the one it was
+prepared in.
+
+The task 529 seventh pass kept the sixth pass's layout. The same script rebuilt the shard files from
+the sixth pass's lists, one new file (`tests/ui/helpers.ts`) was placed by hand, and the focus range
+ran from `59861b3d` to HEAD, the sixth pass's fix commit included. `retrieval-store.ts` was stubbed
+in the pack this time, so its finder read it from disk inside its shard. Eight finders stopped after
+their focus ranges: each prompt named a focus, and they read it as the limit of the job. Each was
+resumed with the rest of its shard, so every shard line was read, and the resumed reads raised
+nothing new. A prompt that names a focus has to say in the same line that the whole shard is read.
+The one Medium sat in the newest code. The sixth pass's fix for a Quick Find question asked while
+reopening the map on another project still lost it when a snapshot read for the old project, in
+flight across the close, landed after the reopen. Two finders found it independently. The Lows fixed
+were a summary backoff that switching summaries off ended, a naming run that announced a project
+forgotten while it ran, OpenCode's post-answer session delete recorded as the chat's run and so
+stopped when the chat ended, an unlink of deleted tasks' commits written as one uncapped transaction
+outside the write budget, and the `'\''` escape `quoteArg` writes, which cut the own-executable
+check's path short. The driver refuted two Mediums about the resume pass. A To Do bounce deletes the
+task's records, which the resume's locked re-check already catches, and its re-check and cancel log
+were pinned by tests the finder's grep missed. The pass first ended with eight findings skipped,
+three of them waiting on a decision: whether a resume that fails in its preparation may fall back to
+a fresh agent (at startup and after a host crash alike), whether a task moved mid-preparation into a
+manual column keeps its Resume, and when a kept `~/.claude.json` copy is worth keeping. The user
+decided all three, and a follow-up commit fixed all eight. A resume that cannot be prepared now keeps
+its conversation behind a paused placeholder when it has one, and the orbit test sets up its race in
+one task, red at 38 units without its fix. A review that ends on a skipped decision with the user at
+hand should ask and fix, not hand the decision back in the verdict.
+
+The task 529 eighth pass kept the seventh pass's layout and changed two things. Every prompt, the
+shared context file and each shard's focus heading said in the same line that the focus is where to
+look hardest and the whole shard is the job, and every finder reported reading all of its shard, so
+none was resumed. And the 4,143-line Knowledge Graph UI spec, stubbed in the pack for the third pass
+running, got a finder of its own that read it from disk in full; `retrieval-store.ts`, also stubbed,
+went to the smallest source shard. That finder found nothing, which closes the gap the sixth and
+seventh passes left by reading only its newest ranges. The focus ran from `5f827c0d` to HEAD, about
+360 lines of source. The one source Medium sat in it: the seventh pass's own follow-up made a resume
+whose preparation failed keep its record resumable, but did so outside the task lock from the
+gather-time snapshots, so a Resume during the preparation could see its retired record CAS'd back to
+suspended and its live agent's `session_id` cleared. It now runs under the lock with the spawn pass's
+re-check, which both now share. Three findings were refuted. A coverage hole the finder's grep missed:
+a moved-task test existed, and only its To Do and Done exclusion was unpinned. A kept
+`~/.claude.json` copy swept after another writer replaced the file, which needs two independent
+failures and sits inside the user's decision to sweep kept copies once a run. And a projection pass
+said to read a closed database after the last page's pace: the loop checks its abort at the top of
+each page with no await before the read. The driver applied that last one before a test-builder,
+asked to pin it, showed no test could go red, and the checks came out again.

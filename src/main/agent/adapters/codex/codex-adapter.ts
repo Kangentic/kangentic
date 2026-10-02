@@ -9,6 +9,7 @@ import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -293,6 +294,42 @@ export class CodexAdapter implements AgentAdapter {
       cliPath,
       args: ['exec', '--skip-git-repo-check'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+    });
+  }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * `--sandbox read-only` is Codex's read-only mode, and `exec` never asks for
+   * approval, so there is nothing to approve and nothing it may change.
+   *
+   * No `--ask-for-approval`: it is an interactive flag that `codex exec`
+   * rejects, so the shipped call failed before it reached the model.
+   *
+   * `--ephemeral` ("run without persisting session files to disk", codex
+   * 0.154's own help): an answer is not a session to resume, and every run
+   * otherwise added one to `~/.codex/sessions`. Streaming (`--json`) and
+   * search (a `-c mcp_servers` override) stay off until a logged-in run
+   * verifies them; this machine's Codex answers 401.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(model ? ['--model', model] : [])],
+      prompt,
       cwd,
     });
   }

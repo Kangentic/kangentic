@@ -88,6 +88,11 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getUserPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
+    // The resume pass confirms under the task lock that its record still exists
+    // in the status it was gathered in: the gathered row itself, as the
+    // database returns it.
+    findByAnyId = (id: string) => [...sessionRepoGetResumable(), ...sessionRepoGetOrphaned()]
+      .find((record: SessionRecord) => record.id === id);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -102,7 +107,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => {
       return taskRepoList();
     };
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
-    getById = vi.fn(() => null);
+    // The spawn pass re-reads its task under the task lock.
+    getById = vi.fn((id: string) => taskRepoList().find((task: Task) => task.id === id));
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -207,6 +213,7 @@ function makeSessionManager() {
     spawn: vi.fn(async () => ({ id: 'new-pty-session-1' })),
     getShell: vi.fn(async () => '/bin/sh'),
     hasSessionForTask: vi.fn(() => false),
+    findLiveSessionByTaskId: vi.fn(() => undefined),
     getUserPausedTaskIds: vi.fn(() => new Set<string>()),
   };
 }
@@ -578,7 +585,9 @@ describe('autoSpawnTasks: resolveIsolatedSwimlaneId(lane) passed into spawn', ()
         adapter: { name: 'claude', sessionType: 'claude_agent', getExitSequence: () => ['\x03'] } as never,
         agent: 'claude',
         command: 'claude --session-id new-agent-uuid',
-        cwd: '/project/cwd',
+        // The cwd the pass prepared in: the task has no worktree, so the
+        // project path. The locked re-check compares the two.
+        cwd: '/project',
         sessionRecordId: 'auto-record-main',
         agentSessionId: 'new-agent-uuid',
         permissionMode: 'default',
@@ -617,7 +626,7 @@ describe('autoSpawnTasks: resolveIsolatedSwimlaneId(lane) passed into spawn', ()
         adapter: { name: 'claude', sessionType: 'claude_agent', getExitSequence: () => ['\x03'] } as never,
         agent: 'claude',
         command: 'claude --session-id new-iso-uuid',
-        cwd: '/project/cwd',
+        cwd: '/project',
         sessionRecordId: 'auto-record-iso',
         agentSessionId: 'new-iso-uuid',
         permissionMode: 'default',

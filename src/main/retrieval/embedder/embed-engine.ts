@@ -26,38 +26,39 @@
  *    worker go. The hold used to be keyed on semantic search being ENABLED,
  *    which kept a 1.75 GB commit reservation resident for the life of the app
  *    with nothing to do (#706). It is keyed on work now; a query never holds,
- *    it just re-arms the idle timer, and Quick Find warms the worker on open
- *    (`prewarm`) so the first query after a release still lands warm.
+ *    it just re-arms the idle timer, and opening the Knowledge Graph warms the
+ *    worker (`prewarm`) so the first question after a release still lands warm.
  *
  * The DB is the durable queue (`chunksNeedingEmbedding` / `embedded_model`),
  * so a crash mid-drain just leaves chunks pending; the next markDirty (or the
- * getStatus safety-net re-mark) resumes them - nothing is lost.
+ * getStatus safety-net re-mark) resumes them - nothing is lost. Its reads and
+ * writes run in the retrieval worker (`embed-store-access.ts`); this loop
+ * embeds and paces.
  */
 
-import type Database from 'better-sqlite3';
-import { getProjectDb } from '../../db/database';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { RetrievalStore } from '../retrieval-store';
-import { hasVecSupport } from '../vec-support';
+import { CONVERSATION_CORPUS } from '../corpora';
 import { EmbedClient } from './embed-client';
 import { EMBED_DRAIN_BATCH, EMBED_DUTY_CYCLE, resolveEmbeddingModel, type EmbeddingModelDef } from './embedding-config';
 import { isEmbeddingModelPresent } from './embedding-model';
+import { retrievalClient, RetrievalUnavailableError } from '../retrieval-client';
+import type { EmbedStoreAccess } from './embed-store-access';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Embedder, StoredChunk } from '../types';
-import type { MemoryAcceleration } from '../../../shared/types';
+import type { KnowledgeGraphAcceleration } from '../../../shared/types';
 
-/** The narrow slice of RetrievalStore the engine actually uses. Structural
- *  (not the concrete class) so unit tests inject a plain fake object without
- *  having to satisfy RetrievalStore's private fields. */
-export interface EmbedStore {
-  getMeta(key: string): string | undefined;
-  setMeta(key: string, value: string): void;
-  resetVec(dimensions: number): void;
-  ensureVecTable(dimensions: number): void;
-  readonly hasVec: boolean;
-  chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[];
-  writeEmbeddings(rows: Array<{ chunkId: number; vector: Float32Array; contentHash: string }>, modelTag: string): void;
-}
+export type { EmbedStore } from './embed-store-access';
+
+/** The drain's database steps, run by the retrieval worker. */
+const workerEmbedStoreAccess: EmbedStoreAccess = {
+  // No call budget: a first batch after a model switch resets the vec
+  // tables, which pages through every vector.
+  nextBatch: (projectId, model, limit) => retrievalClient.call(
+    'embed.nextBatch',
+    { projectId, dimensions: model.dimensions, modelTag: model.modelTag, limit },
+    { timeoutMs: null },
+  ),
+  write: (projectId, rows, modelTag) => retrievalClient.call('embed.write', { projectId, rows, modelTag }),
+};
 
 /** The narrow slice of EmbedClient the engine actually uses. Structural, for
  *  the same reason as EmbedStore. Extends `Embedder` (dimensions/modelTag/
@@ -110,25 +111,37 @@ function defaultDelay(ms: number): Promise<void> {
 }
 
 export interface EmbedEngineDeps {
-  getDb: (projectId: string) => Database.Database;
-  createStore: (db: Database.Database) => EmbedStore;
-  createClient: (model: EmbeddingModelDef, acceleration: MemoryAcceleration) => EmbedWorkerClient;
+  store: EmbedStoreAccess;
+  createClient: (model: EmbeddingModelDef, acceleration: KnowledgeGraphAcceleration) => EmbedWorkerClient;
   delay: (ms: number) => Promise<void>;
   dutyCycle: number;
   drainBatchSize: number;
   interactiveIdleWaitCapMs: number;
   transientBackoffMs: number;
+  /** The clock the record-progress reports are paced by. */
+  now: () => number;
 }
 
+/**
+ * How often a run that embeds task records reports its progress. A full record
+ * run takes minutes (2,342 chunks in about six on the real board), and a share
+ * that moved only at the end sat at "0% embedded" the whole time.
+ */
+export const RECORD_PROGRESS_INTERVAL_MS = 30_000;
+
+/** Batches a run embeds before its rate is taken as this machine's: the first
+ *  batch pays the worker's warm-up. */
+export const RATE_MIN_BATCHES = 3;
+
 const defaultDeps: EmbedEngineDeps = {
-  getDb: getProjectDb,
-  createStore: (db) => new RetrievalStore(db),
+  store: workerEmbedStoreAccess,
   createClient: (model, acceleration) => new EmbedClient(model, acceleration),
   delay: defaultDelay,
   dutyCycle: EMBED_DUTY_CYCLE,
   drainBatchSize: EMBED_DRAIN_BATCH,
   interactiveIdleWaitCapMs: INTERACTIVE_IDLE_WAIT_CAP_MS,
   transientBackoffMs: TRANSIENT_BACKOFF_MS,
+  now: () => Date.now(),
 };
 
 /** Config/model accessors the engine needs from an IpcContext. Kept as free
@@ -136,7 +149,7 @@ const defaultDeps: EmbedEngineDeps = {
  *  engine has no dependency on the service module. */
 function isSemanticEnabled(context: IpcContext): boolean {
   try {
-    return context.configManager.load().memory?.semanticEnabled === true;
+    return context.configManager.load().knowledgeGraph?.enabled === true;
   } catch {
     return false;
   }
@@ -144,15 +157,15 @@ function isSemanticEnabled(context: IpcContext): boolean {
 
 function selectedModel(context: IpcContext): EmbeddingModelDef {
   try {
-    return resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
+    return resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
   } catch {
     return resolveEmbeddingModel(undefined);
   }
 }
 
-function selectedAcceleration(context: IpcContext): MemoryAcceleration {
+function selectedAcceleration(context: IpcContext): KnowledgeGraphAcceleration {
   try {
-    return context.configManager.load().memory?.acceleration ?? 'auto';
+    return context.configManager.load().knowledgeGraph?.acceleration ?? 'auto';
   } catch {
     return 'auto';
   }
@@ -176,7 +189,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
   // whole app: shared by the background drain AND the interactive query path.
   let client: EmbedWorkerClient | null = null;
   let activeModelId: string | null = null;
-  let activeAcceleration: MemoryAcceleration | null = null;
+  let activeAcceleration: KnowledgeGraphAcceleration | null = null;
 
   const dirty = new Set<string>();
   let wakeResolve: (() => void) | null = null;
@@ -194,7 +207,38 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    * Settings -> Developer -> Persist Console Logs is on (see log-mirror.ts) -
    * no verbose logging cost for a user who never turns that on.
    */
-  const drainRuns = new Map<string, { startedAt: number; chunks: number; batches: number }>();
+  const drainRuns = new Map<string, {
+    startedAt: number;
+    chunks: number;
+    batches: number;
+    /** Chunks embedded that are not conversations: task records. */
+    sideChunks: number;
+    /** When this run last reported its records' progress. */
+    reportedAt: number;
+  }>();
+  /**
+   * Told when task records have been embedded: at most every
+   * `RECORD_PROGRESS_INTERVAL_MS` while a run embeds them, and once when it has
+   * nothing left. The Knowledge Graph re-reads its Index then: a corpus's
+   * embedded share is read when the graph loads, and nothing else moves it, so
+   * a row caught mid-embed (a task summary re-embeds its whole record) said
+   * "98% embedded" until the graph was reopened.
+   *
+   * Only for a run that embedded something besides conversations. A
+   * conversation-only run follows every agent turn, and a re-read after each
+   * one recomputes the map's coverage on main (about 280 ms on a 92k-chunk
+   * index) for every window showing the graph. A records-only re-read leaves
+   * that coverage cached.
+   */
+  let onRecordsEmbedded: ((projectId: string) => void) | undefined;
+  /**
+   * Chunks this machine embeds a minute in the background, measured over the
+   * latest drain run on wall time, duty-cycle sleeps and all. What a "minutes
+   * left" estimate divides by, so it holds for this machine's device and
+   * load, not a figure taken elsewhere. Null until a run has embedded
+   * `RATE_MIN_BATCHES` batches this launch.
+   */
+  let measuredChunksPerMinute: number | null = null;
 
   function wake(): void {
     if (wakeResolve) {
@@ -217,7 +261,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
    *  selected model or the acceleration preference changed. Re-resolved on
    *  every drain iteration (never cached across a model switch) and by the
    *  query path. */
-  function getClientFor(model: EmbeddingModelDef, acceleration: MemoryAcceleration): EmbedWorkerClient {
+  function getClientFor(model: EmbeddingModelDef, acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient {
     if (client && (activeModelId !== model.id || activeAcceleration !== acceleration)) {
       client.dispose();
       client = null;
@@ -231,7 +275,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
   }
 
   /** The client for the interactive paths (a search / MCP recall query, or a
-   *  Quick Find prewarm), or null for lexical-only. Non-null only when
+   *  Knowledge Graph prewarm), or null for lexical-only. Non-null only when
    *  semantic is enabled, the model is present, and the worker has not
    *  crashed past its cap. Never holds the worker: a query's own embed()
    *  re-arms the idle timer, and a prewarm arms it on ready. */
@@ -267,22 +311,6 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     wake();
   }
 
-  /** Vec-table dimension sync for one project, moved verbatim from the old
-   *  embedPass. A dimension change (a different model) needs a full reset;
-   *  same-dimension model switches are handled by the model-tag re-embed in
-   *  chunksNeedingEmbedding. Returns false when the project has no usable vec
-   *  table (structurally lexical-only), so the drain should skip it. */
-  function syncVecTable(store: EmbedStore, model: EmbeddingModelDef): boolean {
-    const storedDims = store.getMeta('vec_dims');
-    if (storedDims !== String(model.dimensions)) {
-      store.resetVec(model.dimensions);
-      store.setMeta('vec_dims', String(model.dimensions));
-    } else {
-      store.ensureVecTable(model.dimensions);
-    }
-    return store.hasVec;
-  }
-
   /** Pop the next dirty project in round-robin order (insertion order of a
    *  Set). runLoop deletes the popped id before draining and re-adds it (at
    *  the back) only when more work remains, which is what makes this an
@@ -308,16 +336,6 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     const model = selectedModel(context);
     if (!isEmbeddingModelPresent(model)) return 'drained';
 
-    let db;
-    try {
-      db = deps.getDb(projectId);
-    } catch {
-      return 'drained';
-    }
-    if (!hasVecSupport(db)) return 'drained';
-    const store = deps.createStore(db);
-    if (!syncVecTable(store, model)) return 'drained';
-
     const resolvedClient = getClientFor(model, selectedAcceleration(context));
 
     if (resolvedClient.crashed) {
@@ -330,7 +348,23 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       return 'crashed';
     }
 
-    const batch = store.chunksNeedingEmbedding(model.modelTag, deps.drainBatchSize);
+    // The vec tables are put at the model's width first (a different width
+    // resets them). Null: the project cannot hold vectors, lexical only.
+    let batch: StoredChunk[] | null;
+    try {
+      batch = await deps.store.nextBatch(projectId, model, deps.drainBatchSize);
+    } catch (error) {
+      // The retrieval worker is restarting: keep the project for later.
+      if (error instanceof RetrievalUnavailableError) {
+        await deps.delay(deps.transientBackoffMs);
+        return 'transient';
+      }
+      // Any other failure drops the project until something marks it dirty
+      // again, so it is logged rather than lost in silence.
+      console.warn(`[embed-engine] nextBatch failed for ${projectId}; leaving the project:`, error);
+      return 'drained';
+    }
+    if (batch === null) return 'drained';
     if (batch.length === 0) {
       const run = drainRuns.get(projectId);
       if (run) {
@@ -345,6 +379,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
           elapsedMs,
           chunksPerMinute: elapsedMs > 0 ? Math.round((run.chunks / elapsedMs) * 60_000) : null,
         });
+        if (run.sideChunks > 0) onRecordsEmbedded?.(projectId);
       }
       return 'drained';
     }
@@ -352,7 +387,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     // There is a batch, so hold the worker resident until the dirty set is
     // empty again (runLoop releases it). Taken only now, AFTER the empty
     // check: getStatus re-marks the current project on every poll (the
-    // Memory tab polls every 1.5 s), and a hold taken on every such pass
+    // Knowledge Graph tab polls every 1.5 s), and a hold taken on every such pass
     // would clear and re-arm the worker's idle countdown each time, so it
     // could never expire while that tab was open. Still ahead of the first
     // await, so no timer can fire between the wake and the hold.
@@ -364,7 +399,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     await raceWithCap(resolvedClient.waitForInteractiveIdle(), deps.interactiveIdleWaitCapMs, deps.delay);
 
     if (!drainRuns.has(projectId)) {
-      drainRuns.set(projectId, { startedAt: Date.now(), chunks: 0, batches: 0 });
+      drainRuns.set(projectId, { startedAt: Date.now(), chunks: 0, batches: 0, sideChunks: 0, reportedAt: deps.now() });
     }
 
     const startedAt = Date.now();
@@ -381,19 +416,31 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       return 'transient';
     }
 
-    // Synchronous sqlite-vec write on the main thread, and the one part of the
-    // drain that can contend with a task write under the 5s busy timeout: the
-    // dev lag monitor records it when it runs long (see event-loop-lag.ts).
-    timeSyncWork('embed:writeEmbeddings', () => store.writeEmbeddings(
-      batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index], contentHash: chunk.contentHash })),
-      model.modelTag,
-    ));
+    // Written by the retrieval worker. A batch lost to a worker restart is
+    // still pending in the database and is embedded again.
+    try {
+      await deps.store.write(
+        projectId,
+        batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index], contentHash: chunk.contentHash })),
+        model.modelTag,
+      );
+    } catch (error) {
+      if (!(error instanceof RetrievalUnavailableError)) throw error;
+      await deps.delay(deps.transientBackoffMs);
+      return 'transient';
+    }
 
     const sleepMs = computeEmbedSleepMs(batchMs, deps.dutyCycle);
     const run = drainRuns.get(projectId);
     if (run) {
       run.chunks += batch.length;
       run.batches += 1;
+      run.sideChunks += batch.filter((chunk) => !(CONVERSATION_CORPUS as ReadonlyArray<string>).includes(chunk.corpus)).length;
+      // Progress on a long record run, so the Index's share moves while it runs.
+      if (run.sideChunks > 0 && deps.now() - run.reportedAt >= RECORD_PROGRESS_INTERVAL_MS) {
+        run.reportedAt = deps.now();
+        onRecordsEmbedded?.(projectId);
+      }
     }
     console.debug('[embed-engine] batch', {
       projectId,
@@ -405,6 +452,10 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
     });
 
     await deps.delay(sleepMs);
+    // Taken after the sleep, so the rate counts the pacing a real drain pays.
+    if (run && run.batches >= RATE_MIN_BATCHES) {
+      measuredChunksPerMinute = (run.chunks / Math.max(1, Date.now() - run.startedAt)) * 60_000;
+    }
     return 'more-pending';
   }
 
@@ -463,6 +514,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     markDirty,
 
+    /** Register the records-embedded listener. Last writer wins, like the graph's. */
+    setOnRecordsEmbedded(listener: (projectId: string) => void): void {
+      onRecordsEmbedded = listener;
+    },
+
     getEmbedder(context: IpcContext): Embedder | null {
       return resolveClient(context);
     },
@@ -471,7 +527,7 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
       reconcileClientAndDirty(context);
     },
 
-    /** Spawn + init the worker ahead of a query (Quick Find open), embedding
+    /** Spawn + init the worker ahead of a query (Knowledge Graph open), embedding
      *  nothing. A no-op when there is nothing to warm. */
     prewarm(context: IpcContext): void {
       // Fired from an ipcMain.on handler, which has no promise to reject
@@ -483,6 +539,11 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     get activeDevice(): string | null {
       return client?.activeDevice ?? null;
+    },
+
+    /** Background chunks a minute on this machine, or null before a run has measured it. */
+    get chunksPerMinute(): number | null {
+      return measuredChunksPerMinute;
     },
 
     get workerCrashed(): boolean {

@@ -100,9 +100,12 @@ therefore needs one too.
 ### Changing a runtime dependency
 
 `npm run package` is the only gate that proves the closure. `build/afterPack.js` runs
-`build/verify-unpacked-worker.js` for the embed and dictation workers, forking a child `node`
-fenced to `app.asar.unpacked`. CI never packages, so a package wrongly moved out of
-`dependencies` fails there and nowhere else. See [[release-gates-fail-loudly]].
+`build/verify-unpacked-worker.js` for every forked process, loading its externals fenced to
+`app.asar.unpacked`. The required CI checks never package, so a package wrongly moved out of
+`dependencies` fails there: locally, on the release matrix, or in the path-filtered
+`package-smoke` workflow (`.github/workflows/package-smoke.yml`, not a required check), which
+packages on all three platforms when a pull request touches `package.json` or the packaging
+config. See [[release-gates-fail-loudly]].
 
 ## Enforcement (self-maintaining)
 

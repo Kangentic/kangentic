@@ -43,6 +43,19 @@ class MockSessionManager extends EventEmitter {
     this.writeRawCalls.push({ id, data });
   }
 
+  /** Raw-output subscriptions the engine holds, by session. The real manager
+   *  forwards 'data-tap' only while one is held. */
+  readonly tapSubscriptions = new Map<string, number>();
+
+  subscribeDataTap(sessionId: string): () => void {
+    this.tapSubscriptions.set(sessionId, (this.tapSubscriptions.get(sessionId) ?? 0) + 1);
+    return () => {
+      const remaining = (this.tapSubscriptions.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.tapSubscriptions.set(sessionId, remaining);
+      else this.tapSubscriptions.delete(sessionId);
+    };
+  }
+
   flushDrain(): void {
     const pending = this.drainResolvers.splice(0, this.drainResolvers.length);
     for (const resolve of pending) resolve();
@@ -179,6 +192,9 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await flushSetImmediate();
     await tick();
     expect(mockSessionManager.writeRawCalls).toHaveLength(4);
+    // The engine holds a raw-output subscription for the whole call, so the
+    // pty host forwards the unfocused session's bytes at all.
+    expect(mockSessionManager.tapSubscriptions.get('s1') ?? 0).toBeGreaterThan(0);
 
     // The TUI's paste-placeholder redraw, arriving on data-tap ONLY.
     mockSessionManager.emit('data-tap', 's1', '\x1b[K[Pasted text +0 lines]');
@@ -195,6 +211,8 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await reachEvidenceWait();
     await emitEvidence();
     await expect(promise).resolves.toBeUndefined();
+    // Released when the call ends.
+    expect(mockSessionManager.tapSubscriptions.has('s1')).toBe(false);
   });
 
   it('chunks large payloads at 1024-byte boundaries', async () => {

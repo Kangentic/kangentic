@@ -13,6 +13,7 @@ import { taskDetailSurfaceFor } from '../../../utils/task-progress';
 import { scheduleWindowTerminalResize } from '../../../window-manager/terminal/resize-coalescer';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
 import { taskHasDescriptionContent } from './description-content';
+import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';
@@ -293,6 +294,15 @@ export function TaskDetailBody({
       )}
       {labelsAndPriorityRow}
       {attachmentStrip}
+      {/* Proactive recall, deliberately placed INSIDE the description subtree
+          rather than as a new child of the split row below: React matches that
+          row's children by index, and a shifted index silently remounts a
+          retained Browser pane's <webview>, killing the agent's CDP session.
+          See .claude/rules/retained-pane-never-remounts.md. This subtree is a
+          sibling of that row, and the description peek is mutually exclusive
+          with the Browser pane, so nothing here can shift it. Renders null
+          when there is no prior work, so it costs nothing on most tasks. */}
+      <TaskPriorWork taskId={task.id} projectId={paneProjectId ?? null} />
     </>
   );
 

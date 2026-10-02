@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext } from '../shared/types';
+import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphAnswerContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -776,15 +776,45 @@ const api: ElectronAPI = {
   },
 
   transcripts: {
-    get: (input) => ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input),
+    // Main relays the retrieval worker's JSON untouched (a long conversation
+    // is several MB); it is parsed here, in the renderer's process.
+    get: async (input) => {
+      const reply: unknown = await ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input);
+      return typeof reply === 'string' ? JSON.parse(reply) : reply;
+    },
     listSessions: (taskId, projectId) =>
       ipcRenderer.invoke(IPC.TRANSCRIPT_LIST_SESSIONS, taskId, projectId),
   },
 
-  memory: {
-    getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
-    prewarm: () => ipcRenderer.send(IPC.MEMORY_PREWARM),
-    rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
+  knowledgeGraph: {
+    getStatus: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_STATUS),
+    prewarm: (chat) => ipcRenderer.send(IPC.KNOWLEDGE_GRAPH_PREWARM, chat),
+    endChat: (chatId) => ipcRenderer.send(IPC.KNOWLEDGE_GRAPH_END_CHAT, chatId),
+    rebuildPlan: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_PLAN),
+    rebuildIndex: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REBUILD_INDEX),
+    taskSummary: (projectId, taskId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_TASK_SUMMARY, projectId, taskId),
+    graphSnapshot: (projectId, knownProjectionKey) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_SNAPSHOT, projectId, knownProjectionKey),
+    graphProjects: () => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_PROJECTS),
+    refreshGraph: (projectId) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_REFRESH, projectId),
+    answerFromGraph: (
+      question: string,
+      projectId?: string | null,
+      granularity?: string,
+      requestId?: string,
+      context?: KnowledgeGraphAnswerContext,
+    ) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_ANSWER, question, projectId, granularity, requestId, context),
+    relatedToTask: (taskId: string, projectId?: string | null) =>
+      ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK, taskId, projectId),
+    onGraphChanged: (callback: (projectId: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
+      ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
+    },
+    onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, push: KnowledgeGraphAnswerStreamPush) => callback(push);
+      ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, handler);
+      return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM, handler);
+    },
   },
 
   platform: process.platform,
@@ -814,9 +844,12 @@ if (__KANGENTIC_DEV__) {
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
-    seedEmbeddingBacklog: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_EMBEDDING_BACKLOG, count),
     seedLargeConversation: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_LARGE_CONVERSATION, count),
     seedUsageData: (days: number) => ipcRenderer.invoke(IPC.DEV_SEED_USAGE_DATA, days),
+    seedKnowledgeGraph: (options: { documentCount?: number; chunksPerDocument?: number; embeddingBacklog?: number }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH, options),
+    seedKnowledgeGraphReal: (options: { documentLimit?: number; sourceProject?: string; embeddingBacklog?: number }) =>
+      ipcRenderer.invoke(IPC.DEV_SEED_KNOWLEDGE_GRAPH_REAL, options),
     isEphemeralPreview,
     previewTaskTitle,
   };

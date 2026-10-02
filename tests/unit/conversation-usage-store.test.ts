@@ -1,10 +1,22 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
   ConversationUsageStore,
   extractTurnUsageRecords,
+  TURNS_PER_TRANSACTION,
   type TurnUsageOwner,
 } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { adaptDatabase } from './helpers/node-sqlite-database';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
 import type { SessionRecord, TranscriptEntry, TranscriptTurnUsage } from '../../src/shared/types';
 
@@ -197,7 +209,7 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
   }));
   const db = {
     prepare,
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
   return { db, table, prepare };
 }
@@ -248,6 +260,47 @@ describe('extractTurnUsageRecords', () => {
       { kind: 'assistant', uuid: 'a1', ts: 2, blocks: [{ type: 'text', text: 'hello' }] },
     ];
     expect(extractTurnUsageRecords(entries)).toEqual([]);
+  });
+});
+
+const describeWithSqlite = sqlite ? describe : describe.skip;
+
+describeWithSqlite('ConversationUsageStore.recordTurns against SQLite', () => {
+  function realStore(): { store: ConversationUsageStore; recordedAt: (turnUuid: string) => string } {
+    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    runProjectMigrations(db);
+    const read = db.prepare('SELECT recorded_at AS recordedAt FROM conversation_turn_usage WHERE turn_uuid = ?');
+    return {
+      store: new ConversationUsageStore(db),
+      recordedAt: (turnUuid) => (read.get(turnUuid) as { recordedAt: string }).recordedAt,
+    };
+  }
+
+  it('leaves an unchanged turn unwritten, and rewrites one whose usage changed', () => {
+    // Every agent turn records the whole transcript's turns again; before, each
+    // replay rewrote every row of the conversation.
+    const { store, recordedAt } = realStore();
+    const turns = [
+      { turnUuid: 'a1', ts: 2, model: 'model-x', usage: usage() },
+      { turnUuid: 'a2', ts: 4, model: 'model-x', usage: usage() },
+    ];
+    store.recordTurns(owner, turns, '2026-07-01T00:00:00.000Z');
+
+    store.recordTurns(owner, [turns[0], { ...turns[1], usage: usage({ outputTokens: 99 }) }], '2026-07-02T00:00:00.000Z');
+
+    expect(recordedAt('a1')).toBe('2026-07-01T00:00:00.000Z');
+    expect(recordedAt('a2')).toBe('2026-07-02T00:00:00.000Z');
+  });
+
+  it('records a batch larger than one transaction in full', () => {
+    const { store } = realStore();
+    const turns = Array.from({ length: TURNS_PER_TRANSACTION * 2 + 5 }, (_, index) => ({
+      turnUuid: `turn-${index}`, ts: index, model: 'model-x', usage: usage(),
+    }));
+
+    store.recordTurns(owner, turns, now);
+
+    expect(store.getForTask('task-1')).toHaveLength(turns.length);
   });
 });
 
@@ -473,7 +526,7 @@ function makeIndexerFakeDb(state: FakeIndexerDbState): Database.Database {
         },
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

@@ -50,6 +50,12 @@ grace when the report says a young session's kill is deferred to a timer inside 
 calls `app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With no
 PTY killed, the quit is the plain synchronous one.
 
+Every PTY runs in the `kangentic-pty-host` utility process ([[pty-host-out-of-process]]), so the
+exit callbacks land there. When any PTY was killed, `SessionManager.killAll()` adds the host's pid
+to the report as one more kill, and `dispose()` posts the host's `shutdown` with a wait bound of the
+drain's deadline less 200 ms: the host exits itself once its last exit callback has run, inside the
+window main is still waiting.
+
 A killed PTY whose child pid was unreadable has no probe, so the drain spends a fixed 400ms blind
 budget for it instead of waiting on liveness. `killAllSessions` therefore returns a `PtyKillReport`
 (pids plus a total kill count) rather than a bare pid list: an empty pid list must never be read as

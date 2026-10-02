@@ -120,10 +120,12 @@ sessions bypass all of this (not task agents).
    - If under limit, call `doSpawn()`:
      - Drain EVERY existing registry row for the task, not just the first match (`SessionRegistry.listByTaskId`): kill each PTY, detach its files while preserving them on disk, clear its per-session caches, then carry scrollback and geometry over from the most recently started row that is not the id being reused (a queued placeholder being promoted reuses its own id and has no scrollback). This is what keeps the in-memory registry at one row per task; a spawn that evicted only the first match left a second stale row listed ahead of the live PTY.
      - Resolve shell and arguments (platform-specific)
-     - Spawn PTY via `node-pty`
+     - Spawn the PTY in the `kangentic-pty-host` utility process (`PtyHostClient.spawn`; node-pty
+       runs only there, see [PTY host](#pty-host)). The host reads the carry-over before it drops
+       the task's earlier sessions.
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
-     - Set up output handler (16ms batched flush, 512KB scrollback)
+     - The host runs the output handler (16ms batched flush, 512KB scrollback)
      - After 100ms delay, write CLI command to PTY stdin (agent spawns prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals exempt)
 
 ## Queue
@@ -568,7 +570,65 @@ On project open (`src/main/transition-engine/session-startup/`):
 7. **Resume or respawn** (isolation-scoped via `getLatestForTaskByTypeAndIsolation`):
    - Suspended/orphaned/interrupted-exited with `agent_session_id` -- use `--resume` (attempts to restore conversation; the id is first reconciled against the record's own `status.json`, see [Resume](#resume))
    - No session ID -- fresh `--session-id` with prompt from matching `spawn_agent` action
+   - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. Retiring it used to let step 8 start a fresh agent over it. A record with no conversation to resume (no agent session id yet) is still retired, so step 8 starts the task fresh, which is all a resume of it could have done.
 8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
+
+The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
+exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 3's
+gather is filtered to them and step 2 orphans nothing. Without the scope, an agent that exited
+non-zero on its own earlier in the run, or one suspended this run, would be woken with them.
+Step 8 runs scoped too, to the lost sessions' tasks. A lost session with no `agent_session_id` yet
+has nothing to resume (the interrupted-exited gather requires one), so its task starts a fresh
+agent there, as it would at startup. Its lost row is still in the registry, exited, so in this pass
+every row but the lost ones counts as the task having a session: a resumed session, a paused
+placeholder that keeps its Resume, and a resume whose spawn failed, whose exited row a fresh agent
+must not replace.
+
+Both passes spawn each task under its lifecycle lock (`withTaskLock`), after reading the task again,
+because their preparation awaits the shell and every agent's detection. A task is skipped when its
+column changed or its `session_id` changed (a Reset clears it). A resume is also skipped when the
+task gained a live session, its record is gone, or its record's status moved (a user's Resume retires
+it). A fresh agent is also skipped when the task gained any session row (in the crash path, any row
+but the lost ones), or when its worktree is no longer the one it was prepared in (a move to To Do and
+back removes it). A resume skipped because the task moved into a custom column that starts no agent
+keeps its record resumable with a placeholder, as step 6 does for a record it finds there: that move
+had no session to suspend, so the card would otherwise offer no Resume until the next launch. A resume
+whose preparation failed is kept resumable (step 7) under the same lock and the same re-check, since
+its preparation awaited too: a record a Resume retired meanwhile is exited, and an unlocked CAS would
+have taken it back to suspended under the live agent and cleared that agent's `session_id`.
+
+## PTY host
+
+Every PTY runs in the `kangentic-pty-host` utility process (`src/main/pty/host/`), as VS Code runs
+its terminals, so terminal output never crosses main's event loop. The host core
+(`pty-host-core.ts`) owns node-pty, the headless buffer and scrollback ring, backpressure, the raw
+transcript writer and the adapters' output detectors. `SessionManager` stays the facade and talks to
+it through `PtyHostClient`: ordered commands, id-matched requests, ordered events (`protocol.ts`).
+
+- **What main keeps.** The session registry, the activity engine and every push to the renderer.
+  It mirrors the alt-screen state and buffer width from host events, and reads scrollback, the
+  serialized frame, raw scrollback, the output peek and diagnostics by request.
+- **Which output reaches main.** `data` for the focused union (`setFocused`), `tap` for the
+  sessions a phone streams (`subscribeDataTap`, reference counted, so a reader that needs raw output
+  briefly subscribes for that long), and otherwise only a coalesced `outputSeen` with no bytes.
+- **A host crash.** Main first stops the process tree each PTY left behind, by pid
+  (`stopLostPtyTree`): a closed pseudo console or a hangup usually ends the agent, but nothing
+  guarantees it, and one still running would edit its worktree beside the session that resumes. Each
+  PTY is then reported through its own exit listener with
+  `PTY_HOST_LOST_EXIT_CODE` (-2), so the session ends exactly as a PTY exit ends it. The renderer and
+  the desktop notifier fold those exits into one "Terminals restarted" notice. The host restarts at
+  once (then after 1, 5 and 15 s), main replays its focus and tap sets, and the lost agent sessions
+  resume (see Crash Recovery above). After five crashes the same core runs in main for the rest of
+  the run, which is how terminals ran before the host existed.
+- **Off-main spawns.** One-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
+  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`) and the background-shell
+  watcher's process table run in the host too, since a Windows spawn's CreateProcess is synchronous
+  on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
+  fails a running one (it is never rerun, which would be a second paid answer) and main stops the
+  orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
+  main by pid, since with no terminal open the quit does not wait for the host.
+
+See `.claude/rules/pty-host-out-of-process.md`.
 
 ## Isolated Sessions (Per-Column Session Model)
 
@@ -613,7 +673,7 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`)
 2. List all in-memory sessions with `running` or `queued` status
 3. For each running record, call `captureSessionMetrics()` (synchronous: in-memory cache read + better-sqlite3 writes) so cost / tokens / duration / `tool_breakdown` / `compaction_count` are flushed to the DB before the PTY is killed. The function writes to BOTH the `sessions` row (`SessionRepository.updateMetrics`) and, when `usage` is defined, to a `usage_history` row (`UsageHistoryRepository.recordSessionUsage`) so lifetime period totals survive any subsequent task deletion. Without this step every clean app close loses in-flight metrics for any session that had not yet checkpointed. (The shutdown path uses the synchronous snapshot only; the async transcript-token refinement, `refineTranscriptTokens`, runs only on the exit/suspend/move paths, never here.) A periodic snapshot timer (`startMetricsSnapshotTimer`, ~45s) also runs this same capture for live sessions during normal operation so an app/OS kill bounds the loss to one interval; it is stopped synchronously at the top of `syncShutdownCleanup`.
 4. Mark each running record `suspended` (with `suspended_at` timestamp and `suspended_by = 'system'`) so sessions can resume on next launch. Queued records are marked `exited` since there is nothing to resume.
-5. Call `SessionManager.killAll({ allowGrace })` which writes each PTY's exit sequence and force-kills it immediately (no waiting), except that a YOUNG session (see the `kill()` grace above) is parked on the deferred registry's 1500 ms timer when `allowGrace` is set, which it is only on a route the drain follows (a user quit, the powerMonitor shutdown; never a Windows `session-end` or a signal, which flush every parked PTY at once). Then `sessionManager.dispose()`, which leaves the parked PTYs alone
+5. Call `SessionManager.killAll({ allowGrace })` which writes each PTY's exit sequence and force-kills it immediately (no waiting), except that a YOUNG session (see the `kill()` grace above) is parked on the deferred registry's 1500 ms timer when `allowGrace` is set, which it is only on a route the drain follows (a user quit, the powerMonitor shutdown; never a Windows `session-end` or a signal, which flush every parked PTY at once). The kills are commands to the pty host, which carries them out. When any PTY was killed, `killAll` adds the host's own pid to the report, counted as one more kill. Then `sessionManager.dispose()`, which leaves the parked PTYs alone and posts the host's `shutdown`: the host flushes the transcripts, ends any probe PTY, waits for every exit callback, and exits itself, within the drain's deadline less 200 ms
 6. Clean up session files and clear in-memory session maps
 7. Delete ephemeral project from index (if applicable)
 8. Close all database connections via `closeAll()`
@@ -621,7 +681,7 @@ The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`)
 
 Every cleanup step before the kill runs through `runCleanupStep`, which logs `[SHUTDOWN] cleanup:step-failed <name>` and continues. A throwing handle-closer used to abort the whole `try` and leave every PTY alive, which hangs Electron's teardown until the 6 second failsafe, because node-pty's ThreadSafeFunction finalizer joins the thread waiting on the child. The one bare call in that region is the `getSessionManager()` read, which is not a cleanup step: a throw there leaves no manager to kill PTYs with either way. Steps 7 and 8 are wrapped too, so a read-only global index DB cannot skip `closeAll()` and leak SQLite handles into the quit.
 
-Then, only when at least one PTY was killed, the handler calls `event.preventDefault()` and runs the bounded PTY exit-callback drain (`drainPtyExitCallbacks` in `src/main/pty/shutdown/exit-callback-drain.ts`): it polls the killed pids every 25 ms until every one is gone, allows 100 ms of further loop turns, gives up at 1500 ms (plus the 1500 ms kill grace when `deferredCount` is above zero, since a deferred kill lands exactly at the grace), and then calls `app.quit()` again. A kill whose child pid was unreadable has no probe, so the drain spends a fixed 400 ms blind budget for it instead. The second `before-quit` pass is a no-op and Electron's normal quit proceeds (tearing down Chromium child processes). The drain logs `[SHUTDOWN] pty-drain:start n=<probed> blind=<unprobed>` (with ` deferred=<n>` appended when a kill rides the grace timer) and `pty-drain:done <ms>` (or `pty-drain:timeout <ms> lingering=<pids> blind=<n>`). It exists because node-pty delivers a PTY's exit through a native ThreadSafeFunction, and an exit callback first dispatched after Electron has stopped Node kills the process with an unhandled C++ exception (Sentry DESKTOP-C); the drain makes sure those callbacks land while JS is still callable.
+Then, only when at least one PTY was killed, the handler calls `event.preventDefault()` and runs the bounded PTY exit-callback drain (`drainPtyExitCallbacks` in `src/main/pty/shutdown/exit-callback-drain.ts`): it polls the killed pids every 25 ms until every one is gone, allows 100 ms of further loop turns, gives up at 1500 ms (plus the 1500 ms kill grace when `deferredCount` is above zero, since a deferred kill lands exactly at the grace), and then calls `app.quit()` again. A kill whose child pid was unreadable has no probe, so the drain spends a fixed 400 ms blind budget for it instead. The second `before-quit` pass is a no-op and Electron's normal quit proceeds (tearing down Chromium child processes). The drain logs `[SHUTDOWN] pty-drain:start n=<probed> blind=<unprobed>` (with ` deferred=<n>` appended when a kill rides the grace timer) and `pty-drain:done <ms>` (or `pty-drain:timeout <ms> lingering=<pids> blind=<n>`). It exists because node-pty delivers a PTY's exit through a native ThreadSafeFunction, and an exit callback first dispatched after Electron has stopped Node kills the process with an unhandled C++ exception (Sentry DESKTOP-C); the drain makes sure those callbacks land while JS is still callable. With the PTYs in the pty host, those callbacks land in the host, which is why the host's pid is in the drain: the quit waits for the host to exit on its own, after its last exit callback, rather than tearing it down mid-callback.
 
 The count, not just the pid list, is what arms the drain: an empty pid list must never read as "no PTY was killed" when one was killed and could not be named.
 
@@ -693,7 +753,7 @@ Sessions from non-active projects must not interfere with the active project's t
 
 PTY output is captured for two purposes: terminal display (via the scrollback buffer) and persistent transcript storage (via `TranscriptWriter`).
 
-`TranscriptWriter` (`src/main/pty/buffer/transcript-writer.ts`) receives raw PTY data, strips ANSI escape sequences, and debounces writes to the `session_transcripts` table every 30 seconds, flushing early if a session's pending buffer exceeds 256KB. This provides a clean, searchable text transcript of the session without terminal formatting noise.
+`TranscriptWriter` (`src/main/pty/buffer/transcript-writer.ts`) runs in the pty host. It receives raw PTY data, strips ANSI escape sequences, and flushes every 30 seconds, early if a session's pending buffer exceeds 64KB. Each flush is one INSERT into `session_transcript_chunks` (1 to 2 ms) in the database of the session's own project, over the host's own connection (opened after main migrated the file, with its auto-checkpoint off, since the retrieval worker runs the checkpoints). The project id comes with the spawn, and the writer keeps it for its final flush after removal. A project whose database is not open drops the flush rather than writing it elsewhere. This provides a clean, searchable text transcript of the session without terminal formatting noise, kept whole after the session row is gone.
 
 The transcript is used during cross-agent handoff: when a task moves to a column with a different agent, the `HandoffOrchestrator` reads the transcript from the database, combines it with git diff and session metrics, and packages it as handoff context for the new agent.
 
@@ -702,7 +762,7 @@ The transcript is used during cross-agent handoff: when a task moves to a column
 When a task moves to a column where `resolveTargetAgent()` returns a different agent than the current session:
 
 1. The current session is suspended (Priority 3a in the [Transition Engine](transition-engine.md))
-2. The `HandoffOrchestrator` packages context: session transcript (from `session_transcripts`), git diff (changed files), and session metrics (tokens, cost, duration)
+2. The `HandoffOrchestrator` packages context: session transcript (from `session_transcript_chunks`), git diff (changed files), and session metrics (tokens, cost, duration)
 3. A new session is spawned with the target agent, receiving a `handoffPromptPrefix` summarizing the previous agent's work
 4. A `handoff-context.md` file is written to the new session directory for reference
 5. A `handoffs` record is inserted in the database tracking the from/to agents, sessions, and the full context packet
@@ -711,8 +771,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 
 ## Output Streaming
 
+Everything in this section runs in the [pty host](#pty-host); main relays what a renderer or a
+phone needs and reads the rest by request.
+
 - PTY `onData` accumulates into a per-session buffer.
-- A 16ms flush interval (~60fps) emits buffered data via IPC `session:data`.
+- A 16ms flush interval (~60fps) sends buffered data to main for a session in the focused union,
+  which main forwards via IPC `session:data`. A phone's stream gets every flushed byte as `tap`, for
+  as long as it holds a `subscribeDataTap` subscription.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
 - **Alt-screen sessions - and non-alt sessions whose byte ring spans an effective geometry
   change - replay the parsed grid, not the byte tail.** A raw byte replay is not a
@@ -1219,7 +1284,9 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
+| Pty host exit wait | drain deadline less 200 ms | After `shutdown`, the host exits once every PTY's exit callback has run, or at this bound |
+| Pty host restart | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
 | KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |

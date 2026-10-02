@@ -96,6 +96,40 @@ function parseNameStatus(output: string): Map<string, { status: GitDiffStatus; o
 /** The empty tree object every git repo has - used as the "parent" of a root commit. */
 const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
+/**
+ * The best common ancestor of two commits, or null when they share none or a
+ * ref does not resolve. Also how ancestry is tested: A is an ancestor of B
+ * exactly when their merge-base is A. That reads an oid rather than
+ * `--is-ancestor`'s bare exit code, which a git wrapper can report as success.
+ */
+async function mergeBaseOf(git: ReturnType<typeof simpleGit>, first: string, second: string): Promise<string | null> {
+  try {
+    const oid = (await git.raw(['merge-base', first, second])).trim();
+    return oid || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The commit the current branch was created at, from the oldest entry of its
+ * reflog, when that entry is still the creation (`branch: Created from ...`).
+ * Null on a detached HEAD, with reflogs off, or once git has expired the entry
+ * (entries for commits a rebase left unreachable expire after 30 days).
+ */
+async function branchCreationPoint(git: ReturnType<typeof simpleGit>): Promise<string | null> {
+  try {
+    const branch = (await git.raw(['symbolic-ref', '-q', '--short', 'HEAD'])).trim();
+    if (!branch) return null;
+    const entries = (await git.raw(['reflog', 'show', '--format=%H %gs', `refs/heads/${branch}`])).trim().split(/\r?\n/);
+    const oldest = entries[entries.length - 1] ?? '';
+    const match = /^([0-9a-f]{40,64}) branch: Created from /.exec(oldest);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 export class DiffService {
   private readonly gitDirectory: string;
   private mergeBaseCache: Map<string, string> = new Map();
@@ -129,34 +163,51 @@ export class DiffService {
   }
 
   /**
-   * Find the merge-base between the base branch and HEAD.
-   * This is the fork point - where the task branch diverged from the base.
+   * Find the fork point: where the task branch diverged from the base.
    * Diffing against this (instead of the base branch tip) shows only changes
    * made on this branch, excluding changes merged into the base after forking.
    * Result is cached per base branch to avoid redundant git subprocess calls
    * (getDiffFiles and getFileContent both need the merge-base).
+   *
+   * The merge-base with `origin/<base>` (the local `<base>` when there is no
+   * such remote ref), unless the commit git recorded when the branch was
+   * created is NEWER - a descendant of it on HEAD's own history.
+   *
+   * That happens when the base's history is rewritten: the merge-base with the
+   * new history falls back to the last commit the two still share, far behind
+   * where the task started. Measured: three tasks branched an hour before a
+   * rewrite recorded 369 to 388 files of churn against PRs of 11 to 57 files.
+   * The creation point stays on the branch's own history, so it is still where
+   * the task started. A rebase or a merge of the base moves the merge-base past
+   * the creation point, and the merge-base is then kept, as before.
    */
   private async getMergeBase(git: ReturnType<typeof simpleGit>, baseBranch: string): Promise<string> {
     const cached = this.mergeBaseCache.get(baseBranch);
     if (cached) return cached;
 
+    // Started together: each is a git child, and the Changes panel waits on
+    // this before its first paint.
+    const [remoteBase, creationPoint] = await Promise.all([
+      mergeBaseOf(git, `origin/${baseBranch}`, 'HEAD'),
+      branchCreationPoint(git),
+    ]);
     // Try origin ref first - local branch may be stale if repo hasn't pulled recently.
     // Fall back to local ref (works for repos without a remote, or non-standard remote names).
-    for (const ref of [`origin/${baseBranch}`, baseBranch]) {
-      try {
-        const result = await git.raw(['merge-base', ref, 'HEAD']);
-        const mergeBase = result.trim();
-        this.mergeBaseCache.set(baseBranch, mergeBase);
-        return mergeBase;
-      } catch {
-        continue;
-      }
-    }
+    const refBase = remoteBase ?? await mergeBaseOf(git, baseBranch, 'HEAD');
 
-    // Neither ref exists (e.g. repo uses 'master' not 'main') - fall back to HEAD
-    // so the panel still shows uncommitted working tree changes.
-    this.mergeBaseCache.set(baseBranch, 'HEAD');
-    return 'HEAD';
+    // Neither ref exists (e.g. repo uses 'master' not 'main') - fall back to the
+    // creation point, else HEAD, so the panel still shows uncommitted changes.
+    let forkPoint = refBase ?? 'HEAD';
+    // The common case is a branch never rebased, whose creation point IS the
+    // merge-base and costs no further call. Otherwise the creation point wins
+    // only when it is on HEAD's history AND past the merge-base.
+    if (creationPoint && creationPoint !== refBase
+      && await mergeBaseOf(git, creationPoint, 'HEAD') === creationPoint
+      && (refBase === null || await mergeBaseOf(git, refBase, creationPoint) === refBase)) {
+      forkPoint = creationPoint;
+    }
+    this.mergeBaseCache.set(baseBranch, forkPoint);
+    return forkPoint;
   }
 
   /**

@@ -5,7 +5,7 @@
 // whole component tree in the store's import graph - and neither module
 // self-accepts, so a Fast Refresh anywhere in it would re-evaluate the store and
 // hand a second instance to a mounted tree (hmr-patterns Pattern E).
-import { boardWindowManager, commandWindowManager, monitorWindowManager } from '../window-manager/store/window-store';
+import { boardWindowManager, commandWindowManager, knowledgeGraphWindowManager, monitorWindowManager } from '../window-manager/store/window-store';
 import { isLayerMounted } from '../window-manager/store/layer-mount-registry';
 import { isWindowDormant } from '../window-manager/store/types';
 import { useSessionStore } from '../stores/session-store';
@@ -102,8 +102,21 @@ export interface FocusedWindowTerminal {
 }
 
 /** Layers in paint order, front-most first: the Command Terminal layer renders
- *  over the Agent Monitor, which renders over the board. */
-const TERMINAL_WINDOW_LAYERS = [commandWindowManager, monitorWindowManager, boardWindowManager];
+ *  over the Agent Monitor and the Knowledge Graph (mutually exclusive with each
+ *  other, both at z-43), which render over the board.
+ *
+ *  The Knowledge Graph's layer resolves to nothing today - it hosts only conversation
+ *  windows, which the loop below skips as read-only. It is listed anyway, because
+ *  membership here is a parity invariant (`window-layer-isolation.test.ts`): a
+ *  layer omitted from this list is invisible to `resolveFocusedWindowTerminal`,
+ *  which would cost both dictation targeting and the arrival-focus arbiter's tier
+ *  2 the day that layer gains a terminal-hosting window. */
+const TERMINAL_WINDOW_LAYERS = [
+  commandWindowManager,
+  monitorWindowManager,
+  knowledgeGraphWindowManager,
+  boardWindowManager,
+];
 
 /**
  * The terminal-hosting window that currently holds window-layer focus, across

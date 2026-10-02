@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import { handleCreateColumn, handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
 import { handleGetColumnDetail } from '../../src/main/agent/commands/analytics-commands';
@@ -77,7 +78,7 @@ function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] 
   return {
     // handleCreateColumn wraps the position shift and the insert in one
     // transaction; better-sqlite3's transaction(fn) returns a callable.
-    transaction: (body: () => unknown) => () => body(),
+    transaction: passThroughTransaction,
     prepare: vi.fn((sql: string) => {
       // SwimlaneRepository.create() with no position asks for the current max.
       if (sql.includes('MAX(position)')) {

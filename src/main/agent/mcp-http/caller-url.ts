@@ -41,3 +41,34 @@ export function appendCallerSession(
   if (!projectUrl) return undefined;
   return `${projectUrl}/${callerSessionId}`;
 }
+
+/**
+ * The caller segment prefix that marks a Knowledge Graph answer run.
+ *
+ * An answer run is not a task session: it is a headless agent reading the
+ * user's own history to answer a question, and it must be able to change
+ * nothing. The server gives a caller with this prefix exactly one tool,
+ * `kangentic_search` (see `buildAnswerMcpServer`), whatever the agent's own
+ * permission handling does. That matters because several CLIs cannot be told
+ * to call one tool and refuse the rest: Cursor's `--force` approves every call,
+ * and OpenCode called an MCP tool without asking in the probe. So the server
+ * is the guarantee, and the CLI flags are a second lock at best.
+ */
+export const ANSWER_CALLER_PREFIX = 'answer-';
+
+/**
+ * The MCP URL for one Knowledge Graph chat's answer runs:
+ * `/mcp/<projectId>/answer-<chatId>`.
+ *
+ * Keyed by the CHAT, not by one question, because a warm answer session's MCP
+ * URL is fixed when its process starts, so every later turn's searches arrive
+ * on the first turn's URL.
+ */
+export function appendAnswerCaller(projectUrl: string, chatId: string): string {
+  return `${projectUrl}/${ANSWER_CALLER_PREFIX}${chatId}`;
+}
+
+/** True for a caller segment minted by `appendAnswerCaller`. */
+export function isAnswerCaller(callerSessionId: string | undefined): boolean {
+  return callerSessionId !== undefined && callerSessionId.startsWith(ANSWER_CALLER_PREFIX);
+}

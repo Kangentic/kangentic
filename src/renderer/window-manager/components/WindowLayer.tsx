@@ -36,6 +36,7 @@ import { useDetailOwnershipSync } from '../bridge/useDetailOwnershipSync';
 import { useBrowserPaneRequestBridge } from '../bridge/useBrowserPaneRequestBridge';
 import { useBrowserDownloadToast } from '../bridge/useBrowserDownloadToast';
 import { useProjectStore } from '../../stores/project-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
@@ -301,6 +302,9 @@ function useBoardDetailOwnership(): void {
 
 const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
   minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
+  // This layer CAN reveal a task detail: `useTaskDetailWindowBridge` (mounted in
+  // BoardBridges above) turns the signal into a window on this very layer.
+  revealTaskDetail: (taskId) => useSessionStore.getState().setDetailTaskId(taskId),
   // Only the board parks: a task-detail window whose Browser pane an agent is
   // driving is hidden in place on close rather than removed, so reopening the
   // task re-attaches the same guest. See `bridge/window-parking.ts`.

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import type { WorktreeSkipReason } from '../../shared/types';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
+import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { worktreesRootFor } from './task-worktree-folder';
 import { isGitRepo, isInsideWorktree } from './git-checks';
@@ -671,14 +672,16 @@ export class WorktreeManager {
    * null (recorded for any surface that wants to say "running in the checkout
    * the app runs from"; no renderer reads it back yet):
    *   - 'reused': a live worktree already exists on disk and is kept as is.
-   *   - 'disabled': `use_worktree` (per task) or `worktreesEnabled` (project) is off.
+   *   - 'disabled': `worktreesEnabled` (project) is off, or the task picked Project.
    *   - 'not-a-repo': the project path has no `.git`.
    *   - 'nested-worktree': the project path is itself a worktree; git cannot nest them.
    *   - 'no-commits': unborn HEAD, so there is no ref to branch from.
-   * The `shouldUseWorktree` check runs before the three structural guards, so a
-   * per-task `use_worktree: 1` can force worktrees on in a project where they
-   * are off but can never override a structural reason. An unresolvable base
-   * branch throws instead (see `resolveWorktreeBase`).
+   * `worktreesEnabled` is the feature switch (`taskUsesWorktree`): off, even a
+   * task created with Worktree picked runs in the project folder. The live-
+   * directory reuse above runs first, so a task that already has a worktree
+   * keeps it when the switch goes off. No per-task choice overrides a
+   * structural reason. An unresolvable base branch throws instead (see
+   * `resolveWorktreeBase`).
    */
   async ensureWorktree(
     task: { id: string; title: string; display_id: number; worktree_path: string | null; worktree_folder?: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
@@ -694,10 +697,9 @@ export class WorktreeManager {
     if (task.worktree_path && fs.existsSync(task.worktree_path) && isInsideWorktree(task.worktree_path)) {
       return { skipped: true, reason: 'reused' };
     }
-    const shouldUseWorktree = task.use_worktree != null
-      ? Boolean(task.use_worktree)
-      : gitConfig.worktreesEnabled;
-    if (!shouldUseWorktree) return { skipped: true, reason: 'disabled' };
+    if (!taskUsesWorktree(gitConfig.worktreesEnabled, storedWorktreeChoice(task.use_worktree))) {
+      return { skipped: true, reason: 'disabled' };
+    }
     if (!isGitRepo(this.projectPath)) return { skipped: true, reason: 'not-a-repo' };
     if (isInsideWorktree(this.projectPath)) return { skipped: true, reason: 'nested-worktree' };
 

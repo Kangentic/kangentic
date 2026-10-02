@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import type React from 'react';
+import { AppWindow, Bug, FileDiff, Globe, Keyboard, Mic, PanelTop, RotateCcw, SquareTerminal } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
 import {
   KEYBINDINGS,
@@ -8,7 +9,8 @@ import {
   effectiveCombo,
   type KeyGroup,
 } from '../../../../shared/keybindings';
-import { SectionHeader, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard } from '../settings-card';
 import { CountBadge } from '../../CountBadge';
 import { Pill } from '../../Pill';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
@@ -16,6 +18,22 @@ import { HotkeyRow } from '../keybindings/HotkeyRow';
 import { OsHotkeyBanner } from '../keybindings/OsHotkeyBanner';
 
 type ProbeStatus = 'available' | 'taken' | 'unsupported';
+
+/**
+ * Each hotkey group's card. Keyed by the group id, so a new `KeyGroup` fails to
+ * compile until it has a card; the ids stay as they are, since the registry
+ * groups by them.
+ */
+const HOTKEY_GROUP_CARDS = {
+  'General': { label: 'General', description: 'Hotkeys that work anywhere in the app.', icon: <Keyboard size={16} /> },
+  'Dictation': { label: 'Dictation', description: 'Push-to-talk and the other dictation keys.', icon: <Mic size={16} /> },
+  'Task Detail': { label: 'Task detail', description: 'Keys for an open task window.', icon: <PanelTop size={16} /> },
+  'Git Changes': { label: 'Git changes', description: 'Keys for the Changes panel and its diff.', icon: <FileDiff size={16} /> },
+  'Windows': { label: 'Windows', description: 'Moving between task windows and arranging them.', icon: <AppWindow size={16} /> },
+  'Browser': { label: 'Browser', description: "Keys for a task's Browser pane.", icon: <Globe size={16} /> },
+  'Terminal': { label: 'Terminal', description: 'Copy, paste and interrupt inside a terminal.', icon: <SquareTerminal size={16} /> },
+  'Developer': { label: 'Developer', description: 'Debug tools in development builds.', icon: <Bug size={16} /> },
+} satisfies Record<KeyGroup, { label: string; description: string; icon: React.ReactNode }>;
 
 /**
  * Hotkeys settings tab: lists every keyboard hotkey grouped by area, lets the
@@ -113,55 +131,63 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
 
   return (
     <div className="space-y-4" data-testid="hotkeys-tab">
-      <OsHotkeyBanner />
-
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs">
-          {conflictComboCount > 0 ? (
-            <span className="inline-flex items-center gap-1.5 text-red-400" data-testid="hotkey-conflict-summary">
+      <SettingsCard
+        icon={<Keyboard size={16} />}
+        label="Hotkeys"
+        description="Rebind any hotkey. Conflicts and taken combos are flagged."
+        searchIds={['hotkeys']}
+      >
+        {/* One tile: the notice, Reset to default on its right edge, and the conflict
+            count under the notice while there are conflicts. A disabled Reset
+            says every hotkey is at its default, so no line repeats that. */}
+        <OsHotkeyBanner
+          status={conflictComboCount > 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-red-400" data-testid="hotkey-conflict-summary">
               <CountBadge count={conflictComboCount} variant="solid" size="sm" className="bg-red-500/80 text-white" />
               {conflictComboCount === 1 ? 'conflict' : 'conflicts'} detected
             </span>
-          ) : customCount > 0 ? (
-            <span className="inline-flex items-center gap-1.5 text-fg-muted">
-              <CountBadge count={customCount} variant="accent" size="sm" /> custom
-            </span>
-          ) : (
-            <span className="text-fg-faint">All hotkeys at their defaults</span>
+          ) : undefined}
+          action={(
+            <Pill
+              size="md"
+              onClick={() => setShowResetAll(true)}
+              disabled={customCount === 0}
+              title={customCount === 0 ? 'Every hotkey is at its default' : 'Restore every hotkey to its default'}
+              className="text-fg-muted bg-surface-hover/50 enabled:hover:bg-surface-hover enabled:hover:text-fg-secondary disabled:opacity-40 disabled:cursor-default transition-colors"
+              data-testid="hotkeys-reset-all"
+            >
+              <RotateCcw size={14} /> Reset to default
+            </Pill>
           )}
-        </div>
-        <Pill
-          size="md"
-          onClick={() => setShowResetAll(true)}
-          className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
-          data-testid="hotkeys-reset-all"
-        >
-          <RotateCcw size={14} /> Reset all to defaults
-        </Pill>
-      </div>
+        />
+      </SettingsCard>
 
       {groups.map(([group, definitions]) => (
-        <div key={group}>
-          <SectionHeader label={group} />
-          <div className="space-y-1">
-            {definitions.map((definition) => {
-              const effective = effectiveCombo(definition.id, overrides);
-              return (
-                <HotkeyRow
-                  key={definition.id}
-                  definition={definition}
-                  effective={effective}
-                  isCustom={definition.id in overrides}
-                  conflict={conflictIds.has(definition.id)}
-                  terminalWarn={terminalWarnIds.has(definition.id)}
-                  taken={definition.rebindable && probeStatus[effective] === 'taken'}
-                  onCommit={(combo) => setOverride(definition.id, combo)}
-                  onReset={() => resetOne(definition.id)}
-                />
-              );
-            })}
-          </div>
-        </div>
+        <SettingsCard
+          key={group}
+          icon={HOTKEY_GROUP_CARDS[group].icon}
+          label={HOTKEY_GROUP_CARDS[group].label}
+          description={HOTKEY_GROUP_CARDS[group].description}
+          searchIds={['hotkeys']}
+          testId={`hotkey-group-${group}`}
+        >
+          {definitions.map((definition) => {
+            const effective = effectiveCombo(definition.id, overrides);
+            return (
+              <HotkeyRow
+                key={definition.id}
+                definition={definition}
+                effective={effective}
+                isCustom={definition.id in overrides}
+                conflict={conflictIds.has(definition.id)}
+                terminalWarn={terminalWarnIds.has(definition.id)}
+                taken={definition.rebindable && probeStatus[effective] === 'taken'}
+                onCommit={(combo) => setOverride(definition.id, combo)}
+                onReset={() => resetOne(definition.id)}
+              />
+            );
+          })}
+        </SettingsCard>
       ))}
 
       {showResetAll && (

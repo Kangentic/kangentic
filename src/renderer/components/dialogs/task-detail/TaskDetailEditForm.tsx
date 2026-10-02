@@ -4,6 +4,7 @@ import { Field, FIELD_CONTROL_CLASS } from '../../Field';
 import { TaskBranchRow } from '../TaskBranchRow';
 import { PriorityLabelsRow } from '../PriorityLabelsRow';
 import { DescriptionEditor } from '../../DescriptionEditor';
+import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
@@ -78,7 +79,10 @@ export function TaskDetailEditForm({
 
   // The HOSTING project's path, not the open board's: an @-mention search must
   // look inside the project the task actually belongs to.
-  const { projectPath } = useTaskDetailHost();
+  // Both come from the host context rather than ambient state: a task-detail
+  // window can be hosted for a project that is not the open board's
+  // (`.claude/rules/pop-out-surface-registry.md`).
+  const { projectPath, projectId } = useTaskDetailHost();
 
   // Focus title input on mount
   useEffect(() => {
@@ -111,6 +115,11 @@ export function TaskDetailEditForm({
         mentionSearchCwd={task.worktree_path ?? projectPath ?? null}
         className="flex-1"
       />
+      {/* Proactive recall belongs here as much as in the view mode: a task with
+          no session yet opens straight into this form, which is exactly the
+          "about to start" moment when "have I already worked this out?" is
+          worth answering. Renders null when there is nothing to say. */}
+      <TaskPriorWork taskId={task.id} projectId={projectId ?? null} />
       <AttachmentChipStrip
         attachments={attachments.savedAttachments}
         onOpen={(attachment) =>
@@ -151,6 +160,7 @@ export function TaskDetailEditForm({
           defaultBaseBranch={branchConfig.defaultBaseBranch}
           effectiveWorktree={branchConfig.effectiveWorktree}
           setUseWorktree={branchConfig.setUseWorktree}
+          showWorktree={branchConfig.worktreesEnabled}
           worktreeBlocker={branchConfig.blocker}
         />
       )}
@@ -166,7 +176,7 @@ export function TaskDetailEditForm({
           defaultBaseBranch={branchConfig.defaultBaseBranch}
           effectiveWorktree={branchConfig.effectiveWorktree}
           setUseWorktree={branchConfig.setUseWorktree}
-          showWorktree={!task.worktree_path}
+          showWorktree={branchConfig.worktreesEnabled && !task.worktree_path}
           worktreeBlocker={branchConfig.blocker}
         />
       )}

@@ -32,7 +32,8 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
 import { UsageHistoryRepository } from '../../main/db/repositories/usage-history-repository';
-import { ConversationUsageStore, type TurnUsageInput } from '../../main/retrieval/conversation/conversation-usage-store';
+import type { TurnUsageInput } from '../../main/retrieval/conversation/conversation-usage-store';
+import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import type { DevSeedUsageDataResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 
@@ -76,10 +77,11 @@ let seedRunIndex = 0;
 
 /** Seed one project's ledgers. `volumeScale` shrinks the per-day session count
  *  so different projects get visibly different volumes. */
-function seedOneProject(projectId: string, days: number, runIndex: number, volumeScale: number, nowMs: number): { sessions: number; turns: number } {
+async function seedOneProject(projectId: string, days: number, runIndex: number, volumeScale: number, nowMs: number): Promise<{ sessions: number; turns: number }> {
   const db = getProjectDb(projectId);
   const usageHistory = new UsageHistoryRepository(db);
-  const turnUsage = new ConversationUsageStore(db);
+  // The turn ledger is index data, written by the retrieval worker.
+  const ledger: Array<{ sessionId: string; turns: TurnUsageInput[]; indexedAt: string }> = [];
 
   let sessionCount = 0;
   let turnCount = 0;
@@ -143,11 +145,7 @@ function seedOneProject(projectId: string, days: number, runIndex: number, volum
           },
         });
       }
-      turnUsage.recordTurns(
-        { agentSessionId: null, sessionId, taskId: null },
-        turns,
-        new Date(Math.min(startMs + durationMs, nowMs)).toISOString(),
-      );
+      ledger.push({ sessionId, turns, indexedAt: new Date(Math.min(startMs + durationMs, nowMs)).toISOString() });
 
       const totalTokens = sessionInput + sessionOutput;
       const costUsd = (totalTokens / 1_000_000) * profile.costPerMTokens * (0.8 + Math.random() * 0.4);
@@ -178,6 +176,7 @@ function seedOneProject(projectId: string, days: number, runIndex: number, volum
     }
   }
 
+  await retrievalClient.call('dev.recordTurns', { projectId, sessions: ledger }, { timeoutMs: null });
   return { sessions: sessionCount, turns: turnCount };
 }
 
@@ -188,7 +187,7 @@ function seedOneProject(projectId: string, days: number, runIndex: number, volum
  * shows a real difference and the All Projects rollup / per-project table has
  * something to reconcile. Throws when no project is registered.
  */
-export function seedUsageData(context: IpcContext, days: number): DevSeedUsageDataResult {
+export async function seedUsageData(context: IpcContext, days: number): Promise<DevSeedUsageDataResult> {
   const projects = context.projectRepo.list();
   if (projects.length === 0) throw new Error('No registered projects to seed usage data into');
 
@@ -198,14 +197,14 @@ export function seedUsageData(context: IpcContext, days: number): DevSeedUsageDa
 
   let sessionCount = 0;
   let turnCount = 0;
-  projects.forEach((project, projectIndex) => {
+  for (const [projectIndex, project] of projects.entries()) {
     // First project gets full volume, each subsequent one roughly half the
     // previous (floored), so per-project numbers are clearly distinct.
     const volumeScale = 1 / Math.pow(2, projectIndex);
-    const seeded = seedOneProject(project.id, days, runIndex, Math.max(volumeScale, 0.2), nowMs);
+    const seeded = await seedOneProject(project.id, days, runIndex, Math.max(volumeScale, 0.2), nowMs);
     sessionCount += seeded.sessions;
     turnCount += seeded.turns;
-  });
+  }
 
   return { sessions: sessionCount, turns: turnCount, days, projects: projects.length };
 }
@@ -217,7 +216,7 @@ let devIpcRegistered = false;
 export function registerSeedUsageDataDevIpc(getContext: () => IpcContext | null): void {
   if (devIpcRegistered) return;
   devIpcRegistered = true;
-  ipcMain.handle(IPC.DEV_SEED_USAGE_DATA, (_event, days: number): DevSeedUsageDataResult => {
+  ipcMain.handle(IPC.DEV_SEED_USAGE_DATA, (_event, days: number): Promise<DevSeedUsageDataResult> => {
     const context = getContext();
     if (!context) throw new Error('IPC not initialized');
     return seedUsageData(context, days);

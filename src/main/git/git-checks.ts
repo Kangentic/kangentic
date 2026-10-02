@@ -1,10 +1,8 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../utility-process/off-main-exec';
 import path from 'node:path';
 import fs from 'node:fs';
 import { slugify } from '../../shared/slugify';
 
-const execFileAsync = promisify(execFile);
 
 /**
  * Filesystem-only git introspection helpers. No simple-git dependency

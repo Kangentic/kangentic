@@ -23,7 +23,7 @@ import { McpServerTab } from './tabs/McpServerTab';
 import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
 import { NotificationsTab } from './tabs/NotificationsTab';
 import { MobileDevicesTab } from './tabs/MobileDevicesTab';
-import { MemoryTab } from './tabs/MemoryTab';
+import { KnowledgeGraphTab } from './tabs/KnowledgeGraphTab';
 import { PrivacyTab } from './tabs/PrivacyTab';
 import { DeveloperTab } from './tabs/DeveloperTab';
 import { HotkeysTab } from './tabs/HotkeysTab';
@@ -77,7 +77,8 @@ const TAB_ICONS: Record<string, ElementType> = {
   behavior: SlidersHorizontal,
   performance: Gauge,
   dictation: Mic,
-  memory: Brain,
+  // The title bar's Knowledge Graph icon, so the two read as one feature.
+  knowledgeGraph: Brain,
   hotkeys: Keyboard,
   mcpServer: Plug,
   browserAutomation: MousePointerClick,
@@ -210,7 +211,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'browserAutomation': return <BrowserAutomationTab globalConfig={globalConfig} />;
       case 'notifications': return <NotificationsTab globalConfig={globalConfig} />;
       case 'mobile': return <MobileDevicesTab globalConfig={globalConfig} />;
-      case 'memory': return <MemoryTab globalConfig={globalConfig} />;
+      case 'knowledgeGraph': return <KnowledgeGraphTab globalConfig={globalConfig} />;
       case 'privacy': return <PrivacyTab />;
       default: return null;
     }

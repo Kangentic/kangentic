@@ -16,6 +16,7 @@
  *     on move to Done, so the retry pass would never see them via `list`).
  */
 
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import type Database from 'better-sqlite3';
@@ -91,7 +92,7 @@ function createSqlTracker() {
   const db = {
     prepare: vi.fn((sql: string) => makeStatement(sql)),
     // TaskRepository.create uses these two additional methods:
-    transaction: vi.fn((fn: () => void) => fn),
+    transaction: vi.fn(passThroughTransaction),
     pragma: vi.fn(() => []),
   } as unknown as Database.Database;
 

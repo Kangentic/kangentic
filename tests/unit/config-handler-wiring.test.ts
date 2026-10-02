@@ -337,7 +337,7 @@ describe('config write handlers - report whether the write reached disk', () => 
 });
 
 describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring', () => {
-  // Regression guard: toggling memory settings (semanticEnabled off, etc.) must
+  // Regression guard: toggling Knowledge Graph settings (enabled off, etc.) must
   // release/re-hold the resident embed worker promptly rather than waiting for
   // its next idle-recycle window. Mirrors the CONFIG_SET_PROJECT_BY_PATH
   // prRefreshScheduler wiring tests below - the call is behind a lazy dynamic
@@ -354,7 +354,7 @@ describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring
     const context = makeContext({ currentProjectPath: '/repo/main' });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:set', { memory: { semanticEnabled: false } });
+    invokeHandler('config:set', { knowledgeGraph: { enabled: false } });
 
     await vi.waitFor(() => expect(reconcileEmbedWorkerSpy).toHaveBeenCalledTimes(1));
     expect(reconcileEmbedWorkerSpy).toHaveBeenCalledWith(context);
@@ -366,7 +366,7 @@ describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring
 
     invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
 
-    // Drain the microtask queue. The dynamic import is behind the `if (config.memory)`
+    // Drain the microtask queue. The dynamic import is behind the `if (config.knowledgeGraph)`
     // branch, so it is never queued when the key is absent.
     // (Intentional fixed budget - we cannot poll for non-occurrence.)
     await Promise.resolve();
@@ -560,7 +560,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', projectPath, { git: { prRefreshIntervalMinutes: 10 } });
+    invokeHandler('config:setProjectByPath', projectPath, { git: { prAutoRefresh: false } });
 
     // The call is behind a lazy dynamic import that resolves on a microtask.
     // vi.waitFor polls until the assertion passes (or times out at 1 second).
@@ -571,7 +571,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     expect(projectArg.path).toBe(projectPath);
   });
 
-  it('re-arms the remote-fetch scheduler too, so a changed git.autoFetchIntervalMinutes takes effect at once', () => {
+  it('re-arms the remote-fetch scheduler too, so a flipped git.autoFetch takes effect at once', () => {
     const projectPath = '/repo/active';
     const context = makeContext({
       currentProjectPath: projectPath,
@@ -579,7 +579,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetchIntervalMinutes: 2 } });
+    invokeHandler('config:setProjectByPath', projectPath, { git: { autoFetch: false } });
 
     // Static import, so the re-arm is synchronous with the handler.
     expect(fetchStartForProjectSpy).toHaveBeenCalledTimes(1);
@@ -596,7 +596,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     });
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
 
-    invokeHandler('config:setProjectByPath', backgroundPath, { git: { prRefreshIntervalMinutes: 10 } });
+    invokeHandler('config:setProjectByPath', backgroundPath, { git: { prAutoRefresh: false } });
 
     // Drain the microtask queue. The dynamic import is behind the if-branch that
     // only fires when projectPath === currentProjectPath, so it is never queued.
@@ -609,7 +609,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
     // saveProjectOverrides is still called for background projects.
     expect(context.configManager.saveProjectOverrides).toHaveBeenCalledWith(
       backgroundPath,
-      { git: { prRefreshIntervalMinutes: 10 } },
+      { git: { prAutoRefresh: false } },
     );
   });
 

@@ -15,6 +15,7 @@ import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
+import { useKnowledgeGraphStore } from './stores/knowledge-graph-store';
 import { usePopOutStore } from './stores/pop-out-store';
 import { receivePopOutOpenSet } from './pop-out/pop-out-changed';
 import { useDictationStore } from './stores/dictation-store';
@@ -28,11 +29,12 @@ import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
+import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shared/pty-host';
 import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
-import { useWindowStore, commandWindowManager } from './window-manager/store/window-store';
+import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager } from './window-manager/store/window-store';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -494,6 +496,9 @@ export function App() {
 
     // Session exit events
     if (sessions.onExit) {
+      // A pty host crash ends every terminal at once; its exits collapse to
+      // one notice, and the agents among them resume a moment later.
+      let lastHostLostToastAt = 0;
       cleanups.push(sessions.onExit((sessionId, exitCode, projectId, intentional) => {
         const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
         const exitedTaskId = currentSession?.taskId;
@@ -529,9 +534,19 @@ export function App() {
 
         const notifyConfig = useConfigStore.getState().config.notifications;
 
-        // Only show toast if exited session belongs to current project
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if ((projectId ?? currentSession?.projectId) === activeProjectId) {
+        if (exitCode === PTY_HOST_LOST_EXIT_CODE) {
+          // A machine-level event, not one project's, so no project gate.
+          const now = Date.now();
+          if (notifyConfig.toasts.onAgentCrash && now - lastHostLostToastAt >= PTY_HOST_LOST_NOTICE_WINDOW_MS) {
+            useToastStore.getState().addToast({
+              message: 'Terminals restarted. Running agents are resuming.',
+              variant: 'warning',
+            });
+          }
+          lastHostLostToastAt = now;
+        } else if ((projectId ?? currentSession?.projectId) === activeProjectId) {
+          // Only show toast if exited session belongs to current project
           if (notifyConfig.toasts.onAgentCrash) {
             const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId)
               ?? useBoardStore.getState().tasks.find((t) => t.id === currentSession?.taskId);
@@ -1181,6 +1196,22 @@ if (import.meta.hot) {
     if (useMonitorStore.getState().monitorOpen) {
       void useMonitorStore.getState().loadSnapshot();
     }
+    // Knowledge Graph Pattern B: re-read the cached projection + coverage from
+    // main-process truth (no-ops while the surface is closed).
+    // The Projects list and every project in a scope are main-process truth too.
+    // Marked as pushes: a save is a refresh, not the reader acting, so it never
+    // starts a rebuild of a stale map on its own. A window following the main
+    // one re-reads with null, as its own pushes do, so it keeps following.
+    if (useKnowledgeGraphStore.getState().graphOpen) {
+      const knowledgeGraph = useKnowledgeGraphStore.getState();
+      const asRefresh = { fromPush: true };
+      void knowledgeGraph.loadSnapshot(knowledgeGraph.followsCurrentProject ? null : knowledgeGraph.projectId, asRefresh);
+      void knowledgeGraph.loadProjects();
+      // The open project's island comes from loadSnapshot above.
+      for (const scopedProjectId of knowledgeGraph.scopeProjectIds ?? []) {
+        if (scopedProjectId !== knowledgeGraph.projectId) void knowledgeGraph.loadScopeSnapshot(scopedProjectId, asRefresh);
+      }
+    }
     // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
     usePopOutStore.getState().loadOpen();
     // Offscreen browser surfaces Pattern B: main is the only authority, and a
@@ -1221,7 +1252,9 @@ if (import.meta.env.DEV) {
     window: useWindowStore,
     monitor: useMonitorStore,
     commandWindow: commandWindowManager.store,
+    knowledgeGraphWindows: knowledgeGraphWindowManager.store,
     usageDashboard: useUsageDashboardStore,
+    knowledgeGraph: useKnowledgeGraphStore,
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,

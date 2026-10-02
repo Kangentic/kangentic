@@ -112,7 +112,7 @@ won't be found.
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
   `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications,
-  Dictation, Memory, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
+  Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
   settings that apply across all projects, saved to global config, and remain fully functional with
   no project open. The Task tab holds task-presentation settings split out of Board (Card Density,
   Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
@@ -120,8 +120,8 @@ won't be found.
   and Terminal stays pure terminal cosmetics. The Performance tab holds app-wide rendering:
   Graphics acceleration (Chromium hardware rendering, which the GPU recovery path in
   `src/main/index.ts` turns off after a run the GPU killed) and Animations, which moved from
-  Board because it toggles `.no-motion` on `<html>` and was never board chrome. Memory's own
-  hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
+  Board because it toggles `.no-motion` on `<html>` and was never board chrome. The Knowledge
+  Graph tab's own hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
   speed-versus-accuracy decision, and the rename is what keeps it distinct from Graphics
   acceleration. Terminal (shell, font, cursor style,
   colors) is global-only, not per-project: shell in particular was never reliably project-scoped
@@ -267,6 +267,8 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and `docs/mcp-server.md`.
 - `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
+- `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.
+- `pty-host-out-of-process.md` - every PTY and its per-chunk work run in the `kangentic-pty-host` utility process; main holds mirrors and async reads.
 - `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only inside the `kangentic-dictation` utilityProcess worker.
 - `pop-out-surface-registry.md` - every `BrowserWindow` comes from `createWindow` or the pop-out manager, through the registries.
 - `spawn-entry-point-parity.md` - every agent spawn routes through `spawnAgent` / `prepareAgentSpawn` and `runSpawnPreamble`.
@@ -274,6 +276,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `release-gates-fail-loudly.md` - a release-path step that guarantees something fails loudly when it cannot.
 - `task-template-vars-parity.md` - promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS`.
 - `settings-tab-scope.md` - a setting's tab must match its persistence scope.
+- `settings-card-design.md` - every settings tab is `SettingsCard`s whose bodies hold only tiles; depth lifts, switches align, descriptions fit one line, short fixed choices are segmented controls.
 - `derived-detail-ownership.md` - task-detail ownership is a host's COMPLETE mounted set, reconciled, never accumulated.
 - `retained-pane-never-remounts.md` - a window with an open Browser pane is RETAINED across a project switch; hide it with `opacity: 0`.
 - `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route it through `mayTakeArrivalFocus`.

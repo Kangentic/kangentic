@@ -60,6 +60,7 @@ const DIRECT_CLOSE_CALLERS: Record<string, string> = {
   'src/renderer/components/command-bar/CommandTerminalWindow.tsx': 'command-terminal layer (never a browser pane)',
   'src/renderer/components/command-bar/CommandTerminalLayer.tsx': 'command-terminal layer (never a browser pane)',
   'src/renderer/components/monitor/useMonitorDetailOwnership.ts': 'monitor layer displacement (the monitor never parks)',
+  'src/renderer/components/knowledge-graph/open-knowledge-graph-conversation.ts': 'knowledge-graph conversation windows on a project switch (never a browser pane)',
 };
 
 describe('every board close path reaches the park-or-drop decision', () => {

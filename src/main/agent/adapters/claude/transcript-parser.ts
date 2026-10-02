@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/types';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { touchBounded, heldBytes } from '../../shared/bounded-lru';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import {
   parseWindowBytes,
   prependTruncationMarker,
@@ -293,15 +294,19 @@ const INCREMENTAL_STATE_LIMIT = 32;
  * budget is the backstop against many large sessions accumulating, not the
  * primary fix.
  *
- * Both bounds are live and neither is decorative: with `MAX_PARSE_SOURCE_BYTES`
- * capping any single record at 16MB of source, the COUNT binds for the common
- * working set of many small sessions and these BYTES bind for a few large ones
- * (at least 4 max-size records fit).
+ * Both bounds are live and neither is decorative: with a record holding at most
+ * `MAX_RETAINED_WINDOWS` windows of source (32MB), the COUNT binds for the
+ * common working set of many small sessions and these BYTES bind for a few
+ * large ones (at least 2 max-size records fit).
  *
  * Mutable only so tests can exercise eviction against a few KB instead of
  * writing 64MB of temp files.
  */
 const INCREMENTAL_STATE_BYTE_BUDGET = 64 * 1024 * 1024;
+
+/** Parse windows of source a record may retain before an append re-windows it:
+ *  a full parse keeps one, and appends grow it to two. */
+const MAX_RETAINED_WINDOWS = 2;
 let incrementalStateByteBudget = INCREMENTAL_STATE_BYTE_BUDGET;
 
 /** Source bytes this state's retained entries were parsed from. */
@@ -317,10 +322,10 @@ function touchIncrementalState(filePath: string, state: IncrementalParseState): 
     limit: INCREMENTAL_STATE_LIMIT,
     byteBudget: incrementalStateByteBudget,
     sizeOf: retainedSourceBytes,
-    // A lone record cannot exceed the budget on its own, because
-    // MAX_PARSE_SOURCE_BYTES (16MB) is a quarter of it. So this floor never has
-    // to rescue anything, and the "retain one oversized record forever" versus
-    // "evict it and re-parse every tick" dilemma simply does not arise.
+    // A lone record cannot exceed the budget on its own, because it holds at
+    // most MAX_RETAINED_WINDOWS windows (32MB), half of it. So this floor never
+    // has to rescue anything, and the "retain one oversized record forever"
+    // versus "evict it and re-parse every tick" dilemma simply does not arise.
     minRetained: 1,
   });
 }
@@ -410,13 +415,16 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
     && stat.size > previous.size
     && stat.mtimeMs >= previous.mtimeMs
     // Appending forever would grow `entries` without bound even though each
-    // increment is small, so a session that has outgrown the window falls
-    // through to a full re-window below. That costs one re-read per
-    // MAX_PARSE_SOURCE_BYTES of growth, and during it the replacement array is
-    // built while the old one is still reachable from the file cache and the
-    // stitch memo - a transient of roughly two windows, which the byte budget
+    // increment is small, so a session whose retained span passes TWO windows
+    // falls through to a full re-window below: one re-read per
+    // MAX_PARSE_SOURCE_BYTES of growth. The bound used to be one window, which
+    // a full parse of a large file already fills (it keeps exactly the last
+    // window), so every poll of a live session past 16 MB re-read and
+    // re-parsed its whole 16 MB tail. During a re-window the replacement array
+    // is built while the old one is still reachable from the file cache and the
+    // stitch memo, a transient of about three windows, which the byte budget
     // above is sized to absorb.
-    && stat.size - previous.windowStartByte <= parseWindowBytes();
+    && stat.size - previous.windowStartByte <= MAX_RETAINED_WINDOWS * parseWindowBytes();
 
   if (canIncrement && previous) {
     try {
@@ -429,10 +437,12 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
       const combined = Buffer.concat([previous.carry, appended]);
       const { completeLinesText, carry } = splitCompleteLines(combined);
       if (completeLinesText.length > 0) {
-        for (const line of completeLinesText.split('\n')) {
-          if (line.length === 0) continue;
-          parseTranscriptLine(line, previous.entries, previous.usageAttributedMessageIds);
-        }
+        timeSyncWork('transcript:parse-append', () => {
+          for (const line of completeLinesText.split('\n')) {
+            if (line.length === 0) continue;
+            parseTranscriptLine(line, previous.entries, previous.usageAttributedMessageIds);
+          }
+        });
       }
       previous.mtimeMs = stat.mtimeMs;
       previous.size = stat.size;
@@ -459,10 +469,12 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
 
   const entries: TranscriptEntry[] = [];
   const usageAttributedMessageIds = new Set<string>();
-  for (const line of window.text.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    parseTranscriptLine(line, entries, usageAttributedMessageIds);
-  }
+  timeSyncWork('transcript:parse-tail', () => {
+    for (const line of window.text.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      parseTranscriptLine(line, entries, usageAttributedMessageIds);
+    }
+  });
 
   // Report the omission in-band rather than dropping turns silently. The
   // viewer already renders `system` entries, so this needs no new response
@@ -549,10 +561,12 @@ export async function parseClaudeTranscriptWindow(
 ): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number }> {
   const window = await readJsonlWindow(filePath, { startByte, maxBytes });
   const entries: TranscriptEntry[] = [];
-  for (const line of window.text.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    parseTranscriptLine(line, entries, attributedMessageIds);
-  }
+  timeSyncWork('transcript:parse-walk', () => {
+    for (const line of window.text.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      parseTranscriptLine(line, entries, attributedMessageIds);
+    }
+  });
   // Prune to the most recent ids. A Set iterates in insertion order, so the
   // front is the oldest - and the oldest is the safest to drop, because a
   // message id is only ever at risk of straddling the seam that immediately

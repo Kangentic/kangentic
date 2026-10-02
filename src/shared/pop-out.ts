@@ -13,9 +13,9 @@ import { IPC } from './ipc-channels';
 // Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
 import type { GitDiffScope, GitDiffStatus } from './types';
 
-export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file';
+export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'knowledge-graph';
 
-export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file'];
+export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'knowledge-graph'];
 
 export function isPopOutKind(value: string): value is PopOutKind {
   return (POPOUT_KINDS as readonly string[]).includes(value);
@@ -71,6 +71,7 @@ export interface PopOutParamsByKind {
   browser: PopOutTaskParams;
   monitor: Record<string, never>;
   'changes-file': PopOutChangesFileParams;
+  'knowledge-graph': Record<string, never>;
 }
 
 /**
@@ -79,7 +80,7 @@ export interface PopOutParamsByKind {
  * inline `kind === 'stats'` check so adding a global surface cannot silently fall
  * through to the task-params branch and key as `monitor:undefined:undefined`.
  */
-const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor'];
+const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor', 'knowledge-graph'];
 
 /** True for a kind whose params carry no task/project, so a caller must not read
  *  `taskId` / `projectId` off them. Exported so every such branch reads the one
@@ -298,6 +299,27 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // browser that exists - which is the invisibility this whole mechanism was
       // built to remove, reappearing in one host.
       IPC.BROWSER_OFFSCREEN_SURFACES,
+    ],
+  },
+  'knowledge-graph': {
+    kind: 'knowledge-graph',
+    scope: 'global',
+    title: 'Knowledge Graph',
+    // Wider than tall: the surface is a canvas beside the answer rail, and the
+    // map is far more readable with horizontal room than vertical.
+    defaultBounds: { width: 1200, height: 820 },
+    // Below this the canvas and the answer rail cannot both be useful.
+    minSize: { width: 720, height: 480 },
+    needsWebview: false,
+    channels: [
+      // A projection pass can take minutes on a cold corpus and finishes in the
+      // background, so a detached window must be told rather than poll. Omitting
+      // this leaves the pop-out permanently showing "building".
+      IPC.KNOWLEDGE_GRAPH_CHANGED,
+      // Progress on an answer in flight. Declared here or a detached window
+      // sits on a spinner while the main window watches the answer arrive.
+      IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,
+      IPC.CONFIG_CHANGED,
     ],
   },
 };

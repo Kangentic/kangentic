@@ -82,7 +82,7 @@ export function waitForTurnCompletion(
       if (settled) return;
       settled = true;
       sessionManager.off('activity', onActivity);
-      sessionManager.off('data-tap', onOutput);
+      sessionManager.off('output-seen', onOutput);
       sessionManager.off('exit', onExit);
       signal?.removeEventListener('abort', onAbort);
       if (quietTimer) clearTimeout(quietTimer);
@@ -125,10 +125,8 @@ export function waitForTurnCompletion(
         lastOutputAt = Date.now();
         evaluate();
       } catch (caughtError) {
-        // Same contract as onActivity above - and 'data-tap' can now fire
-        // SYNCHRONOUSLY inside a replay's IPC stack (the buffer manager's
-        // replay-drain report), so a throw here would fail an unrelated
-        // getScrollback reply, not just a flush timer.
+        // Same contract as onActivity above: a throw must not unwind into the
+        // session manager's event dispatch.
         console.error(`[turn-completion] output handler failed for ${sessionId.slice(0, 8)}:`, caughtError);
       }
     };
@@ -144,7 +142,9 @@ export function waitForTurnCompletion(
     // The focus-independent seam. `'data'` is gated on renderer focus and the
     // session we are waiting on is usually not the visible terminal, so
     // observing it would report "quiet" for a session that is painting hard.
-    sessionManager.on('data-tap', onOutput);
+    // `'output-seen'` fires for every session's output, merged by the pty host
+    // to a few events a second, which is all a quiet-period check needs.
+    sessionManager.on('output-seen', onOutput);
     sessionManager.on('exit', onExit);
     signal?.addEventListener('abort', onAbort, { once: true });
 

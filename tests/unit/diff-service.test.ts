@@ -69,6 +69,18 @@ function makeDiffSummary(files: Array<{ file: string; insertions: number; deleti
   };
 }
 
+/**
+ * Answers `git.raw` by its arguments, joined with spaces. A null answer, or an
+ * argument list not listed, rejects the way git does for a ref it cannot resolve.
+ */
+function routeGit(answers: Record<string, string | null>): void {
+  mockGit.raw.mockImplementation(async (args: string[]) => {
+    const answer = answers[args.join(' ')];
+    if (answer === undefined || answer === null) throw new Error(`fatal: no route for git ${args.join(' ')}`);
+    return `${answer}\n`;
+  });
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('DiffService', () => {
@@ -206,10 +218,9 @@ describe('DiffService', () => {
     });
 
     it('falls back to local branch when origin ref fails', async () => {
-      // origin/main fails (no remote), local main succeeds
-      mockGit.raw
-        .mockRejectedValueOnce(new Error('fatal: not a valid object name'))
-        .mockResolvedValueOnce('def456\n');
+      // origin/main fails (no remote), local main succeeds. Routed by arguments,
+      // since the creation-point lookup runs beside the origin merge-base.
+      routeGit({ 'merge-base origin/main HEAD': null, 'merge-base main HEAD': 'def456' });
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
       mockGit.diff.mockResolvedValue('');
 
@@ -221,6 +232,81 @@ describe('DiffService', () => {
       expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'origin/main', 'HEAD']);
       expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'main', 'HEAD']);
       expect(mockGit.diffSummary).toHaveBeenCalledWith(['def456']);
+    });
+
+    describe('the branch creation point', () => {
+      const OLD_BASE = 'a'.repeat(40);
+      const CREATED = 'c'.repeat(40);
+      const NEW_BASE = 'e'.repeat(40);
+      const reflog = (oldest: string) => `${'f'.repeat(40)} commit: the task's work\n${oldest}\n`;
+
+      beforeEach(() => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+      });
+
+      it('wins over a merge-base left far behind by a rewritten base', async () => {
+        // The measured case: the base was rewritten after the branch was cut, so
+        // its merge-base with HEAD fell back to an old shared commit and the
+        // task was charged with most of the repository.
+        routeGit({
+          'merge-base origin/main HEAD': OLD_BASE,
+          'symbolic-ref -q --short HEAD': 'task-branch',
+          'reflog show --format=%H %gs refs/heads/task-branch': reflog(`${CREATED} branch: Created from origin/main`),
+          [`merge-base ${CREATED} HEAD`]: CREATED,
+          [`merge-base ${OLD_BASE} ${CREATED}`]: OLD_BASE,
+        });
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([CREATED]);
+      });
+
+      it('loses to a merge-base that a rebase or merge moved past it', async () => {
+        routeGit({
+          'merge-base origin/main HEAD': NEW_BASE,
+          'symbolic-ref -q --short HEAD': 'task-branch',
+          'reflog show --format=%H %gs refs/heads/task-branch': reflog(`${CREATED} branch: Created from origin/main`),
+          [`merge-base ${CREATED} HEAD`]: CREATED,
+          // The creation point is behind the new merge-base, not past it.
+          [`merge-base ${NEW_BASE} ${CREATED}`]: CREATED,
+        });
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([NEW_BASE]);
+      });
+
+      it('is ignored when it is not on HEAD\'s history', async () => {
+        routeGit({
+          'merge-base origin/main HEAD': OLD_BASE,
+          'symbolic-ref -q --short HEAD': 'task-branch',
+          'reflog show --format=%H %gs refs/heads/task-branch': reflog(`${CREATED} branch: Created from origin/main`),
+          [`merge-base ${CREATED} HEAD`]: OLD_BASE,
+        });
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([OLD_BASE]);
+      });
+
+      it('is ignored once git has expired the creation entry', async () => {
+        // The oldest entry left is an ordinary commit, which says nothing about
+        // where the branch started.
+        routeGit({
+          'merge-base origin/main HEAD': OLD_BASE,
+          'symbolic-ref -q --short HEAD': 'task-branch',
+          'reflog show --format=%H %gs refs/heads/task-branch': reflog(`${CREATED} commit: an early commit`),
+        });
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([OLD_BASE]);
+      });
+
+      it('costs no extra call when it is the merge-base, the common case', async () => {
+        routeGit({
+          'merge-base origin/main HEAD': CREATED,
+          'symbolic-ref -q --short HEAD': 'task-branch',
+          'reflog show --format=%H %gs refs/heads/task-branch': reflog(`${CREATED} branch: Created from origin/main`),
+        });
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([CREATED]);
+        const mergeBaseCalls = mockGit.raw.mock.calls.filter(([args]) => (args as string[])[0] === 'merge-base');
+        expect(mergeBaseCalls).toHaveLength(1);
+      });
     });
 
     it('falls back to HEAD when both origin and local refs fail', async () => {

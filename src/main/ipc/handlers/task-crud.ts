@@ -221,7 +221,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }
     }
 
-    const updated = tasks.update(input);
+    const updated = timeSyncWork('ipc:task:update', () => tasks.update(input));
 
     // The task-detail edit form writes pr_url/pr_number with pr_state and
     // pr_merge_readiness null on purpose (`buildPrFields`), so a stale terminal

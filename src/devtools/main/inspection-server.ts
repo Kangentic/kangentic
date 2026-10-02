@@ -42,6 +42,8 @@ import {
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
+import { retrievalClient } from '../../main/retrieval/retrieval-client';
+import { captureCpuProfile, getStallProfiles, isStallProfilerRunning, stallProfileDirectory } from './stall-profiler';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 import { readTerminalTrace } from '../../main/pty/terminal-trace';
@@ -240,6 +242,16 @@ async function handleRequest(
     respondJson(response, 200, { ok: true });
     setImmediate(() => app.quit());
     return;
+  }
+
+  // A whole-window CPU profile of main, for scenarios whose cost is spread
+  // over many short spans. Body: `{ "durationMs": 15000 }`. No CDP needed.
+  if (route === 'POST /cpu-profile') {
+    const body = await readJsonBody(request);
+    const requested = typeof body === 'object' && body !== null ? (body as { durationMs?: unknown }).durationMs : undefined;
+    const durationMs = typeof requested === 'number' ? requested : 10_000;
+    const result = await captureCpuProfile(stallProfileDirectory(app.getPath('userData')), durationMs);
+    return respondJson(response, 200, result);
   }
 
   // CDP-backed endpoints from this point on need a main window AND an
@@ -592,23 +604,38 @@ async function respondEventLoopLag(
       renderer = { error: error instanceof Error ? error.message : String(error) };
     }
   }
-  respondJson(response, 200, { ts: new Date().toISOString(), main, renderer });
+  const stallProfiler = {
+    running: isStallProfilerRunning(),
+    profiles: getStallProfiles(),
+  };
+  // The retrieval worker's own counters, every span per label (main's
+  // `worker:` labels are only the spans relayed at 16 ms and over). Never
+  // forks a worker to ask.
+  let worker: unknown = { unavailable: 'not-running' };
+  if (retrievalClient.running) {
+    try {
+      worker = { syncWorkByLabel: await retrievalClient.call('dev.syncWork', {}) };
+    } catch (error) {
+      worker = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  respondJson(response, 200, { ts: new Date().toISOString(), main, worker, stallProfiler, renderer });
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses
  *  terminal-driven lag: a paused session with high in-flight bytes or a
  *  ballooning pending buffer points at a flooding agent. */
-function respondPtyPipeline(
+async function respondPtyPipeline(
   options: InspectionServerOptions,
   response: http.ServerResponse,
-): void {
+): Promise<void> {
   const sessionManager = options.getSessionManager();
   if (!sessionManager) {
     return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
   }
   respondJson(response, 200, {
     ts: new Date().toISOString(),
-    sessions: sessionManager.getPipelineStats(),
+    sessions: await sessionManager.getPipelineStats(),
   });
 }
 
@@ -643,7 +670,7 @@ async function respondTerminalState(
     return respondError(response, 503, 'no-main-window', 'Main window is not available yet.');
   }
 
-  const main = sessionManager.getTerminalDimensions();
+  const main = await sessionManager.getTerminalDimensions();
   // The third layer beside the pty-vs-grid invariants: the width the child TUI
   // is actually composing at, read from its own byte stream. Gated on
   // alt-screen because outside it raw pass-through content fakes widths (see
@@ -655,7 +682,7 @@ async function respondTerminalState(
     // resolveBaseWidth); it cannot manufacture agreement.
     composedBySession.set(
       dimensionRow.sessionId,
-      measureComposedCols(sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
+      measureComposedCols(await sessionManager.getRawScrollback(dimensionRow.sessionId), dimensionRow.ptyCols),
     );
   }
   const composedFields = (
@@ -733,7 +760,7 @@ async function respondTerminalState(
     unmountedSessions: main
       .filter((row) => !grids.some((grid) => (grid as Record<string, unknown>).sessionId === row.sessionId))
       .map((row) => ({ ...row, ...composedFields(row.sessionId, row.ptyCols) })),
-    pipeline: sessionManager.getPipelineStats(),
+    pipeline: await sessionManager.getPipelineStats(),
     // Both processes' lifecycle events on ONE timeline. The terminal bugs worth
     // debugging are orderings - which of resize / repaint / sample / replay-write
     // happened first - and that is only visible merged.
@@ -810,7 +837,7 @@ async function respondTerminalForensics(
     FORENSIC_RAW_TAIL_MAX_BYTES,
   );
 
-  const dimensions = sessionManager.getTerminalDimensions()
+  const dimensions = (await sessionManager.getTerminalDimensions())
     .find((row) => row.sessionId === sessionId) ?? null;
 
   // Main's parsed grid, reconstructed by replaying its own serialized frame
@@ -852,7 +879,7 @@ async function respondTerminalForensics(
   const evaluatedValue = (evaluated.value ?? {}) as { dumps?: unknown };
   const rendererGrids = Array.isArray(evaluatedValue.dumps) ? evaluatedValue.dumps : [];
 
-  const raw = sessionManager.getRawScrollback(sessionId);
+  const raw = await sessionManager.getRawScrollback(sessionId);
   const tail = sliceTailOnCharacterBoundary(raw, rawTailBytes);
 
   respondJson(response, 200, {

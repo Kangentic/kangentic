@@ -21,7 +21,7 @@ interface ToggleCardProps {
    * beside the label, so a verbose "how it works" note need not occupy layout.
    */
   info?: string;
-  /** `data-testid` for the card, so a toggle-led settings row is addressable like a `SettingRow`. */
+  /** `data-testid` for the card, so a toggle-led row is addressable like a settings row. */
   testId?: string;
 }
 
@@ -44,7 +44,7 @@ const TOGGLE_CARD_SURFACE = {
 /**
  * Aria-hidden visual indicator for an interactive toggle. The interactive
  * element (with `role="switch"` + `aria-checked`) is the parent; this is just
- * pixels. Used by `ToggleCard` and `CompactToggleList`.
+ * pixels. Used by `ToggleCard`.
  */
 export function ToggleIndicator({ checked, className = '' }: { checked: boolean; className?: string }) {
   return (
@@ -69,8 +69,9 @@ export function ToggleIndicator({ checked, className = '' }: { checked: boolean;
  * label and switch from "empty space next to a small control" into "interior
  * of one large control."
  *
- * Use this for any standalone boolean setting that has a label + description.
- * For dense lists of toggles, use `CompactToggleList` instead.
+ * Use this for a standalone boolean with a label and description outside the
+ * settings panel (the board manager, dialogs). A settings tab uses
+ * `CardToggleRow` from `settings/settings-card.tsx` instead.
  */
 export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, disabled, info, testId }: ToggleCardProps) {
   const tone = TOGGLE_CARD_SURFACE;

@@ -18,18 +18,25 @@
  *
  * WHICH EVENT TO OBSERVE is the caller's decision and it matters:
  * `SessionManager`'s `'data'` event is gated on renderer focus
- * (`focusedSessionIds`, default-closed), while `'data-tap'` fires for every
- * session regardless of focus. A headless caller - auto_command injection
- * into a task whose terminal is not the visible one is the normal case, not
- * the exception - must observe `'data-tap'` or it will silently degrade to
- * the wall-clock floor for exactly the sessions it cares about. See the
- * comment on `focusedSessionIds` in `session-manager.ts`.
+ * (`focusedSessionIds`, default-closed), while `'data-tap'` fires regardless
+ * of focus for a session someone subscribed to, which this wait does for its
+ * own duration. A headless caller - auto_command injection into a task whose
+ * terminal is not the visible one is the normal case, not the exception -
+ * must observe `'data-tap'` or it will silently degrade to the wall-clock
+ * floor for exactly the sessions it cares about. See the comment on
+ * `focusedSessionIds` in `session-manager.ts`.
  */
 
 /** Structural view of the emitter, so tests and rigs can supply a stub. */
 export interface OutputSettleSource {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off(event: string, listener: (...args: unknown[]) => void): unknown;
+  /**
+   * Ask for the session's raw output for the length of the wait. The pty
+   * host sends a session's bytes to main only while someone is subscribed
+   * (`SessionManager.subscribeDataTap`); a stub may omit it.
+   */
+  subscribeDataTap?(sessionId: string): () => void;
 }
 
 export interface OutputSettleResult {
@@ -80,9 +87,11 @@ export function waitForOutputSettle(
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let capTimer: ReturnType<typeof setTimeout> | null = null;
     let resolved = false;
+    const releaseTap = event === 'data-tap' ? source.subscribeDataTap?.(sessionId) : undefined;
 
     const cleanup = (): void => {
       source.off(event, onData);
+      releaseTap?.();
       signal.removeEventListener('abort', onAbort);
       if (idleTimer) clearTimeout(idleTimer);
       if (capTimer) clearTimeout(capTimer);

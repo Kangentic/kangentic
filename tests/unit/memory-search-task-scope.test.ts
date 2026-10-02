@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { Project } from '../../src/shared/types';
@@ -86,10 +87,11 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
           }
           // Task-scoped lexical: the FTS MATCH joined against memory_chunks.task_id.
           if (sql.includes('memory_chunks_fts') && sql.includes('MATCH') && sql.includes('task_id')) {
-            const taskId = args[1] as string;
+            // Bound as the match, the corpora, the task id, then the limit.
+            const taskId = args[args.length - 2] as string;
             return config.lexicalForTask[taskId] ?? [];
           }
-          if (sql.includes('memory_chunks_vec')) return [];
+          if (sql.includes('memory_vec_conversation')) return [];
           if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) {
             const ids = new Set(args as number[]);
             return config.chunks.filter((row) => ids.has(row.id));
@@ -112,7 +114,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
         run: () => ({ changes: 0, lastInsertRowid: 0 }),
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

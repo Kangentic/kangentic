@@ -9,7 +9,7 @@
 // A jar is orphaned iff its PROJECT is gone (checked against the global project
 // list, no per-project DB) or its TASK is gone (a light read-only `SELECT id FROM
 // tasks` against that project's DB, on a throwaway connection - never
-// `getProjectDb`, which would migrate + load sqlite-vec + cache the connection).
+// `getProjectDb`, which would migrate and cache the connection).
 // The abandoned pre-task-keying `kngbrowser-<hash>` jars are reclaimed once here
 // too. The startup sweep is the sole reclaim path; there is no mid-run hook,
 // because with task-keyed jars the right trigger is task DELETION (not worktree

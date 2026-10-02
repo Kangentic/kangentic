@@ -10,6 +10,7 @@ import { parseKimiTranscript, locateKimiTranscriptFile } from './transcript-pars
 import { migrateKimiProjectData } from './project-relocation';
 import { discoverKimiCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { runCliPrintAnswer } from '../../shared/cli-answer';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -253,6 +254,39 @@ export class KimiAdapter implements AgentAdapter {
       cliPath,
       args: ['--print', '--quiet'],
       prompt: buildSummarizePrompt(prompt),
+      cwd,
+    });
+  }
+
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * `--plan` is Kimi's plan mode, which is what stands between a question and
+   * an edit: print mode implicitly adds `--yolo` (the CLI's own help).
+   * `--quiet` is `--print --output-format text --final-message-only`, so stdout
+   * is the last assistant message, and print mode reads the piped prompt.
+   *
+   * The shipped call passed `--permission-mode plan`, which is Claude's flag,
+   * not Kimi's. Not yet run against a configured model on the machine this was
+   * written on ("LLM not set"), so the flags come from `kimi --help`.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+  ): Promise<string> {
+    return runCliPrintAnswer({
+      cliPath,
+      // The model flag is OMITTED when none is chosen: passing an
+      // empty value is an error.
+      args: ['--quiet', '--plan', ...(model ? ['--model', model] : [])],
+      prompt,
       cwd,
     });
   }

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
-import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
+import { GrokAdapter, grokInitSessionId } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from '../../src/main/agent/adapters/grok/command-builder';
 import type { GrokCommandOptions } from '../../src/main/agent/adapters/grok/command-builder';
 import { parseGrokVersion, GrokDetector } from '../../src/main/agent/adapters/grok/detector';
@@ -40,7 +40,7 @@ import {
 } from '../../src/main/agent/adapters/grok/command-injection-verifier';
 import { cleanGrokTranscript } from '../../src/main/agent/adapters/grok/transcript-cleanup';
 import { discoverGrokCapabilities, clearGrokCapabilityMemo } from '../../src/main/agent/adapters/grok/capability-discovery';
-import { ensureWorktreeTrust, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
+import { ensureAnswerHomeTrust, ensureWorktreeTrust, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
 import { migrateGrokProjectData } from '../../src/main/agent/adapters/grok/project-relocation';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -1598,6 +1598,28 @@ describe('trust manager', () => {
     expect(fs.existsSync(path.join(home, 'trusted_folders.toml'))).toBe(false);
   });
 
+  it('trusts the answer home once, so its search server starts, and never again', async () => {
+    // Untrusted, Grok silently never starts a project MCP server, so an answer
+    // run could not reach the search tool. `--trust` also works, and records
+    // the folder permanently: one entry per question.
+    const home = useTempGrokHome();
+    const answerHome = path.join(home, 'kangentic-ask-home');
+    await ensureAnswerHomeTrust(answerHome);
+    await ensureAnswerHomeTrust(answerHome);
+    const store = fs.readFileSync(path.join(home, 'trusted_folders.toml'), 'utf-8');
+    expect(store.split(`[folders.'${path.resolve(answerHome)}']`).length - 1).toBe(1);
+    expect(store).toContain('trusted = true');
+  });
+
+  it('leaves an answer home the user explicitly distrusted alone', async () => {
+    const home = useTempGrokHome();
+    const answerHome = path.join(home, 'kangentic-ask-home');
+    const storePath = path.join(home, 'trusted_folders.toml');
+    fs.writeFileSync(storePath, `[folders.'${path.resolve(answerHome)}']\ntrusted = false\ndecided_at = 1786162868\n`);
+    await ensureAnswerHomeTrust(answerHome);
+    expect(fs.readFileSync(storePath, 'utf-8')).not.toContain('trusted = true');
+  });
+
   it('writes nothing for a worktree path containing a single quote (cannot be a TOML literal key)', async () => {
     const home = useTempGrokHome();
     const projectRoot = path.join(home, 'fake-project');
@@ -1966,5 +1988,14 @@ describe('GrokAdapter.locateSessionHistoryFile (strict cwd-scoped probe)', () =>
 
     const located = await adapter.locateSessionHistoryFile(SESSION_ID, '/home/dev/probe-project');
     expect(located).toBeNull();
+  });
+});
+
+describe('grokInitSessionId', () => {
+  it('reads the session id off the streaming-messages-json init line, and nothing else', () => {
+    expect(grokInitSessionId(JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION_ID, model: 'grok-4.7' }))).toBe(SESSION_ID);
+    expect(grokInitSessionId(JSON.stringify({ type: 'result', subtype: 'init', session_id: SESSION_ID }))).toBeNull();
+    expect(grokInitSessionId(JSON.stringify({ type: 'assistant', message: { content: 'init' } }))).toBeNull();
+    expect(grokInitSessionId('not json "init"')).toBeNull();
   });
 });

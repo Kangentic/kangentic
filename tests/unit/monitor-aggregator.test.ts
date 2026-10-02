@@ -342,7 +342,7 @@ describe('buildMonitorSnapshot', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('excludes a project whose DB cannot be resolved without throwing, and resolves the failure only once across several of its sessions', () => {
+  it('excludes a project whose DB cannot be resolved without throwing, and resolves the failure only once across several of its sessions', async () => {
     registerHealthyProject('project-healthy', {
       tasksById: new Map([['task-healthy-1', makeTask('task-healthy-1')]]),
     });
@@ -356,10 +356,10 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    let snapshot: ReturnType<typeof buildMonitorSnapshot> | undefined;
-    expect(() => {
-      snapshot = buildMonitorSnapshot(context);
-    }).not.toThrow();
+    let snapshot: Awaited<ReturnType<typeof buildMonitorSnapshot>> | undefined;
+    await expect((async () => {
+      snapshot = await buildMonitorSnapshot(context);
+    })()).resolves.toBeUndefined();
 
     // Only the healthy project's session survives.
     expect(snapshot!.rows).toHaveLength(1);
@@ -378,7 +378,7 @@ describe('buildMonitorSnapshot', () => {
     expect(console.error).toHaveBeenCalled();
   });
 
-  it('produces a row for a Command Terminal (transient) session and skips the task lookup entirely', () => {
+  it('produces a row for a Command Terminal (transient) session and skips the task lookup entirely', async () => {
     const { tasksGetById } = registerHealthyProject('project-a');
 
     const summaries = [
@@ -394,7 +394,7 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
 
     expect(tasksGetById).not.toHaveBeenCalled();
 
@@ -423,7 +423,7 @@ describe('buildMonitorSnapshot', () => {
     expect(row.description).toBeNull();
   });
 
-  it('falls back to the unnumbered name for a transient session with no slot', () => {
+  it('falls back to the unnumbered name for a transient session with no slot', async () => {
     // Main learns the slot from the renderer at spawn, so a session spawned by a
     // path that sends none must still name itself rather than print "NaN".
     registerHealthyProject('project-a');
@@ -437,12 +437,12 @@ describe('buildMonitorSnapshot', () => {
       }),
     ]);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
 
     expect(snapshot.rows[0].taskTitle).toBe('Command Terminal');
   });
 
-  it('drops a non-transient session whose task row is gone (deleted while the session lives)', () => {
+  it('drops a non-transient session whose task row is gone (deleted while the session lives)', async () => {
     registerHealthyProject('project-a', {
       tasksById: new Map(), // no task rows at all - getById always returns undefined
     });
@@ -458,12 +458,12 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
 
     expect(snapshot.rows).toHaveLength(0);
   });
 
-  it('recently-finished window: drops an exited session older than the window, keeps one inside the window, and keeps an undateable (null exitedAt) exited session', () => {
+  it('recently-finished window: drops an exited session older than the window, keeps one inside the window, and keeps an undateable (null exitedAt) exited session', async () => {
     registerHealthyProject('project-a', {
       tasksById: new Map([
         ['task-old', makeTask('task-old')],
@@ -499,7 +499,7 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
     const sessionIds = snapshot.rows.map((row) => row.sessionId);
 
     expect(sessionIds).not.toContain('session-old');
@@ -511,7 +511,7 @@ describe('buildMonitorSnapshot', () => {
     expect(undateableRow?.exitedAt).toBeNull();
   });
 
-  it('recently-finished cap: trims exited rows past the cap by oldest exitedAt, keeps every live row regardless of count, and treats a null exitedAt as newest', () => {
+  it('recently-finished cap: trims exited rows past the cap by oldest exitedAt, keeps every live row regardless of count, and treats a null exitedAt as newest', async () => {
     const tasksById = new Map<string, Task>();
     const liveSessionCount = 3;
     // One exited entry has no session record (null exitedAt); the rest are
@@ -560,7 +560,7 @@ describe('buildMonitorSnapshot', () => {
     registerHealthyProject('project-a', { tasksById });
     const context = makeContext(summaries);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
     const sessionIds = new Set(snapshot.rows.map((row) => row.sessionId));
 
     // Every live row survives no matter how many exited rows compete for the cap.
@@ -585,12 +585,12 @@ describe('buildMonitorSnapshot', () => {
     expect(sessionIds.has('session-exited-1')).toBe(true);
   });
 
-  it('generatedAt is a UTC ISO 8601 timestamp captured at call time', () => {
+  it('generatedAt is a UTC ISO 8601 timestamp captured at call time', async () => {
     registerHealthyProject('project-a');
     const context = makeContext([]);
 
     const before = Date.now();
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
     const after = Date.now();
 
     expect(snapshot.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -599,7 +599,7 @@ describe('buildMonitorSnapshot', () => {
     expect(generatedAtMs).toBeLessThanOrEqual(after);
   });
 
-  it('carries the task PR link and merge readiness onto the row', () => {
+  it('carries the task PR link and merge readiness onto the row', async () => {
     // The transient-session test above pins the null shape; this one pins the
     // passthrough, so a row that hardcoded `prMergeReadiness: null` goes red.
     registerHealthyProject('project-a', {
@@ -616,7 +616,7 @@ describe('buildMonitorSnapshot', () => {
       makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
     ]);
 
-    const snapshot = buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context);
 
     expect(snapshot.rows[0]).toMatchObject({
       prUrl: 'https://github.com/owner/repo/pull/7',
@@ -631,7 +631,7 @@ describe('buildMonitorSnapshot', () => {
   // =========================================================================
 
   describe('modelDisplayName', () => {
-    it('falls back to applied_model when the usage cache has no entry for the session', () => {
+    it('falls back to applied_model when the usage cache has no entry for the session', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       registerSessionRecord('project-a', 'session-a', {
         exited_at: null,
@@ -643,12 +643,12 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
     });
 
-    it('falls back to applied_model when the cached usage carries an empty displayName', () => {
+    it('falls back to applied_model when the cached usage carries an empty displayName', async () => {
       // UsageAccumulator.emptyUsage() seeds displayName: '', and status.json can
       // omit display_name (status-parser.ts uses `?? ''`), so an empty string is
       // a real, reachable value here - not just an absent one. `??` alone treats
@@ -666,12 +666,12 @@ describe('buildMonitorSnapshot', () => {
         { 'session-a': makeSessionUsage({ model: { displayName: '' } }) },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
     });
 
-    it('prefers a nonempty live displayName over applied_model', () => {
+    it('prefers a nonempty live displayName over applied_model', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       registerSessionRecord('project-a', 'session-a', {
         exited_at: null,
@@ -685,18 +685,18 @@ describe('buildMonitorSnapshot', () => {
         { 'session-a': makeSessionUsage({ model: { displayName: 'Haiku 4.5' } }) },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].modelDisplayName).toBe('Haiku 4.5');
     });
 
-    it('is null when neither live usage nor applied_model has a value', () => {
+    it('is null when neither live usage nor applied_model has a value', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext([
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].modelDisplayName).toBeNull();
     });
@@ -707,18 +707,18 @@ describe('buildMonitorSnapshot', () => {
   // =========================================================================
 
   describe('contextPercent', () => {
-    it('is null when the session has no cached usage at all', () => {
+    it('is null when the session has no cached usage at all', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext([
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBeNull();
     });
 
-    it('is null when the window size is unknown (the transcript-fallback sentinel)', () => {
+    it('is null when the window size is unknown (the transcript-fallback sentinel)', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext(
         [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
@@ -730,12 +730,12 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBeNull();
     });
 
-    it('is 0, not null, for a genuinely empty session with a KNOWN window', () => {
+    it('is 0, not null, for a genuinely empty session with a KNOWN window', async () => {
       // Distinguishes "no usage yet" (null, renders "-") from "usage confirmed
       // empty" (0, renders "0%") - a real zero must not collapse into the
       // unknown-window display path.
@@ -750,12 +750,12 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBe(0);
     });
 
-    it('rounds a known window/percentage', () => {
+    it('rounds a known window/percentage', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext(
         [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
@@ -767,12 +767,12 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBe(62);
     });
 
-    it('clamps an over-budget percentage to 100', () => {
+    it('clamps an over-budget percentage to 100', async () => {
       // Genuinely reachable, not a defensive-only branch: usage-accumulator's
       // over-budget pairing path (src/main/activity-engine/usage-accumulator.ts)
       // computes usedPercentage from usedTokens / knownWindow with no upper
@@ -789,12 +789,12 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBe(100);
     });
 
-    it('clamps a negative percentage to 0', () => {
+    it('clamps a negative percentage to 0', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext(
         [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
@@ -806,7 +806,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].contextPercent).toBe(0);
     });
@@ -817,7 +817,7 @@ describe('buildMonitorSnapshot', () => {
   // =========================================================================
 
   describe('outputPeek (row seeding)', () => {
-    it('seeds every row from the session manager, keyed by that session', () => {
+    it('seeds every row from the session manager, keyed by that session', async () => {
       // Seeded on the snapshot (not only pushed live) so a row is self-consistent
       // the moment it appears, and so an IDLE session that never emits still has
       // something to show. Keyed per session id, because getting that wrong would
@@ -837,14 +837,14 @@ describe('buildMonitorSnapshot', () => {
       (context.sessionManager.getOutputPeek as unknown as ReturnType<typeof vi.fn>)
         .mockImplementation((sessionId: string) => peeksBySession[sessionId] ?? []);
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
       expect(rowsById.get('session-1')?.outputPeek).toEqual(['running tests', 'all green']);
       expect(rowsById.get('session-2')?.outputPeek).toEqual(['reading src/main/index.ts']);
     });
 
-    it('carries an empty array (never undefined) for a session with nothing to show', () => {
+    it('carries an empty array (never undefined) for a session with nothing to show', async () => {
       // The renderer maps over this unconditionally, so undefined would throw
       // rather than render an empty card.
       registerHealthyProject('project-a', { tasksById: new Map([['task-1', makeTask('task-1')]]) });
@@ -852,12 +852,12 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].outputPeek).toEqual([]);
     });
 
-    it('leaves commandTerminalBranch null for a task agent', () => {
+    it('leaves commandTerminalBranch null for a task agent', async () => {
       // A worktree-backed task has a branch too, but its COLUMN is the more
       // useful breadcrumb and the eyebrow only has room for one.
       registerHealthyProject('project-a', { tasksById: new Map([['task-1', makeTask('task-1')]]) });
@@ -865,7 +865,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect(buildMonitorSnapshot(context).rows[0].commandTerminalBranch).toBeNull();
+      expect((await buildMonitorSnapshot(context)).rows[0].commandTerminalBranch).toBeNull();
     });
   });
 
@@ -874,7 +874,7 @@ describe('buildMonitorSnapshot', () => {
   // =========================================================================
 
   describe('description (row seeding)', () => {
-    it("carries the task's description on the row", () => {
+    it("carries the task's description on the row", async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([['task-1', makeTask('task-1', { description: 'Fix the PTY capture race.' })]]),
       });
@@ -882,10 +882,10 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect(buildMonitorSnapshot(context).rows[0].description).toBe('Fix the PTY capture race.');
+      expect((await buildMonitorSnapshot(context)).rows[0].description).toBe('Fix the PTY capture race.');
     });
 
-    it('is null when the task has no description, not an empty string', () => {
+    it('is null when the task has no description, not an empty string', async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([['task-1', makeTask('task-1', { description: '' })]]),
       });
@@ -893,10 +893,10 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect(buildMonitorSnapshot(context).rows[0].description).toBeNull();
+      expect((await buildMonitorSnapshot(context)).rows[0].description).toBeNull();
     });
 
-    it('truncates a description longer than MONITOR_ROW_DESCRIPTION_MAX_CHARS', () => {
+    it('truncates a description longer than MONITOR_ROW_DESCRIPTION_MAX_CHARS', async () => {
       // The snapshot fans to every monitor window on every change, so a raw
       // multi-KB description must never ride it uncapped.
       const longDescription = 'x'.repeat(MONITOR_ROW_DESCRIPTION_MAX_CHARS + 500);
@@ -907,7 +907,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      const row = buildMonitorSnapshot(context).rows[0];
+      const row = (await buildMonitorSnapshot(context)).rows[0];
       expect(row.description).toHaveLength(MONITOR_ROW_DESCRIPTION_MAX_CHARS);
       expect(row.description).toBe(longDescription.slice(0, MONITOR_ROW_DESCRIPTION_MAX_CHARS));
     });
@@ -918,7 +918,7 @@ describe('buildMonitorSnapshot', () => {
   // =========================================================================
 
   describe('lastEventOf (row.lastEvent projection)', () => {
-    it('projects a SessionEvent down to exactly { type, detail }, dropping correlation/telemetry fields', () => {
+    it('projects a SessionEvent down to exactly { type, detail }, dropping correlation/telemetry fields', async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([['task-a', makeTask('task-a')]]),
       });
@@ -928,7 +928,7 @@ describe('buildMonitorSnapshot', () => {
       const fullEvent = makeFullSessionEvent({ type: EventType.ToolStart, detail: 'Reading file.ts' });
       const context = makeContext(summaries, { 'session-a': [fullEvent] });
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       const lastEvent = snapshot.rows[0].lastEvent;
       expect(lastEvent).not.toBeNull();
@@ -940,7 +940,7 @@ describe('buildMonitorSnapshot', () => {
       expect(lastEvent).toEqual({ type: EventType.ToolStart, detail: 'Reading file.ts' });
     });
 
-    it('picks the LAST event in the cache, not the first', () => {
+    it('picks the LAST event in the cache, not the first', async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([['task-a', makeTask('task-a')]]),
       });
@@ -954,12 +954,12 @@ describe('buildMonitorSnapshot', () => {
         ],
       });
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.ToolEnd, detail: 'Read file.ts' });
     });
 
-    it('returns null when the session has no events cached (undefined) or an empty array', () => {
+    it('returns null when the session has no events cached (undefined) or an empty array', async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([
           ['task-undefined-events', makeTask('task-undefined-events')],
@@ -974,14 +974,14 @@ describe('buildMonitorSnapshot', () => {
       // session-empty-events is present with an explicit empty array.
       const context = makeContext(summaries, { 'session-empty-events': [] });
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
       expect(rowsById.get('session-undefined-events')?.lastEvent).toBeNull();
       expect(rowsById.get('session-empty-events')?.lastEvent).toBeNull();
     });
 
-    it('yields detail: null (not undefined) for an event with no detail field', () => {
+    it('yields detail: null (not undefined) for an event with no detail field', async () => {
       registerHealthyProject('project-a', {
         tasksById: new Map([['task-a', makeTask('task-a')]]),
       });
@@ -993,7 +993,7 @@ describe('buildMonitorSnapshot', () => {
       const eventWithNoDetail = makeFullSessionEvent({ type: EventType.Idle });
       const context = makeContext(summaries, { 'session-a': [eventWithNoDetail] });
 
-      const snapshot = buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context);
 
       expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.Idle, detail: null });
     });

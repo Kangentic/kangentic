@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Pencil } from 'lucide-react';
+import { AudioLines, Mic, Pencil } from 'lucide-react';
 import { useDictationStore } from '../../../stores/dictation-store';
 import type {
   AppConfig,
   DictationConfig,
   DictationInfo,
 } from '../../../../shared/types';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, SettingTextInput, useScopedUpdate } from '../shared';
+import { Select, SettingTextInput, useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow, CardTile, CardStatusRow, InfoTip } from '../settings-card';
+import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
@@ -38,11 +40,39 @@ function accuracyRank(modelId: string): number {
   return MODEL_ACCURACY[modelId]?.rank ?? 0;
 }
 
+type DictationModelState = 'ready' | 'downloading' | 'failed';
+
+/**
+ * The picked models' state, as the same status row every Settings status uses.
+ * Switching dictation on starts the download (prewarm on enable), so a model
+ * not on disk yet reads as Downloading, never as a separate waiting state.
+ * Every state names the same models.
+ */
+function DictationModelStatus({ names, state, percent, error }: { names: string; state: DictationModelState; percent: number; error?: string }) {
+  if (state === 'failed') {
+    // Why it failed (no space, no network) is what the user can act on.
+    return <CardStatusRow label="Download failed" value={error ?? names} tone="failure" testId="dictation-model-download" />;
+  }
+  if (state === 'ready') {
+    return <CardStatusRow label="Models" value={names} tone="ready" testId="dictation-model-download" valueTestId="dictation-model-ready" />;
+  }
+  return (
+    <CardStatusRow
+      label="Downloading"
+      value={`${Math.min(100, Math.floor(percent))}%, ${names}`}
+      percent={percent}
+      progressLabel="Dictation models downloaded"
+      testId="dictation-model-download"
+    />
+  );
+}
+
 /**
  * Voice-to-text dictation settings. GLOBAL/shared scope (below the settings
- * separator). Two groups: Transcription (where it runs + which model, the
- * accuracy) and Input (how you trigger and insert it). Dictation always streams
- * a live preview as you talk, on-device or cloud.
+ * separator). Two cards: Voice dictation (the switch, then how you trigger and
+ * insert it) and Transcription (language, mode, models, punctuation), both
+ * hidden while dictation is off. Dictation always streams a live preview as you
+ * talk, on-device or cloud.
  */
 export function DictationTab({
   globalConfig,
@@ -205,12 +235,6 @@ export function DictationTab({
     }
   };
 
-  const selectedModelName = info?.selectedModelId
-    ? [...info.finalModels, ...info.liveModels].find((model) => model.id === info.selectedModelId)?.displayName
-      ?? (info.selectedModelId.includes('zipformer') ? 'Streaming Zipformer' : info.selectedModelId)
-    : null;
-  const isAutoModel = (dictation.modelId ?? null) === null;
-
   // The model auto-downloads in the background (prewarm on enable), which does
   // not re-fetch getInfo, so its installed-state snapshot would stay stale and
   // the row would keep reading "not ready". Re-fetch when a download finishes
@@ -224,239 +248,239 @@ export function DictationTab({
     wasDownloadingRef.current = downloadingNow;
   }, [modelProgress, refreshInfo]);
 
-  // Read-only status. The model downloads automatically (prewarm on enable) and
-  // its live progress shows in the dictation popup, so there is no manual button
-  // here - just the resolved model, its size, and whether it is ready.
-  const modelDownloadRow = info?.selectedModelId ? (
-    <div
-      className="flex items-center justify-between gap-2 rounded border border-edge bg-surface-hover px-3 py-2 text-xs"
-      data-testid="dictation-model-download"
-    >
-      <div className="min-w-0">
-        <div className="text-fg-secondary">
-          {isCloud ? 'Live preview model' : 'Model'}: <span className="text-fg">{selectedModelName}</span>
-          {!isCloud && isAutoModel ? <span className="text-fg-faint"> (Auto)</span> : null}
-          {info.selectedModelSizeMb ? (
-            <span className="text-fg-faint"> (~{info.selectedModelSizeMb} MB)</span>
-          ) : null}
-        </div>
-        {modelProgress?.status === 'error' ? (
-          <div className="text-red-400">{modelProgress.error ?? 'Download failed'}</div>
-        ) : modelInstalled ? (
-          <div className="text-fg-faint">Cached for offline use.</div>
-        ) : isDownloading ? (
-          <>
-            <div className="text-fg-faint">
-              Downloading... {modelProgress && modelProgress.totalBytes > 0
-                ? Math.min(100, Math.round((modelProgress.downloadedBytes / modelProgress.totalBytes) * 100))
-                : 0}%
-            </div>
-            <DownloadProgressBar
-              percent={modelProgress && modelProgress.totalBytes > 0
-                ? (modelProgress.downloadedBytes / modelProgress.totalBytes) * 100
-                : 0}
-            />
-          </>
-        ) : (
-          <div className="text-fg-faint">Downloads automatically when enabled.</div>
-        )}
-      </div>
-      {modelInstalled ? (
-        <span
-          className="inline-flex items-center gap-1 whitespace-nowrap text-fg-muted"
-          data-testid="dictation-model-ready"
-        >
-          <Check size={13} /> Ready
-        </span>
-      ) : null}
-    </div>
-  ) : null;
+  // The on-device models this setup runs, live then refinement, for the one
+  // status line under Mode. A cloud refinement has no model to download.
+  const pickedModelIds = [liveValue, isCloud ? 'none' : finalValue].filter((id) => id !== '' && id !== 'none');
+  const modelNameOf = (id: string): string => (
+    [...(info?.liveModels ?? []), ...(info?.finalModels ?? [])].find((model) => model.id === id)?.displayName
+      ?? (id.includes('zipformer') ? 'Streaming Zipformer' : id)
+  );
+  const pickedModelNames = [...new Set(pickedModelIds.map(modelNameOf))].join(' and ');
+  const allModelsInstalled = pickedModelIds.length > 0
+    && pickedModelIds.every((id) => info?.installedModels.includes(id) ?? false);
+  const downloadPercent = modelProgress && modelProgress.totalBytes > 0
+    ? (modelProgress.downloadedBytes / modelProgress.totalBytes) * 100
+    : 0;
+
+  const modelsReady = allModelsInstalled || (modelInstalled && pickedModelIds.length === 1);
+  const modelState: DictationModelState = modelProgress?.status === 'error'
+    ? 'failed'
+    : modelsReady ? 'ready' : 'downloading';
+
+  const pushToTalkDescription = 'Hold to record; release to insert the transcription. Rebind it in Hotkeys.';
+  const modeDescription = 'A preset picks the live and refinement models for you. Custom lets you pick them.';
 
   return (
-    <>
+    <div className="space-y-4">
       {/* Master on/off. Cloud vs local is no longer a master choice: it is the
-          "Cloud endpoint" option in the Refinement dropdown below. */}
-      <SettingToggleRow
+          "Cloud endpoint" option in the Refinement dropdown. Off means hidden,
+          not greyed out: nothing below applies until dictation is on. */}
+      <SettingsCard
+        icon={<Mic size={16} />}
         {...settingProps('dictation.enabled')}
+        // Its own rows, and while dictation is off the Transcription card's
+        // settings too: that card is not rendered then, so a search for one of
+        // them finds this switch. While it is on, that card answers for its own
+        // settings, and listing them here would pull this card's rows into
+        // their results.
+        searchIds={[
+          'dictation.releaseBufferMs',
+          'dictation.autoSubmit',
+          ...(enabled ? [] : ['dictation.language', 'dictation.punctuation', 'dictation.remote']),
+        ]}
         checked={enabled}
         onChange={(value) => updateGlobal({ dictation: { enabled: value } })}
-      />
-
-      {/* Disabled (greyed, non-interactive) until dictation is turned on above, so
-          the models and endpoint can only be edited once the feature is enabled. */}
-      <div
-        className={enabled ? 'space-y-4' : 'space-y-4 pointer-events-none opacity-50'}
-        aria-disabled={!enabled}
       >
-      {info?.workerUnavailable ? (
-        <div
-          className="rounded border border-edge bg-surface-hover px-3 py-2 text-xs text-red-400"
-          data-testid="dictation-worker-unavailable"
-        >
-          Dictation stopped after repeated crashes{info.workerError ? ` (${info.workerError})` : ''}. Restart Kangentic to try again.
-        </div>
-      ) : null}
-      {info && (
-        <>
-          {/* Language first (never locked by the preset): the models below adapt to
-              it. English offers the full lineup; another language narrows them to
-              the multilingual builds. */}
-          <SettingRow {...settingProps('dictation.language')}>
-            <Select
-              value={languageValue}
-              onChange={(event) => applyLanguage(event.target.value)}
-              data-testid="dictation-language-select"
-            >
-              {languageOptions.map((language) => (
-                <option key={language.code} value={language.code}>
-                  {language.label}
-                </option>
-              ))}
-            </Select>
-          </SettingRow>
-          <SettingRow
-            label="Mode"
-            description="Choose a preset to set the models below for you, or Custom to pick them yourself."
-          >
-            <Select
-              value={mode}
-              onChange={(event) => applyMode(event.target.value)}
-              data-testid="dictation-preset-select"
-            >
-              <option value="accurate">Best accuracy</option>
-              <option value="balanced">Balanced</option>
-              <option value="fast">Fastest</option>
-              <option value="custom">Custom</option>
-            </Select>
-          </SettingRow>
-          <SettingRow
-            label="Live model"
-            description="Preview while you speak: streaming is instant, chunked is accurate."
-          >
-            <Select
-              value={liveValue}
-              onChange={(event) => updateGlobal({ dictation: { liveModelId: event.target.value } })}
-              data-testid="dictation-live-model-select"
-              disabled={modelsLocked}
-            >
-              {liveModelsForLanguage.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                  {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
-                  {` (${model.sizeMb} MB)`}
-                </option>
-              ))}
-              <option value="none">None</option>
-            </Select>
-          </SettingRow>
-          <SettingRow
-            label="Refinement model"
-            description="Refines the live draft into the accurate result on release. None keeps the live text as-is."
-          >
-            <Select
-              value={finalValue}
-              onChange={(event) => {
-                const value = event.target.value;
-                // The Refinement dropdown is what drives local vs cloud: 'cloud' routes
-                // the final pass to the remote endpoint; any model id keeps it on-device.
-                if (value === 'cloud') updateGlobal({ dictation: { engineMode: 'remote', mode: 'custom' } });
-                else updateGlobal({ dictation: { engineMode: 'auto', modelId: value } });
-              }}
-              data-testid="dictation-final-model-select"
-              disabled={modelsLocked}
-            >
-              {finalModelsForLanguage.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                  {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
-                  {` (${model.sizeMb} MB)`}
-                </option>
-              ))}
-              <option value="none">None</option>
-              <option value="cloud">Cloud endpoint</option>
-            </Select>
-          </SettingRow>
-          {/* The Cloud refinement needs its endpoint. Only the final clip is sent here;
-              the live preview always runs on-device. */}
-          {isCloud && (
-            <div className="ml-1 space-y-2 border-l border-edge pl-3" data-testid="dictation-cloud-fields">
-              <p className="text-xs text-fg-faint">
-                Sends the final clip to your OpenAI-compatible /v1/audio/transcriptions endpoint. The live preview stays on-device.
-              </p>
-              <SettingTextInput
-                placeholder="https://api.example.com/v1/audio/transcriptions"
-                value={dictation.remote?.url ?? ''}
-                onCommit={(nextUrl) => updateGlobal({ dictation: { remote: { url: nextUrl } } })}
-                ariaLabel="Cloud transcription endpoint"
-              />
-              <SettingTextInput
-                type="password"
-                placeholder="API key (optional)"
-                value={dictation.remote?.apiKey ?? ''}
-                onCommit={(nextApiKey) => updateGlobal({ dictation: { remote: { apiKey: nextApiKey } } })}
-                ariaLabel="Cloud transcription API key"
-              />
-              <SettingTextInput
-                placeholder="Model (optional, e.g. whisper-1)"
-                value={dictation.remote?.model ?? ''}
-                onCommit={(nextModel) => updateGlobal({ dictation: { remote: { model: nextModel } } })}
-                ariaLabel="Cloud transcription model"
-              />
-            </div>
-          )}
-          {modelDownloadRow && <div className="pb-1">{modelDownloadRow}</div>}
-        </>
-      )}
+        {enabled ? (
+          <>
+            {/* Push-to-talk is a hotkey, rebound in Hotkeys. The row shows the
+                current combo and takes you there. */}
+            <CardTile className="flex items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <span className={SETTING_LABEL_CLASS}>Push-to-talk</span>
+                <InfoTip label="Push-to-talk" text={pushToTalkDescription} />
+              </div>
+              <button
+                type="button"
+                onClick={onOpenHotkeys}
+                title="Rebind in the Hotkeys settings"
+                data-testid="dictation-rebind-cta"
+                className="inline-flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded border border-edge-input bg-surface-control px-2 py-1 text-xs text-fg-secondary transition-colors hover:border-accent hover:text-fg"
+              >
+                <span className="font-medium">{pushToTalkLabel}</span>
+                <span className="inline-flex items-center gap-1 text-fg-faint">
+                  <Pencil size={12} /> Rebind
+                </span>
+              </button>
+            </CardTile>
+            <CardRow {...settingProps('dictation.releaseBufferMs')}>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={500}
+                  step={50}
+                  value={dictation.releaseBufferMs ?? 250}
+                  onChange={(event) => updateGlobal({ dictation: { releaseBufferMs: Number(event.target.value) } })}
+                  aria-label="Release buffer"
+                  data-testid="dictation-release-buffer"
+                  className="h-1.5 w-40 cursor-pointer accent-[var(--kng-accent)]"
+                />
+                <span className="w-12 shrink-0 text-right text-xs tabular-nums text-fg-secondary">
+                  {(dictation.releaseBufferMs ?? 250) === 0 ? 'Off' : `${dictation.releaseBufferMs ?? 250} ms`}
+                </span>
+              </div>
+            </CardRow>
+            <CardToggleRow
+              {...settingProps('dictation.autoSubmit')}
+              checked={dictation.autoSubmit ?? true}
+              onChange={(value) => updateGlobal({ dictation: { autoSubmit: value } })}
+            />
+          </>
+        ) : null}
+      </SettingsCard>
 
-      <SettingToggleRow
-        {...settingProps('dictation.punctuation')}
-        checked={dictation.punctuation ?? true}
-        onChange={(value) => updateGlobal({ dictation: { punctuation: value } })}
-      />
-
-      {/* Input: how you trigger and insert dictation. */}
-      <SectionHeader label="Input" searchIds={['dictation.releaseBufferMs', 'dictation.autoSubmit']} />
-      <SettingRow
-        label="Push-to-talk"
-        description={`Hold ${pushToTalkLabel} to record; release to insert the transcription.`}
-      >
-        <button
-          type="button"
-          onClick={onOpenHotkeys}
-          title="Rebind in the Hotkeys settings"
-          data-testid="dictation-rebind-cta"
-          className="inline-flex items-center gap-2 whitespace-nowrap rounded border border-edge-input bg-surface px-2 py-1 text-xs text-fg-secondary transition-colors hover:border-accent hover:text-fg"
+      {enabled ? (
+        <SettingsCard
+          icon={<AudioLines size={16} />}
+          label="Transcription"
+          description="Runs on this machine unless you choose a cloud refinement."
+          searchIds={['dictation.language', 'dictation.punctuation', 'dictation.remote']}
         >
-          <span className="font-medium">{pushToTalkLabel}</span>
-          <span className="inline-flex items-center gap-1 text-fg-faint">
-            <Pencil size={12} /> Rebind
-          </span>
-        </button>
-      </SettingRow>
-      <SettingRow {...settingProps('dictation.releaseBufferMs')}>
-        <div className="flex items-center gap-3">
-          <input
-            type="range"
-            min={0}
-            max={500}
-            step={50}
-            value={dictation.releaseBufferMs ?? 250}
-            onChange={(event) => updateGlobal({ dictation: { releaseBufferMs: Number(event.target.value) } })}
-            aria-label="Release buffer"
-            data-testid="dictation-release-buffer"
-            className="h-1.5 w-40 cursor-pointer accent-[var(--kng-accent)]"
+          {info?.workerUnavailable ? (
+            <CardTile className="text-xs text-red-400" testId="dictation-worker-unavailable">
+              Dictation stopped after repeated crashes{info.workerError ? ` (${info.workerError})` : ''}. Restart Kangentic to try again.
+            </CardTile>
+          ) : null}
+          {info ? (
+            <>
+              {/* Language first (never locked by the preset): the models adapt to
+                  it. English offers the full lineup; another language narrows them
+                  to the multilingual builds. */}
+              <CardRow {...settingProps('dictation.language')}>
+                <Select
+                  value={languageValue}
+                  onChange={(event) => applyLanguage(event.target.value)}
+                  data-testid="dictation-language-select"
+                >
+                  {languageOptions.map((language) => (
+                    <option key={language.code} value={language.code}>
+                      {language.label}
+                    </option>
+                  ))}
+                </Select>
+              </CardRow>
+              <CardChoiceRow
+                label="Mode"
+                description={modeDescription}
+                options={[
+                  { value: 'accurate', label: 'Best accuracy', testId: 'dictation-preset-accurate' },
+                  { value: 'balanced', label: 'Balanced', testId: 'dictation-preset-balanced' },
+                  { value: 'fast', label: 'Fastest', testId: 'dictation-preset-fast' },
+                  { value: 'custom', label: 'Custom', testId: 'dictation-preset-custom' },
+                ]}
+                value={mode}
+                onChange={(next) => applyMode(next)}
+                testId="dictation-preset-choice"
+              />
+              {modelsLocked ? null : (
+                <>
+                  <CardRow
+                    label="Live model"
+                    description="Preview while you speak: streaming is instant, chunked is accurate."
+                  >
+                    <Select
+                      value={liveValue}
+                      onChange={(event) => updateGlobal({ dictation: { liveModelId: event.target.value } })}
+                      data-testid="dictation-live-model-select"
+                    >
+                      {liveModelsForLanguage.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.displayName}
+                          {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
+                          {` (${model.sizeMb} MB)`}
+                        </option>
+                      ))}
+                      <option value="none">None</option>
+                    </Select>
+                  </CardRow>
+                  <CardRow
+                    label="Refinement model"
+                    description="Refines the live draft into the accurate result on release. None keeps the live text as-is."
+                  >
+                    <Select
+                      value={finalValue}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        // The Refinement dropdown is what drives local vs cloud: 'cloud' routes
+                        // the final pass to the remote endpoint; any model id keeps it on-device.
+                        if (value === 'cloud') updateGlobal({ dictation: { engineMode: 'remote', mode: 'custom' } });
+                        else updateGlobal({ dictation: { engineMode: 'auto', modelId: value } });
+                      }}
+                      data-testid="dictation-final-model-select"
+                    >
+                      {finalModelsForLanguage.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.displayName}
+                          {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
+                          {` (${model.sizeMb} MB)`}
+                        </option>
+                      ))}
+                      <option value="none">None</option>
+                      <option value="cloud">Cloud endpoint</option>
+                    </Select>
+                    {/* The cloud refinement needs its endpoint. Only the final clip
+                        is sent; the live preview always runs on this machine. */}
+                    {isCloud ? (
+                      <div className="mt-1 space-y-2 border-l-2 border-edge pl-3" data-testid="dictation-cloud-fields">
+                        <p className="text-xs text-fg-muted">
+                          Only the final clip is sent. The live preview stays on this machine.
+                        </p>
+                        <SettingTextInput
+                          placeholder="https://api.example.com/v1/audio/transcriptions"
+                          value={dictation.remote?.url ?? ''}
+                          onCommit={(nextUrl) => updateGlobal({ dictation: { remote: { url: nextUrl } } })}
+                          ariaLabel="Cloud transcription endpoint"
+                        />
+                        <SettingTextInput
+                          type="password"
+                          placeholder="API key (optional)"
+                          value={dictation.remote?.apiKey ?? ''}
+                          onCommit={(nextApiKey) => updateGlobal({ dictation: { remote: { apiKey: nextApiKey } } })}
+                          ariaLabel="Cloud transcription API key"
+                        />
+                        <SettingTextInput
+                          placeholder="Model (optional, e.g. whisper-1)"
+                          value={dictation.remote?.model ?? ''}
+                          onCommit={(nextModel) => updateGlobal({ dictation: { remote: { model: nextModel } } })}
+                          ariaLabel="Cloud transcription model"
+                        />
+                      </div>
+                    ) : null}
+                  </CardRow>
+                </>
+              )}
+              {/* The models this setup runs and whether they are on disk, under
+                  the rows that pick them: Mode for a preset, the two pickers in
+                  Custom. A cloud-only setup has none to show, and a stopped
+                  worker downloads nothing, which the tile above already says. */}
+              {pickedModelIds.length > 0 && !info.workerUnavailable ? (
+                <DictationModelStatus
+                  names={pickedModelNames}
+                  state={modelState}
+                  percent={isDownloading ? downloadPercent : 0}
+                  error={modelProgress?.error}
+                />
+              ) : null}
+            </>
+          ) : null}
+          <CardToggleRow
+            {...settingProps('dictation.punctuation')}
+            checked={dictation.punctuation ?? true}
+            onChange={(value) => updateGlobal({ dictation: { punctuation: value } })}
           />
-          <span className="w-12 shrink-0 text-right text-xs tabular-nums text-fg-secondary">
-            {(dictation.releaseBufferMs ?? 250) === 0 ? 'Off' : `${dictation.releaseBufferMs ?? 250} ms`}
-          </span>
-        </div>
-      </SettingRow>
-      <SettingToggleRow
-        {...settingProps('dictation.autoSubmit')}
-        checked={dictation.autoSubmit ?? true}
-        onChange={(value) => updateGlobal({ dictation: { autoSubmit: value } })}
-      />
-      </div>
-    </>
+        </SettingsCard>
+      ) : null}
+    </div>
   );
 }

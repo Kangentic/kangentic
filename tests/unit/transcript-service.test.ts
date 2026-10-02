@@ -36,11 +36,17 @@ import {
   resolveSessionTranscript,
   resolveTaskTranscript,
   resetForTests,
+  setIndexedChunkReaderForTests,
   setStitchMemoBudgetForTests,
   stitchMemoBytesForTests,
   stitchMemoSizeForTests,
 } from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+
+// The index fallback reads through the retrieval worker in the app; here the
+// worker's own read runs in process over the fake database.
+setIndexedChunkReaderForTests(async (db, docId) => new RetrievalStore(db).getChunksForDoc('conversation', docId));
 
 interface MemoryChunkRow {
   id: number;

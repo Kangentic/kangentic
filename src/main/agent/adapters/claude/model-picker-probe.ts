@@ -36,10 +36,9 @@
  * (see `recordProbeResult`). The last good scan is also kept in the
  * app's config directory (see `lastScanFilePath`) so a restart starts from it.
  */
-// Type-only: erased at compile time so merely importing this module (e.g. via
-// the agent-adapter graph during capability discovery) does NOT load node-pty's
-// native bindings. The runtime module is pulled in lazily inside the probe.
-import type * as pty from 'node-pty';
+// The probe's PTY runs in the pty host; node-pty loads only there, or lazily
+// here when no host is registered, so importing this module loads nothing.
+import { spawnOffMainPty, type OffMainPty, type OffMainPtyOptions } from '../../../utility-process/off-main-pty';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -410,7 +409,7 @@ function spawnEnvironment(): Record<string, string> {
  * paces `/model` and Enter separates the two.
  */
 async function exitProbeGracefully(
-  probeProcess: pty.IPty,
+  probeProcess: OffMainPty,
   exited: Promise<void>,
   settleMs: number,
   graceMs: number,
@@ -455,13 +454,11 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
   }
 
   const screen = new VirtualScreen(PROBE_COLS, PROBE_ROWS);
-  let probeProcess: pty.IPty;
+  let probeProcess: OffMainPty;
   try {
-    // Load node-pty here, not at module top level, so the native bindings
-    // initialize only when a probe actually runs - importing this module
-    // (e.g. through the agent-adapter graph) stays side-effect-free.
-    const nodePty = await import('node-pty');
-    const spawnOptions: pty.IPtyForkOptions = {
+    // Spawned in the pty host (off-main-pty.ts): ConPTY creation is
+    // synchronous, and node-pty loads only where a PTY actually runs.
+    const spawnOptions: OffMainPtyOptions = {
       name: 'xterm-256color',
       cols: PROBE_COLS,
       rows: PROBE_ROWS,
@@ -471,8 +468,8 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     // --safe-mode: hooks, plugins, MCP servers, CLAUDE.md all skipped; auth
     // and model selection work normally (verified empirically on 2.1.170).
     probeProcess = process.platform === 'win32'
-      ? nodePty.spawn('cmd.exe', ['/c', cliPath, '--safe-mode'], spawnOptions)
-      : nodePty.spawn(cliPath, ['--safe-mode'], spawnOptions);
+      ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, '--safe-mode'], spawnOptions)
+      : await spawnOffMainPty(cliPath, ['--safe-mode'], spawnOptions);
   } catch {
     return undefined;
   }

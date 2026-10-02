@@ -296,12 +296,12 @@ describe('pr-registry wrappers forward options untouched to the connector', () =
    * structural equality) is deliberate: the header comment on
    * `resolvePRByNumber` in pr-registry.ts promises "options is forwarded
    * untouched", and a structural check alone would still pass a registry that
-   * reconstructed `{ evaluateBranchPolicies: options?.evaluateBranchPolicies }`
+   * reconstructed `{ bypassCountsAsReady: options?.bypassCountsAsReady }`
    * instead of forwarding the same reference.
    */
   it('resolvePRForBranch forwards the exact options object to connector.resolveForBranch', async () => {
     const spy = vi.spyOn(gitHubPRConnector, 'resolveForBranch').mockResolvedValue(null);
-    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+    const options: PRResolveOptions = { bypassCountsAsReady: true };
 
     await resolvePRForBranch('/r', 'feat', 'main', options);
 
@@ -311,7 +311,7 @@ describe('pr-registry wrappers forward options untouched to the connector', () =
 
   it('resolvePRByNumber forwards the exact options object to connector.resolveByNumber', async () => {
     const spy = vi.spyOn(gitHubPRConnector, 'resolveByNumber').mockResolvedValue(null);
-    const options: PRResolveOptions = { evaluateBranchPolicies: true };
+    const options: PRResolveOptions = { bypassCountsAsReady: true };
 
     await resolvePRByNumber('/r', 42, options);
 
@@ -323,7 +323,7 @@ describe('pr-registry wrappers forward options untouched to the connector', () =
    * A caller that omits `options` (every production call site except
    * pr-linking.ts's readiness-aware ladder tiers) must reach the connector as
    * literal `undefined`, never a registry-invented `{}`. A connector's gate
-   * reads `options?.evaluateBranchPolicies === true`, so `undefined` and `{}`
+   * reads `options?.bypassCountsAsReady === true`, so `undefined` and `{}`
    * are behaviorally identical there today - but this pins the distinction at
    * the one layer that could otherwise silently erase it for every future
    * caller and every future gate.
@@ -1019,19 +1019,6 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect(result?.mergeReadiness).toBe('running');
   });
 
-  it('accepts and ignores the branch-policy option: the verdict already carries policy', async () => {
-    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
-      pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: '' }),
-    );
-    const bypass = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
-    const withOption = await gitHubPRConnector.resolveByNumber!('/r', 7, { evaluateBranchPolicies: true });
-    const without = await gitHubPRConnector.resolveByNumber!('/r', 7);
-    expect(withOption).toEqual(without);
-    expect(withOption?.mergeReadiness).toBe('ready');
-    // The branch-policy option alone never opens the bypass probe either.
-    expect(bypass).not.toHaveBeenCalled();
-  });
-
   /**
    * The viewer's merge bypass, folded into `ready`. The board's Merge column
    * merges a green PR past its missing review with `gh pr merge --admin`, so
@@ -1326,7 +1313,6 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
   it.each([
     ['the option is absent', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), undefined],
     ['the option is off', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { bypassCountsAsReady: false }],
-    ['only the branch-policy option is on', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: green }), { evaluateBranchPolicies: true }],
     ['the PR is already ready', pr({ number: 7, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: 'APPROVED', statusCheckRollup: green }), BYPASS_ON],
     ['a check failed', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] }), BYPASS_ON],
     ['a check is in progress', pr({ number: 7, mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', reviewDecision: 'REVIEW_REQUIRED', statusCheckRollup: [checkRun('IN_PROGRESS')] }), BYPASS_ON],

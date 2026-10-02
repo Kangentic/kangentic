@@ -9,7 +9,6 @@ import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
-import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
@@ -28,6 +27,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
+import { retrievalClient } from '../../retrieval/retrieval-client';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -114,6 +114,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
+    // The retrieval worker and the pty host each hold their own connection,
+    // and Windows will not unlink a file another process has open.
+    await retrievalClient.closeProject(projectId);
+    await context.sessionManager.closeProjectInPtyHost(projectId);
     closeProjectDb(projectId);
     const dbPath = PATHS.projectDb(projectId);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -206,7 +210,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     }
   } catch { /* may not exist or not readable -- skip */ }
 
-  // 5. Close the project DB connection before deleting files
+  // 5. Close the project DB connections before deleting files: the retrieval
+  // worker's and the pty host's, then main's.
+  await retrievalClient.closeProject(projectId);
+  await context.sessionManager.closeProjectInPtyHost(projectId);
   closeProjectDb(projectId);
 
   // Steps 6-7 modify the project's .gitignore and .kangentic/ directory.
@@ -299,6 +306,8 @@ export async function pruneStaleWorktreeProjects(context: IpcContext): Promise<v
     console.log(`[PRUNE] Removing ephemeral preview project: ${project.name} (${project.path})`);
 
     // Lightweight cleanup: only delete DB records, not worktree filesystem.
+    await retrievalClient.closeProject(project.id);
+    await context.sessionManager.closeProjectInPtyHost(project.id);
     closeProjectDb(project.id);
     const dbPath = PATHS.projectDb(project.id);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -552,9 +561,6 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
 
   applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
 
-  // Enable transcript capture for cross-agent handoffs
-  context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
-
   // A project seeded milliseconds ago reads as a constant (the default lanes,
   // no tasks, no profiles) and project_create already counts it, so its first
   // real view snapshots instead: nothing is marked, so a later switch back or
@@ -636,6 +642,67 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
       }
     });
   });
+}
+
+/**
+ * The pty host died and a new one is up: resume the agent sessions it took
+ * down, and only those. Each lost PTY was reported exited with a non-zero
+ * code, so its record is an interrupted one and the startup recovery path
+ * resumes it (`--resume`), honouring the auto-resume setting as it does after
+ * a hard shutdown. Then, as startup does, a fresh agent for each lost task the
+ * resume could not bring back (its session had no agent session id yet, so
+ * there was nothing to resume) when its column starts one. Scoped to the lost
+ * ids and their tasks, so a session that exited or was suspended earlier this
+ * run is not woken with them.
+ */
+export async function recoverSessionsAfterPtyHostLoss(
+  context: IpcContext,
+  lostSessionIdsByProject: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<void> {
+  for (const [projectId, lostSessionIds] of lostSessionIdsByProject) {
+    if (isShuttingDown()) return;
+    const project = context.projectRepo.getById(projectId);
+    if (!project || !fs.existsSync(project.path)) continue;
+    // Read before the resume, which replaces the rows it brings back.
+    const lostTaskIds = new Set(
+      context.sessionManager.listSessions()
+        .filter((session) => lostSessionIds.has(session.id) && session.taskId)
+        .map((session) => session.taskId),
+    );
+    try {
+      // Inside the try: a board config that fails to read skips this project,
+      // not every project after it.
+      const boardProfiles = context.boardConfigManager.getBoardProfiles(project.path);
+      await runWithProjectLogContext(project.name, async () => {
+        await resumeSuspendedSessions(
+          project.id,
+          project.path,
+          context.sessionManager,
+          context.configManager,
+          project.default_agent,
+          context.mcpServerHandle,
+          project.default_model,
+          project.default_effort,
+          boardProfiles,
+          lostSessionIds,
+        );
+        await autoSpawnTasks(
+          project.id,
+          project.path,
+          context.sessionManager,
+          context.configManager,
+          project.default_agent,
+          context.mcpServerHandle,
+          project.default_model,
+          project.default_effort,
+          boardProfiles,
+          { taskIds: lostTaskIds, lostSessionIds },
+        );
+      });
+    } catch (error) {
+      console.error(`[pty-host] recovering sessions in ${project.name} after the host restarted failed:`, error);
+    }
+  }
 }
 
 /**
@@ -788,16 +855,16 @@ export function registerProjectHandlers(context: IpcContext): void {
     // Apply project config overrides (always -- config may have changed)
     applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
 
-    // Background PR-state refresh: an immediate (deferred) sweep + the periodic
-    // timer. Runs on EVERY open (cold restart AND warm switch-back) so a PR
-    // merged off-app while away is reflected on return; the sweep is deferred off
-    // the IPC critical path and the timer is torn down on switch/delete/shutdown.
+    // Background PR-state refresh: an immediate (deferred) sweep, then the
+    // per-PR queue. Runs on EVERY open (cold restart AND warm switch-back) so a
+    // PR merged off-app while away is reflected on return; the sweep is deferred
+    // off the IPC critical path and the queue is torn down on switch/delete/shutdown.
     prRefreshScheduler.startForProject(context, project);
 
     // Background remote-tracking refresh, same lifecycle: an immediate deferred
     // `git fetch --all --prune` so every "behind" count is measured against
-    // current refs the moment a project opens, then the periodic timer. Fetch
-    // only; nothing is pulled, merged, or rebased.
+    // current refs the moment a project opens, then one 5 minutes after each
+    // full fetch. Fetch only; nothing is pulled, merged, or rebased.
     gitFetchScheduler.startForProject(context, project);
 
     // Background conversation-memory indexing: a deferred, switch-guarded

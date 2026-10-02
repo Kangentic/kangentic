@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { Project } from '../../src/shared/types';
@@ -123,7 +124,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
           if (sql.includes('memory_chunks_fts') && sql.includes('MATCH')) {
             return [];
           }
-          if (sql.includes('memory_chunks_vec') && sql.includes('MATCH')) {
+          if (sql.includes('memory_vec_conversation') && sql.includes('MATCH')) {
             return config.semantic;
           }
           if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) {
@@ -137,7 +138,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
           // existing so `vecReady` flips true and `searchSemantic` actually runs
           // its query instead of short-circuiting to [].
           if (sql.includes('sqlite_master')) {
-            return { name: 'memory_chunks_vec' };
+            return { name: 'memory_vec_conversation' };
           }
           if (sql.includes('SELECT title FROM tasks')) {
             const taskId = args[0] as string;
@@ -154,7 +155,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
         run: () => ({ changes: 0, lastInsertRowid: 0 }),
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 

@@ -21,6 +21,9 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
 import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
+import type { TaskKnowledge } from '../retrieval/task-knowledge';
+import { retrievalClient } from '../retrieval/retrieval-client';
+import { taskSummariesOn } from '../../shared/answer-agent';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -154,7 +157,10 @@ export function buildCommandContextForProject(
           ipcContext.sessionManager.remove(task.session_id);
         } catch { /* may already be dead */ }
       }
-      ipcContext.sessionManager.removeByTaskId(task.id);
+      // Resolves once a spawn of the task still in flight has settled: the PTY
+      // its host may already have started holds the worktree until it exits,
+      // and the task row may not name that session yet (see task-cleanup.ts).
+      const spawnsSettled = ipcContext.sessionManager.removeByTaskId(task.id);
 
       // Best-effort worktree + branch cleanup
       if (task.worktree_path) {
@@ -164,6 +170,7 @@ export function buildCommandContextForProject(
         // task's worktree work in the project (see task-cleanup.ts).
         void (async () => {
           await sessionExited;
+          await spawnsSettled;
           // Before the removal: a live process holding the worktree as its cwd
           // is what makes the delete fail on Windows.
           await reapSessionLeftovers(task.id, leftovers);
@@ -277,6 +284,30 @@ export function buildCommandContextForProject(
     // row, and the task's current state rather than the state at failure time.
     onRunAutomation: (automationId, taskId) =>
       runAutomationAgain(ipcContext, projectId, taskId, automationId),
+
+    // Written summaries show whatever the Task summaries switch says: the
+    // switch stops new ones being written, and the ones already written keep
+    // helping, as they do in search and Ask. The whole read waits on the index,
+    // which is the switch that says whether the index may be read at all.
+    readTaskKnowledge: async (taskIds) => {
+      let knowledgeGraph: AppConfig['knowledgeGraph'];
+      try {
+        knowledgeGraph = ipcContext.configManager.load().knowledgeGraph;
+      } catch {
+        knowledgeGraph = undefined;
+      }
+      if (knowledgeGraph?.indexingEnabled === false) return { indexOn: false };
+      let byTask: Map<string, TaskKnowledge>;
+      try {
+        byTask = await retrievalClient.call('task.knowledge', { projectId, taskIds });
+      } catch (error) {
+        console.warn('[MCP] could not read task knowledge:', error instanceof Error ? error.message : error);
+        byTask = new Map();
+      }
+      return { indexOn: true, summariesOn: taskSummariesOn(knowledgeGraph), byTask };
+    },
+
+    listSessionSummaries: () => retrievalClient.call('sessions.summaries', { projectId }),
   };
 }
 

@@ -34,10 +34,10 @@ interface FakePtyProcess {
 
 /**
  * Install a scripted fake PTY, following the claude-model-picker-probe.test.ts
- * precedent: `onSpawn` fires from a `queueMicrotask` scheduled at the moment
- * `spawn()` is called, so it always runs AFTER the synchronous `onData`/
- * `onExit` registration inside print-runner's `new Promise(executor)` -
- * causally ordered, no fixed-delay guess needed.
+ * precedent: `onSpawn` fires from a zero-delay timer scheduled at the moment
+ * `spawn()` is called, a later event-loop turn, as node-pty delivers real
+ * output. That is after the `onData` / `onExit` registration, which follows
+ * the awaited spawn in print-runner (it spawns through off-main-pty.ts).
  */
 function installFakePty(onSpawn: (fake: FakePtyProcess) => void): void {
   let dataCallback: ((data: string) => void) | null = null;
@@ -54,7 +54,7 @@ function installFakePty(onSpawn: (fake: FakePtyProcess) => void): void {
     killMock: vi.fn(),
   };
   spawnMock.mockImplementation(() => {
-    queueMicrotask(() => onSpawn(fake));
+    setTimeout(() => onSpawn(fake), 0);
     return {
       onData: (callback: (data: string) => void) => {
         dataCallback = callback;

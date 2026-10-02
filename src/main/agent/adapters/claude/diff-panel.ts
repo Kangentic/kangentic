@@ -64,15 +64,9 @@ function ensureDiffPanelClosedSync(): void {
       // A missing file cannot be wiped, so create it the way trust-manager does.
       data = {};
     } else {
-      // Unlike trust-manager's `catch { data = {} }`, an unreadable file is left alone rather
-      // than replaced. ~/.claude.json holds the user's auth and MCP state, and a torn read (the
-      // CLI mid-write) must never be overwritten with `{ diffSidebarOpen: false }`.
-      //
-      // Scope of that guard: it stops THIS write from compounding the damage. It is not a
-      // property of `ensureTrust()` as a whole. `ensureWorktreeTrust` and `ensureMcpServerTrust`
-      // run first in `ClaudeAdapter.ensureTrust`, and both still fall back to `data = {}` on a
-      // parse failure and write that back, so on a torn file the other keys are already gone by
-      // the time this runs. Giving those two the same policy is a change to trust-manager.ts.
+      // An unreadable file is left alone rather than replaced, as trust-manager's writers do.
+      // ~/.claude.json holds the user's auth and MCP state, and a torn read (the CLI mid-write)
+      // must never be overwritten with `{ diffSidebarOpen: false }`.
       const parsed = parseObject(raw);
       if (parsed === null) {
         console.warn(`${LOG_TAG} ${claudeJsonPath} is not a JSON object; leaving it untouched`);
@@ -81,9 +75,8 @@ function ensureDiffPanelClosedSync(): void {
       data = parsed;
     }
 
-    if (data.diffSidebarOpen === false) return;
+    if (!applyDiffPanelClosed(data)) return;
 
-    data.diffSidebarOpen = false;
     // Temp file + rename, so the CLI never sees a torn file. No `.kangentic-backup`
     // copy: this runs after every `/diff` anywhere, the file is over a megabyte, and
     // a backup taken from the same read cannot recover anything the rename loses.
@@ -94,6 +87,14 @@ function ensureDiffPanelClosedSync(): void {
   } catch (error) {
     console.warn(`${LOG_TAG} Failed to close the diff panel preference:`, error);
   }
+}
+
+/** Set the closed diff panel in a parsed ~/.claude.json. True when it changed
+ *  anything. A spawn applies it in `ensureClaudeSpawnConfig`'s one pass. */
+export function applyDiffPanelClosed(data: Record<string, unknown>): boolean {
+  if (data.diffSidebarOpen === false) return false;
+  data.diffSidebarOpen = false;
+  return true;
 }
 
 function parseObject(raw: string): Record<string, unknown> | null {

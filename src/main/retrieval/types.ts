@@ -64,6 +64,17 @@ export interface LexicalHit {
   snippet: string;
 }
 
+/** Where a chunk sits: its document, session, task and turn. No text. */
+export interface ChunkPlacement {
+  id: number;
+  corpus: string;
+  docId: string;
+  sessionId: string | null;
+  taskId: string | null;
+  tsStart: number | null;
+  turnUuidStart: string | null;
+}
+
 export interface SemanticHit {
   chunkId: number;
   /** 1-based rank within the semantic result list (best = 1). */
@@ -84,6 +95,10 @@ export interface IndexStateRow {
   chunkCount: number;
   status: 'ok' | 'unsupported' | 'missing-source' | 'error';
   indexedAt: string;
+  /** Where the next walk of a growing conversation transcript starts, as JSON
+   *  (`ResumePoint` in `conversation-indexer.ts`). Null for every other corpus,
+   *  and absent when a writer does not set it. */
+  resumePoint?: string | null;
 }
 
 /**

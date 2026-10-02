@@ -74,6 +74,17 @@ describe('the reason requirement', () => {
     expect(hasOptOutMarker(lines, 2, MARKER)).toBe(false);
   });
 
+  it('rejects a block-comment marker whose only "reason" is the comment closer', () => {
+    // `{/* example-ok: */}` has nothing after the colon but the `*/` that ends
+    // the comment, and the old pattern took that `*` as the reason's first
+    // character, so an empty JSX-comment marker read as justified.
+    expect(hasJsxOptOutMarker(['  {/* example-ok: */}', '  <select>'], 1, MARKER)).toBe(false);
+    expect(hasOptOutMarker(['  /* example-ok: */', '  writeFileSync(path, value);'], 1, MARKER)).toBe(false);
+    expect(hasOptOutMarker(['  /** example-ok: **/', '  writeFileSync(path, value);'], 1, MARKER)).toBe(false);
+    // A real reason in the same shape still counts.
+    expect(hasJsxOptOutMarker(['  {/* example-ok: the labels do not fit. */}', '  <select>'], 1, MARKER)).toBe(true);
+  });
+
   it('rejects prose that names the marker without using it', () => {
     const lines = [
       '  // deliberately not an example-ok opt-out, because the reset is wanted.',

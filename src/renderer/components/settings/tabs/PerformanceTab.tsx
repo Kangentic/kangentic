@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
-import { RotateCw, TriangleAlert } from 'lucide-react';
+import { Gauge, RotateCw, TriangleAlert } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { SettingToggleRow, useScopedUpdate } from '../shared';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard, CardToggleRow, CardTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useToastStore } from '../../../stores/toast-store';
@@ -53,45 +54,49 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
   };
 
   return (
-    <>
-      {/* A toggle, not a two-option dropdown. The value is genuinely binary,
-          and Animations below it is the same shape of setting - rendering one
-          as a select and the other as a switch is the inconsistency a user
-          notices first.
+    <div className="space-y-4">
+      <SettingsCard
+        icon={<Gauge size={16} />}
+        label="Rendering"
+        description="Hardware rendering and motion across the whole app."
+        searchIds={['graphicsAccelerationEnabled', 'animationsEnabled']}
+      >
+        {/* A toggle, not a two-option dropdown. The value is genuinely binary,
+            and Animations below it is the same shape of setting - rendering one
+            as a select and the other as a switch is the inconsistency a user
+            notices first.
 
-          It saves nothing on its own. The graphics mode is chosen before the
-          app is ready and cannot change while it runs, so a change goes
-          through the restart dialog below, and main saves it and restarts in
-          one call. Whatever the user picks there becomes THEIR choice,
-          including off (`graphicsAccelerationOffBy: 'user'`), which is what
-          stops a later GPU failure overwriting it and hides the callout. */}
-      <SettingToggleRow
-        {...settingProps('graphicsAccelerationEnabled')}
-        checked={globalConfig.graphicsAccelerationEnabled}
-        onChange={(value) => setPendingGraphicsAcceleration(value)}
-      />
+            It saves nothing on its own. The graphics mode is chosen before the
+            app is ready and cannot change while it runs, so a change goes
+            through the restart dialog below, and main saves it and restarts in
+            one call. Whatever the user picks there becomes THEIR choice,
+            including off (`graphicsAccelerationOffBy: 'user'`), which is what
+            stops a later GPU failure overwriting it and hides the callout. */}
+        <CardToggleRow
+          {...settingProps('graphicsAccelerationEnabled')}
+          checked={globalConfig.graphicsAccelerationEnabled}
+          onChange={(value) => setPendingGraphicsAcceleration(value)}
+        />
 
-      {/* Shown only when KANGENTIC turned it off, never when the user did.
-          One line, one state: no failure count, no date, no adapter. All
-          three are evidence for us rather than guidance for the reader, and
-          they go to Sentry instead (src/main/diagnostics/gpu-health.ts).
-          "failures" rather than "graphics failures" because the row directly
-          above already says Graphics acceleration. */}
-      {turnedOffByApp && (
-        <div
-          data-testid="graphics-acceleration-notice"
-          className="flex items-start gap-2.5 rounded-lg border border-edge bg-surface-raised px-3 py-2.5"
-        >
-          <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-fg-muted">Kangentic turned this off after repeated failures.</p>
-        </div>
-      )}
+        {/* Shown only when KANGENTIC turned it off, never when the user did.
+            One line, one state: no failure count, no date, no adapter. All
+            three are evidence for us rather than guidance for the reader, and
+            they go to Sentry instead (src/main/diagnostics/gpu-health.ts).
+            "failures" rather than "graphics failures" because the row directly
+            above already says Graphics acceleration. */}
+        {turnedOffByApp && (
+          <CardTile className="flex items-start gap-2.5" testId="graphics-acceleration-notice">
+            <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-fg-muted">Kangentic turned this off after repeated failures.</p>
+          </CardTile>
+        )}
 
-      <SettingToggleRow
-        {...settingProps('animationsEnabled')}
-        checked={globalConfig.animationsEnabled}
-        onChange={(value) => updateGlobal({ animationsEnabled: value })}
-      />
+        <CardToggleRow
+          {...settingProps('animationsEnabled')}
+          checked={globalConfig.animationsEnabled}
+          onChange={(value) => updateGlobal({ animationsEnabled: value })}
+        />
+      </SettingsCard>
 
       {pendingGraphicsAcceleration !== null && (
         <ConfirmDialog
@@ -107,6 +112,6 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
           onCancel={() => setPendingGraphicsAcceleration(null)}
         />
       )}
-    </>
+    </div>
   );
 }

@@ -52,8 +52,8 @@ test.describe('settings write failure toast', () => {
       await openTab(page, 'Board');
 
       // `skipBoardConfigConfirm` - top-level config key `skipBoardConfigConfirm`.
-      // A SettingToggleRow puts its testid on the `role="switch"` element itself
-      // (ToggleCard), unlike a SettingRow, whose testid is on a wrapping div.
+      // A CardToggleRow puts its testid on the `role="switch"` element itself,
+      // unlike a CardRow, whose testid is on its tile.
       await page.getByTestId('setting-row-skipBoardConfigConfirm').click();
       await expect(failureToasts(page)).toHaveCount(1, { timeout: 5000 });
 

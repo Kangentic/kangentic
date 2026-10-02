@@ -93,7 +93,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // ── General ──
   {
     id: 'settings.toggle',
-    label: 'Toggle Settings',
+    label: 'Toggle settings',
     description: 'Open or close the settings panel.',
     group: 'General',
     scope: 'global',
@@ -110,6 +110,19 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    // Mod+Shift+A from the free set. M (monitor) and U (stats) are taken, and
+    // detectConflicts must stay empty across every rebindable global/board
+    // entry plus the terminal-unsafe set. R and I are avoided deliberately:
+    // Chromium claims them for force-reload and DevTools.
+    id: 'knowledgeGraph.toggle',
+    label: 'Toggle Knowledge Graph',
+    description: 'Open or close the map of what the conversation index has learned.',
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+A',
+    rebindable: true,
+  },
+  {
     id: 'monitor.toggle',
     label: 'Toggle Agent Monitor',
     description: 'Open or close the cross-project view of every running agent.',
@@ -120,7 +133,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'view.toggleBoardBacklog',
-    label: 'Switch Board / Backlog',
+    label: 'Switch board / backlog',
     description: 'Toggle between the board and the backlog view.',
     group: 'General',
     scope: 'board',
@@ -129,7 +142,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'view.toggleSidebar',
-    label: 'Toggle Sidebar',
+    label: 'Toggle sidebar',
     description: 'Show or hide the project sidebar.',
     group: 'General',
     scope: 'global',
@@ -138,7 +151,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'view.toggleTerminalPanel',
-    label: 'Toggle Terminal Panel',
+    label: 'Toggle terminal panel',
     description: 'Collapse or expand the bottom terminal panel.',
     group: 'General',
     scope: 'global',
@@ -156,7 +169,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'dictation.pushToTalk',
-    label: 'Push-to-Talk (Hold)',
+    label: 'Push-to-talk (hold)',
     description: 'Hold to dictate; release to populate the focused terminal or text field.',
     group: 'Dictation',
     scope: 'global',
@@ -174,7 +187,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'search.plainFind',
-    label: 'Find on Board',
+    label: 'Find on board',
     description: 'Focus the board search, or open Quick Find if not on the board.',
     group: 'General',
     scope: 'global',
@@ -183,7 +196,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'conversation.find',
-    label: 'Find in Conversation',
+    label: 'Find in conversation',
     description: 'Open in-viewer search inside the focused Conversation window.',
     group: 'General',
     // Deliberately shares Mod+F with search.plainFind: 'conversation' is NOT
@@ -197,7 +210,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'task.create',
-    label: 'New Task',
+    label: 'New task',
     description: 'Open the New Task dialog on the board.',
     group: 'General',
     scope: 'board',
@@ -206,7 +219,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'dialog.dismiss',
-    label: 'Dismiss Dialog',
+    label: 'Dismiss dialog',
     description: 'Hidden universal closer: Escape closes any open modal. Always on, not rebindable, not shown in the list. The visible, rebindable close hotkey is panel.close.',
     group: 'General',
     scope: 'dialog',
@@ -216,7 +229,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'boardManager.save',
-    label: 'Save Board Configuration',
+    label: 'Save board configuration',
     description: 'Save changes in the Board Manager dialog. Fixed; has its own Save button.',
     group: 'General',
     scope: 'dialog',
@@ -226,7 +239,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'boardManager.nextColumn',
-    label: 'Next Column',
+    label: 'Next column',
     description: 'Select the next column (or the overview) in the Edit Columns dialog. Fixed.',
     group: 'General',
     scope: 'dialog',
@@ -236,7 +249,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'boardManager.prevColumn',
-    label: 'Previous Column',
+    label: 'Previous column',
     description: 'Select the previous column (or the overview) in the Edit Columns dialog. Fixed.',
     group: 'General',
     scope: 'dialog',
@@ -282,7 +295,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'description.pastePlain',
-    label: 'Paste as Plain Text',
+    label: 'Paste as plain text',
     description: 'Paste into the description without converting pasted HTML to markdown. Fixed; not shown because the combo is a platform convention no app lets you rebind.',
     group: 'General',
     scope: 'dialog',
@@ -314,7 +327,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'panel.closeViaHeaderClick',
-    label: 'Close Window (Click Header)',
+    label: 'Close window (click header)',
     description: 'Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side).',
     group: 'Task Detail',
     scope: 'panel',
@@ -323,7 +336,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'taskDetail.toggleBrowser',
-    label: 'Toggle Browser Pane',
+    label: 'Toggle Browser pane',
     description: 'Show or hide the browser pane inside the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
@@ -332,7 +345,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'taskDetail.toggleChanges',
-    label: 'Toggle Changes Panel',
+    label: 'Toggle Changes panel',
     description: 'Show or hide the changes (diff) panel inside the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
@@ -341,7 +354,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'taskDetail.toggleDescription',
-    label: 'Toggle Description Peek',
+    label: 'Toggle description peek',
     description: 'Show or hide the description panel inside the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
@@ -364,7 +377,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // one-keystroke step. See useTaskActions.ts's `keepOpen` handling.
   {
     id: 'taskDetail.moveColumnLeft',
-    label: 'Move Task Left',
+    label: 'Move task left',
     description: 'Move the open task one column left and keep its window open.',
     group: 'Task Detail',
     scope: 'task-dialog',
@@ -373,7 +386,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'taskDetail.moveColumnRight',
-    label: 'Move Task Right',
+    label: 'Move task right',
     description: 'Move the open task one column right and keep its window open.',
     group: 'Task Detail',
     scope: 'task-dialog',
@@ -385,7 +398,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // Shift+F7 is the VS Code / JetBrains diff-nav convention, offered as an alt).
   {
     id: 'changes.nextChange',
-    label: 'Next Change',
+    label: 'Next change',
     description: 'Jump to the next change in the diff. Past a file\'s last change, continues into the next file.',
     group: 'Git Changes',
     scope: 'task-dialog',
@@ -395,7 +408,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'changes.prevChange',
-    label: 'Previous Change',
+    label: 'Previous change',
     description: 'Jump to the previous change in the diff. Before a file\'s first change, continues into the previous file.',
     group: 'Git Changes',
     scope: 'task-dialog',
@@ -405,7 +418,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'changes.nextFile',
-    label: 'Next Changed File',
+    label: 'Next changed file',
     description: 'Select the next file in the Changes panel.',
     group: 'Git Changes',
     scope: 'task-dialog',
@@ -414,7 +427,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'changes.prevFile',
-    label: 'Previous Changed File',
+    label: 'Previous changed file',
     description: 'Select the previous file in the Changes panel.',
     group: 'Git Changes',
     scope: 'task-dialog',
@@ -428,7 +441,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // stay out of the terminalUnsafe set the "in sync" test locks).
   {
     id: 'changes.copy',
-    label: 'Copy Selection',
+    label: 'Copy selection',
     description: 'Copy the selected diff text to the clipboard.',
     group: 'Git Changes',
     scope: 'task-dialog',
@@ -444,7 +457,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // task window is a panel, beside panel.maximize / panel.close). Logic: snap-zones.ts.
   {
     id: 'window.snapLeft',
-    label: 'Snap Window Left',
+    label: 'Snap window left',
     description: 'Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap).',
     group: 'Windows',
     scope: 'panel',
@@ -453,7 +466,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'window.snapRight',
-    label: 'Snap Window Right',
+    label: 'Snap window right',
     description: 'Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap).',
     group: 'Windows',
     scope: 'panel',
@@ -462,7 +475,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'window.snapUp',
-    label: 'Snap Window Up',
+    label: 'Snap window up',
     description: 'Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap).',
     group: 'Windows',
     scope: 'panel',
@@ -471,7 +484,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'window.snapDown',
-    label: 'Snap Window Down',
+    label: 'Snap window down',
     description: 'Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap).',
     group: 'Windows',
     scope: 'panel',
@@ -485,7 +498,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // pane toolbar, so listing them here adds only clutter.
   {
     id: 'browser.inspect',
-    label: 'Inspect Element',
+    label: 'Inspect element',
     description: 'Pick an element from the embedded page.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -495,7 +508,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'browser.draw',
-    label: 'Draw / Annotate',
+    label: 'Draw / annotate',
     description: 'Toggle free-draw annotation on the embedded page.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -505,7 +518,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'browser.zoomIn',
-    label: 'Zoom In',
+    label: 'Zoom in',
     description: 'Increase the embedded page zoom.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -515,7 +528,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'browser.zoomOut',
-    label: 'Zoom Out',
+    label: 'Zoom out',
     description: 'Decrease the embedded page zoom.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -525,7 +538,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'browser.zoomReset',
-    label: 'Reset Zoom',
+    label: 'Reset zoom',
     description: 'Reset the embedded page zoom to 100%.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -535,7 +548,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'browser.reload',
-    label: 'Reload Page',
+    label: 'Reload page',
     description: 'Reload the embedded page.',
     group: 'Browser',
     scope: 'browser-pane',
@@ -574,7 +587,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'terminal.sendNewline',
-    label: 'Insert Newline',
+    label: 'Insert newline',
     description: 'Send a newline instead of submitting (Claude Code TUI). Handled by the terminal.',
     group: 'Terminal',
     scope: 'terminal',
@@ -596,7 +609,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'terminal.interrupt',
-    label: 'Interrupt (Cancel)',
+    label: 'Interrupt (cancel)',
     description: 'Cancel the running command (sends SIGINT). Native terminal behavior.',
     group: 'Terminal',
     scope: 'terminal',
@@ -609,7 +622,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // ── Developer ──
   {
     id: 'debug.toggleOverlay',
-    label: 'Toggle Activity Debug Overlay',
+    label: 'Toggle debug overlay',
     description: 'Show or hide the activity-engine debug overlay.',
     group: 'Developer',
     scope: 'global',

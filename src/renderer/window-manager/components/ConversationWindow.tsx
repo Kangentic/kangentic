@@ -38,9 +38,14 @@ import { ConversationView, type InitialPosition } from '../../components/convers
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
-import { useLayerStore } from '../context';
+import { useLayerStore, useWindowManager } from '../context';
 import type { ManagedWindow } from '../store/types';
-import type { TranscriptGetResponse, TranscriptUnchangedResponse } from '../../../shared/types';
+import {
+  applyTranscriptDelta,
+  type TranscriptDeltaResponse,
+  type TranscriptGetResponse,
+  type TranscriptUnchangedResponse,
+} from '../../../shared/types';
 
 interface ConversationWindowProps {
   managedWindow: ManagedWindow;
@@ -54,10 +59,30 @@ interface ConversationWindowProps {
  *  open viewer follows new turns as the agent produces them. */
 const LIVE_REFRESH_MS = 2500;
 
-function isUnchangedResponse(
-  value: TranscriptGetResponse | TranscriptUnchangedResponse,
-): value is TranscriptUnchangedResponse {
+/** How long to wait before asking again after the first read failed. */
+const READER_RETRY_MS = 5000;
+
+type TranscriptReply = TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse;
+
+function isUnchangedResponse(value: TranscriptReply): value is TranscriptUnchangedResponse {
   return (value as TranscriptUnchangedResponse).unchanged === true;
+}
+
+/**
+ * The response a reply leaves the window holding: the reply itself when it
+ * is whole, the held entries patched when it is a delta against the held
+ * revision, and null when it is a delta against some other revision (the
+ * caller then fetches the whole conversation). An unchanged reply never
+ * reaches here.
+ */
+function responseAfterReply(
+  held: TranscriptGetResponse | null,
+  reply: TranscriptGetResponse | TranscriptDeltaResponse,
+): TranscriptGetResponse | null {
+  if (!('delta' in reply)) return reply;
+  if (!held || held.revision !== reply.baseRevision) return null;
+  const { delta: _delta, baseRevision: _baseRevision, length: _length, upserts: _upserts, ...meta } = reply;
+  return { ...meta, entries: applyTranscriptDelta(held.entries, reply) };
 }
 
 /**
@@ -112,14 +137,24 @@ export function ConversationWindow({
   titleBarPointerDown,
   requestClose,
 }: ConversationWindowProps) {
-  const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const setDetailTaskId = useSessionStore((state) => state.setDetailTaskId);
+  const openProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  // A window the Knowledge Graph opened from another project's island reads its
+  // transcript from THAT project; every other window reads the open one.
+  const currentProjectId = managedWindow.projectId ?? openProjectId;
   const scrollToTurnUuid = useSessionStore((state) => state.scrollToTurnUuid);
   const setScrollToTurnUuid = useSessionStore((state) => state.setScrollToTurnUuid);
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
   const pendingTuiAnchor = useSessionStore((state) => state.pendingTuiAnchor);
   const setPendingTuiAnchor = useSessionStore((state) => state.setPendingTuiAnchor);
   const sessions = useSessionStore((state) => state.sessions);
+
+  // Whether THIS layer can put a task detail somewhere the user will see it. The
+  // board supplies the route, and so does the in-app Knowledge Graph (it closes
+  // the graph first); the detached graph does not (see
+  // `WindowManagerLayerOptions.revealTaskDetail`), so "Open task" hides there
+  // rather than doing nothing at all.
+  const { layer } = useWindowManager();
+  const revealTaskDetail = layer.revealTaskDetail;
 
   const layerStore = useLayerStore();
   const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
@@ -156,20 +191,30 @@ export function ConversationWindow({
   // the handler always returns the full payload here.
   useEffect(() => {
     let cancelled = false;
-    window.electronAPI.transcripts
-      .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
-      .then((result) => {
-        if (cancelled) return;
-        if (!isUnchangedResponse(result)) setResponse(result);
-        setSettledFetchKey(fetchKey);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setResponse(null);
-        setSettledFetchKey(fetchKey);
-      });
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const fetchWhole = (): void => {
+      window.electronAPI.transcripts
+        .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
+        .then((result) => {
+          if (cancelled) return;
+          // No knownRevision was sent, so the reply is whole.
+          if (!isUnchangedResponse(result)) setResponse(responseAfterReply(null, result));
+          setSettledFetchKey(fetchKey);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setResponse(null);
+          setSettledFetchKey(fetchKey);
+          // The reader (the retrieval worker) may be restarting after a
+          // crash: try again while the window is open, so it fills in by
+          // itself once the reader is back.
+          retryTimer = setTimeout(fetchWhole, READER_RETRY_MS);
+        });
+    };
+    fetchWhole();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [managedWindow.anchor, currentProjectId, fetchKey]);
 
@@ -194,23 +239,34 @@ export function ConversationWindow({
     const live = sessionStatus === 'running' || sessionStatus === 'queued' || taskHasLiveSession;
     if (!live) return;
     let cancelled = false;
+    // Set when a delta did not fit what this window holds: the next tick asks
+    // for the whole conversation.
+    let wantWhole = false;
     const interval = setInterval(() => {
+      const held = responseRef.current;
       window.electronAPI.transcripts
         .get({
           sessionId: managedWindow.anchor,
           projectId: currentProjectId,
-          knownRevision: responseRef.current?.revision,
+          knownRevision: wantWhole ? undefined : held?.revision,
         })
         .then((result) => {
           if (cancelled) return;
-          // Nothing changed server-side: the handler already skipped the full
-          // structured clone, so there is nothing further to do here.
+          // Nothing changed: the reader sent only a revision.
           if (isUnchangedResponse(result)) return;
+          // A delta carries only the entries that changed since the held
+          // revision; unchanged ones keep their objects.
+          const next = responseAfterReply(responseRef.current, result);
+          if (!next) {
+            wantWhole = true;
+            return;
+          }
+          wantWhole = false;
           // Returning the SAME reference when nothing changed makes React bail
           // out of the re-render, so an idle live session does not repaint the
           // viewer every 2.5s.
           setResponse((previous) =>
-            transcriptSignature(previous) === transcriptSignature(result) ? previous : result,
+            transcriptSignature(previous) === transcriptSignature(next) ? previous : next,
           );
         })
         .catch(() => undefined);
@@ -236,12 +292,23 @@ export function ConversationWindow({
   }, [response]);
 
   const handleOpenTask = useCallback(() => {
-    if (taskId) setDetailTaskId(taskId);
-  }, [taskId, setDetailTaskId]);
+    // A window opened from another project's island names that project, so the
+    // task opens there rather than being looked up on the open board.
+    if (taskId) revealTaskDetail?.(taskId, managedWindow.projectId);
+  }, [taskId, revealTaskDetail, managedWindow.projectId]);
 
+  /** Both "Open task" affordances gate on this: a real task AND a layer that can
+   *  actually show it. */
+  const canOpenTask = taskId !== null && revealTaskDetail !== undefined;
+
+  const clearWindowScrollTarget = layerStore((state) => state.clearWindowScrollTarget);
+  const windowScrollTarget = managedWindow.scrollToTurnUuid;
   const consumeScroll = useCallback(() => {
-    setScrollToTurnUuid(null);
-  }, [setScrollToTurnUuid]);
+    // A per-window target (the Knowledge Graph's source rows) is this window's
+    // own; the session-store one-shot belongs to the board's bridge.
+    if (windowScrollTarget) clearWindowScrollTarget(managedWindow.id);
+    else setScrollToTurnUuid(null);
+  }, [windowScrollTarget, clearWindowScrollTarget, managedWindow.id, setScrollToTurnUuid]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(managedWindow.id), [toggleMaximizeWindow, managedWindow.id]);
   const handleUndock = useCallback(() => untileWindow(managedWindow.id), [untileWindow, managedWindow.id]);
@@ -282,7 +349,8 @@ export function ConversationWindow({
   const agentName = response?.agentName ?? '';
   // Only this window (the one the signal points at) consumes the one-shot scroll,
   // so a second open conversation window never races to clear it.
-  const activeScrollUuid = managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null;
+  const activeScrollUuid = windowScrollTarget
+    ?? (managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null);
 
   // Open-at-position: computed ONCE, synchronously, on the render where
   // `response` first becomes available - so it is ready before ConversationView
@@ -355,7 +423,7 @@ export function ConversationWindow({
               behind "...". The kebab entries stay too (same pill+kebab redundancy
               TaskDetailHeader uses for "View conversation"). Search has no toggle
               button here - it is always visible inside ConversationView. */}
-          {taskId && (
+          {canOpenTask && (
             <HeaderActionButton
               icon={SquareTerminal}
               onClick={handleOpenTask}
@@ -376,7 +444,7 @@ export function ConversationWindow({
           <KebabMenu>
             {(close) => (
               <>
-                {taskId && (
+                {canOpenTask && (
                   <KebabMenuItem
                     icon={<SquareTerminal size={13} />}
                     label="Open task"

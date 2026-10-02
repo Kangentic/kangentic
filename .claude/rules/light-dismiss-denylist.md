@@ -26,10 +26,12 @@ store. It is not a dismissibility switch. There is one declaration per HOST, and
 - `AppLayout.tsx`'s content row and `StatusBar`'s root: `"board"`
 - `MonitorPage.tsx`'s root (the in-app overlay) and `PopOutMonitorRoot.tsx` (the detached window):
   `"monitor"`
+- `KnowledgeGraphPage.tsx`'s root (the in-app overlay) and `PopOutKnowledgeGraphRoot.tsx` (the
+  detached window): `"knowledge-graph"`
 
 Per HOST is the subtlety. The monitor has two hosts that share no root - the pop-out renders
 `LazyMonitor` + `MonitorDetailLayer` without `MonitorPage` - and both mount the hook via
-`MonitorDetailLayer`, so both need a marker. A surface that gains a second host needs a second
+`MonitorDetailLayer`, so both need a marker. The Knowledge Graph has the same two-host shape. A surface that gains a second host needs a second
 declaration, or that host silently stops dismissing.
 
 Anything with no scope root above it is inert. That is deliberate and load-bearing: every overlay in
@@ -79,7 +81,7 @@ to decide dismissal (that would make styling silently change behavior):
   marker routed through the helper takes one of the two line-scoped rules instead. It also pins
   that the pointer-cursor heuristic and the `.xterm` exclusion still exist, since its own scope
   assumes both. Runs in CI via `npm run test:unit`.
-- **Test (scope markers):** `tests/unit/window-layer-isolation.test.ts` pins the four marker sites,
+- **Test (scope markers):** `tests/unit/window-layer-isolation.test.ts` pins the six marker sites,
   fails on a bare unscoped `data-dismiss-layer`, and fails if the retired `data-dismiss-surface`
   returns. The site list is what stops the bare-attribute scan passing vacuously if a marker is
   deleted - under a denylist, a MISSING marker silently disables background-close for that layer.
@@ -102,8 +104,9 @@ Renderer light dismiss under `src/renderer/`. The `window-manager/`, `dialogs/ta
 hosts stamped `data-window-layer-root` and are excluded wholesale.
 
 `pop-out/**` is NOT exempt from the scope rule: a pop-out is a separate `BrowserWindow` document,
-but `PopOutMonitorRoot` mounts `MonitorDetailLayer`, which mounts the hook, so that window needs
-its own scope root (above). Only the action-cursor scan skips the tree.
+but `PopOutMonitorRoot` mounts `MonitorDetailLayer` and `PopOutKnowledgeGraphRoot` mounts
+`KnowledgeGraphDetailLayer`, each of which mounts the hook, so each window needs its own scope root
+(above). Only the action-cursor scan skips the tree.
 
 Does not govern the `windowLightDismiss` POLICY (how many windows a qualifying click closes), which
 is the pure resolver in `window-manager/light-dismiss/resolve-targets.ts`.

@@ -5,7 +5,7 @@
 
 export { WindowLayer, WindowManagerLayer } from './components/WindowLayer';
 export { WindowContent } from './components/WindowContent';
-export { boardWindowManager, commandWindowManager, monitorWindowManager, useWindowStore } from './store/window-store';
+export { boardWindowManager, commandWindowManager, knowledgeGraphWindowManager, monitorWindowManager, useWindowStore } from './store/window-store';
 export type { WindowManager } from './store/window-store';
 export { WindowManagerProvider, useWindowManager, useLayerStore } from './context';
 export type { WindowManagerLayerOptions, TaskDetailRenderInput } from './context';

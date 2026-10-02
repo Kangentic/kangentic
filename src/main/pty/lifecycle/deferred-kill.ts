@@ -1,4 +1,4 @@
-import type * as pty from 'node-pty';
+import type { PtyDisposable, PtyHandle } from '../host/pty-host-client';
 
 /**
  * Deferred force-kill for a PTY whose agent is still inside its boot window.
@@ -78,26 +78,26 @@ export function isYoungSession(session: YoungSessionFields, now = Date.now()): b
 
 export interface DeferredKillInput {
   sessionId: string;
-  ptyRef: pty.IPty;
+  ptyRef: PtyHandle;
   /** The child pid, read by the caller before the row's `pty` was nulled. */
   pid: number | undefined;
   /**
    * The spawn flow's onData / onExit disposables, handed over so the quit path
    * can detach them: after `remove()` the row that held them is gone.
    */
-  ptyDisposables?: pty.IDisposable[];
+  ptyDisposables?: PtyDisposable[];
 }
 
 interface DeferredKillEntry {
   sessionId: string;
-  ptyRef: pty.IPty;
+  ptyRef: PtyHandle;
   pid: number | undefined;
   timer: ReturnType<typeof setTimeout>;
-  ptyDisposables: pty.IDisposable[] | undefined;
+  ptyDisposables: PtyDisposable[] | undefined;
 }
 
 export interface DeferredKillRegistryOptions {
-  killPty: (ptyRef: pty.IPty) => boolean;
+  killPty: (ptyRef: PtyHandle) => boolean;
   graceMs?: number;
 }
 
@@ -114,8 +114,8 @@ export interface DeferredKillFlushReport {
  * un-killed child.
  */
 export class DeferredKillRegistry {
-  private readonly entries = new Map<pty.IPty, DeferredKillEntry>();
-  private readonly killPty: (ptyRef: pty.IPty) => boolean;
+  private readonly entries = new Map<PtyHandle, DeferredKillEntry>();
+  private readonly killPty: (ptyRef: PtyHandle) => boolean;
   private readonly graceMs: number;
 
   constructor(options: DeferredKillRegistryOptions) {
@@ -201,7 +201,7 @@ export class DeferredKillRegistry {
   }
 }
 
-function disposeAll(disposables: pty.IDisposable[] | undefined): void {
+function disposeAll(disposables: PtyDisposable[] | undefined): void {
   if (!disposables) return;
   for (const disposable of disposables) {
     try {

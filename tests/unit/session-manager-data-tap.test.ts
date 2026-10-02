@@ -1,14 +1,19 @@
 /**
- * Unit tests for the 'data-tap' unfiltered PTY output event added to
- * SessionManager for the mobile bridge (see session-manager.ts's onFlush
- * and onDrain callbacks - data-tap has TWO feeders: the ordinary 16ms
- * flush, and the replay-drain report for bytes a desktop replay consumed
- * out of the pending buffer before they could flush). The load-bearing
- * property: 'data-tap' fires for EVERY session's output regardless of
- * renderer focus, unlike 'data' - which is gated to focusedSessionIds -
- * and it must not feed the renderer's backpressure accounting, since that
- * protocol exists only for the focused-tab drain handshake a bridge
- * subscriber never participates in.
+ * Unit tests for SessionManager's focus-independent output seams.
+ *
+ * 'data-tap' carries a session's raw bytes regardless of renderer focus, for
+ * consumers that need them (the mobile bridge's terminal stream, the paste
+ * engine, the keystroke settle). The PTY lives in the pty host, which sends a
+ * session's bytes to main only while someone holds a `subscribeDataTap` on it,
+ * so an unwatched flood costs main nothing. It has TWO feeders: the ordinary
+ * 16ms flush, and the replay-drain report for bytes a desktop replay consumed
+ * out of the pending buffer before they could flush. It must not feed the
+ * renderer's backpressure accounting, since that protocol exists only for the
+ * focused-tab drain handshake a tap subscriber never participates in.
+ *
+ * 'output-seen' carries no bytes and fires for every session's output, for
+ * consumers that only need to know output happened (the monitor peek, turn
+ * completion).
  *
  * Follows the same mock-pty harness as session-manager.test.ts.
  */
@@ -55,9 +60,11 @@ function createMockPty() {
     rows: 30,
     onData: vi.fn((cb: (data: string) => void) => {
       dataHandler = cb;
+      return { dispose: () => { dataHandler = null; } };
     }),
     onExit: vi.fn((cb: (e: { exitCode: number }) => void) => {
       exitHandler = cb;
+      return { dispose: () => { exitHandler = null; } };
     }),
     write: vi.fn(),
     resize: vi.fn((cols: number, rows: number) => {
@@ -65,7 +72,7 @@ function createMockPty() {
       mockPty.rows = rows;
     }),
     kill: vi.fn(() => {
-      if (exitHandler) setTimeout(() => exitHandler!({ exitCode: 0 }), 0);
+      if (exitHandler) setTimeout(() => exitHandler?.({ exitCode: 0 }), 0);
     }),
   };
 
@@ -73,6 +80,11 @@ function createMockPty() {
     mockPty,
     feedData: (data: string) => dataHandler?.(data),
   };
+}
+
+/** Let the 16ms flush land. */
+function waitForFlush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 30));
 }
 
 beforeEach(() => {
@@ -108,10 +120,11 @@ describe('SessionManager data-tap', () => {
     return { session, ...mock };
   }
 
-  it('fires for an unfocused session, where "data" does not', async () => {
+  it('fires for a subscribed unfocused session, where "data" does not', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-unfocused');
     // Focus a DIFFERENT session, so this one is explicitly excluded.
     manager.setFocusedSessions(['some-other-session-id']);
+    manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
     const dataListener = vi.fn();
@@ -119,30 +132,69 @@ describe('SessionManager data-tap', () => {
     manager.on('data', dataListener);
 
     feedData('hello from a background session');
-    // PtyBufferManager flushes on a 16ms timer, not synchronously on onData.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, 'hello from a background session');
     expect(dataListener).not.toHaveBeenCalled();
   });
 
+  it('sends no bytes for a session nobody subscribed to, and stops when the last subscription goes', async () => {
+    const { session, feedData } = await spawnSession('task-data-tap-unsubscribed');
+    const dataTapListener = vi.fn();
+    manager.on('data-tap', dataTapListener);
+
+    feedData('nobody is watching');
+    await waitForFlush();
+    expect(dataTapListener).not.toHaveBeenCalled();
+
+    // Two holders: the tap stays on until both release.
+    const releaseFirst = manager.subscribeDataTap(session.id);
+    const releaseSecond = manager.subscribeDataTap(session.id);
+    feedData('two holders');
+    await waitForFlush();
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'two holders');
+
+    releaseFirst();
+    releaseFirst(); // a second call of the same release is a no-op
+    feedData('one holder left');
+    await waitForFlush();
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'one holder left');
+
+    releaseSecond();
+    dataTapListener.mockClear();
+    feedData('released');
+    await waitForFlush();
+    expect(dataTapListener).not.toHaveBeenCalled();
+  });
+
+  it('reports output on "output-seen" for every session, subscribed or not, without its bytes', async () => {
+    const { session, feedData } = await spawnSession('task-output-seen');
+    const outputSeenListener = vi.fn();
+    manager.on('output-seen', outputSeenListener);
+
+    feedData('anything');
+
+    expect(outputSeenListener).toHaveBeenCalledWith(session.id);
+  });
+
   it('does not feed the focused-session backpressure accounting for an unfocused session', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-backpressure');
     manager.setFocusedSessions(['some-other-session-id']);
+    manager.subscribeDataTap(session.id);
 
     feedData('x'.repeat(1024));
-    // PtyBufferManager flushes on a 16ms timer; wait for it to actually run
-    // so this assertion covers the flushed state, not just the pre-flush
+    // Wait for the flush so this covers the flushed state, not the pre-flush
     // window where inFlightBytes would trivially still read 0.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
-    const stats = manager.getPipelineStats().find((entry) => entry.sessionId === session.id);
+    const stats = (await manager.getPipelineStats()).find((entry) => entry.sessionId === session.id);
     expect(stats?.inFlightBytes).toBe(0);
   });
 
-  it('still fires alongside "data" for a focused session (unfiltered means "in addition to", not "instead of")', async () => {
+  it('still fires alongside "data" for a focused session (a tap is in addition to, not instead of)', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-focused');
     manager.setFocusedSessions([session.id]);
+    manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
     const dataListener = vi.fn();
@@ -150,18 +202,19 @@ describe('SessionManager data-tap', () => {
     manager.on('data', dataListener);
 
     feedData('hello from a focused session');
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
     expect(dataListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
   });
 
-  it('default-closed: with no setFocusedSessions call, "data" never fires while "data-tap" does', async () => {
+  it('default-closed: with no setFocusedSessions call, "data" never fires while a tap does', async () => {
     // Before the renderer's first SESSION_SET_FOCUSED push, NO session's
     // output goes over IPC (the empty set used to mean "all focused" and
     // fanned every session out). Red-green: fails if the size===0 escape
     // is ever restored in session-manager.ts's gate.
     const { session, feedData } = await spawnSession('task-data-tap-default');
+    manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
     const dataListener = vi.fn();
@@ -169,7 +222,7 @@ describe('SessionManager data-tap', () => {
     manager.on('data', dataListener);
 
     feedData('output before any focus sync');
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, 'output before any focus sync');
     expect(dataListener).not.toHaveBeenCalled();
@@ -183,23 +236,24 @@ describe('SessionManager data-tap', () => {
     manager.on('data', dataListener);
 
     feedData('while focused');
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
     expect(dataListener).toHaveBeenCalledTimes(1);
 
     // The renderer derives [] when no terminal is visible; that must close
     // the gate, not open the floodgates for every session.
     manager.setFocusedSessions([]);
     feedData('after focus cleared');
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
     expect(dataListener).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards replay-drained bytes to data-tap without emitting "data" or feeding backpressure', async () => {
+  it('forwards replay-drained bytes to a tap without emitting "data" or feeding backpressure', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-replay-drain');
     // Focused is the strong case: 'data' WOULD fire here if the drain report
     // were ever miswired into the renderer emit.
     manager.setFocusedSessions([session.id]);
+    manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
     const dataListener = vi.fn();
@@ -219,14 +273,14 @@ describe('SessionManager data-tap', () => {
     // exactly the duplicate the drain exists to prevent.
     expect(dataListener).not.toHaveBeenCalled();
 
-    // The emptied flush stays silent - no second data-tap delivery either.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // The emptied flush stays silent - no second tap delivery either.
+    await waitForFlush();
     expect(dataTapListener).toHaveBeenCalledTimes(1);
     expect(dataListener).not.toHaveBeenCalled();
 
     // Drained bytes never ride the renderer's 'data' channel, so they must
     // not enter its backpressure accounting.
-    const stats = manager.getPipelineStats().find((entry) => entry.sessionId === session.id);
+    const stats = (await manager.getPipelineStats()).find((entry) => entry.sessionId === session.id);
     expect(stats?.inFlightBytes).toBe(0);
   });
 
@@ -253,7 +307,7 @@ describe('SessionManager data-tap', () => {
     // The tracker is a one-shot latch, so the ordinary flush stream feeding
     // the SAME latch afterwards must not double-fire it.
     feedData('second chunk after the drain');
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForFlush();
 
     expect(firstOutputListener).toHaveBeenCalledTimes(1);
   });
@@ -266,12 +320,12 @@ describe('SessionManager data-tap', () => {
     const { session: sessionA } = await spawnSession('task-pipeline-stats-focus-a');
     const { session: sessionB } = await spawnSession('task-pipeline-stats-focus-b');
 
-    const statsBefore = manager.getPipelineStats();
+    const statsBefore = await manager.getPipelineStats();
     expect(statsBefore.find((entry) => entry.sessionId === sessionA.id)?.focused).toBe(false);
     expect(statsBefore.find((entry) => entry.sessionId === sessionB.id)?.focused).toBe(false);
 
     manager.setFocusedSessions([sessionA.id]);
-    const statsAfter = manager.getPipelineStats();
+    const statsAfter = await manager.getPipelineStats();
     expect(statsAfter.find((entry) => entry.sessionId === sessionA.id)?.focused).toBe(true);
     expect(statsAfter.find((entry) => entry.sessionId === sessionB.id)?.focused).toBe(false);
 

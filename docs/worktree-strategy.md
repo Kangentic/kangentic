@@ -255,12 +255,23 @@ Every "behind" number the app shows (the Changes panel header, the spawn-time dr
 `kangentic_list_worktrees`) is measured against remote-tracking refs, and until this scheduler
 those refs were only refreshed when someone opened a Changes panel or dropped a task on Done, so a
 project nobody had touched in a week reported week-old counts. `src/main/git/git-fetch-scheduler.ts`
-sweeps the FOCUSED project's remotes on every `PROJECT_OPEN` and then on a timer set by
-`git.autoFetchIntervalMinutes` (default 5, `null` = off; the on-open sweep still runs). It mirrors
-`prRefreshScheduler` ([pr-integration.md](pr-integration.md#the-scheduler)) line for line: one active
-timer, an immediate deferred sweep, re-armed after a config change, torn down on project switch,
-project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with each tick
-wrapped inside it.
+sweeps the FOCUSED project's remotes on every `PROJECT_OPEN` and then, with the `git.autoFetch`
+switch on (the default), 5 minutes (`AUTO_FETCH_INTERVAL_MS`) after the project's last FULL fetch.
+Off, the on-open sweep still runs and nothing follows it.
+
+The clock is the repo's, not the scheduler's. `lastAllRemotesFetchAt` reads the throttle cache that
+every all-remotes fetch stamps (the Changes panel mount, the Done probe, the drag prefetch, this
+sweep), keyed by the git common dir so a worktree's fetch counts for its project. Each tick re-reads
+it, so a fetch somebody else just made pushes the next sweep back instead of repeating it. A
+base-branch fetch (`fetchIfStale`, which worktree creation runs whatever this switch says) refreshes
+one branch and does not count. A failed fetch stamps nothing, so the scheduler also counts from its
+own last attempt (`lastAttemptAt`); without that, an offline repo would retry on every tick.
+
+The lifecycle mirrors `prRefreshScheduler` ([pr-integration.md](pr-integration.md#the-scheduler)):
+one active timer, an immediate deferred sweep, re-armed after a config change, torn down on project
+switch, project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with
+each sweep wrapped inside it. `git.autoFetch` replaced `git.autoFetchIntervalMinutes`;
+`legacy-git-keys.ts` reads a saved interval as on and `null` or `<= 0` as off.
 
 A sweep is one `fetchAllRemotesIfStale(projectPath, { nonInteractive: true })`, the same throttled,
 5s-bounded, never-rejecting `git fetch --all --prune` the Changes panel mount and the Done probe
@@ -273,8 +284,8 @@ interval.
 There is a third caller, and it is a head start rather than a trigger of its own: the board fires
 `git:prefetchRemotes` when a drag of a worktree-backed card begins, so the Done probe that may
 follow finds the fetch already cached or still in flight instead of starting one after the card has
-landed. It shares this scheduler's throttle cache AND its `git.autoFetchIntervalMinutes` setting,
-so a user who turned background fetching off gets no fetch from dragging. See
+landed. It shares this scheduler's throttle cache AND its `git.autoFetch` switch, so a user who
+turned background fetching off gets no fetch from dragging. Its fetch also resets the sweep's clock. See
 [board-drag-perf-audit.md](board-drag-perf-audit.md).
 
 Two things are deliberate. The scheduler's fetches run with `GIT_TERMINAL_PROMPT=0` and
@@ -323,7 +334,8 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
 10. Copy optional files from repo root (configured via `config.git.copyFiles`)
 11. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
 12. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
-13. Pre-populate `~/.claude.json` trust entry for the worktree path
+
+Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](agent-integration.md#trust-management)).
 
 ### Windows Long Paths
 
@@ -534,7 +546,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 - **Hook identification** -- two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
-- **Trust pre-population** -- `ensureWorktreeTrust()` adds worktree paths to `~/.claude.json` so Claude Code doesn't prompt for trust on first run.
+- **Trust pre-population.** Before each spawn, `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) trusts the agent's working directory in `~/.claude.json`, so Claude Code doesn't prompt for trust on first run.
 - **Synchronous shutdown** -- DB records marked suspended, mature PTYs force-killed immediately. A young session's force-kill waits out a 1500 ms exit-sequence grace on a timer inside the bounded PTY drain the quit already holds for, never as an added async phase. Files persist for recovery on next launch.
 
 ## Test Coverage
@@ -549,7 +561,7 @@ Unit tests (`tests/unit/`, run with `npm run test:unit`) cover the worktree stra
 - Copies `enabledMcpjsonServers` from parent project entry
 - Uses empty array when parent has no MCP servers
 - Preserves existing worktree entry fields while setting `hasTrustDialogAccepted`
-- Handles malformed JSON (treats as empty)
+- Leaves malformed JSON untouched rather than replacing it
 
 Uses real temp files with mocked `os.homedir()`.
 

@@ -43,6 +43,24 @@ export interface WindowManagerLayerOptions {
    * not of the window.
    */
   renderTaskDetail?: (input: TaskDetailRenderInput) => ReactNode;
+  /**
+   * How this layer reveals a task's detail, for content that offers a jump to one
+   * (`ConversationWindow`'s "Open task"). Omitted means this layer CANNOT reveal a
+   * task detail, and such affordances must hide themselves rather than call a
+   * route that goes nowhere.
+   *
+   * Supplied rather than branched for the same reason `renderTaskDetail` is: what
+   * differs is where a layer's host can put a task detail, which is a property of
+   * the layer. The board supplies `setDetailTaskId`, whose bridge mounts the
+   * window on the board layer. The Knowledge Graph's layer supplies it only
+   * in-app, where its host closes the graph first and then reveals the task on
+   * the board (mounting it there with the graph still open would put the detail
+   * at z-40, UNDERNEATH the graph's own z-42 overlay). The detached graph omits
+   * it: there is no board layer in a pop-out, so the button would be inert.
+   * Hiding a control that cannot work beats shipping one that silently does
+   * nothing.
+   */
+  revealTaskDetail?: (taskId: string, projectId?: string) => void;
 }
 
 /** What a layer's `renderTaskDetail` receives. Mirrors WindowContent's props. */

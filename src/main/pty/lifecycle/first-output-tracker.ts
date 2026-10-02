@@ -43,6 +43,17 @@ export class FirstOutputTracker {
     return true;
   }
 
+  /**
+   * Record a first output decided elsewhere (the pty host runs the detector
+   * and reports the result). Returns true the first time for a session, so a
+   * repeated report cannot fire twice.
+   */
+  markEmitted(sessionId: string): boolean {
+    if (this.emitted.has(sessionId)) return false;
+    this.emitted.add(sessionId);
+    return true;
+  }
+
   /** True if `consume()` has ever returned true for this session. */
   hasEmitted(sessionId: string): boolean {
     return this.emitted.has(sessionId);

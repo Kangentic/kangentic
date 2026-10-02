@@ -1,3 +1,4 @@
+import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { Project } from '../../src/shared/types';
@@ -166,7 +167,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
             return config.lexical;
           }
           // searchSemantic never reaches here (vec is not marked capable).
-          if (sql.includes('memory_chunks_vec')) return [];
+          if (sql.includes('memory_vec_conversation')) return [];
           // getChunks: SELECT * FROM memory_chunks WHERE id IN (?, ?, ...)
           if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) {
             const ids = new Set(args as number[]);
@@ -190,7 +191,7 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
         run: () => ({ changes: 0, lastInsertRowid: 0 }),
       };
     },
-    transaction: (fn: () => unknown) => fn,
+    transaction: passThroughTransaction,
   } as unknown as Database.Database;
 }
 
@@ -234,40 +235,19 @@ function singleProjectConfig(): FakeDbConfig {
 
 const PROJECT_A = makeProject({ id: 'project-A', name: 'Proj A' });
 
-describe('searchConversationMemory - semantic_memory adoption signal', () => {
-  it('fires once per search when the query embedded', async () => {
+describe('searchConversationMemory - no analytics in the worker', () => {
+  // The search runs in the retrieval worker, which has no analytics. The
+  // semantic_memory signal is main's (retrieval-queries.test.ts).
+  it('sends no feature signal, whether or not the query embedded', async () => {
     mockTrackFeatureUsed.mockClear();
     const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
-
     await searchConversationMemory({
       query: 'idle bug',
       projects: [PROJECT_A],
       embedder: new DeterministicFakeEmbedder('ok'),
       getDb,
     });
-
-    expect(mockTrackFeatureUsed).toHaveBeenCalledTimes(1);
-    expect(mockTrackFeatureUsed).toHaveBeenCalledWith('semantic_memory');
-  });
-
-  it('stays silent when the search fell back to lexical: no embedder, a null embed, or a throw', async () => {
-    mockTrackFeatureUsed.mockClear();
-    const getDb = makeGetDb({ 'project-A': singleProjectConfig() });
-
     await searchConversationMemory({ query: 'idle bug', projects: [PROJECT_A], getDb });
-    await searchConversationMemory({
-      query: 'idle bug',
-      projects: [PROJECT_A],
-      embedder: new DeterministicFakeEmbedder('null'),
-      getDb,
-    });
-    await searchConversationMemory({
-      query: 'idle bug',
-      projects: [PROJECT_A],
-      embedder: new DeterministicFakeEmbedder('throw'),
-      getDb,
-    });
-
     expect(mockTrackFeatureUsed).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
@@ -12,6 +13,8 @@ import type {
 } from '../../agent/agent-adapter';
 import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
+import { awaitWriteTurn } from '../write-budget';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
 import {
@@ -23,6 +26,8 @@ import {
 
 const CORPUS = 'conversation';
 const CHUNKER_VERSION_KEY = 'chunker_version';
+/** Deleted sessions' documents found per read of the index state. */
+const ORPHAN_PAGE = 20;
 /** Max sessions actually (re)indexed per backfill sweep, so a large history's
  *  cost amortizes across project opens instead of one long CPU burst. Exported
  *  so tests can assert the cap by the real value rather than a copied-in
@@ -109,17 +114,61 @@ interface AdapterLike {
  */
 const INDEX_WINDOW_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Where the next walk of a growing transcript can start instead of byte 0,
+ * stored as JSON on the document's index-state row.
+ *
+ * A live conversation is indexed again after every turn, and walking it from
+ * byte 0 each time parsed and chunked every window of it: 52 windows for a
+ * 413 MB transcript, per turn. The walk chunks each window on its own and the
+ * parser carries nothing across a window seam except the usage-attribution
+ * ids, so a walk that restarts at a window's start, with the carry as it was
+ * there, produces exactly the chunks, entries and usage a walk from byte 0
+ * would. Everything before that window is left as it is.
+ *
+ * The point is the start of the LAST WINDOW THAT ADVANCED, not the last window
+ * read. A transcript caught mid-write ends in a partial line, and the walk
+ * ends on a window at that line that reads nothing. Resuming there would chunk
+ * the completed line apart from the window before it, where a walk from byte 0
+ * chunks them together.
+ */
+interface ResumePoint {
+  sourcePath: string;
+  /** Byte offset of the window to start from. */
+  offset: number;
+  /** Hash of up to `RESUME_CHECK_BYTES` just before `offset`, so a transcript
+   *  rewritten rather than appended to is walked from byte 0. */
+  checkHash: string;
+  /** Chunks and entries the walk had collected before `offset`. */
+  chunkCount: number;
+  entryCount: number;
+  /** The usage-attribution carry before `offset`, oldest first: the parser
+   *  prunes it oldest first, so the order is part of its state. */
+  carry: string[];
+  /** The owner the chunks and usage rows before `offset` were written for. A
+   *  new session row over the same transcript (a resume) re-points every one
+   *  of them, which only a walk from byte 0 does. */
+  sessionId: string;
+  taskId: string | null;
+}
+
+const RESUME_CHECK_BYTES = 4096;
+
 /** A transcript reduced to everything indexing needs, with no entries retained. */
 interface WalkedTranscript {
   sourcePath: string | null;
   /** Total entries seen across all windows (for the index-state row only). */
   entryCount: number;
+  /** Seq of the first chunk in `chunks`: 0, or the resume point's chunk count. */
+  fromSeq: number;
   chunks: ChunkInput[];
   usageRecords: TurnUsageInput[];
   /** Subagent-spawning tool calls this transcript emitted. Collected alongside
    *  the usage records but NOT gated on them, so a spawn on a turn the ledger
    *  skips is still resolvable. */
   spawnLinks: SubagentSpawnLink[];
+  /** Where the next walk can start, when the walk went by windows. */
+  resumeAt: Omit<ResumePoint, 'sourcePath' | 'checkHash' | 'sessionId' | 'taskId'> | null;
 }
 
 export interface ConversationIndexerDeps {
@@ -130,12 +179,45 @@ export interface ConversationIndexerDeps {
   now: () => string;
   chunker: (entries: TranscriptEntry[]) => ChunkInput[];
   chunkerVersion: number;
+  /** Source bytes per window of the walk. */
+  windowBytes: number;
+  /** Hash of up to `length` bytes of a file just before `offset`, or null when
+   *  the file cannot be read. */
+  hashBefore: (filePath: string, offset: number, length: number) => Promise<string | null>;
 }
 
 function defaultStat(filePath: string): { mtimeMs: number; size: number } | null {
   try {
     const stats = fs.statSync(filePath);
     return { mtimeMs: stats.mtimeMs, size: stats.size };
+  } catch {
+    return null;
+  }
+}
+
+async function defaultHashBefore(filePath: string, offset: number, length: number): Promise<string | null> {
+  const start = Math.max(0, offset - length);
+  const bytes = Buffer.alloc(offset - start);
+  try {
+    const handle = await fs.promises.open(filePath, 'r');
+    try {
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, start);
+      if (bytesRead !== bytes.length) return null;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+  return crypto.createHash('sha1').update(bytes).digest('hex');
+}
+
+/** A stored resume point, or null when it is absent or unreadable. */
+function parseResumePoint(json: string | null | undefined): ResumePoint | null {
+  if (!json) return null;
+  try {
+    const point = JSON.parse(json) as ResumePoint;
+    return typeof point.offset === 'number' && Array.isArray(point.carry) ? point : null;
   } catch {
     return null;
   }
@@ -148,6 +230,8 @@ const defaultDeps: ConversationIndexerDeps = {
   now: () => new Date().toISOString(),
   chunker: chunkTranscript,
   chunkerVersion: CHUNKER_VERSION,
+  windowBytes: INDEX_WINDOW_BYTES,
+  hashBefore: defaultHashBefore,
 };
 
 /**
@@ -187,6 +271,7 @@ export class ConversationIndexer {
     entryCount: number,
     chunkCount: number,
     docSuffix = '',
+    resumePoint: string | null = null,
   ): void {
     store.setIndexState({
       corpus: CORPUS,
@@ -199,9 +284,9 @@ export class ConversationIndexer {
       // sessionId column below stays record.id so the session-delete trigger and
       // the ownership re-point track the live session.
       // `docSuffix` splits the subagent walk onto its own row (see
-      // SUBAGENT_DOC_SUFFIX). It stays keyed to record.id, so
-      // trg_sessions_delete_memory cleans it up with the main one; the ledger
-      // rows it produced survive by design (no cascade).
+      // SUBAGENT_DOC_SUFFIX). It stays keyed to record.id, so the record
+      // sweep's orphan purge removes it with the main one once the session is
+      // deleted; the ledger rows it produced survive by design (no cascade).
       docId: `${record.agent_session_id ?? record.id}${docSuffix}`,
       sessionId: record.id,
       sourcePath: signature.path,
@@ -211,7 +296,48 @@ export class ConversationIndexer {
       chunkCount,
       status,
       indexedAt: this.deps.now(),
+      resumePoint,
     });
+  }
+
+  /**
+   * The stored resume point, if the next walk may start from it: written for
+   * this owner, the same file, not shorter than the point, the chunks before it
+   * all still stored, and the bytes just before it unchanged. Anything else is
+   * walked from byte 0.
+   */
+  private async usableResumePoint(
+    store: RetrievalStore,
+    record: SessionRecord,
+    state: IndexStateRow | undefined,
+    signature: SourceSignature,
+  ): Promise<ResumePoint | null> {
+    const point = state?.status === 'ok' ? parseResumePoint(state.resumePoint) : null;
+    if (!point || !record.agent_session_id) return null;
+    if (point.sessionId !== record.id || point.taskId !== record.task_id) return null;
+    if (point.sourcePath !== signature.path || signature.size === null || signature.size < point.offset) return null;
+    if (store.documentChunkCountBelow(CORPUS, record.agent_session_id, point.chunkCount) !== point.chunkCount) return null;
+    const checkHash = await this.deps.hashBefore(point.sourcePath, point.offset, RESUME_CHECK_BYTES);
+    return checkHash === point.checkHash ? point : null;
+  }
+
+  /** The resume point a finished walk leaves for the next one, as JSON. */
+  private async resumePointAfter(
+    walked: WalkedTranscript,
+    sourcePath: string | null,
+    record: SessionRecord,
+  ): Promise<string | null> {
+    if (!walked.resumeAt || !sourcePath) return null;
+    const checkHash = await this.deps.hashBefore(sourcePath, walked.resumeAt.offset, RESUME_CHECK_BYTES);
+    if (checkHash === null) return null;
+    const point: ResumePoint = {
+      sourcePath,
+      checkHash,
+      sessionId: record.id,
+      taskId: record.task_id,
+      ...walked.resumeAt,
+    };
+    return JSON.stringify(point);
   }
 
   /** Index one session by id. Idempotent; safe to call on every finalize. */
@@ -251,7 +377,8 @@ export class ConversationIndexer {
 
     let walked: WalkedTranscript;
     try {
-      walked = await this.walkTranscript(adapter, record.agent_session_id, record.cwd);
+      const resume = await this.usableResumePoint(store, record, state, signature);
+      walked = await this.walkTranscript(adapter, record.agent_session_id, record.cwd, resume);
     } catch {
       this.writeState(store, record, signature, 'error', 0, 0);
       return 'error';
@@ -284,6 +411,7 @@ export class ConversationIndexer {
         metaJson: null,
       },
       chunks,
+      walked.fromSeq,
     );
 
     // Durable per-turn token-usage ledger (conversation_turn_usage): captured
@@ -309,13 +437,16 @@ export class ConversationIndexer {
       console.warn(`[retrieval] turn-usage record failed for session ${record.id}:`, error);
     }
 
+    const sourcePath = walked.sourcePath ?? signature.path;
     this.writeState(
       store,
       record,
-      { ...signature, path: walked.sourcePath ?? signature.path },
+      { ...signature, path: sourcePath },
       'ok',
       walked.entryCount,
-      chunks.length,
+      walked.fromSeq + chunks.length,
+      '',
+      await this.resumePointAfter(walked, sourcePath, record),
     );
     return 'indexed';
   }
@@ -437,17 +568,25 @@ export class ConversationIndexer {
    * implemented `parseTranscriptWindow` indexes only recent history. That is
    * the deliberate trade: bounded memory everywhere, full search coverage
    * wherever the walk exists.
+   *
+   * Given a resume point, the windowed walk starts there and returns only what
+   * follows it: chunks numbered from the point's chunk count, and the usage
+   * and spawn links of those windows alone, which is enough because the ledger
+   * writes upsert and never delete (see `ResumePoint`).
    */
   private async walkTranscript(
     adapter: AdapterLike,
     agentSessionId: string,
     cwd: string,
+    resume: ResumePoint | null,
   ): Promise<WalkedTranscript> {
+    const start = adapter.parseTranscriptWindow ? resume : null;
+    const fromSeq = start?.chunkCount ?? 0;
     const chunks: ChunkInput[] = [];
     const usageRecords: TurnUsageInput[] = [];
     const spawnLinks: SubagentSpawnLink[] = [];
     let sourcePath: string | null = null;
-    let entryCount = 0;
+    let entryCount = start?.entryCount ?? 0;
 
     // `seq` must be 0-based and DENSE across the whole document, but the
     // chunker numbers from 0 per call, so per-window numbering has to be
@@ -463,7 +602,7 @@ export class ConversationIndexer {
       );
       entryCount += indexable.length;
       for (const chunk of this.deps.chunker(indexable)) {
-        chunks.push({ ...chunk, seq: chunks.length });
+        chunks.push({ ...chunk, seq: fromSeq + chunks.length });
       }
       for (const usage of extractTurnUsageRecords(indexable)) usageRecords.push(usage);
       // Note this reads `indexable`, not the raw `entries`: the truncation notice
@@ -476,7 +615,7 @@ export class ConversationIndexer {
     };
 
     if (adapter.parseTranscriptWindow) {
-      let offset = 0;
+      let offset = start?.offset ?? 0;
       // Usage-attribution carry, created OUTSIDE the loop and never reset per
       // window. An agent reports one API message's tokens on several transcript
       // lines; the adapter attributes them to the first line it emits, and a
@@ -491,33 +630,87 @@ export class ConversationIndexer {
       // tool_result lines can fill it), and the carry has to survive that
       // window to reach the message's remaining lines. The adapter prunes it, so
       // it costs a handful of ids against a `usageRecords` array that is already
-      // O(turns in the file).
-      const attributedMessageIds = new Set<string>();
+      // O(turns in the file). A resumed walk starts from the carry as it was at
+      // its window, in the same order.
+      const attributedMessageIds = new Set<string>(start?.carry ?? []);
+      let resumeAt: WalkedTranscript['resumeAt'] = null;
       // Bounds the walk against a pathological file or an adapter that fails to
       // advance. At INDEX_WINDOW_BYTES per window this still covers far more
       // than any real transcript.
       for (let windowIndex = 0; windowIndex < 4096; windowIndex += 1) {
+        // Taken before the parse, which prunes and adds to the carry in place.
+        const beforeWindow = { offset, chunkCount: fromSeq + chunks.length, entryCount, carry: [...attributedMessageIds] };
         const window = await adapter.parseTranscriptWindow(
-          agentSessionId, cwd, offset, INDEX_WINDOW_BYTES, attributedMessageIds,
+          agentSessionId, cwd, offset, this.deps.windowBytes, attributedMessageIds,
         );
         sourcePath = window.sourcePath ?? sourcePath;
-        collect(window.entries);
+        timeSyncWork('index:chunk-window', () => collect(window.entries));
         if (window.nextByteOffset <= offset) break;
+        resumeAt = beforeWindow;
         offset = window.nextByteOffset;
         if (offset >= window.totalBytes) break;
       }
-      return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
+      return { sourcePath, entryCount, fromSeq, chunks, usageRecords, spawnLinks, resumeAt };
     }
 
     // Narrowed rather than asserted: `indexSession` only reaches here when at
     // least one of the two capabilities exists, and the window branch above
     // consumed the other - but that reasoning lives in a different method, so
     // let the type system carry it instead of a `!`.
-    if (!adapter.parseTranscript) return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
+    const unwalked = { fromSeq, chunks, usageRecords, spawnLinks, resumeAt: null };
+    if (!adapter.parseTranscript) return { sourcePath, entryCount, ...unwalked };
     const parsed = await adapter.parseTranscript(agentSessionId, cwd);
     sourcePath = parsed.sourcePath;
     collect(parsed.entries);
-    return { sourcePath, entryCount, chunks, usageRecords, spawnLinks };
+    return { sourcePath, entryCount, ...unwalked };
+  }
+
+  /**
+   * Remove deleted sessions' documents from the index (the conversation, its
+   * subagent walk, the files it changed), one document at a time with a yield
+   * between, `DELETES_PER_TRANSACTION` chunks per transaction. This used to be
+   * a trigger on `sessions`, which deleted a whole conversation inside the
+   * session delete's own transaction. `fromChunks` also finds them by their
+   * chunks (`deletedSessionChunkDocuments`), for a document whose index state
+   * was never written; project open asks for it. Returns how many documents
+   * went; never throws.
+   */
+  async purgeDeletedSessions(
+    projectId: string,
+    shouldContinue: () => boolean,
+    options: { fromChunks?: boolean } = {},
+  ): Promise<number> {
+    let removed = 0;
+    let db: Database.Database;
+    let store: RetrievalStore;
+    try {
+      db = this.deps.getDb(projectId);
+      store = new RetrievalStore(db);
+    } catch {
+      return removed;
+    }
+    for (;;) {
+      if (!shouldContinue()) return removed;
+      let documents: Array<{ corpus: string; docId: string }>;
+      try {
+        documents = store.deletedSessionDocuments(ORPHAN_PAGE);
+        if (documents.length === 0 && options.fromChunks) documents = store.deletedSessionChunkDocuments(ORPHAN_PAGE);
+      } catch {
+        return removed;
+      }
+      if (documents.length === 0) return removed;
+      for (const { corpus, docId } of documents) {
+        if (!shouldContinue()) return removed;
+        try {
+          timeSyncWork('index:purge-deleted', () => store.deleteDocument(corpus, docId));
+          removed += 1;
+        } catch (error) {
+          console.warn(`[retrieval] a deleted session's ${corpus} document ${docId} failed to remove:`, error);
+          return removed;
+        }
+        await awaitWriteTurn(db);
+      }
+    }
   }
 
   /**
@@ -535,9 +728,12 @@ export class ConversationIndexer {
     }
     const store = new RetrievalStore(db);
 
-    // A chunker change invalidates every stored chunk: purge + reindex.
+    // A chunker change invalidates every conversation chunk and the session
+    // changes read from them: purge + reindex. Task records are chunked by
+    // their own indexer and survive. The purge takes write turns, and one
+    // stopped part way leaves the old version, so the next sweep finishes it.
     if (store.getMeta(CHUNKER_VERSION_KEY) !== String(this.deps.chunkerVersion)) {
-      store.purgeAll();
+      if (!await store.purgeCorpora(['conversation', 'change'], () => awaitWriteTurn(db), shouldContinue)) return;
       store.setMeta(CHUNKER_VERSION_KEY, String(this.deps.chunkerVersion));
     }
 

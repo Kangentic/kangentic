@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { promises as fsPromises } from 'node:fs';
 
 /**
  * Raw native events, arriving inside STORM_WINDOW_MS with no dispatch in
@@ -37,7 +38,9 @@ interface FileWatcherOptions {
   onChange: () => void;
   debounceMs?: number;
   pollIntervalMs?: number;
-  isStale?: () => boolean;
+  /** Whether the file changed since the last dispatch. May answer later: the
+   *  poll waits for it, and starts no second check while one is out. */
+  isStale?: () => boolean | Promise<boolean>;
 }
 
 /**
@@ -65,12 +68,14 @@ export class FileWatcher {
   private nativeEventCount = 0;
   private nativeEventWindowStart = 0;
   private closed = false;
+  /** A poll's file checks are still out; the next tick skips. */
+  private pollInFlight = false;
 
   private readonly filePath: string;
   private readonly onChange: () => void;
   private readonly debounceMs: number;
   private readonly pollIntervalMs: number;
-  private readonly isStale: () => boolean;
+  private readonly isStale: () => boolean | Promise<boolean>;
 
   constructor(options: FileWatcherOptions) {
     this.filePath = options.filePath;
@@ -79,10 +84,13 @@ export class FileWatcher {
     this.pollIntervalMs = options.pollIntervalMs ?? 1000;
     this.lastWatcherFireTime = Date.now();
 
-    // Default staleness check: mtime-based (good for files overwritten on each write)
-    this.isStale = options.isStale ?? (() => {
+    // Default staleness check: mtime-based (good for files overwritten on
+    // each write). Asynchronous, as every file read on this path is: a stat
+    // that a virus scanner or a network drive holds up waits off the main
+    // thread instead of on it.
+    this.isStale = options.isStale ?? (async () => {
       try {
-        const stat = fs.statSync(this.filePath);
+        const stat = await fsPromises.stat(this.filePath);
         return stat.mtimeMs > this.lastWatcherFireTime;
       } catch {
         return false;
@@ -255,27 +263,39 @@ export class FileWatcher {
    * floods. And only when the file exists, which keeps a disarmed watcher from
    * throwing inside fs.watch once per second for the rest of its life.
    */
-  private rearmFileWatcherIfDisarmed(): void {
+  private async rearmFileWatcherIfDisarmed(): Promise<void> {
     if (this.watcher) return;
-    if (!fs.existsSync(this.filePath)) return;
+    try {
+      await fsPromises.access(this.filePath);
+    } catch {
+      return;
+    }
+    if (this.closed || this.watcher) return;
     this.armFileWatcher();
+  }
+
+  private async poll(): Promise<void> {
+    await this.rearmFileWatcherIfDisarmed();
+    if (this.closed || this.debounceTimer) return;
+    // fs.watch delivered an OS event within the last interval: it is healthy
+    // and already pushing changes, so skip the redundant stat entirely. This
+    // removes the per-interval stat precisely during active streaming
+    // (when the main loop is busiest). The poll still runs its full stat
+    // when the native watcher is quiet (broke, or genuinely no changes), so
+    // the fallback is preserved.
+    if (Date.now() - this.lastWatcherNativeFireTime < this.pollIntervalMs) return;
+    if (await this.isStale()) {
+      if (!this.closed) this.onFileChange();
+    }
   }
 
   private startPolling(): void {
     this.pollTimer = setInterval(() => {
-      if (this.closed) return;
-      this.rearmFileWatcherIfDisarmed();
-      if (this.debounceTimer) return;
-      // fs.watch delivered an OS event within the last interval: it is healthy
-      // and already pushing changes, so skip the redundant stat entirely. This
-      // removes the per-interval statSync precisely during active streaming
-      // (when the main loop is busiest). The poll still runs its full stat
-      // when the native watcher is quiet (broke, or genuinely no changes), so
-      // the fallback is preserved.
-      if (Date.now() - this.lastWatcherNativeFireTime < this.pollIntervalMs) return;
-      if (this.isStale()) {
-        this.onFileChange();
-      }
+      if (this.closed || this.pollInFlight) return;
+      this.pollInFlight = true;
+      void this.poll().finally(() => {
+        this.pollInFlight = false;
+      });
     }, this.pollIntervalMs);
     // A file-watcher poll must never, on its own, keep the process alive.
     // Without unref, a reader not detached before quit holds the libuv loop

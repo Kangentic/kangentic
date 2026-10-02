@@ -28,16 +28,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import { BoardEventBus } from '../../src/main/mobile-bridge/board-event-bus';
 
-// retrieval-service.ts's other direct imports that would otherwise drag in
-// electron (vec-extension.ts) or a native module built for Electron's Node
-// ABI (better-sqlite3, via db/database.ts) - neither is exercised by the
-// finalize-debounce path, so both are stubbed rather than pulled in for real.
+// db/database.ts would otherwise drag in a native module built for Electron's
+// Node ABI (better-sqlite3), which the finalize-debounce path never exercises,
+// so it is stubbed rather than pulled in for real.
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
-vi.mock('../../src/main/retrieval/vec-extension', () => ({
-  lastVecLoadError: vi.fn(() => null),
-  loadVecExtension: vi.fn(() => false),
-}));
+// Indexing runs in the retrieval worker; its handlers run here, in process,
+// against the indexer mocks below.
+vi.mock('../../src/main/retrieval/retrieval-client', async () => (
+  (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
+));
 
 const conversationIndexerMock = vi.hoisted(() => ({
   indexSession: vi.fn(async () => ({})),
@@ -50,11 +51,13 @@ vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
   ConversationIndexer: class {
     indexSession = conversationIndexerMock.indexSession;
     indexSubagentUsage = conversationIndexerMock.indexSubagentUsage;
+    purgeDeletedSessions = vi.fn(async () => 0);
   },
 }));
 
 const embedEngineMock = vi.hoisted(() => ({
   attach: vi.fn(),
+  setOnRecordsEmbedded: vi.fn(),
   markDirty: vi.fn(),
   dispose: vi.fn(),
   getEmbedder: vi.fn(() => null),
@@ -65,6 +68,26 @@ const embedEngineMock = vi.hoisted(() => ({
 }));
 vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
   embedEngine: embedEngineMock,
+}));
+
+const taskIndexerMock = vi.hoisted(() => ({
+  sweepTaskRecords: vi.fn(async () => ({ indexed: 1, removed: 0 })),
+}));
+vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
+  sweepTaskRecords: taskIndexerMock.sweepTaskRecords,
+}));
+const graphServiceMock = vi.hoisted(() => ({
+  notifyChanged: vi.fn(),
+  setSummariesSkipped: vi.fn(),
+  setSummaryNamesOn: vi.fn(),
+  setProjectIds: vi.fn(),
+}));
+vi.mock('../../src/main/retrieval/graph-facade', () => ({ graphService: graphServiceMock }));
+const changeIndexerMock = vi.hoisted(() => ({
+  sweepChangeRecords: vi.fn(async () => ({ indexed: 0 })),
+}));
+vi.mock('../../src/main/retrieval/change/change-indexer', () => ({
+  sweepChangeRecords: changeIndexerMock.sweepChangeRecords,
 }));
 
 /** Minimal fake of the SessionManager surface scheduleFinalizeIndex reads:
@@ -87,10 +110,11 @@ class FakeSessionManager extends EventEmitter {
   }
 }
 
-function makeContext(sessionManager: FakeSessionManager): IpcContext {
+function makeContext(sessionManager: FakeSessionManager, boardEvents = new BoardEventBus()): IpcContext {
   return {
     sessionManager,
-    configManager: { load: () => ({ memory: { indexingEnabled: true } }) },
+    boardEvents,
+    configManager: { load: () => ({ knowledgeGraph: { indexingEnabled: true } }) },
     currentProjectId: null,
   } as unknown as IpcContext;
 }
@@ -195,6 +219,8 @@ describe('retrievalService - per-session finalize debounce', () => {
 
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledTimes(1);
     expect(conversationIndexerMock.indexSubagentUsage).toHaveBeenCalledWith('proj-1', 'sess-1');
+    // And the files it changed, read from what was just indexed.
+    expect(changeIndexerMock.sweepChangeRecords).toHaveBeenCalledWith('proj-1', null, undefined, { getDb: expect.any(Function) });
   });
 
   it('does NOT walk subagent usage on the live turn-boundary (activity) path', async () => {
@@ -213,5 +239,68 @@ describe('retrievalService - per-session finalize debounce', () => {
     // vacuously because nothing ran at all.
     expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
     expect(conversationIndexerMock.indexSubagentUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('retrievalService - task records follow the board', () => {
+  let retrievalService: typeof import('../../src/main/retrieval/retrieval-service')['retrievalService'];
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.resetModules();
+    ({ retrievalService } = await import('../../src/main/retrieval/retrieval-service'));
+  });
+
+  afterEach(() => {
+    retrievalService.dispose();
+    vi.useRealTimers();
+  });
+
+  it('re-reads a project once after a burst of task changes, and flags it for embedding', async () => {
+    const boardEvents = new BoardEventBus();
+    retrievalService.attach(makeContext(new FakeSessionManager(), boardEvents));
+
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'task-updated', ids: ['task-1'] });
+    await vi.advanceTimersByTimeAsync(1000);
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'task-created', ids: ['task-2'] });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledWith('proj-1', expect.any(Function), { getDb: expect.any(Function) });
+    expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
+    // An open graph re-reads, so its Index counts the new records.
+    expect(graphServiceMock.notifyChanged).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('ignores a column edit, which changes no task record', async () => {
+    const boardEvents = new BoardEventBus();
+    retrievalService.attach(makeContext(new FakeSessionManager(), boardEvents));
+
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'swimlane-updated', ids: ['lane-1'] });
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
+  });
+
+  it('re-reads an open graph when a project finishes embedding, so its Index shares are current', () => {
+    retrievalService.attach(makeContext(new FakeSessionManager()));
+    const listener = embedEngineMock.setOnRecordsEmbedded.mock.calls.at(-1)?.[0] as ((projectId: string) => void) | undefined;
+    expect(listener).toBeTypeOf('function');
+    listener?.('proj-1');
+    expect(graphServiceMock.notifyChanged).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('does not flag a project for embedding when a sweep changed nothing', async () => {
+    taskIndexerMock.sweepTaskRecords.mockResolvedValueOnce({ indexed: 0, removed: 0 });
+    retrievalService.attach(makeContext(new FakeSessionManager()));
+
+    retrievalService.refreshRecords(makeContext(new FakeSessionManager()), 'proj-1');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(taskIndexerMock.sweepTaskRecords).toHaveBeenCalledTimes(1);
+    expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
   });
 });

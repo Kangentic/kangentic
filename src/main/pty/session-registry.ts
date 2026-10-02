@@ -1,5 +1,5 @@
-import type * as pty from 'node-pty';
 import { v4 as uuidv4 } from 'uuid';
+import type { PtyDisposable, PtyHandle } from './host/pty-host-client';
 import type {
   AgentParser,
   Session,
@@ -25,7 +25,8 @@ export interface ManagedSession {
   id: string;
   taskId: string;
   projectId: string;
-  pty: pty.IPty | null;
+  /** The session's PTY, which lives in the pty host (see `host/`). */
+  pty: PtyHandle | null;
   status: SessionStatus;
   shell: string;
   cwd: string;
@@ -96,13 +97,11 @@ export interface ManagedSession {
    *  orchestration through this; SessionManager never inspects the
    *  attachment. */
   adapterAttachment?: SessionAttachment;
-  /** Disposables for the PTY's onData / onExit listeners. Disposed by
-   *  killAllSessions (the synchronous shutdown path) so node-pty stops
-   *  invoking our callbacks on a later tick - a final ConPTY chunk would
-   *  otherwise fire onData into an already-deleted session dir, and any late
-   *  callback keeps the libuv loop referenced past a clean quit. Only set on
-   *  the normal-spawn path; left undefined for placeholder/queued sessions. */
-  ptyDisposables?: pty.IDisposable[];
+  /** Disposables for the PTY's exit listener. Disposed by killAllSessions
+   *  (the synchronous shutdown path) so a late exit cannot run the exit
+   *  handling against an already-deleted session dir. Only set on the
+   *  normal-spawn path; left undefined for placeholder/queued sessions. */
+  ptyDisposables?: PtyDisposable[];
   /** Set by kill(sessionId, true) before a deliberate force-kill that does NOT
    *  go through suspend() (move-to-To-Do reset, task delete, move-to-Backlog).
    *  Read by the PTY onExit handler to tag the 'exit' event intentional so the

@@ -4,18 +4,49 @@
 
 Electron app with two processes:
 
-- **Main process** -- Node.js runtime. Owns the database, PTY sessions, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
+- **Main process** -- Node.js runtime. Owns the database migrations and project-data writes, the session registry and activity engine, git operations, file I/O, and IPC handlers. Entry point: `src/main/index.ts`.
 - **Renderer process** -- Chromium window running React. Communicates exclusively through `window.electronAPI` (context bridge). Entry point: `src/renderer/index.tsx`.
 - **Preload script** -- Bridges main↔renderer via `contextBridge.exposeInMainWorld()`. Exposes typed `electronAPI` object. Entry point: `src/preload/preload.ts`.
 
 Context isolation is enabled -- the renderer has no direct access to Node.js APIs.
 
+Work that would block main runs in Electron `utilityProcess` workers, each its own esbuild entry
+with a crash policy and stderr capture:
+
+- **`kangentic-pty-host`** (`src/main/pty/host/pty-host-entry.ts`) runs every PTY and the work on
+  its output: node-pty, the headless xterm and scrollback ring, backpressure, the raw transcript
+  (written on the host's own database connection), and the adapters' output detectors. Main keeps
+  `SessionManager` as the facade, mirrors what it reads synchronously, and reads the rest by
+  request; output reaches main only for the sessions a renderer shows or a phone streams. The host
+  also runs main's one-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
+  (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`: Ask, task summaries,
+  auto-name, the warm answer session) and the background-shell watcher's process table, because
+  on Windows each spawn's CreateProcess is synchronous on the calling thread. Forked once at startup, restarted on
+  a crash (the lost agent sessions resume), and replaced by the same core running in main after
+  five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 0.7% after.
+  See `.claude/rules/pty-host-out-of-process.md`.
+- **`kangentic-retrieval`** (`src/main/retrieval/worker/retrieval-worker.ts`) runs every read and
+  write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger,
+  spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, and the
+  parse and stitch of agent transcripts for the Conversation window, the phone and MCP. It opens
+  the project database on its own connection, after main has migrated it, and runs the WAL's
+  PASSIVE checkpoints. Main sends requests through `retrievalClient` and relays the JSON replies.
+  See `.claude/rules/retrieval-out-of-process.md`.
+- **`kangentic-embeddings`** (`src/main/retrieval/embedder/embed-worker.ts`) runs ONNX inference,
+  driven only by `embed-engine.ts` on main (`.claude/rules/central-embedding-engine.md`).
+- **`kangentic-dictation`** and **`kangentic-line-count`** run the dictation engine and the diff
+  line counts.
+
+Main still writes project data (tasks, sessions, the app tables) inside `writeTransaction`, an
+immediate transaction that waits for a worker's write instead of failing with `SQLITE_BUSY`. The
+pty host writes one row per raw transcript flush on its own connection.
+
 ### Renderer crash recovery
 
 A recoverable renderer death (`render-process-gone` with reason `oom` or `crashed`, never
 `clean-exit` or `killed`) reloads the main window automatically instead of leaving it dead and
-blank. PTY sessions live in main and are untouched by a renderer-only crash, so a reload costs the
-user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
+blank. PTY sessions live in the pty host and are untouched by a renderer-only crash, so a reload
+costs the user a repaint, not their work. Reloads are bounded (`RENDERER_RELOAD_MAX` per
 `RENDERER_RELOAD_WINDOW_MS`, `src/main/diagnostics/renderer-recovery.ts`): a machine still starved
 of memory would kill a freshly reloaded renderer too, so past the bound a native dialog explains
 what happened instead of retrying forever. See `src/main/diagnostics/host-memory.ts` (Sentry
@@ -72,9 +103,10 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `dev:createEphemeralProject` | invoke | Clone the current worktree into an isolated, throwaway preview project (TestHarness "Create Project" button); fills its working tree in the background and returns the usable `Project` |
 | `dev:seedGitChanges` | invoke | Seed a realistic all-scopes / all-statuses git changeset (committed, staged, working) into each ephemeral preview repo (active task worktrees plus the project) so the Changes tab has content to exercise; silently skips any path outside the preview-projects root. Returns `DevSeedGitChangesResult` |
-| `dev:seedEmbeddingBacklog` | invoke | Seed synthetic pending chunks (`embedded_model = NULL`) into the current project's conversation-memory index via the real chunk-write path, then flag the project dirty (TestHarness "Seed Embedding Backlog" button) - a fast path to a realistic embedding backlog for exercising the central embedding engine's drain loop without needing that many real agent turns. Returns `DevSeedEmbeddingBacklogResult` |
 | `dev:seedLargeConversation` | invoke | Seed a throwaway task backed by a synthetic multi-thousand-turn Claude JSONL transcript (TestHarness "Seed Large Conversation" button; appends more turns on re-click) and open it in the Conversation viewer, for exercising the viewer's virtualization, in-viewer search, and open-at-position behavior against a realistic long transcript. Returns `DevSeedLargeConversationResult` |
 | `dev:seedUsageData` | invoke | Seed days of realistic synthetic usage (sessions across several agents/models plus per-turn time series) into every registered project's usage ledgers via the real capture repositories, at descending volume per project (TestHarness "Seed Usage Data" button; appends another batch on re-click), so the usage dashboard has rich charts in a preview. Returns `DevSeedUsageDataResult` |
+| `dev:seedKnowledgeGraph` | invoke | Seed a cluster-structured synthetic conversation corpus into the current project, hung off real tasks and session rows so provenance exists: the TestHarness "Seed Knowledge Graph" button's fallback when there is no real index to mirror. Vectors are written DIRECTLY rather than inferred, because real ONNX inference over hundreds of documents would take minutes before the Knowledge Graph showed anything, except for the newest `embeddingBacklog` chunks (1,000 by default), which are left for the embedding drain. Documents are drawn from planted topic clusters, so the map has a ground truth you can check by eye. Returns `DevSeedKnowledgeGraphResult` |
+| `dev:seedKnowledgeGraphReal` | invoke | Mirror the real parent project's indexed conversations (chunks, vectors, index state, and the tasks and sessions they hang off) into the open preview project (TestHarness "Seed Knowledge Graph" button), so the Knowledge Graph shows a real corpus in a preview. `documentLimit` keeps only the most recent conversations; `sourceProject` (an id or a name, passed at run time) mirrors a different real project, which is how a second preview project is seeded to check the graph across projects; the newest `embeddingBacklog` chunks (1,000 by default) are copied without their vectors, so the embedding drain has real work the moment the map is built, and a count above the index's size leaves all of it pending, the backlog a model switch creates. The result's `modelTag` is the source's own; the harness then turns semantic search on with that model through the Settings panel's `updateConfig`, since a fresh preview has it off and the drain would otherwise never run. Answers `{ unavailable }` when this machine has no real index to copy. |
 
 ### Project Groups (6 channels)
 | Channel | Pattern | Purpose |
@@ -345,7 +377,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -379,7 +411,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `git:diffUnsubscribe` | send | Release THIS window's subscription for a worktree; the watcher and merge-base cache are torn down only when the path's last subscriber leaves (a destroyed window releases its subscriptions automatically) |
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
-| `git:prefetchRemotes` | invoke | Warm the throttled all-remotes fetch for a worktree (fire-and-forget, non-interactive) so a following `checkPendingChanges` skips or joins it rather than starting its own; the board calls it when a worktree-backed card drag begins, and main skips it when `git.autoFetchIntervalMinutes` is off |
+| `git:prefetchRemotes` | invoke | Warm the throttled all-remotes fetch for a worktree (fire-and-forget, non-interactive) so a following `checkPendingChanges` skips or joins it rather than starting its own; the board calls it when a worktree-backed card drag begins, and main skips it when the `git.autoFetch` switch is off |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire. An optional `refreshRemote` flag makes the handler run the throttled all-remotes fetch first so `behind` reflects the actual remote; the panel passes it once per mount, never on watcher fires |
 | `git:worktreeHead` | invoke | A checkout's live HEAD (`branch`, `sha`): two rev-parse calls, no fetch. `branch` is null on a detached HEAD or a git error and `sha` is null only on a git error, so the pair tells the two apart. The Command Terminal layer re-derives every window's branch pill from it on reattach and on every `git:diffChanged`. Unqueued, like `git:branchSummary` |
 | `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the Changes panel's commit-history browser. Local-only and fail-safe, like `git:branchSummary` |
@@ -401,7 +433,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ### Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float).
+Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor, the Knowledge Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float).
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open; resolves `false` when the kind's `maxInstances` cap refused the open (currently only `changes-file`) |
@@ -494,16 +526,27 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 Read-only structured-transcript access for the conversation viewer. Prefer the explicit `projectId`, falling back to the ambient current project.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
+| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (3 channels)
-Conversation-memory semantic layer (Smart-mode search). See the Memory settings tab.
+### Knowledge Graph (13 channels)
+Conversation-memory semantic layer and the Knowledge Graph surface built on it.
+See the Knowledge Graph settings tab (id `knowledgeGraph`).
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
-| `memory:prewarm` | on | Spawn + init the embedding worker ahead of the first Smart query (fire-and-forget, embeds nothing). Sent on a Smart-mode Quick Find open: the worker is released once it has gone long enough without a query or pending index work (see `memory.semanticEnabled` in `docs/configuration.md` for the windows), and the typing that follows the open is the window its cold start needs. A no-op when semantic is off, the model is absent, or the worker has crashed past its cap. |
-| `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
+| `knowledgeGraph:status` | invoke | Report the conversation-memory index status for the Knowledge Graph settings tab (the Search quality status row and the Index card's source lines): the open project's `sources` (conversations, tasks and commits: each one's count, and while passages still wait for vectors the share embedded and the minutes left, `KnowledgeGraphSourcesStatus`; the counts are the same `corpusTotals` read as the Index panel, so the two agree, read in the retrieval worker and kept there for 30 s, since on every index-size change they cost about 15 ms a poll while embedding ran (`worker/index-status.ts`); the waiting passages are read on every poll by `countChunksNeedingEmbedding`, three ranges of `(embedded_model, corpus)` that cost only what is waiting), and while the Knowledge Graph is on the open project's `summaries` for the Task summaries line, switched on or off (off, the line gives how many Done tasks switching it on would cover): how many finished tasks have one, how many the agent passed over, whether the scheduler is writing or waiting to retry a failed call, the minutes left at the pace the current run of passes has measured (`summaryScheduler.writtenPerMinute`, wall time since the run's first pass, gaps included; a run ends when it catches up or a call fails, and there is no figure before its first pass writes), the summaries counted by the agent, model and effort that wrote them, what a summary would be written with now, and how many await a rewrite (`KnowledgeGraphSummaryStatus`, a few index reads per poll). While the Knowledge Graph is on it also carries the open project's `code` for the Source code line (`KnowledgeGraphCodeStatus`, `code/code-status.ts`): off, the branch's indexable files and their passages estimated from file sizes (1,292 bytes a passage, measured on this repository), read by `git ls-tree` in the background at most once a minute and never awaited by the poll; on, three index counts (files, passages, and passages embedded by the current model). The branch is `origin/<base>`, else `<base>`, else `origin/HEAD`, else the checked-out HEAD (`readBranchHead`, `branch-git.ts`), so any repository with a commit has one; with none the state is `nothing-committed`. Either way it gives the minutes left at the embedding engine's own measured background rate (`embedEngine.chunksPerMinute`, wall time over the latest drain run, duty-cycle sleeps included), or none before a run has measured one. |
+| `knowledgeGraph:rebuildPlan` | invoke | What the Index card's Rebuild would spend: how many finished-task summaries (task summaries) in every project were written with anything but the current agent, model and summary effort. Main resolves the choice the way the writer does, and counts with the same match Rebuild marks with (`SummaryStore.countNotWrittenWith`), so the confirm names exactly what Rebuild rewrites. Zero while summaries are off or wait for a choice. Returns `{ summariesToRewrite }`. |
+| `knowledgeGraph:taskSummary` | invoke | One task's summary for the Knowledge Graph's selected conversation, read from the node's own project when it is selected rather than shipped in every snapshot. Null while task summaries are switched off, and null when the task has none. Returns `string \| null`. |
+| `knowledgeGraph:prewarm` | send | Spawn + init the embedding worker ahead of the first question (fire-and-forget, embeds nothing). Sent when the Knowledge Graph opens: the worker is released once it has gone long enough without a query or pending index work (see `knowledgeGraph.enabled` in `docs/configuration.md` for the windows), and the typing that follows the open is the window its cold start needs. Quick Find no longer sends it, since it searches by keyword only. A no-op when semantic is off, the model is absent, or the worker has crashed past its cap. The graph sends it with a `KnowledgeGraphAnswerPrewarm` (`{ chatId, projectId }`), which also starts that chat's warm answering session for an agent with `openAnswerSession` (`answer-session-pool.ts`): the CLI is up before the question, and an idle one makes no model call. |
+| `knowledgeGraph:graphEndChat` | send | The chat's warm answering session is no longer needed: X ended the chat, or the graph closed (in-app or detached). Ends the process and removes its run directory. A kept chat's next question opens a fresh session carrying the chat so far. A one-shot answer run still going for the chat stops too (`stopCliRunsForChat`: the handler runs it under `runCliForChat`, so the CLI it spawns is recorded as the chat's). The renderer sends this with a turn in flight only on X or a project switch, both of which clear the thread; closing the graph mid-turn sends it once the turn lands. |
+| `knowledgeGraph:rebuildIndex` | invoke | The Index card's Rebuild, for every source in every project. Each project forgets what its sources were read from (`resetIndexState`: never the chunks or their vectors, so nothing indexed is lost and unchanged text keeps its vector), and its summaries written with another agent or model are marked for rewriting. Only the open project is read again now (a sweep runs for the open project alone); every other project is read again on its next open. Returns `{ summariesToRewrite }`, the summaries marked. The renderer calls `knowledgeGraph:rebuildPlan` first and asks only when that is above zero. |
+| `knowledgeGraph:graphSnapshot` | invoke | Cheap read of the cached Knowledge Graph projection plus its conversation coverage, and `index`: what every corpus holds (conversations, task records, session changes, commits, source code: documents, chunks, and embedded chunks where the corpus is embedded), how many finished tasks have a task summary and how many the summary scheduler passed over this run (`summaries`), and the whole store's size, for the Index panel. The corpus totals are three index reads, kept until the store's size moves. The projection's region names are laid over it from `graph_region_names` in `memory_meta` (`graph/region-names.ts`): names made for this map by the current labeller, from task titles and, while task summaries are on, each task's summary at 0.75 weight. Names made for another map, labeller or summary setting are not shown and new ones are made at once in the background, one granularity per event-loop turn (about 21 ms each on 998 conversations); names a few summaries behind are shown while new ones wait, at most every 5 minutes during a backfill and at once when a summary pass catches up. A rebuilt map is named in its own pass, before its push. Ask's task table reads the same names. Never runs the projection pass. Returns `KnowledgeGraphSnapshot \| null`. |
+| `knowledgeGraph:graphRefresh` | invoke | Ask for a background refresh of one project's projection. Returns immediately; completion arrives via `knowledgeGraph:graphChanged`. |
+| `knowledgeGraph:graphChanged` | on | Push: something a project's snapshot shows moved. A projection pass finished, a record sweep changed task records, session changes or commits, or the embedding drain embedded task records (at most every 30 s during such a run and once when it finishes, so the Index's embedded shares move while it runs; a conversation-only run, which follows every agent turn, does not push, since each re-read recomputes the map's coverage on main). The renderer re-reads the snapshot on every push, but asks for another rebuild only to continue one it asked for itself: an agent's turn makes the map stale, and rebuilding on any push would start a pass per turn on an open graph. Declared in the `knowledge-graph` pop-out surface's `channels`, or a detached window never updates. |
+| `knowledgeGraph:graphAnswer` | invoke | Ask: finds the related work locally first (`related-work.ts`), across the conversations and the tasks' own records (title, labels and description, the `task` corpus, rescaled to the conversations' relevance so a short record ranks on their scale; an unscoped question reaches a task with no indexed conversation through its record) and, by keyword only, the default branch's commits, each counting toward the task that wrote it (the `commit` corpus); the records' and commits' keyword pools come from one full-text scan, each ranked within its own corpus. While source code is indexed (`codeIndexOn`), the question as asked is also searched by meaning over the `code` corpus, and the closest passages at or above a relevance floor (0.45, or 0.35 for a question that names an identifier) go to the agent in a `<source_code>` block, at most six and two from one file. They never rank a task, and the rules name the block only while code is indexed, a setting rather than a per-question fact, so the cached prompt prefix stays the same from question to question. Whether code is indexed is part of a warm session's scope, since a follow-up does not resend the rules. It then hands the answering agent the complete task table, that related set with its best passages, and the chat so far, plus ONE tool for an agent that can use it: `kangentic_search`, on an `answer-<chatId>` MCP URL whose server registers nothing else. Each question also queues a re-read of the task records, which catches a desktop edit the board event bus does not carry. Spawns the agent's non-interactive CLI in the answer home (no PTY, no `sessions` row), so it costs a real call and is never automatic. For an agent with a warm session, the chat's session answers instead: its first turn gets the whole prompt, and a follow-up under the same scope gets only its related work and the question (about 8k characters against 140k), reusing the refs of the table the session already holds while its related rows carry this turn's facts (the table is rebuilt every turn, so a running task's cost is current); a changed scope, or related work that finds a task the session's table never listed, starts a fresh session, and a session that dies before writing anything is retried once as a fresh run. Takes a renderer-minted `requestId` that the stream below is keyed on, and a `KnowledgeGraphAnswerContext` (the chat id, earlier turns, the filter scope as docKeys, and the Projects scope as `projectIds`). Across two or more projects, each project's table is built on its own and merged, every ticket prefixed with its project's short name (`kangentic#432`, `mobile#88`, since ticket numbers repeat between projects; a bare `#N` still resolves to the open project), and the question is embedded once and searched in each project (`searchRelatedWorkAcross`). Returns `KnowledgeGraphAnswerResult`: the prose, its `rows` (the tasks it is about, with `docKeys`, the passage to open at, `projectId`, the `ref` the prose uses, and `projectName` across projects), the `related` set, and `handedCount`. |
+| `knowledgeGraph:graphProjects` | invoke | Every registered project for the Knowledge Graph's Projects picker: its name, how many conversations its map would draw, how many task records it also searches, and when its index last took a conversation in (`KnowledgeGraphProjectSummary[]`). Index-only counts per project database, about 12 ms across 19 projects warm. |
+| `knowledgeGraph:graphAnswerStream` | on | Push: the answer arriving. `{ requestId, kind: 'set' \| 'search' \| 'text' \| 'tool' \| 'done', ... }` - `set` carries the related work before the agent starts, so the map lights first; `search` is each `kangentic_search` the agent made, with the docKeys it found; text as the agent writes it; a tool call as it starts; and `done` whether the call succeeded or threw, so a renderer is never left holding a partial answer it believes is still growing. Sent with `broadcast` and declared in the `knowledge-graph` pop-out surface's `channels`, or a detached window never sees a word. |
+| `knowledgeGraph:relatedToTask` | invoke | Proactive recall: earlier conversations semantically near a task, using its title + description as the query and excluding its own conversations. Powers the "N earlier conversations about this" line in task detail. Returns `KnowledgeGraphQueryHit[]`. |
 
 ### Diagnostics (2 channels)
 | Channel | Pattern | Purpose |
@@ -562,7 +605,8 @@ Created on project open. Stored in the global config directory (not inside the p
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
-- **session_transcripts** -- ANSI-stripped PTY output per session. Written by `TranscriptWriter` with a 30s debounced flush (early-flushed at 256KB pending). Used for cross-agent handoff context. No FK; cascade via DELETE trigger on sessions.
+- **session_transcript_chunks** -- ANSI-stripped PTY output per session, one row per flush. Written by `TranscriptWriter` with a 30s debounced flush (early-flushed at 64KB pending) to the session's own project database. Used for cross-agent handoff context and raw `kangentic_get_transcript`. No FK and no delete trigger: a transcript outlives its session row. The legacy `session_transcripts` table (one value per session, rewritten whole on each flush) is read until the retrieval worker converts its rows.
+- **memory_\*, conversation_turn_usage, turn_spawn_links, session_activity_intervals** -- The retrieval index (chunks, full-text and vector tables, per-document state and sums, task summaries) and the durable usage, subagent-spawn and activity ledgers. The index is read and written only by the retrieval worker. Their column tables live in [database.md](database.md).
 - **handoffs** -- Cross-agent handoff records. Tracks from/to agents and sessions, stores serialized `ContextPacket` (transcript excluded). FK on task_id with CASCADE delete.
 - **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model, agent). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the usage dashboard's period totals, cost-per-day series, and by-model / by-agent breakdowns (Live/Today/Week/Month/All Time) via `usage:getDashboardStats` and the `kangentic_get_usage_stats` MCP tool. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitChurn` (`src/main/ipc/handlers/git-stats-capture.ts`, fired on every session finalization - suspend, move, handoff, respawn, natural exit - not just move-to-Done; writes to exactly one record per task lineage via `setTaskGitStats` to avoid double-counting branch-cumulative churn across `--resume` records). The dashboard's SESSIONS KPI and Live view additionally merge in-flight sessions from the live `SessionManager` (deduped by `session_record_id` against the ledger) so running sessions are not undercounted before they finalize.
 
@@ -665,16 +709,18 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 1. Check concurrency limit → queue if full (returns placeholder with `status: 'queued'`)
 2. Drain every existing registry row for the task (kill each PTY, preserve its files, carry scrollback over from the most recently started one) so the registry holds one row per task; the full step list is in [session-lifecycle.md](session-lifecycle.md#spawn-flow)
 3. Resolve shell and arguments (platform-specific)
-4. Spawn PTY via node-pty
+4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid)
 5. Start two file watchers (status, events)
-6. Set up output handler (16ms batched flush)
+6. The host runs the output handler (16ms batched flush)
 7. After 100ms delay, write the CLI command to PTY stdin (agent spawns are prefixed with the shell's own clear via `buildSpawnClearPrelude`; transient Command Terminals are not)
 
 ### Output Streaming
 
+All of it runs in the pty host; main relays what a renderer or a phone needs.
+
 - **Buffer:** PTY `onData` accumulates into per-session buffer
-- **Flush:** 16ms interval (~60fps) emits buffered data via IPC `session:data`
-- **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [session-lifecycle](session-lifecycle.md).
+- **Flush:** 16ms interval (~60fps). The host sends a flush to main as `data` only for a session a renderer shows (the focused union), and as `tap` only for a session a phone streams (`subscribeDataTap`, reference counted). Main forwards `data` via IPC `session:data`. Every other session sends only a coalesced `outputSeen` (no bytes), which the activity engine and the Monitor read.
+- **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [session-lifecycle](session-lifecycle.md). Main reads it by request.
 
 ### File Watchers
 
@@ -727,7 +773,10 @@ Shell-specific adaptations:
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills mature PTYs immediately) |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children are gone, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host process are gone. The host exits itself once every exit callback has run there, within the drain's deadline less 200 ms, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
+| Pty host request timeout | 15 s (an exec: its own timeout plus 5 s) | A request the host never answers rejects; an exec then runs locally |
+| Pty host heartbeat | 5 s beat, 11 s unresponsive | VS Code's intervals; an unresponsive host is logged |
+| Pty host restarts | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
 | KILL_GRACE_MS | 1500 ms | `kill()` on a young session: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`) |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
@@ -843,18 +892,11 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 
 ### Global Config Writes
 
-Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). One lock is all the three share: only the diff-panel write is atomic (temp file + rename) and bails on a file it cannot parse, while the two trust writers still rewrite in place and fall back to an empty object on a parse failure. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
+Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). It is one read-modify-write: a temp file renamed over the file, written with the file's own mode, and skipped when the file does not parse as a JSON object. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
 
 ## Session Recovery
 
-On project open (`src/main/transition-engine/session-startup/`):
-
-1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
-2. **Mark crash recovery** -- leftover `running` DB records become `orphaned`
-3. **Deduplicate** -- keep only the latest record per task_id
-4. **Filter candidates** -- skip To Do/Done, skip auto_spawn=false, skip missing CWD. A suspended record in a non-auto-spawn *custom* column still gets a placeholder registered so the renderer keeps offering Resume
-5. **Resume or respawn** -- suspended sessions use `--resume`, others get fresh `--session-id`
-6. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session
+On project open (`src/main/transition-engine/session-startup/`), leftover `running` records become `orphaned`, and the latest record of each `(task_id, isolated_swimlane_id)` session is recovered. A suspended, orphaned or OS-killed record with an `agent_session_id` resumes with `--resume`, and a task in an `auto_spawn` column with no session at all gets a fresh agent. The same pipeline, scoped to the lost sessions, runs after a [pty host](session-lifecycle.md#pty-host) crash. The full sequence, its skips and its task-lock re-checks are in [Crash Recovery](session-lifecycle.md#crash-recovery-session-recovery).
 
 ## Performance
 

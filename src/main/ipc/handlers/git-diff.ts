@@ -192,19 +192,18 @@ export function registerGitDiffHandlers(context: IpcContext): void {
   // ran 640 to 1150ms on the dogfooding instance and the fetch was its dominant
   // step, while the FlyingCard flight it gates is 500ms.
   //
-  // Gated on the SAME per-project setting the background scheduler reads
-  // (`git.autoFetchIntervalMinutes`, null or <= 0 meaning off). A drag is a user
-  // gesture, but it is not a request to reach the network, and a card dragged
-  // between two working columns never goes near the Done probe at all. A user who
-  // turned background fetching off therefore sees no new fetches; their Done drop
-  // still fetches inside the probe exactly as it does today, so the setting costs
-  // them the speed-up and nothing else.
+  // Gated on the SAME per-project switch the background scheduler reads
+  // (`git.autoFetch`). A drag is a user gesture, but it is not a request to reach
+  // the network, and a card dragged between two working columns never goes near
+  // the Done probe at all. A user who turned background fetching off therefore
+  // sees no new fetches; their Done drop still fetches inside the probe exactly as
+  // it does today, so the setting costs them the speed-up and nothing else.
   ipcMain.handle(IPC.GIT_PREFETCH_REMOTES, async (_, checkPath: unknown): Promise<void> => {
     if (typeof checkPath !== 'string' || checkPath.length === 0) return;
-    const intervalMinutes = context.configManager
+    const autoFetch = context.configManager
       .getEffectiveConfig(context.currentProjectPath ?? undefined)
-      .git.autoFetchIntervalMinutes;
-    if (intervalMinutes === null || intervalMinutes <= 0) return;
+      .git.autoFetch;
+    if (autoFetch !== true) return;
     await fetchAllRemotesIfStale(checkPath, { nonInteractive: true });
   });
 

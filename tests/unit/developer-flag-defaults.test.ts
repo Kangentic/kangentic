@@ -80,6 +80,15 @@ describe('defaultDeveloperFlag - recordIpcTraffic', () => {
   });
 });
 
+describe('defaultDeveloperFlag - stallProfiler', () => {
+  it('defaults ON only for a dev build AND ephemeral /preview: a 1 kHz profiler costs CPU while on', () => {
+    expect(defaultDeveloperFlag('stallProfiler', true, true)).toBe(true);
+    expect(defaultDeveloperFlag('stallProfiler', true, false)).toBe(false);
+    expect(defaultDeveloperFlag('stallProfiler', false, true)).toBe(false);
+    expect(defaultDeveloperFlag('stallProfiler', false, false)).toBe(false);
+  });
+});
+
 describe('defaultDeveloperFlag - activityDebugOverlay', () => {
   it('defaults OFF in every combination - it has a visible cost the user must opt into', () => {
     expect(defaultDeveloperFlag('activityDebugOverlay', true, true)).toBe(false);
@@ -97,13 +106,14 @@ describe('defaultDeveloperFlag - full table (pins every key x isDevBuild x isEph
       'recordIpcTraffic',
       'previewInspectionServer',
       'previewEvalEnabled',
+      'stallProfiler',
     ];
     const booleans = [true, false];
 
     const expectedFor = (key: DeveloperFlagKey, isDevBuild: boolean, isEphemeralPreview: boolean): boolean => {
       if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return isDevBuild;
       if (key === 'persistConsoleLogs') return isDevBuild;
-      if (key === 'recordIpcTraffic') return isDevBuild && isEphemeralPreview;
+      if (key === 'recordIpcTraffic' || key === 'stallProfiler') return isDevBuild && isEphemeralPreview;
       return false; // activityDebugOverlay
     };
 

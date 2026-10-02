@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../utility-process/off-main-exec';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -14,7 +13,6 @@ import { readLocalBranchSha } from '../git/worktree-head';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
 
-const execFileAsync = promisify(execFile);
 
 /**
  * When this main process started, as the boundary for the automation-run sweep.

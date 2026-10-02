@@ -26,7 +26,10 @@ interface TaskBranchRowProps {
   defaultBaseBranch: string;
   effectiveWorktree: boolean;
   setUseWorktree: (value: boolean) => void;
-  /** Hide the Worktree | Project control (a task that already has a worktree on disk). */
+  /**
+   * Show the Worktree | Project control. False when the project's Worktrees
+   * switch is off, and for a task that already has a worktree on disk.
+   */
   showWorktree?: boolean;
   /**
    * The project cannot have a worktree at all; the Worktree option renders

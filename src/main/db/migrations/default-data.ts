@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
+import { writeTransaction } from '../transaction';
 
 /**
  * The seeded default board. Exported (not just function-local) so the
@@ -29,7 +30,7 @@ export function seedDefaultSwimlanes(db: Database.Database): void {
   );
   const defaults = DEFAULT_SWIMLANES;
 
-  const tx = db.transaction(() => {
+  const tx = writeTransaction(db, () => {
     const laneIds: string[] = [];
     defaults.forEach((lane, index) => {
       const id = uuidv4();

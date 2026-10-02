@@ -494,15 +494,22 @@ export class TerminalSubmit {
     capMs: number,
     idleMs: number = SETTLE_IDLE_MS,
   ): Promise<void> {
-    await this.sessionManager.drain(sessionId);
-    await waitForOutputSettle(this.sessionManager, sessionId, {
-      event: 'data-tap',
-      idleMs,
-      capMs,
-      floorMs: 0,
-      signal,
-      abortError: () => new Error('aborted'),
-    });
+    // Tapped before the drain, so the pty host is already forwarding this
+    // session's bytes when the write's response comes back.
+    const releaseTap = this.sessionManager.subscribeDataTap(sessionId);
+    try {
+      await this.sessionManager.drain(sessionId);
+      await waitForOutputSettle(this.sessionManager, sessionId, {
+        event: 'data-tap',
+        idleMs,
+        capMs,
+        floorMs: 0,
+        signal,
+        abortError: () => new Error('aborted'),
+      });
+    } finally {
+      releaseTap();
+    }
   }
 
   /**

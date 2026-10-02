@@ -3,8 +3,8 @@ import {
   cleanSummarizeOutput,
   buildSummarizePrompt,
   extractFinalAssistantText,
-  quoteForCmdShell,
 } from '../../src/main/agent/shared/auto-name';
+import { quoteForCmdShell } from '../../src/main/agent/shared/cli-print';
 
 describe('cleanSummarizeOutput', () => {
   it('returns the first non-empty line', () => {

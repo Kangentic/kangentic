@@ -144,7 +144,7 @@ describe('synchronous fs writes are guarded, tried, or marked', () => {
         'src/main/config/board-config/atomic-write.ts',
         'src/main/db/repositories/attachment-repository.ts',
         'src/main/agent/adapters/claude/command-builder.ts',
-        'src/main/agent/adapters/claude/trust-manager.ts',
+        'src/main/agent/adapters/gemini/trust-manager.ts',
         'src/main/transition-engine/session-startup/prepare-spawn.ts',
         'src/main/ipc/handlers/transient-sessions.ts',
         'src/main/transcription/models/download-model.ts',

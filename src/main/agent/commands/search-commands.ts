@@ -6,6 +6,19 @@ import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import type { Task, BacklogTask } from '../../../shared/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import { taskKnowledgeFor } from './task-knowledge-lines';
+
+/** One matched task as the task reads print it. */
+function taskLine(task: Task, column: string): string {
+  const parts = [`"${task.title}" [${column}]`];
+  if (task.branch_name) parts.push(`branch: ${task.branch_name}`);
+  if (task.base_branch) parts.push(`base: ${task.base_branch}`);
+  if (task.worktree_path) parts.push(`worktree: ${task.worktree_path}`);
+  if (task.pr_url) parts.push(`PR: ${task.pr_url}`);
+  else if (task.pr_number) parts.push(`PR #${task.pr_number}`);
+  parts.push(`#${task.display_id}, id: ${task.id}`);
+  return `- ${parts.join(' | ')}`;
+}
 
 export type SearchScope = 'board' | 'backlog' | 'both';
 
@@ -168,10 +181,10 @@ export const handleSearchTasks: CommandHandler = (
   };
 };
 
-export const handleFindTask: CommandHandler = (
+export const handleFindTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const displayId = typeof params.displayId === 'number' ? params.displayId : null;
   const taskId = typeof params.id === 'string' && params.id ? params.id : null;
   const branch = typeof params.branch === 'string' && params.branch ? params.branch : null;
@@ -230,19 +243,17 @@ export const handleFindTask: CommandHandler = (
   const totalHits = taskMatches.length + backlogMatches.length;
   sections.push(`Found ${totalHits} match(es):`);
 
+  const doneLaneIds = new Set(allSwimlanes.filter((swimlane) => swimlane.role === 'done').map((swimlane) => swimlane.id));
+  const knowledge = await taskKnowledgeFor(
+    context.readTaskKnowledge,
+    taskMatches.map((task) => ({ id: task.id, finished: task.archived_at !== null || doneLaneIds.has(task.swimlane_id) })),
+  );
+
   if (taskMatches.length > 0) {
     if (backlogMatches.length > 0) sections.push(`\nBoard (${taskMatches.length}):`);
     const lines = taskMatches.map((task) => {
-      const isArchived = task.archived_at !== null;
-      const column = isArchived ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown');
-      const parts = [`"${task.title}" [${column}]`];
-      if (task.branch_name) parts.push(`branch: ${task.branch_name}`);
-      if (task.base_branch) parts.push(`base: ${task.base_branch}`);
-      if (task.worktree_path) parts.push(`worktree: ${task.worktree_path}`);
-      if (task.pr_url) parts.push(`PR: ${task.pr_url}`);
-      else if (task.pr_number) parts.push(`PR #${task.pr_number}`);
-      parts.push(`#${task.display_id}, id: ${task.id}`);
-      return `- ${parts.join(' | ')}`;
+      const column = task.archived_at !== null ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown');
+      return [taskLine(task, column), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
     });
     sections.push(lines.join('\n'));
   }
@@ -256,6 +267,7 @@ export const handleFindTask: CommandHandler = (
     });
     sections.push(lines.join('\n'));
   }
+  if (knowledge.notes.length > 0) sections.push(knowledge.notes.join('\n'));
 
   return {
     success: true,
@@ -274,6 +286,7 @@ export const handleFindTask: CommandHandler = (
         prUrl: task.pr_url,
         useWorktree: task.use_worktree,
         status: task.archived_at ? 'completed' : 'active',
+        knowledge: knowledge.knowledgeByTask.get(task.id) ?? null,
       })),
       backlog: backlogMatches.map((item) => ({
         id: item.id,
@@ -289,10 +302,10 @@ export const handleFindTask: CommandHandler = (
 
 const normalizePath = (value: string): string => value.replace(/\\/g, '/').toLowerCase();
 
-export const handleGetCurrentTask: CommandHandler = (
+export const handleGetCurrentTask: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): Promise<CommandResponse> => {
   const cwdRaw = typeof params.cwd === 'string' && params.cwd ? params.cwd : null;
   const branchRaw = typeof params.branch === 'string' && params.branch ? params.branch : null;
 
@@ -365,18 +378,31 @@ export const handleGetCurrentTask: CommandHandler = (
     };
   }
 
+  // The agent reads the message, never `data`, so everything it needs is in the
+  // text: the same task line find_task prints, then the Knowledge Graph's lines.
+  const doneLaneIds = new Set(allSwimlanes.filter((swimlane) => swimlane.role === 'done').map((swimlane) => swimlane.id));
+  const knowledge = await taskKnowledgeFor(
+    context.readTaskKnowledge,
+    matches.map((task) => ({ id: task.id, finished: task.archived_at !== null || doneLaneIds.has(task.swimlane_id) })),
+  );
+  const columnOf = (task: Task): string => (task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'));
+  const blockOf = (task: Task): string =>
+    [taskLine(task, columnOf(task)), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+  const withKnowledge = (task: Task) => ({ ...toData(task), knowledge: knowledge.knowledgeByTask.get(task.id) ?? null });
+  const notes = knowledge.notes.length > 0 ? `\n${knowledge.notes.join('\n')}` : '';
+
   if (matches.length === 1) {
     const task = matches[0];
     return {
       success: true,
-      message: `Current task: #${task.display_id} "${task.title}" [${task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown')}]`,
-      data: toData(task),
+      message: `Current task:\n${blockOf(task)}${notes}`,
+      data: withKnowledge(task),
     };
   }
 
   return {
     success: true,
-    message: `Ambiguous: ${matches.length} tasks match the current context. Disambiguate with displayId.`,
-    data: matches.map(toData),
+    message: `Ambiguous: ${matches.length} tasks match the current context. Disambiguate with displayId.\n${matches.map(blockOf).join('\n')}${notes}`,
+    data: matches.map(withKnowledge),
   };
 };

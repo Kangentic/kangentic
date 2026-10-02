@@ -13,12 +13,9 @@
  *   `gemini-3.1-pro-high\tGemini 3.1 Pro (High)`.
  */
 
-import { exec, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import type { AgentCapabilities } from '../../../../shared/types';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 const HELP_TIMEOUT_MS = 5000;
 const MODELS_TIMEOUT_MS = 10000;

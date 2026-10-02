@@ -95,9 +95,10 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
   `src/main/**/*.ts` and fails on any `utilityProcess.fork` call that does not pass
   `stdio: UTILITY_PROCESS_STDIO`, so a new call site cannot inline its own literal and drift. This
   one has to be a static assertion rather than a running app, because no tier can reach the bug:
-  CI never packages, and every tier (including E2E's `_electron.launch()`) starts the app from a
-  terminal, which hands it the valid stdout handle that hides it. Both tests ride the unit tier, so
-  CI still runs them as a PR check.
+  every tier (including E2E's `_electron.launch()`) starts the app from a terminal, and the one
+  workflow that runs a packaged build (`package-smoke.yml`) redirects its output to a file, so each
+  hands the app the valid stdout handle that hides it. Both tests ride the unit tier, so CI still
+  runs them as a PR check.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
   (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes and

@@ -7,7 +7,7 @@ import { unpacked } from '../../utility-process/paths';
 import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES, readProcessCommitBytes } from '../../utility-process/commit-ceiling';
 import type { Embedder } from '../types';
 import type { EmbeddingModelDef } from './embedding-config';
-import type { MemoryAcceleration } from '../../../shared/types';
+import type { KnowledgeGraphAcceleration } from '../../../shared/types';
 
 /** Max queued embed requests before new ones resolve null (backpressure). */
 const QUEUE_CAP = 64;
@@ -42,7 +42,7 @@ const SERVICE_NAME = 'kangentic-embeddings';
  * cross-platform GPU fallback elsewhere.
  */
 export function resolveDeviceChain(
-  acceleration: MemoryAcceleration,
+  acceleration: KnowledgeGraphAcceleration,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
   if (acceleration === 'cpu') return ['cpu'];
@@ -78,7 +78,7 @@ export class EmbedClient implements Embedder {
 
   constructor(
     private readonly model: EmbeddingModelDef,
-    acceleration: MemoryAcceleration = 'auto',
+    acceleration: KnowledgeGraphAcceleration = 'auto',
     restartPolicy?: UtilityRestartPolicy,
     options?: { readCommitBytes?: (pid: number) => number | null },
   ) {
@@ -122,7 +122,7 @@ export class EmbedClient implements Embedder {
     return this.restartPolicy.exhausted;
   }
 
-  /** Why the worker is off, for the Memory tab: the newest crash's exit code
+  /** Why the worker is off, for the Knowledge Graph tab: the newest crash's exit code
    *  and first error line. Null while nothing has crashed in the window. */
   get crashReason(): string | null {
     return this.restartPolicy.lastCrashDescription;
@@ -152,8 +152,8 @@ export class EmbedClient implements Embedder {
       // A background batch waits out a cold start however long it takes. An
       // interactive query spends its own budget on it and then degrades to
       // lexical, while the init it started carries on for the next query to
-      // join: Quick Find on a released worker keeps answering keystrokes
-      // instead of stalling for the model load.
+      // join: a question on a released worker still gets an answer instead of
+      // stalling for the model load.
       const ready = background ? await this.ensureReady() : await this.readyWithin(timeoutMs);
       if (!ready || this.disposed) return null;
 
@@ -172,7 +172,7 @@ export class EmbedClient implements Embedder {
   }
 
   /** Spawn and initialize the worker ahead of a query, embedding nothing.
-   *  Fired from the Quick Find open: the typing that follows is the free
+   *  Fired from the Knowledge Graph open: the typing that follows is the free
    *  window for the cold start. Shares `ensureReady()`'s memo with the query
    *  path, so it is never a second load; the ready settle arms the idle timer. */
   async prewarm(): Promise<void> {

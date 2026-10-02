@@ -10,7 +10,8 @@ import type {
   SearchHit,
   Project,
 } from '../../shared/types';
-import { searchConversationMemory, type TranscriptSearchHit } from '../retrieval/memory-search';
+import type { TranscriptSearchHit } from '../retrieval/memory-search';
+import type { ConversationSearchRequest } from '../retrieval/retrieval-queries';
 import type { Embedder } from '../retrieval/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../shared/ticket-query';
 
@@ -52,7 +53,7 @@ export function toConversationSearchHit(
 //     readline. Async; we run all projects' event scans concurrently via
 //     Promise.all so cross-project I/O overlaps.
 //
-// The RAW `session_transcripts` scrollback blob (written by TranscriptWriter)
+// The RAW scrollback (`session_transcript_chunks`, written by TranscriptWriter)
 // is still NOT searched: for TUI agents like Claude Code it is mostly
 // inline-redraw frames (cursor positioning + screen clears), so it produces
 // duplicate hits and noisy snippets. Instead, the STRUCTURED transcript
@@ -468,7 +469,7 @@ export interface SearchEverythingInput {
    * Conversation-memory (structured transcript) search. Omitted or
    * `enabled: false` skips it entirely - existing callers and tests are
    * unaffected. The IPC handler and MCP tool set `enabled` from
-   * `memory.indexingEnabled`. `embedder` enables the semantic/hybrid path;
+   * `knowledgeGraph.indexingEnabled`. `embedder` enables the semantic/hybrid path;
    * absent = lexical-only. `embedWaitMs` is the query-embed budget: the palette
    * uses a short one (latency-sensitive), the MCP tool a generous one.
    */
@@ -478,6 +479,9 @@ export interface SearchEverythingInput {
     embedWaitMs?: number;
     /** Restrict conversation hits to one task's history (internal id). */
     taskId?: string;
+    /** Runs the search: `searchConversations` (the retrieval worker) in the
+     *  app, the in-process search over a test database in tests. */
+    search: (request: ConversationSearchRequest) => Promise<TranscriptSearchHit[]>;
   };
 }
 
@@ -577,12 +581,11 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
   const conversationScan = (async () => {
     if (!input.conversationSearch?.enabled) return;
     try {
-      const conversationHits = await searchConversationMemory({
+      const conversationHits = await input.conversationSearch.search({
         query,
         projects: input.projects,
         k: budget.conversation,
         embedWaitMs: input.conversationSearch.embedWaitMs ?? 400,
-        getDb,
         embedder: input.conversationSearch.embedder ?? null,
         taskId: input.conversationSearch.taskId,
       });

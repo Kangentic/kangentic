@@ -5,6 +5,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { captureSessionMetrics } from './session-metrics';
 import type { SessionManager } from '../../pty/session-manager';
 import type { Session } from '../../../shared/types';
+import { writeTransaction } from '../../db/transaction';
 
 /**
  * Crash-resilience snapshot interval. Session metrics otherwise persist only at
@@ -68,7 +69,7 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
       const db = getProjectDb(projectId);
       const sessionRepo = new SessionRepository(db);
       const usageHistoryRepo = new UsageHistoryRepository(db);
-      const snapshotProjectBatch = db.transaction(() => {
+      const snapshotProjectBatch = writeTransaction(db, () => {
         for (const session of sessions) {
           try {
             const record = sessionRepo.getLatestForTask(session.taskId);

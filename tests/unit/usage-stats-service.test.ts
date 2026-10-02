@@ -383,9 +383,9 @@ function makeService(projects: FakeProject[], nowMs = Date.now()) {
 }
 
 describe('usage-stats service: cutoffs and payload shape', () => {
-  it('passes the ISO cutoff to usage aggregates and the epoch-ms cutoff to turn groups', () => {
+  it('passes the ISO cutoff to usage aggregates and the epoch-ms cutoff to turn groups', async () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals');
     const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
@@ -396,17 +396,17 @@ describe('usage-stats service: cutoffs and payload shape', () => {
     expect(groupCall?.groupMs).toBe(COST_GROUP_MS);
   });
 
-  it('groups turns on the 5-minute grid ONLY for Live (its chart buckets sit on that grid)', () => {
+  it('groups turns on the 5-minute grid ONLY for Live (its chart buckets sit on that grid)', async () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
 
     const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
     expect(groupCall?.groupMs).toBe(TURN_GROUP_MS);
   });
 
-  it('passes the SAME usage window to the turn-group cost allocation (a session outside it allocates $0)', () => {
+  it('passes the SAME usage window to the turn-group cost allocation (a session outside it allocates $0)', async () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals');
     const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
@@ -414,18 +414,18 @@ describe('usage-stats service: cutoffs and payload shape', () => {
     expect(groupCall?.costUntilIso).toBe(totalsCall?.untilIso ?? null);
   });
 
-  it('requests cost groups on the 15-minute grid', () => {
+  it('requests cost groups on the 15-minute grid', async () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     const costGroupCall = readerCalls.find((call) => call.method === 'listUsageCostGroups');
     expect(costGroupCall?.groupMs).toBe(COST_GROUP_MS);
   });
 
-  it('live scopes both reads to the trailing window and returns an empty cost series', () => {
+  it('live scopes both reads to the trailing window and returns an empty cost series', async () => {
     const nowMs = Date.now();
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }], nowMs);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'live');
 
     const groupCall = readerCalls.find((call) => call.method === 'listTurnGroups');
     expect(groupCall?.sinceMs).toBe(Math.floor((nowMs - LIVE_WINDOW_MS) / TURN_GROUP_MS) * TURN_GROUP_MS);
@@ -434,11 +434,11 @@ describe('usage-stats service: cutoffs and payload shape', () => {
     expect(stats.generatedAtMs).toBe(nowMs);
   });
 
-  it('project scope carries no perProject/skippedProjects; series are dense', () => {
+  it('project scope carries no perProject/skippedProjects; series are dense', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow()], groups: [makeGroup()] },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.perProject).toBeUndefined();
     expect(stats.skippedProjects).toBeUndefined();
@@ -452,12 +452,12 @@ describe('usage-stats service: cutoffs and payload shape', () => {
 });
 
 describe('usage-stats service: app-wide rollup', () => {
-  it('NEVER opens a project whose DB file does not exist (getProjectDb would create it)', () => {
+  it('NEVER opens a project whose DB file does not exist (getProjectDb would create it)', async () => {
     const { service, openReader } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow()] },
       { id: 'p2', name: 'Never Opened', exists: false },
     ]);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
 
     expect(openReader).toHaveBeenCalledTimes(1);
     expect(openReader).toHaveBeenCalledWith('p1');
@@ -466,14 +466,14 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.perProject).toHaveLength(1);
   });
 
-  it('a project whose read throws lands in skippedProjects instead of failing the payload', () => {
+  it('a project whose read throws lands in skippedProjects instead of failing the payload', async () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const { service } = makeService([
         { id: 'p1', name: 'Good', rows: [makeRow()] },
         { id: 'p2', name: 'Corrupt', throws: true },
       ]);
-      const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+      const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
 
       expect(stats.skippedProjects).toEqual([{ projectId: 'p2', projectName: 'Corrupt' }]);
       expect(stats.perProject).toHaveLength(1);
@@ -483,7 +483,7 @@ describe('usage-stats service: app-wide rollup', () => {
     }
   });
 
-  it('merges every project before one global fold: KPIs sum, breakdowns merge', () => {
+  it('merges every project before one global fold: KPIs sum, breakdowns merge', async () => {
     const { service } = makeService([
       {
         id: 'p1',
@@ -498,7 +498,7 @@ describe('usage-stats service: app-wide rollup', () => {
         groups: [makeGroup({ sessionId: 'b' })],
       },
     ]);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
 
     expect(stats.kpis.totalCostUsd).toBe(5);
     expect(stats.kpis.sessionCount).toBe(2);
@@ -511,7 +511,7 @@ describe('usage-stats service: app-wide rollup', () => {
     ]);
   });
 
-  it('sums filesChanged into each perProject summary (previously dropped)', () => {
+  it('sums filesChanged into each perProject summary (previously dropped)', async () => {
     const { service } = makeService([
       {
         id: 'p1',
@@ -522,12 +522,12 @@ describe('usage-stats service: app-wide rollup', () => {
         ],
       },
     ]);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
 
     expect(stats.perProject?.[0]).toEqual(expect.objectContaining({ filesChanged: 5 }));
   });
 
-  it('perProject tokens come from the TURN ledger (not the usage_history snapshot columns), and active time is PER PROJECT', () => {
+  it('perProject tokens come from the TURN ledger (not the usage_history snapshot columns), and active time is PER PROJECT', async () => {
     // summarizeProject switched from totals.totalInputTokens/totalOutputTokens
     // (usage_history's context-window snapshot columns) to a fold over this
     // project's own turnGroups. makeRow's defaults (100/40) and makeGroup's
@@ -552,7 +552,7 @@ describe('usage-stats service: app-wide rollup', () => {
         activeTotals: { activeMs: 900_000, sessionsCovered: 5 },
       },
     ]);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'today');
 
     const p1 = stats.perProject!.find((project) => project.projectId === 'p1')!;
     const p2 = stats.perProject!.find((project) => project.projectId === 'p2')!;
@@ -566,7 +566,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(p2.activeSessionsCovered).toBe(5);
   });
 
-  it("All Time buckets adapt to the data span: a two-week history renders DAILY, not three weekly bars", () => {
+  it("All Time buckets adapt to the data span: a two-week history renders DAILY, not three weekly bars", async () => {
     const nowMs = Date.now();
     const dayMs = 24 * 3_600_000;
     const { service } = makeService([
@@ -579,7 +579,7 @@ describe('usage-stats service: app-wide rollup', () => {
         ],
       },
     ], nowMs);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all');
 
     expect(stats.costBucketSizeMs).toBe(dayMs);
     expect(stats.bucketSizeMs).toBe(dayMs);
@@ -588,7 +588,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.costSeries.length).toBeLessThanOrEqual(16);
   });
 
-  it('burn rate divides by the REPORTED (bucket-aligned) range start, matching the returned rangeStartMs', () => {
+  it('burn rate divides by the REPORTED (bucket-aligned) range start, matching the returned rangeStartMs', async () => {
     // 'all' period with a session that does NOT start at local midnight, so
     // the bucket-aligned start the payload REPORTS (stats.rangeStartMs) sits
     // strictly earlier than the raw session-start-derived range start.
@@ -609,7 +609,7 @@ describe('usage-stats service: app-wide rollup', () => {
       },
     ], nowMs);
 
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all');
 
     // The vacuity guard: prove the two really differ before trusting the
     // reproduction check below.
@@ -618,7 +618,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.kpis.burnRateUsdPerHour! * hours).toBeCloseTo(stats.kpis.totalCostUsd, 6);
   });
 
-  it('a day drill bounds BOTH reads to the local day and re-scopes the range at hourly granularity', () => {
+  it('a day drill bounds BOTH reads to the local day and re-scopes the range at hourly granularity', async () => {
     const nowMs = Date.now();
     const dayMs = 24 * 3_600_000;
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One' }], nowMs);
@@ -627,7 +627,7 @@ describe('usage-stats service: app-wide rollup', () => {
     const target = new Date(nowMs - 3 * dayMs);
     const dayStartMs = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
     const dayEndMs = new Date(target.getFullYear(), target.getMonth(), target.getDate() + 1).getTime();
-    const stats = service.getDashboardStats(
+    const stats = await service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'all',
       { dayStartMs: dayStartMs + 5 * 3_600_000 },
@@ -654,9 +654,9 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(previousDayCall?.untilIso).toBe(new Date(dayStartMs).toISOString());
   });
 
-  it('the previous window reads KPI inputs only (previousKpis has no breakdowns or series)', () => {
+  it('the previous window reads KPI inputs only (previousKpis has no breakdowns or series)', async () => {
     const { service, readerCalls } = makeService([{ id: 'p1', name: 'One', rows: [makeRow()] }]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     const currentSinceIso = computePeriodCutoff('today');
     // Of the ISO-windowed reads, only the usage_history totals repeat for the
@@ -670,7 +670,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(previousGroupCalls).toHaveLength(1);
   });
 
-  it('reads subagent totals for the PREVIOUS window too, so its KPI fields are not zero', () => {
+  it('reads subagent totals for the PREVIOUS window too, so its KPI fields are not zero', async () => {
     // Regression guard: every subagent* field lives on UsageKpis, which is also
     // the shape of previousKpis. Wiring the new read into the current-window
     // branch alone leaves them 0 there, and the tiles diff against
@@ -699,7 +699,7 @@ describe('usage-stats service: app-wide rollup', () => {
       ],
     }]);
 
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.kpis.subagentInputTokens).toBe(300);
     expect(stats.kpis.subagentOutputTokens).toBe(120);
@@ -712,7 +712,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(readerCalls.filter((call) => call.method === 'listSubagentTotals')).toHaveLength(2);
   });
 
-  it('reads active-time totals for the PREVIOUS window too, so Avg Active is not zeroed out', () => {
+  it('reads active-time totals for the PREVIOUS window too, so Avg Active is not zeroed out', async () => {
     // Same regression shape as the subagent test above, one field over: the
     // service accumulates previousActiveMsTotal/previousActiveSessionsCovered
     // in the `if (previousWindow)` branch, and a dropped read there leaves
@@ -739,7 +739,7 @@ describe('usage-stats service: app-wide rollup', () => {
       ],
     }]);
 
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.kpis.activeMs).toBe(600_000);
     expect(stats.kpis.activeSessionsCovered).toBe(1);
@@ -750,7 +750,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(readerCalls.filter((call) => call.method === 'getActiveTotals')).toHaveLength(2);
   });
 
-  it('keeps subagent tokens OUT of the main-thread KPI fields and series', () => {
+  it('keeps subagent tokens OUT of the main-thread KPI fields and series', async () => {
     const nowMs = Date.now();
     const { service } = makeService([{
       id: 'p1',
@@ -763,7 +763,7 @@ describe('usage-stats service: app-wide rollup', () => {
       ],
     }]);
 
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     // The four turn fields and the token series are the MAIN THREAD, which is
     // what makes them comparable back through the whole history.
@@ -779,7 +779,7 @@ describe('usage-stats service: app-wide rollup', () => {
     ]);
   });
 
-  it('merges one subagent type across projects in an app-wide rollup', () => {
+  it('merges one subagent type across projects in an app-wide rollup', async () => {
     const nowMs = Date.now();
     const { service } = makeService([
       {
@@ -801,7 +801,7 @@ describe('usage-stats service: app-wide rollup', () => {
       },
     ]);
 
-    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'today');
 
     // SQL groups within one project DB, so the same type arrives once per
     // project and has to be merged here. Heaviest cache read leads.
@@ -814,7 +814,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.kpis.subagentCount).toBe(4);
   });
 
-  it('a custom month window bounds both reads, buckets daily, and compares against the preceding same-length window', () => {
+  it('a custom month window bounds both reads, buckets daily, and compares against the preceding same-length window', async () => {
     const nowMs = new Date(2026, 6, 10, 12).getTime();
     const sinceMs = new Date(2026, 3, 1).getTime();
     const untilMs = new Date(2026, 5, 1).getTime();
@@ -822,7 +822,7 @@ describe('usage-stats service: app-wide rollup', () => {
       [{ id: 'p1', name: 'One', rows: [makeRow({ sessionStartedAt: new Date(2026, 3, 10).toISOString() })] }],
       nowMs,
     );
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'month', null, { sinceMs, untilMs });
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'month', null, { sinceMs, untilMs });
 
     // Current-window reads carry the window's bounds.
     const totalsCall = readerCalls.find((call) => call.method === 'getUsageTotals' && call.sinceIso === new Date(sinceMs).toISOString());
@@ -842,16 +842,16 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.previousKpis).not.toBeNull();
   });
 
-  it('ships previousKpis for bounded periods and null for All Time', () => {
+  it('ships previousKpis for bounded periods and null for All Time', async () => {
     const { service } = makeService([{ id: 'p1', name: 'One', rows: [makeRow()] }]);
-    expect(service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'week').previousKpis).not.toBeNull();
-    expect(service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all').previousKpis).toBeNull();
+    expect((await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'week')).previousKpis).not.toBeNull();
+    expect((await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'all')).previousKpis).toBeNull();
   });
 
-  it('returns an all-zero payload when no project has data', () => {
+  it('returns an all-zero payload when no project has data', async () => {
     const nowMs = Date.now();
     const { service } = makeService([{ id: 'p1', name: 'One' }], nowMs);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'all');
 
     expect(stats.kpis.totalTokens).toBe(0);
     expect(stats.kpis.burnRateTokensPerHour).toBeNull();
@@ -860,7 +860,7 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.byEffort).toEqual([]);
   });
 
-  it('stats.earliestTurnMs is the MIN across projects, skipping a project with none', () => {
+  it('stats.earliestTurnMs is the MIN across projects, skipping a project with none', async () => {
     // p1 is processed FIRST and carries the LARGER value (5000); p2 is
     // processed SECOND and carries the SMALLER one (2000). That ascending
     // fixture-vs-processing order is what discriminates a correct `<` from an
@@ -873,16 +873,16 @@ describe('usage-stats service: app-wide rollup', () => {
       // minimum with null.
       { id: 'p3', name: 'Three', rows: [makeRow({ sessionRecordId: 'c' })], earliestTurnMs: null },
     ]);
-    const stats = service.getDashboardStats({ kind: 'all' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'all' }, 'today');
 
     expect(stats.earliestTurnMs).toBe(2000);
   });
 
-  it('stats.earliestTurnMs is null when no scoped project has any turn data', () => {
+  it('stats.earliestTurnMs is null when no scoped project has any turn data', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow()], earliestTurnMs: null },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.earliestTurnMs).toBeNull();
   });
@@ -890,7 +890,7 @@ describe('usage-stats service: app-wide rollup', () => {
 
 describe('usage-stats service: subagentBlindAgents', () => {
   // Mirrors the fake reader's own capability stub above: only 'claude' reports.
-  it('names the agent that ran but cannot report subagent usage, excludes the reporting agent, and drops a null agent', () => {
+  it('names the agent that ran but cannot report subagent usage, excludes the reporting agent, and drops a null agent', async () => {
     const { service } = makeService([
       {
         id: 'p1',
@@ -902,12 +902,12 @@ describe('usage-stats service: subagentBlindAgents', () => {
         ],
       },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.subagentBlindAgents).toEqual(['codex']);
   });
 
-  it('sorts and dedups several non-reporting agents even when multiple sessions share one', () => {
+  it('sorts and dedups several non-reporting agents even when multiple sessions share one', async () => {
     const { service } = makeService([
       {
         id: 'p1',
@@ -920,7 +920,7 @@ describe('usage-stats service: subagentBlindAgents', () => {
         ],
       },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.subagentBlindAgents).toEqual(['codex', 'gemini']);
   });
@@ -935,11 +935,11 @@ describe('usage-stats service: live session count overlay', () => {
   // round-trip, required for instant reactivity) - merging them here too
   // would double-count against that client-side overlay.
 
-  it('adds a live session (different id) to sessionCount, without touching cost/tokens', () => {
+  it('adds a live session (different id) to sessionCount, without touching cost/tokens', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalInputTokens: 100, totalOutputTokens: 40, totalCostUsd: 1 })] },
     ]);
-    const stats = service.getDashboardStats(
+    const stats = await service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'today',
       null,
@@ -953,11 +953,11 @@ describe('usage-stats service: live session count overlay', () => {
     expect(stats.kpis.totalCostUsd).toBe(1);
   });
 
-  it('does NOT double-count a live session already snapshotted into the ledger for the same id', () => {
+  it('does NOT double-count a live session already snapshotted into the ledger for the same id', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id' })] },
     ]);
-    const stats = service.getDashboardStats(
+    const stats = await service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'today',
       null,
@@ -968,11 +968,11 @@ describe('usage-stats service: live session count overlay', () => {
     expect(stats.kpis.sessionCount).toBe(1);
   });
 
-  it('dedups against the ledger via the windowed COUNT, not an unbounded one', () => {
+  it('dedups against the ledger via the windowed COUNT, not an unbounded one', async () => {
     const { service, readerCalls } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id' })] },
     ]);
-    service.getDashboardStats(
+    await service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'today',
       null,
@@ -985,16 +985,16 @@ describe('usage-stats service: live session count overlay', () => {
     expect(dedupCall?.sinceIso).toBe(computePeriodCutoff('today'));
   });
 
-  it('skips the dedup query entirely when a project has no live sessions', () => {
+  it('skips the dedup query entirely when a project has no live sessions', async () => {
     const { service, readerCalls } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow()] },
     ]);
-    service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(readerCalls.some((call) => call.method === 'countSessionsRepresented')).toBe(false);
   });
 
-  it('sums liveLedgerBaseline.costUsd across live sessions in DIFFERENT projects, windowed', () => {
+  it('sums liveLedgerBaseline.costUsd across live sessions in DIFFERENT projects, windowed', async () => {
     // The `+=` accumulator is load-bearing: two projects each contribute a
     // live session already snapshotted into their own project's ledger, and
     // the total has to be the SUM (8), not the last project's value alone (5)
@@ -1005,7 +1005,7 @@ describe('usage-stats service: live session count overlay', () => {
       // No live session here at all - the sum query must not even run.
       { id: 'p3', name: 'Three', rows: [] },
     ]);
-    const stats = service.getDashboardStats(
+    const stats = await service.getDashboardStats(
       { kind: 'all' },
       'today',
       null,
@@ -1020,22 +1020,22 @@ describe('usage-stats service: live session count overlay', () => {
     expect(readerCalls.some((call) => call.projectId === 'p3' && call.method === 'sumSessionsRepresented')).toBe(false);
   });
 
-  it('leaves liveLedgerBaseline at zero when no live session is in scope', () => {
+  it('leaves liveLedgerBaseline at zero when no live session is in scope', async () => {
     const { service, readerCalls } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalCostUsd: 9 })] },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.liveLedgerBaseline).toEqual({ costUsd: 0 });
     expect(readerCalls.some((call) => call.method === 'sumSessionsRepresented')).toBe(false);
   });
 
-  it('scopes live sessions to the matching project in an app-wide rollup, and rolls up into the headline count', () => {
+  it('scopes live sessions to the matching project in an app-wide rollup, and rolls up into the headline count', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [] },
       { id: 'p2', name: 'Two', rows: [] },
     ]);
-    const stats = service.getDashboardStats(
+    const stats = await service.getDashboardStats(
       { kind: 'all' },
       'today',
       null,
@@ -1050,11 +1050,11 @@ describe('usage-stats service: live session count overlay', () => {
     expect(stats.kpis.sessionCount).toBe(1);
   });
 
-  it('defaults to no live overlay when liveSessions is omitted (MCP command handler call shape)', () => {
+  it('defaults to no live overlay when liveSessions is omitted (MCP command handler call shape)', async () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1' })] },
     ]);
-    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+    const stats = await service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
 
     expect(stats.kpis.sessionCount).toBe(1);
   });

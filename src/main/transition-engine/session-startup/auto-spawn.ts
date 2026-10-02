@@ -7,12 +7,22 @@ import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
+import { isAbortError } from '../../../shared/abort-utils';
 import { isShuttingDown } from '../../shutdown-state';
+import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
+
+/** What the pty host's crash took down, for a scoped pass (`lostScope`). */
+export interface LostSessionScope {
+  /** The tasks of the lost sessions: only these start. */
+  taskIds: ReadonlySet<string>;
+  /** The lost sessions themselves, whose rows stay in the registry, exited. */
+  lostSessionIds: ReadonlySet<string>;
+}
 
 /**
  * Enforce the auto-spawn invariant on project open: find tasks in
@@ -39,8 +49,25 @@ export async function autoSpawnTasks(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task spawns on its own rung for this column. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
+  /**
+   * Start the crash's lost tasks and nothing else: the pty host's crash path,
+   * mid-run, for the tasks whose lost session could not be resumed (it had no
+   * agent session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`:
+   * an unscoped pass would also wake a task whose agent exited earlier this
+   * run. Startup omits it.
+   */
+  lostScope?: LostSessionScope,
 ): Promise<void> {
   if (isShuttingDown()) return;
+  if (lostScope && lostScope.taskIds.size === 0) return;
+  // The lost rows stay in the registry, exited, so in a scoped pass every row
+  // but those counts as the task having a session: a resumed session, a paused
+  // placeholder that must keep its Resume, and a resume whose spawn failed (an
+  // exited row of its own), which a fresh agent must not replace.
+  const hasSession = lostScope
+    ? (taskId: string): boolean => sessionManager.listSessions()
+      .some((session) => session.taskId === taskId && !lostScope.lostSessionIds.has(session.id))
+    : (taskId: string): boolean => sessionManager.hasSessionForTask(taskId);
 
   const done = startStartupTimer('autoSpawnTasks', projectId, 'spawned');
   const db = getProjectDb(projectId);
@@ -93,7 +120,8 @@ export async function autoSpawnTasks(
   const candidates: Array<{ lane: Swimlane; task: Task }> = [];
   for (const lane of lanesToScan) {
     for (const task of taskRepo.list(lane.id)) {
-      if (sessionManager.hasSessionForTask(task.id)) continue;
+      if (lostScope && !lostScope.taskIds.has(task.id)) continue;
+      if (hasSession(task.id)) continue;
       const laneForTask = applyProfileToLane(
         lane,
         findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id }),
@@ -129,7 +157,7 @@ export async function autoSpawnTasks(
     // 'system'-suspended records when autoResumeSessionsOnRestart=false;
     // in either case the user must explicitly Resume - don't auto-spawn over
     // the placeholder and clobber the resumable record's agent_session_id.
-    if (sessionManager.hasSessionForTask(task.id)) continue;
+    if (hasSession(task.id)) continue;
 
     // Safety net: register a placeholder for user-paused records that
     // somehow weren't registered by resumeSuspendedSessions (e.g. the
@@ -198,8 +226,38 @@ export async function autoSpawnTasks(
     return;
   }
 
+  // Each spawn and its DB writes run under the task's lifecycle lock, after a
+  // re-check: the preparation above awaited the shell and every agent's
+  // detection, and a move, a Resume or a reset that took the task in that time
+  // owns it now. Without the lock this pass spawned into a task the user had
+  // just moved, To Do included. A reset shows as a changed `session_id`, which
+  // it clears. A skipped task keeps what its preparation wrote: the session
+  // directory, which the next launch's orphan cleanup removes, and anything the
+  // adapter's command builder wrote for that run (Gemini's hooks file in the
+  // worktree), which stays until a later session of the task ends.
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map(async (input) => {
+    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+      const current = taskRepo.getById(input.task.id);
+      if (
+        !current
+        || current.swimlane_id !== input.task.swimlane_id
+        || current.session_id !== input.task.session_id
+        // A move to To Do and back inside the preparation leaves the column as
+        // it was, but its cleanup removed the worktree the agent was prepared
+        // in, and the move back may still be making it again (its own spawn
+        // follows when it has).
+        || (current.worktree_path || projectPath) !== input.cwd
+        || !fs.existsSync(input.cwd)
+        || hasSession(input.task.id)
+      ) {
+        // Logged, so a task this pass left without an agent leaves a trace.
+        console.log(`[AUTO_SPAWN] Skipped task ${input.task.id}: it changed while its spawn was prepared`);
+        return null;
+      }
+      // Stamped inside the lock, so a record another holder wrote while this
+      // one waited never sorts after the one written here.
+      const now = new Date().toISOString();
+
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,
         taskId: input.task.id,
@@ -215,17 +273,6 @@ export async function autoSpawnTasks(
         isolatedSwimlaneId: input.isolatedSwimlaneId,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
-      return { input, newSession };
-    }),
-  );
-
-  // --- DB update pass (sequential): process results ---
-  let spawned = 0;
-  const now = new Date().toISOString();
-  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
-    const result = spawnResults[resultIndex];
-    if (result.status === 'fulfilled') {
-      const { input, newSession } = result.value;
 
       taskRepo.update({
         id: input.task.id,
@@ -256,11 +303,24 @@ export async function autoSpawnTasks(
         model: input.appliedModel,
         effort: input.appliedEffort,
       });
+      return newSession;
+    })),
+  );
 
-      spawned++;
+  let spawned = 0;
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      if (result.value) spawned++;
     } else {
       const input = spawnInputs[resultIndex];
-      console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);
+      if (isAbortError(result.reason)) {
+        // A teardown (a move, a reset, a project close) ended the session while
+        // it spawned: the canceller took the task over, not a failure.
+        console.log(`[AUTO_SPAWN] Spawn cancelled for task ${input.task.id}: the session was ended while it spawned`);
+      } else {
+        console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);
+      }
     }
   }
 

@@ -101,6 +101,7 @@ vi.mock('../../src/main/activity-engine/trace-recorder', () => ({
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
+import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 
 // ---- Helpers ----
 
@@ -108,12 +109,8 @@ function makeContext(): SpawnFlowContext {
   const registry = new SessionRegistry();
   return {
     registry,
-    bufferManager: {
-      getRawScrollback: vi.fn(() => ''),
-      removeSession: vi.fn(),
-      initSession: vi.fn(),
-      onData: vi.fn(),
-    },
+    host: new PtyHostClient(new InProcessPtyHostTransport({ resolveAgent: () => undefined, transcriptSinkFor: () => null })),
+    setBufferCols: vi.fn(),
     telemetry: {
       removeSession: vi.fn(),
       initSession: vi.fn(),
@@ -140,9 +137,6 @@ function makeContext(): SpawnFlowContext {
       removeSession: vi.fn(),
       detachOnPtyExit: vi.fn(),
     },
-    resizeManager: {
-      shouldNotifyOnData: vi.fn(() => false),
-    },
     statusFileReader: {
       attach: vi.fn(),
       flushPendingEvents: vi.fn(),
@@ -156,7 +150,6 @@ function makeContext(): SpawnFlowContext {
     firstOutputTracker: {
       removeSession: vi.fn(),
     },
-    getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
     emit: vi.fn(),

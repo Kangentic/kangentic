@@ -1,14 +1,16 @@
 import React from 'react';
-import { ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { Brain, ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUpdaterStore } from '../../stores/updater-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { useMonitorStore } from '../../stores/monitor-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useAnnouncementsStore, selectUnreadAnnouncementCount } from '../../stores/announcements-store';
 import { CountBadge } from '../CountBadge';
 import { warmStatsDashboard } from '../stats/LazyStatsDashboard';
+import { warmKnowledgeGraph } from '../knowledge-graph/LazyKnowledgeGraph';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
 import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
@@ -62,6 +64,7 @@ export function TitleBar({
   const settingsCombo = useFormattedCombo('settings.toggle');
   const statsCombo = useFormattedCombo('stats.toggle');
   const monitorCombo = useFormattedCombo('monitor.toggle');
+  const knowledgeGraphCombo = useFormattedCombo('knowledgeGraph.toggle');
 
   // Store-direct like the Settings gear (statsOpen is dashboard-store state).
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
@@ -83,6 +86,17 @@ export function TitleBar({
   // Like stats: when detached, this button focuses that window rather than
   // toggling the (suppressed) in-app overlay.
   const monitorPopOut = usePopOut('monitor', {});
+
+  const knowledgeGraphOpen = useKnowledgeGraphStore((state) => state.graphOpen);
+  const toggleKnowledgeGraph = useKnowledgeGraphStore((state) => state.toggle);
+  const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
+  // Only the lazy chunk is warmed, not a payload: unlike stats there is nothing
+  // to prefetch here. The snapshot read is already cheap by construction (main
+  // never runs the projection pass in a handler), and the expensive part is a
+  // background pass that hovering must not kick off.
+  const handleKnowledgeGraphHover = () => {
+    warmKnowledgeGraph();
+  };
 
   const announcementsOpen = useAnnouncementsStore((state) => state.historyOpen);
   const openAnnouncements = useAnnouncementsStore((state) => state.openHistory);
@@ -253,6 +267,22 @@ export function TitleBar({
           data-testid="agent-monitor-button"
         >
           <SquareActivity size={20} />
+        </button>
+        {/* Placed INSIDE the monitor/stats cluster rather than after it. This
+            row is right-anchored, so an element's distance from the window edge
+            is fixed by whatever comes AFTER it: appending here instead would
+            shift Quick Find, settings, and the OS window controls. */}
+        <button
+          onClick={() => (knowledgeGraphPopOut.isOpen ? knowledgeGraphPopOut.focus() : toggleKnowledgeGraph(currentProject?.id ?? null))}
+          onMouseEnter={handleKnowledgeGraphHover}
+          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+            knowledgeGraphOpen || knowledgeGraphPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+          }`}
+          title={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : `Knowledge Graph (${knowledgeGraphCombo})`}
+          aria-label="Knowledge Graph"
+          data-testid="knowledge-graph-button"
+        >
+          <Brain size={20} />
         </button>
         <button
           onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}

@@ -26,7 +26,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `board_snapshot` | Once per project per app run, the first time the user views it (the boot auto-open or a sidebar switch); background activation of other projects does not count, and neither does the open that creates a project, whose board is still the default | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
-| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`), exitCode (see below), phase (`first` / `latched`) |
+| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), phase (`first` / `latched`) |
 | `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
@@ -121,8 +121,8 @@ Profiles. Column names and task content never leave the machine.
 `settings_snapshot` answers "what are people actually running with", the question that changes a
 default; a stream of setting-changed events would only say what was touched. It carries only the
 settings that differ from their default, from a fixed allowlist of fifteen global settings
-(`SETTINGS_SNAPSHOT_ALLOWLIST` in `src/main/analytics/settings-snapshot.ts`): `memory.indexingEnabled`,
-`memory.semanticEnabled`, `memory.embeddingModel`, `memory.acceleration`,
+(`SETTINGS_SNAPSHOT_ALLOWLIST` in `src/main/analytics/settings-snapshot.ts`): `knowledgeGraph.indexingEnabled`,
+`knowledgeGraph.enabled`, `knowledgeGraph.localModel`, `knowledgeGraph.acceleration`,
 `agent.maxConcurrentSessions` (bucketed `1-3` / `4-7` / `9-12` / `13-16` / `17+`),
 `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`, `agent.idleTimeoutMinutes` (bucketed
 `1-15` / `16-60` / `61+`), `browserAutomation.enabled`, `browserAutomation.allowEval`,
@@ -409,7 +409,7 @@ in one Sentry org, one triage surface.
   Every crash does log its stderr tail to the main console as a
   `[utility-process] <service> exited with code <n>` warning, which the log mirror persists to
   `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether or not error
-  reporting is on. The Memory settings tab shows the same reason (exit code plus the first error
+  reporting is on. The Knowledge Graph settings tab shows the same reason (exit code plus the first error
   line) while semantic search is off because of it.
 - **A GPU health escalation is reported once, and on the NEXT launch, not live.**
   `src/main/diagnostics/gpu-health.ts` counts GPU `child-process-gone` deaths the same way

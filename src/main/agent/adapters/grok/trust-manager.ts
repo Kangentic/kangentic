@@ -46,6 +46,19 @@ export async function ensureWorktreeTrust(workingDirectory: string): Promise<voi
   return withTrustStoreLock(() => ensureWorktreeTrustSync(workingDirectory));
 }
 
+/**
+ * Trust the Knowledge Graph's answer home, so an answer run's project-scoped
+ * MCP server (the search tool) starts there.
+ *
+ * The same boundary as a worktree: a folder Kangentic created and owns, with
+ * no user content in it. ONE entry for the one stable folder every answer run
+ * starts in. `--trust` was the other way to start the server, and it records
+ * the run's folder permanently: a trust entry per question.
+ */
+export async function ensureAnswerHomeTrust(answerHome: string): Promise<void> {
+  return withTrustStoreLock(() => ensureFolderTrustSync(path.resolve(answerHome)));
+}
+
 export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
   return withTrustStoreLock(() => removeWorktreeTrustSync(worktreePath));
 }
@@ -131,7 +144,11 @@ function ensureWorktreeTrustSync(workingDirectory: string): void {
   // Only a Kangentic worktree is ever pre-approved; a project root spawn
   // runs with whatever the user decided (or undecided = untrusted).
   if (!projectRoot) return;
+  ensureFolderTrustSync(resolvedPath);
+}
 
+/** Record trust for exactly `resolvedPath`, unless a decision already covers it. */
+function ensureFolderTrustSync(resolvedPath: string): void {
   const storePath = trustStorePath();
   let content: string;
   try {

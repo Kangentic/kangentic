@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { FileWatcher } from './file-watcher';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
@@ -70,6 +71,12 @@ interface AttachedState {
   statusFileHook: StatusFileHook | null;
   /** True once the first `parseStatus` dispatch fired `onFirstStatus`. */
   firstStatusDelivered: boolean;
+  /** Bumped per status read; a read that finishes after a later one began is dropped. */
+  statusReadSequence: number;
+  /** The session's events reads, one after another, so events dispatch in order. */
+  eventsChain: Promise<void>;
+  /** Bumped by the synchronous exit flush, which supersedes any read in flight. */
+  eventsGeneration: number;
 }
 
 /**
@@ -120,6 +127,9 @@ export class StatusFileReader {
       eventsFileOffset: 0,
       statusFileHook,
       firstStatusDelivered: false,
+      statusReadSequence: 0,
+      eventsChain: Promise.resolve(),
+      eventsGeneration: 0,
     };
 
     // Truncate stale status.json so the watcher doesn't emit cached data
@@ -139,18 +149,19 @@ export class StatusFileReader {
     // wrapped in try/catch; the rest return null unconditionally), so an empty
     // file emits nothing and cannot satisfy the firstStatusDelivered handoff.
     if (statusOutputPath) {
+      // sync-write-ok: once per attach, and it must land before the agent's first status write.
       try { fs.writeFileSync(statusOutputPath, ''); } catch { /* dir may not exist */ }
 
       // Only install the watcher when we have a status-file hook to
       // decode changes. Sessions without a hook still need the file
       // deleted but don't need change notifications.
       if (statusFileHook) {
-        // Both change handlers below read synchronously on the main thread,
-        // once per file change per running session: the dev lag monitor
-        // records a read that runs long (see event-loop-lag.ts).
+        // Both change handlers read asynchronously, once per file change per
+        // running session; the dev lag monitor times what they do with the
+        // bytes (see event-loop-lag.ts).
         state.statusWatcher = new FileWatcher({
           filePath: statusOutputPath,
-          onChange: () => timeSyncWork('status-file:status', () => this.handleStatusChange(sessionId)),
+          onChange: () => this.handleStatusChange(sessionId),
           debounceMs: 100,
         });
         // Immediately read any existing status.json (e.g. resumed sessions).
@@ -170,15 +181,16 @@ export class StatusFileReader {
     // field on a `session_start` line. Gating this on `statusFileHook`
     // made the fromHook capture path dead code for Codex/Gemini.
     if (eventsOutputPath) {
+      // sync-write-ok: once per attach, and it must land before the agent's first event.
       try { fs.writeFileSync(eventsOutputPath, ''); } catch { /* bridge may create it */ }
 
       state.eventsWatcher = new FileWatcher({
         filePath: eventsOutputPath,
-        onChange: () => timeSyncWork('status-file:events', () => this.handleEventsChange(sessionId)),
+        onChange: () => this.handleEventsChange(sessionId),
         debounceMs: 50,
-        isStale: () => {
+        isStale: async () => {
           try {
-            const stat = fs.statSync(eventsOutputPath);
+            const stat = await fsPromises.stat(eventsOutputPath);
             return stat.size > state.eventsFileOffset;
           } catch {
             // ENOENT: the session directory (or the events file) vanished
@@ -207,9 +219,11 @@ export class StatusFileReader {
     this.closeWatchers(state);
 
     if (state.statusOutputPath) {
+      // sync-write-ok: once per session end, done before a later attach can reuse the path.
       try { fs.unlinkSync(state.statusOutputPath); } catch { /* may not exist */ }
     }
     if (state.eventsOutputPath) {
+      // sync-write-ok: as above.
       try { fs.unlinkSync(state.eventsOutputPath); } catch { /* may not exist */ }
     }
 
@@ -268,7 +282,33 @@ export class StatusFileReader {
    * Idempotent - safe to call multiple times.
    */
   flushPendingEvents(sessionId: string): void {
-    this.handleEventsChange(sessionId);
+    // The exit handling that follows must see these events, so this read
+    // stays synchronous. It reads only the bytes since the last dispatch, a
+    // few hundred at the end of a run, and supersedes an asynchronous read
+    // still in flight (bumping the generation that read checks) by re-reading
+    // that read's range itself, so no event is dispatched twice or out of order.
+    const state = this.states.get(sessionId);
+    if (!state || !state.eventsOutputPath) return;
+    state.eventsGeneration += 1;
+    try {
+      // sync-read-ok: the exit path dispatches these before it handles the exit.
+      const stat = fs.statSync(state.eventsOutputPath);
+      const from = stat.size < state.eventsFileOffset ? 0 : state.eventsFileOffset;
+      if (stat.size <= from) return;
+      const buffer = Buffer.alloc(stat.size - from);
+      // sync-read-ok: the exit flush, as above.
+      const fileDescriptor = fs.openSync(state.eventsOutputPath, 'r');
+      try {
+        // sync-read-ok: as above.
+        fs.readSync(fileDescriptor, buffer, 0, buffer.length, from);
+      } finally {
+        fs.closeSync(fileDescriptor);
+      }
+      state.eventsFileOffset = from + buffer.length;
+      this.dispatchEvents(sessionId, state, buffer);
+    } catch {
+      // File may not exist, or be partially written - ignore.
+    }
   }
 
   // -- Internal --
@@ -288,8 +328,20 @@ export class StatusFileReader {
   private handleStatusChange(sessionId: string): void {
     const state = this.states.get(sessionId);
     if (!state || !state.statusOutputPath || !state.statusFileHook) return;
+    const sequence = ++state.statusReadSequence;
+    void fsPromises.readFile(state.statusOutputPath, 'utf-8').then((raw) => {
+      // A later read began while this one was out, or the session left.
+      if (this.states.get(sessionId) !== state || sequence !== state.statusReadSequence) return;
+      timeSyncWork('status-file:status', () => this.dispatchStatus(sessionId, state, raw));
+    }, () => {
+      // File may not exist yet - ignore.
+    });
+  }
+
+  /** Parse a status.json read and hand its usage to the consumer. */
+  private dispatchStatus(sessionId: string, state: AttachedState, raw: string): void {
+    if (!state.statusFileHook) return;
     try {
-      const raw = fs.readFileSync(state.statusOutputPath, 'utf-8');
       const usage = state.statusFileHook.parseStatus(raw);
       if (!usage) return;
       // Dev-only: append the parsed delta to status-deltas.jsonl for
@@ -337,8 +389,10 @@ export class StatusFileReader {
     const state = this.states.get(sessionId);
     if (!state?.eventsOutputPath) return false;
     const directory = path.dirname(state.eventsOutputPath);
+    // sync-read-ok: only after a stat failed, which a live session's directory never does.
     if (fs.existsSync(directory)) return false;
     try {
+      // sync-write-ok: as above; the repair is rare and tiny.
       fs.mkdirSync(directory, { recursive: true });
       // The events file will be recreated fresh by the next hook append, so
       // start reading from byte 0 again.
@@ -371,43 +425,59 @@ export class StatusFileReader {
   private handleEventsChange(sessionId: string): void {
     const state = this.states.get(sessionId);
     if (!state || !state.eventsOutputPath) return;
-    try {
-      const stat = fs.statSync(state.eventsOutputPath);
-      if (stat.size < state.eventsFileOffset) {
-        console.warn(`[status-file] ${state.eventsOutputPath} shrank from ${state.eventsFileOffset} to ${stat.size} bytes for session=${sessionId.slice(0, 8)} - resetting cursor`);
-        state.eventsFileOffset = 0;
-      }
-      if (stat.size <= state.eventsFileOffset) return;
-
-      const length = stat.size - state.eventsFileOffset;
-      const buffer = Buffer.alloc(length);
-      const fileDescriptor = fs.openSync(state.eventsOutputPath, 'r');
-      try {
-        fs.readSync(fileDescriptor, buffer, 0, length, state.eventsFileOffset);
-      } finally {
-        fs.closeSync(fileDescriptor);
-      }
-      state.eventsFileOffset = stat.size;
-
-      const chunk = buffer.toString('utf-8');
-      const rawLines = chunk.split(/\r?\n/).filter((line) => line.length > 0);
-      if (rawLines.length === 0) return;
-
-      // Parse into SessionEvent objects only when the adapter has a
-      // statusFile hook (currently only Claude). Other adapters still
-      // need `rawLines` delivered so the consumer can run
-      // hook-based session-ID capture on the `hookContext` field.
-      const events: SessionEvent[] = [];
-      if (state.statusFileHook) {
-        for (const line of rawLines) {
-          const event = state.statusFileHook.parseEvent(line);
-          if (event) events.push(event);
-        }
-      }
-
-      this.callbacks.onEventsParsed(sessionId, rawLines, events);
-    } catch {
+    state.eventsChain = state.eventsChain.then(() => this.readNewEvents(sessionId, state)).catch(() => {
       // File may not exist yet, or be partially written - ignore.
+    });
+  }
+
+  /** Read the bytes appended since the last dispatch and dispatch them. */
+  private async readNewEvents(sessionId: string, state: AttachedState): Promise<void> {
+    const eventsOutputPath = state.eventsOutputPath;
+    if (!eventsOutputPath || this.states.get(sessionId) !== state) return;
+    const generation = state.eventsGeneration;
+    const stat = await fsPromises.stat(eventsOutputPath);
+    if (this.states.get(sessionId) !== state || generation !== state.eventsGeneration) return;
+    let from = state.eventsFileOffset;
+    if (stat.size < from) {
+      console.warn(`[status-file] ${eventsOutputPath} shrank from ${from} to ${stat.size} bytes for session=${sessionId.slice(0, 8)} - resetting cursor`);
+      from = 0;
+      state.eventsFileOffset = 0;
     }
+    if (stat.size <= from) return;
+    const buffer = Buffer.alloc(stat.size - from);
+    const handle = await fsPromises.open(eventsOutputPath, 'r');
+    try {
+      await handle.read(buffer, 0, buffer.length, from);
+    } finally {
+      await handle.close();
+    }
+    // The exit flush ran meanwhile and dispatched this range itself.
+    if (this.states.get(sessionId) !== state || generation !== state.eventsGeneration) return;
+    state.eventsFileOffset = from + buffer.length;
+    timeSyncWork('status-file:events', () => this.dispatchEvents(sessionId, state, buffer));
+  }
+
+  /**
+   * Split newly-appended events.jsonl bytes into lines, parse each line,
+   * and dispatch both raw lines and parsed events to the consumer.
+   */
+  private dispatchEvents(sessionId: string, state: AttachedState, buffer: Buffer): void {
+    const chunk = buffer.toString('utf-8');
+    const rawLines = chunk.split(/\r?\n/).filter((line) => line.length > 0);
+    if (rawLines.length === 0) return;
+
+    // Parse into SessionEvent objects only when the adapter has a
+    // statusFile hook (currently only Claude). Other adapters still
+    // need `rawLines` delivered so the consumer can run
+    // hook-based session-ID capture on the `hookContext` field.
+    const events: SessionEvent[] = [];
+    if (state.statusFileHook) {
+      for (const line of rawLines) {
+        const event = state.statusFileHook.parseEvent(line);
+        if (event) events.push(event);
+      }
+    }
+
+    this.callbacks.onEventsParsed(sessionId, rawLines, events);
   }
 }

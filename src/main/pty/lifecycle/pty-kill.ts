@@ -1,4 +1,4 @@
-import type * as pty from 'node-pty';
+import type { PtyHandle } from '../host/pty-host-client';
 
 /**
  * Kill a node-pty instance without propagating errors.
@@ -15,7 +15,7 @@ import type * as pty from 'node-pty';
  * already dead. Callers that wait on the 'exit' event can use the return
  * value to skip the wait - the event already fired before we got here.
  */
-export function safeKillPty(ptyRef: pty.IPty): boolean {
+export function safeKillPty(ptyRef: PtyHandle): boolean {
   try {
     ptyRef.kill();
     return true;

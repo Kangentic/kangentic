@@ -13,7 +13,6 @@
  * Electron's ABI so a suite gated on it skips everywhere, CI included.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
 import type { BoardColumnConfig } from '../../src/shared/types';
 
 type SqliteModule = typeof import('node:sqlite');
@@ -38,45 +37,7 @@ const { AutomationRepository } = await import('../../src/main/db/repositories/au
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
 
-/**
- * Adapt node:sqlite to the slice of better-sqlite3 the migrations and
- * repositories use.
- *
- * Unlike the simpler adapter in the sibling suites, this one supports NESTED
- * transactions, because the code under test genuinely nests: `applyBoardConfigToDb`
- * wraps its whole reconcile in one, and `replaceForColumn` opens its own inside
- * it. better-sqlite3's `transaction()` handles that with SAVEPOINTs, so an
- * adapter that issued a bare BEGIN would fail on a nesting production handles
- * fine, and the test would be reporting on the harness rather than the code.
- */
-function adaptDatabase(database: InstanceType<SqliteModule['DatabaseSync']>): DatabaseType.Database {
-  let depth = 0;
-  const adapter = {
-    exec: (sql: string) => database.exec(sql),
-    prepare: (sql: string) => database.prepare(sql),
-    pragma: (statement: string) => database.prepare(`PRAGMA ${statement}`).all(),
-    transaction: <Args extends unknown[], Result>(body: (...args: Args) => Result) =>
-      (...args: Args): Result => {
-        const savepoint = `sp_${depth}`;
-        const begin = depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`;
-        const commit = depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`;
-        const rollback = depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}`;
-        database.exec(begin);
-        depth += 1;
-        try {
-          const result = body(...args);
-          depth -= 1;
-          database.exec(commit);
-          return result;
-        } catch (error) {
-          depth -= 1;
-          database.exec(rollback);
-          throw error;
-        }
-      },
-  };
-  return adapter as unknown as DatabaseType.Database;
-}
+import { adaptDatabase } from './helpers/node-sqlite-database';
 
 describeWithSqlite('kangentic.json automations round-trip', () => {
   function freshDatabase() {

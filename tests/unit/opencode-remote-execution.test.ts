@@ -24,6 +24,7 @@ import { OpenCodeSessionHistoryParser } from '../../src/main/agent/adapters/open
 import { mapOpenCodeRemoteEntries } from '../../src/main/agent/adapters/opencode/transcript-parser';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages, type FetchLike } from '../../src/main/agent/adapters/opencode/remote-client';
 import { resolveExecutionTarget } from '../../src/main/agent/shared/execution-target';
+import { adoptRemoteTargets, collectRemoteTargets } from '../../src/main/retrieval/remote-targets';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { AgentExecutionServer, ResolvedExecutionTarget } from '../../src/shared/types';
 
@@ -319,6 +320,29 @@ describe('OpenCodeAdapter - remote target tracking by cwd', () => {
     await adapter.runtime.sessionId.fromFilesystem({ spawnedAt: new Date(), cwd });
     expect(parserSpy).toHaveBeenCalledTimes(1);
     parserSpy.mockRestore();
+  });
+
+  it('hands the targets main\'s copy learned at spawn to the retrieval worker\'s copy, so a remote transcript is read from its server there too', async () => {
+    const onMain = new OpenCodeAdapter();
+    const inWorker = new OpenCodeAdapter();
+    const cwd = '/home/dev/kangentic-worktree';
+    onMain.buildCommand(makeOptions({ cwd, executionTarget: REMOTE_TARGET }));
+    const registry = (adapter: OpenCodeAdapter) => ({ list: () => ['opencode'], get: () => adapter });
+
+    const sent = collectRemoteTargets(registry(onMain));
+    expect(sent).toEqual([{ adapter: 'opencode', targets: [[cwd, REMOTE_TARGET]] }]);
+    // Structured clone is what carries it across the process boundary.
+    adoptRemoteTargets(registry(inWorker), structuredClone(sent));
+    const locateSpy = vi.spyOn(OpenCodeSessionHistoryParser, 'locate').mockResolvedValue('/should/not/be/used');
+    expect(await inWorker.locateSessionHistoryFile('ses_abc123', cwd)).toBeNull();
+    expect(locateSpy).not.toHaveBeenCalled();
+
+    // Main's entries are the whole truth: a cwd main cleared (a local
+    // respawn) is cleared in the worker's copy on the next job.
+    onMain.buildCommand(makeOptions({ cwd }));
+    adoptRemoteTargets(registry(inWorker), collectRemoteTargets(registry(onMain)));
+    expect(await inWorker.locateSessionHistoryFile('ses_abc123', cwd)).toBe('/should/not/be/used');
+    locateSpy.mockRestore();
   });
 
   it('declares the remoteExecution capability with OpenCode-specific info', () => {

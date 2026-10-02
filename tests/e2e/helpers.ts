@@ -749,20 +749,37 @@ export async function waitForTaskSession(
   throw new Error(`Timed out waiting for task ${taskId}'s session to reach status='running'`);
 }
 
+/**
+ * Poll `sessions.list()` until `predicate` holds or `timeoutMs` passes. A
+ * manual loop over page.evaluate, which awaits its async body: an async
+ * predicate handed to page.waitForFunction returns a Promise, which is truthy,
+ * so it resolved on the first tick and these helpers never waited at all.
+ */
+async function pollSessions(
+  page: Page,
+  predicate: 'some-running' | 'none-running',
+  timeoutMs: number,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const anyRunning = await page.evaluate(async () => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      return sessions.some((session) => session.status === 'running');
+    });
+    if (predicate === 'some-running' ? anyRunning : !anyRunning) return;
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${predicate === 'some-running' ? 'a running session' : 'no running session'}`);
+}
+
 /** Wait until at least one session reports status='running' via IPC. */
 export async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions: Session[] = await window.electronAPI.sessions.list();
-    return sessions.some((session) => session.status === 'running');
-  }, null, { timeout: timeoutMs });
+  await pollSessions(page, 'some-running', timeoutMs);
 }
 
 /** Wait until no session reports status='running' (suspend/exit completion). */
 export async function waitForNoRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions: Session[] = await window.electronAPI.sessions.list();
-    return !sessions.some((session) => session.status === 'running');
-  }, null, { timeout: timeoutMs });
+  await pollSessions(page, 'none-running', timeoutMs);
 }
 
 /**
@@ -777,10 +794,11 @@ export async function waitForTaskSessionNotRunning(page: Page, taskId: string, t
   // can treat the returned Promise as truthy and resolve on the first tick.
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    // Any of the task's rows, not the first: an exited row listed ahead of a
+    // resumed one read as "not running" while the new session still ran.
     const running = await page.evaluate(async (taskId) => {
       const sessions: Session[] = await window.electronAPI.sessions.list();
-      const session = sessions.find((candidate) => candidate.taskId === taskId);
-      return !!session && session.status === 'running';
+      return sessions.some((candidate) => candidate.taskId === taskId && candidate.status === 'running');
     }, taskId);
     if (!running) return;
     await page.waitForTimeout(200);

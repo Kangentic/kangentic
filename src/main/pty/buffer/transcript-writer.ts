@@ -1,4 +1,7 @@
-import type { TranscriptRepository } from '../../db/repositories/transcript-repository';
+/** Where one project's transcript pieces go (`TranscriptRepository`). */
+export interface TranscriptSink {
+  appendChunk(sessionId: string, chunk: string): void;
+}
 
 // The ANSI/control-code stripper now lives in shared/ so the renderer and the
 // shared transcript formatter can reuse it. Re-exported here to keep the PTY
@@ -65,15 +68,21 @@ export function filterAltScreenContent(
  * of the same plain text. Pre-TUI banner and post-TUI exit messages survive.
  *
  * Flushes to the database every 30 seconds (debounced), or immediately once a
- * session's pending buffer exceeds 256KB. At worst, a crash loses the last 30
- * seconds or 256KB of output, whichever is smaller.
+ * session's pending buffer exceeds 64KB. At worst, a crash loses the last 30
+ * seconds or 64KB of output, whichever is smaller.
+ *
+ * Each session's flushes go to its OWN project's database, whichever project
+ * is focused: the project is read once, on the session's first output, so the
+ * final flush after the session leaves the registry still routes. (One writer
+ * used to be rebound to the focused project on every open, which sent a
+ * background project's live transcript into the wrong database.)
  */
 export class TranscriptWriter {
   /** Per-session pending data not yet flushed to DB. */
   private pending = new Map<string, string>();
   private flushTimers = new Map<string, NodeJS.Timeout>();
-  /** Tracks which sessions have had their DB row created. */
-  private initialized = new Set<string>();
+  /** Each session's project, read on its first output. */
+  private projectBySession = new Map<string, string>();
   /** Tracks whether each session is currently in the alternate-screen buffer.
    *  Threads across onData calls so a toggle in one chunk affects subsequent
    *  chunks. */
@@ -85,11 +94,22 @@ export class TranscriptWriter {
    *  MAX_BYTES_PER_FLUSH). Every other PTY buffer is byte-capped; without this
    *  a high-volume session accumulates unbounded text for the full 30s
    *  debounce window. Alt-screen redraws are dropped before accumulation, so
-   *  only genuinely large plain-text output trips the cap. Public (not
+   *  only genuinely large plain-text output trips the cap. 64KB, since a flush
+   *  is one INSERT on main and a 256KB one measured up to 15 ms. Public (not
    *  private) so tests exercise the real threshold instead of mirroring it. */
-  static readonly MAX_PENDING_CHARS = 256 * 1024;
+  static readonly MAX_PENDING_CHARS = 64 * 1024;
 
-  constructor(private transcriptRepo: TranscriptRepository) {}
+  /**
+   * @param projectOf the project a session belongs to, or null (a transient
+   *   Command Terminal session, which keeps no transcript)
+   * @param sinkFor where a project's transcripts are written, or null while
+   *   its database is not open (a deleted project: the flush is dropped
+   *   rather than creating the file again)
+   */
+  constructor(
+    private readonly projectOf: (sessionId: string) => string | null,
+    private readonly sinkFor: (projectId: string) => TranscriptSink | null,
+  ) {}
 
   /**
    * Called on every PTY data chunk (same event source as PtyBufferManager).
@@ -98,6 +118,10 @@ export class TranscriptWriter {
    * every 30 seconds.
    */
   onData(sessionId: string, data: string): void {
+    if (!this.projectBySession.has(sessionId)) {
+      const projectId = this.projectOf(sessionId);
+      if (projectId) this.projectBySession.set(sessionId, projectId);
+    }
     const inAltAtStart = this.inAltScreen.get(sessionId) ?? false;
     const { content, inAltAtEnd } = filterAltScreenContent(data, inAltAtStart);
     this.inAltScreen.set(sessionId, inAltAtEnd);
@@ -124,12 +148,7 @@ export class TranscriptWriter {
     }
   }
 
-  /**
-   * Flush pending data for a session to the database.
-   * Lazily creates the transcript row on first flush - this avoids
-   * FK constraint failures when the sessions DB row hasn't been
-   * inserted yet (doSpawn runs before executeSpawnAgent inserts the record).
-   */
+  /** Flush pending data for a session to its project's database, as one piece. */
   flush(sessionId: string): void {
     const timer = this.flushTimers.get(sessionId);
     if (timer) {
@@ -141,15 +160,10 @@ export class TranscriptWriter {
     if (!chunk) return;
     this.pending.set(sessionId, '');
 
+    const projectId = this.projectBySession.get(sessionId);
+    if (!projectId) return;
     try {
-      // Lazy init: create the transcript row on first flush.
-      // By this point the sessions table row exists (inserted by
-      // executeSpawnAgent after doSpawn returns).
-      if (!this.initialized.has(sessionId)) {
-        this.transcriptRepo.create(sessionId);
-        this.initialized.add(sessionId);
-      }
-      this.transcriptRepo.appendChunk(sessionId, chunk);
+      this.sinkFor(projectId)?.appendChunk(sessionId, chunk);
     } catch (error) {
       // Best effort - don't crash the session if DB write fails
       console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);
@@ -169,7 +183,7 @@ export class TranscriptWriter {
   remove(sessionId: string): void {
     this.finalize(sessionId);
     this.pending.delete(sessionId);
-    this.initialized.delete(sessionId);
+    this.projectBySession.delete(sessionId);
     this.inAltScreen.delete(sessionId);
   }
 

@@ -11,7 +11,10 @@ import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
+import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
+import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -143,7 +146,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   // AgentAdapter interface change - adapters have no other way to reach
   // Kangentic's AppConfig (see agent-adapters-boundary.md). Known limitation:
   // empty after an app restart, so a remote session's transcript falls back
-  // to the (empty) local SQLite lookup until the task is resumed again.
+  // to the (empty) local SQLite lookup until the task is resumed again. The
+  // retrieval worker's copy of this adapter is handed main's entries with each
+  // index job (`knownTargets` / `adoptTargets`).
   private readonly remoteTargetsByCwd = new Map<string, ResolvedExecutionTarget>();
 
   /** Declares OpenCode's own dialect of the generic remote-execution capability. */
@@ -158,6 +163,13 @@ export class OpenCodeAdapter implements AgentAdapter {
         + 'OpenCode sessions - attach has no way to push local config into an already-running server.',
     },
     probeServer: probeOpenCodeServer,
+    knownTargets: (): Array<[string, ResolvedExecutionTarget]> => [...this.remoteTargetsByCwd],
+    adoptTargets: (targets: ReadonlyArray<[string, ResolvedExecutionTarget]>): void => {
+      // Main's entries are the whole truth: a cwd main cleared (a local
+      // respawn) is cleared here too.
+      this.remoteTargetsByCwd.clear();
+      for (const [cwd, target] of targets) this.remoteTargetsByCwd.set(cwd, target);
+    },
   };
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
@@ -467,14 +479,97 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {
-    // `opencode run` runs non-interactively. The `-q` flag suppresses the spinner so
-    // stdout contains only the assistant's response.
+    // `opencode run` runs non-interactively. No `-q`: with it the call printed
+    // nothing at all, and the spinner it was meant to hide goes to stderr anyway.
     return runCliPrintSummarize({
       cliPath,
-      args: ['run', '-q'],
+      args: ['run'],
       prompt: buildSummarizePrompt(prompt),
       cwd,
     });
+  }
+
+  readonly answerCapabilities = { streaming: true, search: true, model: true, effort: false };
+
+  /**
+   * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
+   *
+   * OpenCode's built-in `plan` agent is read-only: no edits, no bash (the
+   * probe's file write and shell command were both refused). The prompt is
+   * piped, and a 61,584-character prompt answered from its middle row.
+   *
+   * No `-q`: with it the shipped call returned nothing at all. The spinner it
+   * was meant to hide goes to stderr, so stdout is the answer either way.
+   *
+   * STREAMING is `--format json`, whose events carry each text part whole as
+   * its step ends (`answer-stream.ts`): by step, not by token, but the
+   * narration, the search and the answer each land as they happen.
+   *
+   * SEARCH is our server added through `OPENCODE_CONFIG_CONTENT`, which
+   * OpenCode merges over the user's config for this process only, so nothing
+   * is written anywhere. The plan agent called it without asking (measured on
+   * 1.18.31: 12 hits). `--pure` keeps external plugins out of an answer and
+   * still loads MCP servers.
+   *
+   * The session each run leaves in OpenCode's database is deleted afterwards
+   * (`opencode session delete`): the answer home is not a git repository, so
+   * its sessions would otherwise pile up in the user's global session list.
+   *
+   * The prompt, its rules and the retrieval budget are all built upstream and
+   * handed over whole; this only decides the CLI's flags.
+   */
+  async answerFromContext(
+    prompt: string,
+    cliPath: string,
+    cwd: string,
+    model?: string | null,
+    options?: AnswerFromContextOptions,
+  ): Promise<string> {
+    const retrieval = options?.retrieval;
+    const onEvent = options?.onEvent;
+    let sessionId: string | null = null;
+    try {
+      return await runCliPrintAnswer({
+        cliPath,
+        // The model flag is OMITTED when none is chosen: passing an
+        // empty value is an error.
+        args: ['run', '--agent', 'plan', '--format', 'json', '--pure', ...(model ? ['--model', model] : [])],
+        prompt,
+        cwd,
+        extractRaw: extractOpenCodeAnswer,
+        outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
+        onChunk: forwardStreamLines((line) => {
+          sessionId ??= openCodeSessionId(line);
+          if (onEvent) for (const event of openCodeAnswerEvents(line)) onEvent(event);
+        }),
+        ...(retrieval
+          ? {
+            env: {
+              OPENCODE_CONFIG_CONTENT: JSON.stringify({
+                mcp: { kangentic: { type: 'remote', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token }, enabled: true } },
+              }),
+            },
+          }
+          : {}),
+      });
+    } finally {
+      // After the answer, not before it: the delete is its own process, and
+      // the reader is not kept waiting on it. The id is read from the CLI's
+      // output, so it goes on the command line only in the shape an id has.
+      // Its output is drained so a full pipe cannot stall it. It is not the
+      // chat's run, so the chat ending right after the answer cannot stop it.
+      if (sessionId && /^[\w-]+$/.test(sessionId)) {
+        const deleteArgs = ['session', 'delete', sessionId];
+        const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd));
+        deletion.on('error', () => undefined);
+        // A delete that exits at once (the session already gone) can close the
+        // pipe under the `end` below, as `runResolvedCliPrint` guards its own.
+        deletion.stdin.on('error', () => undefined);
+        deletion.stdout.resume();
+        deletion.stderr.resume();
+        deletion.stdin.end();
+      }
+    }
   }
 
   /**

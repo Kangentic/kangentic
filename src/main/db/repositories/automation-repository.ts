@@ -6,6 +6,7 @@ import type {
   AutomationType,
   ColumnAutomation,
 } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 interface AutomationRow {
   id: string;
@@ -82,7 +83,7 @@ export class AutomationRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       // Read the created_at values first so a row that survives the replace
       // keeps the date it was actually made on, not the date it was last saved.
       const existing = new Map(

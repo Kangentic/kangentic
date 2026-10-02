@@ -1,24 +1,21 @@
 /**
- * UI tests for the ToggleCard primitive and its settings-panel wrappers.
+ * UI tests for the settings card switches (SettingsCard headers and
+ * CardToggleRow tiles), plus the board manager's ToggleCard info icon.
  *
  * Coverage:
- * 1. Click-anywhere invariant - clicking the label text fires onChange and
- *    flips aria-checked (the whole point of the refactor).
- * 2. Click-anywhere invariant - clicking the description text also fires
- *    onChange (interior of the button, not just the indicator).
+ * 1. Click-anywhere invariant - clicking a tile's label text flips its switch.
+ * 2. Click-anywhere invariant - clicking empty space in the tile also flips it.
  * 3. Keyboard activation - Space and Enter on a `<button role="switch">` must
  *    fire the click handler.
- * 4. CompactToggleList click-anywhere - clicking a dense row label flips
- *    aria-checked on that row only.
- * 5. Icon variant (McpServerTab) - the optional icon prop path renders an icon
- *    alongside the label.
- * 6. SettingToggleRow filter detach - when search hides the row's searchId the
- *    element is removed from the DOM (not.toBeAttached()).
- * 7. BehaviorTab toggle persistence - clicking a SettingToggleRow saves the
- *    new value to global config via config.set IPC.
- * 8. BrowserAutomationTab master-switch gating - the four dependent toggles
- *    are wrapped in an opacity-40 + inert div when the master switch is off,
- *    and fully interactable when it is on.
+ * 4. Context bar rows - clicking one row's label flips that row only.
+ * 5. Card header (McpServerTab) - the icon, the header switch, a header click,
+ *    the info icon, and one right edge for every switch on a tab.
+ * 6. Filter detach - when search hides a row's searchId the element is removed
+ *    from the DOM (not.toBeAttached()).
+ * 7. Persistence - clicking a CardToggleRow saves the new value to global
+ *    config via config.set IPC.
+ * 8. BrowserAutomationTab master-switch gating - the dependent switches show
+ *    only while the master switch is on.
  * 9. Info icon variant (BoardManagerDialog Handoff toggle) - the optional
  *    `info` prop renders an aria-hidden Info icon with a title tooltip beside
  *    the label, a ToggleCard without `info` renders no such icon, and
@@ -94,13 +91,13 @@ async function setGlobalConfigAndSync(partial: Record<string, unknown>) {
   });
 }
 
-// ── Gap 1 + 2: Click-anywhere invariant (ToggleCard) ──────────────────────────
+// ── Gap 1 + 2: Click-anywhere invariant (CardToggleRow tiles) ─────────────────
 //
-// BehaviorTab has two SettingToggleRow cards. "Auto-Focus Idle Sessions" starts
-// unchecked (mock default: autoFocusIdleSession = false), which is a reliable
-// starting state for click tests.
+// Behavior's Sessions card holds CardToggleRow tiles. "Auto-focus idle sessions"
+// starts unchecked (mock default: autoFocusIdleSession = false), which is a
+// reliable starting state for click tests. The whole tile is the click target.
 
-test.describe('ToggleCard click-anywhere invariant', () => {
+test.describe('CardToggleRow click-anywhere invariant', () => {
   // Reset autoFocusIdleSession to its default (false) before each test so the
   // starting state is deterministic regardless of order. Uses the sync helper
   // so the React config store also updates (not just the mock backing store).
@@ -108,34 +105,34 @@ test.describe('ToggleCard click-anywhere invariant', () => {
     await setGlobalConfigAndSync({ autoFocusIdleSession: false });
   });
 
-  test('clicking the label text fires onChange and flips aria-checked', async () => {
+  test('clicking the label text flips the row\'s switch', async () => {
     await openTab('Behavior');
 
-    // Scope to the specific ToggleCard by its aria-label.
-    const card = page.getByRole('switch', { name: 'Auto-Focus Idle Sessions' });
-    await expect(card).toHaveAttribute('aria-checked', 'false');
+    const toggle = page.getByRole('switch', { name: 'Auto-focus idle sessions', exact: true });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
 
-    // Click the label text element inside the button - this is the
-    // "click-anywhere" invariant: the whole card, including text, is the target.
-    const labelText = card.locator('text=Auto-Focus Idle Sessions').first();
-    await labelText.click();
+    // The switch's parent is the tile; its label text is a sibling of the switch.
+    const tile = toggle.locator('..');
+    await tile.getByText('Auto-focus idle sessions', { exact: true }).click();
 
-    await expect(card).toHaveAttribute('aria-checked', 'true');
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
 
     await closeSettings();
   });
 
-  test('clicking the description text fires onChange and flips aria-checked', async () => {
+  test('clicking empty space in the tile flips the row\'s switch', async () => {
     await openTab('Behavior');
 
-    const card = page.getByRole('switch', { name: 'Auto-Focus Idle Sessions' });
-    await expect(card).toHaveAttribute('aria-checked', 'false');
+    const toggle = page.getByRole('switch', { name: 'Auto-focus idle sessions', exact: true });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
 
-    // Click the description paragraph inside the button.
-    const description = card.locator('p').first();
-    await description.click();
+    // The tile's top padding, over no text and no control.
+    const tile = toggle.locator('..');
+    const box = await tile.boundingBox();
+    expect(box).not.toBeNull();
+    await tile.click({ position: { x: (box?.width ?? 0) / 2, y: 3 } });
 
-    await expect(card).toHaveAttribute('aria-checked', 'true');
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
 
     await closeSettings();
   });
@@ -155,7 +152,7 @@ test.describe('ToggleCard keyboard activation', () => {
   test('Space toggles the switch', async () => {
     await openTab('Behavior');
 
-    const card = page.getByRole('switch', { name: 'Auto-Focus Idle Sessions' });
+    const card = page.getByRole('switch', { name: 'Auto-focus idle sessions', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     await card.focus();
@@ -169,7 +166,7 @@ test.describe('ToggleCard keyboard activation', () => {
   test('Enter toggles the switch', async () => {
     await openTab('Behavior');
 
-    const card = page.getByRole('switch', { name: 'Auto-Focus Idle Sessions' });
+    const card = page.getByRole('switch', { name: 'Auto-focus idle sessions', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     await card.focus();
@@ -181,14 +178,13 @@ test.describe('ToggleCard keyboard activation', () => {
   });
 });
 
-// ── Gap 4: CompactToggleList click-anywhere (dense rows) ─────────────────────
+// ── Gap 4: Context bar rows click-anywhere ───────────────────────────────────
 //
-// The Task tab Context Bar section renders a CompactToggleList. Each row
-// is a `<button role="switch" aria-label="...">` that should toggle when any
-// part of the row (including the label text) is clicked.
-// "Shell Name" row (contextBar.showShell) starts checked=true in the mock.
+// The Task tab's Context bar card renders one CardToggleRow tile per stat.
+// Clicking a row's label flips that row and no other.
+// "Shell name" (contextBar.showShell) starts checked=true in the mock.
 
-test.describe('CompactToggleList click-anywhere invariant', () => {
+test.describe('Context bar rows click-anywhere invariant', () => {
   test.beforeEach(async () => {
     await setGlobalConfigAndSync({ contextBar: { showShell: true } });
   });
@@ -196,13 +192,10 @@ test.describe('CompactToggleList click-anywhere invariant', () => {
   test('clicking the row label text flips aria-checked on that row only', async () => {
     await openTab('Task');
 
-    // The CompactToggleList item for "Shell Name" is a button with role="switch".
-    const shellRow = page.getByRole('switch', { name: 'Shell Name', exact: true });
+    const shellRow = page.getByRole('switch', { name: 'Shell name', exact: true });
     await expect(shellRow).toHaveAttribute('aria-checked', 'true');
 
-    // Click the label text div inside the button.
-    const labelText = shellRow.locator('text=Shell Name').first();
-    await labelText.click();
+    await shellRow.locator('..').getByText('Shell name', { exact: true }).click();
 
     await expect(shellRow).toHaveAttribute('aria-checked', 'false');
 
@@ -214,84 +207,168 @@ test.describe('CompactToggleList click-anywhere invariant', () => {
   });
 });
 
-// ── Gap 5: Icon variant (McpServerTab) ────────────────────────────────────────
+// ── Gap 5: Settings card with an icon (McpServerTab) ──────────────────────────
 //
-// McpServerTab passes `icon={<Plug className="size-5" />}` to SettingToggleRow,
-// which threads it through to ToggleCard's optional icon slot. The icon must be
-// visible in the DOM and the card must still function as a switch.
+// McpServerTab is a SettingsCard: an icon, the title and description, and the
+// master switch in the header, with the tool list inside while it is on. The
+// icon must render, and the header switch must toggle the tool list.
 
-test.describe('ToggleCard icon variant', () => {
-  test('MCP Server tab renders icon alongside label in ToggleCard', async () => {
+test.describe('Settings card header', () => {
+  test('MCP Server card renders its icon and a named switch in the header', async () => {
+    await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
     await openTab('MCP Server');
 
-    const card = page.getByRole('switch', { name: 'Kangentic MCP Server' });
+    const card = page.locator('section[aria-label="MCP server"]');
     await expect(card).toBeVisible();
-
-    // The icon is inside a <span class="flex-shrink-0 ..."> that wraps the
-    // Lucide Plug SVG. Assert the span exists and contains an svg element.
-    const iconSpan = card.locator('span.flex-shrink-0').first();
-    await expect(iconSpan).toBeVisible();
-    await expect(iconSpan.locator('svg')).toBeVisible();
+    await expect(card.locator('svg').first()).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'MCP server' })).toBeVisible();
 
     await closeSettings();
   });
 
-  test('MCP Server ToggleCard still toggles when icon is present', async () => {
-    // Ensure known starting state.
+  test('MCP Server header switch toggles and hides the tool list while off', async () => {
     await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
 
     await openTab('MCP Server');
 
-    const card = page.getByRole('switch', { name: 'Kangentic MCP Server' });
-    await expect(card).toHaveAttribute('aria-checked', 'true');
+    const toggle = page.getByRole('switch', { name: 'MCP server' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('mcp-tool-list')).toBeVisible();
 
-    await card.click();
-    await expect(card).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect(page.getByTestId('mcp-tool-list')).toHaveCount(0);
 
     // Restore for subsequent tests.
     await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
 
     await closeSettings();
   });
+
+  test('a click anywhere on the header flips its switch, but a click on its info icon does not', async () => {
+    await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
+    await openTab('MCP Server');
+
+    const card = page.locator('section[aria-label="MCP server"]');
+    const toggle = page.getByRole('switch', { name: 'MCP server' });
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await card.locator('h3').click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    // The info icon is a control of its own: reading "How it works" must not
+    // change the setting.
+    await card.getByRole('button', { name: /^About MCP server/ }).click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    await card.locator('p').first().click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
+    await closeSettings();
+  });
+
+  test('every switch on a tab ends on one right edge, header switches included', async () => {
+    // The header's right inset is computed from the tiles' inset plus their
+    // right padding (settings-card.tsx), so a header switch lines up with the
+    // tile switches below it. Measured on Git: the Worktrees header switch,
+    // its two tile switches, and every other card's.
+    await openTab('Git');
+    await expect(page.getByRole('switch', { name: 'Worktrees' })).toBeVisible();
+    const rightEdges = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('section[aria-label] [role="switch"]'))
+        .map((element) => element.getBoundingClientRect().right),
+    );
+    expect(rightEdges.length).toBeGreaterThan(3);
+    expect(Math.max(...rightEdges) - Math.min(...rightEdges)).toBeLessThan(1);
+    await closeSettings();
+  });
+
+  test('a header\'s click target is tile-shaped and stands apart from the first tile', async () => {
+    // The header's hover fill used to run edge to edge and straight into the
+    // first tile, in the same fill, so a hovered header merged with the option
+    // below it. Its click target is now inset like a tile, with a tile gap under
+    // it. Measured on Git's Worktrees card, whose header has a switch.
+    await setGlobalConfigAndSync({ git: { worktreesEnabled: true } });
+    await openTab('Git');
+    const headerSwitch = page.getByRole('switch', { name: 'Worktrees', exact: true });
+    await expect(headerSwitch).toBeVisible();
+    const geometry = await headerSwitch.evaluate((switchElement) => {
+      const target = switchElement.parentElement as HTMLElement;
+      const card = target.closest('section') as HTMLElement;
+      const firstTile = card.children[1].children[0] as HTMLElement;
+      const targetRect = target.getBoundingClientRect();
+      const tileRect = firstTile.getBoundingClientRect();
+      return {
+        leftDelta: Math.abs(targetRect.left - tileRect.left),
+        rightDelta: Math.abs(targetRect.right - tileRect.right),
+        gap: tileRect.top - targetRect.bottom,
+        hoverFill: target.className.includes('hover:bg-'),
+      };
+    });
+    // The hover fill lives on the measured element, so the geometry is the fill's.
+    expect(geometry.hoverFill).toBe(true);
+    expect(geometry.leftDelta).toBeLessThan(1);
+    expect(geometry.rightDelta).toBeLessThan(1);
+    expect(geometry.gap).toBeGreaterThanOrEqual(4);
+    await closeSettings();
+  });
+
+  test('a header whose prerequisite is off still flips, and turns the prerequisite on', async () => {
+    await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: false, enabled: false } });
+    await openTab('Knowledge Graph');
+
+    const card = page.locator('section[aria-label="Knowledge Graph"]');
+    // The description stays; a tag after the title names the prerequisite.
+    await expect(card).toContainText('Needs indexing');
+    await expect(card).toContainText('Finds your work by meaning and answers questions.');
+    // Never a dead end: a click on the header turns the feature and its index on.
+    await card.locator('h3').click();
+    await expect(page.getByRole('switch', { name: 'Knowledge Graph' })).toHaveAttribute('aria-checked', 'true');
+    await expect(card).not.toContainText('Needs indexing');
+
+    await setGlobalConfigAndSync({ knowledgeGraph: { indexingEnabled: true, enabled: false } });
+    await closeSettings();
+  });
 });
 
-// ── Gap 6: SettingToggleRow filter detach ─────────────────────────────────────
+// ── Gap 6: CardToggleRow filter detach ────────────────────────────────────────
 //
-// When the settings search query does not match a row's searchId, SettingToggleRow
+// When the settings search query does not match a row's searchId, CardToggleRow
 // returns null, removing the element from the DOM entirely. Verify with
 // not.toBeAttached() against a specific row.
 //
-// "Auto-Resume Agents on Restart" (searchId: 'agent.autoResumeSessionsOnRestart')
+// "Auto-resume agents on restart" (searchId: 'agent.autoResumeSessionsOnRestart')
 // does NOT appear under the search term "font" (a Terminal-only term).
 
-test.describe('SettingToggleRow filter detach', () => {
+test.describe('CardToggleRow filter detach', () => {
   test('searching "font" removes Behavior tab toggles from the DOM', async () => {
     await openTab('Behavior');
 
     // Confirm the toggle exists before searching.
-    const autoResumeSwitch = page.getByRole('switch', { name: 'Auto-Resume Agents on Restart' });
+    const autoResumeSwitch = page.getByRole('switch', { name: 'Auto-resume agents on restart', exact: true });
     await expect(autoResumeSwitch).toBeAttached();
 
     // Enter a search term that matches only Terminal settings.
     const searchInput = page.getByTestId('settings-search');
     await searchInput.fill('font');
 
-    // The Behavior tab's toggle rows must be detached (SettingToggleRow returns null).
+    // The Behavior tab's toggle rows must be detached (CardToggleRow returns null).
     await expect(autoResumeSwitch).not.toBeAttached();
 
     await closeSettings();
   });
 });
 
-// ── Gap 7: BehaviorTab SettingToggleRow persistence ──────────────────────────
+// ── Gap 7: CardToggleRow persistence ─────────────────────────────────────────
 //
-// Clicking a SettingToggleRow must persist the new value to global config via
+// Clicking a CardToggleRow must persist the new value to global config via
 // the config.set IPC (window.electronAPI.config.set). Verified by reading back
 // config.getGlobal() after the click.
 //
-// Pattern mirrors browser-settings.spec.ts "toggling Enable Browser Pane persists".
+// Pattern mirrors browser-settings.spec.ts "toggling Browser pane persists".
 
-test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
+test.describe('Behavior/Board tab CardToggleRow persistence', () => {
   test.afterEach(async () => {
     // Restore all three toggles to their mock defaults.
     await setGlobalConfigAndSync({
@@ -301,13 +378,13 @@ test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
     });
   });
 
-  test('clicking Auto-Focus Idle Sessions persists autoFocusIdleSession to global config', async () => {
+  test('clicking Auto-focus idle sessions persists autoFocusIdleSession to global config', async () => {
     // Ensure clean starting state.
     await setGlobalConfigAndSync({ autoFocusIdleSession: false });
 
     await openTab('Behavior');
 
-    const card = page.getByRole('switch', { name: 'Auto-Focus Idle Sessions' });
+    const card = page.getByRole('switch', { name: 'Auto-focus idle sessions', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     await card.click();
@@ -331,12 +408,12 @@ test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
     await closeSettings();
   });
 
-  test('clicking Auto-Resume Agents on Restart persists agent.autoResumeSessionsOnRestart', async () => {
+  test('clicking Auto-resume agents on restart persists agent.autoResumeSessionsOnRestart', async () => {
     await setGlobalConfigAndSync({ agent: { autoResumeSessionsOnRestart: false } });
 
     await openTab('Behavior');
 
-    const card = page.getByRole('switch', { name: 'Auto-Resume Agents on Restart' });
+    const card = page.getByRole('switch', { name: 'Auto-resume agents on restart', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     await card.click();
@@ -350,7 +427,7 @@ test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
     await closeSettings();
   });
 
-  test('clicking Auto-Apply Board Config Changes persists skipBoardConfigConfirm to global config', async () => {
+  test('clicking Auto-apply board config changes persists skipBoardConfigConfirm to global config', async () => {
     // skipBoardConfigConfirm starts false (mock default). Lives in the Board
     // tab's Config Sync section, not Behavior - it is board data reconciliation,
     // not session/window behavior.
@@ -358,7 +435,7 @@ test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
 
     await openTab('Board');
 
-    const card = page.getByRole('switch', { name: 'Auto-Apply Board Config Changes' });
+    const card = page.getByRole('switch', { name: 'Auto-apply board config changes', exact: true });
     await expect(card).toHaveAttribute('aria-checked', 'false');
 
     // Toggle on - must persist true.
@@ -385,58 +462,65 @@ test.describe('Behavior/Board tab SettingToggleRow persistence', () => {
 
 // ── Gap 8: BrowserAutomationTab master-switch gating ──────────────────────
 //
-// When the master "Enable Browser Automation" switch is off, the four dependent
-// capability toggles (Allow Interaction, Allow Navigation, Allow Eval, Restrict
-// Navigation to Localhost) are wrapped in a div that gains the `opacity-40`
-// class and the HTML `inert` attribute. This communicates visually that the
-// toggles are disabled and prevents accidental interaction while preserving
-// their stored values so re-enabling restores prior choices.
-//
-// `inert` is used only in BrowserAutomationTab in the entire renderer, so
-// `page.locator('[inert]')` is an unambiguous selector for this wrapper div.
-// The equivalent McpServerTab gating is deliberately untested (it predates
-// this commit); we guard the new gating here so a refactor cannot silently
-// drop the wrapper without a test catching it.
+// The capability switches (Allow interaction, Allow navigation, Only localhost,
+// Allow eval) sit inside the Browser automation card and show only while its
+// master switch is on: off means hidden, not greyed out. Their stored values
+// are kept, so switching it back on restores the prior choices. Only localhost
+// nests under Allow navigation and hides with it, since it does nothing
+// without navigation.
 
 test.describe('BrowserAutomationTab master-switch gating', () => {
   test.afterEach(async () => {
-    // Restore enabled:true so subsequent tests start from a known state.
-    await setGlobalConfigAndSync({ browserAutomation: { enabled: true } });
+    // Restore defaults so subsequent tests start from a known state.
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: true, allowNavigation: true } });
   });
 
-  test('sub-toggle wrapper gains opacity-40 and inert when master switch is off', async () => {
+  test('capability switches are hidden while the master switch is off', async () => {
     await setGlobalConfigAndSync({ browserAutomation: { enabled: false } });
     await openTab('Agent Browser');
 
-    // Master switch must be unchecked.
-    const masterSwitch = page.getByRole('switch', { name: 'Enable Browser Automation' });
+    const masterSwitch = page.getByRole('switch', { name: 'Browser automation' });
     await expect(masterSwitch).toHaveAttribute('aria-checked', 'false');
-
-    // The wrapper div around the four dependent toggles must be dimmed (opacity-40)
-    // and non-interactive (inert). inert is the only usage of that attribute in the
-    // renderer, so the locator is unambiguous.
-    const inertWrapper = page.locator('[inert]');
-    await expect(inertWrapper).toBeAttached();
-    await expect(inertWrapper).toHaveClass(/opacity-40/);
+    await expect(page.getByRole('switch', { name: 'Allow interaction' })).toHaveCount(0);
+    await expect(page.getByRole('switch', { name: 'Allow eval' })).toHaveCount(0);
 
     await closeSettings();
   });
 
-  test('sub-toggle wrapper has no opacity-40 or inert when master switch is on', async () => {
-    await setGlobalConfigAndSync({ browserAutomation: { enabled: true } });
+  test('capability switches show while the master switch is on, with Only localhost under navigation', async () => {
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: true, allowNavigation: true } });
     await openTab('Agent Browser');
 
-    // Master switch must be checked.
-    const masterSwitch = page.getByRole('switch', { name: 'Enable Browser Automation' });
+    const masterSwitch = page.getByRole('switch', { name: 'Browser automation' });
+    await expect(masterSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('switch', { name: 'Allow interaction' })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Only localhost' })).toBeVisible();
+
+    // Only localhost narrows navigation, so it hides once navigation is off.
+    await page.getByRole('switch', { name: 'Allow navigation' }).click();
+    await expect(page.getByRole('switch', { name: 'Only localhost' })).toHaveCount(0);
+
+    await closeSettings();
+  });
+
+  test('a click on a row\'s label or description flips that row\'s switch only', async () => {
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: true, allowNavigation: true, allowEval: false } });
+    await openTab('Agent Browser');
+
+    const card = page.locator('section[aria-label="Browser automation"]');
+    const evalSwitch = page.getByRole('switch', { name: 'Allow eval' });
+    const interactionSwitch = page.getByRole('switch', { name: 'Allow interaction' });
+    const masterSwitch = page.getByRole('switch', { name: 'Browser automation' });
+    const interactionBefore = await interactionSwitch.getAttribute('aria-checked');
+    await expect(evalSwitch).toHaveAttribute('aria-checked', 'false');
+
+    await card.getByText('Allow eval', { exact: true }).click();
+    await expect(evalSwitch).toHaveAttribute('aria-checked', 'true');
+    // Neither a sibling row nor the card's own header switch moved.
+    await expect(interactionSwitch).toHaveAttribute('aria-checked', interactionBefore ?? '');
     await expect(masterSwitch).toHaveAttribute('aria-checked', 'true');
 
-    // No inert wrapper present when the master is on.
-    await expect(page.locator('[inert]')).not.toBeAttached();
-
-    // The Allow Interaction sub-toggle must be visible and interactable (in the
-    // accessibility tree, not behind an inert barrier).
-    await expect(page.getByRole('switch', { name: 'Allow Interaction' })).toBeVisible();
-
+    await setGlobalConfigAndSync({ browserAutomation: { allowEval: false } });
     await closeSettings();
   });
 });

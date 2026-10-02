@@ -10,25 +10,23 @@
  * would sit frozen for minutes while the terminal scrolled. The peek has to ride
  * a mechanism that fires on OUTPUT.
  *
- * ## Why `data-tap`
+ * ## Why `output-seen`
  *
  * `SessionManager`'s `data` event is gated on the renderer's focused set, which
  * is exactly wrong here: the monitor's whole job is showing sessions you are NOT
- * looking at. `data-tap` is the documented focus-independent seam for headless
- * consumers, and it deliberately does not feed backpressure. It has TWO
- * feeders: the 16ms flush (pre-coalesced) and the replay-drain report
- * (un-coalesced - bytes a desktop replay consumed out of the pending buffer;
- * see PtyBufferManagerCallbacks.onDrain), so a per-emit handler must stay
- * cheap rather than lean on flush pacing.
+ * looking at. `output-seen` fires for every session that produced output, at
+ * most a few times a second (the pty host merges chunks), and carries no bytes:
+ * the tracker only needs to know which grids changed, and the grids are read
+ * from the host.
  *
  * ## The cost bound, stated rather than implied
  *
- * `data-tap` emits are a no-op when nothing is listening, so this attaches its
- * listener ONLY while a monitor surface is subscribed and detaches when the last
- * one goes away. A closed monitor therefore costs nothing at all. While open:
+ * This attaches its listener ONLY while a monitor surface is subscribed and
+ * detaches when the last one goes away. A closed monitor therefore costs
+ * nothing at all. While open:
  *
- *   - per PTY chunk: one `Set.add`, nothing else. No parsing, no grid read.
- *   - per sample tick: an O(rows) synchronous grid read for DIRTY sessions only.
+ *   - per output event: one `Set.add`, nothing else. No parsing, no grid read.
+ *   - per sample tick: one host read per DIRTY session.
  *   - per push: only sessions whose peek text actually CHANGED.
  *
  * That last gate is what keeps a spinner-ticking TUI quiet. A repainting frame
@@ -97,7 +95,7 @@ export class MonitorPeekTracker {
   private sampleTimer: ReturnType<typeof setInterval> | null = null;
   private listening = false;
 
-  private readonly onDataTap = (sessionId: string): void => {
+  private readonly onOutputSeen = (sessionId: string): void => {
     if (!this.isWanted(sessionId)) return;
     this.dirty.add(sessionId);
   };
@@ -109,12 +107,11 @@ export class MonitorPeekTracker {
    * exit: the renderer keeps the peek it was already sent, and the row lives on
    * as "recently finished".
    *
-   * Note this clears the change-gate rather than closing it. The PTY's `exit`
-   * fires synchronously from node-pty while the last chunk may still be parked on
-   * the buffer manager's 16ms flush, so a late `data-tap` can re-dirty the session
-   * and re-populate `lastSent` with its final frame. That is desirable, not a
-   * leak: the agent's closing lines reach the card instead of being dropped on
-   * the exit edge.
+   * Note this clears the change-gate rather than closing it. A late
+   * `output-seen` (the host's last merge window) can re-dirty the session and
+   * re-populate `lastSent` with its final frame. That is desirable, not a leak:
+   * the agent's closing lines reach the card instead of being dropped on the
+   * exit edge.
    */
   private readonly onSessionExit = (sessionId: string): void => {
     this.dirty.delete(sessionId);
@@ -140,7 +137,7 @@ export class MonitorPeekTracker {
     const previous = this.wantedByRenderer.has(rendererId) ? this.wantedByRenderer.get(rendererId) ?? null : undefined;
     this.wantedByRenderer.set(rendererId, wanted);
     this.recomputeWanted();
-    this.seed(previous, wanted);
+    void this.seed(previous, wanted);
   }
 
   /** Unsubscribe a renderer; the listener and timer stop with the last one. */
@@ -187,15 +184,15 @@ export class MonitorPeekTracker {
   private attach(): void {
     if (this.listening) return;
     this.listening = true;
-    this.sessionManager.on('data-tap', this.onDataTap);
+    this.sessionManager.on('output-seen', this.onOutputSeen);
     this.sessionManager.on('exit', this.onSessionExit);
-    this.sampleTimer = setInterval(() => this.sampleDirty(), PEEK_SAMPLE_INTERVAL_MS);
+    this.sampleTimer = setInterval(() => void this.sampleDirty(), PEEK_SAMPLE_INTERVAL_MS);
   }
 
   private detach(): void {
     if (!this.listening) return;
     this.listening = false;
-    this.sessionManager.off('data-tap', this.onDataTap);
+    this.sessionManager.off('output-seen', this.onOutputSeen);
     this.sessionManager.off('exit', this.onSessionExit);
     if (this.sampleTimer) {
       clearInterval(this.sampleTimer);
@@ -209,7 +206,7 @@ export class MonitorPeekTracker {
    * the change-gate. `previous` is `undefined` for a first subscribe (everything
    * wanted is new), `null` when the renderer previously wanted every session.
    */
-  private seed(previous: ReadonlySet<string> | null | undefined, wanted: ReadonlySet<string> | null): void {
+  private async seed(previous: ReadonlySet<string> | null | undefined, wanted: ReadonlySet<string> | null): Promise<void> {
     const isNewlyWanted = (sessionId: string): boolean => {
       if (wanted !== null && !wanted.has(sessionId)) return false;
       if (previous === undefined) return true;
@@ -218,14 +215,18 @@ export class MonitorPeekTracker {
     };
     const peeks: Record<string, string[]> = {};
     const live = new Set<string>();
+    const newlyWanted: string[] = [];
     for (const summary of this.sessionManager.listManagedSummaries()) {
       live.add(summary.id);
-      if (!isNewlyWanted(summary.id)) continue;
-      const lines = this.sessionManager.getOutputPeek(summary.id);
-      if (lines.length === 0) continue;
-      this.lastSent.set(summary.id, lines);
-      peeks[summary.id] = lines;
+      if (isNewlyWanted(summary.id)) newlyWanted.push(summary.id);
     }
+    const sampled = await Promise.all(newlyWanted.map((sessionId) => this.readPeek(sessionId)));
+    newlyWanted.forEach((sessionId, index) => {
+      const lines = sampled[index];
+      if (lines.length === 0) return;
+      this.lastSent.set(sessionId, lines);
+      peeks[sessionId] = lines;
+    });
     // Drop bookkeeping for sessions the registry has forgotten. Bounded by
     // REGISTRY MEMBERSHIP, not by exit: an exited session stays registered (that
     // is what makes the monitor's "recently finished" rows work), so this only
@@ -238,21 +239,30 @@ export class MonitorPeekTracker {
   }
 
   /** Resample only sessions that produced output, and push only real changes. */
-  private sampleDirty(): void {
+  private async sampleDirty(): Promise<void> {
     if (this.dirty.size === 0) return;
-    const sampling = [...this.dirty];
+    const sampling = [...this.dirty].filter((sessionId) => this.isWanted(sessionId));
     this.dirty.clear();
 
+    const sampled = await Promise.all(sampling.map((sessionId) => this.readPeek(sessionId)));
     const changed: Record<string, string[]> = {};
-    for (const sessionId of sampling) {
-      if (!this.isWanted(sessionId)) continue;
-      const lines = this.sessionManager.getOutputPeek(sessionId);
-      if (lines.length === 0) continue;
+    sampling.forEach((sessionId, index) => {
+      const lines = sampled[index];
+      if (lines.length === 0) return;
       const previous = this.lastSent.get(sessionId);
-      if (previous && peeksEqual(previous, lines)) continue;
+      if (previous && peeksEqual(previous, lines)) return;
       this.lastSent.set(sessionId, lines);
       changed[sessionId] = lines;
-    }
+    });
     if (Object.keys(changed).length > 0) this.emit(changed);
+  }
+
+  /** A session's peek from the pty host; empty when the host cannot answer. */
+  private async readPeek(sessionId: string): Promise<string[]> {
+    try {
+      return await this.sessionManager.getOutputPeek(sessionId);
+    } catch {
+      return [];
+    }
   }
 }

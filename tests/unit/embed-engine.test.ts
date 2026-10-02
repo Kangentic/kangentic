@@ -12,15 +12,19 @@ vi.mock('../../src/main/retrieval/embedder/embedding-model', () => ({
 import {
   createEmbedEngine,
   computeEmbedSleepMs,
+  RATE_MIN_BATCHES,
+  RECORD_PROGRESS_INTERVAL_MS,
   type EmbedStore,
   type EmbedWorkerClient,
 } from '../../src/main/retrieval/embedder/embed-engine';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
+import { localEmbedStoreAccess } from '../../src/main/retrieval/embedder/embed-store-access';
+import { RetrievalUnavailableError } from '../../src/main/retrieval/retrieval-client';
 import { isEmbeddingModelPresent } from '../../src/main/retrieval/embedder/embedding-model';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { StoredChunk } from '../../src/main/retrieval/types';
 import type { EmbeddingModelDef } from '../../src/main/retrieval/embedder/embedding-config';
-import type { MemoryAcceleration } from '../../src/shared/types';
+import type { KnowledgeGraphAcceleration } from '../../src/shared/types';
 
 /**
  * The central embedding engine's scheduling contract: the duty-cycle pacer
@@ -105,10 +109,10 @@ function makeFakeClient(overrides?: Partial<EmbedWorkerClient>): EmbedWorkerClie
   };
 }
 
-function makeContext(overrides?: { currentProjectId?: string | null; semanticEnabled?: boolean }): IpcContext {
+function makeContext(overrides?: { currentProjectId?: string | null; enabled?: boolean }): IpcContext {
   return {
     configManager: {
-      load: () => ({ memory: { semanticEnabled: overrides?.semanticEnabled ?? true } }),
+      load: () => ({ knowledgeGraph: { enabled: overrides?.enabled ?? true } }),
     },
     currentProjectId: overrides?.currentProjectId ?? null,
   } as unknown as IpcContext;
@@ -157,8 +161,7 @@ describe('createEmbedEngine drain loop', () => {
     ]);
 
     const engine = createEmbedEngine({
-      getDb: (projectId) => dbs.get(projectId)!,
-      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -195,8 +198,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -208,6 +210,69 @@ describe('createEmbedEngine drain loop', () => {
     await vi.waitFor(() => expect(store.remaining).toBe(0));
     expect(writtenOrder).toEqual([5, 6, 7]);
 
+    engine.dispose();
+  });
+
+  it('takes this machine\'s rate only once a run has embedded enough batches to be past the warm-up', async () => {
+    const drain = async (chunkCount: number): Promise<number | null> => {
+      const store = new FakeStore('proj-rate', Array.from({ length: chunkCount }, (_, index) => makeChunk(index + 1)), []);
+      const db = { name: `proj-rate-${chunkCount}` } as unknown as Database.Database;
+      markVecCapable(db);
+      const engine = createEmbedEngine({
+        store: localEmbedStoreAccess(() => db, () => store),
+        createClient: () => makeFakeClient(),
+        delay: immediateDelay,
+        drainBatchSize: 1,
+      });
+      engine.attach(makeContext({ currentProjectId: 'proj-rate' }));
+      engine.markDirty('proj-rate');
+      await vi.waitFor(() => expect(store.remaining).toBe(0));
+      const rate = engine.chunksPerMinute;
+      engine.dispose();
+      return rate;
+    };
+    expect(await drain(RATE_MIN_BATCHES - 1)).toBeNull();
+    expect(await drain(RATE_MIN_BATCHES)).toBeGreaterThan(0);
+  });
+
+  it('keeps a project dirty while the retrieval worker restarts, and drains it once the worker answers', async () => {
+    const store = new FakeStore('proj-restart', [makeChunk(20), makeChunk(21)], []);
+    const db = { name: 'proj-restart' } as unknown as Database.Database;
+    markVecCapable(db);
+    const local = localEmbedStoreAccess(() => db, () => store);
+    let readsRefused = 0;
+    let writesRefused = 0;
+    const engine = createEmbedEngine({
+      store: {
+        // The worker is down for the first read and the first write.
+        nextBatch: async (projectId, model, limit) => {
+          if (readsRefused === 0) {
+            readsRefused += 1;
+            throw new RetrievalUnavailableError('The retrieval worker exited');
+          }
+          return local.nextBatch(projectId, model, limit);
+        },
+        write: async (projectId, rows, modelTag) => {
+          if (writesRefused === 0) {
+            writesRefused += 1;
+            throw new RetrievalUnavailableError('The retrieval worker exited');
+          }
+          return local.write(projectId, rows, modelTag);
+        },
+      },
+      createClient: () => makeFakeClient(),
+      delay: immediateDelay,
+      drainBatchSize: 1,
+    });
+
+    engine.attach(makeContext({ currentProjectId: 'proj-restart' }));
+    engine.markDirty('proj-restart');
+
+    await vi.waitFor(() => expect(store.remaining).toBe(0));
+    expect(readsRefused).toBe(1);
+    expect(writesRefused).toBe(1);
+    // The batch whose write was refused is embedded again, not lost.
+    expect(store.written.map((row) => row.chunkId)).toEqual([20, 21]);
     engine.dispose();
   });
 
@@ -228,8 +293,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 2,
@@ -252,8 +316,7 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient({ crashed: true });
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -297,8 +360,7 @@ describe('createEmbedEngine drain loop', () => {
     });
 
     const engine = createEmbedEngine({
-      getDb: (projectId) => dbs.get(projectId)!,
-      createStore: (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!,
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
       createClient: () => client,
       delay: immediateDelay,
       drainBatchSize: 1,
@@ -330,14 +392,13 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
 
     engine.attach(makeContext({ currentProjectId: 'proj-caught-up' }));
-    // The Memory tab re-marks the project on every 1.5 s poll.
+    // The Knowledge Graph tab re-marks the project on every 1.5 s poll.
     engine.markDirty('proj-caught-up');
     engine.markDirty('proj-caught-up');
     engine.markDirty('proj-caught-up');
@@ -345,6 +406,88 @@ describe('createEmbedEngine drain loop', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(client.embed).not.toHaveBeenCalled();
     expect(client.setWarmHold).not.toHaveBeenCalledWith(true);
+
+    engine.dispose();
+  });
+
+  it('says once when a project that had task records to embed has caught up, never for a conversation-only run or a poll that found none', async () => {
+    const taskChunk = (id: number): StoredChunk => ({ ...makeChunk(id), corpus: 'task' });
+    // Records and a conversation chunk in one run: the run counts.
+    const working = new FakeStore('proj-drains', [taskChunk(50), taskChunk(51), makeChunk(52)], []);
+    // An agent turn's chunks alone: no push, since a re-read recomputes the
+    // map's coverage on main for every window showing the graph.
+    const turn = new FakeStore('proj-turn', [makeChunk(60), makeChunk(61)], []);
+    const idle = new FakeStore('proj-idle', [], []);
+    const dbWorking = { __fakeProjectId: 'proj-drains' } as unknown as Database.Database;
+    const dbTurn = { __fakeProjectId: 'proj-turn' } as unknown as Database.Database;
+    const dbIdle = { __fakeProjectId: 'proj-idle' } as unknown as Database.Database;
+    markVecCapable(dbWorking);
+    markVecCapable(dbTurn);
+    markVecCapable(dbIdle);
+    const dbs = new Map([['proj-drains', dbWorking], ['proj-turn', dbTurn], ['proj-idle', dbIdle]]);
+    const stores = new Map([['proj-drains', working], ['proj-turn', turn], ['proj-idle', idle]]);
+    const drained: string[] = [];
+
+    const engine = createEmbedEngine({
+      store: localEmbedStoreAccess((projectId) => dbs.get(projectId)!, (db) => stores.get((db as unknown as { __fakeProjectId: string }).__fakeProjectId)!),
+      createClient: () => makeFakeClient(),
+      delay: immediateDelay,
+      drainBatchSize: 1,
+    });
+    engine.setOnRecordsEmbedded((projectId) => drained.push(projectId));
+
+    engine.attach(makeContext({ currentProjectId: 'proj-drains' }));
+    engine.markDirty('proj-drains');
+    engine.markDirty('proj-turn');
+    engine.markDirty('proj-idle');
+    await vi.waitFor(() => {
+      expect(working.remaining).toBe(0);
+      expect(turn.remaining).toBe(0);
+    });
+    await vi.waitFor(() => expect(drained).toEqual(['proj-drains']));
+
+    // The Knowledge Graph tab's poll re-marks a caught-up project: no second call.
+    engine.markDirty('proj-drains');
+    engine.markDirty('proj-idle');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(drained).toEqual(['proj-drains']);
+
+    engine.dispose();
+  });
+
+  it('reports a long record run as it goes, at most once per interval, then once at the end', async () => {
+    const taskChunk = (id: number): StoredChunk => ({ ...makeChunk(id), corpus: 'task' });
+    // Six batches of one record chunk, the clock moving 20 s per batch: reports
+    // at 40, 80 and 120 s of the run, then the caught-up one.
+    const store = new FakeStore('proj-records', [70, 71, 72, 73, 74, 75].map(taskChunk), []);
+    const db = { name: 'proj-records' } as unknown as Database.Database;
+    markVecCapable(db);
+    let clock = 0;
+    const client = makeFakeClient({
+      embed: vi.fn(async (texts: string[]) => {
+        clock += 20_000;
+        return texts.map(() => new Float32Array([0.1]));
+      }),
+    });
+    const reports: Array<{ projectId: string; remaining: number }> = [];
+
+    const engine = createEmbedEngine({
+      store: localEmbedStoreAccess(() => db, () => store),
+      createClient: () => client,
+      delay: immediateDelay,
+      drainBatchSize: 1,
+      now: () => clock,
+    });
+    engine.setOnRecordsEmbedded((projectId) => reports.push({ projectId, remaining: store.remaining }));
+
+    engine.attach(makeContext({ currentProjectId: 'proj-records' }));
+    engine.markDirty('proj-records');
+    // Three progress reports and the caught-up one, whose arrival is awaited
+    // rather than slept for.
+    await vi.waitFor(() => expect(reports).toHaveLength(4));
+
+    expect(RECORD_PROGRESS_INTERVAL_MS).toBe(30_000);
+    expect(reports.map((report) => report.remaining)).toEqual([4, 2, 0, 0]);
 
     engine.dispose();
   });
@@ -361,8 +504,7 @@ describe('createEmbedEngine drain loop', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
@@ -385,13 +527,12 @@ describe('createEmbedEngine drain loop', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    engine.attach(makeContext({ currentProjectId: 'proj-e', semanticEnabled: false }));
+    engine.attach(makeContext({ currentProjectId: 'proj-e', enabled: false }));
     engine.markDirty('proj-e');
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -405,13 +546,12 @@ describe('createEmbedEngine drain loop', () => {
 describe('createEmbedEngine getEmbedder (resolveClient)', () => {
   it('returns null when semantic search is disabled, even with a project open', () => {
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-disabled', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-disabled', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-disabled', semanticEnabled: false });
+    const context = makeContext({ currentProjectId: 'proj-disabled', enabled: false });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
@@ -419,39 +559,36 @@ describe('createEmbedEngine getEmbedder (resolveClient)', () => {
     vi.mocked(isEmbeddingModelPresent).mockReturnValueOnce(false);
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-missing-model', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-missing-model', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-missing-model', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-missing-model', enabled: true });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
   it('returns null when the shared client has crashed past MAX_CRASHES', () => {
     const crashedClient = makeFakeClient({ crashed: true });
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-crashed', [], [])),
       createClient: () => crashedClient,
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-crashed', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-crashed', enabled: true });
     expect(engine.getEmbedder(context)).toBeNull();
   });
 
   it('returns the shared client for the interactive query path when semantic is enabled, the model is present, and the client is healthy, without holding it', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-healthy', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-healthy', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-healthy', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-healthy', enabled: true });
     expect(engine.getEmbedder(context)).toBe(client);
     // A query never holds the worker; its own embed() re-arms the idle timer.
     expect(client.setWarmHold).not.toHaveBeenCalled();
@@ -462,32 +599,30 @@ describe('createEmbedEngine prewarm', () => {
   it('warms the client when semantic is on and the model is present, and never when disabled, model absent, or crashed', () => {
     const healthy = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-prewarm', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-prewarm', [], [])),
       createClient: () => healthy,
       delay: immediateDelay,
     });
 
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: false }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: false }));
     expect(healthy.prewarm).not.toHaveBeenCalled();
 
     vi.mocked(isEmbeddingModelPresent).mockReturnValueOnce(false);
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: true }));
     expect(healthy.prewarm).not.toHaveBeenCalled();
 
-    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', semanticEnabled: true }));
+    engine.prewarm(makeContext({ currentProjectId: 'proj-prewarm', enabled: true }));
     expect(healthy.prewarm).toHaveBeenCalledTimes(1);
     expect(healthy.embed).not.toHaveBeenCalled();
     expect(healthy.setWarmHold).not.toHaveBeenCalled();
 
     const crashed = makeFakeClient({ crashed: true });
     const crashedEngine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-prewarm-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-prewarm-crashed', [], [])),
       createClient: () => crashed,
       delay: immediateDelay,
     });
-    crashedEngine.prewarm(makeContext({ currentProjectId: 'proj-prewarm-crashed', semanticEnabled: true }));
+    crashedEngine.prewarm(makeContext({ currentProjectId: 'proj-prewarm-crashed', enabled: true }));
     expect(crashed.prewarm).not.toHaveBeenCalled();
   });
 });
@@ -499,12 +634,11 @@ describe('createEmbedEngine workerCrashReason', () => {
   // embed-engine module, so it never runs this getter's own body either. A
   // regression here (e.g. forwarding `client.crashed` instead of
   // `client.crashReason`, or dropping the `?? null` fallback) would leave
-  // every existing test green while the Memory tab's worker-error note
+  // every existing test green while the Knowledge Graph tab's worker-error note
   // silently went blank.
   it('is null before any client has been resolved', () => {
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-unresolved', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-unresolved', [], [])),
       createClient: () => makeFakeClient(),
       delay: immediateDelay,
     });
@@ -518,12 +652,11 @@ describe('createEmbedEngine workerCrashReason', () => {
       crashReason: "exited with code 1: Error: Cannot find module 'sharp'",
     });
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-crashed', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-crashed', [], [])),
       createClient: () => crashedClient,
       delay: immediateDelay,
     });
-    const context = makeContext({ currentProjectId: 'proj-crashed', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-crashed', enabled: true });
 
     // getEmbedder() is what populates the engine's client reference (it
     // returns null itself, since a crashed client degrades the query path -
@@ -537,13 +670,12 @@ describe('createEmbedEngine reconcile', () => {
   it('leaves the existing client alone (no dispose, no hold) when semantic is enabled and a project is open', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-warm', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-warm', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-warm', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-warm', enabled: true });
     // Seed the shared client via the query path first, so there is something
     // for reconcile to keep. attach() is deliberately NOT called here: the
     // dispose branch of reconcile is synchronous and does not depend on the
@@ -563,17 +695,16 @@ describe('createEmbedEngine reconcile', () => {
   it('disposes the cached client and drops it when semantic becomes disabled', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-cold', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-cold', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    const enabledContext = makeContext({ currentProjectId: 'proj-cold', semanticEnabled: true });
+    const enabledContext = makeContext({ currentProjectId: 'proj-cold', enabled: true });
     engine.getEmbedder(enabledContext);
     expect(client.dispose).not.toHaveBeenCalled();
 
-    const disabledContext = makeContext({ currentProjectId: 'proj-cold', semanticEnabled: false });
+    const disabledContext = makeContext({ currentProjectId: 'proj-cold', enabled: false });
     engine.reconcile(disabledContext);
 
     expect(client.dispose).toHaveBeenCalledTimes(1);
@@ -582,17 +713,16 @@ describe('createEmbedEngine reconcile', () => {
   it('disposes the cached client and drops it when no project is open, even with semantic enabled', () => {
     const client = makeFakeClient();
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-none', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-none', [], [])),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    const openContext = makeContext({ currentProjectId: 'proj-none', semanticEnabled: true });
+    const openContext = makeContext({ currentProjectId: 'proj-none', enabled: true });
     engine.getEmbedder(openContext);
     expect(client.dispose).not.toHaveBeenCalled();
 
-    const noProjectContext = makeContext({ currentProjectId: null, semanticEnabled: true });
+    const noProjectContext = makeContext({ currentProjectId: null, enabled: true });
     engine.reconcile(noProjectContext);
 
     expect(client.dispose).toHaveBeenCalledTimes(1);
@@ -606,13 +736,12 @@ describe('createEmbedEngine reconcile', () => {
     const client = makeFakeClient();
 
     const engine = createEmbedEngine({
-      getDb: () => db,
-      createStore: () => store,
+      store: localEmbedStoreAccess(() => db, () => store),
       createClient: () => client,
       delay: immediateDelay,
     });
 
-    const context = makeContext({ currentProjectId: 'proj-reconcile-dirty', semanticEnabled: true });
+    const context = makeContext({ currentProjectId: 'proj-reconcile-dirty', enabled: true });
     engine.attach(context);
 
     // No markDirty call here -- reconcile itself is what must flag the project.
@@ -628,17 +757,17 @@ describe('createEmbedEngine reconcile', () => {
 describe('createEmbedEngine getClientFor model/acceleration switch', () => {
   function makeMutableContext(initial: {
     currentProjectId?: string | null;
-    semanticEnabled?: boolean;
-    embeddingModel?: string;
-    acceleration?: MemoryAcceleration;
+    enabled?: boolean;
+    localModel?: string;
+    acceleration?: KnowledgeGraphAcceleration;
   }): { context: IpcContext; state: typeof initial } {
     const state = { ...initial };
     const context = {
       configManager: {
         load: () => ({
-          memory: {
-            semanticEnabled: state.semanticEnabled ?? true,
-            embeddingModel: state.embeddingModel,
+          knowledgeGraph: {
+            enabled: state.enabled ?? true,
+            localModel: state.localModel,
             acceleration: state.acceleration,
           },
         }),
@@ -652,29 +781,28 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
 
   it('disposes the old client and creates a fresh one when the selected model changes', () => {
     const createdClients: EmbedWorkerClient[] = [];
-    const createClient = vi.fn((model: EmbeddingModelDef, _acceleration: MemoryAcceleration): EmbedWorkerClient => {
+    const createClient = vi.fn((model: EmbeddingModelDef, _acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient => {
       const instance = makeFakeClient({ modelTag: model.modelTag, dimensions: model.dimensions });
       createdClients.push(instance);
       return instance;
     });
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-model-switch', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-model-switch', [], [])),
       createClient,
       delay: immediateDelay,
     });
 
     const { context, state } = makeMutableContext({
       currentProjectId: 'proj-model-switch',
-      embeddingModel: 'bge-small',
+      localModel: 'bge-small',
     });
 
     const first = engine.getEmbedder(context);
     expect(createClient).toHaveBeenCalledTimes(1);
     expect(first).toBe(createdClients[0]);
 
-    state.embeddingModel = 'bge-large';
+    state.localModel = 'bge-large';
     const second = engine.getEmbedder(context);
 
     expect(createdClients[0].dispose).toHaveBeenCalledTimes(1);
@@ -685,15 +813,14 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
 
   it('disposes the old client and creates a fresh one when the acceleration preference changes', () => {
     const createdClients: EmbedWorkerClient[] = [];
-    const createClient = vi.fn((_model: EmbeddingModelDef, _acceleration: MemoryAcceleration): EmbedWorkerClient => {
+    const createClient = vi.fn((_model: EmbeddingModelDef, _acceleration: KnowledgeGraphAcceleration): EmbedWorkerClient => {
       const instance = makeFakeClient();
       createdClients.push(instance);
       return instance;
     });
 
     const engine = createEmbedEngine({
-      getDb: () => ({}) as unknown as Database.Database,
-      createStore: () => new FakeStore('proj-accel-switch', [], []),
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-accel-switch', [], [])),
       createClient,
       delay: immediateDelay,
     });

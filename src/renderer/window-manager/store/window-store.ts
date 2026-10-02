@@ -211,6 +211,11 @@ interface OpenWindowInput {
    *  arrival-focus arbiter refuse to hand ANY terminal the keyboard off the back
    *  of this window's focus. See `.claude/rules/agent-driven-focus.md`. */
   openedByAgent?: boolean;
+  /** Open a `conversation` window at this turn (see `ManagedWindow.scrollToTurnUuid`).
+   *  An already-open window for the anchor is re-aimed at it. */
+  scrollToTurnUuid?: string;
+  /** The project the conversation belongs to (see `ManagedWindow.projectId`). */
+  projectId?: string;
 }
 
 export interface WindowStoreState {
@@ -230,6 +235,8 @@ export interface WindowStoreState {
 
   /** Open a window for an anchor, or focus the existing one for that anchor. */
   openWindow: (input: OpenWindowInput) => string;
+  /** Drop a window's one-shot scroll target once it has scrolled there. */
+  clearWindowScrollTarget: (id: string) => void;
   /** Unconditional removal. A USER close on the board goes through the layer's
    *  policy in `WindowFrame` (`shouldParkOnClose`), which parks a window whose
    *  Browser pane must outlive the close; a direct caller of this is declaring
@@ -381,6 +388,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // the user's pointer-down that normally calls it), so stamping first
         // would be undone by the very next line.
         if (input.openedByAgent) get().markAgentOpened(existing.id);
+        // Re-aim an open conversation at the passage now asked for.
+        const turnUuid = input.scrollToTurnUuid;
+        if (turnUuid) {
+          set((current) => {
+            const target = current.windows[existing.id];
+            if (!target) return current;
+            return { windows: { ...current.windows, [existing.id]: { ...target, scrollToTurnUuid: turnUuid } } };
+          });
+        }
         return existing.id;
       }
 
@@ -407,6 +423,8 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // Same shape, same reason: absent means "the user opened this", so a
         // user path can never inherit an agent stamp by forgetting to clear it.
         ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
+        ...(input.scrollToTurnUuid ? { scrollToTurnUuid: input.scrollToTurnUuid } : {}),
+        ...(input.projectId ? { projectId: input.projectId } : {}),
       };
 
       set((current) => ({
@@ -416,6 +434,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         zCounter,
       }));
       return id;
+    },
+
+    clearWindowScrollTarget: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target || target.scrollToTurnUuid === undefined) return current;
+        const { scrollToTurnUuid: _consumed, ...rest } = target;
+        return { windows: { ...current.windows, [id]: rest } };
+      });
     },
 
     closeWindow: (id) => {
@@ -1182,7 +1209,7 @@ const HMR_DATA: Record<string, WindowManager> | undefined = import.meta.hot?.dat
  *  `import.meta.hot.data` (the block at the bottom of this module), so they are
  *  recovered here. That write MUST stay after these `resolveInstance` calls. */
 function resolveInstance(
-  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager',
+  key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager' | 'knowledgeGraphWindowManager',
   options: WindowManagerStoreOptions,
 ): WindowManager {
   return HMR_DATA?.[key] ?? createWindowManagerStore(options);
@@ -1213,6 +1240,25 @@ export const monitorWindowManager = resolveInstance('monitorWindowManager', {
 });
 
 /**
+ * The Knowledge Graph's conversation layer. The ONLY instance whose windows are
+ * conversations rather than task details, and the reason it exists at all: the
+ * graph's "Open conversation" used to write `session-store.conversationSessionId`,
+ * which the BOARD's bridge turned into a window at z-40 - underneath the graph's
+ * own z-42 overlay, so the transcript opened where the user could not see it. And
+ * in the detached graph there is no board layer at all, so that route had no
+ * destination whatsoever.
+ *
+ * Anchored by session id (`kind: 'conversation'` matches the board's conversation
+ * windows), never persisted, and deliberately NOT wired to detail ownership or
+ * session claims - all three of those systems already skip non-task-detail
+ * windows, so this layer adds no coupling to them.
+ */
+export const knowledgeGraphWindowManager = resolveInstance('knowledgeGraphWindowManager', {
+  idPrefix: 'mem',
+  kind: 'conversation',
+});
+
+/**
  * Every window-manager instance in this renderer.
  *
  * Some state the layers feed is renderer-GLOBAL rather than per-layer - notably
@@ -1227,6 +1273,7 @@ export const allWindowManagers: readonly WindowManager[] = [
   boardWindowManager,
   commandWindowManager,
   monitorWindowManager,
+  knowledgeGraphWindowManager,
 ];
 
 /** Back-compat: the board instance's bound store hook. Existing engine consumers
@@ -1242,6 +1289,8 @@ if (import.meta.hot) {
   import.meta.hot.data.commandWindowManager = commandWindowManager;
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.monitorWindowManager = monitorWindowManager;
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.knowledgeGraphWindowManager = knowledgeGraphWindowManager;
   // Self-accept: editing this module forces a clean reload rather than handing a
   // second store instance to part of an already-mounted tree (Pattern E).
   // @ts-expect-error -- Vite handles import.meta.hot

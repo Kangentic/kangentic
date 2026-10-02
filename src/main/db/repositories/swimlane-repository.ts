@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
+import { writeTransaction } from '../transaction';
 
 /** Raw row shape returned by better-sqlite3 for the swimlanes table. */
 interface SwimlaneRow {
@@ -52,7 +53,7 @@ interface SwimlaneRow {
  * Guards (role column, non-empty) belong to the CALLER, not here.
  */
 export function deleteSwimlaneRowWithReferences(db: Database.Database, id: string): void {
-  const tx = db.transaction(() => {
+  const tx = writeTransaction(db, () => {
     db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?').run(id, id);
     // The column's automations. `column_automations.swimlane_id` declares
     // ON DELETE CASCADE and `foreign_keys = ON` is set, so this is belt and
@@ -188,7 +189,7 @@ export class SwimlaneRepository {
       throw new Error('Custom columns cannot be at the first position.');
     }
 
-    const tx = this.db.transaction(() => {
+    const tx = writeTransaction(this.db, () => {
       const stmt = this.db.prepare('UPDATE swimlanes SET position = ? WHERE id = ?');
       ids.forEach((id, index) => {
         stmt.run(index, id);

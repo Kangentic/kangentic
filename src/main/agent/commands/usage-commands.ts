@@ -88,7 +88,7 @@ function formatUsageMessage(stats: UsageDashboardStats): string {
  * precedence. `includeSeries` keeps the bucketed time series in `data`
  * (stripped by default: KPI/breakdown reads should stay cheap).
  */
-export const handleGetUsageStats: CommandHandler = (params): CommandResponse => {
+export const handleGetUsageStats: CommandHandler = async (params): Promise<CommandResponse> => {
   const rawPeriod = typeof params.period === 'string' ? params.period : 'all';
   if (!PERIODS.includes(rawPeriod as UsageTimePeriod)) {
     return { success: false, error: `Invalid period "${rawPeriod}". Valid: ${PERIODS.join(', ')}` };
@@ -105,7 +105,7 @@ export const handleGetUsageStats: CommandHandler = (params): CommandResponse => 
     ? { kind: 'all' }
     : { kind: 'project', projectId: projectId as string };
 
-  const stats = usageStatsService.getDashboardStats(scope, period);
+  const stats = await usageStatsService.getDashboardStats(scope, period);
   const data = includeSeries
     ? stats
     : (() => {

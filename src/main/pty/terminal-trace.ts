@@ -49,9 +49,35 @@ const RING_SIZE = 300;
 // hmr-safe: main is not hot-reloaded; the ring is rebuilt on app restart.
 const ring: TerminalTraceEvent[] = [];
 
+/** Set in the pty host, whose buffer traces belong in main's ring. */
+let traceRelay: ((sessionId: string, event: string, detail: Record<string, unknown> | undefined, ts: number) => void) | null = null;
+
+/** Send this process's trace entries elsewhere instead of keeping them (the
+ *  pty host relays its entries to main). */
+export function setTerminalTraceRelay(
+  relay: ((sessionId: string, event: string, detail: Record<string, unknown> | undefined, ts: number) => void) | null,
+): void {
+  traceRelay = relay;
+}
+
 export function traceTerminal(sessionId: string, event: string, detail?: Record<string, unknown>): void {
   if (!__KANGENTIC_DEV__) return;
-  ring.push({ ts: Date.now(), source: 'main', sessionId, event, detail });
+  if (traceRelay) {
+    traceRelay(sessionId, event, detail, Date.now());
+    return;
+  }
+  recordTerminalTrace(sessionId, event, detail, Date.now());
+}
+
+/** Keep an entry, with the time it happened (a relayed one carries its own). */
+export function recordTerminalTrace(
+  sessionId: string,
+  event: string,
+  detail: Record<string, unknown> | undefined,
+  ts: number,
+): void {
+  if (!__KANGENTIC_DEV__) return;
+  ring.push({ ts, source: 'main', sessionId, event, detail });
   while (ring.length > RING_SIZE) ring.shift();
 }
 

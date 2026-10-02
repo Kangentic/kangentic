@@ -344,7 +344,7 @@ When a task moves to a column with a different agent (detected by `resolveTarget
 1. **Agent resolution** detects agent change: `resolveTargetAgent()` checks `task.agent_override` first (highest priority - the user's create-time lock), then column `agent_override`, then project `default_agent`, then global fallback (`'claude'`). If the resolved agent differs from the current session's agent, a handoff is triggered. Tasks with a non-null `task.agent_override` never trigger a handoff on column moves - the locked agent supersedes column settings.
 2. **Task-move Priority 3** suspends the current session.
 3. **spawnAgent handoff path** - the `agentOverride` parameter is passed to `executeSpawnAgent()`, which prevents resume of the wrong agent's session.
-4. **HandoffOrchestrator** packages context from the previous session: transcript (from `session_transcripts`), git diff, and session metrics.
+4. **HandoffOrchestrator** packages context from the previous session: transcript (from `session_transcript_chunks`), git diff, and session metrics.
 5. **Transition engine** spawns the new agent with a `handoffPromptPrefix` that summarizes the handoff context.
 6. **Post-spawn** - a `handoff-context.md` file is written to the session directory for the new agent to reference.
 

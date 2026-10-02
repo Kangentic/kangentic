@@ -68,7 +68,7 @@ test.describe('Theme swatch grid', () => {
   test('is a radiogroup with one named radio per theme, still inside the registry row', async () => {
     await openThemeTab();
 
-    // The SettingRow wrapper is what search, the registry, and the docs scene key on.
+    // The CardRow tile is what search, the registry, and the docs scene key on.
     await expect(page.getByTestId('setting-row-theme')).toBeVisible();
 
     const group = page.getByRole('radiogroup', { name: 'Theme' });

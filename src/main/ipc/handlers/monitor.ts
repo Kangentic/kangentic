@@ -31,6 +31,11 @@ const MONITOR_PUSH_DEBOUNCE_MS = 250;
 
 export function registerMonitorHandlers(context: IpcContext): void {
   let pushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Each push build's number, and the newest one broadcast. The build awaits
+   *  the pty host's output peeks, so a slow build could land after a newer one
+   *  and overwrite the fresher snapshot. */
+  let pushBuildCount = 0;
+  let newestBroadcastBuild = 0;
 
   /**
    * Renderers with a live monitor mounted, keyed by webContents id. The push
@@ -75,9 +80,9 @@ export function registerMonitorHandlers(context: IpcContext): void {
     sender.once('render-process-gone', dropOnTeardown);
   };
 
-  const buildSnapshotSafe = () => {
+  const buildSnapshotSafe = async () => {
     try {
-      return buildMonitorSnapshot(context);
+      return await buildMonitorSnapshot(context);
     } catch (error) {
       // Same reasoning as the push path below: one project's DB hiccup must not
       // fail the whole cross-project fetch. `resolveProject` already guards the
@@ -145,16 +150,22 @@ export function registerMonitorHandlers(context: IpcContext): void {
       pushTimer = null;
       if (subscribers.size === 0) return;
       if (context.mainWindow.isDestroyed()) return;
-      try {
+      // A snapshot failure must never take down the session event pipeline it
+      // is riding on.
+      const build = ++pushBuildCount;
+      buildMonitorSnapshot(context).then((snapshot) => {
+        if (context.mainWindow.isDestroyed()) return;
+        if (build < newestBroadcastBuild) return;
+        newestBroadcastBuild = build;
         // broadcast (not webContents.send) so a detached monitor window receives
         // it too. MONITOR_CHANGED is declared in the surface's `channels`, without
         // which the pop-out would silently never update.
-        broadcast(context.mainWindow, IPC.MONITOR_CHANGED, buildMonitorSnapshot(context));
-      } catch (error) {
-        // A snapshot failure must never take down the session event pipeline it
-        // is riding on.
+        broadcast(context.mainWindow, IPC.MONITOR_CHANGED, snapshot);
+        // A catch, not a second argument to then: a broadcast that throws (a
+        // pop-out torn down mid-send) is caught too.
+      }).catch((error: unknown) => {
         console.error('[monitor] Failed to build snapshot for push:', error);
-      }
+      });
     }, MONITOR_PUSH_DEBOUNCE_MS);
   };
 

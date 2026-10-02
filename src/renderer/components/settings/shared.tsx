@@ -1,12 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
-import { useAnySettingVisible, useSettingVisible, useSettingsSearch } from './settings-search';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
-import { ToggleCard, ToggleIndicator } from '../ToggleCard';
-import { SettingText, SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
 export { SettingsPanelProvider, useScopedUpdate } from './setting-scope';
@@ -158,8 +155,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                 const hasNoMatches = isSearching && (matchCount === undefined || matchCount === 0);
                 const isFirstSystemTab = tab.category === 'system' && tabs[index - 1]?.category !== 'system';
                 // 'core' is the first, unlabeled tier directly under the System
-                // header (mirrors the unsectioned-first-group convention used
-                // within individual tabs). Only later tiers get their own header.
+                // header. Only later tiers get their own header.
                 const isNewTier = tab.category === 'system' && tab.tier && tab.tier !== 'core'
                   && tab.tier !== tabs[index - 1]?.tier;
                 return (
@@ -204,9 +200,10 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                 );
               })}
             </div>
-            {/* Tab content */}
+            {/* Tab content. The scroller every tab lives in, so a tab of any
+                length scrolls at the 900x600 window floor. */}
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+              <div data-testid="settings-content" className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
                 {children}
               </div>
             </div>
@@ -248,69 +245,9 @@ export function NoSearchResults({ query }: { query: string }) {
   );
 }
 
-/* ── Section Header ── */
-
-interface SectionHeaderProps {
-  label: string;
-  description?: string;
-  /** Adds a stronger top border for visual separation (e.g. Project Defaults). */
-  prominent?: boolean;
-  /** Setting IDs in this section. When searching, hides if none match. */
-  searchIds?: string[];
-}
-
-export function SectionHeader({ label, description, prominent, searchIds }: SectionHeaderProps) {
-  // Shared with the section BODIES that sit under a header (see
-  // useAnySettingVisible's own comment): a header and its body must apply the
-  // same any-of-these-ids rule, or the header hides while the body renders on
-  // (or the reverse, orphaning the heading).
-  const visible = useAnySettingVisible(searchIds);
-  if (!visible) return null;
-
-  return (
-    <div className={prominent ? 'pt-4 mt-4 border-t-2 border-edge first:pt-0 first:mt-0' : 'pt-3 mt-2 first:pt-0 first:mt-0'}>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{label}</h3>
-      {description && <p className="text-xs text-fg-disabled mt-0.5">{description}</p>}
-    </div>
-  );
-}
-
-/* ── Setting Row ── */
-
-interface SettingRowProps {
-  /** Usually a string; a caller may pass a fragment (e.g. label text + a
-   *  small `Pill` tag like "Optional") for a row that needs inline markup. */
-  label: React.ReactNode;
-  description: string;
-  children: React.ReactNode;
-  /** Registry ID for search filtering. */
-  searchId?: string;
-  /** Optional content rendered right-aligned in the label row. */
-  trailing?: React.ReactNode;
-}
-
-export function SettingRow({ label, description, children, searchId, trailing }: SettingRowProps) {
-  const visible = useSettingVisible(searchId);
-
-  // Search filtering.
-  if (!visible) return null;
-
-  return (
-    <div className="space-y-1.5" data-testid={searchId ? `setting-row-${searchId}` : undefined}>
-      {/* Raw classes rather than <SettingText>: this row right-aligns `trailing`
-          against the DESCRIPTION line, a layout the shared component does not
-          own. The values still come from one place. */}
-      <div>
-        <div className={SETTING_LABEL_CLASS}>{label}</div>
-        <div className="flex items-center justify-between gap-2">
-          <div className={SETTING_DESCRIPTION_CLASS}>{description}</div>
-          {trailing}
-        </div>
-      </div>
-      {children}
-    </div>
-  );
-}
+/* The old row components (SectionHeader, SettingRow, SettingToggleRow,
+   CompactToggleList) are gone: every tab builds from settings-card.tsx.
+   See .claude/rules/settings-card-design.md. */
 
 /* ── Select ── */
 
@@ -344,28 +281,6 @@ export function Select({
         {children}
       </select>
       <ChevronDown size={chevronSize} className={`absolute ${chevronClassName} top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none`} />
-    </div>
-  );
-}
-
-/* ── Download progress bar ── */
-
-/** Thin filled progress bar for a model/asset download. Shared by the Dictation
- *  and Memory model-status cards so the two download indicators read identically. */
-export function DownloadProgressBar({ percent }: { percent: number }) {
-  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-  return (
-    <div
-      className="mt-1 h-1 w-full overflow-hidden rounded-full bg-edge/40"
-      role="progressbar"
-      aria-valuenow={clamped}
-      aria-valuemin={0}
-      aria-valuemax={100}
-    >
-      <div
-        className="h-full rounded-full bg-accent transition-[width] duration-300"
-        style={{ width: `${clamped}%` }}
-      />
     </div>
   );
 }
@@ -431,88 +346,6 @@ export function ToggleSwitch({
         }`}
       />
     </button>
-  );
-}
-
-/* ── Setting Toggle Row ── */
-
-interface SettingToggleRowProps {
-  label: string;
-  description: string;
-  searchId?: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  /** Optional left-side icon. */
-  icon?: React.ReactNode;
-  /** When true, the row renders greyed and ignores clicks (prerequisite unmet). */
-  disabled?: boolean;
-}
-
-/**
- * Settings-panel wrapper around `<ToggleCard>` that hides the row when the
- * settings search filter excludes its `searchId`.
- */
-export function SettingToggleRow({ label, description, searchId, checked, onChange, icon, disabled }: SettingToggleRowProps) {
-  const visible = useSettingVisible(searchId);
-  if (!visible) return null;
-
-  return (
-    <ToggleCard
-      label={label}
-      description={description}
-      checked={checked}
-      onChange={onChange}
-      icon={icon}
-      disabled={disabled}
-      testId={searchId ? `setting-row-${searchId}` : undefined}
-    />
-  );
-}
-
-/* ── Compact Toggle List ── */
-
-export interface CompactToggleItem {
-  label: string;
-  description?: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  /** Registry ID for search filtering. */
-  searchId?: string;
-}
-
-/**
- * Single-column list of label + toggle pairs. Material Design-style compact
- * rows for dense boolean groups (e.g. context bar visibility toggles). Each
- * row is a click-anywhere button so the whole row toggles, not just the
- * switch on the right.
- */
-export function CompactToggleList({ items }: { items: CompactToggleItem[] }) {
-  const { isSearching, matchingIds } = useSettingsSearch();
-
-  // When searching, filter items to those with matching searchIds.
-  const visibleItems = isSearching
-    ? items.filter((item) => !item.searchId || matchingIds.has(item.searchId))
-    : items;
-
-  if (visibleItems.length === 0) return null;
-
-  return (
-    <div className="space-y-0.5">
-      {visibleItems.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          role="switch"
-          aria-checked={item.checked}
-          aria-label={item.label}
-          onClick={() => item.onChange(!item.checked)}
-          className="flex items-center justify-between gap-4 w-full text-left cursor-pointer rounded px-2 py-1.5 hover:bg-surface/60 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
-        >
-          <SettingText className="leading-tight" label={item.label} description={item.description} />
-          <ToggleIndicator checked={item.checked} />
-        </button>
-      ))}
-    </div>
   );
 }
 

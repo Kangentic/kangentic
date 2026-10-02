@@ -3,6 +3,13 @@ import { app } from 'electron';
 import { writeLockfile, removeLockfile } from './main/lockfile';
 import { startInspectionServer, stopInspectionServer } from './main/inspection-server';
 import { attachDebugger, detachDebugger } from './main/cdp';
+import { installSpawnTracer } from './main/spawn-tracer';
+import {
+  isStallProfilerRunning,
+  stallProfileDirectory,
+  startStallProfiler,
+  stopStallProfiler,
+} from './main/stall-profiler';
 import type { SessionManager } from '../main/pty/session-manager';
 import type { IpcContext } from '../main/ipc/ipc-context';
 
@@ -47,6 +54,8 @@ export interface DevtoolsContext {
   getInspectionServerEnabled: () => boolean;
   /** Returns `developer.previewEvalEnabled`. Live read on each lookup. */
   getEvalEnabled: () => boolean;
+  /** Returns `developer.stallProfiler`. Live read on each lookup. */
+  getStallProfilerEnabled: () => boolean;
 }
 
 let installedContext: DevtoolsContext | null = null;
@@ -56,13 +65,26 @@ let bridgeStarting = false;
 export function installDevtools(context: DevtoolsContext): void {
   if (installedContext) return;
   installedContext = context;
+  // Count every child-process spawn on main by caller (spawn-tracer.ts).
+  installSpawnTracer();
 
   // Synchronous before-quit per .claude/rules/synchronous-shutdown.md. Removes
   // the lockfile, detaches CDP, closes the HTTP server. No async work in
   // the quit path.
   app.on('before-quit', () => {
+    stopStallProfiler();
     teardownBridge(context);
   });
+}
+
+/** Start or stop the stall profiler to match `developer.stallProfiler`. */
+function reconcileStallProfiler(context: DevtoolsContext): void {
+  const wanted = context.getStallProfilerEnabled();
+  if (wanted && !isStallProfilerRunning()) {
+    void startStallProfiler(stallProfileDirectory(context.app.getPath('userData')));
+  } else if (!wanted && isStallProfilerRunning()) {
+    stopStallProfiler();
+  }
 }
 
 /**
@@ -80,6 +102,8 @@ export function installDevtools(context: DevtoolsContext): void {
 export function notifyDevtoolsRefresh(): void {
   const context = installedContext;
   if (!context) return;
+
+  reconcileStallProfiler(context);
 
   const enabled = context.getInspectionServerEnabled();
   const running = activeProjectRoot !== null;
