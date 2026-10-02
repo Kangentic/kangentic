@@ -8,6 +8,7 @@ import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { isShuttingDown } from '../../shutdown-state';
+import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
@@ -214,8 +215,18 @@ export async function autoSpawnTasks(
     return;
   }
 
+  // Each spawn and its DB writes run under the task's lifecycle lock, after a
+  // re-check: the preparation above awaited the shell and every agent's
+  // detection, and a move, a Resume or a reset that took the task in that time
+  // owns it now. Without the lock this pass spawned into a task the user had
+  // just moved, To Do included. A skipped task leaves its prepared session
+  // directory to the startup orphan cleanup.
+  const now = new Date().toISOString();
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map(async (input) => {
+    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+      const current = taskRepo.getById(input.task.id);
+      if (!current || current.swimlane_id !== input.task.swimlane_id || hasSession(input.task.id)) return null;
+
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,
         taskId: input.task.id,
@@ -231,17 +242,6 @@ export async function autoSpawnTasks(
         isolatedSwimlaneId: input.isolatedSwimlaneId,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
-      return { input, newSession };
-    }),
-  );
-
-  // --- DB update pass (sequential): process results ---
-  let spawned = 0;
-  const now = new Date().toISOString();
-  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
-    const result = spawnResults[resultIndex];
-    if (result.status === 'fulfilled') {
-      const { input, newSession } = result.value;
 
       taskRepo.update({
         id: input.task.id,
@@ -272,8 +272,15 @@ export async function autoSpawnTasks(
         model: input.appliedModel,
         effort: input.appliedEffort,
       });
+      return newSession;
+    })),
+  );
 
-      spawned++;
+  let spawned = 0;
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      if (result.value) spawned++;
     } else {
       const input = spawnInputs[resultIndex];
       console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);

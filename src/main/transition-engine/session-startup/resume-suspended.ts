@@ -13,6 +13,7 @@ import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
+import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
@@ -424,8 +425,24 @@ export async function resumeSuspendedSessions(
     return;
   }
 
+  // Each resume and its DB writes run under the task's lifecycle lock, after a
+  // re-check: the preparation above awaited the shell and every agent's
+  // detection, and a move, a Resume or a reset in that time owns the task now.
+  // The check is for a LIVE session, not any row: the pty host's crash path
+  // leaves the lost row registered, exited, for exactly the task it resumes.
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map(async (input) => {
+    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+      const current = taskRepo.getById(input.task.id);
+      const recordStillThere = sessionRepo.findByAnyId(input.record.id)?.id === input.record.id;
+      if (
+        !current
+        || current.swimlane_id !== input.task.swimlane_id
+        || !recordStillThere
+        || sessionManager.findLiveSessionByTaskId(input.task.id)
+      ) {
+        return null;
+      }
+
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,
         taskId: input.task.id,
@@ -448,16 +465,6 @@ export async function resumeSuspendedSessions(
         resuming: true,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
-      return { input, newSession };
-    }),
-  );
-
-  // --- DB update pass (sequential): process results ---
-  let recovered = 0;
-  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
-    const result = spawnResults[resultIndex];
-    if (result.status === 'fulfilled') {
-      const { input, newSession } = result.value;
 
       retireRecord(sessionRepo, input.record.id);
 
@@ -486,7 +493,15 @@ export async function resumeSuspendedSessions(
       });
 
       taskRepo.update({ id: input.task.id, session_id: newSession.id });
-      recovered++;
+      return newSession;
+    })),
+  );
+
+  let recovered = 0;
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      if (result.value) recovered++;
     } else {
       const input = spawnInputs[resultIndex];
       console.error(

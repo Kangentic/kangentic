@@ -88,6 +88,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     getUserPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
+    // The resume pass confirms under the task lock that its record still exists.
+    findByAnyId = (id: string) => ({ id }) as SessionRecord;
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -102,7 +104,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => {
       return taskRepoList();
     };
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
-    getById = vi.fn(() => null);
+    // The spawn pass re-reads its task under the task lock.
+    getById = vi.fn((id: string) => taskRepoList().find((task: Task) => task.id === id));
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -207,6 +210,7 @@ function makeSessionManager() {
     spawn: vi.fn(async () => ({ id: 'new-pty-session-1' })),
     getShell: vi.fn(async () => '/bin/sh'),
     hasSessionForTask: vi.fn(() => false),
+    findLiveSessionByTaskId: vi.fn(() => undefined),
     getUserPausedTaskIds: vi.fn(() => new Set<string>()),
   };
 }

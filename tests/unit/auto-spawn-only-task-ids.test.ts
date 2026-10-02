@@ -17,6 +17,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
+/** The task row as the database holds it now; unset, the row discovery listed. */
+const mockTaskGetById = vi.fn((_id: string): unknown => undefined);
 const mockSwimlaneList = vi.fn();
 
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => true) } }));
@@ -24,7 +26,15 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
-    list = (...args: unknown[]) => mockTaskList(...args);
+    // The spawn pass re-reads its task under the task lock: answer with what the
+    // discovery pass was handed.
+    listed = new Map<string, unknown>();
+    list = (...args: unknown[]) => {
+      const rows = (mockTaskList(...args) ?? []) as Array<{ id: string }>;
+      for (const row of rows) this.listed.set(row.id, row);
+      return rows;
+    };
+    getById = (id: string) => mockTaskGetById(id) ?? this.listed.get(id);
     update = vi.fn();
   },
 }));
@@ -33,6 +43,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = vi.fn(() => undefined);
     getUserPausedTaskIds = () => new Set<string>();
+    insert = vi.fn();
+    updateAppliedSettings = vi.fn();
   },
 }));
 
@@ -91,7 +103,7 @@ async function runScopedAutoSpawn(registry: RegistryRow[], onlyTaskIds: Readonly
     listSessions: vi.fn(() => registry),
     getShell: vi.fn(async () => 'powershell'),
     registerSuspendedPlaceholder: vi.fn(),
-    spawn: vi.fn(),
+    spawn: vi.fn(async (input: { id: string }) => ({ id: input.id })),
   };
   await autoSpawnTasks(
     'proj-1',
@@ -158,5 +170,80 @@ describe('autoSpawnTasks: onlyTaskIds scopes the pass to the lost tasks', () => 
 
     expect(mockSwimlaneList).not.toHaveBeenCalled();
     expect(mockPrepareAgentSpawn).not.toHaveBeenCalled();
+  });
+});
+
+/** What a successful `prepareAgentSpawn` hands the spawn pass. */
+function preparedSpawn(taskId: string) {
+  return {
+    ok: true as const,
+    data: {
+      sessionRecordId: `session-new-${taskId}`,
+      command: 'claude',
+      cwd: '/mock/project',
+      extraEnv: null,
+      statusOutputPath: '/mock/status.json',
+      eventsOutputPath: '/mock/events.jsonl',
+      adapter: { name: 'claude', sessionType: 'claude_agent' },
+      agentSessionId: 'agent-1',
+      agent: 'claude',
+      permissionMode: 'acceptEdits',
+      appliedModel: null,
+      appliedEffort: null,
+    },
+  };
+}
+
+/**
+ * The preparation awaits the shell and the agent's detection, seconds on a
+ * real machine, and the user can act on the task meanwhile. The spawn re-reads
+ * the task under its lifecycle lock and leaves one a user action took over.
+ *
+ * Red-green: drop the re-check in the spawn pass and the last two fail.
+ */
+describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskGetById.mockReset();
+    mockTaskGetById.mockImplementation(() => undefined);
+    mockSwimlaneList.mockReturnValue([activeLane()]);
+    mockTaskList.mockReturnValue([task('task-lost')]);
+  });
+
+  it('spawns the lost task when nothing took it over during the preparation', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spawn over a session the user started while the agent was being prepared', async () => {
+    const registry: RegistryRow[] = [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      registry.push({ id: 'session-user', taskId: 'task-lost', status: 'running' });
+      return preparedSpawn('task-lost') as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(registry, new Set(['task-lost']));
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('does not spawn a task moved to another column while the agent was being prepared', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      mockTaskGetById.mockImplementation((id) => (id === 'task-lost' ? { ...task('task-lost'), swimlane_id: 'lane-todo' } : undefined));
+      return preparedSpawn('task-lost') as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+    );
+
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 });

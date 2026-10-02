@@ -669,8 +669,10 @@ export async function recoverSessionsAfterPtyHostLoss(
         .filter((session) => lostSessionIds.has(session.id) && session.taskId)
         .map((session) => session.taskId),
     );
-    const boardProfiles = context.boardConfigManager.getBoardProfiles(project.path);
     try {
+      // Inside the try: a board config that fails to read skips this project,
+      // not every project after it.
+      const boardProfiles = context.boardConfigManager.getBoardProfiles(project.path);
       await runWithProjectLogContext(project.name, async () => {
         await resumeSuspendedSessions(
           project.id,
