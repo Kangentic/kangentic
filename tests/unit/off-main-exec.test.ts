@@ -9,6 +9,8 @@
  *
  * Tier: Unit.
  */
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -146,13 +148,52 @@ describe('host-exec', () => {
       expect(launchesOwnBinary(execFileOf(appBinary), appBinary)).toBe(true);
     });
 
-    // Node's path module on POSIX does not split a backslash path, so these
-    // Windows-form paths only mean anything on Windows.
-    it.runIf(process.platform === 'win32')('does not reach a Windows path with a directory by its name', () => {
+    // Compared as Windows paths on every platform, through the platform
+    // argument, so CI's Linux runner checks the Windows forms too.
+    it('does not reach a Windows path with a directory by its name', () => {
       const windowsBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
-      expect(launchesOwnBinary(execFileOf('C:\\Other\\Kangentic.exe'), windowsBinary)).toBe(false);
-      expect(launchesOwnBinary(execFileOf(windowsBinary), windowsBinary)).toBe(true);
-      expect(launchesOwnBinary(execFileOf('Kangentic'), windowsBinary)).toBe(true);
+      expect(launchesOwnBinary(execFileOf('C:\\Other\\Kangentic.exe'), windowsBinary, 'win32')).toBe(false);
+      expect(launchesOwnBinary(execFileOf(windowsBinary), windowsBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('c:\\program files\\kangentic\\KANGENTIC.EXE'), windowsBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(execFileOf('Kangentic'), windowsBinary, 'win32')).toBe(true);
+    });
+  });
+
+  describe('a path that names the app\'s binary another way', () => {
+    const execFileOf = (file: string): HostExecRequest => ({ kind: 'execFile', file, args: ['--version'], options: {} });
+
+    // macOS's default file system ignores case, as Windows does, so a path in
+    // another case is the same binary there and another file on Linux.
+    // Red-green: fold case on Windows only and the darwin assertion fails.
+    it('compares a path without case on macOS, and with it on Linux', () => {
+      const appBinary = '/Applications/Kangentic.app/Contents/MacOS/Kangentic';
+      const otherCase = '/applications/kangentic.app/Contents/MacOS/Kangentic';
+      expect(launchesOwnBinary(execFileOf(otherCase), appBinary, 'darwin')).toBe(true);
+      expect(launchesOwnBinary(execFileOf(otherCase), appBinary, 'linux')).toBe(false);
+    });
+
+    // A link to the app's binary (an install link like `/usr/bin/kangentic`)
+    // starts the app as surely as its own path. Symlinks need privileges on
+    // Windows, so this runs on POSIX, which CI's runner is.
+    // Red-green: drop the real-path compare in `isSameExecutable` and the link
+    // is allowed through.
+    it.skipIf(process.platform === 'win32')('refuses a link whose target is the app\'s binary, and allows a link to another program', () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'own-executable-'));
+      try {
+        const appBinary = path.join(directory, 'Kangentic');
+        const otherBinary = path.join(directory, 'codex');
+        fs.writeFileSync(appBinary, '');
+        fs.writeFileSync(otherBinary, '');
+        const appLink = path.join(directory, 'app-link');
+        const otherLink = path.join(directory, 'other-link');
+        fs.symlinkSync(appBinary, appLink);
+        fs.symlinkSync(otherBinary, otherLink);
+
+        expect(launchesOwnBinary(execFileOf(appLink), appBinary)).toBe(true);
+        expect(launchesOwnBinary(execFileOf(otherLink), appBinary)).toBe(false);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
     });
   });
 
@@ -223,14 +264,14 @@ describe('host-exec', () => {
       expect(launchesOwnBinary(command('"/opt/Kangentic/bin/codex.exe" --version'), appBinary)).toBe(false);
     });
 
-    // Node's path module on POSIX does not split a backslash path, so these
-    // Windows-form paths only mean anything on Windows.
-    it.runIf(process.platform === 'win32')('compares a Windows executable name with its .exe stripped', () => {
+    // Compared as Windows paths on every platform, through the platform
+    // argument, so CI's Linux runner checks the Windows forms too.
+    it('compares a Windows executable name with its .exe stripped', () => {
       const appBinary = 'C:\\Program Files\\Kangentic\\Kangentic.exe';
 
-      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\Kangentic" --version'), appBinary)).toBe(true);
-      expect(launchesOwnBinary(command('Kangentic --help'), appBinary)).toBe(true);
-      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\bin\\codex" --version'), appBinary)).toBe(false);
+      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\Kangentic" --version'), appBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(command('Kangentic --help'), appBinary, 'win32')).toBe(true);
+      expect(launchesOwnBinary(command('"C:\\Program Files\\Kangentic\\bin\\codex" --version'), appBinary, 'win32')).toBe(false);
     });
   });
 

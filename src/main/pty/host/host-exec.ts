@@ -12,6 +12,7 @@
  */
 
 import { exec, execFile } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { isSamePath } from '../../../shared/paths';
 import type { HostExecFailure, HostExecRequest, HostExecResult } from './protocol';
@@ -52,34 +53,77 @@ export function leadingExecutable(commandLine: string): string {
   return commandLine.trim().split(/\s+/)[0] ?? '';
 }
 
+/** The path module for `platform`, so a Windows path is split as Windows
+ *  splits it whatever the platform the check runs on. */
+function pathFor(platform: NodeJS.Platform): path.PlatformPath {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
 /** An executable's name as a shell resolves it: no directory, no case and no
  *  `.exe`, on every platform. cmd finds a name through PATHEXT with `.exe` left
  *  off, and macOS's default file system ignores case. */
-function commandName(file: string): string {
-  return path.basename(file).toLowerCase().replace(/\.exe$/, '');
+function commandName(file: string, platform: NodeJS.Platform): string {
+  return pathFor(platform).basename(file).toLowerCase().replace(/\.exe$/, '');
+}
+
+/** Real paths of the executables compared, read once: they do not move while
+ *  this process runs. Null for one that cannot be resolved. */
+const realExecutables = new Map<string, string | null>();
+
+function realPathOf(file: string): string | null {
+  try {
+    return realpathSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether two paths name the same executable: the same path once resolved
+ * (case-folded where the file system ignores case: Windows, and macOS by
+ * default), or, on this machine, the same file through a link (an install
+ * link such as `/usr/bin/kangentic` to the app's binary).
+ */
+function isSameExecutable(file: string, candidate: string, platform: NodeJS.Platform): boolean {
+  const platformPath = pathFor(platform);
+  const foldsCase = platform === 'win32' || platform === 'darwin';
+  const normalize = (value: string): string => {
+    const resolved = platformPath.resolve(value);
+    return foldsCase ? resolved.toLowerCase() : resolved;
+  };
+  if (normalize(file) === normalize(candidate)) return true;
+  // A link is read off this machine's file system, so only for its platform.
+  if (platform !== process.platform) return false;
+  if (!realExecutables.has(candidate)) realExecutables.set(candidate, realPathOf(candidate));
+  const realCandidate = realExecutables.get(candidate);
+  if (!realCandidate) return false;
+  const realFile = realPathOf(file);
+  return realFile !== null && normalize(realFile) === normalize(realCandidate);
 }
 
 /** True when the request would start this app's own executable (this
- *  process's, or main's). */
+ *  process's, or main's). `platform` is the platform whose paths the request
+ *  holds, the one this runs on but for a test. */
 export function launchesOwnBinary(
   request: HostExecRequest,
   ownExecutable: string | readonly string[] = ownExecutables(),
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   const candidates = typeof ownExecutable === 'string' ? [ownExecutable] : ownExecutable;
   if (request.kind === 'execFile') {
     // A path is compared as a path. A bare name is found on PATH, so it is
     // compared as a name, the way the shell branch below compares one.
-    const bareName = path.basename(request.file) === request.file;
-    return candidates.some((candidate) => isSamePath(request.file, candidate)
-      || (bareName && commandName(request.file) === commandName(candidate)));
+    const bareName = pathFor(platform).basename(request.file) === request.file;
+    return candidates.some((candidate) => isSameExecutable(request.file, candidate, platform)
+      || (bareName && commandName(request.file, platform) === commandName(candidate, platform)));
   }
   // Only the executable the command line starts is compared, by path or by
   // name. A probe's own path can contain this app's name without launching
   // it (`/opt/kangentic/bin/codex --version` on a build whose binary is
   // `kangentic`), and a substring match refused that probe.
   const executable = leadingExecutable(request.command);
-  return candidates.some((candidate) => isSamePath(executable, candidate)
-    || commandName(executable) === commandName(candidate));
+  return candidates.some((candidate) => isSameExecutable(executable, candidate, platform)
+    || commandName(executable, platform) === commandName(candidate, platform));
 }
 
 function failure(error: ChildProcessFailure, stdout: string, stderr: string): HostExecFailure {

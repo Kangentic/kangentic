@@ -3087,17 +3087,18 @@ test.describe('knowledge graph', () => {
         const PointClass = (controlsRef.current.camera.position as { constructor: unknown }).constructor as new () => PointProbe;
         const mapCentre = controlsRef.current.getTarget(new PointClass());
 
-        // Fly to A, and set the pivot while that fly is still running: the
-        // pivot is deferred to the controls' `sleep`.
+        // Fly to A, set the pivot while that fly is still running (so it is
+        // deferred to the controls' `sleep`), and fly to B, all in this one
+        // task. camera-controls reports `active` from the moment a transition
+        // starts, so the race is set up without waiting on frames: a frame a
+        // loaded runner delivers late cannot let the first fly rest in between.
         frameNodes(subsetA);
-        await nextFrames(2);
         const activeDuringFirstFly = controlsRef.current.active;
         setOrbitAnchor(middle);
-        await nextFrames(2);
         const activeAfterAnchor = controlsRef.current.active;
 
-        // Fly to B before the first fly has slept. Listening starts in this same
-        // task, so no `sleep` can be missed between the call and the listener.
+        // Listening starts in this same task too, so no `sleep` can be missed
+        // between the call and the listener.
         const controls = controlsRef.current;
         let sleepSeen = false;
         const onSleep = (): void => { sleepSeen = true; };

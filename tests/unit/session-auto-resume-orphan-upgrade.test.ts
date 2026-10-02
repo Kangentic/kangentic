@@ -353,10 +353,10 @@ describe('resumeSuspendedSessions: auto-resume-disabled branch (autoResumeSessio
   it('guard-flip: when autoResumeSessionsOnRestart=true, orphaned record skips the disabled branch', async () => {
     // Arrange: setting is true (default). The orphaned record must NOT be
     // transitioned via the disabled branch. It enters toProcess and the
-    // preparation pass. The key assertion is that markRecordSuspended is
-    // never called (the disabled branch was not entered). The preparation
-    // pass will retire the record (prepareAgentSpawn returns a failure),
-    // which is fine - we only care that the branch did not fire.
+    // preparation pass, which the disabled branch never reaches, so reaching
+    // it is the proof. The preparation then fails (prepareAgentSpawn returns
+    // a failure), and a failed preparation keeps the record resumable too:
+    // suspended, with a placeholder, but only AFTER the preparation ran.
     const { prepareAgentSpawn } = await import(
       '../../src/main/transition-engine/session-startup/prepare-spawn'
     );
@@ -379,10 +379,14 @@ describe('resumeSuspendedSessions: auto-resume-disabled branch (autoResumeSessio
       configManager as never,
     );
 
-    // Assert: disabled branch was NOT entered
-    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    // Assert: the record reached the preparation pass, which the disabled
+    // branch skips.
+    expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
 
-    // Assert: no suspended placeholder registered via the disabled branch
-    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+    // Assert: the upgrade and the placeholder both came after the preparation,
+    // from the failed preparation, not from the disabled branch ahead of it.
+    const preparedAt = vi.mocked(prepareAgentSpawn).mock.invocationCallOrder[0];
+    expect(markRecordSuspendedMock.mock.invocationCallOrder.every((order) => order > preparedAt)).toBe(true);
+    expect(sessionManager.registerSuspendedPlaceholder.mock.invocationCallOrder.every((order) => order > preparedAt)).toBe(true);
   });
 });

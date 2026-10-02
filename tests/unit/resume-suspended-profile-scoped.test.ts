@@ -319,8 +319,8 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
 
     // Not skipped by the auto_spawn exclusion check: entered the preparation
     // pass and reached prepareAgentSpawn. (The mock then fails with
-    // 'unknown-agent', which retires the record for an UNRELATED reason -
-    // that retire is not what this test is about.)
+    // 'unknown-agent', which keeps the record resumable for an UNRELATED
+    // reason - that is not what this test is about.)
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
   });
 
@@ -369,7 +369,7 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
     await runResume();
 
     // Not skipped by the auto_spawn exclusion check (same caveat re: the
-    // mock's own 'unknown-agent' retire as the test above).
+    // mock's own 'unknown-agent' failure as the test above).
     expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
   });
 

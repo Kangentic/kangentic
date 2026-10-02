@@ -130,6 +130,24 @@ export async function resumeSuspendedSessions(
     ) ?? lane;
   };
 
+  /**
+   * Keep a record this pass will not resume resumable: 'suspended' (system),
+   * shown as a paused card with Resume, and gathered again by the next launch.
+   * Never retired, so no fresh agent takes its task over: the auto-spawn pass
+   * skips a task with a session row, and the placeholder is one. Clears
+   * `task.session_id` too, which SESSION_RESUME needs clear to spawn rather than
+   * hand back a stale ref. False when the CAS lost (the record moved on).
+   */
+  const keepResumable = (record: SessionRecord, task: Task): boolean => {
+    if ((record.status === 'orphaned' || record.status === 'exited')
+        && !markRecordSuspended(sessionRepo, record.id, 'system')) {
+      return false;
+    }
+    sessionManager.registerSuspendedPlaceholder({ taskId: record.task_id, projectId, cwd: record.cwd });
+    if (task.session_id) taskRepo.update({ id: task.id, session_id: null });
+    return true;
+  };
+
   // 3a. Deduplicate PER (task_id, isolated_swimlane_id): keep only the most recent
   //     record for each parallel session. Retire strictly-older SAME-session
   //     duplicates only. A task may hold multiple sessions (e.g. its main session
@@ -278,23 +296,7 @@ export async function resumeSuspendedSessions(
     // atomically transition to 'suspended' so we don't re-process them on next
     // startup. If the CAS fails (concurrent retire), skip quietly.
     if (!autoResumeSessionsOnRestart) {
-      if (record.status === 'orphaned' || record.status === 'exited') {
-        const upgraded = markRecordSuspended(sessionRepo, record.id, 'system');
-        if (!upgraded) {
-          skipped++;
-          continue;
-        }
-      }
-      sessionManager.registerSuspendedPlaceholder({
-        taskId: record.task_id,
-        projectId,
-        cwd: record.cwd,
-      });
-      // Ensure task.session_id is null so SESSION_RESUME's precondition
-      // passes when the user clicks the Resume button.
-      if (task.session_id) {
-        taskRepo.update({ id: task.id, session_id: null });
-      }
+      keepResumable(record, task);
       skipped++;
       continue;
     }
@@ -390,13 +392,16 @@ export async function resumeSuspendedSessions(
         boardProfiles,
       });
 
+      // A resume that cannot be prepared keeps its conversation: the card shows
+      // Resume and the next launch tries again, rather than a fresh agent
+      // replacing it (`keepResumable`).
       if (!prep.ok) {
         if (prep.reason === 'unknown-agent') {
-          console.warn(`[SESSION_RECOVERY] Unknown agent for task ${task.id.slice(0, 8)} -- skipping`);
+          console.warn(`[SESSION_RECOVERY] Unknown agent for task ${task.id.slice(0, 8)}; keeping its session resumable`);
         } else {
-          console.warn(`[SESSION_RECOVERY] CLI not found for task ${task.id.slice(0, 8)} -- skipping`);
+          console.warn(`[SESSION_RECOVERY] CLI not found for task ${task.id.slice(0, 8)}; keeping its session resumable`);
         }
-        retireRecord(sessionRepo, record.id);
+        keepResumable(record, task);
         skipped++;
         continue;
       }
@@ -404,14 +409,15 @@ export async function resumeSuspendedSessions(
       spawnInputs.push({ record, task, ...prep.data });
     } catch (err) {
       console.error(
-        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}):`,
+        `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); keeping it resumable:`,
         err,
       );
       try {
-        retireRecord(sessionRepo, record.id);
+        keepResumable(record, task);
       } catch (updateErr) {
-        console.error(`[SESSION_RECOVERY] Failed to mark session ${record.id} as exited:`, updateErr);
+        console.error(`[SESSION_RECOVERY] Failed to keep session ${record.id} resumable:`, updateErr);
       }
+      skipped++;
     }
   }
 
@@ -446,6 +452,23 @@ export async function resumeSuspendedSessions(
         || !recordUnchanged
         || sessionManager.findLiveSessionByTaskId(input.task.id)
       ) {
+        // Moved, in the preparation, into a column that starts no agent. That
+        // move had no session to suspend, so without a placeholder the card
+        // would offer no Resume until the next launch. Kept resumable as the
+        // gather keeps a record found in such a column; a column that starts
+        // agents is the move's own to spawn into.
+        if (
+          current
+          && recordNow
+          && recordUnchanged
+          && current.swimlane_id !== input.task.swimlane_id
+          && current.session_id === input.task.session_id
+          && !sessionManager.findLiveSessionByTaskId(input.task.id)
+        ) {
+          const lane = laneForTask(current);
+          const hidesResume = lane?.role != null && RESUME_HIDDEN_ROLES.has(lane.role);
+          if (lane && !lane.auto_spawn && !hidesResume) keepResumable(recordNow, current);
+        }
         // Logged and counted, so a task this pass left alone leaves a trace.
         console.log(
           `[SESSION_RECOVERY] Skipped session ${input.record.id} (task ${input.task.id}): it changed while its resume was prepared`,

@@ -134,6 +134,44 @@ describe('graph service markDirty', () => {
     expect(mockRunProjectionPass).toHaveBeenCalledTimes(2);
   });
 
+  // `forget` aborts a pass in flight, and lets go of it then rather than when
+  // the aborted pass unwinds: until then the project read as building and a
+  // markDirty for it was dropped. The old pass's own cleanup must not remove
+  // the new pass's entry when it finally settles.
+  //
+  // Red-green: drop `running.delete(projectId)` from `forget` and the second
+  // markDirty is refused, so `runProjectionPass` is called once, not twice.
+  it('lets a forgotten project start a new pass at once, and the old pass\'s cleanup leaves the new one running', async () => {
+    let finishFirstPass: (value: undefined) => void = () => undefined;
+    let finishSecondPass: (value: undefined) => void = () => undefined;
+    mockRunProjectionPass
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirstPass = resolve as (value: undefined) => void;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishSecondPass = resolve as (value: undefined) => void;
+      }));
+    const service = makeService();
+
+    service.markDirty('project-a', 'model', 4);
+    await settle();
+    service.forget('project-a');
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(false);
+
+    service.markDirty('project-a', 'model', 4);
+    await settle();
+    expect(mockRunProjectionPass).toHaveBeenCalledTimes(2);
+
+    // The aborted first pass settles; the second is still the one running.
+    finishFirstPass(undefined);
+    await settle();
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(true);
+
+    finishSecondPass(undefined);
+    await settle();
+    expect(service.getSnapshotWire('project-a', 'model').building).toBe(false);
+  });
+
   it('keeps each project on its own pass', async () => {
     let finishPass: (value: undefined) => void = () => undefined;
     mockRunProjectionPass.mockImplementationOnce(() => new Promise((resolve) => {

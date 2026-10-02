@@ -570,6 +570,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 7. **Resume or respawn** (isolation-scoped via `getLatestForTaskByTypeAndIsolation`):
    - Suspended/orphaned/interrupted-exited with `agent_session_id` -- use `--resume` (attempts to restore conversation; the id is first reconciled against the record's own `status.json`, see [Resume](#resume))
    - No session ID -- fresh `--session-id` with prompt from matching `spawn_agent` action
+   - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. It is never retired, which used to let step 8 start a fresh agent over it.
 8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
@@ -589,7 +590,9 @@ column changed or its `session_id` changed (a Reset clears it). A resume is also
 task gained a live session, its record is gone, or its record's status moved (a user's Resume retires
 it). A fresh agent is also skipped when the task gained any session row (in the crash path, any row
 but the lost ones), or when its worktree is no longer the one it was prepared in (a move to To Do and
-back removes it).
+back removes it). A resume skipped because the task moved into a custom column that starts no agent
+keeps its record resumable with a placeholder, as step 6 does for a record it finds there: that move
+had no session to suspend, so the card would otherwise offer no Resume until the next launch.
 
 ## PTY host
 

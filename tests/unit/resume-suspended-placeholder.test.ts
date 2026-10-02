@@ -22,7 +22,7 @@
  * edit form.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionRecord, Swimlane, Task } from '../../src/shared/types';
 
 const sessionRepoGetResumable = vi.fn(() => [] as SessionRecord[]);
@@ -317,15 +317,100 @@ describe('resumeSuspendedSessions: a suspended record in a non-auto-spawn column
 
     await runResume(sessionManager);
 
-    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
     // Reaching the preparation pass is the proof it was not caught by the
-    // !auto_spawn branch at all.
+    // !auto_spawn branch at all. (The mocked preparation fails, and a failed
+    // preparation keeps the record resumable, so a placeholder may follow it,
+    // never precede it.)
     expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expectNoPlaceholderBeforePreparation(sessionManager);
   });
 
   it('leaves an auto-spawn column to the normal resume path', async () => {
     sessionRepoGetResumable.mockReturnValue([makeRecord()]);
     swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expectNoPlaceholderBeforePreparation(sessionManager);
+  });
+});
+
+/** No placeholder came from a branch ahead of the preparation pass. */
+function expectNoPlaceholderBeforePreparation(sessionManager: ReturnType<typeof makeSessionManager>): void {
+  const preparedAt = prepareAgentSpawnMock.mock.invocationCallOrder[0];
+  expect(preparedAt).toBeDefined();
+  expect(sessionManager.registerSuspendedPlaceholder.mock.invocationCallOrder.every((order) => order > preparedAt)).toBe(true);
+}
+
+/**
+ * A resume that cannot be prepared keeps its conversation: the record stays
+ * resumable (suspended, by the system), the card shows Resume, and the next
+ * launch tries again. Retired, it let the auto-spawn pass start a fresh agent
+ * over the task, after a crash and at startup alike.
+ *
+ * Red-green: put `retireRecord(sessionRepo, record.id)` back in either
+ * preparation-failure branch of resume-suspended.ts and the retire and
+ * placeholder assertions go red.
+ */
+describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
+  beforeEach(() => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+  });
+
+  afterEach(() => {
+    // `clearAllMocks` in the file's beforeEach keeps an implementation.
+    prepareAgentSpawnMock.mockReset();
+  });
+
+  it('keeps an orphaned record resumable when the agent cannot be found, and retires nothing', async () => {
+    sessionRepoGetOrphaned.mockReturnValue([makeRecord({ status: 'orphaned', suspended_by: null })]);
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'cli-not-found' });
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd' });
+    expect(retireRecordMock).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('keeps a record resumable when the preparation throws', async () => {
+    sessionRepoGetInterruptedExited.mockReturnValue([makeRecord({ status: 'exited', exit_code: 1, suspended_by: null })]);
+    prepareAgentSpawnMock.mockRejectedValue(new Error('agent detection failed'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const sessionManager = makeSessionManager();
+    try {
+      await runResume(sessionManager);
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(retireRecordMock).not.toHaveBeenCalled();
+  });
+
+  it('registers a placeholder for an already suspended record with no upgrade, and clears the task\'s stale session ref', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord()]);
+    taskRepoList.mockReturnValue([makeTask({ session_id: 'stale-session' })]);
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'unknown-agent' });
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
+    expect(retireRecordMock).not.toHaveBeenCalled();
+  });
+
+  it('registers nothing when the upgrade loses its CAS', async () => {
+    sessionRepoGetOrphaned.mockReturnValue([makeRecord({ status: 'orphaned', suspended_by: null })]);
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'cli-not-found' });
+    markRecordSuspendedMock.mockReturnValue(false);
     const sessionManager = makeSessionManager();
 
     await runResume(sessionManager);

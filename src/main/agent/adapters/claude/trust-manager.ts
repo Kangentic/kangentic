@@ -116,15 +116,47 @@ async function writeClaudeJson(filePath: string, data: Record<string, unknown>):
       try {
         await fsPromises.writeFile(targetPath, text, 'utf-8');
       } catch (error) {
-        // The in-place write truncates first, so a failure part way leaves
-        // the file short. The temp file is then the one complete copy.
+        // A write refused at open (the file held open, the usual Windows case)
+        // left the file as it was, and a copy of the user's auth would only be
+        // left behind for nothing. One that failed part way left it short: the
+        // temp file is then the one complete copy, so it is kept and named.
+        if (await isIntact(targetPath)) {
+          throw new Error(`Could not write ${targetPath}`, { cause: error });
+        }
         keepTemporary = true;
         throw new Error(`Could not write ${targetPath}; its complete contents are in ${temporaryPath}`, { cause: error });
       }
     }
+    // Written whole: a copy an earlier failed write kept, from this run or an
+    // earlier one (another pid), holds nothing the file does not.
+    await removeKeptCopies(targetPath);
   } finally {
     if (!keepTemporary) await fsPromises.rm(temporaryPath, { force: true }).catch(() => undefined);
   }
+}
+
+/** Whether ~/.claude.json still reads as whole: a JSON object, or no file at
+ *  all, which a failed write cannot have made from one that existed. */
+async function isIntact(targetPath: string): Promise<boolean> {
+  try {
+    return parseObject(await fsPromises.readFile(targetPath, 'utf-8')) !== null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
+/**
+ * Remove the temp copies failed writes kept beside ~/.claude.json
+ * (`<name>.kangentic-<pid>.tmp`). Runs under the file's lock, which every
+ * Kangentic writer of it holds, so none is another writer's file mid-write.
+ */
+async function removeKeptCopies(targetPath: string): Promise<void> {
+  const directory = path.dirname(targetPath);
+  const prefix = `${path.basename(targetPath)}.kangentic-`;
+  const names = await fsPromises.readdir(directory).catch(() => [] as string[]);
+  await Promise.all(names
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.tmp'))
+    .map((name) => fsPromises.rm(path.join(directory, name), { force: true }).catch(() => undefined)));
 }
 
 /**

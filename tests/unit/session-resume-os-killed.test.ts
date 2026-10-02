@@ -719,6 +719,50 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 
+  describe('a task moved during the preparation', () => {
+    // The move had no session to suspend, so in a column that starts no agent
+    // the card offered no Resume until the next launch. The resume keeps the
+    // record resumable with a paused placeholder there, as the gather keeps a
+    // record it finds in such a column. A column that starts agents is the
+    // move's own to spawn into.
+    //
+    // Red-green: drop the placeholder branch from the re-check in
+    // resume-suspended.ts and the first test goes red.
+    const lanes = (movedTo: { id: string; auto_spawn: boolean }) => [
+      { id: 'lane-exec', auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+      { id: movedTo.id, auto_spawn: movedTo.auto_spawn, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    ];
+
+    it('into a column that starts no agent keeps its record resumable, with a paused placeholder', async () => {
+      swimlaneListMock.mockReturnValue(lanes({ id: 'lane-manual', auto_spawn: false }));
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-manual' })]);
+      });
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost', 'system');
+      expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-lost', projectId: 'proj-1', cwd: '/project/cwd' });
+      expect(retireRecordMock).not.toHaveBeenCalled();
+    });
+
+    it('into a column that starts agents is left to the move, with no placeholder', async () => {
+      swimlaneListMock.mockReturnValue(lanes({ id: 'lane-review', auto_spawn: true }));
+      seedLostSession(() => {
+        taskRepoList.mockReturnValue([makeTask({ id: 'task-lost', swimlane_id: 'lane-review' })]);
+      });
+      const sessionManager = managerOver([{ id: 'rec-lost', taskId: 'task-lost', status: 'exited' }]);
+
+      await resumeLost(sessionManager);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+      expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('does not resume a session the user reset during the preparation', async () => {
     seedLostSession(() => {
       dbRecords = [];

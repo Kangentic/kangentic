@@ -539,6 +539,10 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     forget(projectId: string): void {
       const pass = running.get(projectId);
       if (pass) pass.signal.aborted = true;
+      // Let go now, not when the aborted pass unwinds: until then the project
+      // read as building, and a markDirty for it was dropped. The pass's own
+      // cleanup checks the entry is still its own before it removes one.
+      running.delete(projectId);
       const state = naming.get(projectId);
       if (state?.timer) clearTimeout(state.timer);
       naming.delete(projectId);

@@ -222,27 +222,30 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
     });
 
     // The last resort fails too: the rename stays held, and the in-place write
-    // truncates the file and then fails part way, so the file may be short. The
-    // temp file is then the one complete copy, so it is KEPT and the error names
-    // it, which the spawn preamble reports and the user can recover from.
+    // truncates the file and then fails part way, so the file is short. The temp
+    // file is then the one complete copy, so it is KEPT and the error names it,
+    // which the spawn preamble reports and the user can recover from.
     //
     // Red-green: drop `keepTemporary = true` (or remove the temp file in the
     // catch). The `finally` then deletes the temp file, so the leftover-file and
     // the file-the-message-names assertions go red, and the complete copy is gone
     // for good. If the message stops naming the temp path, the `toContain` and the
-    // read of the named file go red. The injected write failure leaves the target
-    // as it was, which keeps the test from reading a half-written file.
-    it('keeps the temp file, which holds the complete contents, and names it in the error, when the in-place write also fails', async () => {
+    // read of the named file go red. The injected write leaves a short file, the
+    // case the copy is kept for.
+    it('keeps the temp file, which holds the complete contents, and names it in the error, when the in-place write leaves the file short', async () => {
       seedClaudeJson();
-      const seeded = fs.readFileSync(claudeJsonPath(), 'utf-8');
       const writeRefusal = new Error('disk full');
+      const shortContents = '{"oauthAccount":';
       const realWriteFile = fs.promises.writeFile.bind(fs.promises);
       // Decided by suffix: the target is reached through its real path, which can
       // differ from the home's own spelling (a short Windows name, a macOS link).
       const writes = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
         const [file] = args;
-        if (!String(file).endsWith('.tmp')) throw writeRefusal;
-        return realWriteFile(...args);
+        if (String(file).endsWith('.tmp')) return realWriteFile(...args);
+        // Truncated, part written, then failed: what an in-place write that
+        // runs out of disk leaves behind.
+        await realWriteFile(file, shortContents, 'utf-8');
+        throw writeRefusal;
       });
       const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
         throw renameRefusal('EPERM');
@@ -270,13 +273,73 @@ describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
         const entry = Object.values(recovered.projects as Record<string, Record<string, unknown>>)[0];
         expect(entry.hasTrustDialogAccepted).toBe(true);
         expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
-        // Nothing replaced the target, and the lock was released on the way out.
+        // The target is the short file, and the lock was released on the way out.
+        expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(shortContents);
+        expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
+      } finally {
+        writes.mockRestore();
+        renames.mockRestore();
+      }
+    });
+
+    // The usual Windows failure: the file is held open, so the in-place write is
+    // refused at open, before it truncates anything. The file is whole, so no
+    // copy of the user's auth is left behind, and the error names none.
+    //
+    // Red-green: keep the temp file whatever the target's state (drop the
+    // `isIntact` check) and the leftover-file assertion goes red.
+    it('removes the temp file, and names none, when the in-place write is refused before it touches the file', async () => {
+      seedClaudeJson();
+      const seeded = fs.readFileSync(claudeJsonPath(), 'utf-8');
+      const writeRefusal = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+      const realWriteFile = fs.promises.writeFile.bind(fs.promises);
+      const writes = vi.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args: Parameters<typeof fs.promises.writeFile>) => {
+        const [file] = args;
+        if (!String(file).endsWith('.tmp')) throw writeRefusal;
+        return realWriteFile(...args);
+      });
+      const renames = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+        throw renameRefusal('EPERM');
+      });
+      try {
+        const failure = await ensureClaudeSpawnConfig(worktree).then(
+          () => null,
+          (error: unknown) => error as Error & { cause?: unknown },
+        );
+
+        expect(failure).not.toBeNull();
+        if (!failure) return;
+        expect(failure.cause).toBe(writeRefusal);
+        expect(failure.message).not.toMatch(/complete contents/);
+        expect(leftoverTemporaryFiles()).toEqual([]);
         expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(seeded);
         expect(fs.existsSync(`${claudeJsonPath()}.lock`)).toBe(false);
       } finally {
         writes.mockRestore();
         renames.mockRestore();
       }
+    });
+
+    // A copy an earlier failed write kept (here from another run, another pid)
+    // holds nothing the file does not once a later write lands whole, so that
+    // write removes it.
+    //
+    // Red-green: drop the `removeKeptCopies` call and the leftover-file
+    // assertion goes red.
+    it('removes a copy an earlier failed write kept once a later write succeeds', async () => {
+      seedClaudeJson();
+      const keptCopy = `${claudeJsonPath()}.kangentic-99999.tmp`;
+      fs.writeFileSync(keptCopy, '{"oauthAccount":{"id":"kept"}}');
+      // Something else beside it that only looks alike is left alone.
+      const unrelated = path.join(tmpHome, '.claude.json.backup');
+      fs.writeFileSync(unrelated, '{}');
+
+      await ensureClaudeSpawnConfig(worktree);
+
+      expectSpawnConfigWritten();
+      expect(leftoverTemporaryFiles()).toEqual([]);
+      expect(fs.existsSync(keptCopy)).toBe(false);
+      expect(fs.existsSync(unrelated)).toBe(true);
     });
 
     // Pins that only the held codes are retried: any other failure is a real
