@@ -99,9 +99,10 @@ function yieldToCalls(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-/** The vec tables at a width, made again when they were made at another. */
-function vecTablesAt(store: RetrievalStore, dimensions: number): void {
-  if (store.getMeta('vec_dims') !== String(dimensions)) store.resetVec(dimensions);
+/** The vec tables at a width, made again when they were made at another. A
+ *  seed resets at full speed, yielding a turn between its writes. */
+async function vecTablesAt(store: RetrievalStore, dimensions: number): Promise<void> {
+  if (store.getMeta('vec_dims') !== String(dimensions)) await store.resetVec(dimensions, yieldToCalls);
   else store.ensureVecTable(dimensions);
   if (!store.hasVec) throw new Error('sqlite-vec is unavailable in this preview, so vectors cannot be seeded');
   store.setMeta('vec_dims', String(dimensions));
@@ -146,7 +147,7 @@ async function buildGraphNow(projectId: string, context: WorkerContext): Promise
 export const devIndexHandlers: DevIndexHandlers = {
   'dev.writeDocuments': async ({ projectId, dimensions, modelTag, documents }, context) => {
     const store = new RetrievalStore(context.getDb(projectId));
-    vecTablesAt(store, dimensions);
+    await vecTablesAt(store, dimensions);
     const now = new Date().toISOString();
     let chunks = 0;
     let pendingChunks = 0;
@@ -185,7 +186,7 @@ export const devIndexHandlers: DevIndexHandlers = {
     try {
       loadVecExtensionFrom(sourceDb, vecPath);
       const store = new RetrievalStore(context.getDb(projectId));
-      vecTablesAt(store, dimensions);
+      await vecTablesAt(store, dimensions);
       const readChunks = sourceDb.prepare(
         `SELECT id, seq, role, text, content_hash AS contentHash, token_estimate AS tokenEstimate,
                 ts_start AS tsStart, ts_end AS tsEnd, turn_uuid_start AS turnUuidStart, turn_uuid_end AS turnUuidEnd
@@ -263,8 +264,8 @@ export const devIndexHandlers: DevIndexHandlers = {
 
   'dev.syncWork': () => getSyncWorkByLabel(),
 
-  'dev.purgeCorpora': ({ projectId, corpora }, context) => {
-    new RetrievalStore(context.getDb(projectId)).purgeCorpora(corpora);
+  'dev.purgeCorpora': async ({ projectId, corpora }, context) => {
+    await new RetrievalStore(context.getDb(projectId)).purgeCorpora(corpora, yieldToCalls);
   },
 
   'dev.recordTurns': async ({ projectId, sessions }, context) => {

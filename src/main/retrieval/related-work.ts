@@ -133,14 +133,22 @@ export const CODE_PASSAGES = 6;
 const CODE_PASSAGES_PER_FILE = 2;
 
 /**
- * The keyword query: every content word, ORed and quoted.
+ * Keyword terms one query carries at most. A question names its subject in a
+ * handful of words, and the earlier questions it is searched with come after
+ * its own, so the cap keeps the question's words. Without it a pasted wall of
+ * text built an OR of thousands of terms, each one a scan of the index.
+ */
+export const KEYWORD_TERMS = 32;
+
+/**
+ * The keyword query: the content words, up to `KEYWORD_TERMS`, ORed and quoted.
  *
  * ORed, not ANDed like the palette's query: a question is a sentence, and
  * requiring every word of it matches almost nothing. Quoting each word turns
  * off FTS5 operator syntax. Null when nothing is left to search for.
  */
 export function relatedKeywordQuery(text: string): string | null {
-  const words = contentWords(text);
+  const words = contentWords(text).slice(0, KEYWORD_TERMS);
   if (words.length === 0) return null;
   return words.map((word) => `"${word.replace(/"/g, '')}"`).join(' OR ');
 }

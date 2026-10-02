@@ -76,6 +76,9 @@ export interface PtyHostTransport {
   shutdown(exitWaitMs?: number): void;
   /** Hear of a host dying and coming back (a utility process only). */
   setLifecycleListener?(listener: PtyHostLifecycleListener): void;
+  /** Stop the process tree a dead host left behind for one of its PTYs. Only a
+   *  utility host implements it: the one host whose PTYs can outlive it. */
+  stopLostPtyTree?(pid: number): void;
   /** What to run the host core on if the utility process keeps crashing. */
   setFallbackFactory?(factory: () => PtyHostTransport): void;
 }
@@ -355,10 +358,20 @@ export class PtyHostClient {
    * exit listener, so the sessions end exactly as a PTY exit ends them.
    */
   private reportHostLost(): void {
+    // A closed pseudo console (Windows) or a hangup (POSIX) usually ends what a
+    // PTY ran, but nothing guarantees it. An agent left running would go on
+    // editing its worktree beside the session recovery resumes on the new host,
+    // so each tree still live is stopped by pid before its exit is reported.
+    const stopTree = (pid: number): void => {
+      if (pid > 0) this.transport.stopLostPtyTree?.(pid);
+    };
     // A probe's raw PTY died with the host too.
     const rawHandles = [...this.rawHandles.values()];
     this.rawHandles.clear();
-    for (const rawHandle of rawHandles) rawHandle.deliverExit(PTY_HOST_LOST_EXIT_CODE, null);
+    for (const rawHandle of rawHandles) {
+      stopTree(rawHandle.pid);
+      rawHandle.deliverExit(PTY_HOST_LOST_EXIT_CODE, null);
+    }
     // So did every agent CLI run. A run never restarts on the new host: a
     // second run would be a second paid answer.
     const cliHandles = [...this.cliHandles.values()];
@@ -372,6 +385,7 @@ export class PtyHostClient {
     }
     const lostSessionIds: string[] = [];
     for (const { handle, listener } of this.takeLiveHandles()) {
+      stopTree(handle.pid);
       handle.markExited();
       if (handle.sessionId) lostSessionIds.push(handle.sessionId);
       try {

@@ -208,6 +208,11 @@ export function KnowledgeGraphChatText({
   // Memoized: a new `a` renderer is a new component type to React, so every
   // ticket mark and link remounted on each streamed delta.
   const components = useMemo<Components>(() => ({
+    // An answer never loads an image. Its address is fetched the moment the
+    // answer paints, with no click, so an instruction planted in an imported
+    // task could have the agent write board data into one and send it out. The
+    // alt text stays, as the words the agent put there.
+    img: ({ alt }) => (alt ? <span>{alt}</span> : null),
     a: ({ href, children, ...rest }) => {
       const match = TICKET_FRAGMENT.exec(href ?? '');
       if (match) {

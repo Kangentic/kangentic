@@ -18,6 +18,7 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 import {
   contentWords,
   relatedKeywordQuery,
+  KEYWORD_TERMS,
   rollUpRelatedWork,
   selectHandedTasks,
   MIN_HANDED,
@@ -59,6 +60,19 @@ describe('the question words', () => {
 
   it('has no keyword query for a question made only of question words', () => {
     expect(relatedKeywordQuery('which tasks were the most expensive?')).toBeNull();
+  });
+
+  // A pasted wall of text built an OR of thousands of terms. The question's own
+  // words come first in the text searched, so the cap keeps them.
+  //
+  // Red-green: drop the `KEYWORD_TERMS` slice and the query carries all 500.
+  it('caps the keyword query at KEYWORD_TERMS terms, keeping the first words', () => {
+    const wall = Array.from({ length: 500 }, (_unused, index) => `word${index}`).join(' ');
+    const query = relatedKeywordQuery(`renderer ${wall}`);
+    const terms = query?.split(' OR ') ?? [];
+    expect(terms).toHaveLength(KEYWORD_TERMS);
+    expect(terms[0]).toBe('"renderer"');
+    expect(terms[KEYWORD_TERMS - 1]).toBe(`"word${KEYWORD_TERMS - 2}"`);
   });
 
   // The full-text index tokenizes letters of any script (`unicode61`), so a word

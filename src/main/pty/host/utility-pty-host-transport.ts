@@ -25,6 +25,7 @@ import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { recordSyncSpan } from '../../diagnostics/event-loop-lag';
 import { unpacked } from '../../utility-process/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
+import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import type { PtyHostLifecycleListener, PtyHostTransport } from './pty-host-client';
 import {
@@ -110,6 +111,10 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   get hostPid(): number | null {
     if (this.fallback) return null;
     return this.child?.pid ?? null;
+  }
+
+  stopLostPtyTree(pid: number): void {
+    killChildTreeByPid(pid);
   }
 
   setEventListener(listener: (event: PtyHostEvent) => void): void {

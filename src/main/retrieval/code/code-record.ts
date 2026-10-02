@@ -20,8 +20,10 @@ import type { ChunkInput } from '../types';
  * chunks; a change here re-measures before it ships.
  */
 
-/** Bump when the chunking or the file rules change, so every file re-reads. */
-export const CODE_RECORD_VERSION = 2;
+/** Bump when the chunking or the file rules change, so every file re-reads.
+ *  The re-read also removes a file the rules now skip, and an unchanged
+ *  passage keeps its embedding, so a bump costs a read of the branch. */
+export const CODE_RECORD_VERSION = 3;
 /** Files bigger than this are skipped: generated, vendored, or data. */
 export const CODE_MAX_FILE_BYTES = 256 * 1024;
 const CHUNK_CHARS = 1_600;
@@ -34,7 +36,7 @@ const TESTS_AND_FIXTURES = /(^|\/)(tests?|__tests__|__mocks__|fixtures?|e2e|spec
 const DATA_FILES = /\.(json|ya?ml|toml|csv|svg|snap|lock)$/i;
 /** Keys and credential files, committed or not: a passage is handed to the
  *  answering agent, so none of these may ever become one. */
-const SECRET_FILES = /(^|\/)(\.env(\..+)?|\.npmrc|\.pypirc|\.netrc|id_(rsa|dsa|ecdsa|ed25519))$|\.(pem|key|p12|pfx|jks|keystore)$/i;
+const SECRET_FILES = /(^|\/)(\.env(\..+)?|\.envrc|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd|\.pgpass|\.dockercfg|\.s3cfg|\.aws\/credentials|id_(rsa|dsa|ecdsa|ed25519))$|\.(pem|key|p12|pfx|jks|keystore|ppk|p8|tfvars|tfstate)$/i;
 /** A line that starts a top-level declaration, where a chunk may break. */
 const DECLARATION = /^(export |function |class |interface |type |const |let |async function |def |fn |pub |func |impl |struct |enum |module |describe\(|it\(|test\()/;
 

@@ -314,7 +314,7 @@ const summaryStores = new WeakMap<WorkerContext, ReturnType<typeof localSummaryP
 function embedStoreFor(context: WorkerContext): ReturnType<typeof localEmbedStoreAccess> {
   let access = embedStores.get(context);
   if (!access) {
-    access = localEmbedStoreAccess(context.getDb, (db) => new RetrievalStore(db));
+    access = localEmbedStoreAccess(context.getDb, (db) => new RetrievalStore(db), (db) => awaitWriteTurn(db));
     embedStores.set(context, access);
   }
   return access;

@@ -220,7 +220,7 @@ export const indexHandlers: IndexHandlers = {
     if (steps.code && shouldContinue()) {
       const { plan, projectPath, baseBranch, allowFullRead } = steps.code;
       const none: CodeSweepResult = { indexed: 0, removed: 0, deferred: false };
-      if (plan === 'clear') result.code = purgeCodeRecords(projectId, context.getDb) ? { ...none, removed: 1 } : none;
+      if (plan === 'clear') result.code = await purgeCodeRecords(projectId, context.getDb, shouldContinue) ? { ...none, removed: 1 } : none;
       else if (plan === 'keep' || !projectPath) result.code = none;
       else result.code = await sweepCodeRecords(projectId, projectPath, baseBranch, { shouldContinue, allowFullRead }, recordDeps);
     }

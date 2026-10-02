@@ -115,11 +115,16 @@ describeWithVec('conversation vectors move to chunk size 128', () => {
     await expect(indexHandlers['vec.migrateLayout']({ projectId: 'project-1' }, context)).resolves.toEqual({ copied: 0, switched: false, freedBlocks: 0 });
   });
 
-  it('a reset during the copy drops both tables and stops it', () => {
+  it('a reset during the copy drops both tables and stops it', async () => {
     const { database, db, store } = legacyProject(50);
     store.beginConversationVecCopy();
     store.copyConversationVecBatch(20);
-    store.resetVec(DIMENSIONS);
+    // The reset shares the worker's write budget: a turn after each of its
+    // transactions. Red-green: drop the `await awaitTurn()` in resetVec's page
+    // loop and no turn is taken (there are no stored sums here to clear).
+    let turns = 0;
+    await store.resetVec(DIMENSIONS, async () => { turns += 1; });
+    expect(turns).toBeGreaterThan(0);
     expect(tableExists(database, 'memory_chunks_vec')).toBe(false);
     expect(vecLayout(db)).toEqual({ conversationTable: 'memory_vec_conversation', copyTarget: null });
     expect(store.copyConversationVecBatch(20)).toBe(0);

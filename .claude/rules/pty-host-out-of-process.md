@@ -36,7 +36,10 @@ at the Windows timer floor.
 - **One host, forked once, built in two places only.** `register-all.ts` constructs the
   `UtilityPtyHostTransport`; `SessionManager.createInProcessHost` is the only place the core runs in
   main, as the unit tests' host and as the fallback after five host crashes.
-- **A host crash ends its PTYs and recovery resumes them.** Each lost PTY is reported through its
+- **A host crash ends its PTYs and recovery resumes them.** Main first stops each lost PTY's
+  process tree by pid (`stopLostPtyTree`, which only the utility transport implements): a closed
+  pseudo console or a hangup usually ends the agent, but nothing guarantees it, and one left running
+  would edit its worktree beside the resumed session. Each lost PTY is then reported through its
   own exit listener with `PTY_HOST_LOST_EXIT_CODE` (-2), the host restarts (at once, then on the
   restart policy's backoff), main replays its focus and tap sets, and
   `recoverSessionsAfterPtyHostLoss` resumes the agent sessions through the startup recovery path,

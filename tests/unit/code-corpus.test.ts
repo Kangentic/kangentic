@@ -41,7 +41,7 @@ describe('code records', () => {
     for (const kept of [
       'src/main/pty/session-manager.ts', 'docs/architecture.md', 'scripts/dev.js', 'README.md', 'src/renderer/App.tsx',
       // Lookalikes of a secret file's name that are ordinary source.
-      'src/env.ts', 'src/keyboard.ts',
+      'src/env.ts', 'src/keyboard.ts', 'src/credentials.ts', 'docs/aws-credentials.md', 'src/envrc-loader.ts',
     ]) {
       expect(isIndexableCodePath(kept), kept).toBe(true);
     }
@@ -62,6 +62,10 @@ describe('code records', () => {
       'certs/server.pem', 'deploy/site.key', 'keys/signing.p12', 'keys/client.pfx', 'android/release.jks', 'android/upload.keystore',
       '.npmrc', 'packages/app/.npmrc', '.pypirc', '.netrc',
       'ops/id_ed25519', 'ops/id_rsa', 'ops/id_dsa', 'id_ecdsa',
+      // Red-green: each of these was indexed before the rule named it.
+      '.envrc', 'services/api/.envrc', '.git-credentials', 'web/.htpasswd', '.pgpass', '.dockercfg', '.s3cfg',
+      'ops/.aws/credentials', 'keys/server.ppk', 'keys/AuthKey_ABC123.p8',
+      'infra/prod.tfvars', 'infra/staging.auto.tfvars', 'infra/terraform.tfstate',
     ]) {
       expect(isIndexableCodePath(secret), secret).toBe(false);
     }
@@ -257,7 +261,7 @@ describeWithSqlite('sweepCodeRecords', () => {
     fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
     await fixture.sweep();
     // Switched off: the corpus is cleared, and the stored head stays behind.
-    expect(purgeCodeRecords('project', () => fixture.db)).toBe(true);
+    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(true);
     expect(fixture.paths()).toEqual([]);
     fixture.git.listCalls = 0;
 
@@ -341,10 +345,10 @@ describeWithSqlite('sweepCodeRecords', () => {
     fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
     await fixture.sweep();
 
-    expect(purgeCodeRecords('project', () => fixture.db)).toBe(true);
+    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(true);
     expect(fixture.paths()).toEqual([]);
     expect(fixture.store.corpusProgress('code', 'model@1').documents).toBe(0);
-    expect(purgeCodeRecords('project', () => fixture.db)).toBe(false);
+    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(false);
   });
 
   describe('a file that fails to index or to remove', () => {

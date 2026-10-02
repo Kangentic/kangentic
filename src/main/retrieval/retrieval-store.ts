@@ -472,17 +472,30 @@ export class RetrievalStore {
    * conversation chunks (and what is derived from them), not the task records.
    * Their chunks go `DELETES_PER_TRANSACTION` at a time: a whole corpus is tens
    * of thousands of rows, each with a full-text delete behind it.
+   *
+   * `awaitTurn` runs after every transaction, so the purge shares the worker's
+   * write budget. Back to back, the 1,500 transactions of a large index left
+   * main's own writes a free moment between two of them and nothing more, and
+   * a chunker change runs this on its own on upgrade. False when
+   * `shouldContinue` stopped it part way: the caller keeps its own marker as it
+   * was, so the next pass purges the rest.
    */
-  purgeCorpora(corpora: ReadonlyArray<IndexCorpus>): void {
-    if (corpora.length === 0) return;
+  async purgeCorpora(
+    corpora: ReadonlyArray<IndexCorpus>,
+    awaitTurn: () => Promise<void>,
+    shouldContinue: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (corpora.length === 0) return true;
     // One corpus at a time, so each page is a seek on `(corpus)` in id order
     // rather than a sort of every remaining row.
     const page = this.db.prepare(`SELECT id FROM memory_chunks WHERE corpus = ? ORDER BY id LIMIT ${DELETES_PER_TRANSACTION}`);
     for (const corpus of corpora) {
       for (;;) {
+        if (!shouldContinue()) return false;
         const ids = (page.all(corpus) as Array<{ id: number }>).map((row) => row.id);
         if (ids.length === 0) break;
         this.deleteChunks(ids, corpus);
+        await awaitTurn();
       }
     }
     writeTransaction(this.db, () => {
@@ -494,19 +507,29 @@ export class RetrievalStore {
         if (copyTarget) this.db.prepare(`DELETE FROM ${copyTarget}`).run();
       }
     })();
-    for (const corpus of corpora) this.clearDocSums(corpus);
+    for (const corpus of corpora) {
+      if (!await this.clearDocSums(corpus, awaitTurn, shouldContinue)) return false;
+    }
+    return true;
   }
 
-  /** Every stored document sum of one corpus, a few rows per transaction:
-   *  each row is two vector sums, 16 KB at 1,024 dimensions. */
-  private clearDocSums(corpus: IndexCorpus): void {
+  /** Every stored document sum of one corpus, a few rows per transaction with
+   *  `awaitTurn` between: each row is two vector sums, 16 KB at 1,024
+   *  dimensions. False when `shouldContinue` stopped it. */
+  private async clearDocSums(
+    corpus: IndexCorpus,
+    awaitTurn: () => Promise<void>,
+    shouldContinue: () => boolean = () => true,
+  ): Promise<boolean> {
     const clearPage = this.cachedStatement(
       `DELETE FROM memory_doc_sums WHERE rowid IN
          (SELECT rowid FROM memory_doc_sums WHERE corpus = ? LIMIT ${DOC_SUMS_DELETED_PER_TRANSACTION})`,
     );
     for (;;) {
+      if (!shouldContinue()) return false;
       const cleared = writeTransaction(this.db, () => clearPage.run(corpus).changes)();
-      if (cleared === 0) break;
+      if (cleared === 0) return true;
+      await awaitTurn();
     }
   }
 
@@ -868,8 +891,9 @@ export class RetrievalStore {
 
   /** Recreate every vec table at a new dimension (a model switch that changes
    *  vector width) and clear every chunk's embedding marker so they re-embed.
-   *  vec0 tables are fixed-width, so a dimension change requires a full reset. */
-  resetVec(dimensions: number): void {
+   *  vec0 tables are fixed-width, so a dimension change requires a full reset.
+   *  `awaitTurn` runs after every transaction, as `purgeCorpora`'s does. */
+  async resetVec(dimensions: number, awaitTurn: () => Promise<void>): Promise<void> {
     if (!hasVecSupport(this.db)) return;
     // Every embedded chunk back to pending, its vector deleted with it, a page
     // at a time: one statement over the whole index rewrote about 95k rows
@@ -885,6 +909,7 @@ export class RetrievalStore {
           this.deleteVecRows(ids, corpus);
           this.db.prepare(`UPDATE memory_chunks SET embedded_model = NULL WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
         })();
+        await awaitTurn();
       }
     }
     // The tables themselves, at the new width. Dropping a vec0 table frees its
@@ -905,7 +930,7 @@ export class RetrievalStore {
     for (const corpus of EMBEDDED_CORPORA) this.vecTables.add(corpus);
     // Sums of vectors at the old width. The pass would replace them anyway,
     // since each row names its model and width; this frees them now.
-    for (const corpus of INDEX_CORPORA) this.clearDocSums(corpus);
+    for (const corpus of INDEX_CORPORA) await this.clearDocSums(corpus, awaitTurn);
   }
 
   /**

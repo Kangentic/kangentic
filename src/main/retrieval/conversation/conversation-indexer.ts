@@ -730,9 +730,10 @@ export class ConversationIndexer {
 
     // A chunker change invalidates every conversation chunk and the session
     // changes read from them: purge + reindex. Task records are chunked by
-    // their own indexer and survive.
+    // their own indexer and survive. The purge takes write turns, and one
+    // stopped part way leaves the old version, so the next sweep finishes it.
     if (store.getMeta(CHUNKER_VERSION_KEY) !== String(this.deps.chunkerVersion)) {
-      store.purgeCorpora(['conversation', 'change']);
+      if (!await store.purgeCorpora(['conversation', 'change'], () => awaitWriteTurn(db), shouldContinue)) return;
       store.setMeta(CHUNKER_VERSION_KEY, String(this.deps.chunkerVersion));
     }
 

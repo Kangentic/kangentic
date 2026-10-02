@@ -611,7 +611,10 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
 - **Which output reaches main.** `data` for the focused union (`setFocused`), `tap` for the
   sessions a phone streams (`subscribeDataTap`, reference counted, so a reader that needs raw output
   briefly subscribes for that long), and otherwise only a coalesced `outputSeen` with no bytes.
-- **A host crash.** Each PTY it held is reported through its own exit listener with
+- **A host crash.** Main first stops the process tree each PTY left behind, by pid
+  (`stopLostPtyTree`): a closed pseudo console or a hangup usually ends the agent, but nothing
+  guarantees it, and one still running would edit its worktree beside the session that resumes. Each
+  PTY is then reported through its own exit listener with
   `PTY_HOST_LOST_EXIT_CODE` (-2), so the session ends exactly as a PTY exit ends it. The renderer and
   the desktop notifier fold those exits into one "Terminals restarted" notice. The host restarts at
   once (then after 1, 5 and 15 s), main replays its focus and tap sets, and the lost agent sessions

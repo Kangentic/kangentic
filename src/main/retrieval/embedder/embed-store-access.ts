@@ -16,7 +16,7 @@ import type { StoredChunk } from '../types';
 export interface EmbedStore {
   getMeta(key: string): string | undefined;
   setMeta(key: string, value: string): void;
-  resetVec(dimensions: number): void;
+  resetVec(dimensions: number, awaitTurn: () => Promise<void>): Promise<void> | void;
   ensureVecTable(dimensions: number): void;
   readonly hasVec: boolean;
   chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[];
@@ -50,9 +50,9 @@ export interface EmbedStoreAccess {
 
 /** The vec tables at the model's width: a new width needs a full reset, the
  *  same width only needs the table to exist. False when there is none. */
-function syncVecTable(store: EmbedStore, model: EmbedModelRef): boolean {
+async function syncVecTable(store: EmbedStore, model: EmbedModelRef, awaitTurn: () => Promise<void>): Promise<boolean> {
   if (store.getMeta('vec_dims') !== String(model.dimensions)) {
-    store.resetVec(model.dimensions);
+    await store.resetVec(model.dimensions, awaitTurn);
     store.setMeta('vec_dims', String(model.dimensions));
   } else {
     store.ensureVecTable(model.dimensions);
@@ -61,10 +61,12 @@ function syncVecTable(store: EmbedStore, model: EmbedModelRef): boolean {
 }
 
 /** The steps run on a connection this process holds: the worker's, or a
- *  test's. One store per connection, since building one looks up its tables. */
+ *  test's. One store per connection, since building one looks up its tables.
+ *  `awaitTurnFor` paces a width reset's writes (the worker's write budget). */
 export function localEmbedStoreAccess(
   getDb: (projectId: string) => Database.Database,
   createStore: (db: Database.Database) => EmbedStore,
+  awaitTurnFor: (db: Database.Database) => Promise<void> = async () => undefined,
 ): EmbedStoreAccess {
   const stores = new WeakMap<Database.Database, EmbedStore>();
   const storeFor = (db: Database.Database): EmbedStore => {
@@ -80,7 +82,7 @@ export function localEmbedStoreAccess(
       const db = getDb(projectId);
       if (!hasVecSupport(db)) return null;
       const store = storeFor(db);
-      if (!syncVecTable(store, model)) return null;
+      if (!await syncVecTable(store, model, () => awaitTurnFor(db))) return null;
       return store.chunksNeedingEmbedding(model.modelTag, limit);
     },
     async write(projectId, rows, modelTag) {

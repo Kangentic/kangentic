@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { writeInSlices, type PreparedWrite } from '../timed-slices';
+import { awaitWriteTurn } from '../write-budget';
 import { listTree, readBlobs, readBranchHead, readIndexedHead, writeIndexedHead, type BranchHead, type TreeEntry } from '../branch-git';
 import { CODE_MAX_FILE_BYTES, CODE_RECORD_VERSION, codeChunks, isIndexableCodePath } from './code-record';
 
@@ -221,14 +222,20 @@ export async function sweepCodeRecords(
 }
 
 /** Everything the code corpus holds, gone: source code switched off. The
- *  index is derived from the branch, so switching it back on rebuilds it. */
-export function purgeCodeRecords(projectId: string, getDb: (projectId: string) => Database.Database = getProjectDb): boolean {
+ *  index is derived from the branch, so switching it back on rebuilds it.
+ *  True when there was anything to clear. The purge takes write turns, and
+ *  one `shouldContinue` stops part way is finished by the next clear. */
+export async function purgeCodeRecords(
+  projectId: string,
+  getDb: (projectId: string) => Database.Database = getProjectDb,
+  shouldContinue: () => boolean = () => true,
+): Promise<boolean> {
   try {
     const db = getDb(projectId);
     const anything = db.prepare("SELECT 1 FROM memory_index_state WHERE corpus = 'code' LIMIT 1").get() !== undefined
       || db.prepare("SELECT 1 FROM memory_chunks WHERE corpus = 'code' LIMIT 1").get() !== undefined;
     if (!anything) return false;
-    new RetrievalStore(db).purgeCorpora([CORPUS]);
+    await new RetrievalStore(db).purgeCorpora([CORPUS], () => awaitWriteTurn(db), shouldContinue);
     return true;
   } catch (error) {
     console.warn('[retrieval] code index could not be cleared:', error);

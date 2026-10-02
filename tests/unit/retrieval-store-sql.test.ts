@@ -2,7 +2,7 @@ import { passThroughTransaction } from './helpers/transaction-double';
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { CHUNKS_PER_TRANSACTION, RetrievalStore, type DocSumWrite } from '../../src/main/retrieval/retrieval-store';
+import { CHUNKS_PER_TRANSACTION, DELETES_PER_TRANSACTION, RetrievalStore, type DocSumWrite } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
@@ -594,7 +594,7 @@ describe('RetrievalStore corpus reads', () => {
     expect(stateRead?.sql).toContain("corpus = 'conversation'");
   });
 
-  it('purges only the corpora named, vectors included, a page of ids at a time', () => {
+  it('purges only the corpora named, vectors included, a page of ids at a time', async () => {
     // Each corpus holds one page of chunks, then none.
     const pagesServed = new Map<string, number>();
     const { store, calls } = vecStore({
@@ -607,7 +607,7 @@ describe('RetrievalStore corpus reads', () => {
       },
     });
 
-    store.purgeCorpora(['conversation', 'change']);
+    await store.purgeCorpora(['conversation', 'change'], async () => undefined);
 
     const chunkDeletes = calls.filter((call) => call.method === 'run' && call.sql.startsWith('DELETE FROM memory_chunks WHERE id IN'));
     expect(chunkDeletes.map((call) => call.args)).toEqual([[1], [2]]);
@@ -838,7 +838,7 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     return { database, db, count, embed, vectorIds };
   }
 
-  it('deletes chunks without their vectors, so a re-index, a delete and a purge all go through lexical-only', () => {
+  it('deletes chunks without their vectors, so a re-index, a delete and a purge all go through lexical-only', async () => {
     const { db, count, embed } = projectWithVecTable();
     const store = new RetrievalStore(db);
     store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
@@ -852,7 +852,7 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(0);
 
     store.upsertDocument({ ...ref, docId: 'doc-2' }, [chunk(0, 'hashE')]);
-    store.purgeCorpora(['conversation']);
+    await store.purgeCorpora(['conversation'], async () => undefined);
     expect(count('SELECT COUNT(*) AS count FROM memory_chunks')).toBe(0);
     // The vectors stay for the reconcile; nothing here could reach them.
     expect(count('SELECT COUNT(*) AS count FROM memory_vec_conversation')).toBe(2);
@@ -970,17 +970,51 @@ describeWithSqlite('RetrievalStore.purgeCorpora (real database)', () => {
     return { store, count };
   }
 
-  it('clears the sums of the purged corpora only', () => {
+  it('clears the sums of the purged corpora only', async () => {
     const { store, count } = project();
     store.upsertDocument(ref, [chunk(0, 'hashA')]);
     store.upsertDocument({ ...ref, corpus: 'task', docId: 'task-1' }, [chunk(0, 'hashB')]);
     store.writeDocSums('conversation', [sumsWrite({ docId: ref.docId, chunkCount: 1, embeddedCount: 0 })]);
     store.writeDocSums('task', [sumsWrite({ docId: 'task-1', chunkCount: 1, embeddedCount: 0 })]);
 
-    store.purgeCorpora(['conversation']);
+    await store.purgeCorpora(['conversation'], async () => undefined);
 
     expect(count('memory_doc_sums')).toBe(1);
     expect(store.docSumPrefix('task', 'task-1')).not.toBeNull();
+  });
+
+  // A purge shares the worker's write budget: a turn after each transaction,
+  // so main's own writes get the lock between them. Back to back, a large
+  // index's purge left main a free moment between two transactions and no more.
+  //
+  // Red-green: drop the `await awaitTurn()` in purgeCorpora's page loop and the
+  // first test takes no turn for the chunk pages (only the sums clear's one).
+  it('takes a write turn after each page a purge deletes', async () => {
+    const { store, count } = project();
+    const chunkCount = DELETES_PER_TRANSACTION * 3 + 8;
+    store.upsertDocument(ref, Array.from({ length: chunkCount }, (_unused, index) => chunk(index, `hash${index}`)));
+    let turns = 0;
+
+    const finished = await store.purgeCorpora(['conversation'], async () => { turns += 1; });
+
+    expect(finished).toBe(true);
+    expect(count('memory_chunks')).toBe(0);
+    // Four pages of chunks, each followed by a turn.
+    expect(turns).toBeGreaterThanOrEqual(Math.ceil(chunkCount / DELETES_PER_TRANSACTION));
+  });
+
+  // A purge stopped part way says so, so the caller keeps its own marker (the
+  // chunker version) and the next pass purges the rest.
+  it('stops a purge where shouldContinue says, and reports it unfinished', async () => {
+    const { store, count } = project();
+    const chunkCount = DELETES_PER_TRANSACTION * 3;
+    store.upsertDocument(ref, Array.from({ length: chunkCount }, (_unused, index) => chunk(index, `hash${index}`)));
+    let turns = 0;
+
+    const finished = await store.purgeCorpora(['conversation'], async () => { turns += 1; }, () => turns < 1);
+
+    expect(finished).toBe(false);
+    expect(count('memory_chunks')).toBe(chunkCount - DELETES_PER_TRANSACTION);
   });
 });
 

@@ -39,7 +39,8 @@ connection.
   write that meets the worker's lock waits instead of failing with `SQLITE_BUSY`. Worker
   transactions are capped (16 chunks, 64 deletes, 64 KB) so main waits a few ms at most, and the
   worker's background writes (storage upkeep, record sweeps, the embedding writeback, the map's
-  sums) share one lock budget per database (`write-budget.ts`): 20% of wall time while no other
+  sums, and the corpus purges and width resets) share one lock budget per database
+  (`write-budget.ts`): 20% of wall time while no other
   connection has committed for 2 s, 5% with commits at least 50 ms apart while one has. A new
   background write loop awaits `awaitWriteTurn` between its writes.
 - **The worker owns checkpoints.** It runs `PRAGMA wal_checkpoint(PASSIVE)` every 5 s, and after
