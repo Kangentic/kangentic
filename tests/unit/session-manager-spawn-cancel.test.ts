@@ -454,10 +454,13 @@ describe('SessionManager: a teardown waits for the spawn it cancelled to settle'
   // that promotion was not in the set, so the removal resolved at once and the
   // caller removed a worktree the promotion's shell and PTY were about to use.
   // The shell is held, so the promotion is parked where only the wait can see it.
-  it('removeByTaskId waits for a promotion its own removal loop started', async () => {
+  it('removeByTaskId waits for a promotion its own removal loop started, and for the rows it removed', async () => {
     const { manager, transport } = makeManager();
     manager.setMaxConcurrent(1);
-    vi.mocked(pty.spawn).mockReturnValue(createMockPty(801) as unknown as pty.IPty);
+    // Ended by hand: the running row is young, so its kill is parked for the
+    // exit-sequence grace and its PTY still holds the directory meanwhile.
+    const runningPty = createMockPty(801, { exitOnKill: false });
+    vi.mocked(pty.spawn).mockReturnValue(runningPty as unknown as pty.IPty);
     const running = await manager.spawn({ taskId: 'task-shared', command: '', cwd: tmpDir });
     const firstQueued = await manager.spawn({ taskId: 'task-shared', command: '', cwd: tmpDir });
     const secondQueued = await manager.spawn({ taskId: 'task-shared', command: '', cwd: tmpDir });
@@ -488,11 +491,17 @@ describe('SessionManager: a teardown waits for the spawn it cancelled to settle'
 
     // The promotion saw its cancel before the host was asked for anything: the
     // only spawn the host ever saw is the running row's, from the setup.
-    expect(settled).toBe(true);
     expect(spawnsInFlight(manager).size).toBe(0);
     expect(transport.spawnRequests).toEqual([running.id]);
     expect(pty.spawn).toHaveBeenCalledTimes(1);
     expect(registryRow(manager, secondQueued.id)).toBeUndefined();
+    // Red-green: the row exits captured inside the loop. Without them the
+    // removal resolved here, with the running row's PTY still alive.
+    expect(settled).toBe(false);
+
+    runningPty.exit();
+    await flush();
+    expect(settled).toBe(true);
   });
 });
 

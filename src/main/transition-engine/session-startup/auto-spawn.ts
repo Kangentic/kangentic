@@ -39,8 +39,23 @@ export async function autoSpawnTasks(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task spawns on its own rung for this column. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
+  /**
+   * Start these tasks and nothing else: the pty host's crash path, mid-run,
+   * for the tasks whose lost session could not be resumed (it had no agent
+   * session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`: an
+   * unscoped pass would also wake a task whose agent exited earlier this run.
+   * The lost row is still in the registry, exited, so a task counts as having
+   * a session here only for a row that is not exited (a resumed session, or a
+   * paused placeholder that must keep its Resume). Startup omits it.
+   */
+  onlyTaskIds?: ReadonlySet<string>,
 ): Promise<void> {
   if (isShuttingDown()) return;
+  if (onlyTaskIds && onlyTaskIds.size === 0) return;
+  const hasSession = onlyTaskIds
+    ? (taskId: string): boolean => sessionManager.listSessions()
+      .some((session) => session.taskId === taskId && session.status !== 'exited')
+    : (taskId: string): boolean => sessionManager.hasSessionForTask(taskId);
 
   const done = startStartupTimer('autoSpawnTasks', projectId, 'spawned');
   const db = getProjectDb(projectId);
@@ -93,7 +108,8 @@ export async function autoSpawnTasks(
   const candidates: Array<{ lane: Swimlane; task: Task }> = [];
   for (const lane of lanesToScan) {
     for (const task of taskRepo.list(lane.id)) {
-      if (sessionManager.hasSessionForTask(task.id)) continue;
+      if (onlyTaskIds && !onlyTaskIds.has(task.id)) continue;
+      if (hasSession(task.id)) continue;
       const laneForTask = applyProfileToLane(
         lane,
         findTaskProfile({ profiles: boardProfiles, profileId: task.profile_id, taskId: task.id }),
@@ -129,7 +145,7 @@ export async function autoSpawnTasks(
     // 'system'-suspended records when autoResumeSessionsOnRestart=false;
     // in either case the user must explicitly Resume - don't auto-spawn over
     // the placeholder and clobber the resumable record's agent_session_id.
-    if (sessionManager.hasSessionForTask(task.id)) continue;
+    if (hasSession(task.id)) continue;
 
     // Safety net: register a placeholder for user-paused records that
     // somehow weren't registered by resumeSuspendedSessions (e.g. the

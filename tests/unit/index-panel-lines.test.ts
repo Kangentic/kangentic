@@ -33,6 +33,17 @@ function indexOf(overrides: Partial<KnowledgeGraphIndexSummary> = {}): Knowledge
   };
 }
 
+// The lines render counts through `toLocaleString()`, so grouping follows the
+// PROCESS locale ('1,005' reads '1.005' under de-DE). Expected counts ask the
+// same runtime for their text rather than hard-coding en-US, so the file passes
+// on any developer machine and on CI. Percentages, `MB`, and the words around a
+// count are not locale-formatted by the source and stay literal.
+const COUNT_FORMAT = new Intl.NumberFormat();
+
+function counted(value: number): string {
+  return COUNT_FORMAT.format(value);
+}
+
 const NOTHING_WAITS = { summaries: undefined, code: undefined };
 
 function input(overrides: Partial<IndexSourceLinesInput> = {}): IndexSourceLinesInput {
@@ -80,10 +91,10 @@ describe('the source lines', () => {
 
   it('are each count with a check once caught up', () => {
     const lines = indexSourceLines(input());
-    expect(lineFor(lines, 'Conversations')).toMatchObject({ value: '1,005', tone: 'ready' });
-    expect(lineFor(lines, 'Commits')).toMatchObject({ value: '2,419', tone: 'ready' });
-    expect(lineFor(lines, 'Task summaries')).toMatchObject({ value: '674', tone: 'ready' });
-    expect(lineFor(lines, 'Source code')).toMatchObject({ value: '1,488 files', tone: 'ready' });
+    expect(lineFor(lines, 'Conversations')).toMatchObject({ value: counted(1005), tone: 'ready' });
+    expect(lineFor(lines, 'Commits')).toMatchObject({ value: counted(2419), tone: 'ready' });
+    expect(lineFor(lines, 'Task summaries')).toMatchObject({ value: counted(674), tone: 'ready' });
+    expect(lineFor(lines, 'Source code')).toMatchObject({ value: `${counted(1488)} files`, tone: 'ready' });
   });
 
   it('show a share with a track and no time left while embedding, since the summary carries no rate', () => {
@@ -101,7 +112,7 @@ describe('the source lines', () => {
   it('show no share with the Knowledge Graph off, only the count', () => {
     const index = indexOf({ corpora: [corpus('conversation', 1005, 1000, 405)] });
     expect(lineFor(indexSourceLines(input({ index, semanticAvailable: false })), 'Conversations'))
-      .toMatchObject({ value: '1,005', tone: 'ready' });
+      .toMatchObject({ value: counted(1005), tone: 'ready' });
   });
 
   it('say Not yet indexed for a source with nothing in it, never a checked 0', () => {
@@ -136,11 +147,11 @@ describe('the source lines', () => {
 
   it('say how many were skipped once the pass has passed over the rest', () => {
     const index = indexOf({ summaries: { written: 410, finishedTasks: 412, skipped: 2 } });
-    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: '410 of 412, 2 skipped' });
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: `${counted(410)} of ${counted(412)}, ${counted(2)} skipped` });
   });
 
   it('keep the summaries already written with a check when switched off', () => {
-    expect(lineFor(indexSourceLines(input({ summariesOn: false })), 'Task summaries')).toMatchObject({ value: '674', tone: 'ready' });
+    expect(lineFor(indexSourceLines(input({ summariesOn: false })), 'Task summaries')).toMatchObject({ value: counted(674), tone: 'ready' });
   });
 
   it('carry the info texts and test ids the panel spec reads', () => {
@@ -161,8 +172,8 @@ describe('the map lines', () => {
   it('count the links once a map is drawn, then what the index holds beyond the sources', () => {
     const lines = indexMapLines({ hasMap: true, building: false, edgeCount: 3438, coverage: coverageOf(), storageBytes: 412 * 1024 * 1024 });
     expect(lines.map((line) => [line.label, line.value])).toEqual([
-      ['Links', '3,438'],
-      ['Transcript gone', '714'],
+      ['Links', counted(3438)],
+      ['Transcript gone', counted(714)],
       ['Size on disk', '412 MB'],
     ]);
     expect(lines[0].info).toMatch(/exact/);
@@ -186,7 +197,7 @@ describe('the map lines', () => {
       coverage: coverageOf({ notYetIndexed: bucket(12), failed: bucket(3) }),
       storageBytes: 0,
     });
-    expect(lines.find((line) => line.label === 'Not yet indexed')).toMatchObject({ value: '12' });
-    expect(lines.find((line) => line.label === 'Failed to index')).toMatchObject({ tone: 'caution', problem: '3' });
+    expect(lines.find((line) => line.label === 'Not yet indexed')).toMatchObject({ value: counted(12) });
+    expect(lines.find((line) => line.label === 'Failed to index')).toMatchObject({ tone: 'caution', problem: counted(3) });
   });
 });

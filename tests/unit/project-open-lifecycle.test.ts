@@ -214,7 +214,7 @@ import {
   cleanupProject,
   recoverSessionsAfterPtyHostLoss,
 } from '../../src/main/ipc/handlers/projects';
-import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup';
+import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
 import { ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
@@ -276,8 +276,12 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       create: vi.fn(),
       updateLastOpened: vi.fn(),
     },
-    // A project delete has the pty host close its database handle first.
-    sessionManager: { closeProjectInPtyHost: vi.fn(async () => undefined) },
+    // A project delete has the pty host close its database handle first. The
+    // host-loss recovery reads the registry to map lost session ids to tasks.
+    sessionManager: {
+      closeProjectInPtyHost: vi.fn(async () => undefined),
+      listSessions: vi.fn(() => []),
+    },
     configManager: { getEffectiveConfig: vi.fn(() => ({ mcpServer: { enabled: false } })) },
     boardConfigManager: {
       attach: vi.fn(),
@@ -1026,6 +1030,9 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
   // drop `lostSessionIds` from the call in projects.ts and the first test goes
   // red (the tenth argument is undefined).
   const RESUME_ONLY_SESSION_IDS_ARGUMENT = 9;
+  // autoSpawnTasks' tenth parameter is its scope, for the same reason: an
+  // unscoped pass would also restart a task whose agent exited earlier this run.
+  const AUTO_SPAWN_ONLY_TASK_IDS_ARGUMENT = 9;
 
   function registerProjects(context: MockContext, projects: Project[]): void {
     const byId = new Map(projects.map((project) => [project.id, project]));
@@ -1058,6 +1065,29 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     expect(calls[1][0]).toBe('project-B');
     expect(calls[1][4]).toBe('codex');
     expect(calls[1][RESUME_ONLY_SESSION_IDS_ARGUMENT]).toBe(lostInB);
+  });
+
+  it('then starts fresh only the tasks whose sessions the loss took down, the way startup does', async () => {
+    const context = createMockContext();
+    const project = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    registerProjects(context, [project]);
+    // session-a2 had no agent session id, so the resume could not take it back;
+    // session-other belongs to a task the host loss never touched.
+    context.sessionManager.listSessions = vi.fn(() => [
+      { id: 'session-a1', taskId: 'task-1', status: 'running' },
+      { id: 'session-a2', taskId: 'task-2', status: 'exited' },
+      { id: 'session-other', taskId: 'task-3', status: 'exited' },
+    ]);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', new Set(['session-a1', 'session-a2'])]]));
+
+    expect(state.callOrder).toEqual(['resumeSuspendedSessions', 'autoSpawnTasks']);
+    const autoSpawnCalls = vi.mocked(autoSpawnTasks).mock.calls;
+    expect(autoSpawnCalls).toHaveLength(1);
+    expect(autoSpawnCalls[0][0]).toBe('project-A');
+    expect(autoSpawnCalls[0][2]).toBe(context.sessionManager);
+    // autoSpawnTasks itself skips task-1, whose resumed row is no longer exited.
+    expect(autoSpawnCalls[0][AUTO_SPAWN_ONLY_TASK_IDS_ARGUMENT]).toEqual(new Set(['task-1', 'task-2']));
   });
 
   it('skips a project that left the index and one whose folder is gone, and still resumes the rest', async () => {

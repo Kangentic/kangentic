@@ -46,9 +46,10 @@ import { fetchAllRemotesIfStale, lastAllRemotesFetchAt } from './fetch-throttle'
 import { WorktreeManager, GitQueuePriority } from './worktree-manager';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
+import { AUTO_FETCH_INTERVAL_MS } from '../../shared/refresh-intervals';
 
-/** How long after the project's last full fetch the next one runs. */
-export const AUTO_FETCH_INTERVAL_MS = 5 * 60_000;
+// Shared, so the Settings copy names the cadence this runs on.
+export { AUTO_FETCH_INTERVAL_MS };
 
 let activeTimer: NodeJS.Timeout | null = null;
 let activeProjectId: string | null = null;

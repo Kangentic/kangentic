@@ -20,6 +20,18 @@ import {
   formatDuration,
 } from '../../src/renderer/components/knowledge-graph/KnowledgeGraphCanvas';
 
+// `formatCost` renders through `toLocaleString(undefined, ...)`, so its digits,
+// grouping and decimal marks follow the PROCESS locale. These expectations ask
+// the same runtime for the number's text instead of hard-coding en-US ('1,206.50'
+// reads '1.206,50' under de-DE), so the suite passes on any developer machine
+// and on CI. The dollar sign and the sub-cent collapse are the contract under
+// test and stay literal.
+const CENT_PRECISION = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function dollars(amount: number): string {
+  return `$${CENT_PRECISION.format(amount)}`;
+}
+
 describe('hover card facts', () => {
   it('does not throw when a conversation recorded no cost', () => {
     // The crash, in its two reachable shapes. `undefined` is the one that shipped.
@@ -36,22 +48,25 @@ describe('hover card facts', () => {
   });
 
   it('folds the token count into the cost when both are present', () => {
-    expect(formatCostWithTokens(41.32, 60_100_000)).toBe('$41.32 (60.1M tokens)');
+    expect(formatCostWithTokens(41.32, 60_100_000)).toBe(`${dollars(41.32)} (60.1M tokens)`);
   });
 
   it('reports cost alone when the token count is missing', () => {
-    expect(formatCostWithTokens(41.32, undefined)).toBe('$41.32');
-    expect(formatCostWithTokens(41.32, 0)).toBe('$41.32');
+    expect(formatCostWithTokens(41.32, undefined)).toBe(dollars(41.32));
+    expect(formatCostWithTokens(41.32, 0)).toBe(dollars(41.32));
   });
 
   it('keeps cost to the cent at every scale', () => {
     // Rounding to whole dollars above ten hides whether "$41" was 41.02 or
     // 41.98, and these are amounts someone may reconcile against a bill.
-    expect(formatCost(41.02)).toBe('$41.02');
-    expect(formatCost(1206.5)).toBe('$1,206.50');
+    expect(formatCost(41.02)).toBe(dollars(41.02));
+    expect(formatCost(1206.5)).toBe(dollars(1206.5));
+    // Locale-free statement of the same rule: two amounts a cent apart from a
+    // round dollar must not render alike.
+    expect(formatCost(41.02)).not.toBe(formatCost(41.98));
     // Only a genuinely sub-cent amount collapses: "$0.00" reads as free.
     expect(formatCost(0.004)).toBe('<$0.01');
-    expect(formatCost(0)).toBe('$0.00');
+    expect(formatCost(0)).toBe(dollars(0));
   });
 
   it('abbreviates large counts and leaves small ones alone', () => {

@@ -524,5 +524,21 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       });
     },
 
+    /**
+     * Let go of everything held for a project closed for deletion: its map's
+     * JSON (about 1 MB), its coverage and totals, and its naming timer, which
+     * would otherwise fire later against a database that is gone. A pass still
+     * running stops at its next step.
+     */
+    forget(projectId: string): void {
+      const pass = running.get(projectId);
+      if (pass) pass.signal.aborted = true;
+      const state = naming.get(projectId);
+      if (state?.timer) clearTimeout(state.timer);
+      naming.delete(projectId);
+      projectionJson.delete(projectId);
+      coverageCache.delete(projectId);
+      corpusCache.delete(projectId);
+    },
   };
 }

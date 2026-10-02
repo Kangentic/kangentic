@@ -32,9 +32,10 @@ import { refreshProjectPRs, listRefreshEligibleTasks, pickNextDuePR, nextPRDueAt
 import { linkPR, cancelPendingVerdictRepolls, lastPRCheckAt, prunePRCheckStamps, clearPRCheckStamps } from './pr-linking';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
+import { PR_REFRESH_INTERVAL_MS } from '../../shared/refresh-intervals';
 
-/** How long after its last check a PR falls due again. */
-export const PR_REFRESH_INTERVAL_MS = 2 * 60_000;
+// Shared, so the Settings copy names the cadence this runs on.
+export { PR_REFRESH_INTERVAL_MS };
 /** The least time between one queued check finishing and the next starting. */
 export const PR_REFRESH_MIN_GAP_MS = 10_000;
 

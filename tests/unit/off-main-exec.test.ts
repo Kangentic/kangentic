@@ -19,7 +19,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { execFileAsync, setOffMainExecutor, type OffMainExecutor } from '../../src/main/utility-process/off-main-exec';
-import { launchesOwnBinary, runHostExec } from '../../src/main/pty/host/host-exec';
+import { launchesOwnBinary, ownExecutables, runHostExec, setMainExecutable } from '../../src/main/pty/host/host-exec';
 import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 afterEach(() => {
@@ -114,6 +114,34 @@ describe('host-exec', () => {
     const result = await runHostExec({ kind: 'execFile', file: process.execPath, args: ['--version'], options: {} });
     expect(result.ok).toBe(false);
     expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  describe('main\'s executable, as reported in the host\'s init', () => {
+    // On macOS a utility process runs from the app's Helper bundle, so the
+    // host's own execPath is never the app binary a request names. Main
+    // reports its own in init (`setMainExecutable`).
+    const mainBinary = path.resolve('/mock/Kangentic.app/Contents/MacOS/Kangentic');
+    afterEach(() => setMainExecutable(undefined));
+
+    it('refuses main\'s executable too, by path and by name, without spawning', async () => {
+      setMainExecutable(mainBinary);
+      expect(ownExecutables()).toEqual([process.execPath, mainBinary]);
+      // Red-green: before main reported its executable, only the host's own
+      // execPath was compared, and these were allowed.
+      expect(launchesOwnBinary({ kind: 'execFile', file: mainBinary, args: [], options: {} })).toBe(true);
+      expect(launchesOwnBinary({ kind: 'exec', command: `"${mainBinary}" --version`, options: {} })).toBe(true);
+      const result = await runHostExec({ kind: 'execFile', file: mainBinary, args: ['--version'], options: {} });
+      expect(result.ok).toBe(false);
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('still runs an unrelated command, and with nothing reported compares only its own', () => {
+      setMainExecutable(mainBinary);
+      expect(launchesOwnBinary({ kind: 'execFile', file: 'git', args: ['status'], options: {} })).toBe(false);
+      setMainExecutable(undefined);
+      expect(ownExecutables()).toEqual([process.execPath]);
+      expect(launchesOwnBinary({ kind: 'execFile', file: mainBinary, args: [], options: {} })).toBe(false);
+    });
   });
 
   it('maps a failed child to its exit code, streams and command', async () => {

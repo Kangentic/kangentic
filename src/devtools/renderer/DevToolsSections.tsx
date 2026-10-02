@@ -9,6 +9,7 @@ import { useProjectStore } from '../../renderer/stores/project-store';
 import { useUpdaterStore } from '../../renderer/stores/updater-store';
 import { useAnnouncementsStore } from '../../renderer/stores/announcements-store';
 import { SettingsCard, CardToggleRow, CardTile } from '../../renderer/components/settings/settings-card';
+import { settingProps } from '../../renderer/components/settings/settings-registry';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../renderer/components/SettingText';
 
 const FIXTURE_RELEASE_NOTES = `## What's New
@@ -179,36 +180,20 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
         icon={<Network size={16} />}
         label="Dev inspection bridge"
         description="The localhost bridge behind the devtools MCP tools."
-        searchIds={['developer.activityDebugOverlay']}
+        searchIds={['developer.previewInspectionServer', 'developer.previewEvalEnabled', 'developer.stallProfiler']}
       >
         <CardToggleRow
-          label="Inspection bridge"
-          description={
-            'Exposes screenshots, input, DOM and React queries, console and log tails, and engine and renderer '
-            + 'state through the kangentic_devtools_* MCP tools. Bound to 127.0.0.1 on a random port with no auth, '
-            + 'and writes .kangentic/preview.lock. On by default in dev; excluded from production builds.'
-          }
+          {...settingProps('developer.previewInspectionServer')}
           checked={inspectionEnabled}
           onChange={(value) => updateGlobal({ developer: { previewInspectionServer: value } })}
         />
         <CardToggleRow
-          label="Allow unsafe operations"
-          description={
-            'Gates three high-risk endpoints: devtools eval (runs any JavaScript in Kangentic\'s own renderer; the '
-            + 'agent browser\'s eval is a separate setting under Agent Browser), inject session event (fake '
-            + 'activity-engine events), and raw PTY input (any byte sequence, control codes included). Leave off '
-            + 'unless stress-testing.'
-          }
+          {...settingProps('developer.previewEvalEnabled')}
           checked={evalEnabled}
           onChange={(value) => updateGlobal({ developer: { previewEvalEnabled: value } })}
         />
         <CardToggleRow
-          label="Stall profiler"
-          description={
-            'Profiles the main process and, when main stalls, saves the profile and names the stall\'s heaviest '
-            + 'functions in the kangentic_devtools_event_loop_lag report. Costs CPU while on, so it is on by '
-            + 'default only in /preview.'
-          }
+          {...settingProps('developer.stallProfiler')}
           checked={stallProfilerEnabled}
           onChange={(value) => updateGlobal({ developer: { stallProfiler: value } })}
         />
@@ -218,7 +203,7 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
         icon={<Wrench size={16} />}
         label="Dev triggers"
         description="Open the surfaces a dev session cannot reach on its own."
-        searchIds={['developer.activityDebugOverlay']}
+        searchIds={['developer.devTriggers']}
       >
 
       {/* initUpdater() early-returns on !app.isPackaged (see

@@ -649,8 +649,11 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
  * down, and only those. Each lost PTY was reported exited with a non-zero
  * code, so its record is an interrupted one and the startup recovery path
  * resumes it (`--resume`), honouring the auto-resume setting as it does after
- * a hard shutdown. Scoped to the lost ids, so a session that exited or was
- * suspended earlier this run is not woken with them.
+ * a hard shutdown. Then, as startup does, a fresh agent for each lost task the
+ * resume could not bring back (its session had no agent session id yet, so
+ * there was nothing to resume) when its column starts one. Scoped to the lost
+ * ids and their tasks, so a session that exited or was suspended earlier this
+ * run is not woken with them.
  */
 export async function recoverSessionsAfterPtyHostLoss(
   context: IpcContext,
@@ -660,21 +663,42 @@ export async function recoverSessionsAfterPtyHostLoss(
     if (isShuttingDown()) return;
     const project = context.projectRepo.getById(projectId);
     if (!project || !fs.existsSync(project.path)) continue;
+    // Read before the resume, which replaces the rows it brings back.
+    const lostTaskIds = new Set(
+      context.sessionManager.listSessions()
+        .filter((session) => lostSessionIds.has(session.id) && session.taskId)
+        .map((session) => session.taskId),
+    );
+    const boardProfiles = context.boardConfigManager.getBoardProfiles(project.path);
     try {
-      await runWithProjectLogContext(project.name, () => resumeSuspendedSessions(
-        project.id,
-        project.path,
-        context.sessionManager,
-        context.configManager,
-        project.default_agent,
-        context.mcpServerHandle,
-        project.default_model,
-        project.default_effort,
-        context.boardConfigManager.getBoardProfiles(project.path),
-        lostSessionIds,
-      ));
+      await runWithProjectLogContext(project.name, async () => {
+        await resumeSuspendedSessions(
+          project.id,
+          project.path,
+          context.sessionManager,
+          context.configManager,
+          project.default_agent,
+          context.mcpServerHandle,
+          project.default_model,
+          project.default_effort,
+          boardProfiles,
+          lostSessionIds,
+        );
+        await autoSpawnTasks(
+          project.id,
+          project.path,
+          context.sessionManager,
+          context.configManager,
+          project.default_agent,
+          context.mcpServerHandle,
+          project.default_model,
+          project.default_effort,
+          boardProfiles,
+          lostTaskIds,
+        );
+      });
     } catch (error) {
-      console.error(`[pty-host] resuming sessions in ${project.name} after the host restarted failed:`, error);
+      console.error(`[pty-host] recovering sessions in ${project.name} after the host restarted failed:`, error);
     }
   }
 }

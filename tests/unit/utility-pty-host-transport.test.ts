@@ -109,7 +109,9 @@ describe('UtilityPtyHostTransport', () => {
       [],
       expect.objectContaining({ serviceName: 'kangentic-pty-host', stdio: ['ignore', 'pipe', 'pipe'] }),
     );
-    expect(latestChild().posted[0]).toEqual({ type: 'init', projectsDir: '/mock/projects' });
+    // Main's executable rides the init, so the host refuses to launch it too
+    // (on macOS the host's own execPath is the Helper bundle's).
+    expect(latestChild().posted[0]).toEqual({ type: 'init', projectsDir: '/mock/projects', mainExecutable: process.execPath });
     expect(latestChild().postedTypes()).toEqual(['init', 'setFocused']);
     expect(transport.hostPid).toBe(1000);
   });

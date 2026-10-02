@@ -18,7 +18,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { childHasExited, stopChildTree } from '../../shared/child-tree-stop';
-import { launchesOwnBinary, leadingExecutable } from './host-exec';
+import { launchesOwnBinary, leadingExecutable, ownExecutables } from './host-exec';
 import { toPtyHostError, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
 
 export { leadingExecutable };
@@ -37,8 +37,9 @@ export class HostCliProcesses {
   constructor(
     private readonly emit: (event: PtyHostEvent) => void,
     private readonly spawnChild: typeof spawn = spawn,
-    /** This process's executable, which a run may never start. */
-    private readonly ownExecutable: string = process.execPath,
+    /** This app's executables, which a run may never start. Read at each
+     *  start by default, since main reports its own in the host's init. */
+    private readonly ownExecutable?: string,
   ) {}
 
   start(params: PtyHostCliSpawnParams): void {
@@ -47,7 +48,7 @@ export class HostCliProcesses {
     // spawnCli builds it), and its arguments can carry a user's text naming
     // this app. Only the executable that would run is compared.
     const executable = params.shell ? leadingExecutable(params.command) : params.command;
-    const ownBinary = launchesOwnBinary({ kind: 'execFile', file: executable, args: [], options: {} }, this.ownExecutable);
+    const ownBinary = launchesOwnBinary({ kind: 'execFile', file: executable, args: [], options: {} }, this.ownExecutable ?? ownExecutables());
     if (ownBinary) {
       this.failToStart(processId, new Error('The pty host does not launch its own executable'));
       return;

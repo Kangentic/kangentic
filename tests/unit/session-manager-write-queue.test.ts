@@ -65,6 +65,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as nodePty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { DEFAULT_CHUNK_SIZE } from '../../src/main/pty/write-queue';
 
 // ---------------------------------------------------------------------------
 // Mock PTY factory - matches the shape from session-manager.test.ts.
@@ -419,9 +420,17 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
         .map((callArgs) => callArgs[0])
         .join('');
 
-      // The rest of the first payload, then the second, in order.
-      expect(writtenText.endsWith('recovery-payload')).toBe(true);
-      expect(writtenText.replace('recovery-payload', '')).toMatch(/^a*$/);
+      // The rest of the first payload, then the second, in order. Exactly: the
+      // queue drains DEFAULT_CHUNK_SIZE bytes per tick, so two chunks of the 20000
+      // are gone before the mock is cleared (the synchronous first, and the one the
+      // armed throw dropped in the host), the remainder is what is still buffered,
+      // and the recovery payload was appended behind it on the same queue. A queue
+      // that dropped its buffer on the throw would leave only the recovery payload,
+      // and `a*` alone would have matched that (and the empty string).
+      const firstPayloadLength = 20000;
+      const chunksAlreadyDrained = 2;
+      const remainderOfFirstPayload = 'a'.repeat(firstPayloadLength - chunksAlreadyDrained * DEFAULT_CHUNK_SIZE);
+      expect(writtenText).toBe(`${remainderOfFirstPayload}recovery-payload`);
 
       errorSpy.mockRestore();
     } finally {

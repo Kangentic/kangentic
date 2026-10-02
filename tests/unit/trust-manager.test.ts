@@ -1,6 +1,8 @@
 /**
- * Unit tests for ensureWorktreeTrust() -- pre-populates Claude Code's
- * trust entry in ~/.claude.json so agents skip the trust prompt.
+ * Unit tests for the ~/.claude.json writers: ensureClaudeSpawnConfig (a
+ * spawn's changes in one pass), ensureWorktreeTrust and ensureMcpServerTrust.
+ * All three share one reader and one temp-file writer, so a file that does not
+ * parse is left untouched by every one of them.
  *
  * Uses real temp files (same pattern as hook-manager.test.ts).
  * Mocks os.homedir() to point at a temp directory.
@@ -396,18 +398,47 @@ describe('ensureWorktreeTrust', () => {
     expect(entry.allowedTools).toEqual(['Bash', 'Read']);
   });
 
-  it('handles malformed JSON (treats as empty)', async () => {
-    fs.writeFileSync(claudeJsonPath(), '{ this is not valid JSON !!!');
+  // The file holds the user's auth and MCP state, and a torn read (the CLI
+  // mid-write) must never be written back as a file holding one trust entry.
+  // It used to be: the parse failure read as `{}`.
+  it('leaves malformed JSON untouched rather than replacing it, and does not throw', async () => {
+    const malformed = '{ this is not valid JSON !!!';
+    fs.writeFileSync(claudeJsonPath(), malformed);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(ensureWorktreeTrust('/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234')).resolves.toBeUndefined();
 
-    const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
-    await ensureWorktreeTrust(wtPath);
+      expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(malformed);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
-    // Should not throw, and should create a valid file
-    const data = readClaudeJson();
-    const projects = data.projects as Record<string, Record<string, unknown>>;
-    const entries = Object.values(projects);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].hasTrustDialogAccepted).toBe(true);
+  it('leaves a file that parses to something other than an object untouched', async () => {
+    fs.writeFileSync(claudeJsonPath(), '[]');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await ensureWorktreeTrust('/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234');
+
+      expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe('[]');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('writes through a temp file and a rename, so the CLI never reads a torn file', async () => {
+    fs.writeFileSync(claudeJsonPath(), JSON.stringify({ oauthAccount: { id: 'kept' } }));
+    const renames = vi.spyOn(fs.promises, 'rename');
+    try {
+      await ensureWorktreeTrust('/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234');
+
+      expect(renames).toHaveBeenCalledTimes(1);
+      expect(readClaudeJson().oauthAccount).toEqual({ id: 'kept' });
+      expect(fs.readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      renames.mockRestore();
+    }
   });
 });
 
@@ -485,6 +516,19 @@ describe('ensureMcpServerTrust', () => {
     const projects = data.projects as Record<string, Record<string, unknown>>;
     const resolvedKey = path.resolve(projectPath).replace(/\\/g, '/');
     expect(projects[resolvedKey].enabledMcpjsonServers).toContain('kangentic');
+  });
+
+  it('leaves malformed JSON untouched rather than replacing it', async () => {
+    const torn = '{"oauthAccount": {"id": "half-writ';
+    fs.writeFileSync(claudeJsonPath(), torn);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(ensureMcpServerTrust('/projects/myrepo')).resolves.toBeUndefined();
+
+      expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(torn);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

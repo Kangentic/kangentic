@@ -158,9 +158,22 @@ function fireExit(fixture: ExitFixture = {}) {
   return context;
 }
 
-/** Let the raw-ring read (answered by the pty host) and the notice land. */
-async function settleRead(): Promise<void> {
-  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+/**
+ * Let the raw-ring read (answered by the pty host) and the notice land. This
+ * awaits the reads the handler actually posted, not a count of microtask turns:
+ * a fixed count is a guess about how deep the read's chain is, and a negative
+ * assertion ("no notice") passes vacuously whenever the read outlasts the guess.
+ *
+ * The handler chains its `.then` onto the read promise before this awaits the
+ * same promise, and a promise runs its continuations in registration order, so
+ * the handler's continuation has run by the time this resumes. The macrotask
+ * tick after it lets anything chained a step further (the `.catch`, a task
+ * lookup) finish too.
+ */
+async function settleRead(context: ReturnType<typeof fireExit>): Promise<void> {
+  const reads = vi.mocked(context.sessionManager.getRawScrollback).mock.results.map((result) => result.value as Promise<string>);
+  await Promise.all(reads);
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 beforeEach(() => {
@@ -172,8 +185,8 @@ beforeEach(() => {
 
 describe('PTY exit listener: startup-failure notice', () => {
   it('asks the adapter about the CLI output and raises the "Agent did not start" notice with its sentence', async () => {
-    fireExit({ exitCode: 1 });
-    await settleRead();
+    const context = fireExit({ exitCode: 1 });
+    await settleRead(context);
 
     expect(hoisted.describeStartupFailure).toHaveBeenCalledWith(CLI_OUTPUT, 1);
     expect(hoisted.notifySpawnBlocked).toHaveBeenCalledTimes(1);
@@ -185,9 +198,13 @@ describe('PTY exit listener: startup-failure notice', () => {
   });
 
   it('never raises it for an intentional exit (a kill or a suspend carries no failure)', async () => {
-    fireExit({ intentional: true });
-    await settleRead();
+    const context = fireExit({ intentional: true });
+    await settleRead(context);
 
+    // The gate is ahead of the read, so no read exists to be waited on: asserting
+    // that none was posted is what makes the silence below mean "gated", not
+    // "the read had not landed yet".
+    expect(context.sessionManager.getRawScrollback).not.toHaveBeenCalled();
     expect(hoisted.describeStartupFailure).not.toHaveBeenCalled();
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
@@ -199,13 +216,14 @@ describe('PTY exit listener: startup-failure notice', () => {
     // therefore announces the absence first, and that is where the notice
     // comes from in practice.
     const context = fireExit({ intentional: true });
-    await settleRead();
+    await settleRead(context);
+    expect(context.sessionManager.getRawScrollback).not.toHaveBeenCalled();
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
     const absentHandler = capturedSessionEventHandlers.get('agent-absent');
     if (!absentHandler) throw new Error('agent-absent handler was not registered');
 
     absentHandler('pty-1', { id: 'pty-1', taskId: 'task-1', transient: false });
-    await settleRead();
+    await settleRead(context);
 
     expect(context.sessionManager.getRawScrollback).toHaveBeenCalledWith('pty-1');
     // The sweep forces exit code 0; the recognizer reads the wording.
@@ -218,21 +236,24 @@ describe('PTY exit listener: startup-failure notice', () => {
   });
 
   it('the sweep route also skips a Command Terminal', async () => {
-    fireExit({ intentional: true });
-    await settleRead();
+    const context = fireExit({ intentional: true });
+    await settleRead(context);
     const absentHandler = capturedSessionEventHandlers.get('agent-absent');
     if (!absentHandler) throw new Error('agent-absent handler was not registered');
 
     absentHandler('pty-1', { id: 'pty-1', taskId: 'transient-task', transient: true });
-    await settleRead();
+    await settleRead(context);
 
+    // Gated ahead of the read, as for an intentional exit.
+    expect(context.sessionManager.getRawScrollback).not.toHaveBeenCalled();
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
 
   it('never raises it for a Command Terminal, which has no task to notify about', async () => {
-    fireExit({ session: { id: 'pty-1', taskId: 'transient-task', transient: true } });
-    await settleRead();
+    const context = fireExit({ session: { id: 'pty-1', taskId: 'transient-task', transient: true } });
+    await settleRead(context);
 
+    expect(context.sessionManager.getRawScrollback).not.toHaveBeenCalled();
     expect(hoisted.describeStartupFailure).not.toHaveBeenCalled();
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
@@ -240,26 +261,36 @@ describe('PTY exit listener: startup-failure notice', () => {
   it('stays silent when the adapter names no failure (a normal end, or a crash it cannot read)', async () => {
     hoisted.describeStartupFailure.mockReturnValue(null);
 
-    fireExit({ exitCode: 0 });
-    await settleRead();
+    const context = fireExit({ exitCode: 0 });
+    await settleRead(context);
 
+    // The read happened and was read: silence here is the adapter's answer.
+    expect(context.sessionManager.getRawScrollback).toHaveBeenCalledTimes(1);
     expect(hoisted.describeStartupFailure).toHaveBeenCalledWith(CLI_OUTPUT, 0);
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
 
   it('stays silent for an adapter that does not implement the capability', async () => {
-    fireExit({ agentName: 'bare' });
-    await settleRead();
+    const context = fireExit({ agentName: 'bare' });
+    await settleRead(context);
 
+    // No capability, so there is nothing to read the output for.
+    expect(context.sessionManager.getRawScrollback).not.toHaveBeenCalled();
+    expect(hoisted.describeStartupFailure).not.toHaveBeenCalled();
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
 
   it('stays silent when the task no longer exists', async () => {
     mockTaskRepoGetById.mockReturnValue(null);
 
-    fireExit();
-    await settleRead();
+    const context = fireExit();
+    await settleRead(context);
 
+    // The adapter named a failure and the handler went looking for its task:
+    // the silence is the missing task, not an unfinished read.
+    expect(context.sessionManager.getRawScrollback).toHaveBeenCalledTimes(1);
+    expect(hoisted.describeStartupFailure).toHaveBeenCalledWith(CLI_OUTPUT, 1);
+    expect(mockTaskRepoGetById).toHaveBeenCalledWith('task-1');
     expect(hoisted.notifySpawnBlocked).not.toHaveBeenCalled();
   });
 });

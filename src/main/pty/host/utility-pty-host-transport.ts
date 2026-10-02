@@ -213,7 +213,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     captureWorkerStderr(child, stderrTail, !app.isPackaged);
     child.on('message', (message: unknown) => this.onHostMessage(child, message));
     child.on('exit', (code: number) => this.onHostExit(child, code, stderrTail));
-    child.postMessage({ type: 'init', projectsDir: this.options.projectsDir } satisfies ToPtyHostMessage);
+    child.postMessage({ type: 'init', projectsDir: this.options.projectsDir, mainExecutable: process.execPath } satisfies ToPtyHostMessage);
     // Whatever was posted while the previous host was down goes after init.
     for (const queued of this.queuedWhileDown.splice(0)) child.postMessage(queued);
     return child;

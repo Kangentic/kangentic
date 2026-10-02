@@ -43,47 +43,27 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<Bug size={16} />}
         label="Diagnostics"
         description="Debug overlays and logs for diagnosing sessions."
-        searchIds={['developer.activityDebugOverlay']}
+        searchIds={['developer.activityDebugOverlay', 'developer.persistConsoleLogs', 'developer.crashReports', 'developer.recordIpcTraffic']}
       >
         <CardToggleRow
           {...settingProps('developer.activityDebugOverlay')}
-          description={
-            'A floating panel with each session\'s current activity, dominant reason, counters and last '
-            + '10 transitions, polled every 2s. With it on, the engine also writes a snapshot to '
-            + '.kangentic/debug/<sessionId>.json on every state change.'
-          }
           labelTrailing={overlayCombo ? <SettingTag>{formatCombo(overlayCombo)}</SettingTag> : undefined}
           checked={overlayEnabled}
           onChange={(value) => updateGlobal({ developer: { activityDebugOverlay: value } })}
         />
         <CardToggleRow
-          label="Persistent console logs"
-          description={
-            'Errors and warnings are always saved; this also captures info, debug and log output, as NDJSON, '
-            + 'to .kangentic/logs/<YYYY-MM-DD>.log. Read it with kangentic_tail_logs.'
-            + (__KANGENTIC_DEV__ ? ' On by default in dev builds; the write path is async, so it costs nothing measurable.' : '')
-          }
+          {...settingProps('developer.persistConsoleLogs')}
           checked={persistConsoleLogsEnabled}
           onChange={(value) => updateGlobal({ developer: { persistConsoleLogs: value } })}
         />
         <CardToggleRow
-          label="Crash reports"
-          description={
-            'Always on. Every uncaught exception, unhandled rejection, renderer or GPU crash and preload error '
-            + 'writes a record with its source-mapped stack to .kangentic/logs/crashes/. Read them with '
-            + 'kangentic_get_recent_crashes.'
-          }
+          {...settingProps('developer.crashReports')}
           checked
           disabled
           onChange={() => {}}
         />
         <CardToggleRow
-          label="Record IPC traffic"
-          description={
-            'Logs every IPC call\'s channel, arguments, result and duration to .kangentic/logs/ipc-<date>.jsonl, '
-            + 'with mutating channels redacted. Off by default except in /preview, whose logs are wiped on close. '
-            + 'Read it with kangentic_get_ipc_log.'
-          }
+          {...settingProps('developer.recordIpcTraffic')}
           checked={recordIpcTrafficEnabled}
           onChange={(value) => updateGlobal({ developer: { recordIpcTraffic: value } })}
         />

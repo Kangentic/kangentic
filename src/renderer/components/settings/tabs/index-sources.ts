@@ -15,15 +15,14 @@
 
 import type { CardSourceLineProps } from '../settings-card';
 import type { AnswerSetupGap, SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
-import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 
 /** A line's text and look, without its switch. */
 export type SourceLineState = Pick<CardSourceLineProps, 'value' | 'tone' | 'problem' | 'percent' | 'progressLabel' | 'requirement'>;
 
 /** The Task summaries line's info, here and in the Knowledge Graph's Index panel. */
-export const SUMMARIES_INFO = `A sentence or two per Done task, so questions find it. The Knowledge Graph's agent reads each Done task's title, description, changed files, commit subjects and how its sessions ended, about ${SUMMARY_BATCH_SIZE} tasks a call, in the background.`;
+export const SUMMARIES_INFO = 'A sentence or two per Done task, written in the background from its title, description, files and commits.';
 /** The Source code line's info. */
-export const CODE_INFO = 'The project\'s code and docs, so answers can explain it. Reads the default branch as committed: source files and docs. Tests, fixtures, data files and anything over 256 KB are skipped. Kept current as the branch moves.';
+export const CODE_INFO = 'The default branch\'s source and docs, kept current; tests, data files and files over 256 KB are skipped.';
 
 export interface SourceRequirementInput {
   semanticEnabled: boolean;

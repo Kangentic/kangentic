@@ -64,15 +64,9 @@ function ensureDiffPanelClosedSync(): void {
       // A missing file cannot be wiped, so create it the way trust-manager does.
       data = {};
     } else {
-      // Unlike trust-manager's `catch { data = {} }`, an unreadable file is left alone rather
-      // than replaced. ~/.claude.json holds the user's auth and MCP state, and a torn read (the
-      // CLI mid-write) must never be overwritten with `{ diffSidebarOpen: false }`.
-      //
-      // Scope of that guard: it stops THIS write from compounding the damage. It is not a
-      // property of `ensureTrust()` as a whole. `ensureWorktreeTrust` and `ensureMcpServerTrust`
-      // run first in `ClaudeAdapter.ensureTrust`, and both still fall back to `data = {}` on a
-      // parse failure and write that back, so on a torn file the other keys are already gone by
-      // the time this runs. Giving those two the same policy is a change to trust-manager.ts.
+      // An unreadable file is left alone rather than replaced, as trust-manager's writers do.
+      // ~/.claude.json holds the user's auth and MCP state, and a torn read (the CLI mid-write)
+      // must never be overwritten with `{ diffSidebarOpen: false }`.
       const parsed = parseObject(raw);
       if (parsed === null) {
         console.warn(`${LOG_TAG} ${claudeJsonPath} is not a JSON object; leaving it untouched`);

@@ -21,6 +21,7 @@ import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
+import { setMainExecutable } from './host-exec';
 import { toPtyHostError, type FromPtyHostMessage, type PtyHostInitMessage, type PtyHostRequest, type ToPtyHostMessage } from './protocol';
 
 // This process forks node-pty's Windows kill helper too, under the same
@@ -88,6 +89,7 @@ let core: PtyHostCore | null = null;
 
 function initialize(message: PtyHostInitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
+  setMainExecutable(message.mainExecutable);
   // The retrieval worker runs the PASSIVE checkpoints for every process; a
   // commit here must not run one on this thread.
   setWalAutoCheckpoint(0);

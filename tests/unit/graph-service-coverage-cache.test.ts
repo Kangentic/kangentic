@@ -131,6 +131,24 @@ describe('graph service coverage cache', () => {
     expect(storeState.chunkTotalsCalls).toBe(1);
   });
 
+  it('lets go of a project\'s cached coverage and totals when the project is forgotten', () => {
+    // `forget` is what `project.close` calls before main deletes the project's
+    // files. Red-green: without it both caches kept the closed project's
+    // entries for the worker's lifetime, so the read after it served them.
+    const service = createGraphService({ getDb: () => ({}) as never });
+    service.getSnapshotWire('project-a', 'model');
+    service.getSnapshotWire('project-b', 'model');
+    expect(storeState.chunkTotalsCalls).toBe(2);
+    expect(storeState.corpusTotalsCalls).toBe(2);
+
+    service.forget('project-a');
+    service.getSnapshotWire('project-a', 'model');
+    service.getSnapshotWire('project-b', 'model');
+    // Only the forgotten project read again.
+    expect(storeState.chunkTotalsCalls).toBe(3);
+    expect(storeState.corpusTotalsCalls).toBe(3);
+  });
+
   it('says how many summaries the scheduler passed over', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
     expect(service.getSnapshotWire('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });

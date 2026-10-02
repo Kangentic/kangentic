@@ -335,6 +335,10 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     if (!created) return;
     const scene = created;
     sceneRef.current = scene;
+    // The anchor is a position in the LAST scene. A rebuild moves every node,
+    // so the framing below must not re-apply it; the host declares it again
+    // against this scene (`setOrbitAnchor`) once the scene is in its hands.
+    orbitAnchorRef.current = null;
 
     const controls = new CameraControls(scene.camera, canvas);
     controls.minDistance = MIN_DISTANCE;
@@ -689,6 +693,18 @@ export function useKnowledgeGraphScene(options: UseKnowledgeGraphSceneOptions): 
     // against a camera that has not been placed yet.
     if (position === null && orbitAnchorRef.current === null) return;
     orbitAnchorRef.current = position ? position.clone() : null;
+    const controls = controlsRef.current;
+    // camera-controls documents `setOrbitPoint` as unsafe mid-transition, and a
+    // new map arriving flies to its framing: the pivot lands once the camera
+    // has stopped. Read from the ref then, so the latest anchor wins.
+    if (controls?.active) {
+      const onSleep = (): void => {
+        controls.removeEventListener('sleep', onSleep);
+        applyOrbitPoint();
+      };
+      controls.addEventListener('sleep', onSleep);
+      return;
+    }
     applyOrbitPoint();
   }, [applyOrbitPoint]);
 

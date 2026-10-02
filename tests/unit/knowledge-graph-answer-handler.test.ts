@@ -12,7 +12,7 @@
  * off a mocked `ipcMain.handle`, then drive one channel.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -63,8 +63,35 @@ vi.mock('../../src/main/agent/shared/cli-print', async (importActual) => {
   };
 });
 
-// The first session opened sweeps stale run directories out of the real temp
-// folder; a unit run must not touch the developer's.
+// The handler makes the answer home (`kangentic-ask-home*`, one stable folder per
+// user) and the session pool makes run directories, both under `os.tmpdir()`, and
+// the answer home is meant to outlive a run, so nothing in the code under test ever
+// removes it. Left on the real temp folder, every run of this file would leave one
+// behind on the machine that ran it. `os.tmpdir()` is therefore pointed at a root
+// this file creates and removes. The assertion that the home sits directly under
+// the temp folder keeps its meaning: it now reads the temp folder the handler used.
+// The root is empty until `beforeAll` makes it, so anything that asks for the temp
+// folder before then (a module read at import) gets the real one.
+const { fakeTemp } = vi.hoisted(() => ({ fakeTemp: { root: '' } }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  const tmpdir = (): string => fakeTemp.root || actual.tmpdir();
+  return { ...actual, default: { ...actual, tmpdir }, tmpdir };
+});
+
+beforeAll(() => {
+  fakeTemp.root = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-answer-handler-'));
+});
+
+afterAll(() => {
+  const root = fakeTemp.root;
+  // Back to the real temp folder first, so a late call cannot recreate a folder in the root being removed.
+  fakeTemp.root = '';
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// The first session opened sweeps stale run directories out of the temp folder;
+// a unit run must not touch the developer's.
 vi.mock('../../src/main/agent/shared/answer-run-directory', async (importActual) => {
   const actual = await importActual<typeof import('../../src/main/agent/shared/answer-run-directory')>();
   return { ...actual, sweepStaleAnswerRunDirectories: vi.fn(async () => 0) };
@@ -460,7 +487,9 @@ describe('the Ask handler', () => {
     await ask('anything else');
     // The per-user name on POSIX, the plain one on Windows, as its real path.
     expect(seen[0].cwd).toBe(fs.realpathSync(answerHomeDirectory()));
-    expect(path.dirname(seen[0].cwd)).toBe(fs.realpathSync(os.tmpdir()));
+    // Directly under the temp folder the handler used, which is this file's own
+    // root and not the machine's, so the home it made is removed with the root.
+    expect(path.dirname(seen[0].cwd)).toBe(fs.realpathSync(fakeTemp.root));
     expect(seen[1].cwd).toBe(seen[0].cwd);
     expect(fs.existsSync(seen[0].cwd)).toBe(true);
     expect(path.basename(seen[0].runDirectory)).toMatch(/^kangentic-answer-/);

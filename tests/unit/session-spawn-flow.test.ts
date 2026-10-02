@@ -1182,10 +1182,14 @@ describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candi
 
     expect(ptyExitHarness.onExitCallback).toBeTypeOf('function');
     ptyExitHarness.onExitCallback!({ exitCode: 0 });
-    // The PR fallback reads the ring from the host before it emits.
-    for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
-
+    // The PR fallback reads the ring from the host before it emits, and that
+    // read takes however many turns the host round trip takes. Wait for the
+    // emit itself (the later of the two events) instead of counting microtask
+    // turns, which is a guess about the transport's depth.
     const emitMock = context.emit as unknown as ReturnType<typeof vi.fn>;
+    await vi.waitFor(() => {
+      expect(emitMock.mock.calls.map((call) => call[0] as string)).toContain('pr-candidate');
+    });
     const eventOrder = emitMock.mock.calls.map((call) => call[0] as string);
     const branchPushedIndex = eventOrder.indexOf('branch-pushed');
     const prCandidateIndex = eventOrder.indexOf('pr-candidate');

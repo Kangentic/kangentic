@@ -276,6 +276,9 @@ export type PtyHostReply =
 export interface PtyHostInitMessage {
   type: 'init';
   projectsDir: string;
+  /** Main's executable, so the host refuses to launch it too: on macOS the
+   *  host runs from the Helper bundle, whose `execPath` is not the app's. */
+  mainExecutable?: string;
 }
 
 /** Everything main sends the utility process. */

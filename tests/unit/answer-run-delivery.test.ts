@@ -18,12 +18,36 @@
  * everything about what the run may do.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 const { answerSpy } = vi.hoisted(() => ({ answerSpy: vi.fn(async () => 'answered') }));
+
+// Gemini's and Copilot's `answerFromContext` remove the chat they named from the
+// home directory when the run ends (`~/.gemini`, `~/.copilot/session-state`). Left
+// alone, every adapter this file drives would run that cleanup against the real
+// home of whoever runs the suite. The module is mocked rather than spied on
+// because the adapters read the home through different import shapes, and a spy
+// on one export does not reach the others (see gemini-answer-stream.test.ts).
+const { fakeHome } = vi.hoisted(() => ({ fakeHome: { directory: '' } }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return {
+    ...actual,
+    default: { ...actual, homedir: () => fakeHome.directory },
+    homedir: () => fakeHome.directory,
+  };
+});
+
+beforeAll(() => {
+  fakeHome.directory = fs.mkdtempSync(path.join(os.tmpdir(), 'answer-run-delivery-home-'));
+});
+
+afterAll(() => {
+  fs.rmSync(fakeHome.directory, { recursive: true, force: true });
+});
 
 vi.mock('../../src/main/agent/shared/cli-answer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/agent/shared/cli-answer')>();
@@ -50,6 +74,19 @@ import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter'
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama/ollama-adapter';
 import { extractLastTurnAnswer, extractStreamedAnswer } from '../../src/main/agent/shared/cli-answer';
 import type { RunCliPrintOptions } from '../../src/main/agent/shared/cli-print';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
+import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+
+type AnsweringAdapter = AgentAdapter & Required<Pick<AgentAdapter, 'answerFromContext'>>;
+
+/**
+ * Every registered adapter that can answer, read from the registry the way
+ * `agent-list.ts` derives `supportsAnswerFromContext`. A cross-adapter check
+ * over this list covers a new adapter the day it registers, with no edit here.
+ */
+const answeringAdapters: AnsweringAdapter[] = agentRegistry.list()
+  .map((agentName) => agentRegistry.getOrThrow(agentName))
+  .filter((adapter): adapter is AnsweringAdapter => typeof adapter.answerFromContext === 'function');
 
 /** The options the adapter handed the runner for one answer. */
 async function optionsFor(
@@ -269,10 +306,45 @@ describe('answer run flags and prompt delivery', () => {
   });
 
   it('omits the model flag everywhere when no model is passed', async () => {
-    for (const adapter of [new CopilotAdapter(), new CursorAdapter(), new DroidAdapter(), new GrokAdapter()]) {
-      const options = await optionsFor(adapter, null);
-      expect(options.args).not.toContain('--model');
+    // Every adapter that can answer, not a hand-picked few: passing an empty
+    // `--model` is an error in these CLIs, so the flag must be left off.
+    const refusedToRun: string[] = [];
+    for (const adapter of answeringAdapters) {
+      answerSpy.mockClear();
+      try {
+        await adapter.answerFromContext('THE PROMPT', '/bin/agent', '/scratch', null);
+      } catch (error) {
+        // The one other honest answer to "no model": refuse to run, because the
+        // CLI has no default worth guessing (Ollama would have to pull one).
+        expect(String(error), `${adapter.name} refused for the wrong reason`).toMatch(/choose a model/);
+        expect(answerSpy, `${adapter.name} refused and still ran`).not.toHaveBeenCalled();
+        refusedToRun.push(adapter.name);
+        continue;
+      }
+      expect(answerSpy, `${adapter.name} ran once`).toHaveBeenCalledTimes(1);
+      const args = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0].args;
+      expect(args, `${adapter.name} passes --model with none chosen`).not.toContain('--model');
     }
+    // Pinned so the loop cannot pass by every adapter refusing: Ollama alone
+    // does, and a new refuser has to be added here on purpose.
+    expect(refusedToRun).toEqual(['ollama']);
+    expect(answeringAdapters.length).toBeGreaterThan(refusedToRun.length);
+  });
+
+  it('removes the Copilot session it named, from the home it was given', async () => {
+    // The run names its chat with --session-id and removes the folder the CLI
+    // saved for it. The mocked runner plays the CLI here and saves one, so a
+    // cleanup aimed at the REAL home would leave this one behind.
+    let savedSessionFolder = '';
+    answerSpy.mockImplementationOnce(async (options: RunCliPrintOptions) => {
+      const sessionId = options.args[options.args.indexOf('--session-id') + 1];
+      savedSessionFolder = path.join(os.homedir(), '.copilot', 'session-state', sessionId);
+      fs.mkdirSync(savedSessionFolder, { recursive: true });
+      return 'answered';
+    });
+    await new CopilotAdapter().answerFromContext('THE PROMPT', '/bin/copilot', '/scratch', null);
+    expect(savedSessionFolder.startsWith(fakeHome.directory)).toBe(true);
+    expect(fs.existsSync(savedSessionFolder)).toBe(false);
   });
 
   it('passes the effort level as each CLI\'s own flag, and omits it when unset', async () => {
@@ -333,12 +405,22 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toContain('--no-session-persistence');
   });
 
-  it('declares no effort where the run would not pass it on', () => {
-    for (const adapter of [
-      new CursorAdapter(), new DroidAdapter(), new OpenCodeAdapter(), new CodexAdapter(), new GeminiAdapter(),
-      new KimiAdapter(), new AiderAdapter(), new GooseAdapter(), new OllamaAdapter(),
-    ]) {
-      expect(adapter.answerCapabilities.effort, adapter.name).toBe(false);
+  it('declares effort exactly where the run passes it on', async () => {
+    // Read off the run itself rather than a list of adapters that do not take
+    // effort: hand an effort level no CLI knows to every adapter that can
+    // answer, and see whether it reaches the command (an argument or the
+    // environment). The Settings tab shows an Effort row for every adapter that
+    // DECLARES effort, so a declaration the run ignores is a control that does
+    // nothing, and a run that passes it undeclared is a control that is hidden.
+    // A new or existing adapter (Qwen included) is covered with no edit here.
+    const effortProbe = 'effort-probe-level';
+    for (const adapter of answeringAdapters) {
+      answerSpy.mockClear();
+      await adapter.answerFromContext('THE PROMPT', '/bin/agent', '/scratch', 'some-model', { effort: effortProbe });
+      expect(answerSpy, `${adapter.name} ran once`).toHaveBeenCalledTimes(1);
+      const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+      const passesEffort = JSON.stringify([options.args, options.env ?? {}]).includes(effortProbe);
+      expect(adapter.answerCapabilities?.effort, `${adapter.name} declares effort only if its run passes it`).toBe(passesEffort);
     }
   });
 });

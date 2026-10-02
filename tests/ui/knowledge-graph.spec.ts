@@ -2,10 +2,11 @@
  * UI-tier coverage for the Knowledge Graph surface.
  *
  * Scope is deliberate: the surface opening, the Index panel's NUMBERS and
- * TONE, and the four empty/loading states. The canvas itself is not asserted -
- * per-pixel canvas output is not reliably reproducible on CI's headless Linux
- * (font metrics and devicePixelRatio both differ), and the layout math that
- * actually matters is covered exhaustively in the unit tier
+ * TONE, the four empty/loading states, and the camera and hover behaviour read
+ * off the drawn title chips' DOM (their text, opacity and transform). Canvas
+ * pixels are never asserted - per-pixel output is not reliably reproducible on
+ * CI's headless Linux (font metrics and devicePixelRatio both differ), and the
+ * layout math that actually matters is covered exhaustively in the unit tier
  * (`knowledge-graph-layout.test.ts`).
  *
  * The tone assertions are the ones worth having here. `missing-source` covers
@@ -2602,6 +2603,56 @@ test.describe('knowledge graph', () => {
     }, change);
   }
 
+  /**
+   * Rebuild the open map so two conversations trade places on the map and the
+   * rest shuffle among themselves, then push it. Every conversation keeps its
+   * docKey AND its index, so the host keeps the selection; only where each one
+   * SITS changes. The set of positions is untouched, so the map's extent and
+   * framing are the same and nothing lands off screen.
+   *
+   * Titles become "Moved k" (the number stays with the conversation) so a chip
+   * reading that proves the rebuilt map has been drawn.
+   */
+  async function permuteMap(page: Page, change: { swap: [number, number] }): Promise<void> {
+    await page.evaluate((requested) => {
+      type MapNode = { x: number; y: number; z: number; title?: string | null };
+      type Projection = { signature: string; nodes: MapNode[] };
+      type Snapshot = { projection: Projection | null };
+      const holder = window as unknown as {
+        electronAPI: { knowledgeGraph: { graphSnapshot: () => Promise<Snapshot | null> } };
+        __mockFireGraphChanged: (projectId: string) => void;
+      };
+      const api = holder.electronAPI.knowledgeGraph;
+      const previous = api.graphSnapshot.bind(api);
+      api.graphSnapshot = async () => {
+        const snapshot = await previous();
+        if (!snapshot || !snapshot.projection) return snapshot;
+        const projection = snapshot.projection;
+        const [first, second] = requested.swap;
+        const places = projection.nodes.map((node) => ({ x: node.x, y: node.y, z: node.z }));
+        const others = projection.nodes.map((_node, index) => index).filter((index) => index !== first && index !== second);
+        const placeOf = new Map<number, { x: number; y: number; z: number }>();
+        placeOf.set(first, places[second]);
+        placeOf.set(second, places[first]);
+        // Each of the rest takes the place of the next one along.
+        others.forEach((index, position) => placeOf.set(index, places[others[(position + 1) % others.length]]));
+        return {
+          ...snapshot,
+          projection: {
+            ...projection,
+            signature: 'sig-permuted',
+            nodes: projection.nodes.map((node, index) => ({
+              ...node,
+              ...placeOf.get(index),
+              title: (node.title ?? '').replace('Conversation', 'Moved'),
+            })),
+          },
+        };
+      };
+      holder.__mockFireGraphChanged('project-1');
+    }, change);
+  }
+
   test('keeps showing the same conversation, and the way back to the one before, when a rebuild reorders the map', async () => {
     // The selection and the trail of followed neighbours are positions in the
     // map's node list. A rebuild re-clusters and reorders it, so carried by
@@ -2722,6 +2773,195 @@ test.describe('knowledge graph', () => {
       // only adds an uncaught error, should one ever escape it.
       await expect(card).toHaveCount(0);
       expect(pageErrors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /** What the hover card says on each of the next `frames` frames, empty when it is not up. */
+  async function watchHoverCardText(page: Page, frames = WATCHED_FRAMES): Promise<string[]> {
+    return page.evaluate(async (frameCount) => {
+      const texts: string[] = [];
+      for (let frame = 0; frame < frameCount; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+        texts.push(document.querySelector('[data-testid="knowledge-graph-hover-card"]')?.textContent ?? '');
+      }
+      return texts;
+    }, frames);
+  }
+
+  test('a rebuild clears the hover, so a resting pointer does not show another conversation\'s card', async () => {
+    // The hover is a position in `projection.nodes`, and a rebuild reorders it.
+    // Carried over, a pointer that had not moved went on showing the card of
+    // whichever conversation now sat at that position, under a pointer that was
+    // resting on a different one. Cleared on a new node list instead, and found
+    // again by the next pointer move.
+    //
+    // `reverse` keeps every conversation where it is drawn and only renumbers
+    // them, so the pointer is still over the same conversation after the
+    // rebuild while its old index now names the one at the far end of the list.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(30) }));
+    try {
+      await openKnowledgeGraph(page);
+      const card = page.locator('[data-testid="knowledge-graph-hover-card"]');
+      await expect(page.locator('[data-testid="knowledge-graph-canvas"]')).toHaveAttribute('data-drawn-count', '30');
+      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
+      // The same aim as the cut-map test above: a drawn title's start, where its
+      // node is, clear of the floating panels.
+      const point = await page.evaluate(() => {
+        const candidate = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+          .map((element) => ({ element: element as HTMLElement, rect: element.getBoundingClientRect() }))
+          .filter(({ element }) => Number(element.style.opacity || '0') > 0)
+          .map(({ rect }) => ({ x: rect.left + Math.min(12, rect.width / 2), y: rect.top + rect.height / 2 }))
+          .find((aim) => aim.x > 280 && aim.x < window.innerWidth - 440 && aim.y > 60);
+        return candidate ?? null;
+      });
+      if (!point) throw new Error('no drawn title clear of the panels');
+      await page.mouse.move(point.x, point.y);
+      await expect(card).toBeVisible();
+      // Which conversation the pointer resolved to is read back, not assumed.
+      const hovered = Number(/Conversation (\d+)/.exec(await card.innerText())?.[1] ?? -1);
+      expect(hovered).toBeGreaterThanOrEqual(0);
+
+      await reshapeMap(page, { reverse: true });
+
+      // The rebuilt map is on screen: every drawn title is in its new words, so
+      // what follows is not the old map still standing.
+      await expect.poll(async () => {
+        const titles = await visibleNodeTitles(page);
+        return titles.length > 0 && titles.every((title) => /^Rebuilt \d+$/.test(title));
+      }).toBe(true);
+
+      // With 30 conversations reversed, the old index now names conversation
+      // 29 - hovered. The pointer has not moved, so no frame may show that card,
+      // nor the old map's card. A non-occurrence, so watched rather than polled.
+      const seen = await watchHoverCardText(page);
+      expect(seen.filter((text) => text.includes(`Rebuilt ${29 - hovered}`) || text.includes(`Conversation ${hovered}`))).toEqual([]);
+      expect(seen.filter((text) => text !== '')).toEqual([]);
+
+      // And hovering is not dead after a rebuild: the next move finds the
+      // conversation under the pointer, in the rebuilt map's words. The same
+      // conversation as before, since it never moved.
+      await page.mouse.move(point.x + 1, point.y);
+      await expect(card).toContainText(`Rebuilt ${hovered}`);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /** Where the drawn title reading `text` is centred, or null when it is not drawn. */
+  async function titleCentre(page: Page, text: string): Promise<{ x: number; y: number } | null> {
+    return page.evaluate((wanted) => {
+      const chip = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+        .find((element) => element.textContent === wanted && Number((element as HTMLElement).style.opacity || '0') > 0);
+      if (!chip) return null;
+      const rect = chip.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }, text);
+  }
+
+  /**
+   * Resolves once the camera has stopped: every title chip's text, opacity and
+   * transform are byte-identical on `frames` frames running. The frame loop
+   * rewrites the chips on every frame it draws and stops drawing when the camera
+   * has settled, so identical writes mean it has. A sub-pixel damping tail is
+   * NOT identical, which is the point: camera-controls reports `active` through
+   * that tail, and the orbit pivot is only applied once it goes to sleep, so a
+   * drag started inside it would turn about the wrong point.
+   */
+  async function waitForCameraAsleep(page: Page, frames = 12): Promise<void> {
+    const asleep = await page.evaluate(async (needed) => {
+      const snapshot = () => Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+        .map((element) => `${element.textContent}|${(element as HTMLElement).style.opacity}|${(element as HTMLElement).style.transform}`)
+        .join(';');
+      let previous = snapshot();
+      let identical = 0;
+      for (let frame = 0; frame < 300; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+        const current = snapshot();
+        identical = current === previous ? identical + 1 : 0;
+        previous = current;
+        if (identical >= needed) return true;
+      }
+      return false;
+    }, frames);
+    expect(asleep).toBe(true);
+  }
+
+  test('a drag orbits about the selected conversation after a rebuild moved it', async () => {
+    // The orbit pivot is a POSITION in the scene that was current when the
+    // conversation was selected. A rebuild keeps the selection (same document
+    // key) but moves the conversation, so a pivot left where it was turned the
+    // map about a spot with nothing at it: the selected conversation swung across
+    // the screen on a drag instead of staying put.
+    //
+    // Two conversations trade places in the rebuilt map, so the selected one
+    // lands exactly where the partner stood (and the partner where it stood), and
+    // the rest shuffle. The positions are the same set, so the framing is too and
+    // nothing leaves the screen. An orbit about the right point keeps the pivot's
+    // screen position fixed (the camera turns rigidly about it), so the selected
+    // conversation must barely move while the partner, now at the old pivot,
+    // swings.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
+    try {
+      await openKnowledgeGraph(page);
+      const selected = await selectVisibleNode(page);
+      await waitForCameraAsleep(page);
+      const selectedBefore = await titleCentre(page, `Conversation ${selected}`);
+      if (!selectedBefore) throw new Error('the selected conversation has no drawn title');
+
+      // The partner is the drawn title furthest above or below the selected one.
+      // A turn about a vertical axis moves a point sideways in proportion to how
+      // far it lies along the line of sight, which on this view is up and down
+      // the screen, so that is where a swing is large.
+      const partner = await page.evaluate(({ selectedTitle, anchor }) => {
+        const canvas = document.querySelector('[data-testid="knowledge-graph-canvas"]')!.getBoundingClientRect();
+        const drawn = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0 && element.textContent !== selectedTitle)
+          .map((element) => ({ text: element.textContent ?? '', rect: element.getBoundingClientRect() }))
+          .filter(({ rect }) => rect.left > canvas.left + canvas.width * 0.2 && rect.right < canvas.right - canvas.width * 0.2)
+          .map(({ text, rect }) => ({ text, rise: Math.abs(rect.top + rect.height / 2 - anchor.y) }));
+        drawn.sort((first, second) => second.rise - first.rise);
+        return drawn[0]?.text ?? null;
+      }, { selectedTitle: `Conversation ${selected}`, anchor: selectedBefore });
+      const partnerMatch = /Conversation (\d+)/.exec(partner ?? '');
+      if (!partnerMatch) throw new Error('no second drawn conversation to trade places with');
+      const partnerIndex = Number(partnerMatch[1]);
+
+      await permuteMap(page, { swap: [selected, partnerIndex] });
+
+      // The rebuilt map is drawn and the selection survived it.
+      await expect(page.locator('[data-testid="knowledge-graph-detail-title"]')).toHaveText(`Moved ${selected}`);
+      await expect.poll(async () => (await titleCentre(page, `Moved ${selected}`)) !== null).toBe(true);
+      await waitForCameraAsleep(page);
+
+      const selectedAfterRebuild = (await titleCentre(page, `Moved ${selected}`))!;
+      const partnerBefore = await titleCentre(page, `Moved ${partnerIndex}`);
+      if (!partnerBefore) throw new Error('the partner has no drawn title after the rebuild');
+      // The rebuild really did move the selected conversation, a long way.
+      expect(Math.hypot(selectedAfterRebuild.x - selectedBefore.x, selectedAfterRebuild.y - selectedBefore.y)).toBeGreaterThan(60);
+
+      // A short horizontal drag from open canvas, clear of the panels.
+      const canvasBox = (await page.locator('[data-testid="knowledge-graph-canvas"]').boundingBox())!;
+      const startX = canvasBox.x + canvasBox.width / 2;
+      const startY = canvasBox.y + canvasBox.height * 0.35;
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+      await page.mouse.move(startX + 60, startY, { steps: 10 });
+      await page.mouse.up();
+      await waitForCameraAsleep(page);
+
+      const selectedAfterDrag = await titleCentre(page, `Moved ${selected}`);
+      const partnerAfterDrag = await titleCentre(page, `Moved ${partnerIndex}`);
+      if (!selectedAfterDrag || !partnerAfterDrag) throw new Error('a title went undrawn during the drag');
+      const selectedTravel = Math.hypot(selectedAfterDrag.x - selectedAfterRebuild.x, selectedAfterDrag.y - selectedAfterRebuild.y);
+      const partnerTravel = Math.hypot(partnerAfterDrag.x - partnerBefore.x, partnerAfterDrag.y - partnerBefore.y);
+      // The pivot holds its place, within a few pixels for rounding.
+      expect(selectedTravel).toBeLessThan(4);
+      // While the partner, now at the old pivot, swings: the drag did orbit, so
+      // the selection staying put is not a camera that never moved.
+      expect(partnerTravel).toBeGreaterThan(40);
+      expect(selectedTravel).toBeLessThan(partnerTravel * 0.1);
     } finally {
       await browser.close();
     }
@@ -2870,6 +3110,60 @@ test.describe('knowledge graph', () => {
       expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(chat.x);
       expect(toolbar.x).toBeGreaterThanOrEqual(rail.x + rail.width);
       await expect(page.locator('[data-testid="knowledge-graph-camera-toggle"]')).toHaveAccessibleName('Controls');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the camera toolbar keeps its clearance as its own width changes with the window', async () => {
+    // The clamp that keeps the toolbar's edges off the rails is built from half
+    // the toolbar's width. "Controls" shows only on a map surface at least 1100px
+    // wide, so crossing that width adds or drops the label and changes the
+    // toolbar's width. The half was measured once, at mount, so after a resize
+    // across the line the clamp went on using the old figure: too wide, and it
+    // stopped short of a rail it could have reached; too narrow, and it tucked
+    // under the rail it was meant to clear.
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
+    try {
+      await openKnowledgeGraph(page);
+      const toolbar = page.locator('[data-testid="knowledge-graph-camera-controls"]');
+      const label = page.locator('[data-testid="knowledge-graph-camera-toggle"] span');
+      // No panel on the right with nothing selected and no chat open, so the
+      // clamp's right-hand figure is the half-width alone, with no rail added.
+      await expect(page.locator('[data-graph-chrome="right"]')).toHaveCount(0);
+
+      // Both figures read in one evaluation, so they describe the same frame. The
+      // half is read out of the inline style the clamp is written into.
+      const measure = () => toolbar.evaluate((element) => {
+        // Chromium writes the calc back without its wrapper, so both forms read.
+        const match = /100%\s*-\s*([\d.]+)px/.exec(element.getAttribute('style') ?? '');
+        return { width: (element as HTMLElement).offsetWidth, halfInClamp: match ? Number(match[1]) : null };
+      });
+      const agrees = async () => {
+        const { width, halfInClamp } = await measure();
+        return halfInClamp !== null && Math.abs(halfInClamp - width / 2) <= 1;
+      };
+
+      // Wide: the label is there, and the clamp already holds half of that.
+      await expect(label).toBeVisible();
+      await expect.poll(agrees).toBe(true);
+      const wide = await measure();
+
+      // Narrow, but above the 900px floor: the label is dropped, the toolbar
+      // shrinks, and the clamp has to follow it down.
+      await page.setViewportSize({ width: 1000, height: 800 });
+      await expect(label).toBeHidden();
+      await expect.poll(agrees).toBe(true);
+      const narrow = await measure();
+      // Not vacuous: the width really changed, by about the label's.
+      expect(narrow.width).toBeLessThan(wide.width - 20);
+      expect(narrow.halfInClamp!).toBeLessThan(wide.halfInClamp! - 10);
+
+      // And back up again.
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await expect(label).toBeVisible();
+      await expect.poll(agrees).toBe(true);
+      expect(Math.abs((await measure()).width - wide.width)).toBeLessThanOrEqual(1);
     } finally {
       await browser.close();
     }

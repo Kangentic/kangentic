@@ -24,6 +24,25 @@ type ChildProcessFailure = Error & {
   cmd?: string;
 };
 
+/**
+ * Main's executable, as main reported it in the host's init. On macOS a
+ * utility process runs from the app's Helper bundle, so this process's own
+ * `execPath` is the Helper and never the app binary a request could name.
+ */
+let mainExecutable: string | null = null;
+
+/** Record main's executable (`PtyHostInitMessage.mainExecutable`). */
+export function setMainExecutable(executable: string | undefined): void {
+  mainExecutable = executable && executable.length > 0 ? executable : null;
+}
+
+/** Every executable that is this app: this process's and main's. */
+export function ownExecutables(): string[] {
+  return mainExecutable && !isSamePath(mainExecutable, process.execPath)
+    ? [process.execPath, mainExecutable]
+    : [process.execPath];
+}
+
 /** The executable a shell command line starts: its leading quoted path, or
  *  its first word. */
 export function leadingExecutable(commandLine: string): string {
@@ -32,16 +51,21 @@ export function leadingExecutable(commandLine: string): string {
   return commandLine.trim().split(/\s+/)[0] ?? '';
 }
 
-/** True when the request would start this process's own executable. */
-export function launchesOwnBinary(request: HostExecRequest, ownExecutable = process.execPath): boolean {
-  if (request.kind === 'execFile') return isSamePath(request.file, ownExecutable);
+/** True when the request would start this app's own executable (this
+ *  process's, or main's). */
+export function launchesOwnBinary(
+  request: HostExecRequest,
+  ownExecutable: string | readonly string[] = ownExecutables(),
+): boolean {
+  const candidates = typeof ownExecutable === 'string' ? [ownExecutable] : ownExecutable;
+  if (request.kind === 'execFile') return candidates.some((candidate) => isSamePath(request.file, candidate));
   // Only the executable the command line starts is compared, by path or by
   // name. A probe's own path can contain this app's name without launching
   // it (`/opt/kangentic/bin/codex --version` on a build whose binary is
   // `kangentic`), and a substring match refused that probe.
   const executable = leadingExecutable(request.command);
-  return isSamePath(executable, ownExecutable)
-    || path.basename(executable).toLowerCase() === path.basename(ownExecutable).toLowerCase();
+  return candidates.some((candidate) => isSamePath(executable, candidate)
+    || path.basename(executable).toLowerCase() === path.basename(candidate).toLowerCase());
 }
 
 function failure(error: ChildProcessFailure, stdout: string, stderr: string): HostExecFailure {

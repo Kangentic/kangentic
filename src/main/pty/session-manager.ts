@@ -1749,20 +1749,29 @@ export class SessionManager extends EventEmitter {
    * maps. Like killByTaskId but also cleans up caches and session files.
    *
    * The removal itself is synchronous. The promise resolves once every spawn
-   * for the task that was still in flight has settled: one the host had
-   * started holds the working directory until its PTY exits, and it had no
-   * row for a kill-and-awaitExit to wait on. A caller about to remove that
-   * directory awaits it; one that is not can ignore it.
+   * for the task that was still in flight has settled, and every row it
+   * removed has exited: one the host had started holds the working directory
+   * until its PTY exits, and it had no row for a kill-and-awaitExit to wait
+   * on. A caller about to remove that directory awaits it; one that is not can
+   * ignore it. It never rejects (each wait is bounded by a safety timeout).
    */
   removeByTaskId(taskId: string): Promise<void> {
     this.cancelTaskSpawnsInFlight(taskId);
-    for (const session of this.registry.listByTaskId(taskId)) this.remove(session.id);
+    // Each row's exit, captured while the row still exists (an exit wait made
+    // after the remove finds no row and resolves at once): a young session's
+    // kill waits out its exit-sequence grace, and its PTY holds the working
+    // directory until then (.claude/rules/pty-teardown-grace.md).
+    const rowExits: Promise<void>[] = [];
+    for (const session of this.registry.listByTaskId(taskId)) {
+      rowExits.push(this.awaitRowExit(session.id));
+      this.remove(session.id);
+    }
     // Read after the loop, and cancelled again: each remove frees a slot, and
     // the queue can start a promotion of this task's next row inside it. A
     // cancelled spawn stays tracked until it settles, so none is missed.
     this.cancelTaskSpawnsInFlight(taskId);
     const inFlightForTask = [...this.spawnsInFlight.values()].filter((inFlight) => inFlight.taskId === taskId);
-    return this.awaitSpawnsSettled(inFlightForTask);
+    return Promise.all([this.awaitSpawnsSettled(inFlightForTask), ...rowExits]).then(() => undefined);
   }
 
   /**

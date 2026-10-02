@@ -360,6 +360,8 @@ export const retrievalHandlers: RetrievalHandlers = {
   'project.close': ({ projectId }, context) => {
     context.closeDb(projectId);
     indexStatus.forget(projectId);
+    // Only a context that ever read a graph has one to forget; never create one here.
+    graphs.get(context)?.service.forget(projectId);
   },
   'graph.snapshot': ({ projectId, modelTag, summaryNamesOn, summariesSkipped, knownProjectionKey }, context) => (
     graphFor(context, summaryNamesOn).getSnapshotWire(projectId, modelTag, { summariesSkipped, knownProjectionKey })

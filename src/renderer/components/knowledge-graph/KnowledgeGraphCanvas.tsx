@@ -916,11 +916,18 @@ export function KnowledgeGraphCanvas({
   const pointerStateRef = useRef<{ hovered: number | null; selected: number | null }>({ hovered: null, selected: null });
   const paneInsets = chromeInsets ?? NO_VIEWPORT_INSETS;
   // Half the toolbar's width, so the clamp below can keep its edges clear of
-  // the rails. Its content never changes, so one measurement is enough.
+  // the rails. Measured as it changes, not once: the Controls label shows only
+  // past a container width (`@[1100px]:inline`), so a resize across it widens
+  // the toolbar by its label and the clamp would keep the narrower figure.
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [toolbarHalfWidth, setToolbarHalfWidth] = useState(0);
   useLayoutEffect(() => {
-    if (toolbarRef.current) setToolbarHalfWidth(toolbarRef.current.offsetWidth / 2);
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    setToolbarHalfWidth(toolbar.offsetWidth / 2);
+    const observer = new ResizeObserver(() => setToolbarHalfWidth(toolbar.offsetWidth / 2));
+    observer.observe(toolbar);
+    return () => observer.disconnect();
   }, []);
   const [legendOpen, setLegendOpen] = useState(false);
   const legendRef = useRef<HTMLDivElement | null>(null);
@@ -954,9 +961,12 @@ export function KnowledgeGraphCanvas({
    * your subject across the screen instead. The camera does not move when this
    * changes - only what a drag means.
    */
+  // Again for every scene: a rebuild drops the anchor (it was a position in the
+  // old scene), and the host re-finds the selection by document key, so the
+  // index often stays the same while the node moves.
   useEffect(() => {
     setOrbitAnchor(selectedIndex ?? null);
-  }, [selectedIndex, setOrbitAnchor]);
+  }, [selectedIndex, setOrbitAnchor, graph.scene]);
 
   // ---- per-node styling -----------------------------------------------------
   /** Newest-to-oldest position of each node, for recency tinting. Rank rather

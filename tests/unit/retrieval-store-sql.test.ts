@@ -14,7 +14,17 @@ try {
   sqlite = null;
 }
 const describeWithSqlite = sqlite ? describe : describe.skip;
-type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
+
+// The real vec0 case near the end needs the sqlite-vec extension as well, and
+// skips without either. `node-sqlite-ci-canary.test.ts` asserts both on CI, so
+// a skip here cannot hide there.
+let vecPath: string | null = null;
+try {
+  vecPath = (await import('sqlite-vec')).getLoadablePath();
+} catch {
+  vecPath = null;
+}
+const describeWithVec = sqlite && vecPath ? describe : describe.skip;
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
@@ -894,6 +904,59 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
 
     expect(turns).toBe(2);
     expect(vectorIds()).toEqual([100]);
+  });
+});
+
+describeWithVec('reconcileVecOrphans against a real vec0 table', () => {
+  // The cases above stand a plain table in for the vec table, so they cannot see
+  // what only vec0 does: its rowids are read back and must be bound as BigInt, and
+  // a DELETE on it goes through the extension rather than a b-tree. This one runs
+  // the same reconcile over the real extension and a real vec0 table.
+  const DIMENSIONS = 4;
+  const vectorFor = (seed: number): Float32Array => new Float32Array([seed, seed + 0.5, -seed, 1]);
+
+  it('removes a vector with no chunk, one whose chunk is gone and one at an id a new chunk took, and keeps the one the embedded chunk owns', async () => {
+    const database = new sqlite!.DatabaseSync(':memory:', { allowExtension: true });
+    database.loadExtension(vecPath!);
+    const db = adaptDatabase(database);
+    markVecCapable(db);
+    runProjectMigrations(db);
+    const store = new RetrievalStore(db);
+    store.ensureVecTable(DIMENSIONS);
+    const vectorIds = (): number[] => (database.prepare('SELECT rowid AS id FROM memory_vec_conversation ORDER BY rowid').all() as Array<{ id: number | bigint }>)
+      .map((row) => Number(row.id));
+
+    const keptIds = store.upsertDocument({ ...ref, docId: 'doc-kept' }, [chunk(0, 'hashA')]).insertedIds;
+    const goneIds = store.upsertDocument({ ...ref, docId: 'doc-gone' }, [chunk(0, 'hashB'), chunk(1, 'hashC')]).insertedIds;
+    store.writeEmbeddings([
+      { chunkId: keptIds[0], vector: vectorFor(1), contentHash: 'hashA' },
+      { chunkId: goneIds[0], vector: vectorFor(2), contentHash: 'hashB' },
+      { chunkId: goneIds[1], vector: vectorFor(3), contentHash: 'hashC' },
+    ], 'model@4');
+
+    // Deleted while sqlite-vec was missing: the chunks go, their two vectors stay.
+    database.exec(`DELETE FROM memory_chunks WHERE doc_id = 'doc-gone'`);
+    // SQLite hands the freed top id to the next chunk, which has no vector yet, so
+    // the vector sitting at that id is the deleted chunk's, not this one's.
+    const reusedIds = store.upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashD')]).insertedIds;
+    expect(reusedIds).toEqual([goneIds[0]]);
+    // A vector with no chunk at all. vec0 takes its rowid as a BigInt only.
+    const orphanId = 900;
+    database.prepare('INSERT INTO memory_vec_conversation (rowid, embedding) VALUES (?, ?)')
+      .run(BigInt(orphanId), Buffer.from(vectorFor(9).buffer));
+    expect(vectorIds()).toEqual([keptIds[0], goneIds[0], goneIds[1], orphanId]);
+
+    await new RetrievalStore(db).reconcileVecOrphans(async () => undefined);
+
+    // Exactly the embedded chunk's own vector survives: the orphan, the deleted
+    // chunk's vector and the reused id's stale vector are all gone. Red-green by
+    // the query: without `embedded_model IS NOT NULL` the reused id's vector
+    // would stay, and without the `NOT IN` over the chunk ids the other two would.
+    expect(vectorIds()).toEqual([keptIds[0]]);
+    // And the survivor is still its own vector, readable through the extension.
+    expect(new RetrievalStore(db).searchSemantic(vectorFor(1), 1, ['conversation'])[0]?.chunkId).toBe(keptIds[0]);
+    // The new chunk is untouched: still waiting for its own embedding.
+    expect(database.prepare('SELECT embedded_model AS model FROM memory_chunks WHERE id = ?').get(reusedIds[0])).toEqual({ model: null });
   });
 });
 

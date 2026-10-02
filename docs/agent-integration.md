@@ -467,7 +467,7 @@ Before every spawn, `ClaudeAdapter.ensureTrust()` calls `ensureClaudeSpawnConfig
 4. Set `diffSidebarOpen: false` (see Diff Panel below)
 5. Write once, asynchronously and atomically (temp file + rename), only when something changed
 
-`ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the model-picker probe trusts its scratch directory).
+`ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the model-picker probe trusts its scratch directory). They share the same reader and writer, so they also leave a file that does not parse untouched and write through a temp file.
 
 #### Diff Panel
 

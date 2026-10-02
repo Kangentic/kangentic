@@ -338,8 +338,29 @@ describe('the graph service names regions in the background', () => {
     graph.getProjection('project');
     // The rename is scheduled; the map is rebuilt before its last turn writes.
     await vi.advanceTimersByTimeAsync(0);
+    // Precondition: the pass is in flight (it yields a turn per granularity and
+    // writes only after the last), so nothing is stored yet. Without this the
+    // test could pass with the rebuild landing after a finished pass.
+    expect(stored()).toBeNull();
     state.projection = projection('sig-2');
     await vi.runAllTimersAsync();
-    expect(stored()?.signature).not.toBe('sig-1');
+
+    // What `makeRegionNames` does (graph-service.ts, "A map rebuilt meanwhile has
+    // other regions"): after its last granularity it re-reads the cached map and,
+    // finding another signature, returns false WITHOUT storing. So nothing is
+    // stored for either map and no push goes out. Red-green: with that guard
+    // removed the pass would store `signature: 'sig-1'` and push `changed`, and
+    // a guard that stored under the NEW signature would leave sig-1's names
+    // laid over sig-2, which the old `not.toBe('sig-1')` check let through.
+    expect(stored()).toBeNull();
+    expect(changed).toEqual([]);
+    expect(regionLabel(graph)).toBe('build terminal');
+
+    // That read is what a reader does next: it sees the rebuilt map has no
+    // current names and asks again. The names that land are for sig-2.
+    await vi.runAllTimersAsync();
+    expect(stored()?.signature).toBe('sig-2');
+    expect(changed).toEqual(['project']);
+    expect(regionLabel(graph)).not.toBe('build terminal');
   });
 });
