@@ -642,8 +642,12 @@ describe('StatusFileReader', () => {
     const dispatched = (callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[1] as string[]);
     expect(dispatched).toEqual([lines]);
     // The superseded read drops its range rather than sending it again. Awaited
-    // on its own chain, so the read has finished before the count is taken.
-    await eventsChainOf(reader, 'session-1');
+    // on its own chain, so the read has finished before the count is taken. The
+    // chain must be there: read under a renamed field, the await would wait for
+    // nothing and the count below would pass before the read finished.
+    const eventsChain = eventsChainOf(reader, 'session-1');
+    expect(eventsChain).toBeInstanceOf(Promise);
+    await eventsChain;
     expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
 
     // A later change still reads from where the flush stopped.

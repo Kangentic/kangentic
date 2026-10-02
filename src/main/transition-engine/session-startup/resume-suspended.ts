@@ -351,7 +351,9 @@ export async function resumeSuspendedSessions(
       if (canResume) keepResumable(record, task);
       else retireRecord(sessionRepo, record.id);
     };
-    const giveUpOutcome = (): string => (canResume ? 'keeping its session resumable' : 'retiring its record, which has no conversation to keep');
+    // Says only what was done: a preparation that throws before the check above
+    // retires without knowing whether the record had a conversation.
+    const giveUpOutcome = (): string => (canResume ? 'keeping its session resumable' : 'retiring its record');
     try {
       if (!fs.existsSync(record.cwd)) {
         if (task.worktree_path && !fs.existsSync(task.worktree_path)) {

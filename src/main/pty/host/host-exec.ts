@@ -78,13 +78,31 @@ function realPathOf(file: string): string | null {
   }
 }
 
+/** The request's real path, read at most once however many executables it is
+ *  compared with. Never read for a bare name: the shell finds one on PATH,
+ *  where a real-path read would resolve it against the working directory, and
+ *  the callers compare a name as a name. */
+function lazyRealPath(file: string, platform: NodeJS.Platform): () => string | null {
+  let resolved: { value: string | null } | undefined;
+  return () => {
+    if (pathFor(platform).basename(file) === file) return null;
+    resolved ??= { value: realPathOf(file) };
+    return resolved.value;
+  };
+}
+
 /**
  * Whether two paths name the same executable: the same path once resolved
  * (case-folded where the file system ignores case: Windows, and macOS by
  * default), or, on this machine, the same file through a link (an install
  * link such as `/usr/bin/kangentic` to the app's binary).
  */
-function isSameExecutable(file: string, candidate: string, platform: NodeJS.Platform): boolean {
+function isSameExecutable(
+  file: string,
+  candidate: string,
+  platform: NodeJS.Platform,
+  realFileOf: () => string | null,
+): boolean {
   const platformPath = pathFor(platform);
   const foldsCase = platform === 'win32' || platform === 'darwin';
   const normalize = (value: string): string => {
@@ -97,7 +115,7 @@ function isSameExecutable(file: string, candidate: string, platform: NodeJS.Plat
   if (!realExecutables.has(candidate)) realExecutables.set(candidate, realPathOf(candidate));
   const realCandidate = realExecutables.get(candidate);
   if (!realCandidate) return false;
-  const realFile = realPathOf(file);
+  const realFile = realFileOf();
   return realFile !== null && normalize(realFile) === normalize(realCandidate);
 }
 
@@ -114,7 +132,8 @@ export function launchesOwnBinary(
     // A path is compared as a path. A bare name is found on PATH, so it is
     // compared as a name, the way the shell branch below compares one.
     const bareName = pathFor(platform).basename(request.file) === request.file;
-    return candidates.some((candidate) => isSameExecutable(request.file, candidate, platform)
+    const realFileOf = lazyRealPath(request.file, platform);
+    return candidates.some((candidate) => isSameExecutable(request.file, candidate, platform, realFileOf)
       || (bareName && commandName(request.file, platform) === commandName(candidate, platform)));
   }
   // Only the executable the command line starts is compared, by path or by
@@ -122,7 +141,8 @@ export function launchesOwnBinary(
   // it (`/opt/kangentic/bin/codex --version` on a build whose binary is
   // `kangentic`), and a substring match refused that probe.
   const executable = leadingExecutable(request.command);
-  return candidates.some((candidate) => isSameExecutable(executable, candidate, platform)
+  const realFileOf = lazyRealPath(executable, platform);
+  return candidates.some((candidate) => isSameExecutable(executable, candidate, platform, realFileOf)
     || commandName(executable, platform) === commandName(candidate, platform));
 }
 

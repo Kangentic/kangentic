@@ -195,6 +195,32 @@ describe('host-exec', () => {
         fs.rmSync(directory, { recursive: true, force: true });
       }
     });
+
+    // A bare name is found on PATH, and compared by name. A real-path read of it
+    // would resolve it against the working directory instead, so a file there
+    // linked to the app's binary would refuse an unrelated command. POSIX only,
+    // for the link test's reason above.
+    // Red-green: drop the bare-name guard in `lazyRealPath` and both bare-name
+    // assertions are refused.
+    it.skipIf(process.platform === 'win32')('never reads a bare name\'s real path, which would resolve it against the working directory', () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'own-executable-bare-'));
+      const originalWorkingDirectory = process.cwd();
+      try {
+        const appBinary = path.join(directory, 'Kangentic');
+        fs.writeFileSync(appBinary, '');
+        const helperLink = path.join(directory, 'helper');
+        fs.symlinkSync(appBinary, helperLink);
+        process.chdir(directory);
+
+        expect(launchesOwnBinary(execFileOf('helper'), appBinary)).toBe(false);
+        expect(launchesOwnBinary({ kind: 'exec', command: 'helper --version', options: {} }, appBinary)).toBe(false);
+        // The same link by its path is still read, and refused.
+        expect(launchesOwnBinary(execFileOf(helperLink), appBinary)).toBe(true);
+      } finally {
+        process.chdir(originalWorkingDirectory);
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('a POSIX shell command line and a Windows executable name', () => {

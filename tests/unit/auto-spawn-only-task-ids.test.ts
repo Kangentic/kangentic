@@ -495,7 +495,6 @@ describe('autoSpawnTasks: a spawn a teardown cancelled', () => {
     mockTaskGetById.mockImplementation(() => undefined);
     mockSwimlaneList.mockReturnValue([activeLane()]);
     mockTaskList.mockReturnValue([task('task-lost')]);
-    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
     consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
@@ -506,6 +505,7 @@ describe('autoSpawnTasks: a spawn a teardown cancelled', () => {
   });
 
   it('logs a spawn a teardown cancelled as cancelled, not as a failure, and writes nothing', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
     const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']), async () => {
       throw new DOMException('The session was ended while it was being spawned', 'AbortError');
     });
@@ -518,6 +518,7 @@ describe('autoSpawnTasks: a spawn a teardown cancelled', () => {
   });
 
   it('still reports any other rejection as a failure', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-lost') as never);
     const failure = new Error('the pty host refused the spawn');
     await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']), async () => {
       throw failure;
