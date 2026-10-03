@@ -21,12 +21,16 @@ name: Task reap against real processes
 # Path-filtered, and deliberately NOT a required check, like
 # macos-spawn-helper.yml: ci.yml runs at its 21-job concurrency ceiling (see the
 # note at the top of that file), and this only has something to say when the
-# reap's own code or tests change.
+# reap's own code or tests change, or its dependencies do: a koffi bump changes
+# every native call the Windows and macOS readers make, so package.json and the
+# lockfile are in the filter too.
 
 on:
   pull_request:
     branches: [main]
     paths:
+      - 'package.json'
+      - 'package-lock.json'
       - 'src/main/pty/process-tag/**'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
@@ -37,6 +41,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'package.json'
+      - 'package-lock.json'
       - 'src/main/pty/process-tag/**'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
