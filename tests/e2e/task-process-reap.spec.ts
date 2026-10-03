@@ -154,6 +154,8 @@ test.describe('Task process reap', () => {
   test.beforeEach(() => {
     survivorPid = null;
     survivorKnownDead = false;
+    // afterEach may read this file for a pid; only this test's record may be there.
+    fs.rmSync(resultFile, { force: true });
   });
 
   test.afterEach(() => {

@@ -105,6 +105,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `tests/unit/leftover-process-reports.test.ts` pins one report per burst and that a Stop
   resolves only a minted id. `tests/unit/leftover-processes-copy.test.ts` and
   `tests/ui/leftover-processes.spec.ts` pin the toast and the list.
+- **Test (Windows reader gates):** `tests/unit/win32-reader-gates.test.ts` runs the Windows
+  reader on a fake API on every OS: no handle for another session's process, no
+  `PROCESS_VM_READ` for another user's or an untagged one, a kill only through a handle whose
+  creation time matches, and every handle closed.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, and under CI a visible app). CI's unit

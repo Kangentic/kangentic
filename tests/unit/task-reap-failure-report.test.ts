@@ -1,5 +1,5 @@
 /**
- * A task leftover reap that fails tells Sentry once per kind per launch
+ * A task leftover reap that fails tells Sentry once per stage and code per launch
  * (src/main/pty/task-reap-failure-report.ts), with a fixed message and code and
  * never the failure's own text, and SessionManager reports every way a reap
  * or a Stop can fail.

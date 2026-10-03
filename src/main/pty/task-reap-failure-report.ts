@@ -1,6 +1,6 @@
 /**
  * Tells Sentry when the task leftover reap stops working on a machine, once
- * per kind of failure per launch. Every reap failure errs toward killing
+ * per stage and code per launch. Every reap failure errs toward killing
  * nothing, which is safe and silent: without a report, a platform whose reader
  * stopped loading (a packaging fault) or whose scan stopped listing processes
  * would simply stop cleaning up, and nobody would know.
