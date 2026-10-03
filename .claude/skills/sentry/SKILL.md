@@ -1,5 +1,5 @@
 ---
-description: Investigate a Sentry issue - retrieve the issue, latest event, stack trace, tags, and breadcrumbs from kangentic.sentry.io and diagnose it. Use when a task or the user says to investigate/look at/diagnose a Sentry issue or link, or to check what errors are arriving.
+description: Investigate a Sentry issue - retrieve the issue, latest event, stack trace, tags, and breadcrumbs from kangentic.sentry.io and diagnose it. Use when a task or the user says to investigate/look at/diagnose a Sentry issue or link, to check what errors are arriving, or to triage Sentry before a release (a sweep ends by filing the actionable issues as grouped, parallel-safe board tasks).
 ---
 
 # Sentry
@@ -266,6 +266,33 @@ shortId, title, count, userCount (affected installs), firstSeen, environment, an
   `kangentic_search_tasks` for the shortId, because assignment can be stale and a task can
   exist without one, but an assigned issue is never reported as new.
 
+**Then file the actionable issues as board tasks, grouped.** A sweep ends on the board, not in a
+report the user has to turn into tasks by hand, so file without a separate ask unless the user
+said to only list or only diagnose. Diagnose each candidate first (below): what gets filed is a
+fix with a known throw site or a concrete lead, never "look into X". The user runs these tasks in
+parallel worktrees and prefers fewer, larger ones, so:
+
+- **Group by the files the fix touches.** Issues whose fixes land in the same files go in one
+  task even when their mechanisms differ: DESKTOP-1G's leaked xterm listener and DESKTOP-1J/1K's
+  zero-width WebGL atlas share the terminal lifecycle files, so they were one task. Two worktrees
+  editing the same files conflict at merge, which costs more than one larger task.
+- **Split only where the files are disjoint.** That is the one reason for a second task. Issue
+  count, severity, and subsystem name are not.
+- **Make each task self-contained.** Parallel agents share no context, so each description
+  carries its own diagnosis, evidence, the fields listed under the next request, and a "Done
+  when" naming the red-green test that proves the fix.
+- **Title a grouped task by its shared cause:** `Fix DESKTOP-A, DESKTOP-B: <what they share>`.
+- **Priority follows impact.** Escalating, many installs, or user-visible first; one event on
+  one install with no visible effect last.
+- **Do not file what has no fix in this repo.** Host resource exhaustion, an upstream Chromium or
+  Electron fault, a third party's build, and an issue an unreleased change already addresses
+  each get one line in the report with the reason, and no task. They stay unassigned (see the
+  assignment rules below), so offer to archive them in Sentry and do it only on the user's OK.
+
+Close the sweep with the filed tasks (number, title, priority, and the files each touches, which
+is what shows the set is safe to run at once), the issues not filed and why, and any recurrence
+of an assigned issue on the newest release.
+
 **"Investigate this issue / create a follow-up task."** Retrieve the issue and latest event,
 diagnose (below), then - when asked for a task - create ONE task via the kangentic MCP tools,
 routed by project: a DESKTOP-* issue goes on the `kangentic` board; a MOBILE-* issue (or a
@@ -361,9 +388,10 @@ Four things bite:
 ## Boundaries
 
 - Diagnose and report; fix only when the task asks for a fix.
-- Create a follow-up board task only when asked ("create a follow up task" style requests):
-  include the Sentry link, shortId, affected-install count, and your diagnosis in the
-  description.
+- A triage sweep files its actionable issues as grouped board tasks without a separate ask
+  (see Typical requests), unless the user asked only to list or diagnose. A single-issue
+  investigation files a task only when asked. Either way the description carries the Sentry
+  link, shortId, affected-install count, and your diagnosis.
 - Assigning an issue you just filed a task for is sanctioned and expected, no separate ask
   needed. It is the one write this skill makes on its own.
 - Do not resolve/archive issues in Sentry unless explicitly asked (needs `event:write`). Resolving
