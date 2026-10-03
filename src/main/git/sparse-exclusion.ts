@@ -7,6 +7,9 @@
  * Its own module so code that must honor the exclusion (creating a worktree,
  * carrying changes into one) reads the same value without importing the
  * worktree manager.
+ *
+ * Keep the trailing slash: callers also match paths against it with
+ * `startsWith`, where `.claude/commands` alone would take `.claude/commands-old` too.
  */
 export const WORKTREE_EXCLUDED_DIRECTORY = '.claude/commands/';
 

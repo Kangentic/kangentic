@@ -42,7 +42,9 @@ type WorktreeCandidateTask = Pick<Task, 'id' | 'title' | 'display_id'>
  *
  * Kept deliberately separate from the folder name. They used to be the same
  * string, so cleanup could derive one from the other; now that folders are
- * numeric, doing so would try to delete a branch called "460".
+ * numeric, doing so would try to delete a branch called "460". "Legacy" names
+ * that older use: `candidateWorktreePathsFor` still probes this string as the
+ * folder a task created before numeric folders may sit in.
  */
 export function legacyAutoBranchNameFor(task: Pick<Task, 'id' | 'title'>): string {
   return computeAutoBranchName(slugify(task.title) || 'task', task.id.slice(0, 8));

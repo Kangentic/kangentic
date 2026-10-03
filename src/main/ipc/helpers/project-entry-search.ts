@@ -273,14 +273,16 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
   const taggedPaths = splitNullSeparatedPaths(listedFiles.stdout)
     .map((entry) => ({ skipWorktree: entry.startsWith('S '), relativePath: toForwardSlash(entry.slice(2)) }))
     .filter(({ relativePath }) => relativePath.length > 0 && !isPathInIgnoredDirectory(relativePath));
-  const onDisk = await Promise.all(taggedPaths.map(({ skipWorktree, relativePath }) => (
-    skipWorktree
-      ? fs.access(path.join(cwd, relativePath)).then(() => true, () => false)
-      : true
-  )));
+  // Only the `S` entries need a disk check, and most repos have none.
+  const missingFromDisk = new Set<string>();
+  await Promise.all(taggedPaths
+    .filter(({ skipWorktree }) => skipWorktree)
+    .map(({ relativePath }) => fs.access(path.join(cwd, relativePath)).catch(() => {
+      missingFromDisk.add(relativePath);
+    })));
   const listedPaths = taggedPaths
-    .filter((_taggedPath, index) => onDisk[index])
-    .map(({ relativePath }) => relativePath);
+    .map(({ relativePath }) => relativePath)
+    .filter((relativePath) => !missingFromDisk.has(relativePath));
   const filePaths = await filterGitIgnoredPaths(cwd, listedPaths);
 
   const directorySet = new Set<string>();

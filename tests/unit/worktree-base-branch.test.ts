@@ -634,4 +634,41 @@ describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
     expect(result).toHaveProperty('branchName', 'feature/long-lived');
     expect(result).toHaveProperty('baseBranch', null);
   });
+
+  it('reports the base when it attaches to its own leftover branch still at the start point', async () => {
+    // A creation aborted during its post-worktree script leaves this task's
+    // auto-generated branch behind, cut from the base and holding nothing else.
+    // Attaching to it is the same cut, so withholding the base would only lose it.
+    const repo = tempRepoPath('reports-base-for-own-leftover');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['branch', 'fix-the-thing-task-eee']);
+
+    const worktreeManager = new WorktreeManager(repo);
+    const result = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-eeeeeeee' }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
+
+    expect(result).toHaveProperty('branchName', 'fix-the-thing-task-eee');
+    expect(result).toHaveProperty('baseBranch', 'main');
+  });
+
+  it('reports NO base once its own branch has commits past the start point', async () => {
+    const repo = tempRepoPath('reports-no-base-for-own-moved-branch');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['checkout', '-b', 'fix-the-thing-task-fff']);
+    commit(repo, 'own work');
+    run(repo, ['checkout', 'main']);
+
+    const worktreeManager = new WorktreeManager(repo);
+    const result = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-ffffffff' }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
+
+    expect(result).toHaveProperty('branchName', 'fix-the-thing-task-fff');
+    expect(result).toHaveProperty('baseBranch', null);
+  });
 });

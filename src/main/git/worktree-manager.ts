@@ -209,6 +209,10 @@ export interface WorktreeCreateResult {
    * long-lived `feature/x` and stamped with `main` would sit on `feature/x`'s
    * tip, fail the base-tip bail against the wrong branch, and magnet onto
    * `feature/x`'s own PR - the exact mislink that bail exists to prevent.
+   *
+   * One attach still reports it: the task's own auto-generated branch whose tip
+   * IS the resolved start point. That is what a creation aborted during its
+   * post-worktree script leaves behind, and attaching to it is the same cut.
    */
   baseBranch: string | null;
 }
@@ -930,6 +934,13 @@ export class WorktreeManager {
     } catch {
       // Branch does not exist -- will create it
     }
+    // This task's own auto-generated branch, still at the start point, is what an
+    // aborted creation leaves behind (see the init-script catch below). Attaching
+    // to it is the same cut a new branch would be, so its base is known. Any
+    // other existing branch keeps its base withheld (see the return below).
+    const attachesAtStartPoint = branchExists
+      && branchName === computeAutoBranchName(slugify(task.title) || 'task', shortId)
+      && await this.branchTipEquals(branchName, startPoint);
     options?.signal?.throwIfAborted();
 
     // Create worktree: attach to existing branch or create a new one.
@@ -1109,8 +1120,9 @@ export class WorktreeManager {
         // branch included (reproduced twice in /preview). The half-made
         // worktree left here is never recorded, so the next creation at this
         // path clears its directory through the stale-directory branch above.
-        // Its branch survives, though: that creation sees `branchExists`,
-        // attaches to it without a start point, and reports no `baseBranch`.
+        // Its branch survives, so that creation attaches to it, and still
+        // reports the base while the branch sits at the start point
+        // (`attachesAtStartPoint`).
         if (options?.signal?.aborted) {
           console.log(`[INIT-SCRIPT] Post-worktree script stopped in ${worktreePath}: creation was aborted`);
           throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');
@@ -1124,13 +1136,25 @@ export class WorktreeManager {
 
     // `branchExists` took the no-start-point form of `worktree add` above, so
     // `baseBranch` describes a cut that never happened. Report nothing rather
-    // than a guess (see `WorktreeCreateResult.baseBranch`).
+    // than a guess (see `WorktreeCreateResult.baseBranch`), unless the branch is
+    // this task's own and still at the start point.
     return {
       worktreePath,
       branchName,
       worktreeFolder: folderName,
-      baseBranch: branchExists ? null : baseBranch,
+      baseBranch: branchExists && !attachesAtStartPoint ? null : baseBranch,
     };
+  }
+
+  /** True when local branch `branchName` and `startPoint` name the same commit. Never rejects. */
+  private async branchTipEquals(branchName: string, startPoint: string): Promise<boolean> {
+    try {
+      const branchTip = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
+      const startPointTip = (await this.git.raw(['rev-parse', '--verify', `${startPoint}^{commit}`])).trim();
+      return branchTip !== '' && branchTip === startPointTip;
+    } catch {
+      return false;
+    }
   }
 
   /**

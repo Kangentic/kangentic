@@ -14,7 +14,7 @@
  * control, so an empty result cannot be an artifact of pointing at the wrong
  * directory.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,8 +22,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 
 // CJS script (run by node directly, not bundled), loaded the way preview-isolation.test.ts does.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { findOtherPreviewInstances } = require('../../scripts/preview-isolation.js') as {
+const { findOtherPreviewInstances, isProcessAlive } = require('../../scripts/preview-isolation.js') as {
   findOtherPreviewInstances: (worktreeDir: string) => Array<{ port: number; pid: number; shuttingDown: boolean }>;
+  isProcessAlive: (pid: number) => boolean;
 };
 
 const OWN_PORT = 5198;
@@ -69,5 +70,25 @@ describe('findOtherPreviewInstances and the current process', () => {
     expect(findOtherPreviewInstances(worktreeDir)).toEqual([
       { port: OTHER_PORT, pid: idleProcess.pid, shuttingDown: false },
     ]);
+  });
+});
+
+describe('a pid this user cannot signal', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reads as stale, so a reused pid owned by someone else never blocks a launch', () => {
+    // A preview's dev.js always runs as the developer, so EPERM means the pid
+    // was reused by another user's process. worktree-preview.js's --stop and
+    // the launcher's refusal share this one check.
+    const foreignPid = 424242;
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    });
+    writePidFile(OTHER_PORT, foreignPid);
+
+    expect(isProcessAlive(foreignPid)).toBe(false);
+    expect(findOtherPreviewInstances(worktreeDir)).toEqual([]);
   });
 });
