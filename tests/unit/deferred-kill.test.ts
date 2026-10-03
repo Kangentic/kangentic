@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as pty from 'node-pty';
 import {
+  AWAITING_EXIT_LISTING_MS,
   DeferredKillRegistry,
   isYoungSession,
   KILL_GRACE_MS,
@@ -178,5 +179,40 @@ describe('DeferredKillRegistry', () => {
     // A later flush must not dispose the same listener twice.
     registry.detachAllListeners();
     expect(listener.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  describe('sessionsAwaitingExit (what a task reap waits for)', () => {
+    const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
+
+    it('lists a parked session of the task until its exit, through the force-kill', () => {
+      const registry = new DeferredKillRegistry({ killPty: vi.fn(() => true) });
+      registry.schedule({ sessionId: 'sess-1', taskId: TASK, ptyRef: fakePty(4242), pid: 4242 });
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual(['sess-1']);
+      // The force-kill fired, but the process has not reported its exit: the
+      // pty host still holds it, so a reap must still wait.
+      vi.advanceTimersByTime(KILL_GRACE_MS);
+      expect(registry.size).toBe(0);
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual(['sess-1']);
+      // The exit arrives (the manager cancels on every 'exit').
+      registry.cancel('sess-1');
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual([]);
+    });
+
+    it('lists only the asked tasks, and never a session parked without a task', () => {
+      const registry = new DeferredKillRegistry({ killPty: vi.fn(() => true) });
+      registry.schedule({ sessionId: 'sess-1', taskId: TASK, ptyRef: fakePty(1), pid: 1 });
+      registry.schedule({ sessionId: 'sess-2', taskId: 'another-task', ptyRef: fakePty(2), pid: 2 });
+      registry.schedule({ sessionId: 'sess-3', ptyRef: fakePty(3), pid: 3 });
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual(['sess-1']);
+    });
+
+    it('stops listing a force-killed session whose exit never arrives, after the listing bound', () => {
+      const registry = new DeferredKillRegistry({ killPty: vi.fn(() => true) });
+      registry.schedule({ sessionId: 'sess-1', taskId: TASK, ptyRef: fakePty(4242), pid: 4242 });
+      vi.advanceTimersByTime(KILL_GRACE_MS + AWAITING_EXIT_LISTING_MS - 1);
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual(['sess-1']);
+      vi.advanceTimersByTime(1);
+      expect(registry.sessionsAwaitingExit(new Set([TASK]))).toEqual([]);
+    });
   });
 });

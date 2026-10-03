@@ -18,7 +18,7 @@ import { SessionTelemetry } from '../activity-engine/session-telemetry';
 import type { TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
-import { gracefulPtyShutdown } from './shutdown/session-suspend';
+import { awaitSessionExit, gracefulPtyShutdown } from './shutdown/session-suspend';
 import { killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
@@ -63,6 +63,10 @@ import type { LeftoverProcessEntry, StopProcessOutcome } from './process-tag/tag
 /** How long a task reap may take in the host: two scans, the 1 s grace
  *  between them, and the kills. A scan measured ~30 ms on Windows. */
 const TASK_REAP_TIMEOUT_MS = 15_000;
+/** How long a task reap waits for a parked PTY of its task to exit: the
+ *  deferred force-kill's grace plus the same kill propagation `suspend()`
+ *  allows (`gracefulPtyShutdown`). */
+const PARKED_EXIT_WAIT_MS = KILL_GRACE_MS + 1500;
 /** How long a suspend waits on the host for the scrollback its last-resort
  *  agent session id scan reads. The scan is a fallback; the suspend is not. */
 const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
@@ -1830,6 +1834,16 @@ export class SessionManager extends EventEmitter {
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
+    // A young session that kill() tore down moments ago is still running: its
+    // PTY is parked for the exit grace before the force-kill
+    // (pty-teardown-grace.md). Until it exits the host protects it and
+    // everything under it, so a reap now would leave the agent's children
+    // running. That happens on a Done move whose session was stopped just
+    // before, where suspend() has no PTY left to wait for.
+    const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(validTasks.map((task) => task.id)));
+    if (parkedSessionIds.length > 0) {
+      await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
+    }
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
     // A task with no usable directory can have nothing killed or reported, so
@@ -2072,7 +2086,7 @@ export class SessionManager extends EventEmitter {
         writeExitSequence(ptyRef, session.exitSequence);
         const ptyDisposables = session.ptyDisposables;
         session.ptyDisposables = undefined;
-        this.deferredKills.schedule({ sessionId, ptyRef, pid: childPid, ptyDisposables });
+        this.deferredKills.schedule({ sessionId, taskId: session.taskId, ptyRef, pid: childPid, ptyDisposables });
       } else {
         safeKillPty(ptyRef);
       }
