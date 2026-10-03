@@ -556,6 +556,14 @@ test('Escape in a Command Terminal still posts when a header control holds focus
   // Pin the isolation the way the rung-1 and rung-3 tests do, so this can only be decided by the
   // frame loop.
   await expect(frame.locator('[data-dismissable-layer]')).toHaveCount(0);
+  // The window's terminal takes keyboard focus once, when its replay arrives (the arrival-focus
+  // arbiter). Focusing the header control before that let the arrival take focus back, so the
+  // wait below timed out on CI and passed only on retry. Wait for the arrival first; it is
+  // discharged once, so nothing moves focus after it and the key reaches the frame loop.
+  const textarea = commandWindow.locator('.xterm-helper-textarea').first();
+  await expect
+    .poll(() => textarea.evaluate((element) => document.activeElement === element), { timeout: READY_TIMEOUT_MS })
+    .toBe(true);
   await focusAcrossFrame(commandWindow.locator('[data-testid="command-bar-maximize"]'));
   await page.keyboard.press('Escape');
   await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
