@@ -136,6 +136,26 @@ describe('snapshotDiffViewer', () => {
     expect(snapshot.modified_visible_ranges).toBe('1480-1509');
   });
 
+  it('records a read that throws a non-Error value as its string form', () => {
+    const snapshot = snapshotDiffViewer(
+      fakeDiffEditor(
+        fakeSide({
+          lineCount: 1500,
+          scrollTop: 0,
+          visibleRanges: () => {
+            // A non-Error throw is the case under test.
+            throw 'view model disposed';
+          },
+        }),
+        fakeSide({ lineCount: 3000, scrollTop: 0, visibleRanges: () => [] }),
+      ),
+      STATE,
+    );
+
+    expect(snapshot.original_visible_ranges).toBe('threw: view model disposed');
+    expect(snapshot.original_line_count).toBe(1500);
+  });
+
   it('reads null line counts when a side has no model', () => {
     const snapshot = snapshotDiffViewer(
       fakeDiffEditor(
