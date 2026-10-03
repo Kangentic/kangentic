@@ -65,8 +65,22 @@ describe('WSL reap', () => {
     expect(invocation.args).toEqual([TASK, '2', PROJECT, hostile]);
     expect(invocation.script).not.toContain('reboot');
     expect(invocation.script).not.toContain(TASK);
-    expect(invocation.script).toContain('grep -qxF "KANGENTIC_TASK_ID=$id"');
+    expect(invocation.script).toContain('grep -lsxzF "KANGENTIC_TASK_ID=$id" /proc/[0-9]*/environ');
     expect(invocation.script).toContain('wslpath -u "$1"');
+  });
+
+  it('clears its own tag before anything else runs, and fails on a grep without -z instead of finding nothing', () => {
+    const lines = buildWslReapInvocation(REAP_TASKS)!.script.split('\n');
+    expect(lines[0]).toBe('unset KANGENTIC_TASK_ID');
+    expect(lines[1]).toMatch(/grep -qzx x .*exit 3/);
+  });
+
+  it('merges a task listed twice into one argument group, so one grep covers it', () => {
+    const invocation = buildWslReapInvocation([
+      { taskId: TASK, directories: [PROJECT] },
+      { taskId: TASK, directories: [PROJECT, 'C:\\Users\\dev\\project\\.kangentic\\worktrees\\a'] },
+    ])!;
+    expect(invocation.args).toEqual([TASK, '2', PROJECT, 'C:\\Users\\dev\\project\\.kangentic\\worktrees\\a']);
   });
 
   it('reads the running distros from UTF-16 or UTF-8 output', () => {

@@ -110,7 +110,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 - **Test (Windows reader gates):** `tests/unit/win32-reader-gates.test.ts` runs the Windows
   reader on a fake API on every OS: no handle for another session's process, no
   `PROCESS_VM_READ` for another user's or an untagged one, a kill only through a handle whose
-  creation time matches, and every handle closed.
+  creation time matches, and every handle closed. It also walks a 32-bit (WOW64) PEB laid out
+  from Windows' own offsets, caps an environment read at 1 MiB whatever size the PEB claims, and
+  expands an 8.3 working directory.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, and under CI a visible app). CI's unit
@@ -128,8 +130,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 - **Packaged smoke:** `scripts/package-smoke.mjs` (`package-smoke.yml`, on Windows, macOS and
   Linux whenever `process-tag/` changes) deletes a task whose terminal left a detached process in
   the project and fails unless the packaged app stopped it, and fails on a `[TASK-REAP] reap
-  failed` line. It is the only place the packaged pty host loads koffi, from inside the asar on
-  macOS.
+  failed` line. At build time, the afterPack probe (`buildPtyHostLoadScript`) loads koffi from
+  where the host does, through the asar on macOS, and fails the build unless one native call
+  returns its own pid.
 - **Review:** the privacy bullets are judgment beyond the readers' return shape; `/code-review`
   flags any reader, log line, or error path that carries environment or command-line text.
 - A new terminal transition is not caught mechanically until a wiring test names it; review is the

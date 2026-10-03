@@ -11,6 +11,15 @@
  * visible-app or tmux rules; a WSL agent leaves those rarely, and the gaps are
  * documented in docs/worktree-strategy.md.
  *
+ * One `grep -z` per task finds the tagged processes, so a scan forks a few
+ * processes rather than several per process in /proc (8 ms against 280 ms
+ * with 140 processes, measured in Ubuntu on WSL 2). A directory from a drive
+ * letter is compared without case, as the Windows drive behind it is: a
+ * process that changed into `/mnt/c/users/...` is inside `C:\Users\...`. The
+ * tag is still required, so that can only find more of the task's processes.
+ * A grep without `-z` (an old BusyBox) fails the reap loudly instead of
+ * finding nothing.
+ *
  * A reap never boots the WSL VM: it runs only while the distro is running,
  * which it is whenever an agent in it could have left something behind.
  *
@@ -35,38 +44,58 @@ export interface WslReapTask {
  * a task id, the count of its directories, then the directories.
  */
 export function buildWslReapInvocation(tasks: readonly WslReapTask[]): { script: string; args: string[] } | null {
-  const valid = tasks.filter((task) => isValidTaskTagValue(task.taskId) && task.directories.length > 0);
-  if (valid.length === 0) return null;
+  const directoriesByTask = new Map<string, Set<string>>();
+  for (const task of tasks) {
+    if (!isValidTaskTagValue(task.taskId) || task.directories.length === 0) continue;
+    const directories = directoriesByTask.get(task.taskId) ?? new Set<string>();
+    for (const directory of task.directories) directories.add(directory);
+    directoriesByTask.set(task.taskId, directories);
+  }
+  if (directoriesByTask.size === 0) return null;
   const args: string[] = [];
-  for (const task of valid) args.push(task.taskId, String(task.directories.length), ...task.directories);
+  for (const [taskId, directories] of directoriesByTask) args.push(taskId, String(directories.size), ...directories);
   const script = [
+    // Nothing this script starts may carry a tag: grep reads its own environ.
+    `unset ${TASK_PROCESS_TAG_ENV}`,
+    "printf 'x\\0' | grep -qzx x 2>/dev/null || { echo 'grep has no -z' >&2; exit 3; }",
     'self=$$',
-    // Each argument group becomes lines "id<TAB>/linux/path" in $pairs.
+    // Each argument group becomes lines "id<TAB>fold<TAB>/linux/path" in
+    // $pairs, where fold=1 marks a drive-letter directory, kept lower case.
     'pairs=""',
+    'ids=""',
     'while [ $# -gt 0 ]; do',
     '  id=$1; count=$2; shift 2',
+    '  ids="$ids $id"',
     '  while [ "$count" -gt 0 ]; do',
+    '    fold=0',
+    '    case "$1" in [A-Za-z]:*) fold=1;; esac',
     '    dir=$(wslpath -u "$1" 2>/dev/null) || dir=$1',
     '    dir=${dir%/}',
-    '    [ -n "$dir" ] && pairs="$pairs$id\t$dir',
+    '    [ "$fold" = 1 ] && dir=$(printf %s "$dir" | tr "[:upper:]" "[:lower:]")',
+    '    [ -n "$dir" ] && pairs="$pairs$id\t$fold\t$dir',
     '"',
     '    shift; count=$((count - 1))',
     '  done',
     'done',
-    'reapable() {',
-    '  cwd=$(readlink "/proc/$1/cwd" 2>/dev/null) || return 1',
-    '  [ -n "$cwd" ] || return 1',
-    '  printf %s "$pairs" | while IFS="\t" read -r id dir; do',
-    `    tr '\\000' '\\n' < "/proc/$1/environ" 2>/dev/null | grep -qxF "${TASK_PROCESS_TAG_ENV}=$id" || continue`,
-    '    case "$cwd/" in "$dir"/*) echo yes; break;; esac',
-    '  done | grep -q yes',
+    // Whether working directory $2 (lower case $3) is inside a directory of task $1.
+    'inside() {',
+    '  printf %s "$pairs" | while IFS="\t" read -r pairId fold dir; do',
+    '    [ "$pairId" = "$1" ] || continue',
+    '    subject=$2; [ "$fold" = 1 ] && subject=$3',
+    '    case "$subject/" in "$dir"/*) echo yes; break;; esac',
+    '  done',
     '}',
     'scan() {',
     '  found=""',
-    '  for proc in /proc/[0-9]*; do',
-    '    pid=${proc#/proc/}',
-    '    [ "$pid" = "$self" ] && continue',
-    '    reapable "$pid" && found="$found $pid"',
+    '  for id in $ids; do',
+    `    for file in $(grep -lsxzF "${TASK_PROCESS_TAG_ENV}=$id" /proc/[0-9]*/environ); do`,
+    '      pid=${file#/proc/}; pid=${pid%/environ}',
+    '      [ "$pid" = "$self" ] && continue',
+    '      cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue',
+    '      [ -n "$cwd" ] || continue',
+    '      lower=$(printf %s "$cwd" | tr "[:upper:]" "[:lower:]")',
+    '      [ -n "$(inside "$id" "$cwd" "$lower")" ] && found="$found $pid"',
+    '    done',
     '  done',
     '  echo $found',
     '}',

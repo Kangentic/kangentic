@@ -30,7 +30,9 @@
  * proceed even when the reap fails outright.
  */
 
+import os from 'node:os';
 import { isValidTaskTagValue } from './task-process-tag';
+import { isUsableReapRoot } from './task-directories';
 import {
   buildSafetyProtectedPids,
   isInsideDirectory,
@@ -118,6 +120,8 @@ export interface TaggedReaperDeps {
   wait?: (ms: number) => Promise<void>;
   /** Defaults to the host platform's: case-insensitive on Windows and macOS. */
   caseInsensitivePaths?: boolean;
+  /** Defaults to `os.homedir()`; a test passes its own. */
+  homeDirectory?: string;
 }
 
 /** A fresh result each time, so no caller can share another's arrays. */
@@ -177,8 +181,31 @@ function identityOf(scanned: ScannedProcess): string {
   return `${scanned.pid}:${scanned.startKey}`;
 }
 
-/** The valid tasks of a request, merged by id, with their directories. */
-function scopesOf(tasks: readonly TaggedReapTask[]): Map<string, ReapTaskScope> {
+/**
+ * The task a plan target was killed under: that of the reported root at or
+ * above it in the same scan. Every target sits under one, since a plan only
+ * collects downward from its roots.
+ */
+function owningTaskOf(target: ScannedProcess, byPid: ReadonlyMap<number, ScannedProcess>, rootTasks: ReadonlyMap<number, string>): string | null {
+  let cursor = target;
+  for (let depth = 0; depth < 64; depth += 1) {
+    const taskId = rootTasks.get(cursor.pid);
+    if (taskId !== undefined) return taskId;
+    const parent = byPid.get(cursor.ppid);
+    if (!parent || parent.pid === cursor.pid) return null;
+    cursor = parent;
+  }
+  return null;
+}
+
+/**
+ * The valid tasks of a request, merged by id, with their directories. Main
+ * already drops a filesystem root and the home directory
+ * (`resolveTaskDirectories`); the host drops them again rather than trust
+ * every caller to, since one such directory makes the directory test admit
+ * nearly every tagged process. A task left with no directory is dropped.
+ */
+function scopesOf(tasks: readonly TaggedReapTask[], homeDirectory: string): Map<string, ReapTaskScope> {
   const scopes = new Map<string, { directories: Set<string>; worktreePath: string | null }>();
   for (const task of tasks) {
     if (!isValidTaskTagValue(task.taskId)) continue;
@@ -187,10 +214,12 @@ function scopesOf(tasks: readonly TaggedReapTask[]): Map<string, ReapTaskScope> 
       scope = { directories: new Set(), worktreePath: null };
       scopes.set(task.taskId, scope);
     }
-    for (const directory of task.directories) if (directory.length > 0) scope.directories.add(directory);
-    scope.worktreePath ??= task.worktreePath && task.worktreePath.length > 0 ? task.worktreePath : null;
+    for (const directory of task.directories) if (isUsableReapRoot(directory, homeDirectory)) scope.directories.add(directory);
+    scope.worktreePath ??= task.worktreePath && isUsableReapRoot(task.worktreePath, homeDirectory) ? task.worktreePath : null;
   }
-  return new Map([...scopes].map(([taskId, scope]) => [taskId, { directories: [...scope.directories], worktreePath: scope.worktreePath }]));
+  return new Map([...scopes]
+    .filter(([, scope]) => scope.directories.size > 0)
+    .map(([taskId, scope]) => [taskId, { directories: [...scope.directories], worktreePath: scope.worktreePath }]));
 }
 
 /** One reap for one batch of tasks. Exported for tests. */
@@ -198,7 +227,7 @@ export async function reapTaggedOnce(
   request: TaggedReapRequest,
   deps: TaggedReaperDeps,
 ): Promise<TaggedReapResult> {
-  const tasks = scopesOf(request.tasks);
+  const tasks = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
   if (tasks.size === 0) return emptyResult();
   const wait = deps.wait ?? defaultWait;
   const caseInsensitivePaths = deps.caseInsensitivePaths ?? process.platform !== 'linux';
@@ -266,9 +295,14 @@ export async function reapTaggedOnce(
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
 
     // What outlived even the force pass is reported as not stopped, under the
-    // root it belongs to, or on its own when its root is gone.
+    // root it belongs to, or on its own when its root is gone. On its own it is
+    // reported under the task of the second plan's root it was killed under,
+    // so an untagged one (an unreadable environment, a withheld Apple tool)
+    // is named too.
     const failedRootPids = new Set<number>();
     const orphanSurvivors: ScannedProcess[] = [];
+    const orphanTasks = new Map<number, string>();
+    const secondRootTasks = new Map(secondPlan.roots.map((root) => [root.process.pid, root.taskId]));
     let unreadableCount = secondScan.unreadableCount;
     if (secondPlan.targets.length > 0) {
       await wait(SURVIVOR_CHECK_MS);
@@ -287,15 +321,19 @@ export async function reapTaggedOnce(
           if (reportedRootPids.has(parent.pid)) owner = parent.pid;
           cursor = parent;
         }
-        if (owner !== null) failedRootPids.add(owner);
-        else orphanSurvivors.push(survivor);
+        if (owner !== null) {
+          failedRootPids.add(owner);
+          continue;
+        }
+        const taskId = owningTaskOf(survivor, secondByPid, secondRootTasks);
+        if (taskId === null) continue;
+        orphanSurvivors.push(survivor);
+        orphanTasks.set(survivor.pid, taskId);
       }
     }
     const survivorLabels = await describeSafely(deps.reader, orphanSurvivors);
     for (const [pid, label] of survivorLabels) labels.set(pid, label);
-    const orphanEntries = orphanSurvivors
-      .filter((survivor) => survivor.tagValue !== null && tasks.has(survivor.tagValue))
-      .map((survivor) => entryFor(survivor, survivor.tagValue as string, 'failed', null));
+    const orphanEntries = orphanSurvivors.map((survivor) => entryFor(survivor, orphanTasks.get(survivor.pid) as string, 'failed', null));
 
     return {
       killedPids: [...killed].sort((left, right) => left - right),

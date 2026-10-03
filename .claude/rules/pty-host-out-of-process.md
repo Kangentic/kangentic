@@ -120,7 +120,8 @@ at the Windows timer floor.
   packaging (all of `node_modules/node-pty/**` and `.vite/build/pty-host.js` unpacked) and runs the
   afterPack probe's real spawn under this checkout's Electron.
 - **Packaging gate:** `build/afterPack.js` resolves node-pty from the unpacked tree and spawns a
-  real process with it under the packaged Electron binary, failing the build when it cannot.
+  real process with it under the packaged Electron binary, and on Windows and macOS loads koffi
+  from the same place and makes one native call, failing the build when either cannot.
 - **Packaged smoke:** `.github/workflows/package-smoke.yml` packages on Windows, macOS and Linux
   when a pull request touches the host, its clients or the packaging, and runs
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the

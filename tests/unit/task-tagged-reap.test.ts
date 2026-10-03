@@ -126,6 +126,27 @@ describe('reapTaggedOnce', () => {
     expect(result.killedPids).toEqual([]);
   });
 
+  it('drops a home or filesystem-root directory main should never have sent, and a task left with none, without scanning', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK, 'start-2001', '/home/dev/notes')]]);
+    const result = await reapTaggedOnce(
+      { tasks: [{ taskId: TASK, directories: ['/home/dev', '/', ''], worktreePath: '/home/dev' }], mainPid: MAIN_PID, stop: true },
+      { ...deps(reader), homeDirectory: '/home/dev' },
+    );
+    expect(reader.scanCount).toBe(0);
+    expect(reader.kills).toEqual([]);
+    expect(result.entries).toEqual([]);
+  });
+
+  it('still reaps a project inside the home directory, and nothing working in home itself', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK), tagged(2002, TASK, 'start-2002', '/home/dev')], [tagged(2002, TASK, 'start-2002', '/home/dev')]]);
+    const result = await reapTaggedOnce(
+      { tasks: [{ taskId: TASK, directories: ['/home/dev', PROJECT], worktreePath: null }], mainPid: MAIN_PID, stop: true },
+      { ...deps(reader), homeDirectory: '/home/dev' },
+    );
+    expect(reader.kills.map((kill) => kill.pid)).toEqual([2001]);
+    expect(result.killedPids).toEqual([2001]);
+  });
+
   it('never throws when the scan fails', async () => {
     const reader = new FakeReader([[]]);
     reader.failScan = true;
@@ -209,6 +230,26 @@ describe('reapTaggedOnce report', () => {
     expect(result.entries).toEqual([
       { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
       { taskId: TASK, pid: 2002, startKey: 'start-2002', label: 'node (vite)', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+  });
+
+  it('reports an untagged survivor under the task of the root it was killed under, when that root appeared after the first scan', async () => {
+    // A supervisor respawned between the scans, with a child whose environment
+    // cannot be read (another user's process, or a withheld Apple tool).
+    const unreadableChild: ScannedProcess = {
+      pid: 2004, ppid: 2003, startKey: 'start-2004', startedAtMs: null, tagValue: null, environmentUnreadable: true, workingDirectory: PROJECT,
+    };
+    const reader = new FakeReader([
+      [tagged(2001, TASK)],
+      [tagged(2003, TASK), unreadableChild],
+      // The force pass removed the respawned supervisor, not its child.
+      [unreadableChild],
+    ], { 2001: 'node (npm)', 2004: 'esbuild' });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2003:force', '2004:force']);
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2004, startKey: 'start-2004', label: 'esbuild', outcome: 'failed', reason: null, place: 'project' },
     ]);
   });
 

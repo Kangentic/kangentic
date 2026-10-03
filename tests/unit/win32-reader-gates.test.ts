@@ -14,6 +14,12 @@
  *   throws partway through the PEB walk.
  * - `describe` opens only a target that carries a tag (a start key alone is set
  *   before the user check, so it proves nothing about the owner).
+ * - A 32-bit (WOW64) process is read through its 32-bit PEB, whose offsets the
+ *   fake takes from Windows' own layout, not from the reader.
+ * - An environment read stops at 1 MiB however large a size the PEB claims,
+ *   and a working directory longer than any Windows path is never read.
+ * - An 8.3 working directory is expanded to its long form, and kept short
+ *   when the expansion fails.
  *
  * Each refusal is asserted next to a positive control (the open that the gate
  * does allow), so a fake that silently stopped answering cannot pass for free.
@@ -65,12 +71,19 @@ interface FakeProcess {
   commandLine?: string;
   /** GetProcessTimes reports failure for this pid. */
   creationUnreadable?: boolean;
+  /** A 32-bit process under WOW64: only its 32-bit PEB is laid out, so nothing reads through the 64-bit one. */
+  wow64?: boolean;
+  /** The EnvironmentSize its PEB claims, when not the block's real length. */
+  claimedEnvironmentSize?: number;
+  /** The byte length its CurrentDirectory claims, when not the text's real length. */
+  claimedWorkingDirectoryLength?: number;
 }
 
 function creationOf(pid: number): bigint {
   return CREATION_BASE + BigInt(pid);
 }
 
+/** Per-process addresses; every one stays under 4 GB for pids below 4096, so a 32-bit PEB can point at it. */
 function addressesOf(pid: number) {
   const base = BigInt(pid) * 0x100000n;
   return {
@@ -80,12 +93,20 @@ function addressesOf(pid: number) {
     environmentBlock: base + 0x3000n,
     imageText: base + 0x4000n,
     commandText: base + 0x5000n,
+    peb32: base + 0x8000n,
+    parameters32: base + 0x9000n,
   };
 }
 
 function unsigned64(value: bigint): Buffer {
   const buffer = Buffer.alloc(8);
   buffer.writeBigUInt64LE(value, 0);
+  return buffer;
+}
+
+function unsigned32(value: bigint | number): Buffer {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32LE(Number(value), 0);
   return buffer;
 }
 
@@ -96,6 +117,20 @@ function unicodeStringHeader(byteLength: number, pointer: bigint): Buffer {
   buffer.writeBigUInt64LE(pointer, 8);
   return buffer;
 }
+
+/** A UNICODE_STRING32: a 16-bit byte length, a 16-bit maximum, then a 32-bit buffer pointer at offset 4. */
+function unicodeString32Header(byteLength: number, pointer: bigint): Buffer {
+  const buffer = Buffer.alloc(8);
+  buffer.writeUInt16LE(byteLength, 0);
+  buffer.writeUInt16LE(byteLength, 2);
+  buffer.writeUInt32LE(Number(pointer), 4);
+  return buffer;
+}
+
+/** The longest a fake region grows, so a claimed size of many megabytes stays cheap. */
+const MAX_FAKE_REGION_BYTES = 2 * 1024 * 1024;
+/** The reader's cap on an environment read, as a number this test states rather than imports. */
+const ENVIRONMENT_READ_CAP_BYTES = 1024 * 1024;
 
 function handleOf(handle: unknown): FakeHandle {
   return handle as FakeHandle;
@@ -112,6 +147,12 @@ class FakeWin32 {
   readonly closedHandleIds: number[] = [];
   readonly terminatedHandleIds: number[] = [];
   readonly sessionLookups: number[] = [];
+  /** Every ReadProcessMemory call, in order. */
+  readonly reads: Array<{ pid: number; address: bigint; size: number }> = [];
+  /** Every GetLongPathNameW call's input. */
+  readonly longPathLookups: string[] = [];
+  /** What GetLongPathNameW answers for a short path; anything else fails. */
+  readonly longPaths = new Map<string, string>();
   readonly failingReads = new Set<string>();
   failedReads = 0;
   throwOnFailingRead = false;
@@ -163,8 +204,8 @@ class FakeWin32 {
       sessionOut[0] = fakeProcess.session ?? OWN_SESSION;
       return 1;
     },
-    isWow64Process: (_handle, wowOut) => {
-      wowOut[0] = 0;
+    isWow64Process: (handle, wowOut) => {
+      wowOut[0] = this.byPid.get(handleOf(handle).pid)?.wow64 ? 1 : 0;
       return 1;
     },
     getProcessTimes: (handle, creation) => {
@@ -175,6 +216,7 @@ class FakeWin32 {
     },
     readProcessMemory: (handle, address, buffer, size) => {
       const pid = handleOf(handle).pid;
+      this.reads.push({ pid, address, size });
       const key = `${pid}:${address}`;
       if (this.failingReads.has(key)) {
         this.failedReads += 1;
@@ -207,13 +249,30 @@ class FakeWin32 {
       returnLength[0] = 28;
       return 1;
     },
-    // 0 is STATUS_SUCCESS, unlike the BOOL calls around it.
+    // 0 is STATUS_SUCCESS, unlike the BOOL calls around it. Class 0 is
+    // ProcessBasicInformation (PebBaseAddress at offset 8); class 26 is
+    // ProcessWow64Information (the 32-bit PEB's address, 0 for a 64-bit process).
     queryInformationProcess: (handle, infoClass, buffer) => {
-      if (infoClass !== 0) return 1;
-      buffer.writeBigUInt64LE(addressesOf(handleOf(handle).pid).peb, 8);
-      return 0;
+      const pid = handleOf(handle).pid;
+      if (infoClass === 0) {
+        buffer.writeBigUInt64LE(addressesOf(pid).peb, 8);
+        return 0;
+      }
+      if (infoClass === 26) {
+        buffer.writeBigUInt64LE(this.byPid.get(pid)?.wow64 ? addressesOf(pid).peb32 : 0n, 0);
+        return 0;
+      }
+      return 1;
     },
-    getLongPathName: () => 0,
+    getLongPathName: (shortPath, buffer, characters) => {
+      this.longPathLookups.push(shortPath);
+      const long = this.longPaths.get(shortPath);
+      if (!long) return 0;
+      // Too small a buffer answers the size it needs, counting the terminator.
+      if (long.length + 1 > characters) return long.length + 1;
+      buffer.write(`${long}\u0000`, 0, 'utf16le');
+      return long.length;
+    },
     visibleWindowPids: () => new Set<number>(),
   };
 
@@ -262,20 +321,52 @@ class FakeWin32 {
     const workingDirectory = Buffer.from(fakeProcess.workingDirectory ?? WORKING_DIRECTORY, 'utf16le');
     const entries = ['PATH=C:\\Windows'];
     if (fakeProcess.tag) entries.push(`${TASK_PROCESS_TAG_ENV}=${fakeProcess.tag}`);
-    const environment = Buffer.from(`${entries.join('\u0000')}\u0000\u0000`, 'utf16le');
+    const block = Buffer.from(`${entries.join('\u0000')}\u0000\u0000`, 'utf16le');
+    const environmentSize = fakeProcess.claimedEnvironmentSize ?? block.length;
+    // A region as long as the claim (up to the fake's limit), so a read the
+    // reader did not cap would ask for more than exists and fail.
+    const environment = Buffer.concat([block, Buffer.alloc(Math.max(0, Math.min(environmentSize, MAX_FAKE_REGION_BYTES) - block.length))]);
+    const workingDirectoryLength = fakeProcess.claimedWorkingDirectoryLength ?? workingDirectory.length;
     const imagePath = Buffer.from(fakeProcess.imagePath ?? 'C:\\Tools\\tool.exe', 'utf16le');
     const commandLine = Buffer.from(fakeProcess.commandLine ?? 'tool.exe', 'utf16le');
-
-    this.put(pid, addresses.peb + 0x20n, unsigned64(addresses.parameters));
-    this.put(pid, addresses.parameters + 0x38n, unicodeStringHeader(workingDirectory.length, addresses.workingDirectoryText));
     this.put(pid, addresses.workingDirectoryText, workingDirectory);
-    this.put(pid, addresses.parameters + 0x80n, unsigned64(addresses.environmentBlock));
-    this.put(pid, addresses.parameters + 0x3f0n, unsigned64(BigInt(environment.length)));
     this.put(pid, addresses.environmentBlock, environment);
-    this.put(pid, addresses.parameters + 0x60n, unicodeStringHeader(imagePath.length, addresses.imageText));
     this.put(pid, addresses.imageText, imagePath);
-    this.put(pid, addresses.parameters + 0x70n, unicodeStringHeader(commandLine.length, addresses.commandText));
     this.put(pid, addresses.commandText, commandLine);
+
+    if (fakeProcess.wow64) {
+      // PEB32.ProcessParameters at 0x10, then RTL_USER_PROCESS_PARAMETERS32 as
+      // Windows lays it out: CurrentDirectory.DosPath 0x24, ImagePathName 0x38,
+      // CommandLine 0x40, Environment 0x48, EnvironmentSize 0x290.
+      this.put(pid, addresses.peb32 + 0x10n, unsigned32(addresses.parameters32));
+      this.put(pid, addresses.parameters32 + 0x24n, unicodeString32Header(workingDirectoryLength, addresses.workingDirectoryText));
+      this.put(pid, addresses.parameters32 + 0x38n, unicodeString32Header(imagePath.length, addresses.imageText));
+      this.put(pid, addresses.parameters32 + 0x40n, unicodeString32Header(commandLine.length, addresses.commandText));
+      this.put(pid, addresses.parameters32 + 0x48n, unsigned32(addresses.environmentBlock));
+      this.put(pid, addresses.parameters32 + 0x290n, unsigned32(environmentSize));
+      return;
+    }
+    // PEB.ProcessParameters at 0x20, then RTL_USER_PROCESS_PARAMETERS:
+    // CurrentDirectory.DosPath 0x38, ImagePathName 0x60, CommandLine 0x70,
+    // Environment 0x80, EnvironmentSize 0x3f0.
+    this.put(pid, addresses.peb + 0x20n, unsigned64(addresses.parameters));
+    this.put(pid, addresses.parameters + 0x38n, unicodeStringHeader(workingDirectoryLength, addresses.workingDirectoryText));
+    this.put(pid, addresses.parameters + 0x80n, unsigned64(addresses.environmentBlock));
+    this.put(pid, addresses.parameters + 0x3f0n, unsigned64(BigInt(environmentSize)));
+    this.put(pid, addresses.parameters + 0x60n, unicodeStringHeader(imagePath.length, addresses.imageText));
+    this.put(pid, addresses.parameters + 0x70n, unicodeStringHeader(commandLine.length, addresses.commandText));
+  }
+
+  /** The sizes of every read at one pid's environment block. */
+  environmentReadSizes(pid: number): number[] {
+    const address = addressesOf(pid).environmentBlock;
+    return this.reads.filter((read) => read.pid === pid && read.address === address).map((read) => read.size);
+  }
+
+  /** Whether anything read one pid's working-directory text. */
+  readWorkingDirectoryText(pid: number): boolean {
+    const address = addressesOf(pid).workingDirectoryText;
+    return this.reads.some((read) => read.pid === pid && read.address === address);
   }
 }
 
@@ -463,5 +554,80 @@ describe('Win32TaggedProcessReader.describe', () => {
     expect(fake.openedPids(PROCESS_VM_READ)).toEqual([810]);
     expect(labels.size).toBe(0);
     expectEveryHandleClosedOnce(fake);
+  });
+});
+
+describe('Win32TaggedProcessReader: a 32-bit (WOW64) process', () => {
+  it('reads the tag and working directory through the 32-bit PEB', async () => {
+    const fake = new FakeWin32([{ pid: 900, wow64: true, tag: TASK, workingDirectory: 'C:\\work\\x86' }]);
+    const scan = await readerFor(fake).scan();
+
+    expect(scanned(scan, 900)).toMatchObject({ tagValue: TASK, workingDirectory: 'C:\\work\\x86' });
+    expect(scanned(scan, 900).environmentUnreadable).toBeUndefined();
+    expect(scan.unreadableCount).toBe(0);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('labels it from the 32-bit command line', async () => {
+    const fake = new FakeWin32([{ pid: 910, wow64: true, tag: TASK, imagePath: 'C:\\Windows\\SysWOW64\\ping.exe', commandLine: 'ping.exe -n 300 127.0.0.1' }]);
+    const labels = await readerFor(fake).describe([targetFor(fake, 910)]);
+
+    expect([...labels]).toEqual([[910, 'ping']]);
+    expectEveryHandleClosedOnce(fake);
+  });
+});
+
+describe('Win32TaggedProcessReader.scan: size caps', () => {
+  it('reads at most 1 MiB of an environment whose size claims more, still finds the tag, and closes the handle', async () => {
+    const fake = new FakeWin32([{ pid: 920, tag: TASK, claimedEnvironmentSize: 50 * 1024 * 1024 }]);
+    const scan = await readerFor(fake).scan();
+
+    expect(fake.environmentReadSizes(920)).toEqual([ENVIRONMENT_READ_CAP_BYTES]);
+    expect(scanned(scan, 920).tagValue).toBe(TASK);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('caps a 32-bit process\'s environment read the same way', async () => {
+    const fake = new FakeWin32([{ pid: 930, wow64: true, tag: TASK, claimedEnvironmentSize: 0xFFFFFFF0 }]);
+    const scan = await readerFor(fake).scan();
+
+    expect(fake.environmentReadSizes(930)).toEqual([ENVIRONMENT_READ_CAP_BYTES]);
+    expect(scanned(scan, 930).tagValue).toBe(TASK);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('never reads a working directory whose length is past the longest Windows path, and still reads the tag', async () => {
+    const fake = new FakeWin32([{ pid: 940, tag: TASK, claimedWorkingDirectoryLength: 65535 }, { pid: 950, tag: TASK }]);
+    const scan = await readerFor(fake).scan();
+
+    // Positive control: an ordinary process's directory text is read.
+    expect(fake.readWorkingDirectoryText(950)).toBe(true);
+    expect(fake.readWorkingDirectoryText(940)).toBe(false);
+    expect(scanned(scan, 940)).toMatchObject({ tagValue: TASK, workingDirectory: null });
+    expectEveryHandleClosedOnce(fake);
+  });
+});
+
+describe('Win32TaggedProcessReader.scan: an 8.3 working directory', () => {
+  const SHORT = 'C:\\Users\\RUNNER~1\\work';
+  const LONG = 'C:\\Users\\runneradmin\\work';
+
+  it('expands it to its long form, which is the form a task directory is compared in', async () => {
+    const fake = new FakeWin32([{ pid: 960, tag: TASK, workingDirectory: SHORT }]);
+    fake.longPaths.set(SHORT, LONG);
+    const scan = await readerFor(fake).scan();
+
+    expect(fake.longPathLookups).toEqual([SHORT]);
+    expect(scanned(scan, 960).workingDirectory).toBe(LONG);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('keeps the short form when the expansion fails, and never asks for a path with no tilde', async () => {
+    const fake = new FakeWin32([{ pid: 970, tag: TASK, workingDirectory: SHORT }, { pid: 980, tag: TASK }]);
+    const scan = await readerFor(fake).scan();
+
+    expect(fake.longPathLookups).toEqual([SHORT]);
+    expect(scanned(scan, 970).workingDirectory).toBe(SHORT);
+    expect(scanned(scan, 980).workingDirectory).toBe(WORKING_DIRECTORY);
   });
 });

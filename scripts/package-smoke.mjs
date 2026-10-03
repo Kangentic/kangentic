@@ -21,9 +21,9 @@
  *   4. creates a To Do task, runs a terminal for it that leaves a detached node
  *      process in the project (as an agent's dev server would), deletes the
  *      task, and requires that process to be stopped: the pty host's task reap
- *      (src/main/pty/process-tag/), which loads koffi on Windows and macOS. On
- *      macOS the host bundle runs inside the asar and resolves koffi through it
- *      into app.asar.unpacked, the one load path no build-time probe takes;
+ *      (src/main/pty/process-tag/), which loads koffi on Windows and macOS. The
+ *      afterPack probe loads koffi the same way and calls into it once; this
+ *      step proves the readers built on it find and stop a real process;
  *   5. quits with the first terminal still running, and requires exit code 0 inside
  *      the bound. On Windows and Linux that is a user's quit (the window
  *      closes), which runs the PTY exit drain; on macOS it is SIGTERM, which
