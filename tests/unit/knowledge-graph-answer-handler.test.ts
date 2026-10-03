@@ -222,7 +222,8 @@ import { broadcast } from '../../src/main/pop-out/window-broadcast';
 import { retrievalClient } from '../../src/main/retrieval/retrieval-client';
 import { buildAnswerPrompt } from '../../src/main/retrieval/answer-prompt';
 import { buildAnswerTaskTable } from '../../src/main/retrieval/answer-tasks';
-import type { KnowledgeGraphSnapshotWire } from '../../src/shared/types';
+import type { KnowledgeGraphBuildProgress, KnowledgeGraphSnapshotWire } from '../../src/shared/types';
+import { graphService } from '../../src/main/retrieval/graph-facade';
 import { IPC } from '../../src/shared/ipc-channels';
 
 /** Every stream push the handler broadcast, in order, payload only. */
@@ -373,10 +374,21 @@ describe('the graph snapshot and refresh handlers', () => {
     expect(graphDouble.snapshotFor).toHaveBeenCalledWith('project-1', expect.any(String));
   });
 
-  it('starts no pass for a project the repository does not list', async () => {
-    await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'deleted-project');
+  it('starts no pass for a project the repository does not list, and answers null', async () => {
+    const answer = await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'deleted-project');
 
     expect(graphDouble.markDirty).not.toHaveBeenCalled();
+    expect(answer).toBeNull();
+  });
+
+  it('starts no pass and answers null when no project is open to default to', async () => {
+    capturedHandlers.clear();
+    registerSearchHandlers({ ...makeContext(), currentProjectId: null } as never);
+
+    const answer = await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, undefined);
+
+    expect(graphDouble.markDirty).not.toHaveBeenCalled();
+    expect(answer).toBeNull();
   });
 
   it('asks for a pass for a listed project, named or defaulted to the open one', async () => {
@@ -385,6 +397,78 @@ describe('the graph snapshot and refresh handlers', () => {
 
     expect(graphDouble.markDirty).toHaveBeenCalledTimes(2);
     expect(graphDouble.markDirty).toHaveBeenCalledWith('project-1', expect.any(String), expect.any(Number));
+  });
+
+  // The renderer paints the building card from this answer, so a handler that
+  // asks for the pass and drops what the service said sends a first build back
+  // to "No map yet" until its first push.
+  //
+  // Red-green: make the handler call `graphService.markDirty(...)` without
+  // returning it (the code before the progress answer) and the answer is
+  // undefined, so both cases below go red.
+  it('answers a refresh with the first build\'s progress when the service started one', async () => {
+    const progress: KnowledgeGraphBuildProgress = { pass: 3, stage: 'reading', percent: 0 };
+    vi.mocked(graphDouble.markDirty).mockReturnValueOnce(progress);
+
+    const answer = await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'project-1');
+
+    expect(answer).toEqual(progress);
+  });
+
+  it('answers a refresh with null when the service started no first build', async () => {
+    vi.mocked(graphDouble.markDirty).mockReturnValueOnce(null);
+
+    const answer = await handlerFor(IPC.KNOWLEDGE_GRAPH_REFRESH)(undefined, 'project-1');
+
+    expect(answer).toBeNull();
+  });
+});
+
+/**
+ * A first build's progress reaches the renderer as its own push. The handler
+ * registers the listener with the facade; what is only true here is the channel
+ * it broadcasts on and that a closed window is left alone.
+ */
+describe('the graph build progress push', () => {
+  const progress: KnowledgeGraphBuildProgress = { pass: 3, stage: 'placing', percent: 96 };
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    vi.mocked(broadcast).mockClear();
+  });
+
+  /** The listener `registerSearchHandlers` gave the facade for build progress. */
+  function registerAndTakeListener(context: ReturnType<typeof makeContext>): (projectId: string, pushed: KnowledgeGraphBuildProgress) => void {
+    const registration = vi.spyOn(graphService, 'setOnBuildProgress');
+    try {
+      registerSearchHandlers(context as never);
+      return registration.mock.calls[0][0];
+    } finally {
+      registration.mockRestore();
+    }
+  }
+
+  // Red-green: broadcast on `KNOWLEDGE_GRAPH_CHANGED`, or drop the figure from
+  // the arguments, and the assertion goes red.
+  it('broadcasts the project and its figure on the build progress channel', () => {
+    const context = makeContext();
+    const listener = registerAndTakeListener(context);
+
+    listener('project-1', progress);
+
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(broadcast).toHaveBeenCalledWith(context.mainWindow, IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS, 'project-1', progress);
+  });
+
+  // Red-green: drop the `isDestroyed` guard and the closed window is broadcast to.
+  it('broadcasts nothing once the window is gone', () => {
+    const context = makeContext();
+    const listener = registerAndTakeListener(context);
+    context.mainWindow.isDestroyed.mockReturnValue(true);
+
+    listener('project-1', progress);
+
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });
 

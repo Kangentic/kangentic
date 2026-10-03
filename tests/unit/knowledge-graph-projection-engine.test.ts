@@ -616,6 +616,23 @@ describeWithSqlite('projection pass', () => {
     }
   });
 
+  // With no vectors to read, the share read is vectors in hand over vectors in
+  // the index: nought over nought. The pass reports that as read in full, so the
+  // bar moves on to placing instead of showing NaN.
+  //
+  // Red-green: drop the `embeddedChunks === 0 ? 1 :` guard in `readDocumentSums`
+  // and the first report is NaN, so `fraction` is neither 1 nor finite.
+  it.each([
+    { name: 'an empty index', build: () => testIndex() },
+    { name: 'conversations none of whose chunks is embedded yet', build: () => corpus(3, 1) },
+  ])('reports $name as read in full, never as a division by zero', async ({ build }) => {
+    const reports: ProjectionProgress[] = [];
+    await pass(build(), { onProgress: (progress) => reports.push(progress) });
+
+    expect(reports[0]).toEqual({ stage: 'reading', fraction: 1 });
+    expect(reports.every((report) => Number.isFinite(report.fraction))).toBe(true);
+  });
+
   it('starts a pass at the share its stored sums already cover', async () => {
     // A first build cut short and started again begins where it stopped.
     const index = corpus(4, 3, true);

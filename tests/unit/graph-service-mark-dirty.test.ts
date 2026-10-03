@@ -538,6 +538,80 @@ describe('graph service first build progress', () => {
     expect(service.markDirty('project-a', 'model', 4)).toMatchObject({ stage: 'reading' });
     expect(mockRunProjectionPass).toHaveBeenCalledTimes(2);
   });
+
+  // A figure the throttle is holding back is dropped when the pass ends. Left to
+  // fire, its timer pushes the stale figure AFTER the failure was announced, and
+  // the renderer reads a progress push as "a first build is running": the
+  // building card would come back for a pass that is over, with nothing left to
+  // take it down.
+  //
+  // Red-green: drop `clearProgressTimer(entry)` from the pass's `finally` and the
+  // held figure is pushed after the failure, so the events read
+  // ['progress 0', 'changed', 'progress 47'].
+  it('drops a throttled figure when the pass fails, so no stale figure follows the failure', async () => {
+    vi.useFakeTimers();
+    let report: ((progress: ProjectionProgress) => void) | undefined;
+    let failPass: (reason: Error) => void = () => undefined;
+    mockRunProjectionPass.mockImplementationOnce((deps) => {
+      report = deps.onProgress;
+      return new Promise<null>((_resolve, reject) => { failPass = reject; });
+    });
+    const events: string[] = [];
+    const service = createGraphService({
+      getDb: () => ({}) as never,
+      onBuildProgress: (_projectId, progress) => events.push(`progress ${progress.percent}`),
+      onChanged: () => events.push('changed'),
+      now: () => Date.now(),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    service.markDirty('project-a', 'model', 4);
+    // Inside the 250 ms window of the first push, so this one is held back.
+    report!({ stage: 'reading', fraction: 0.5 });
+    expect(vi.getTimerCount()).toBe(1);
+
+    failPass(new Error('pass failed'));
+    await vi.advanceTimersByTimeAsync(0);
+    error.mockRestore();
+    expect(events).toEqual(['progress 0', 'changed']);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(events).toEqual(['progress 0', 'changed']);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  // The aborted guard in the push already keeps a forgotten pass's held figure
+  // from reaching a reader, so this pins what is left over: nothing stays
+  // scheduled for a project that was forgotten.
+  //
+  // Red-green: drop `clearProgressTimer(pass)` from `forget` and the held
+  // figure's timer is still pending, so the timer count reads 1.
+  it('leaves no timer pending for a throttled figure once forget aborted the pass', () => {
+    vi.useFakeTimers();
+    let report: ((progress: ProjectionProgress) => void) | undefined;
+    mockRunProjectionPass.mockImplementationOnce((deps) => {
+      report = deps.onProgress;
+      return neverSettles();
+    });
+    const pushes: KnowledgeGraphBuildProgress[] = [];
+    const service = createGraphService({
+      getDb: () => ({}) as never,
+      onBuildProgress: (_projectId, progress) => pushes.push(progress),
+      now: () => Date.now(),
+    });
+
+    service.markDirty('project-a', 'model', 4);
+    report!({ stage: 'reading', fraction: 0.5 });
+    expect(vi.getTimerCount()).toBe(1);
+
+    service.forget('project-a');
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.advanceTimersByTime(1_000);
+    expect(pushes.map((progress) => progress.percent)).toEqual([0]);
+    vi.useRealTimers();
+  });
 });
 
 /**
