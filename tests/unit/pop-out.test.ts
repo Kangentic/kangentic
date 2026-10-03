@@ -83,6 +83,20 @@ describe('POP_OUT_SURFACES fan-out declarations', () => {
     expect(channels).toContain(IPC.SESSION_PTY_RESIZED);
   });
 
+  /**
+   * A first build runs for minutes, and a detached Knowledge Graph window shows
+   * its building card from two pushes: the progress, which carries the figure,
+   * and the change, which ends the card (a failed first build ends it the same
+   * way). Main fans a push only to the windows whose surface declares the
+   * channel, so dropping either line leaves the detached card on its first
+   * figure, or on "building", with nothing else to notice.
+   */
+  it('the knowledge graph declares the pushes that drive its building card', () => {
+    const channels = POP_OUT_SURFACES['knowledge-graph'].channels;
+    expect(channels).toContain(IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS);
+    expect(channels).toContain(IPC.KNOWLEDGE_GRAPH_CHANGED);
+  });
+
   it('the monitor is a global surface with no task params', () => {
     expect(POP_OUT_SURFACES.monitor.scope).toBe('global');
     expect(POP_OUT_SURFACES.monitor.needsWebview).toBe(false);
