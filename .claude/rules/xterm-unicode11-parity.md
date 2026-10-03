@@ -2,7 +2,6 @@
 paths:
   - "src/shared/xterm-unicode11.ts"
   - "src/renderer/hooks/useTerminal.ts"
-  - "src/renderer/utils/ansi-filter.ts"
   - "src/main/pty/buffer/headless-frame.ts"
   - "src/main/pty/virtual-screen.ts"
   - "src/devtools/main/inspection-server.ts"

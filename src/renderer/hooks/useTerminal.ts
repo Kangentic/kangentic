@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
+import { releaseMouseTracking } from '../utils/terminal-dispose';
+import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
@@ -19,7 +21,7 @@ import {
 import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
-import type { PastedImageCapability, PtyResizeOrigin, SessionResizeResult, TerminalColorOverrides } from '../../shared/types';
+import { DEFAULT_CONFIG, type PastedImageCapability, type PtyResizeOrigin, type SessionResizeResult, type TerminalColorOverrides } from '../../shared/types';
 // Type only, so this creates no runtime edge to the arbiter (the hook stays
 // surface-agnostic and never reads the policy - it only labels its own paths).
 import type { ArrivalFocusSite } from '../utils/terminal-arrival-focus';
@@ -660,10 +662,16 @@ export function useTerminal(options: UseTerminalOptions) {
   /** The font size the terminal runs at while conformed, so the display-settings
    *  effect re-derives it on a font change instead of clobbering it. */
   const conformedFontRef = useRef<number | null>(null);
+  /** The configured font size, held to the floor that keeps a sub-pixel font
+   *  out of xterm (DESKTOP-1J/1K). Every read of the size goes through this one
+   *  value, so the conform memo and the display effect never disagree on it. */
+  const configuredFontSize = resolveTerminalFontSize(options.fontSize);
+  /** The configured font family, or the default, read once for the same reason. */
+  const configuredFontFamily = options.fontFamily || DEFAULT_CONFIG.terminal.fontFamily;
   /** The configured font size and the session, updated on every commit, so the
    *  conform callbacks below (stable, ref-reading) scale from the size the user
    *  chose and label their traces with the session they serve. */
-  const configuredFontRef = useRef(options.fontSize || 14);
+  const configuredFontRef = useRef(configuredFontSize);
   const sessionIdRef = useRef(options.sessionId ?? null);
   // The latest-value refs above are written in a layout effect, on commit,
   // never during render: the compiler rules forbid a render-time ref write,
@@ -674,7 +682,7 @@ export function useTerminal(options: UseTerminalOptions) {
   useLayoutEffect(() => {
     pasteImageCapabilityRef.current = options.pasteImageCapability;
     backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
-    configuredFontRef.current = options.fontSize || 14;
+    configuredFontRef.current = configuredFontSize;
     sessionIdRef.current = options.sessionId ?? null;
   });
   /** The cell measured at the configured font, taken by every unheld fit, so a
@@ -1212,15 +1220,15 @@ export function useTerminal(options: UseTerminalOptions) {
     // atlas clear on a terminal that has applied nothing yet: opening a task
     // window while the bottom panel already runs at the same font wiped the
     // atlas they share and re-rendered only the new terminal, garbling the
-    // panel. The effect recomputes these two expressions exactly, so a fresh
+    // panel. The effect reads these same two resolved values, so a fresh
     // mount now notifies nothing and a genuine font change still does.
     lastAppliedFontRef.current = {
-      family: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
-      size: options.fontSize || 14,
+      family: configuredFontFamily,
+      size: configuredFontSize,
     };
     const terminal = new Terminal({
-      fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
-      fontSize: options.fontSize || 14,
+      fontFamily: configuredFontFamily,
+      fontSize: configuredFontSize,
       theme: xtermTheme,
       scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: true,
@@ -1531,7 +1539,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fitElapsedMs = readClock() - fitStartedAt;
       traceInitTiming('session-less');
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
+  }, [options.sessionId, configuredFontFamily, configuredFontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -1794,6 +1802,15 @@ export function useTerminal(options: UseTerminalOptions) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Runs first, so no step below can throw and skip it. It drops the
+      // document mouse listeners xterm parks while mouse reporting is on, or
+      // the next click anywhere throws into the disposed terminal (DESKTOP-1G).
+      // If a future xterm renames the private mouse service, the reset()
+      // fallback clears the buffer before the scroll position below is saved,
+      // so a Fast Refresh may lose that position. That is dev-only and cosmetic.
+      // The unit tripwire for the rename runs on @xterm/headless, so it cannot
+      // see a rename in the browser bundle alone.
+      if (xtermRef.current) releaseMouseTracking(xtermRef.current);
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
       // Flush any pending batched writes synchronously so keystrokes queued
@@ -1898,8 +1915,8 @@ export function useTerminal(options: UseTerminalOptions) {
   // process, not a rendering change, and is out of scope here.
   useEffect(() => {
     if (!xtermRef.current) return;
-    const fontFamily = options.fontFamily || 'Menlo, Consolas, "Courier New", monospace';
-    const fontSize = options.fontSize || 14;
+    const fontFamily = configuredFontFamily;
+    const fontSize = configuredFontSize;
     // Only an actual font family/size change needs the document.fonts.load
     // race guard and the glyph-atlas re-rasterization below. A cursor,
     // scrollback, or color change reuses the current font metrics and atlas,
@@ -1966,13 +1983,14 @@ export function useTerminal(options: UseTerminalOptions) {
 
     if (fontChanged) {
       // Make sure the browser has actually resolved/loaded this font BEFORE
-      // letting xterm measure character size against it. Re-measuring mid-load
-      // is what produces a transient 0-width glyph cell, which the WebGL
-      // addon's texture-atlas rasterization then throws IndexSizeError on
-      // ("source width is 0") - this closes that race, most reachable by
-      // clicking rapidly through the Font Family picker's suggestions.
-      // document.fonts.load() can reject (a font that fails to resolve
-      // entirely); the options are applied either way rather than left stale.
+      // letting xterm measure character size against it, so the measurement
+      // is of the new font rather than its fallback. This is not what keeps a
+      // 0-width cell out of the WebGL atlas: xterm keeps its previous size when
+      // a measurement reads 0, and the real 0-width path was a sub-pixel font
+      // size flooring to 0 device pixels (DESKTOP-1J/1K), which the floor in
+      // resolveTerminalFontSize closes. document.fonts.load() can reject (a
+      // font that fails to resolve entirely); the options are applied either
+      // way rather than left stale.
       document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyOptions, applyOptions);
     } else {
       // No font change: apply synchronously, exactly as before this effect
@@ -1983,7 +2001,7 @@ export function useTerminal(options: UseTerminalOptions) {
     return () => {
       cancelled = true;
     };
-  }, [options.fontFamily, options.fontSize, options.cursorStyle, customBackground, customForeground, customCursor, fit]);
+  }, [configuredFontFamily, configuredFontSize, options.cursorStyle, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out
   // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the

@@ -282,6 +282,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route it through `mayTakeArrivalFocus`.
 - `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
 - `xterm-unicode11-parity.md` - every xterm `Terminal` activates Unicode 11 widths; hand-rolled parsers use `wcwidthV11`.
+- `xterm-dispose-releases-mouse.md` - an opened xterm calls `releaseMouseTracking` before `dispose()`, or its document mouse listener throws on every later click.
 - `cookie-jar-sharing.md` - jar cookies are copied only through `cookie-seed.ts`, and partitions stay task-keyed.
 - `pty-teardown-grace.md` - a young agent's PTY is never force-killed without its exit sequence and the 1500 ms grace.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.

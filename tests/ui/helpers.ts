@@ -109,6 +109,99 @@ export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void
   }
 }
 
+/** What `launchWithTransientTerminal` seeds: one project, and the id every Command Terminal spawns with. */
+export interface TransientTerminalSetup {
+  projectId: string;
+  projectName: string;
+  /** The transient session id `spawnTransient` returns, so `__mockFireSessionData` can target it. */
+  sessionId: string;
+  /** Extra `browser.newContext` options (e.g. `deviceScaleFactor`). The viewport defaults to 1600x1000. */
+  contextOptions?: Parameters<Browser['newContext']>[0];
+  /** Seeds the global `terminal.fontSize` before the app mounts, so a terminal is constructed at it. */
+  terminalFontSize?: number;
+}
+
+/**
+ * Launch a page with one project open and a deterministic Command Terminal
+ * session, ready for `openTransientCommandTerminal`. Each call owns its browser,
+ * so a spec using it can run its tests in parallel. Close the returned browser
+ * in a `finally`.
+ */
+export async function launchWithTransientTerminal(setup: TransientTerminalSetup): Promise<{ browser: Browser; page: Page }> {
+  const projectPath = `/mock/${setup.projectId}`;
+  const preConfigScript = `
+    window.__mockPreConfigure(function (state) {
+      var timestamp = new Date().toISOString();
+      state.projects.push({
+        id: ${JSON.stringify(setup.projectId)},
+        name: ${JSON.stringify(setup.projectName)},
+        path: ${JSON.stringify(projectPath)},
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: timestamp,
+        created_at: timestamp,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+        state.swimlanes.push(Object.assign({}, swimlane, {
+          id: ${JSON.stringify(setup.projectId)} + '-lane-' + index,
+          position: index,
+          created_at: timestamp,
+        }));
+      });
+      ${setup.terminalFontSize === undefined ? '' : `state.config.terminal = Object.assign({}, state.config.terminal, { fontSize: ${JSON.stringify(setup.terminalFontSize)} });`}
+      return { currentProjectId: ${JSON.stringify(setup.projectId)} };
+    });
+    window.electronAPI.sessions.spawnTransient = async function (input) {
+      return {
+        session: {
+          id: ${JSON.stringify(setup.sessionId)},
+          taskId: ${JSON.stringify(setup.sessionId)},
+          projectId: input.projectId,
+          pid: null,
+          status: 'running',
+          shell: '/bin/bash',
+          cwd: ${JSON.stringify(projectPath)},
+          startedAt: new Date().toISOString(),
+          exitCode: null,
+          resuming: false,
+          transient: true,
+        },
+        branch: 'main',
+      };
+    };
+  `;
+
+  await waitForViteReady();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, ...setup.contextOptions });
+  const page = await context.newPage();
+  await page.addInitScript({ path: MOCK_SCRIPT });
+  await page.addInitScript(preConfigScript);
+  await gotoVite(page);
+  await page.waitForLoadState('load');
+  await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  return { browser, page };
+}
+
+/**
+ * Open the Command Terminal with Ctrl+Shift+P and return its window once its
+ * xterm is mounted. Marks the session's first output, which is what lifts the
+ * launch overlay over a transient terminal that the mock never writes to.
+ */
+export async function openTransientCommandTerminal(page: Page, sessionId: string): Promise<Locator> {
+  await page.keyboard.press('Control+Shift+P');
+  const commandWindow = page.getByTestId('command-terminal-window');
+  await expect(commandWindow).toBeVisible();
+  await page.evaluate((targetSessionId) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { markFirstOutput: (id: string) => void } } };
+    }).__zustandStores;
+    stores?.session?.getState().markFirstOutput(targetSessionId);
+  }, sessionId);
+  await expect(commandWindow.locator('.xterm-helper-textarea').first()).toBeAttached({ timeout: 8000 });
+  return commandWindow;
+}
+
 /**
  * Chromium flags for a spec that asserts on terminal CONTENT as text. Under
  * WebGL, xterm draws rows to a canvas and `.xterm` innerText is empty; with
@@ -373,8 +466,8 @@ export async function createProject(
   _projectPath?: string,
 ): Promise<void> {
   // Set the mock folder selection so basename = project name
-  await page.evaluate((n: string) => {
-    (window as any).__mockFolderPath = '/mock/projects/' + n;
+  await page.evaluate((projectName: string) => {
+    (window as unknown as { __mockFolderPath: string }).__mockFolderPath = '/mock/projects/' + projectName;
   }, name);
 
   // When no projects exist the sidebar is hidden and the welcome screen

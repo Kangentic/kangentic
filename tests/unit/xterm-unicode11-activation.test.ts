@@ -17,9 +17,9 @@
  * 2. The helper actually switches the table (loadAddon alone is a no-op).
  * 3. virtual-screen.ts takes its widths from wcwidthV11, not its own ranges.
  *
- * This scan is also the ONLY mechanical coverage for ansi-filter.ts, which
- * needs a DOM and cannot run in this tier. Behavioral red/green coverage
- * lives in headless-frame.test.ts ('Unicode 11 width parity') and the
+ * This scan is also the ONLY mechanical coverage for useTerminal.ts's browser
+ * terminal, which needs a DOM and cannot run in this tier. Behavioral red/green
+ * coverage lives in headless-frame.test.ts ('Unicode 11 width parity') and the
  * VirtualScreen cases in claude-model-picker-probe.test.ts.
  *
  * See .claude/rules/xterm-unicode11-parity.md.

@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { RotateCcw, SquareTerminal } from 'lucide-react';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
 import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
+import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../../utils/terminal-font-size';
 import { useConfigStore } from '../../../stores/config-store';
 import { Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings-card';
@@ -81,6 +82,84 @@ function ColorSwatchField({
   );
 }
 
+/** What the font size field is holding while it is focused. */
+interface FontSizeDraft {
+  text: string;
+  seenValue: number;
+  pendingValues: number[];
+}
+
+function isTerminalFontSizeInRange(fontSize: number): boolean {
+  return Number.isFinite(fontSize) && fontSize >= TERMINAL_FONT_SIZE_MIN && fontSize <= TERMINAL_FONT_SIZE_MAX;
+}
+
+/**
+ * The terminal font size field. Like the other number fields it commits per
+ * keystroke, but only a value inside its range. Typing "12" passes through "1",
+ * and committing that put every mounted terminal at 1px, which crashes xterm's
+ * WebGL renderer (DESKTOP-1J/1K; useTerminal floors the size too) and refits
+ * every PTY on the way. The typed text lives in a draft so the field can show
+ * "1" while the user is still typing, and blur puts back the committed value.
+ *
+ * The draft remembers the setting it was typed against (`seenValue`) and every
+ * value it committed that the store has not reached yet (`pendingValues`, in
+ * commit order). The store only moves after each config round trip, so it can
+ * step through several of those, and any of them keeps the draft. Once it
+ * reaches one, the earlier ones are settled and dropped. Any other value came
+ * from outside the field (another window, an agent, a hand-edited config), and
+ * the field shows it instead of hiding it behind a stale draft until blur.
+ */
+function FontSizeField({ value, onCommit }: { value: number; onCommit: (fontSize: number) => void }) {
+  const [draft, setDraft] = useState<FontSizeDraft | null>(null);
+  const liveDraft = draft && (value === draft.seenValue || draft.pendingValues.includes(value)) ? draft : null;
+  // A draft the store moved away from is dropped, not just hidden. Kept, it
+  // came back if the setting later returned to the value it was typed against.
+  if (draft !== null && liveDraft === null) setDraft(null);
+  // Empty is mid-edit, not an error. A typed value outside the range is
+  // rejected, and the field says so instead of ignoring it silently.
+  const outOfRange = liveDraft !== null && liveDraft.text !== '' && !isTerminalFontSizeInRange(Number(liveDraft.text));
+  const rangeMessageId = useId();
+  return (
+    <>
+      <input
+        type="number"
+        value={liveDraft ? liveDraft.text : value}
+        onChange={(event) => {
+          const text = event.target.value;
+          const fontSize = Number(text);
+          const commits = text !== '' && isTerminalFontSizeInRange(fontSize);
+          // Commits still in flight stay pending across later keystrokes, rejected
+          // or not. The store reaches them in order, so the ones before the value
+          // it reads now are settled.
+          const inFlight = liveDraft?.pendingValues ?? [];
+          const settledIndex = inFlight.indexOf(value);
+          const stillPending = settledIndex >= 0 ? inFlight.slice(settledIndex) : inFlight;
+          setDraft({
+            text,
+            seenValue: value,
+            pendingValues: commits ? [...stillPending, fontSize] : stillPending,
+          });
+          if (commits) onCommit(fontSize);
+        }}
+        onBlur={() => setDraft(null)}
+        min={TERMINAL_FONT_SIZE_MIN}
+        max={TERMINAL_FONT_SIZE_MAX}
+        aria-invalid={outOfRange}
+        aria-describedby={outOfRange ? rangeMessageId : undefined}
+        placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
+        className={`${INPUT_CLASS} ${outOfRange ? 'border-warning focus:border-warning' : ''}`}
+      />
+      {outOfRange && (
+        // Shown only while the typed value is rejected, so a valid field keeps
+        // the card's one-line height.
+        <span id={rangeMessageId} data-testid="terminal-font-size-range" className="text-[11px] text-warning">
+          Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}.
+        </span>
+      )}
+    </>
+  );
+}
+
 const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: string }[] = [
   { key: 'background', label: 'Background' },
   { key: 'foreground', label: 'Foreground' },
@@ -135,18 +214,9 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
           </Select>
         </CardRow>
         <CardRow {...settingProps('terminal.fontSize')}>
-          <input
-            type="number"
+          <FontSizeField
             value={globalConfig.terminal.fontSize ?? DEFAULT_CONFIG.terminal.fontSize}
-            onChange={(event) => {
-              if (event.target.value === '') return;
-              const value = Number(event.target.value);
-              if (!Number.isNaN(value)) updateGlobal({ terminal: { fontSize: value } });
-            }}
-            min={8}
-            max={32}
-            placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
-            className={INPUT_CLASS}
+            onCommit={(fontSize) => updateGlobal({ terminal: { fontSize } })}
           />
         </CardRow>
         <CardRow {...settingProps('terminal.fontFamily')}>
