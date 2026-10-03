@@ -1,10 +1,10 @@
 import { FolderInput, FolderOpen } from 'lucide-react';
 import { useConfigStore } from '../../../stores/config-store';
-import { useProjectStore } from '../../../stores/project-store';
 import { useProjectRelocation } from '../../../hooks/useProjectRelocation';
 import { INPUT_CLASS } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { useSettingsProject } from '../use-settings-project';
 
 /**
  * General per-project settings. Project Location is unlike every other
@@ -12,20 +12,14 @@ import { settingProps } from '../settings-registry';
  * projects IPC surface) rather than the project's config overrides.
  */
 export function GeneralTab() {
-  const projectSettingsPath = useConfigStore((state) => state.projectSettingsPath);
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
-  const currentProject = useProjectStore((state) => state.currentProject);
-  const projects = useProjectStore((state) => state.projects);
-
-  // Settings can target a non-current project (sidebar gear icon); resolve
-  // by the path the panel was opened for, falling back to the current project.
-  const activePath = projectSettingsPath || currentProject?.path;
-  const project = projects.find((candidate) => candidate.path === activePath)
-    ?? currentProject;
+  // Settings can target a non-current project (the switcher, the sidebar gear).
+  const project = useSettingsProject();
 
   const { requestMove, relocationDialog } = useProjectRelocation((updated) => {
-    // The settings panel and its project switcher are keyed by path; re-key
-    // them so the panel keeps pointing at the relocated project.
+    // relocateProject has already re-keyed the panel to the new path, so this
+    // changes neither the path nor the tab. It refetches the project's
+    // overrides from the new location.
     openProjectSettings(updated.path, updated.name, 'general');
   });
 

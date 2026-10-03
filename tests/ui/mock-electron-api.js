@@ -729,7 +729,12 @@
   window.electronAPI = {
     projects: {
       list: async function () {
-        return projects.slice().sort(function (a, b) { return a.position - b.position; });
+        // Row COPIES, as getCurrent returns: the store holds what this returns, and
+        // handing out the live rows would let setDefault* (which mutates in place)
+        // refresh the renderer's list behind its back, masking a stale-list bug.
+        return projects
+          .map(function (projectRow) { return Object.assign({}, projectRow); })
+          .sort(function (firstProject, secondProject) { return firstProject.position - secondProject.position; });
       },
       create: async function (input) {
         // Shift existing projects down
@@ -752,7 +757,7 @@
         projects.push(project);
         // Clone settings from the last modified project (or global defaults)
         projectConfigs[project.path] = getLastProjectDefaults(project.path);
-        return project;
+        return Object.assign({}, project);
       },
       delete: async function (id) {
         var deletedProject = projects.find(function (p) { return p.id === id; });
@@ -816,7 +821,7 @@
         var existing = projects.find(function (p) { return p.path === projectPath; });
         if (existing) {
           currentProjectId = existing.id;
-          return existing;
+          return Object.assign({}, existing);
         }
         // Shift existing projects down
         projects.forEach(function (p) { p.position = p.position + 1; });
@@ -850,7 +855,7 @@
             planLane.plan_exit_target_id = execLane.id;
           }
         }
-        return project;
+        return Object.assign({}, project);
       },
       probePath: async function (projectPath) {
         // Test hook: window.__mockProbePathOverrides merges over the defaults

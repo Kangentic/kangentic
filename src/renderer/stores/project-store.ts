@@ -60,6 +60,16 @@ interface ProjectStore {
   relocateProject: (id: string, newPath: string, options?: ProjectRelocateOptions) => Promise<ProjectRelocateResult>;
   setMissingPathProject: (project: Project | null) => void;
   setProjectGroup: (projectId: string, groupId: string | null) => Promise<void>;
+  /**
+   * The project-row defaults a new session starts with. Each writes the row and
+   * applies the returned row to BOTH `projects` and, when it is the open project,
+   * `currentProject`. Refreshing only `currentProject` left the list stale, and
+   * `openProject` copies its row from the list, so the old value came back on the
+   * next switch while spawns used the saved one.
+   */
+  setDefaultAgent: (id: string, agentName: string) => Promise<void>;
+  setDefaultModel: (id: string, model: string | null) => Promise<void>;
+  setDefaultEffort: (id: string, effort: string | null) => Promise<void>;
   loadCurrent: () => Promise<void>;
 
   // Group actions
@@ -69,6 +79,24 @@ interface ProjectStore {
   deleteGroup: (id: string) => Promise<void>;
   reorderGroups: (ids: string[]) => Promise<void>;
   toggleGroupCollapsed: (id: string) => Promise<void>;
+}
+
+/**
+ * A state updater that swaps a row main just returned into both copies of it.
+ * Replace only: a row missing from the list is not added, since a defaults write
+ * is no reason to grow the sidebar. The `Project` type on the IPC is the
+ * repository's cast; its SELECT returns undefined for an id deleted under the
+ * write, and that leaves the state untouched.
+ */
+function withProjectRow(updated: Project | undefined) {
+  return (state: ProjectStore): Partial<ProjectStore> => {
+    // Returning the same state object is Zustand's no-op: no listener fires.
+    if (!updated) return state;
+    return {
+      projects: state.projects.map((project) => (project.id === updated.id ? updated : project)),
+      currentProject: state.currentProject?.id === updated.id ? updated : state.currentProject,
+    };
+  };
 }
 
 const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
@@ -284,6 +312,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     // No optimistic update: validation failures (path missing, already
     // registered to another project) are expected user-facing errors.
     killTransientSessionForProject(id);
+    const previousPath = get().projects.find((project) => project.id === id)?.path ?? null;
     const result = await window.electronAPI.projects.relocate(id, newPath, options);
     const updated = result.project;
     set((state) => ({
@@ -291,6 +320,20 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       currentProject: state.currentProject?.id === id ? updated : state.currentProject,
       missingPathProject: state.missingPathProject?.id === id ? null : state.missingPathProject,
     }));
+    // The Settings panel is keyed by path and resolves its project by path, never
+    // falling back to another one. Re-key it now, or between this update and the
+    // re-open below its target matches no row and the project tabs go blank.
+    // The initial tab is cleared because SettingsPanel applies it on any path
+    // change, and one left by an earlier open (the New Task pencil's 'agent')
+    // would move the panel off the tab the user relocated from.
+    const settings = useConfigStore.getState();
+    if (previousPath && settings.projectSettingsPath === previousPath) {
+      useConfigStore.setState({
+        projectSettingsPath: updated.path,
+        projectSettingsProjectName: updated.name,
+        projectSettingsInitialTab: null,
+      });
+    }
     // Re-open through the normal flow so the main process re-attaches the
     // board config watcher and re-runs session recovery at the new path.
     if (get().currentProject?.id === id) {
@@ -315,6 +358,18 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     } catch {
       await get().loadProjects();
     }
+  },
+
+  setDefaultAgent: async (id, agentName) => {
+    set(withProjectRow(await window.electronAPI.projects.setDefaultAgent(id, agentName)));
+  },
+
+  setDefaultModel: async (id, model) => {
+    set(withProjectRow(await window.electronAPI.projects.setDefaultModel(id, model)));
+  },
+
+  setDefaultEffort: async (id, effort) => {
+    set(withProjectRow(await window.electronAPI.projects.setDefaultEffort(id, effort)));
   },
 
   loadCurrent: async () => {
