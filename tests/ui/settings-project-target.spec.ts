@@ -43,7 +43,13 @@ interface SeededOverrides {
   git?: { prAutoRefresh?: boolean; prBypassCountsAsReady?: boolean };
 }
 
-async function launchTwoProjects(): Promise<{ browser: Browser; page: Page }> {
+/**
+ * Boots the mock with both projects registered. The board opens on project A
+ * unless `boardProjectId` says otherwise; `null` boots with no project open, the
+ * state a Settings panel opened before any project exists starts from.
+ */
+async function launchTwoProjects(options: { boardProjectId?: string | null } = {}): Promise<{ browser: Browser; page: Page }> {
+  const boardProjectId = options.boardProjectId === undefined ? PROJECT_A.id : options.boardProjectId;
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -91,15 +97,33 @@ async function launchTwoProjects(): Promise<{ browser: Browser; page: Page }> {
       // Both already onboarded, so the Get started checklist never covers the board.
       state.config.onboardedProjectIds = ['${PROJECT_A.id}', '${PROJECT_B.id}'];
 
-      return { currentProjectId: '${PROJECT_A.id}' };
+      return { currentProjectId: ${JSON.stringify(boardProjectId)} };
     });
   `);
 
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
-  await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-  await expect.poll(() => readCurrentProjectId(page)).toBe(PROJECT_A.id);
+  if (boardProjectId === null) {
+    // No board project means no To Do lane to wait on. The sidebar row and the title
+    // bar gear are what a project-less launch with registered projects shows.
+    await page.getByTestId(`project-row-${PROJECT_A.id}`).waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('[data-testid="settings-button"]').waitFor({ state: 'visible', timeout: 15000 });
+    await expect.poll(() => readCurrentProjectId(page)).toBeNull();
+  } else {
+    await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    await expect.poll(() => readCurrentProjectId(page)).toBe(boardProjectId);
+  }
   return { browser, page };
+}
+
+/** The path the Settings panel is editing, or null while it has no target. */
+async function readSettingsProjectPath(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { config: { getState: () => { projectSettingsPath: string | null } } };
+    }).__zustandStores;
+    return stores.config.getState().projectSettingsPath;
+  });
 }
 
 async function readCurrentProjectId(page: Page): Promise<string | null> {
@@ -293,6 +317,49 @@ test.describe('Settings panel project target', () => {
       expect(projectAOverrides?.agent?.permissionMode).toBe('plan');
       expect(projectAOverrides?.git?.prBypassCountsAsReady).toBe(true);
       // B is not the board project and was never touched.
+      expect((await readOverrides(page, PROJECT_B.path))?.git?.prAutoRefresh).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a project that opens while the panel is already up with no target becomes its target', async () => {
+    // The mount-time seed is covered above. This is the other entry: the panel mounts
+    // with no project (the title bar gear, or the Performance toast at boot, before
+    // any project is open) and main then auto-opens one with Settings still showing.
+    // Only the effect's re-run on `currentProject` can seed it; a seed that runs on
+    // mount alone leaves the target null.
+    const { browser, page } = await launchTwoProjects({ boardProjectId: null });
+    try {
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+
+      // Up with nothing to edit yet: no board project and no target. Asserting this
+      // first is what makes the seed below a change rather than a leftover.
+      expect(await readCurrentProjectId(page)).toBeNull();
+      expect(await readSettingsProjectPath(page)).toBeNull();
+
+      // The same push main sends for a launch-time auto-open (App.tsx onAutoOpened).
+      await page.evaluate((projectId: string) => {
+        (window as unknown as { __mockFireProjectAutoOpened: (id: string) => void }).__mockFireProjectAutoOpened(projectId);
+      }, PROJECT_A.id);
+      await expect.poll(() => readCurrentProjectId(page)).toBe(PROJECT_A.id);
+
+      // The panel stayed up and now targets the project that opened.
+      await expect.poll(() => readSettingsProjectPath(page)).toBe(PROJECT_A.path);
+      await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+
+      // A project-tab write now persists. An unseeded panel resolves { persisted: true }
+      // without writing, so the poll on the stored overrides is the discriminating
+      // assertion, not the toggle's own state.
+      await page.getByRole('button', { name: 'Git', exact: true }).click();
+      const toggle = page.getByRole('switch', { name: 'Auto-refresh PRs' });
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await toggle.click();
+      await expect.poll(async () => (await readOverrides(page, PROJECT_A.path))?.git?.prAutoRefresh).toBe(true);
+      const projectAOverrides = await readOverrides(page, PROJECT_A.path);
+      expect(projectAOverrides?.agent?.permissionMode, 'merged over A\'s loaded overrides, not over nothing').toBe('plan');
+      expect(projectAOverrides?.git?.prBypassCountsAsReady).toBe(true);
       expect((await readOverrides(page, PROJECT_B.path))?.git?.prAutoRefresh).toBe(true);
     } finally {
       await browser.close();
