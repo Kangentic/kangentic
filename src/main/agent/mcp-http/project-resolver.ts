@@ -225,9 +225,10 @@ export class RequestResolver {
    * Terminal sitting on a feature branch of the main checkout must read its
    * distance from the base, not from its own remote.
    *
-   * `git config kangentic.baseBranch` is deliberately NOT consulted: it is
-   * written to the SHARED `.git/config`, so it holds whichever worktree was
-   * created last, not this one's base.
+   * `git config kangentic.baseBranch` is deliberately NOT consulted. New
+   * worktrees keep it in their own `config.worktree`, but a worktree created
+   * before that, or on git without per-worktree config, reads the SHARED
+   * `.git/config` value, which holds whichever worktree wrote it last.
    *
    * Null (never a throw) when the project's state is unreadable, so the caller
    * degrades to the upstream count. Note `getProjectDb` opens, and migrates,

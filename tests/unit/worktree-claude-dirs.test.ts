@@ -118,6 +118,34 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
     expect(status).toBe('');
   });
 
+  it('every tracked file outside .claude/commands/ is on disk, and only the two patterns are recorded', async () => {
+    // Nested files, so a sparse pass that dropped everything below the root
+    // (the `init` default) and never wrote it back would show here. 150 of
+    // them, because git only checks out with parallel workers from 100 files
+    // up, and createWorktree asks for workers whenever the machine has 2+ cores.
+    writeFile('src/deep/nested/module.ts', 'export const nested = 1;');
+    writeFile('docs/guide.md', '# Guide');
+    for (let index = 0; index < 150; index++) {
+      writeFile(`packages/group-${index % 10}/file-${index}.ts`, `export const value${index} = ${index};`);
+    }
+    git('add -A');
+    git('commit -m "add nested files"');
+
+    const mgr = new WorktreeManager(tmpDir);
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main');
+
+    const tracked = wtGit(worktreePath, 'ls-files').split('\n').filter(Boolean);
+    const expectedOnDisk = tracked.filter((file) => !file.startsWith('.claude/commands/'));
+    const missing = expectedOnDisk.filter((file) => !fs.existsSync(path.join(worktreePath, file)));
+    expect(expectedOnDisk.length).toBeGreaterThan(0);
+    expect(missing).toEqual([]);
+
+    // Exactly the two patterns. git before 2.35 accepts `set --no-cone` and
+    // records `--no-cone` as a pattern, so a wrong version gate shows here.
+    const patterns = wtGit(worktreePath, 'sparse-checkout list').split('\n').map((line) => line.trim()).filter(Boolean);
+    expect(patterns).toEqual(['/*', '!/.claude/commands/']);
+  });
+
   it('sparse-checkout survives simulated rebase', async () => {
     const mgr = new WorktreeManager(tmpDir);
     const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',

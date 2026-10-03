@@ -253,9 +253,16 @@ async function filterGitIgnoredPaths(cwd: string, relativePaths: string[]): Prom
 async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex | null> {
   if (!(await isInsideGitWorkTree(cwd))) return null;
 
+  // `-t` tags every entry with a status letter and a space. `S` is a
+  // skip-worktree entry. Sparse-checkout leaves those off disk (in a task
+  // worktree, everything under `.claude/commands/`), and offering one would
+  // point at a file that does not exist. But `git update-index --skip-worktree`
+  // is also how developers keep local edits to a tracked file out of git
+  // status, and that file IS on disk. So an `S` entry is dropped only when its
+  // file is missing.
   const listedFiles = await runGit(
     cwd,
-    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z'],
     { allowNonZeroExit: true },
   ).catch(() => null);
 
@@ -263,9 +270,17 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
     return null;
   }
 
-  const listedPaths = splitNullSeparatedPaths(listedFiles.stdout)
-    .map((entry) => toForwardSlash(entry))
-    .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+  const taggedPaths = splitNullSeparatedPaths(listedFiles.stdout)
+    .map((entry) => ({ skipWorktree: entry.startsWith('S '), relativePath: toForwardSlash(entry.slice(2)) }))
+    .filter(({ relativePath }) => relativePath.length > 0 && !isPathInIgnoredDirectory(relativePath));
+  const onDisk = await Promise.all(taggedPaths.map(({ skipWorktree, relativePath }) => (
+    skipWorktree
+      ? fs.access(path.join(cwd, relativePath)).then(() => true, () => false)
+      : true
+  )));
+  const listedPaths = taggedPaths
+    .filter((_taggedPath, index) => onDisk[index])
+    .map(({ relativePath }) => relativePath);
   const filePaths = await filterGitIgnoredPaths(cwd, listedPaths);
 
   const directorySet = new Set<string>();

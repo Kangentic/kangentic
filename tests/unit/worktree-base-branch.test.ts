@@ -124,10 +124,34 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const result = await worktreeManager.ensureWorktree(makeTask({ id: 'task-aaaaaaaa' }), baseGitConfig({ defaultBaseBranch: 'main' }));
 
     expect(result).toHaveProperty('worktreePath');
-    // Unaffected by the resolver: base === configured default, no fallback engaged.
-    expect(result!.branchName).not.toContain('/');
+    expect(result!.branchName).toBe('fix-the-thing-task-aaa');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('main');
+  });
+
+  it('keeps each worktree\'s base branch to itself (two worktrees, two bases)', async () => {
+    // A plain `git config` from a linked worktree writes the repo's SHARED
+    // .git/config, so the second worktree's base used to overwrite the first's
+    // and /pull-request would target it from both.
+    const repo = tempRepoPath('two-bases');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['branch', 'release/2.0']);
+
+    const worktreeManager = new WorktreeManager(repo);
+    const onRelease = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-dddddddd', display_id: 11, base_branch: 'release/2.0' }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
+    const onMain = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-eeeeeeee', display_id: 12 }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
+
+    expect(run(onRelease!.worktreePath, ['config', 'kangentic.baseBranch']).trim()).toBe('release/2.0');
+    expect(run(onMain!.worktreePath, ['config', 'kangentic.baseBranch']).trim()).toBe('main');
+    // And none of it leaked into the main checkout's config.
+    expect(() => run(repo, ['config', '--local', 'kangentic.baseBranch'])).toThrow();
   });
 
   it('falls back to master when the repo only has master and defaultBaseBranch is the unconfigured "main" default', async () => {
@@ -141,43 +165,38 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     expect(result).toHaveProperty('worktreePath');
     const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
     expect(configuredBase).toBe('master');
-    // Substitution collapses base === default, so the branch name stays unprefixed
-    // (`fix-the-thing-bbbbbbbb`, not `master/fix-the-thing-bbbbbbbb`).
-    expect(result!.branchName).not.toContain('/');
   });
 
-  it('namespaces the branch under an explicit per-task base that differs from the configured default', async () => {
-    // Distinct from the master-only substitution test above: there `substitutedFor` is set
-    // and the resolved base COLLAPSES onto the default, so the branch stays unprefixed. Here
-    // the task's explicit base ('release/2.0') resolves on its own (`substitutedFor` is
-    // always null for an explicit, single-candidate resolution - see resolveWorktreeBase), so
-    // ensureWorktree must keep the ORIGINALLY CONFIGURED default ('main') rather than
-    // collapsing it to 'release/2.0', and computeAutoBranchName namespaces the branch name
-    // accordingly. This pins the `resolution.substitutedFor ? ... : (gitConfig.defaultBaseBranch...)`
-    // wiring in ensureWorktree: reducing it to just `resolution.baseBranch` would silently
-    // drop the namespace for every explicit-base task.
-    //
-    // Base branch name deliberately contains a slash ('release/2.0', flattened to
-    // 'release-2.0' by computeAutoBranchName) rather than a bare word like 'develop': a bare
-    // 'develop' base would make the auto branch name 'develop/<slug>-<id>', which real git
-    // rejects with a D/F ref conflict (`refs/heads/develop` already exists as a leaf ref, so
-    // `refs/heads/develop/<slug>-<id>` cannot be created under it) - a fixture artifact of
-    // this real-git test file, unrelated to the wiring under test.
-    const repo = tempRepoPath('explicit-namespaced');
-    initRepo(repo, 'main');
-    commit(repo, 'init');
-    run(repo, ['checkout', '-b', 'release/2.0']);
-    run(repo, ['checkout', 'main']);
+  // The branch name used to carry a non-default base as a folder ('develop/<slug>-<id>').
+  // Git stores a ref as a file, so no branch can sit inside a folder named after another
+  // branch: with 'develop' checked out locally `worktree add` refused to create it, and with
+  // 'develop' only on the remote the worktree was created but the push was rejected. The
+  // base now lives in the task row and `kangentic.baseBranch`, never in the branch name.
+  it.each([
+    { where: 'checked out locally', checkOutBaseLocally: true },
+    { where: 'only on the remote', checkOutBaseLocally: false },
+  ])('creates and pushes a branch for a task whose base is a bare name ($where)', async ({ checkOutBaseLocally }) => {
+    const seed = tempRepoPath('bare-base-seed');
+    initRepo(seed, 'main');
+    commit(seed, 'init');
+    run(seed, ['branch', 'develop']);
+    const remote = tempRepoPath('bare-base-remote.git');
+    execFileSync('git', ['clone', '--bare', seed, remote], { windowsHide: true });
+    const repo = tempRepoPath('bare-base-clone');
+    execFileSync('git', ['clone', remote, repo], { windowsHide: true });
+    if (checkOutBaseLocally) run(repo, ['branch', 'develop', 'origin/develop']);
 
     const worktreeManager = new WorktreeManager(repo);
-    const task = makeTask({ id: 'task-mmmmmmmm', base_branch: 'release/2.0' });
-    const result = await worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' }));
+    const result = await worktreeManager.ensureWorktree(
+      makeTask({ id: 'task-nnnnnnnn', base_branch: 'develop' }),
+      baseGitConfig({ defaultBaseBranch: 'main' }),
+    );
 
     expect(result).toHaveProperty('worktreePath');
-    const configuredBase = run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim();
-    expect(configuredBase).toBe('release/2.0');
-    expect(result!.branchName.startsWith('release-2.0/')).toBe(true);
-  });
+    expect(() => run(result!.worktreePath, ['push', 'origin', result!.branchName])).not.toThrow();
+    expect(result!.branchName).toBe('fix-the-thing-task-nnn');
+    expect(run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim()).toBe('develop');
+  }, 20000);
 
   it('throws a written error naming the branch when an explicit per-task base branch does not exist', async () => {
     const repo = tempRepoPath('explicit-missing');
@@ -211,7 +230,6 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const first = await worktreeManager.ensureWorktree(makeTask({ id: 'task-kkkkkkkk', title: 'Round trip task' }), config);
 
     expect(first).toHaveProperty('worktreePath');
-    expect(first!.branchName).not.toContain('/');
 
     // Simulate the real Done-cleanup removal path (not a bare fs.rmSync, which would
     // leave git's own worktree registration stale and fail the second `worktree add`
@@ -380,9 +398,6 @@ describe('resolveWorktreeBase - candidate order', () => {
     const resolution = await resolveWorktreeBase(repo, '', 'main');
 
     expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'master' });
-    if (resolution.kind === 'resolved') {
-      expect(resolution.substitutedFor).toBe('main');
-    }
   });
 
   it('deduplicates the default chain when defaultBaseBranch is already "master"', async () => {
@@ -399,22 +414,21 @@ describe('resolveWorktreeBase - candidate order', () => {
     }
   });
 
-  it('marks substitutedFor null when the FIRST candidate resolves (no fallback engaged)', async () => {
+  it('resolves the configured default itself when it exists (no fallback engaged)', async () => {
     const repo = tempRepoPath('first-candidate-resolves');
     initRepo(repo, 'develop');
     commit(repo, 'init');
 
     const resolution = await resolveWorktreeBase(repo, null, 'develop');
 
-    expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'develop', substitutedFor: null });
+    expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'develop', startPoint: 'develop' });
   });
 
-  it('substitutes a later default-chain candidate resolved only via the fetch pass (substitutedFor at index > 0)', async () => {
+  it('falls through to a later default-chain candidate resolved only via the fetch pass', async () => {
     // Every other fetch-pass test in this file supplies an explicit per-task base, which
-    // forces a single-item candidate list -- substitutedFor is trivially null there. This
-    // needs the UNCONFIGURED-default chain (['main', 'master']) with the winner at index 1,
-    // resolved only by a live fetch (never locally), to exercise
-    // `substitutedFor: candidates[0]` at a winning index > 0.
+    // forces a single-item candidate list. This needs the UNCONFIGURED-default chain
+    // (['main', 'master']) with the winner at index 1, resolved only by a live fetch
+    // (never locally).
     const origin = tempRepoPath('fetch-pass-substitution-origin');
     initRepo(origin, 'trunk');
     commit(origin, 'init');
@@ -436,7 +450,6 @@ describe('resolveWorktreeBase - candidate order', () => {
       kind: 'resolved',
       baseBranch: 'master',
       startPoint: 'origin/master',
-      substitutedFor: 'main',
     });
   });
 });

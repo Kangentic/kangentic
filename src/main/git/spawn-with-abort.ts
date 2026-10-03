@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
+import { killChildTreeByPid } from '../shared/child-tree-stop';
 
 /**
  * Per-stream cap on captured stdout/stderr. A verbose child (e.g. an
@@ -113,11 +114,39 @@ export function spawnWithAbort(
     const launch = args === undefined
       ? resolveShellLaunch({ command })
       : { file: command, args: [...args], shell: false };
-    const spawnOptions: SpawnOptions = { cwd, shell: launch.shell, windowsHide: true, signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'], ...envOption };
+    // A shell command can start children of its own: cmd.exe always runs the
+    // script as one, and `sh -c` forks for a compound script. Node's `signal`
+    // option kills the shell only, which left whatever the script started (an
+    // `npm install`) running in a worktree about to be removed, and on Windows
+    // holding it open: a superseded move's leftover script stalled the next
+    // creation at that path by 12 s until it exited. So a shell command leads
+    // its own process group on POSIX and loses its whole tree on abort or
+    // timeout, the way the run-script automation's script does. A binary (git)
+    // keeps Node's own kill.
+    const killsTree = args === undefined;
+    const spawnOptions: SpawnOptions = {
+      cwd,
+      shell: launch.shell,
+      windowsHide: true,
+      // Windows has no process groups; there `taskkill /T` walks the tree.
+      ...(killsTree ? { detached: process.platform !== 'win32' } : { signal: controller.signal }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...envOption,
+    };
     // A shell-string launch keeps its args-free form (no DEP0190).
     const child = launch.shell
       ? spawn(launch.file, spawnOptions)
       : spawn(launch.file, launch.args, spawnOptions);
+
+    if (killsTree) {
+      // Kill the tree instead of the shell, never after it: `taskkill /T` finds
+      // the children through their parent, which a dead shell no longer is.
+      controller.signal.addEventListener('abort', () => {
+        if (child.pid !== undefined) killChildTreeByPid(child.pid);
+        const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
+        settleReject(new Error(`${label} aborted (${reason}) (child process killed)`));
+      }, { once: true });
+    }
 
     let stdout = '';
     let stderr = '';
