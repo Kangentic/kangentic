@@ -17,7 +17,9 @@ import {
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
+import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funnel';
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
+import { snapshotDiffViewer } from './diff-viewer-snapshot';
 
 interface DiffViewerProps {
   original: string;
@@ -207,6 +209,9 @@ export function DiffViewer({
   const onCrossFileRef = useRef(onCrossFile);
   const pendingChangeFocusRef = useRef(pendingChangeFocus);
   const onPendingChangeFocusConsumedRef = useRef(onPendingChangeFocusConsumed);
+  // Read only by the error-funnel snapshot reader (registered below).
+  const viewModeRef = useRef(viewMode);
+  const languageRef = useRef(language);
   // Written on commit, in a layout effect, never during render (which the
   // compiler rules forbid). The ordering the listeners need still holds: every
   // layout effect of a commit runs before any passive effect of it, and
@@ -218,6 +223,8 @@ export function DiffViewer({
     onCrossFileRef.current = onCrossFile;
     pendingChangeFocusRef.current = pendingChangeFocus;
     onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+    viewModeRef.current = viewMode;
+    languageRef.current = language;
   });
 
   // Mirror the derived blame (null whenever the toggle is off or blame is
@@ -283,6 +290,11 @@ export function DiffViewer({
   // task (setTimeout, not the same frame) so the editor fully processes the
   // disable before the enable - empirically a same-frame toggle does not fold.
   const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True only while the timer's enable call runs. The timer ref is already
+  // null by then, and a scroll that call mirrors onto the original editor
+  // reaches monaco's error funnel synchronously, so the error-funnel snapshot
+  // reads this to tell "inside the fold re-enable" apart from "pending".
+  const foldReenableInProgressRef = useRef(false);
   const applyCollapseFold = useCallback(() => {
     const diffEditor = diffEditorRef.current;
     if (diffEditor === null) return;
@@ -310,7 +322,12 @@ export function DiffViewer({
     collapseTimerRef.current = setTimeout(() => {
       collapseTimerRef.current = null;
       if (collapseUnchangedRef.current) {
-        diffEditorRef.current?.updateOptions({ hideUnchangedRegions: { enabled: true } });
+        foldReenableInProgressRef.current = true;
+        try {
+          diffEditorRef.current?.updateOptions({ hideUnchangedRegions: { enabled: true } });
+        } finally {
+          foldReenableInProgressRef.current = false;
+        }
       }
     }, 0);
   }, []);
@@ -609,6 +626,25 @@ export function DiffViewer({
   useEffect(() => () => {
     if (collapseTimerRef.current !== null) clearTimeout(collapseTimerRef.current);
   }, []);
+
+  // Publish this viewer's live state to monaco's error funnel
+  // (src/renderer/monaco-error-funnel.ts). The funnel receives only the error,
+  // so it calls this reader synchronously at the moment of a throw it reports
+  // as handled (Sentry DESKTOP-19). Registered once per mount: the reader reads
+  // refs at call time, so the binary placeholder and markdown preview, which
+  // null diffEditorRef, need no re-register.
+  useEffect(() => registerDiffViewerSnapshotReader(() => {
+    const diffEditor = diffEditorRef.current;
+    if (diffEditor === null) return null;
+    return snapshotDiffViewer(diffEditor, {
+      viewMode: viewModeRef.current,
+      language: languageRef.current,
+      hideUnchangedRegions: collapseUnchangedRef.current,
+      foldReenablePending: collapseTimerRef.current !== null,
+      foldReenableInProgress: foldReenableInProgressRef.current,
+      contentMatches: contentMatchesRef.current,
+    });
+  }), []);
 
   // Keyboard navigation: next/prev change, rolling into the adjacent file at a
   // boundary. Gated on the window being focused; capture phase so it beats the

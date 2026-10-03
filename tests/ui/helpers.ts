@@ -11,6 +11,7 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 // rarely sees them, but the filter stays as a belt-and-suspenders for any path
 // that reaches window despite the funnel wrapper.
 import { BENIGN_RENDERER_ERRORS, isBenignRendererError } from '../../src/shared/benign-renderer-errors';
+import { MONACO_HANDLED_ERROR_LOG_TAG } from '../../src/renderer/monaco-error-funnel';
 export { BENIGN_RENDERER_ERRORS, isBenignRendererError };
 
 /**
@@ -19,12 +20,23 @@ export { BENIGN_RENDERER_ERRORS, isBenignRendererError };
  * error messages so a spec can assert a clean console without tripping on
  * quirks the app cannot control. Attach before the interaction under test so
  * the error window is fully covered.
+ *
+ * It also collects the monaco funnel's [MONACO] console line. The funnel
+ * (src/renderer/monaco-error-funnel.ts) reports Sentry DESKTOP-19's error as
+ * handled instead of letting monaco rethrow it, so that error no longer
+ * reaches `pageerror`, and without this every spec asserting an empty result
+ * would stop seeing it.
  */
 export function collectPageErrors(page: Page): () => string[] {
   const errors: string[] = [];
   page.on('pageerror', (error) => {
     if (isBenignRendererError(error)) return;
     errors.push(error.message);
+  });
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    if (!message.text().startsWith(MONACO_HANDLED_ERROR_LOG_TAG)) return;
+    errors.push(message.text());
   });
   return () => errors.slice();
 }

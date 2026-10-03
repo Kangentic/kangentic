@@ -250,6 +250,24 @@ in one Sentry org, one triage surface.
   - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
+- **One monaco error is reported as handled, with diff context.** Monaco catches an event
+  listener's throw and hands it to its error funnel, whose default rethrows it on a timer. Sentry
+  DESKTOP-19 ("Illegal value for lineNumber") arrived that way, as an uncaught error with no app
+  frame. The funnel (`src/renderer/monaco-error-funnel.ts`) now sends it through
+  `reportHandledRendererError` (`src/renderer/error-reporting.ts`) with `source:
+  monaco_line_number`, and does not rethrow it. Two more tags make it searchable:
+  `hide_unchanged_regions` (`true`, `false`, or `unknown` when no live viewer reports it) and
+  `diff_viewers_live` (how many viewers had an editor). Each mounted diff viewer publishes a snapshot
+  reader, and the funnel reads them at the moment of the throw. Each becomes a flat
+  `diff_viewer_N` context: line counts, scroll metrics, visible line ranges, and the collapse and
+  fold state. The funnel's own call stack becomes a `call_site` context. It is captured with a
+  raised stack limit, so it holds the outer frames the original error's 50-frame stack lost. Each
+  frame keeps only its file's base name, because a production location is a `file://` URL under
+  the user's home directory, and the SDK's path normalization does not reach `contexts`. No file
+  path or file content is sent. A stuck editor throws on every scroll tick, so the funnel sends at
+  most one report per 30 seconds. It absorbs the rest without rethrowing them, and the next report
+  carries their count in its `funnel` context (`suppressed_since_last_report`). Every other monaco
+  error keeps monaco's default.
 - **Native crashes in processes that are not ours become one warning, and their dumps never
   upload.** This happens in `beforeSend` (`beforeSendEvent` -> `filterNativeCrashEvent`), the only
   hook that can see the minidump attachment. On macOS a task's mach exception ports are inherited
@@ -315,10 +333,12 @@ in one Sentry org, one triage surface.
   cap. The parser reads a V8 stack innermost-first and stops there, so a capped event has lost its
   OUTER frames - the app code that called into the library and the timer it ran under - and reads
   as a self-contained third-party failure with `in_app: false` everywhere. Sentry DESKTOP-19 is
-  the case that earned the tag: six events, fifty monaco frames each, no in-app frame, and the app
-  frame that armed the call truncated away. The tag makes "no app frames survived" distinguishable
-  from "no app frames" without counting by hand. Tagging is annotation, not filtering: it never
-  drops an event.
+  the case that earned the tag: six events, fifty monaco frames each, and no in-app frame. Two caps
+  cut it. V8's 50-frame limit cut the original error's outer frames when monaco's listener threw,
+  and the parser then cut the one frame of monaco's own rethrow. Those outer frames now arrive in
+  the handled report's `call_site` context (see the monaco bullet above). The tag makes "no app
+  frames survived" distinguishable from "no app frames" without counting by hand. Tagging is
+  annotation, not filtering: it never drops an event.
 - **Errors only:** release-health session tracking (the SDK's `MainProcessSession` integration,
   on by default) is filtered out, and tracing and session replay are never enabled.
 - **Breadcrumbs are filtered at the source, in both processes.** Every event carries the trail
@@ -364,7 +384,8 @@ in one Sentry org, one triage surface.
   all three error boundaries hand the real `Error` to `captureException` explicitly. Two of them
   also keep the existing Aptabase funnel (`ErrorBoundary` as `boundary: 'root'`,
   `PanelErrorBoundary` as `boundary: 'panel'`); `DiffErrorBoundary` reports to Sentry only.
-- **Handled errors are forwarded too** (`reportHandledError`): the deliberate catch sites that
+- **Handled errors are forwarded too** (`reportHandledError`; the renderer counterpart,
+  `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
   `reason` tag), a Kangentic utility worker that has crashed past its restart cap
