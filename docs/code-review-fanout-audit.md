@@ -817,6 +817,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, eighth pass | 676f +86115 -7734 | 5974KB, 107091 lines | 4 (0) | 672 | 2 | 31, one shard file each, 10 over tests, none resumed | about 110 of 30 pack-carrying | 23 raised, 22 distinct / 19 applied, 3 refuted |
 | task 529, first-build progress follow-up | 29f +1093 -287 | 192KB, 3315 lines | 11 (8) | 18 | 0 | 8 | 4 of 7 pack-carrying, 2 not reported | 20 / 19, plus 1 found while filling holes |
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
+| task 736, whole branch, pre-PR | 146f +9278 -1701 | 793KB, 14017 lines | 10 (0) | 136 | 0 | 12, sharded by area: 6 area shards, 5 gated auditors on their own ranges, integration on the delta | about 34 of 11 pack-carrying, 1 not reported | 51 raised, 46 distinct / 27 applied, 2 refuted; 6 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1168,3 +1169,22 @@ its rename guards, `worktree-preview.js` for its own liveness check, and `worktr
 The `dev.js` gate sat 8 lines above its hunk, so a wider window would have carried that one. Seven
 of the 19 distinct findings were refuted, and the two that needed an owner's decision were asked
 during the pass and fixed in it.
+
+The task 736 pass reviewed a whole feature branch at 14,017 pack lines, more than twice the
+roughly 6,000-line ceiling, so it reused task 529's layout at a smaller scale. Six area shards of
+929 to 3,318 pack lines each applied every universal criterion to their own TOC ranges: the
+process readers and pty host, the kill plan and tag, main's wiring, the renderer, build and docs,
+and the E2E specs. Each source shard carried the tests for its own sources, so the red-green
+question was answered inside the shard rather than by a grep. The four gated auditors and
+`migration-safety` got only the ranges their globs matched, and the integration finder got the
+signature delta. One shared brief file held the summary, the criteria and the return shape, and
+every finder loaded its ranges in Read calls of at most 600 lines. None reported the Read cap
+failing. Of about 34 reads beyond the pack, most were rule files and callers a criterion named,
+and one shard did not report its reads. The highest-value finds came from the shards that held
+each file's tests next to it: a label path that could carry command-line text, a home directory
+reached through a link that became a reap root, and a WSL reap that could boot a stopped default
+distro. Two candidates were refuted: the integration finder called `bg-shell-watcher.test.ts`
+deleted when only one block of it was, and an E2E toast-lifetime race could not occur, because
+the toast is created after the kill it reports. A test-builder's attempts to mutate four Windows
+safety gates for red-green were blocked by the permission classifier, so those tests rest on
+their positive controls.
