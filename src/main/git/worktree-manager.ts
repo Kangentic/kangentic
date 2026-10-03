@@ -45,15 +45,6 @@ const SPARSE_SET_NO_CONE_MIN_GIT_VERSION = '2.35.0';
 const MAX_CHECKOUT_WORKERS = 8;
 
 /**
- * `-c checkout.workers=N` for `git worktree add`, so its checkout writes files
- * with up to MAX_CHECKOUT_WORKERS processes instead of one. git hands `-c` on to
- * the inner `reset --hard` and to each worker, `core.longpaths` included. Files
- * that need a filter driver (Git LFS), symlinks, and case-colliding paths are
- * still written one at a time, git stays sequential below 100 files, and git
- * before 2.32 ignores the key. Empty when the user set checkout.workers
- * themselves, so their value applies exactly as it did before.
- */
-/**
  * Record a worktree's base branch as `kangentic.baseBranch` in that worktree's
  * OWN config (`config.worktree`). `/pull-request`, `/merge-pull-request`,
  * `/merge-back` and local-only-commits read it to pick the target branch.
@@ -75,6 +66,15 @@ export async function writeWorktreeBaseBranch(worktreeGit: SimpleGit, baseBranch
   }
 }
 
+/**
+ * `-c checkout.workers=N` for `git worktree add`, so its checkout writes files
+ * with up to MAX_CHECKOUT_WORKERS processes instead of one. git hands `-c` on to
+ * the inner `reset --hard` and to each worker, `core.longpaths` included. Files
+ * that need a filter driver (Git LFS), symlinks, and case-colliding paths are
+ * still written one at a time, git stays sequential below 100 files, and git
+ * before 2.32 ignores the key. Empty when the user set checkout.workers
+ * themselves, so their value applies exactly as it did before.
+ */
 async function parallelCheckoutConfig(git: SimpleGit): Promise<string[]> {
   try {
     if ((await git.raw(['config', '--get', 'checkout.workers'])).trim()) return [];
@@ -1108,7 +1108,9 @@ export class WorktreeManager {
         // after it and delete the worktree it had just made, auto-generated
         // branch included (reproduced twice in /preview). The half-made
         // worktree left here is never recorded, so the next creation at this
-        // path clears it through the stale-directory branch above.
+        // path clears its directory through the stale-directory branch above.
+        // Its branch survives, though: that creation sees `branchExists`,
+        // attaches to it without a start point, and reports no `baseBranch`.
         if (options?.signal?.aborted) {
           console.log(`[INIT-SCRIPT] Post-worktree script stopped in ${worktreePath}: creation was aborted`);
           throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');

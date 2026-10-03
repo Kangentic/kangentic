@@ -25,6 +25,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -127,10 +128,15 @@ function listTrashDirs(kangenticDir) {
  * Start scripts/preview-trash-delete.js on `trashDir`, detached so it outlives
  * this process and a closed terminal. Best-effort: a deleter that never runs
  * leaves trash for the next boot's sweep.
+ *
+ * It runs from the temp folder, not dev.js's cwd (the worktree). On Windows a
+ * process's cwd cannot be removed, so a deleter still working there would block
+ * removing the worktree for those seconds.
  */
 function spawnTrashDeleter(trashDir) {
   try {
-    const deleter = spawn(process.execPath, [path.join(__dirname, 'preview-trash-delete.js'), trashDir], {
+    const deleter = spawn(process.execPath, [path.join(__dirname, 'preview-trash-delete.js'), path.resolve(trashDir)], {
+      cwd: os.tmpdir(),
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
