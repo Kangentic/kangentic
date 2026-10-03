@@ -4219,6 +4219,14 @@
         }
         return noop;
       },
+      // The project-open reconcile's warnings. The mock has no kangentic.json,
+      // so nothing ever pushes. A spec seeds `window.__mockLastConfigWarnings`
+      // (an array) and the renderer's fetch on a project becoming current reads
+      // it, which is the path a launch restore takes.
+      onWarnings: function (/* callback(projectId, warnings) */) { return noop; },
+      getLastWarnings: async function (/* projectId */) {
+        return Array.isArray(window.__mockLastConfigWarnings) ? window.__mockLastConfigWarnings.slice() : [];
+      },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
       getBoardProfiles: async function () { return mockBoardProfiles; },
       // window.__mockBoardProfilesSaveError makes the write reject, for a spec

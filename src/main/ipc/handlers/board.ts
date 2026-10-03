@@ -222,6 +222,10 @@ export function registerBoardHandlers(context: IpcContext): void {
     });
   });
 
+  ipcMain.handle(IPC.BOARD_CONFIG_GET_LAST_WARNINGS, (_, projectId: string) => {
+    return context.boardConfigManager.getLastWarnings(projectId);
+  });
+
   ipcMain.handle(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, () => {
     return context.boardConfigManager.getBoardProfiles();
   });

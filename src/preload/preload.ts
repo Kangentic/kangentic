@@ -669,6 +669,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BOARD_CONFIG_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_CHANGED, handler);
     },
+    onWarnings: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string, warnings: string[]) => callback(projectId, warnings);
+      ipcRenderer.on(IPC.BOARD_CONFIG_WARNINGS, handler);
+      return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_WARNINGS, handler);
+    },
+    getLastWarnings: (projectId: string) => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_LAST_WARNINGS, projectId),
     onShortcutsChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
       ipcRenderer.on(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
