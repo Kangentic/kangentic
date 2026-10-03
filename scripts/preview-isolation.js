@@ -46,13 +46,17 @@ function stoppingMarkerPathFor(worktreeDir, port) {
   return path.join(worktreeDir, '.kangentic', `preview-${port}.stopping`);
 }
 
+/**
+ * Whether `pid` is a live process this user owns. EPERM counts as gone: a
+ * preview's dev.js always runs as the developer, so a pid they cannot signal is
+ * a reused pid belonging to someone else, and its PID file is stale.
+ */
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (error) {
-    // EPERM: the process exists, it just is not ours to signal.
-    return Boolean(error) && error.code === 'EPERM';
+  } catch {
+    return false;
   }
 }
 

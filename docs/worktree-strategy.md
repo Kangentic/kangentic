@@ -387,7 +387,7 @@ The **Post-Worktree Script** (`config.git.initScript`, surfaced as "Post-Worktre
 
 The script is **fatal**: a non-zero exit or a timeout (10-minute cap) rejects worktree creation and fails the task move / agent spawn, surfacing the captured output. The worktree directory is left on disk on failure, exactly as a failed file copy is; the next attempt reuses or recreates it.
 
-A cancellation (a superseding move, a cancelled spawn, app shutdown) is not a failure: creation rejects with an `AbortError`, which every caller treats as an abort. That matters for a superseding move. Treated as a failure, the old move's stale-resource cleanup queued behind the new move's own create job on the per-project git lock, ran after it, and deleted the worktree and auto-generated branch the new move had just made (reproduced twice in `/preview`). The half-made worktree an abort leaves is never recorded, so the next creation at that path clears it.
+A cancellation (a superseding move, a cancelled spawn, app shutdown) is not a failure: creation rejects with an `AbortError`, which every caller treats as an abort. That matters for a superseding move. Treated as a failure, the old move's stale-resource cleanup queued behind the new move's own create job on the per-project git lock, ran after it, and deleted the worktree and auto-generated branch the new move had just made (reproduced twice in `/preview`). The half-made worktree an abort leaves is never recorded, so the next creation at that path clears it. Its auto-generated branch survives and the next creation attaches to it. While that branch still sits at the resolved start point, the creation reports its base as it would for a new branch, so `resolved_base_branch` is still recorded.
 
 On abort or timeout the script's whole process tree is killed, not only the shell: `taskkill /T /F` on Windows, where cmd.exe always runs the script as a child, and a process-group `SIGKILL` on POSIX, where the script leads its own group. Killing only the shell left whatever the script started (an `npm install`) running in the worktree; on Windows it held the directory open and stalled the next creation at that path by 12 s.
 
@@ -633,6 +633,7 @@ Uses real temp files with mocked `os.homedir()`.
 
 **Post-Worktree Script abort:**
 - An abort during the script rejects creation with an `AbortError`; a script's own failure stays a failure
+- The next creation attaches to the leftover branch and still reports its base while it sits at the start point (`worktree-base-branch.test.ts`)
 - Abort and timeout kill the script's whole process tree (`run-init-script.test.ts`; real processes in `run-init-script-tree-kill.test.ts`)
 
 **Removal:**

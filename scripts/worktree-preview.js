@@ -27,7 +27,7 @@ const net = require('net');
 const { readExitRecord, clearExitRecord, classifyPreviewExit, exitRecordPath } = require('./preview-exit-record');
 const {
   findOtherPreviewInstances,
-  isProcessAlive: isPreviewProcessAlive,
+  isProcessAlive,
   stoppingMarkerPathFor,
 } = require('./preview-isolation');
 
@@ -382,15 +382,6 @@ function stopFilePathFor(worktreeDir, port) {
  *  it (see the comment at the wait loop). */
 const STOP_GRACE_MS = 45000;
 
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function forceKill(pid) {
   try {
     if (process.platform === 'win32') {
@@ -497,13 +488,13 @@ async function waitForOtherPreviews(worktreeDir) {
   }
   for (const instance of otherPreviews) {
     console.log(`[preview] Waiting for the preview on port ${instance.port} (PID ${instance.pid}) to finish shutting down...`);
-    // The same liveness test findOtherPreviewInstances used, so a pid it counted
-    // as alive (EPERM included) is not read as gone on the first poll.
+    // The same liveness test findOtherPreviewInstances used, so the wait and the
+    // scan never disagree about a pid.
     const deadline = Date.now() + STOP_GRACE_MS;
-    while (Date.now() < deadline && isPreviewProcessAlive(instance.pid)) {
+    while (Date.now() < deadline && isProcessAlive(instance.pid)) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    if (isPreviewProcessAlive(instance.pid)) {
+    if (isProcessAlive(instance.pid)) {
       throw new Error(
         `The preview on port ${instance.port} (PID ${instance.pid}) is still shutting down after ${STOP_GRACE_MS / 1000}s. `
         + `Try again, or end it with: node scripts/worktree-preview.js --stop --port=${instance.port}`
