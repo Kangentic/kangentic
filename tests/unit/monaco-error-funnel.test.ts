@@ -179,6 +179,24 @@ describe('the lineNumber error is reported as handled, with context, and not ret
     expect(defaultHandler).not.toHaveBeenCalled();
   });
 
+  it('records a snapshot reader that throws a non-Error value, and tags the collapse state unknown', () => {
+    register(() => {
+      // A non-Error throw is the case under test.
+      throw 'editor already disposed';
+    });
+    const { handler, defaultHandler } = buildFunnel();
+
+    handler(new Error(LINE_NUMBER_MESSAGE));
+
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    const [, captureContext] = mocks.captureException.mock.calls[0];
+    expect(captureContext.contexts.diff_viewer_1).toEqual({ snapshot_error: 'editor already disposed' });
+    // A viewer that could not be read says nothing about whether collapse is on.
+    expect(captureContext.tags.hide_unchanged_regions).toBe('unknown');
+    expect(captureContext.tags.diff_viewers_live).toBe('1');
+    expect(defaultHandler).not.toHaveBeenCalled();
+  });
+
   it('sends a lineNumber error raised while reporting to the default instead of recursing', () => {
     const { handler, defaultHandler } = buildFunnel();
     const nestedError = new Error(LINE_NUMBER_MESSAGE);
@@ -385,6 +403,8 @@ describe('every other error keeps its existing path', () => {
     // exists after monaco's default has rethrown it, and must not be matched.
     expect(isMonacoLineNumberError(new Error(`${LINE_NUMBER_MESSAGE}\n\n    at x (y.js:1:1)`))).toBe(false);
     expect(isMonacoLineNumberError(LINE_NUMBER_MESSAGE)).toBe(false);
+    // Only a real Error counts: a thrown plain object with the same message is not monaco's BugIndicatingError.
+    expect(isMonacoLineNumberError({ message: LINE_NUMBER_MESSAGE })).toBe(false);
     expect(isMonacoLineNumberError(new Error(LINE_NUMBER_MESSAGE))).toBe(true);
   });
 
