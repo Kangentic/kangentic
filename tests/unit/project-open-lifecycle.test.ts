@@ -140,6 +140,8 @@ vi.mock('../../src/main/config/apply-runtime-config', () => ({
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   ensureGitignore: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => {}),
+  leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => true, onReport: () => {} })),
 }));
 
 vi.mock('../../src/main/ipc/helpers/project-entry-search', () => ({

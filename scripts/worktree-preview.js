@@ -61,6 +61,25 @@ function findRootProject(worktreeDir) {
 // node_modules junction / symlink
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether the worktree's package-lock.json declares a different dependency tree
+ * than the root's. A branch that adds, removes or bumps a dependency needs its
+ * OWN install: previewing it against the root's junctioned node_modules runs
+ * the root's packages, which either fails to resolve the new one (a Vite
+ * "Failed to resolve import") or, worse, quietly runs a code path whose native
+ * module is missing. Unreadable lockfiles count as "same", keeping the old
+ * junction behavior.
+ */
+function lockfilesDiffer(worktreeDir, rootDir) {
+  try {
+    const worktreeLock = fs.readFileSync(path.join(worktreeDir, 'package-lock.json'), 'utf8');
+    const rootLock = fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8');
+    return worktreeLock.replace(/\r\n/g, '\n') !== rootLock.replace(/\r\n/g, '\n');
+  } catch {
+    return false;
+  }
+}
+
 function ensureNodeModulesLink(worktreeDir, rootDir) {
   const rootModules = path.join(rootDir, 'node_modules');
   const wtModules = path.join(worktreeDir, 'node_modules');
@@ -71,6 +90,8 @@ function ensureNodeModulesLink(worktreeDir, rootDir) {
     );
   }
 
+  const ownDependencies = lockfilesDiffer(worktreeDir, rootDir);
+
   // Check if the link already exists and points to the right place
   try {
     const stat = fs.lstatSync(wtModules);
@@ -80,12 +101,19 @@ function ensureNodeModulesLink(worktreeDir, rootDir) {
       const target = fs.realpathSync(wtModules);
       const rootReal = fs.realpathSync(rootModules);
       if (target === rootReal) {
+        if (ownDependencies) warnJunctionedAgainstOwnLockfile(worktreeDir);
         console.log('[preview] node_modules junction already correct');
         return;
       }
       // Points elsewhere -- remove and recreate
       console.log('[preview] node_modules junction points elsewhere, recreating...');
       fs.rmSync(wtModules, { recursive: true, force: true });
+    } else if (ownDependencies) {
+      // A real install for a branch whose dependencies differ from the root's
+      // is exactly what this preview needs. Deleting it (the old behavior)
+      // previewed the branch against the root's packages.
+      console.log("[preview] Keeping this worktree's own node_modules: its package-lock.json differs from the root's.");
+      return;
     } else {
       // Real directory (from a previous npm install) -- remove it
       console.log('[preview] Removing existing node_modules directory...');
@@ -96,10 +124,21 @@ function ensureNodeModulesLink(worktreeDir, rootDir) {
     // Doesn't exist yet -- will create below
   }
 
+  if (ownDependencies) warnJunctionedAgainstOwnLockfile(worktreeDir);
+
   // Create the junction/symlink
   const linkType = process.platform === 'win32' ? 'junction' : 'dir';
   fs.symlinkSync(rootModules, wtModules, linkType);
   console.log(`[preview] Created ${linkType}: ${wtModules} -> ${rootModules}`);
+}
+
+function warnJunctionedAgainstOwnLockfile(worktreeDir) {
+  console.warn(
+    "[preview] WARNING: this worktree's package-lock.json differs from the root's, but node_modules is "
+    + "the root's junction, so the preview runs the ROOT's packages. Replace the junction with a real "
+    + `install (remove the junction, then "npm install" in ${worktreeDir}) and relaunch; the preview `
+    + 'keeps a real install when the lockfiles differ.',
+  );
 }
 
 function isJunction(p) {
@@ -674,5 +713,7 @@ if (require.main === module) {
 // quoting of --env: a quoting bug here is silent (the preview launches, the
 // variable is simply wrong or missing), so it needs a mechanical guard.
 // buildAppleScriptCommand is exported for the same reason (see its own
-// comment above openTerminalMac).
-module.exports = { buildCommand, envPrefix, parseEnvArgs, buildAppleScriptCommand };
+// comment above openTerminalMac). ensureNodeModulesLink is exported for
+// tests/unit/worktree-preview-node-modules.test.ts, which pins that a branch
+// with its own dependencies keeps its own install.
+module.exports = { buildCommand, envPrefix, parseEnvArgs, buildAppleScriptCommand, ensureNodeModulesLink };

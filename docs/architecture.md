@@ -497,6 +497,12 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
 | `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
 
+### Leftover processes (2 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `leftoverProcesses:report` | push | What a burst of terminal transitions stopped, could not stop, and left running (`LeftoverProcessReport`), one report per burst so a bulk delete is one toast. Main window only. Never sent when nothing was left running. See `src/main/ipc/helpers/leftover-process-reports.ts` |
+| `leftoverProcesses:stop` | invoke | Stop one reported process, with everything under it, by the id its report minted (never a pid). Resolves `'stopped'`, `'ended'` or `'failed'`. Not project-scoped: the id carries its own identity |
+
 ### Host memory pressure (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -772,7 +778,6 @@ Shell-specific adaptations:
 | Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
-| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills mature PTYs immediately) |
 | PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host process are gone. The host exits itself once every exit callback has run there, within the drain's deadline less 200 ms, so node-pty's native exit callback is dispatched while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (Sentry DESKTOP-C; `src/main/pty/shutdown/exit-callback-drain.ts`) |
 | Pty host request timeout | 15 s (an exec: its own timeout plus 5 s) | A request the host never answers rejects; an exec then runs locally |
 | Pty host heartbeat | 5 s beat, 11 s unresponsive | VS Code's intervals; an unresponsive host is logged |

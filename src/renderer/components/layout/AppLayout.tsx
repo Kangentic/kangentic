@@ -19,6 +19,7 @@ import { WALKTHROUGH_STEPS, resolveNextStep } from '../onboarding/walkthrough-st
 import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation';
 import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
+import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
 import { AnnouncementBanner } from '../announcements/AnnouncementBanner';
@@ -568,6 +569,7 @@ export function AppLayout() {
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
+      <LeftoverProcessesDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />
       {/* History first, then the announcement dialog it can open on top. The

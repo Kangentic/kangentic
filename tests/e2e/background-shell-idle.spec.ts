@@ -112,6 +112,10 @@ import {
   cleanupTempProject,
   getTestDataDir,
   closeApp,
+  getTaskIdByTitle,
+  getSwimlaneIds,
+  moveTaskIpc,
+  waitForTaskScrollback,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -176,82 +180,69 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: string): Promise<void> {
-  const card = page.locator('[data-testid="swimlane"]').locator(`text=${taskTitle}`).first();
-  await card.waitFor({ state: 'visible', timeout: 5000 });
-
-  const target = page.locator(`[data-swimlane-name="${targetColumn}"]`);
-  await target.waitFor({ state: 'visible', timeout: 5000 });
-
-  await page.evaluate((col) => {
-    const el = document.querySelector(`[data-swimlane-name="${col}"]`);
-    if (el) el.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
-  }, targetColumn);
-  await page.waitForTimeout(100);
-
-  const cardBox = await card.boundingBox();
-  const targetBox = await target.boundingBox();
-  if (!cardBox || !targetBox) throw new Error('Could not get bounding boxes');
-
-  const startX = cardBox.x + cardBox.width / 2;
-  const startY = cardBox.y + cardBox.height / 2;
-  const endX = targetBox.x + targetBox.width / 2;
-  const endY = targetBox.y + 80;
-
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  await page.mouse.move(startX + 10, startY, { steps: 3 });
-  await page.waitForTimeout(100);
-  await page.mouse.move(endX, endY, { steps: 15 });
-  await page.waitForTimeout(200);
-  await page.mouse.up();
-  await page.waitForTimeout(500);
-}
-
-async function waitForScrollbackMarker(page: Page, marker: string, timeoutMs = 15000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const scrollback = await page.evaluate(async () => {
-      const sessions = await window.electronAPI.sessions.list();
-      const texts: string[] = [];
-      for (const session of sessions) {
-        texts.push(await window.electronAPI.sessions.getScrollback(session.id));
-      }
-      return texts.join('\n');
-    });
-    if (scrollback.includes(marker)) return;
-    await page.waitForTimeout(250);
-  }
-  throw new Error(`Timed out waiting for scrollback containing: ${marker}`);
-}
-
-async function sessionDirForTask(
+/**
+ * Spawn the task's session by moving it into Planning over IPC, then wait for
+ * the mock's startup marker in THAT task's own scrollback.
+ *
+ * The move goes through `tasks.move` rather than a card drag: these tests are
+ * about the activity engine, not about drag-and-drop, and a drag chains fixed
+ * sleeps and depends on layout. The marker wait is scoped to the one task's
+ * session so another session's scrollback in the same app cannot satisfy it.
+ * Returns the session id and its `.kangentic/sessions/<id>` directory (the
+ * mock writes events.jsonl there, and the sessions.list() id is the directory
+ * name).
+ */
+async function startTaskInPlanning(
   page: Page,
   tmpDir: string,
   taskTitle: string,
-  timeoutMs = 10000,
-): Promise<string> {
-  const start = Date.now();
-  let lastError = '';
-  while (Date.now() - start < timeoutMs) {
-    const result = await page.evaluate(async (title) => {
-      const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((t) => t.title === title);
-      if (!task) return { error: 'task missing' };
-      const sessions = await window.electronAPI.sessions.list();
-      const taskSessions = sessions.filter((s) => s.taskId === task.id);
-      if (taskSessions.length === 0) {
-        return { error: `0 sessions for task ${task.id} (total ${sessions.length})` };
-      }
-      return { sessionId: taskSessions[taskSessions.length - 1].id };
-    }, taskTitle);
-    if ('sessionId' in result && result.sessionId) {
-      return path.join(tmpDir, '.kangentic', 'sessions', result.sessionId);
-    }
-    lastError = (result as { error: string }).error;
-    await page.waitForTimeout(200);
+): Promise<{ sessionId: string; sessionDir: string }> {
+  const taskId = await getTaskIdByTitle(page, taskTitle);
+  const { planning } = await getSwimlaneIds(page);
+  await moveTaskIpc(page, taskId, planning);
+  const { sessionId } = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
+  return { sessionId, sessionDir: path.join(tmpDir, '.kangentic', 'sessions', sessionId) };
+}
+
+/**
+ * Activity state of ONE session. getActivity() returns every live session's
+ * state keyed by session id, so reading Object.values() would let a sibling
+ * session's state (a previous test's still-alive session in the same app)
+ * satisfy an assertion about the session under test.
+ */
+async function readSessionActivity(page: Page, sessionId: string): Promise<string | undefined> {
+  const activityBySession = await page.evaluate(() => window.electronAPI.sessions.getActivity());
+  return activityBySession[sessionId];
+}
+
+/**
+ * How long the positive control watches a session that must STAY 'thinking'.
+ * This is a deliberate observation window, not a sleep: the test asserts a
+ * NEGATIVE over time (no late flip to idle from a stale-thinking or watchdog
+ * path), and non-occurrence cannot be polled for, so there is no condition to
+ * wait on. It must outlast the engine's debounce and fs.watch latency, and it
+ * must stay well under the mock's detached-child lifetime
+ * (MOCK_CLAUDE_BG_SHELL_LIFETIME_MS, default 10s) so the child is still alive
+ * when the liveness probe runs afterwards.
+ */
+const THINKING_OBSERVATION_WINDOW_MS = 5000;
+
+/** Cadence of the activity samples taken inside the observation window. A
+ *  single read at the end of the window would miss a transient flip to idle. */
+const THINKING_SAMPLE_INTERVAL_MS = 250;
+
+/** Sample the session's activity across the whole window and fail on the first
+ *  sample that is not 'thinking'. */
+async function expectActivityStaysThinking(page: Page, sessionId: string): Promise<void> {
+  const windowEndsAt = Date.now() + THINKING_OBSERVATION_WINDOW_MS;
+  while (Date.now() < windowEndsAt) {
+    expect(
+      await readSessionActivity(page, sessionId),
+      'Session left thinking while the detached bg shell was alive',
+    ).toBe('thinking');
+    // Intentional fixed wait: the sampling cadence of the negative window above.
+    await page.waitForTimeout(THINKING_SAMPLE_INTERVAL_MS);
   }
-  throw new Error(`No session for task "${taskTitle}" after ${timeoutMs}ms (${lastError})`);
 }
 
 async function readBgShellPid(sessionDir: string, timeoutMs = 10000): Promise<number> {
@@ -322,10 +313,7 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
     const title = `BG Shell Fixed ${runId}`;
     await createTask(page, title, 'Backgrounded Bash with detached child');
 
-    await dragTaskToColumn(page, title, 'Planning');
-    await waitForScrollbackMarker(page, 'MOCK_CLAUDE_SESSION:');
-
-    const sessionDir = await sessionDirForTask(page, tmpDir, title);
+    const { sessionId, sessionDir } = await startTaskInPlanning(page, tmpDir, title);
     const pid = await readBgShellPid(sessionDir);
 
     // Wait for the engine to ingest the mock's event cycle
@@ -336,28 +324,16 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
     // with a healthy timeout so fs.watch debounce + IPC round-trip have
     // time.
     await expect
-      .poll(
-        async () => {
-          const activity = await page.evaluate(() =>
-            window.electronAPI.sessions.getActivity(),
-          );
-          return Object.values(activity as Record<string, string>);
-        },
-        {
-          timeout: 10_000,
-          message: 'Expected activity to settle on thinking while bg shell is alive',
-        },
-      )
-      .toContain('thinking');
+      .poll(async () => readSessionActivity(page, sessionId), {
+        timeout: 10_000,
+        message: 'Expected activity to settle on thinking while bg shell is alive',
+      })
+      .toBe('thinking');
 
     // Stay on thinking for an observation window so any latent
     // stale-thinking / watchdog path that might re-flip to idle has
-    // time to do so. 5s is comfortably longer than any debounce.
-    await page.waitForTimeout(5000);
-    const latent = await page.evaluate(() => window.electronAPI.sessions.getActivity());
-    const latentStates = Object.values(latent as Record<string, string>);
-    expect(latentStates).toContain('thinking');
-    expect(latentStates).not.toContain('idle');
+    // time to do so (see THINKING_OBSERVATION_WINDOW_MS).
+    await expectActivityStaysThinking(page, sessionId);
 
     // Prove the child is ACTUALLY alive at the moment we observe the
     // activity state. Without this, a green test could be a false
@@ -392,25 +368,17 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
     const title = `BG Shell Release ${runId}`;
     await createTask(page, title, 'Backgrounded Bash followed by KillBash');
 
-    await dragTaskToColumn(page, title, 'Planning');
-    await waitForScrollbackMarker(page, 'MOCK_CLAUDE_SESSION:');
-
-    const sessionDir = await sessionDirForTask(page, tmpDir, title);
+    const { sessionId, sessionDir } = await startTaskInPlanning(page, tmpDir, title);
     const eventsPath = path.join(sessionDir, 'events.jsonl');
 
     // First poll: while the mock's bg_shell_start is live, activity
     // should be thinking.
     await expect
-      .poll(
-        async () => {
-          const activity = await page.evaluate(() =>
-            window.electronAPI.sessions.getActivity(),
-          );
-          return Object.values(activity as Record<string, string>);
-        },
-        { timeout: 10_000, message: 'Expected activity to settle on thinking pre-kill' },
-      )
-      .toContain('thinking');
+      .poll(async () => readSessionActivity(page, sessionId), {
+        timeout: 10_000,
+        message: 'Expected activity to settle on thinking pre-kill',
+      })
+      .toBe('thinking');
 
     // Append a background_shell_end (as if the agent called KillBash)
     // directly to events.jsonl -- the file watcher will pick it up
@@ -421,19 +389,11 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
     );
 
     await expect
-      .poll(
-        async () => {
-          const activity = await page.evaluate(() =>
-            window.electronAPI.sessions.getActivity(),
-          );
-          return Object.values(activity as Record<string, string>);
-        },
-        {
-          timeout: 5000,
-          message: 'Expected deferred idle to emit after background_shell_end',
-        },
-      )
-      .toContain('idle');
+      .poll(async () => readSessionActivity(page, sessionId), {
+        timeout: 5000,
+        message: 'Expected deferred idle to emit after background_shell_end',
+      })
+      .toBe('idle');
   });
 });
 
@@ -476,10 +436,7 @@ test.describe('Background-shell idle bug -- negative control (no detached child)
     const title = `Well-formed Cycle ${runId}`;
     await createTask(page, title, 'Standard tool cycle ends in idle');
 
-    await dragTaskToColumn(page, title, 'Planning');
-    await waitForScrollbackMarker(page, 'MOCK_CLAUDE_SESSION:');
-
-    const sessionDir = await sessionDirForTask(page, tmpDir, title);
+    const { sessionId, sessionDir } = await startTaskInPlanning(page, tmpDir, title);
     const eventsPath = path.join(sessionDir, 'events.jsonl');
     fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
 
@@ -497,14 +454,11 @@ test.describe('Background-shell idle bug -- negative control (no detached child)
     // idle. The fix should not regress this -- activity must still
     // reach 'idle' for a well-formed cycle with no surviving child.
     await expect
-      .poll(
-        async () => {
-          const activity = await page.evaluate(() => window.electronAPI.sessions.getActivity());
-          return Object.values(activity as Record<string, string>);
-        },
-        { timeout: 5000, message: 'Expected session to reach idle within 5 seconds' },
-      )
-      .toContain('idle');
+      .poll(async () => readSessionActivity(page, sessionId), {
+        timeout: 5000,
+        message: 'Expected session to reach idle within 5 seconds',
+      })
+      .toBe('idle');
 
     const artifact = copyArtifact(eventsPath, 'negative-control-events.jsonl');
     test.info().attachments.push({

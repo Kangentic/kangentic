@@ -18,7 +18,8 @@
  *
  * Either way node-pty waited out its 5 s timeout and then killed the shell's
  * pid alone. This returns that same list at once, with no child process.
- * `reapSessionLeftovers` still sweeps a session's leftover processes.
+ * A terminal transition's `reapTaskLeftovers` still kills what the task's
+ * agents left running, by their `KANGENTIC_TASK_ID` tag.
  */
 import { WindowsPtyAgent } from 'node-pty/lib/windowsPtyAgent';
 

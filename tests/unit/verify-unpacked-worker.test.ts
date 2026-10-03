@@ -405,10 +405,10 @@ describe('pty host gate', () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[afterPack\] pty host: node-pty spawned a process and read its output/));
   }, 60_000);
 
-  it('the host imports node-pty from outside the bundle, and all of node-pty and the host bundle are unpacked', () => {
+  it('the host imports node-pty and koffi from outside the bundle, and both, plus the host bundle, are unpacked', () => {
     const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
     const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
-    expect(PTY_HOST_EXTERNALS).toEqual(['node-pty']);
+    expect(PTY_HOST_EXTERNALS).toEqual(['node-pty', 'koffi']);
     for (const name of PTY_HOST_EXTERNALS) expect(externals).toContain(name);
 
     const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
@@ -417,5 +417,9 @@ describe('pty host gate', () => {
     // The whole package, not only prebuilds/: the host resolves node-pty's JS
     // from the unpacked tree, and its ConPTY conout worker loads from there.
     expect(asarUnpack).toContain('"node_modules/node-pty/**"');
+    // koffi finds its binary in the per-platform @koromix/koffi-* package by a
+    // path relative to its own, so both trees unpack.
+    expect(asarUnpack).toContain('"node_modules/koffi/**"');
+    expect(asarUnpack).toContain('"node_modules/@koromix/koffi-*/**"');
   });
 });

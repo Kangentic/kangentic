@@ -36,6 +36,31 @@ interface ToastStore {
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const initialToasts: Toast[] = import.meta.hot?.data?.toasts ?? [];
 
+/**
+ * Hold the stack to `maxCount`, dropping the oldest toasts that close on their
+ * own first. A toast that stays until closed (`duration <= 0`) is waiting for
+ * the user, and its action can be the only way to what it reports (the
+ * leftover-process Review list), so routine toasts never push it out. Only
+ * when the waiting toasts alone overflow the limit do the oldest of them go.
+ * The newest toast always shows.
+ */
+export function withinToastLimit(toasts: Toast[], maxCount: number): Toast[] {
+  let excess = toasts.length - Math.max(maxCount, 1);
+  if (excess <= 0) return toasts;
+  const dropped = new Set<string>();
+  const olderToasts = toasts.slice(0, -1);
+  for (const closesOnItsOwn of [true, false]) {
+    for (const toast of olderToasts) {
+      if (excess === 0) break;
+      if ((toast.duration > 0) === closesOnItsOwn) {
+        dropped.add(toast.id);
+        excess -= 1;
+      }
+    }
+  }
+  return toasts.filter((toast) => !dropped.has(toast.id));
+}
+
 export const useToastStore = create<ToastStore>((set) => ({
   toasts: initialToasts,
 
@@ -52,7 +77,7 @@ export const useToastStore = create<ToastStore>((set) => ({
       action: input.action,
     };
     set((s) => ({
-      toasts: [...s.toasts, toast].slice(-maxCount),
+      toasts: withinToastLimit([...s.toasts, toast], maxCount),
     }));
     return id;
   },

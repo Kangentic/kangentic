@@ -28,6 +28,15 @@ import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-en
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary, runHostExec } from './host-exec';
 import { HostCliProcesses } from './host-cli-processes';
+import { createTaggedProcessReader } from '../process-tag/reader-factory';
+import {
+  TaggedReaper,
+  type StopProcessOutcome,
+  type StopProcessRequest,
+  type TaggedReapRequest,
+  type TaggedReapResult,
+} from '../process-tag/tagged-reap';
+import type { TaggedProcessReader } from '../process-tag/process-scan';
 import {
   toPtyHostError,
   type HostExecRequest,
@@ -71,6 +80,8 @@ export interface PtyHostCoreDeps {
   spawnPty?: typeof nodePty.spawn;
   /** Starts the agent CLI runs; `child_process.spawn` unless a test swaps it. */
   spawnChild?: ConstructorParameters<typeof HostCliProcesses>[1];
+  /** The task-tag reader; the platform's own unless a test swaps it. */
+  createTaggedProcessReader?: () => TaggedProcessReader | null;
 }
 
 interface HostSession {
@@ -117,6 +128,8 @@ export class PtyHostCore {
   /** The background-shell watcher's process table source, created on first
    *  use. On Windows it keeps one PowerShell child for the host's life. */
   private processTreeProbe: ProcessTreeProbe | null = null;
+  /** Kills what a finished task left running, created on first use. */
+  private taggedReaper: TaggedReaper | null = null;
   /** Raw PTYs (`spawnRaw`), by ptyId. `killed` guards a second kill, which
    *  corrupts a ConPTY's heap on Windows. */
   private readonly rawPtys = new Map<number, { pty: nodePty.IPty; killed: boolean }>();
@@ -300,6 +313,10 @@ export class PtyHostCore {
       case 'listProcesses':
         this.processTreeProbe ??= createProcessTreeProbe();
         return this.processTreeProbe.listAllProcesses() as Promise<PtyHostRequestMap[M]['result']>;
+      case 'reapTaggedProcesses':
+        return this.reapTaggedProcesses(params as TaggedReapRequest) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'stopReportedProcess':
+        return this.stopReportedProcess(params as StopProcessRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
         return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'];
       default: {
@@ -413,6 +430,53 @@ export class PtyHostCore {
         throw new Error(`unknown pty host command: ${JSON.stringify(unknownCommand)}`);
       }
     }
+  }
+
+  /**
+   * Kill what the given tasks left running (`process-tag/tagged-reap.ts`).
+   * The PTY roots protected from the kill are read from this host's own table
+   * on every scan, so a young PTY whose kill main deferred for its exit grace,
+   * and a PTY spawned after the request, are both covered.
+   */
+  reapTaggedProcesses(request: TaggedReapRequest): Promise<TaggedReapResult> {
+    const reaper = this.ensureTaggedReaper();
+    if (!reaper) return Promise.resolve({ killedPids: [], unreadableCount: 0, failureReason: null, entries: [] });
+    return reaper.request(request);
+  }
+
+  /**
+   * Stop one process a reap reported, with everything under it, after the
+   * user asked for it by name. Kangentic's tree and every PTY this host holds
+   * stay out of reach, as in a reap.
+   */
+  stopReportedProcess(request: StopProcessRequest): Promise<StopProcessOutcome> {
+    const reaper = this.ensureTaggedReaper();
+    if (!reaper) return Promise.resolve('failed');
+    return reaper.stop(request);
+  }
+
+  private ensureTaggedReaper(): TaggedReaper | null {
+    if (!this.taggedReaper) {
+      const reader = (this.deps.createTaggedProcessReader ?? createTaggedProcessReader)();
+      if (!reader) return null;
+      this.taggedReaper = new TaggedReaper({
+        reader,
+        liveRootPids: () => this.liveRootPids(),
+      });
+    }
+    return this.taggedReaper;
+  }
+
+  /** Every PTY this host still holds, session and raw, by root pid. */
+  private liveRootPids(): number[] {
+    const pids: number[] = [];
+    for (const entry of this.ptys.values()) {
+      if (!entry.exited && entry.pty.pid > 0) pids.push(entry.pty.pid);
+    }
+    for (const raw of this.rawPtys.values()) {
+      if (raw.pty.pid > 0) pids.push(raw.pty.pid);
+    }
+    return pids;
   }
 
   /** End the process-tree probe's persistent PowerShell child, if one runs. */

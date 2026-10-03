@@ -30,8 +30,11 @@ Any step in the release path that exists to guarantee something must fail when i
 - **Assert the positive condition, not the absence of a known-bad one.** `NODE_ENV !== 'production'`
   catches "nobody set it", which is the failure that actually ships; `NODE_ENV === 'development'` is
   unreachable wherever the value is pinned upstream, and passes while doing nothing.
-- **An attempted-and-failed operation is fatal when it was intended.** If a token is present, an
-  upload was meant to happen: throw rather than log. Reserve non-fatal warnings for genuinely
+- **An attempted-and-failed operation is fatal when it was intended.** In a build authorized to
+  upload (CI, or a local `KANGENTIC_SENTRY_UPLOAD=1`), a present token means an upload was meant
+  to happen: throw rather than log. A local build that merely holds a token (a developer's
+  persisted one) is not intent; it announces the skip and why, which is the "state the branch
+  taken" bullet above, not a warning past a failure. Reserve non-fatal warnings for genuinely
   optional work.
 - **A job named in `needs:` is also named in `if:` whenever that `if:` contains a status-check
   function.** GitHub implies `success()` on a job whose `if:` names none, and that implied gate is
@@ -77,7 +80,9 @@ Any step in the release path that exists to guarantee something must fail when i
 - **Test (mechanical, CI):** `tests/unit/upload-native-debug-files.test.ts` pins the build-side
   (esbuild/main+preload) half: the skip line is printed, a present-token upload failure throws, the
   `NODE_ENV` guard rejects unset and non-production values, and `resolveSentryReleaseName` throws
-  on a missing or empty `version`.
+  on a missing or empty `version`. It also pins `isSentryUploadAuthorized`: a token uploads only
+  in CI or with `KANGENTIC_SENTRY_UPLOAD=1`, and a local build that holds a token says it skipped
+  and why, rather than uploading an unreleased tree.
 - **Test (mechanical, CI):** `tests/unit/vite-config-sentry-guards.test.ts` pins the mirrored
   renderer half in `vite.config.mts`: `resolveSentryVitePlugins` throws unless `NODE_ENV` is
   `production`, and `resolveSentryReleaseName` throws on a missing or empty `version` - both

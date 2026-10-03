@@ -15,6 +15,7 @@ import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd } from '../spawn/pty-spawn';
+import { addTaskProcessTag, parseWslShellSpec } from '../process-tag/task-process-tag';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
@@ -238,9 +239,19 @@ export async function performSpawn(
   // inline in the agent process (OpenCode plugins) need the path on
   // process.env. Setting it universally is harmless: hook-bridge-based
   // adapters ignore the env var.
-  const spawnEnv: Record<string, string> = { ...(input.env ?? {}) };
+  let spawnEnv: Record<string, string> = { ...(input.env ?? {}) };
   if (input.eventsOutputPath) {
     spawnEnv.KANGENTIC_EVENTS_PATH = input.eventsOutputPath;
+  }
+  // Tag every process this task's agent starts, so a terminal transition can
+  // kill what it left running however it detached (see process-tag/). A
+  // Command Terminal is the user's own shell, not task work, so it is never
+  // tagged.
+  if (!input.transient) {
+    spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
+      wslShell: parseWslShellSpec(shell) !== null,
+      inheritedWslEnv: process.env.WSLENV,
+    });
   }
   const cleanEnv = buildSpawnEnv(spawnEnv);
 
@@ -501,7 +512,7 @@ export async function performSpawn(
     //     Suspend).
     //   - kill(sessionId, true) sets session.intentionalExit before the
     //     force-kill for hard-reset teardown that does NOT suspend (move-to-To-Do
-    //     reset, task delete, move-to-Backlog via cleanupTaskSession).
+    //     reset, task delete, backlog demote via cleanupTaskSession).
     // The flag rides the 'exit' event so App.tsx can suppress the false crash
     // notification without depending on cross-channel store-status ordering.
     const intentional = session.status === 'suspended' || session.intentionalExit === true;

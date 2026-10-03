@@ -13,7 +13,6 @@
 import { test, expect } from '@playwright/test';
 import {
   launchApp,
-  waitForBoard,
   createProject,
   createTask,
   createTempProject,
@@ -66,17 +65,25 @@ function writeTestConfig(dataDir: string, maxConcurrent: number): void {
 
 /**
  * Wait for a specific number of running sessions via IPC.
+ *
+ * expect.poll, not page.waitForFunction: an async predicate handed to
+ * waitForFunction resolves on its first evaluation whatever the promise
+ * resolves to, so that version never waited.
  */
 async function waitForRunningCount(page: Page, count: number, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(
-    async (expected) => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      const running = sessions.filter((s: any) => s.status === 'running');
-      return running.length === expected;
-    },
-    count,
-    { timeout: timeoutMs },
-  );
+  await expect
+    .poll(
+      async () => page.evaluate(async () => {
+        const sessions = await window.electronAPI.sessions.list();
+        return sessions.filter((session) => session.status === 'running').length;
+      }),
+      {
+        timeout: timeoutMs,
+        intervals: [100, 250, 500],
+        message: `Expected ${count} running sessions`,
+      },
+    )
+    .toBe(count);
 }
 
 /**
@@ -134,7 +141,7 @@ test.describe('Claude Agent -- Multiple Simultaneous Spawns', () => {
     // Get the Planning swimlane ID
     const planningSwimlaneId = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
       return planning?.id;
     });
     expect(planningSwimlaneId).toBeTruthy();
@@ -143,7 +150,7 @@ test.describe('Claude Agent -- Multiple Simultaneous Spawns', () => {
     for (const title of titles) {
       const taskId = await page.evaluate(async (t) => {
         const tasks = await window.electronAPI.tasks.list();
-        const task = tasks.find((tk: any) => tk.title === t);
+        const task = tasks.find((candidateTask) => candidateTask.title === t);
         return task?.id;
       }, title);
       expect(taskId).toBeTruthy();
@@ -164,18 +171,18 @@ test.describe('Claude Agent -- Multiple Simultaneous Spawns', () => {
     const sessions = await page.evaluate(async () => {
       const sessions = await window.electronAPI.sessions.list();
       return sessions
-        .filter((s: any) => s.status === 'running')
-        .map((s: any) => ({ id: s.id, taskId: s.taskId }));
+        .filter((session) => session.status === 'running')
+        .map((session) => ({ id: session.id, taskId: session.taskId }));
     });
 
     expect(sessions.length).toBe(3);
 
     // All session IDs should be unique
-    const sessionIds = new Set(sessions.map((s: any) => s.id));
+    const sessionIds = new Set(sessions.map((runningSession) => runningSession.id));
     expect(sessionIds.size).toBe(3);
 
     // All task IDs should be unique
-    const taskIds = new Set(sessions.map((s: any) => s.taskId));
+    const taskIds = new Set(sessions.map((runningSession) => runningSession.taskId));
     expect(taskIds.size).toBe(3);
   });
 });
@@ -217,7 +224,7 @@ test.describe('Claude Agent -- Session Queue', () => {
     // Get the Planning swimlane ID
     const planningSwimlaneId = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
       return planning?.id;
     });
     expect(planningSwimlaneId).toBeTruthy();
@@ -227,7 +234,7 @@ test.describe('Claude Agent -- Session Queue', () => {
     for (const title of titles) {
       const taskId = await page.evaluate(async (t) => {
         const tasks = await window.electronAPI.tasks.list();
-        const task = tasks.find((tk: any) => tk.title === t);
+        const task = tasks.find((candidateTask) => candidateTask.title === t);
         return task?.id;
       }, title);
       expect(taskId).toBeTruthy();

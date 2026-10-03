@@ -156,8 +156,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   // The Done branch snapshots the session's process tree before suspending and
   // reaps it before the worktree delete. Inert here; covered by
   // session-tree-reap.test.ts and bg-shell-watcher.test.ts.
-  captureSessionLeftovers: vi.fn(() => null),
-  reapSessionLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => {}),
 }));
 
 // ---------------------------------------------------------------------------

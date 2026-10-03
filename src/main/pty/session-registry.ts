@@ -103,7 +103,7 @@ export interface ManagedSession {
    *  normal-spawn path; left undefined for placeholder/queued sessions. */
   ptyDisposables?: PtyDisposable[];
   /** Set by kill(sessionId, true) before a deliberate force-kill that does NOT
-   *  go through suspend() (move-to-To-Do reset, task delete, move-to-Backlog).
+   *  go through suspend() (move-to-To-Do reset, task delete, backlog demote).
    *  Read by the PTY onExit handler to tag the 'exit' event intentional so the
    *  renderer suppresses the false "Session crashed" notification. Orthogonal to
    *  status: a hard reset stays 'exited', not 'suspended'. */

@@ -24,7 +24,7 @@ interface SessionPathState {
  * Call sites use one of three named teardown modes; each method fixes
  * the ordering and which files are preserved versus deleted.
  *
- *   - `detachPreservingFiles` - respawn, suspend, suspendAll.
+ *   - `detachPreservingFiles` - respawn, suspend.
  *     Null file paths so the old PTY's onExit handler cannot race-delete
  *     files that the next spawn will reuse. Files stay on disk for
  *     --resume.

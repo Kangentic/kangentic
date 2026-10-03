@@ -6,51 +6,110 @@ import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '..
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { reapCapturedTree } from '../../pty/session-tree-reap';
-import type { CapturedSessionTree } from '../../activity-engine/background-shell/process-tree';
 import type { IpcContext } from '../ipc-context';
+import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
+import { getProjectRepos } from './project-repos';
+import { withTaskLock } from '../task-lifecycle-lock';
+import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
 
 /**
- * Snapshot what a task's session currently has running under its PTY.
+ * Kill what the given tasks left running: the processes carrying their
+ * `KANGENTIC_TASK_ID` tag, which each task session's PTY is spawned with and
+ * every descendant inherits, however it detached (`nohup`, `Start-Process`,
+ * `setsid`, a launcher that already exited), and that are the task's (see
+ * `src/main/pty/process-tag/reap-plan.ts` for what is spared). Works across
+ * sessions and across an app restart, because the tag lives in the processes
+ * themselves.
  *
- * MUST be called before the session is killed or suspended. The bg-shell watcher
- * stops publishing the moment the session ends, and on POSIX the children are
- * reparented to init immediately, so after the kill there is no tree left to
- * walk. Free: it reads a snapshot the watcher already took, and deliberately
- * does not enumerate (a scan here would cost ~670ms of PowerShell startup on the
- * drag-to-Done path). See `src/main/pty/session-tree-reap.ts`.
+ * Call it on a TERMINAL transition only (Done, To Do, Backlog, delete), AFTER
+ * every session of the task has exited: the reap force-kills, and a young
+ * agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`). The
+ * pty host protects any PTY it still holds as a second line. Call it BEFORE a
+ * worktree removal: a live process holding the directory as its cwd is what
+ * makes the removal fail on Windows.
+ *
+ * Only processes working inside the task's project or worktree are reaped, so
+ * pass the project path and each task's worktree: a shared daemon the agent
+ * happened to start first (it moves to `/` or home) and anything it started
+ * elsewhere are left alone. A process with no project path to check against
+ * is never killed.
+ *
+ * With the user's "Stop leftover processes" setting off it kills nothing.
+ * Either way the user is told what was stopped and what kept running: the
+ * result goes to the leftover-process toast (`leftover-process-reports.ts`),
+ * under each task's title, so pass `title` where the caller has it.
+ *
+ * Best-effort by contract: a teardown never fails because a reap did.
  */
-export function captureSessionLeftovers(
+export async function reapTaskLeftovers(
   context: IpcContext,
-  sessionId: string | null,
-): CapturedSessionTree | null {
-  if (!sessionId) return null;
+  projectPath: string | null | undefined,
+  tasks: ReadonlyArray<{ id: string; worktree_path: string | null; title?: string }>,
+): Promise<void> {
+  if (tasks.length === 0) return;
+  // Held for the whole reap, so a bulk delete's reaps, which the host runs in
+  // two batches a second apart, still make one toast.
+  const releaseReport = leftoverProcessReports.beginReap();
   try {
-    return context.sessionManager.getCapturedSessionTree(sessionId);
-  } catch {
-    return null;
+    const stoppingEnabled = context.configManager.load().stopLeftoverProcesses !== false;
+    const entries = await context.sessionManager.reapTaskProcesses(
+      projectPath ?? null,
+      tasks.map((task) => ({ id: task.id, worktreePath: task.worktree_path })),
+      { stop: stoppingEnabled },
+    );
+    const taskTitles = new Map<string, string>();
+    for (const task of tasks) if (task.title) taskTitles.set(task.id, task.title);
+    publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath ?? null);
+  } catch (error) {
+    console.warn(`[TASK-REAP] Leftover reap failed for ${tasks.length} task(s) (non-fatal):`, error);
+  } finally {
+    releaseReport();
   }
 }
 
 /**
- * Kill what the session left running in the worktree: the orphaned descendants
- * captured by `captureSessionLeftovers` before the kill.
- *
- * Must complete BEFORE worktree removal. A live process holding the directory as
- * its cwd is exactly what makes the removal fail on Windows, leaving a husk with
- * no git admin entry.
- *
- * Best-effort by contract: a teardown never fails because a reap did.
+ * The startup sweep's view of the setting and the toast
+ * (`sweepTerminalTaskLeftovers`): the same as a transition's reap.
  */
-export async function reapSessionLeftovers(
+export function leftoverSweepOptions(context: IpcContext, projectPath: string): LeftoverSweepOptions {
+  return {
+    stoppingEnabled: () => context.configManager.load().stopLeftoverProcesses !== false,
+    onReport: (entries, taskTitles, stoppingEnabled) => {
+      publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath);
+    },
+  };
+}
+
+/**
+ * After the user stopped a leftover process from the list, retry removing its
+ * task's worktree when the task is in Done and the worktree is still on disk.
+ * On Windows a process working in a directory blocks its removal, so a window
+ * or a server the Done move left running is what kept it; without this, the
+ * worktree waits for the next project open (`retryFailedDoneCleanups`).
+ *
+ * Best-effort and quiet: if something else still holds the directory, the
+ * removal fails as it did at Done, and the same startup retry takes it.
+ */
+export async function retryDoneWorktreeRemoval(
+  context: IpcContext,
+  projectPath: string | null,
   taskId: string,
-  captured: CapturedSessionTree | null,
-): Promise<void> {
-  if (!captured) return;
+): Promise<boolean> {
+  if (!projectPath) return false;
   try {
-    await reapCapturedTree(captured);
+    const project = context.projectRepo.list().find((candidate) => candidate.path === projectPath);
+    if (!project) return false;
+    const { tasks, swimlanes } = getProjectRepos(context, project.id);
+    const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+    if (!doneLane) return false;
+    return await withTaskLock(taskId, async () => {
+      const task = tasks.getById(taskId);
+      if (!task?.worktree_path || task.swimlane_id !== doneLane.id) return false;
+      return deleteTaskWorktree(context, task, tasks, projectPath);
+    });
   } catch (error) {
-    console.warn(`[SESSION-REAP] Leftover reap failed for task ${taskId.slice(0, 8)} (non-fatal):`, error);
+    console.warn(`[TASK-REAP] Worktree removal retry after a stop failed for ${taskId.slice(0, 8)} (non-fatal):`, error);
+    return false;
   }
 }
 
@@ -80,11 +139,13 @@ export async function notifyAdaptersWorktreeRemoved(worktreePath: string): Promi
  * Kill the PTY session and wipe session records for a task.
  * Preserves the worktree and branch so code is not lost.
  *
- * Used by TASK_MOVE -> Backlog ("shelve this task").
+ * Used by `cleanupTaskResources` (below) and by an unarchive into To Do
+ * (`resetSessionForTodoRestore` in task-archive.ts), which resets the session
+ * but keeps a worktree the Done move could not remove.
  */
 export async function cleanupTaskSession(
   context: IpcContext,
-  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null; title?: string },
   tasks: TaskRepository,
   projectId?: string | null,
   projectPath?: string | null,
@@ -95,13 +156,10 @@ export async function cleanupTaskSession(
   // Kill active PTY session and wait for process exit before proceeding.
   // The PTY process holds CWD + conpty handles on the worktree directory;
   // awaiting exit ensures those handles are released before cleanup.
-  // Taken before the kill: killing the PTY orphans its descendants, and on
-  // POSIX they are reparented to init at once, so the tree is unwalkable after.
-  const leftovers = captureSessionLeftovers(context, task.session_id);
   if (task.session_id) {
     try {
       // kill() always tags the exit intentional, so this deliberate hard
-      // reset (move-to-To-Do, move-to-Backlog, task delete) never surfaces a
+      // reset (move to To Do, backlog demote, task delete) never surfaces a
       // false "Session crashed" toast from the non-zero force-kill exit.
       context.sessionManager.kill(task.session_id);
       await context.sessionManager.awaitExit(task.session_id);
@@ -114,16 +172,18 @@ export async function cleanupTaskSession(
     }
   }
 
-  // A dev server the agent backgrounded outlives the PTY and holds the worktree
-  // directory as its cwd, which is what makes the removal below fail.
-  await reapSessionLeftovers(task.id, leftovers);
-
   // Safety net: kill any PTY session for this task that was spawned by a
   // concurrent move but not yet written to the task's session_id field.
   // Awaited: a spawn of the task still in flight is cancelled, and the PTY its
   // host may already have started holds the worktree until it exits, which
   // must come before the session directories and the worktree go.
   await context.sessionManager.removeByTaskId(task.id);
+
+  // A dev server the agent backgrounded outlives the PTY and holds the worktree
+  // directory as its cwd, which is what makes the removal in
+  // cleanupTaskResources fail. After removeByTaskId, so every session of the
+  // task has exited and none is force-killed outside its exit grace.
+  await reapTaskLeftovers(context, resolvedProjectPath, [{ ...task, title: task.title ?? tasks.getById(task.id)?.title }]);
 
   // Remove session DB records + directories from disk
   if (resolvedProjectId) {
@@ -185,11 +245,12 @@ export async function cleanupTaskSession(
 /**
  * Full cleanup: kill session, remove worktree + branch, wipe session records.
  *
- * Used by TASK_DELETE (permanent removal) and TASK_MOVE -> Backlog (full reset).
+ * Used by a move into a todo-role column (full reset), BACKLOG_DEMOTE (the task
+ * becomes a backlog item), TASK_DELETE and TASK_BULK_DELETE (permanent removal).
  */
 export async function cleanupTaskResources(
   context: IpcContext,
-  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null; title?: string },
   tasks: TaskRepository,
   projectId?: string | null,
   projectPath?: string | null,

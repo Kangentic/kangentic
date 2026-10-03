@@ -1,6 +1,7 @@
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { buildHooks } from './hook-manager';
+import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue } from '../../../pty/process-tag/task-process-tag';
 import type { PermissionMode } from '../../../../shared/types';
 
 export interface CodexCommandOptions {
@@ -29,6 +30,8 @@ export interface CodexCommandOptions {
   effort?: string;
   /** Fully-defaulted launch-option values (`AgentLaunchOptionInfo.id` -> enabled). */
   launchOptions?: Record<string, boolean>;
+  /** The task's `KANGENTIC_TASK_ID`; see `CommandOptions.taskProcessTag`. */
+  taskProcessTag?: string;
 }
 
 /**
@@ -141,6 +144,28 @@ function buildMcpConfigArgs(options: CodexCommandOptions): string[] {
   ];
 }
 
+/**
+ * Keep the task's `KANGENTIC_TASK_ID` in the shells Codex starts.
+ *
+ * Every process an agent starts must carry the tag, or a terminal transition
+ * cannot find what the task left running (src/main/pty/process-tag/). Codex
+ * passes its own environment to tool shells through `shell_environment_policy`,
+ * which by default inherits everything but a user can narrow
+ * (`inherit = "core"`, `include_only`), and that strips the tag. A `set` entry
+ * always wins over the inherit and filter steps. Measured on codex-cli 0.154.0
+ * with `codex sandbox`: under `inherit=core` the variable is gone, with this
+ * override it is back, and another `set` entry passed alongside survives, so the
+ * dotted key adds to the user's `set` table rather than replacing it.
+ *
+ * Same QUOTING CONTRACT as buildMcpConfigArgs: a task id is a uuid, free of
+ * quotes and whitespace, and Codex takes the non-TOML value as a literal string.
+ */
+function buildTaskProcessTagArgs(options: CodexCommandOptions): string[] {
+  const tag = options.taskProcessTag;
+  if (!tag || !isValidTaskTagValue(tag)) return [];
+  return ['-c', quoteArg(`shell_environment_policy.set.${TASK_PROCESS_TAG_ENV}=${tag}`, options.shell)];
+}
+
 export class CodexCommandBuilder {
   buildCodexCommand(options: CodexCommandOptions): string {
     const { shell } = options;
@@ -195,6 +220,7 @@ export class CodexCommandBuilder {
     // Kangentic's MCP server. Must precede the positional prompt, since
     // Codex's grammar is `codex [OPTIONS] [PROMPT]`.
     parts.push(...buildMcpConfigArgs(options));
+    parts.push(...buildTaskProcessTagArgs(options));
 
     // Prompt as positional argument. Deliberately skipped when resuming: the
     // resumed conversation already contains it, and re-sending would re-ask

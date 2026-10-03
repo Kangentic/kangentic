@@ -3089,6 +3089,41 @@ export interface MonitorView {
   textFilter: string;
 }
 
+/**
+ * Why a task's own process was left running when the task ended: it has an
+ * open window, it is a tmux server, or it also runs work the task did not
+ * start. See `src/main/pty/process-tag/reap-plan.ts`.
+ */
+export type LeftoverKeptReason = 'window' | 'multiplexer' | 'shared';
+
+/** One process a task left running, as the toast and the list show it. */
+export interface LeftoverProcess {
+  /** Report-scoped id the list's Stop button sends back; never a pid. */
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  pid: number;
+  /** "node (vite)": the program and, for an interpreter, its script. Never more of the command line. */
+  label: string;
+  /** `stopped` by the transition, `failed` to stop, or `kept` running. */
+  outcome: 'stopped' | 'failed' | 'kept';
+  /** Why a `kept` process was left running; null when stopping is off. */
+  reason: LeftoverKeptReason | null;
+  /** Where it worked: the task's worktree, or elsewhere in its project. */
+  place: 'worktree' | 'project';
+}
+
+/** What one burst of terminal transitions (one Done move, a bulk delete) left running. */
+export interface LeftoverProcessReport {
+  id: string;
+  /** False when the user turned stopping off: every process is `kept`. */
+  stoppingEnabled: boolean;
+  processes: LeftoverProcess[];
+}
+
+/** `ended`: it had already exited. `failed`: it is still running. */
+export type LeftoverStopOutcome = 'stopped' | 'ended' | 'failed';
+
 export interface AppConfig {
   /** The theme picked by hand. What the app paints when `themeFollowsSystem` is off. */
   theme: ThemeMode;
@@ -3608,6 +3643,10 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
+  /** Stop what a task's agent left running in the task's own folder when the
+   *  task reaches Done or To Do, or is deleted. Off: nothing is stopped, and a
+   *  toast still lists what kept running. Default true. */
+  stopLeftoverProcesses: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `focused`. */
   windowLightDismiss: WindowLightDismiss;
   /** One-shot marker for the `single` -> `focused` default flip on `windowLightDismiss`.
@@ -3923,6 +3962,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
+  stopLeftoverProcesses: true,
   windowLightDismiss: 'focused',
   hasMigratedWindowLightDismissDefault: false,
   hasPurgedSeededDiscoveredModels: false,
@@ -6113,6 +6153,15 @@ export interface ElectronAPI {
      *  most once per failing source until a later write to that source succeeds;
      *  `message` is the whole user-facing sentence, composed in main. */
     onWriteFailed: (callback: (message: string) => void) => () => void;
+  };
+
+  // Leftover processes: what a task left running when it reached Done, To Do,
+  // or was deleted (see `LeftoverProcessReport`).
+  leftoverProcesses: {
+    /** One report per burst of terminal transitions. Never fires when nothing was left running. */
+    onReport: (callback: (report: LeftoverProcessReport) => void) => () => void;
+    /** Stop one reported process, with everything under it, by its `LeftoverProcess.id`. */
+    stop: (processId: string) => Promise<LeftoverStopOutcome>;
   };
 
   // Keybindings

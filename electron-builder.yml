@@ -22,6 +22,11 @@ files:
   # Terminal Font Family picker: font-list shells out to fc-list (Linux) / a
   # PowerShell script (Windows) and ships a bundled native binary for macOS.
   - "node_modules/font-list/**"
+  # The pty host reads a process's environment through koffi on Windows to find
+  # what a task left running (src/main/pty/process-tag/). koffi loads its
+  # prebuilt binary from the per-platform @koromix/koffi-* package.
+  - "node_modules/koffi/**"
+  - "node_modules/@koromix/koffi-*/**"
   # Conversation-memory retrieval: sqlite-vec loadable extension (per-platform
   # binary packages) + transformers.js. The embed worker runs on the NATIVE
   # onnxruntime-node execution providers (DirectML / WebGPU / CPU) because
@@ -64,6 +69,10 @@ asarUnpack:
   # lookup rewrites app.asar to app.asar.unpacked), and reads the same
   # unpacked files through it.
   - "node_modules/node-pty/**"
+  # The pty host loads koffi from the same unpacked tree, and a native addon
+  # cannot be dlopen'd from inside an asar.
+  - "node_modules/koffi/**"
+  - "node_modules/@koromix/koffi-*/**"
   - "node_modules/sherpa-onnx-*/**"
   # font-list's macOS binary is spawned via child_process, which cannot exec a
   # path inside an asar archive.

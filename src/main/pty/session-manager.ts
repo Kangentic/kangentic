@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { promises as fsPromises } from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
 
@@ -18,7 +19,7 @@ import type { TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
 import { gracefulPtyShutdown } from './shutdown/session-suspend';
-import { suspendAllSessions, killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
+import { killAllSessions, writeExitSequence } from './shutdown/session-shutdown';
 import type { PtyKillReport } from './shutdown/session-shutdown';
 import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle/deferred-kill';
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
@@ -52,8 +53,15 @@ import type {
   SessionResizeResult,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
-import type { CapturedSessionTree } from '../activity-engine/background-shell/process-tree';
+import { execFileAsync } from '../utility-process/off-main-exec';
+import { isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
+import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
+import { resolveTaskDirectories } from './process-tag/task-directories';
+import type { LeftoverProcessEntry, StopProcessOutcome } from './process-tag/tagged-reap';
 
+/** How long a task reap may take in the host: two scans, the 1 s grace
+ *  between them, and the kills. A scan measured ~30 ms on Windows. */
+const TASK_REAP_TIMEOUT_MS = 15_000;
 /** How long a suspend waits on the host for the scrollback its last-resort
  *  agent session id scan reads. The scan is a fallback; the suspend is not. */
 const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
@@ -1801,20 +1809,86 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The session's descendant PIDs as of the bg-shell watcher's last healthy
-   * cycle, for a teardown that wants to take the rest of the tree with the PTY.
+   * Kill what the given tasks left running: every process carrying a task's
+   * `KANGENTIC_TASK_ID` tag and working inside that task's project or worktree
+   * (see `process-tag/reap-plan.ts` for what is spared: shared processes,
+   * visible apps, tmux servers). The pty host scans and kills, and protects
+   * this process's own tree and every PTY it still holds. When the configured
+   * shell is WSL, the same reap also runs inside the distro.
    *
-   * Read it BEFORE killing or suspending: the watcher stops publishing the
-   * moment the session is gone, and on POSIX the children are reparented to
-   * init immediately, so there is no tree left to walk afterwards.
-   *
-   * Null means there is no trustworthy snapshot (watcher off, never enumerated
-   * for this session, or the snapshot has aged out). Treat that as "nothing to
-   * reap", never as a reason to enumerate here - see
-   * `BgShellWatcher.getCapturedDescendants` for why.
+   * Call it only after every session of these tasks has exited. With `stop`
+   * false (the user turned stopping off) nothing is killed and the report
+   * lists what is still running. Returns what the user is told: the processes
+   * stopped, not stopped, and left running, each under a short label. Never
+   * throws.
    */
-  getCapturedSessionTree(sessionId: string): CapturedSessionTree | null {
-    return this.telemetry.getCapturedSessionTree(sessionId);
+  async reapTaskProcesses(
+    projectPath: string | null,
+    tasks: ReadonlyArray<{ id: string; worktreePath: string | null }>,
+    options: { stop: boolean },
+  ): Promise<LeftoverProcessEntry[]> {
+    const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
+    if (validTasks.length === 0) return [];
+    const killedPids: number[] = [];
+    const entries: LeftoverProcessEntry[] = [];
+    const reapTasks = await Promise.all(validTasks.map(async (task) => ({
+      taskId: task.id,
+      directories: await resolveTaskDirectories(projectPath, task.worktreePath),
+      worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
+    })));
+    try {
+      const result = await this.host.reapTaggedProcesses(
+        { tasks: reapTasks, mainPid: process.pid, stop: options.stop },
+        TASK_REAP_TIMEOUT_MS,
+      );
+      killedPids.push(...result.killedPids);
+      entries.push(...result.entries);
+      if (result.failureReason) {
+        console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
+      }
+      // Processes whose environment could not be read (elevated on Windows,
+      // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
+      // tag unseen. A count only: never which ones, never their contents.
+      if (result.unreadableCount > 0) {
+        console.log(`[TASK-REAP] ${result.unreadableCount} same-user process(es) had an unreadable environment and were not checked`);
+      }
+    } catch (error) {
+      console.warn('[TASK-REAP] host reap failed (non-fatal):', error);
+    }
+    // The distro's reap kills and reports nothing back by name, so it runs only
+    // while stopping is on.
+    if (process.platform === 'win32' && options.stop) {
+      const wslSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
+      if (wslSpec) {
+        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, reapTasks, async (file, args, options) => {
+          const output = await execFileAsync(file, args, {
+            timeout: options.timeoutMs,
+            env: { ...process.env, ...options.env },
+            windowsHide: true,
+          });
+          return output.stdout;
+        }));
+      }
+    }
+    if (killedPids.length > 0) {
+      console.log(`[TASK-REAP] killed ${killedPids.length} leftover process(es) for ${validTasks.length} task(s): ${killedPids.join(', ')}`);
+    }
+    return entries;
+  }
+
+  /**
+   * Stop one process a reap reported, with everything under it, after the
+   * user asked for it from the leftover list. The pty host re-checks its
+   * identity and keeps Kangentic's tree and every held PTY out of reach.
+   * Never throws: a host failure reads as `failed`.
+   */
+  async stopReportedProcess(pid: number, startKey: string): Promise<StopProcessOutcome> {
+    try {
+      return await this.host.stopReportedProcess({ pid, startKey, mainPid: process.pid }, TASK_REAP_TIMEOUT_MS);
+    } catch (error) {
+      console.warn('[TASK-REAP] stop failed (non-fatal):', error);
+      return 'failed';
+    }
   }
 
   /**
@@ -2589,19 +2663,6 @@ export class SessionManager extends EventEmitter {
    */
   isSessionTeardownInFlight(sessionId: string): boolean {
     return this.registry.isSessionTeardownInFlight(sessionId);
-  }
-
-  /**
-   * Gracefully suspend all running PTY sessions.
-   *
-   * Sends Ctrl+C then /exit to each Claude Code process so it saves its
-   * conversation state (JSONL) before exiting. Waits up to `timeoutMs`
-   * for processes to exit on their own, then force-kills any remaining.
-   *
-   * Returns task IDs so the caller can mark them as 'suspended' in the DB.
-   */
-  async suspendAll(timeoutMs = 2000): Promise<string[]> {
-    return suspendAllSessions(this.shutdownContext(), timeoutMs);
   }
 
   /**

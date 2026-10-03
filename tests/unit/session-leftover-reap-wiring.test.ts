@@ -1,40 +1,26 @@
 /**
- * Verified test-coverage holes from the session-leftover-reap code-review pass
- * (see the PR description: session teardown now kills whatever a session left
- * running inside its worktree, so a leaked dev server can no longer hold the
- * directory and block its removal on Windows).
+ * Where the task leftover reap is wired, and where it deliberately is not.
  *
- * `captureSessionLeftovers` / `reapSessionLeftovers` (src/main/ipc/helpers/
- * task-cleanup.ts) already appeared in tests/, but only as inert module-level
- * mocks (`vi.fn(() => null)` / `vi.fn(async () => {})`) in
- * task-move-shutdown.test.ts and task-move-git-churn-wiring.test.ts. Nothing
- * asserted the ORDERING these two functions exist to enforce, and nothing
- * asserted the deliberate omission on the Stop / auto_spawn=false paths. This
- * file closes those gaps:
+ * A terminal transition kills every process carrying the task's
+ * `KANGENTIC_TASK_ID` tag through `reapTaskLeftovers` (src/main/ipc/helpers/
+ * task-cleanup.ts). The reap's own logic is covered by task-reap-plan,
+ * task-tagged-reap, task-process-readers and session-reap-real-processes; this
+ * file pins the CALLS and their ORDER:
  *
  *   1. `cleanupTaskSession` / `cleanupTaskResources` (task-cleanup.ts, REAL):
- *      capture runs BEFORE the PTY kill; the reap runs AFTER the kill and
- *      BEFORE the worktree removal. session-tree-reap and worktree-manager are
- *      mocked; the functions under test are the real exports.
- *   2. `handleTaskMove`'s Done branch (task-move.ts, REAL): capture -> suspend
- *      -> reap -> deleteTaskWorktree, in that order. captureSessionLeftovers /
- *      reapSessionLeftovers / deleteTaskWorktree are mocked at the barrel
- *      (`ipc/helpers/index`), mirroring task-move-git-churn-wiring.test.ts's
- *      approach for captureGitChurn: this is a WIRING test asserting the CALL
- *      and its position, not the reap's own logic (already covered by
- *      session-tree-reap.test.ts / session-reap-real-processes.test.ts).
- *   3. The deliberate negative, in two halves:
- *      a. a move into an auto_spawn=false column (Priority 2.5, same file as #2)
- *         must NOT capture or reap - it parks the task rather than finishing it.
- *      b. "Stop" (sessions.ts) must NOT capture or reap either. There is no
- *         single dedicated IPC channel for that verb, so this checks both
- *         plausible readings: SESSION_KILL (the two task-delete flows) and
- *         SESSION_SUSPEND (the task-detail Pause toggle, which parks a
- *         session exactly the way Priority 2.5 parks a task). Proven by a
- *         static source scan of each handler body rather than a full import
- *         of sessions.ts, which would duplicate a large, unrelated mock
- *         graph (PR linking, transient sessions, git churn, ...) for no
- *         additional confidence.
+ *      the reap runs AFTER every session of the task has exited (the kill and
+ *      `removeByTaskId`), so no young agent is force-killed outside its exit
+ *      grace, and BEFORE the worktree removal. It runs even when the task has
+ *      no live session: an earlier session (suspended at a Code Review entry,
+ *      say) may have left a dev server running.
+ *   2. `handleTaskMove`'s Done branch (task-move.ts, REAL, the reap mocked at
+ *      the barrel): suspend -> reap -> deleteTaskWorktree, including a Done
+ *      move whose session had already ended before the move.
+ *   3. The deliberate negatives: a move into an auto_spawn=false column and
+ *      the Stop / Pause handlers (SESSION_KILL, SESSION_SUSPEND) never reap.
+ *      The user chose to keep a parked task's dev server running.
+ *   4. `PROJECT_DELETE` reaps after its sessions' exits and before removing
+ *      worktrees (static line-order scan; the handler's mock graph is large).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -43,12 +29,9 @@ import path from 'node:path';
 import type { Task, Swimlane } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { TaskRepository } from '../../src/main/db/repositories/task-repository';
-import type { CapturedSessionTree } from '../../src/main/activity-engine/background-shell/process-tree';
 
 // ---------------------------------------------------------------------------
-// Shared call-order tracker. Reset per test; Section 1 (direct task-cleanup.ts
-// calls) and Section 2 (handleTaskMove wiring) push into the same array but
-// never within the same test, so there is no cross-talk.
+// Shared call-order tracker. Reset per test.
 // ---------------------------------------------------------------------------
 
 const { callOrder } = vi.hoisted(() => ({ callOrder: [] as string[] }));
@@ -138,27 +121,9 @@ vi.mock('../../src/main/agent/shared', () => ({
   execVersion: vi.fn(async () => '1.0.0'),
 }));
 
-// The real reap primitive, used only by Section 1's direct calls into the
-// real cleanupTaskSession / cleanupTaskResources. Section 2 never reaches
-// this module because task-move.ts's captureSessionLeftovers/
-// reapSessionLeftovers are mocked at the barrel instead (see below).
-const mockReapCapturedTree = vi.fn(async (): Promise<number[]> => []);
-vi.mock('../../src/main/pty/session-tree-reap', () => ({
-  reapCapturedTree: (...args: [CapturedSessionTree | null]) => {
-    callOrder.push('reap');
-    return mockReapCapturedTree(...args);
-  },
-}));
-
-// Section 2's seam: task-move.ts imports captureSessionLeftovers /
-// reapSessionLeftovers / deleteTaskWorktree from this barrel, so mocking it
-// here observes the CALL and its position without re-running
-// reapCapturedTree's own logic (covered elsewhere).
-const mockCaptureSessionLeftovers = vi.fn((): CapturedSessionTree => {
-  callOrder.push('capture');
-  return { rootPid: 111, pids: [222], capturedAt: Date.now() };
-});
-const mockReapSessionLeftovers = vi.fn(async (): Promise<void> => {
+// Section 2's seam: task-move.ts imports reapTaskLeftovers / deleteTaskWorktree
+// from this barrel, so mocking it here observes the CALL and its position.
+const mockReapTaskLeftovers = vi.fn(async (): Promise<void> => {
   callOrder.push('reap');
 });
 const mockDeleteTaskWorktree = vi.fn(async (): Promise<boolean> => {
@@ -180,8 +145,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
   autoSpawnForTask: vi.fn(async () => {}),
-  captureSessionLeftovers: (...args: unknown[]) => mockCaptureSessionLeftovers(...args),
-  reapSessionLeftovers: (...args: unknown[]) => mockReapSessionLeftovers(...args),
+  reapTaskLeftovers: (...args: unknown[]) => mockReapTaskLeftovers(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -254,7 +218,7 @@ interface MockSessionManager {
   suspend: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
   findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
-  getCapturedSessionTree: ReturnType<typeof vi.fn>;
+  reapTaskProcesses: ReturnType<typeof vi.fn>;
 }
 
 function makeSessionManager(): MockSessionManager {
@@ -262,7 +226,7 @@ function makeSessionManager(): MockSessionManager {
     kill: vi.fn(() => { callOrder.push('kill'); }),
     awaitExit: vi.fn(async () => {}),
     remove: vi.fn(),
-    removeByTaskId: vi.fn(),
+    removeByTaskId: vi.fn(async () => { callOrder.push('removeByTaskId'); }),
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => { callOrder.push('suspend'); }),
@@ -271,21 +235,15 @@ function makeSessionManager(): MockSessionManager {
     // on the branches they exercise.
     getSession: vi.fn((id: string) => ({ id, status: 'running' })),
     findLiveSessionByTaskId: vi.fn(() => null),
-    // Section 1 only (the real captureSessionLeftovers calls this directly).
-    // Section 2 never reaches it - task-move.ts's captureSessionLeftovers is
-    // the barrel mock above, which never touches context.sessionManager.
-    getCapturedSessionTree: vi.fn((): CapturedSessionTree => {
-      callOrder.push('captureRead');
-      return { rootPid: 111, pids: [222], capturedAt: Date.now() };
-    }),
+    // Section 1 only: the real reapTaskLeftovers calls this. Section 2's
+    // reapTaskLeftovers is the barrel mock, which never reaches it.
+    reapTaskProcesses: vi.fn(async () => { callOrder.push('reap'); return []; }),
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   callOrder.length = 0;
-  mockReapCapturedTree.mockClear();
-  mockReapCapturedTree.mockResolvedValue([]);
   mockRemoveWorktree.mockClear();
   mockRemoveWorktree.mockResolvedValue(true);
   mockPrepareWorktreeForRemoval.mockClear();
@@ -297,39 +255,78 @@ beforeEach(() => {
 // (src/main/ipc/helpers/task-cleanup.ts, real implementation)
 // ---------------------------------------------------------------------------
 
+/** What `reapTaskLeftovers` reads besides the session manager: the setting, and the window its toast goes to. */
+function reapSettings(stopLeftoverProcesses = true) {
+  return {
+    configManager: { load: vi.fn(() => ({ stopLeftoverProcesses })), getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+    mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
+  };
+}
+
 describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.ts)', () => {
-  it('captures leftovers before killing the PTY, and reaps them after the kill', async () => {
+  it('reaps after the session is killed and every session of the task has exited', async () => {
     const sessionManager = makeSessionManager();
     const context = {
       sessionManager,
       currentProjectId: null,
       currentProjectPath: null,
+      ...reapSettings(),
     } as unknown as IpcContext;
     const task = { id: 'task-1', session_id: 'pty-live-1', worktree_path: null, branch_name: null };
     const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
 
     await cleanupTaskSession(context, task, tasks, null, null);
 
-    expect(callOrder).toEqual(['captureRead', 'kill', 'reap']);
-    expect(sessionManager.getCapturedSessionTree).toHaveBeenCalledWith('pty-live-1');
-    expect(mockReapCapturedTree).toHaveBeenCalledWith({ rootPid: 111, pids: [222], capturedAt: expect.any(Number) });
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'reap']);
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true });
   });
 
-  it('is a no-op capture/reap when the task has no active session', async () => {
+  it('still reaps when the task has no live session: an earlier session may have left a dev server', async () => {
     const sessionManager = makeSessionManager();
     const context = {
       sessionManager,
       currentProjectId: null,
       currentProjectPath: null,
+      ...reapSettings(),
     } as unknown as IpcContext;
-    const task = { id: 'task-1b', session_id: null, worktree_path: null, branch_name: null };
+    const worktreePath = '/mock/project/.kangentic/worktrees/task-1b';
+    const task = { id: 'task-1b', session_id: null, worktree_path: worktreePath, branch_name: null };
     const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
 
     await cleanupTaskSession(context, task, tasks, null, null);
 
-    expect(sessionManager.getCapturedSessionTree).not.toHaveBeenCalled();
     expect(sessionManager.kill).not.toHaveBeenCalled();
-    expect(mockReapCapturedTree).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['removeByTaskId', 'reap']);
+    // The project and the worktree go with the id: only processes working
+    // inside them are reaped.
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true });
+  });
+
+  it('kills nothing when the user turned "Stop leftover processes" off, and still reports', async () => {
+    const sessionManager = makeSessionManager();
+    const context = {
+      sessionManager,
+      currentProjectId: null,
+      currentProjectPath: null,
+      ...reapSettings(false),
+    } as unknown as IpcContext;
+    const task = { id: 'task-1d', session_id: null, worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskSession(context, task, tasks, null, null);
+
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1d', worktreePath: null }], { stop: false });
+  });
+
+  it('never fails the teardown when the reap throws', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.reapTaskProcesses.mockRejectedValueOnce(new Error('host gone'));
+    const context = { sessionManager, currentProjectId: null, currentProjectPath: null, ...reapSettings() } as unknown as IpcContext;
+    const task = { id: 'task-1c', session_id: null, worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+    vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+
+    await expect(cleanupTaskSession(context, task, tasks, null, null)).resolves.toBeUndefined();
   });
 
   it('reaps leftover processes before removing the worktree', async () => {
@@ -338,7 +335,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
       sessionManager,
       currentProjectId: null,
       currentProjectPath: '/mock/project',
-      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      ...reapSettings(),
     } as unknown as IpcContext;
     const task = {
       id: 'task-2',
@@ -354,14 +351,14 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
-    expect(callOrder).toEqual(['captureRead', 'kill', 'reap', 'prepare', 'withLock', 'removeWorktree']);
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'reap', 'prepare', 'withLock', 'removeWorktree']);
   });
 });
 
 // ---------------------------------------------------------------------------
 // Section 2: handleTaskMove's Done branch, and the auto_spawn=false negative
-// (src/main/ipc/handlers/task-move.ts, real implementation; the reap helpers
-// are mocked at the barrel per the comment above the mock declaration).
+// (src/main/ipc/handlers/task-move.ts, real implementation; the reap helper is
+// mocked at the barrel per the comment above the mock declaration).
 // ---------------------------------------------------------------------------
 
 const SOURCE_LANE_ID = 'lane-doing';
@@ -423,8 +420,8 @@ function makeSwimlaneRepo(lanes: Swimlane[]) {
   return { getById: vi.fn((id: string) => laneMap.get(id) ?? null) };
 }
 
-describe('handleTaskMove Done branch: capture -> suspend -> reap -> deleteTaskWorktree', () => {
-  it('reaps leftovers after suspending the session and before deleting the worktree', async () => {
+describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', () => {
+  it('reaps the task after suspending its session and before deleting the worktree', async () => {
     const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
     const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
     const task = makeTask({
@@ -443,14 +440,36 @@ describe('handleTaskMove Done branch: capture -> suspend -> reap -> deleteTaskWo
       'renderer',
     );
 
-    expect(callOrder).toEqual(['capture', 'suspend', 'reap', 'deleteWorktree']);
-    expect(mockCaptureSessionLeftovers).toHaveBeenCalledWith(context, 'pty-active-done');
-    expect(mockDeleteTaskWorktree).toHaveBeenCalled();
+    expect(callOrder).toEqual(['suspend', 'reap', 'deleteWorktree']);
+    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-1', worktree_path: '/mock/project/.kangentic/worktrees/task-done-1' })]);
+  });
+
+  it('reaps on Done even when the session ended before the move (a Code Review entry suspended it)', async () => {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({
+      id: 'task-done-2',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-done-2',
+    });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, doneLane]);
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+
+    expect(callOrder).toEqual(['reap', 'deleteWorktree']);
+    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-2', worktree_path: '/mock/project/.kangentic/worktrees/task-done-2' })]);
   });
 });
 
 describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
-  it('suspends the session but does NOT capture or reap - the task is parked, not finished', async () => {
+  it('suspends the session but does NOT reap - the task is parked, and its dev server keeps running', async () => {
     const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
     const parkedLane = makeSwimlane(PARKED_LANE_ID, { role: null, auto_spawn: false });
     const task = makeTask({
@@ -471,43 +490,23 @@ describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
 
     // The path actually ran (suspend fired for the live session)...
     expect(callOrder).toContain('suspend');
-    // ...but never touched the leftover-reap machinery. A future accidental
-    // wiring of the reap into this branch would turn this red.
-    expect(mockCaptureSessionLeftovers).not.toHaveBeenCalled();
-    expect(mockReapSessionLeftovers).not.toHaveBeenCalled();
+    // ...but never reaped. A future accidental wiring of the reap into this
+    // branch would turn this red.
+    expect(mockReapTaskLeftovers).not.toHaveBeenCalled();
     expect(mockDeleteTaskWorktree).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Section 3: the Stop negative, proven by static source scan.
+// Section 3: the Stop / Pause negative, proven by static source scan.
 //
-// "Stop" has no single dedicated IPC channel in the current UI: the task
-// detail header's Pause/Resume toggle calls SESSION_SUSPEND (parks the
-// session, keeps the task and worktree - exactly the "park rather than
-// finish" contract this hole is about), while SESSION_KILL is reachable only
-// from the two task-delete flows (TaskCard's context-menu delete and the
-// task-detail dialog's delete). Both bodies are three to six lines and
-// neither references the session manager's captured-tree snapshot today, so
-// this scans BOTH rather than guessing which one "Stop" means.
-//
-// Extraction is bounded by the NEXT `ipcMain.handle(` registration rather
-// than the first `\n<ws>});`, because a handler containing its own nested
-// `withTaskLock(taskId, async () => { ... });` closes on exactly that shape
-// before the outer handler does - a brace-shaped match would truncate the
-// body there and silently stop seeing anything added after it. Each
-// extraction also asserts an anchor string unique to that handler's real
-// body, so a mis-extraction (e.g. capturing zero lines, or the wrong handler
-// entirely) fails loudly instead of vacuously passing the "does not contain"
-// check on an empty or unrelated slice.
-//
-// Importing the whole of sessions.ts (PR linking, transient sessions, git
-// churn, session-reconcile, ...) just to invoke these two handlers would
-// duplicate a large, unrelated mock graph for no additional confidence; a
-// source scan states the same invariant directly and is exactly as
-// red-green-able (verified by temporarily adding a call inside each handler
-// body, including a nested-`withTaskLock`-shaped one for SESSION_KILL, and
-// confirming red before restoring the source).
+// The task detail header's Pause/Resume toggle calls SESSION_SUSPEND (parks the
+// session, keeps the task and worktree); SESSION_KILL is reachable from the two
+// task-delete flows, whose cleanup reaps through cleanupTaskSession, never
+// from the handler itself. Extraction is bounded by the NEXT
+// `ipcMain.handle(` registration, and each extraction asserts an anchor unique
+// to that handler's body, so a mis-extraction fails loudly instead of passing
+// the "does not contain" check on an empty slice.
 // ---------------------------------------------------------------------------
 
 function extractHandlerBody(source: string, channelConstant: string): string {
@@ -518,7 +517,7 @@ function extractHandlerBody(source: string, channelConstant: string): string {
   return nextHandlerStart === -1 ? source.slice(start) : source.slice(start, nextHandlerStart);
 }
 
-describe('Stop does not capture or reap (SESSION_KILL and SESSION_SUSPEND)', () => {
+describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
   let sessionsSource: string;
 
   beforeEach(() => {
@@ -526,22 +525,39 @@ describe('Stop does not capture or reap (SESSION_KILL and SESSION_SUSPEND)', () 
     sessionsSource = fs.readFileSync(sessionsPath, 'utf8');
   });
 
-  it('SESSION_KILL (task-delete flows) never references captureSessionLeftovers/reapSessionLeftovers', () => {
+  it('SESSION_KILL never references reapTaskLeftovers / reapTaskProcesses', () => {
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_KILL');
-
-    // Anchor: proves this is really SESSION_KILL's body, not an empty or
-    // mis-bounded slice.
     expect(handlerRegion).toContain('getSessionTaskId');
-    expect(handlerRegion).not.toMatch(/captureSessionLeftovers/);
-    expect(handlerRegion).not.toMatch(/reapSessionLeftovers/);
+    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
   });
 
-  it('SESSION_SUSPEND (the Pause toggle) never references captureSessionLeftovers/reapSessionLeftovers', () => {
+  it('SESSION_SUSPEND (the Pause toggle) never references reapTaskLeftovers / reapTaskProcesses', () => {
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_SUSPEND');
-
-    // Anchor: proves this is really SESSION_SUSPEND's body.
     expect(handlerRegion).toContain('applySuspendDbWrites');
-    expect(handlerRegion).not.toMatch(/captureSessionLeftovers/);
-    expect(handlerRegion).not.toMatch(/reapSessionLeftovers/);
+    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 4: PROJECT_DELETE reaps between the session exits and the worktree
+// removal (line-order scan of cleanupProject in handlers/projects.ts).
+// ---------------------------------------------------------------------------
+
+describe('PROJECT_DELETE reaps every task, archived ones included', () => {
+  it('reaps after the sessions are removed and before any worktree is detached', () => {
+    const projectsSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/projects.ts'), 'utf8');
+    const bodyStart = projectsSource.indexOf('export async function cleanupProject(');
+    expect(bodyStart).toBeGreaterThan(-1);
+    const body = projectsSource.slice(bodyStart);
+    const exitsAwaited = body.indexOf('await Promise.all(sessionExits)');
+    const reap = body.indexOf('await reapTaskLeftovers(');
+    const worktreeRemoval = body.indexOf('worktreeManager.removeWorktree(');
+    expect(exitsAwaited).toBeGreaterThan(-1);
+    expect(reap).toBeGreaterThan(exitsAwaited);
+    expect(worktreeRemoval).toBeGreaterThan(reap);
+    // Archived tasks are reaped too, against the project being deleted: only
+    // processes working inside it are killed.
+    const reapRegion = body.slice(exitsAwaited, worktreeRemoval);
+    expect(reapRegion).toContain('await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks])');
   });
 });

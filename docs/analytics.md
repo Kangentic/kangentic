@@ -624,8 +624,10 @@ in one Sentry org, one triage surface.
   agent to retrieve and diagnose issues from the org via the API.
 - **Sourcemaps** upload at release time only: `@sentry/vite-plugin` (renderer) and
   `@sentry/esbuild-plugin` (main/preload) activate when an upload token is present
-  (`KANGENTIC_SENTRY_TOKEN`, or the conventional `SENTRY_AUTH_TOKEN` as a CI fallback), generate
-  hidden maps, upload them with debug IDs, and delete them from the output. Nothing ships in the
+  (`KANGENTIC_SENTRY_TOKEN`, or the conventional `SENTRY_AUTH_TOKEN` as a CI fallback) AND the
+  build is authorized to upload: in CI (`CI=true`), or locally only with an explicit
+  `KANGENTIC_SENTRY_UPLOAD=1`, so a developer's persisted token never uploads a local build. They
+  generate hidden maps, upload them with debug IDs, and delete them from the output. Nothing ships in the
   artifact; resolution is entirely server-side. The DSN in source is a public routing
   identifier by design, not a secret. `KANGENTIC_SENTRY_TOKEN` is also what the `/sentry`
   skill reads for issue retrieval, so one scoped variable serves both. Both plugins pass an

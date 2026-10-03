@@ -21,6 +21,7 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   closeApp,
+  waitForTaskSession,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -111,15 +112,6 @@ async function unarchiveTaskIpc(page: Page, taskId: string, targetSwimlaneId: st
   }, { taskId, swimlaneId: targetSwimlaneId });
 }
 
-async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions = await (window as unknown as {
-      electronAPI: { sessions: { list: () => Promise<Array<{ status: string }>> } }
-    }).electronAPI.sessions.list();
-    return sessions.some((session) => session.status === 'running');
-  }, null, { timeout: timeoutMs });
-}
-
 /**
  * Poll a specific task's running session scrollback for a marker string.
  * Returns the scrollback text if found; throws on timeout.
@@ -180,7 +172,7 @@ test.describe('Done worktree lifecycle (worktrees enabled)', () => {
 
     // Move to Planning -> spawns session, creates worktree
     await moveTaskIpc(page, taskId, lanes['Planning']);
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     const initialScrollback = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
     const originalSessionId = extractSessionId(initialScrollback, 'SESSION');
@@ -245,7 +237,7 @@ test.describe('Done worktree lifecycle (worktrees enabled)', () => {
 
     // Session should resume with the same agent session id (mock prints
     // MOCK_CLAUDE_RESUMED:<id> when --resume is used).
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
     const resumedScrollback = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_RESUMED:');
     const resumedSessionId = extractSessionId(resumedScrollback, 'RESUMED');
     expect(resumedSessionId).toBe(originalSessionId);

@@ -28,6 +28,9 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   closeApp,
+  waitForRunningSession,
+  waitForNoRunningSession,
+  waitForTaskSession,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -63,6 +66,29 @@ function writeTestConfig(dataDir: string): void {
       },
     }),
   );
+}
+
+/**
+ * Scrollback of the task's RUNNING session, or '' when it has none.
+ *
+ * Filters on status === 'running' on purpose: a task that was moved to To Do
+ * and back keeps an exited row in sessions.list(), and an unfiltered lookup
+ * could read that stale row's scrollback instead of the fresh PTY's.
+ *
+ * Callers poll this through expect.poll. An async predicate handed to
+ * page.waitForFunction resolves on its first evaluation (the Promise is
+ * truthy), so it never waits.
+ */
+async function readRunningTaskScrollback(page: Page, taskId: string): Promise<string> {
+  return page.evaluate(async (targetTaskId) => {
+    const sessions = await window.electronAPI.sessions.list();
+    const runningSession = sessions.find(
+      (session: { taskId: string; status: string }) =>
+        session.taskId === targetTaskId && session.status === 'running',
+    );
+    if (!runningSession) return '';
+    return (await window.electronAPI.sessions.getScrollback(runningSession.id)) ?? '';
+  }, taskId);
 }
 
 test.describe('Claude Agent -- Session Exit Handling', () => {
@@ -119,10 +145,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for session to be running
-    await page.waitForFunction(async () => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return sessions.some((s: { status: string }) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    await waitForRunningSession(page, 15000);
 
     // Verify we have exactly 1 running session
     const runningBefore = await page.evaluate(async () => {
@@ -183,19 +206,15 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for running
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return sessions.some((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-    }, taskId!, { timeout: 15000 });
+    await waitForTaskSession(page, taskId!, 15000);
 
     // Wait for scrollback to have content (session fully started)
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      const s = sessions.find((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-      if (!s) return false;
-      const sb = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.getScrollback(s.id);
-      return sb && sb.length > 10;
-    }, taskId!, { timeout: 15000 });
+    await expect
+      .poll(async () => (await readRunningTaskScrollback(page, taskId!)).length, {
+        timeout: 15000,
+        intervals: [200, 500],
+      })
+      .toBeGreaterThan(10);
 
     // Move to To Do (suspends session, kills PTY)
     await page.evaluate(async ({ taskId, swimlaneId }) => {
@@ -206,13 +225,22 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
       });
     }, { taskId: taskId!, swimlaneId: swimlaneIds.backlog! });
 
-    // Wait for no running sessions
-    await page.waitForFunction(async () => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return !sessions.some((s: { status: string }) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    // Wait for no running sessions (global is correct here: this spec owns its
+    // Electron boot and the first test already drained its own session).
+    await waitForNoRunningSession(page, 15000);
 
-    await page.waitForTimeout(1000);
+    // The fixed 1 s pause that stood here let the To Do move finish detaching
+    // the dead session from the task before the move back. That is observable:
+    // the task's session_id is cleared once the teardown has landed.
+    await expect
+      .poll(
+        async () => page.evaluate(async (tid) => {
+          const tasks = await window.electronAPI.tasks.list();
+          return tasks.find((task: { id: string }) => task.id === tid)?.session_id ?? null;
+        }, taskId!),
+        { timeout: 5000, intervals: [100, 250] },
+      )
+      .toBeNull();
 
     // Move back to Planning → spawns new PTY
     await page.evaluate(async ({ taskId, swimlaneId }) => {
@@ -224,19 +252,15 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for a new running session
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return sessions.some((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-    }, taskId!, { timeout: 15000 });
+    await waitForTaskSession(page, taskId!, 15000);
 
     // Wait for the new session to produce scrollback
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      const s = sessions.find((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-      if (!s) return false;
-      const sb = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.getScrollback(s.id);
-      return sb && sb.includes('MOCK_CLAUDE_');
-    }, taskId!, { timeout: 15000 });
+    await expect
+      .poll(async () => readRunningTaskScrollback(page, taskId!), {
+        timeout: 15000,
+        intervals: [200, 500],
+      })
+      .toContain('MOCK_CLAUDE_');
 
     // Verify a running session exists for this task
     const newSession = await page.evaluate(async (tid) => {
@@ -249,12 +273,11 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
 
     // To Do marks sessions as 'exited' (not 'suspended'), so re-entry
     // must spawn a FRESH session (MOCK_CLAUDE_SESSION), never a resumed one.
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      const s = sessions.find((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-      if (!s) return false;
-      const sb = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.getScrollback(s.id);
-      return sb && sb.includes('MOCK_CLAUDE_SESSION:');
-    }, taskId!, { timeout: 15000 });
+    await expect
+      .poll(async () => readRunningTaskScrollback(page, taskId!), {
+        timeout: 15000,
+        intervals: [200, 500],
+      })
+      .toContain('MOCK_CLAUDE_SESSION:');
   });
 });

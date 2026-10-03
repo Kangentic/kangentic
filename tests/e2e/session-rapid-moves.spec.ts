@@ -31,6 +31,7 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   closeApp,
+  waitForTaskSession,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -267,19 +268,24 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for a running session to appear
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      return sessions.some((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-    }, taskId!, { timeout: 15000 });
+    await waitForTaskSession(page, taskId!, 15000);
 
-    // Verify scrollback contains a mock Claude marker (session actually started)
-    await page.waitForFunction(async (tid) => {
-      const sessions = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.list();
-      const s = sessions.find((s: { taskId: string; status: string }) => s.taskId === tid && s.status === 'running');
-      if (!s) return false;
-      const sb = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.sessions.getScrollback(s.id);
-      return sb && sb.includes('MOCK_CLAUDE_');
-    }, taskId!, { timeout: 15000 });
+    // Verify scrollback contains a mock Claude marker (session actually started).
+    // Reads only the task's RUNNING session: the rapid moves above left exited
+    // rows for this task, and their scrollback must not satisfy the check.
+    await expect
+      .poll(
+        async () => page.evaluate(async (tid) => {
+          const sessions = await window.electronAPI.sessions.list();
+          const runningSession = sessions.find(
+            (session: { taskId: string; status: string }) => session.taskId === tid && session.status === 'running',
+          );
+          if (!runningSession) return '';
+          return (await window.electronAPI.sessions.getScrollback(runningSession.id)) ?? '';
+        }, taskId!),
+        { timeout: 15000, intervals: [200, 500] },
+      )
+      .toContain('MOCK_CLAUDE_');
 
     // Final assertion: exactly one running session for this task
     const finalSession = await page.evaluate(async (tid) => {

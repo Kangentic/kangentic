@@ -136,8 +136,28 @@ describe('toast-store HMR preservation', () => {
     }
     // maxCount: 5 from the config mock
     expect(useToastStore.getState().toasts).toHaveLength(5);
-    // Oldest toasts are dropped (slice(-maxCount) keeps the tail)
+    // Oldest toasts are dropped, so the tail is kept
     expect(useToastStore.getState().toasts[0].message).toBe('Toast 2');
+  });
+
+  it('never pushes out a toast that waits for the user while routine toasts can go instead', () => {
+    useToastStore.getState().addToast({ message: 'Waiting', duration: 0 });
+    for (let i = 0; i < 7; i++) {
+      useToastStore.getState().addToast({ message: `Toast ${i}` });
+    }
+    const messages = useToastStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toHaveLength(5);
+    expect(messages[0]).toBe('Waiting');
+    expect(messages.slice(1)).toEqual(['Toast 3', 'Toast 4', 'Toast 5', 'Toast 6']);
+  });
+
+  it('drops the oldest waiting toast only when waiting toasts alone overflow, and always shows the newest', () => {
+    for (let i = 0; i < 6; i++) {
+      useToastStore.getState().addToast({ message: `Waiting ${i}`, duration: 0 });
+    }
+    useToastStore.getState().addToast({ message: 'Newest' });
+    const messages = useToastStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toEqual(['Waiting 2', 'Waiting 3', 'Waiting 4', 'Waiting 5', 'Newest']);
   });
 
   // ---------------------------------------------------------------------------

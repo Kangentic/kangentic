@@ -515,6 +515,15 @@ export const IPC = {
   // Every OTHER updater failure stays silent by design - see the error handler.
   UPDATE_BLOCKED: 'updater:blocked',
 
+  // Leftover processes (src/main/pty/process-tag/; the toast and list in the
+  // renderer's leftover-processes store). REPORT is a push: what a terminal
+  // transition stopped, could not stop, and left running, one report per burst
+  // (a bulk delete is one). Main window only, like CONFIG_WRITE_FAILED: the
+  // toast host lives in AppLayout. STOP is an invoke naming one reported
+  // process by its report id; main never stops a pid it did not report.
+  LEFTOVER_PROCESSES_REPORT: 'leftoverProcesses:report',
+  LEFTOVER_PROCESSES_STOP: 'leftoverProcesses:stop',
+
   // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
   HOST_MEMORY_RECOVERED: 'hostMemory:recovered',

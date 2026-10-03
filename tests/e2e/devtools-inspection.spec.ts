@@ -54,7 +54,6 @@ function isBundleTreeShaken(): boolean {
 }
 
 const TEST_NAME = 'devtools-inspection';
-const runId = Date.now();
 
 interface LockfileShape {
   pid: number;
@@ -157,11 +156,10 @@ test.describe('Devtools inspection bridge', () => {
 
   let app: ElectronApplication;
   let projectPath: string;
-  let dataDir: string;
 
   test.beforeAll(async () => {
-    dataDir = getTestDataDir(TEST_NAME, runId);
-    projectPath = await createTempProject('devtools-inspection');
+    const dataDir = getTestDataDir(TEST_NAME);
+    projectPath = createTempProject(TEST_NAME);
 
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(
@@ -177,7 +175,11 @@ test.describe('Devtools inspection bridge', () => {
       }),
     );
 
-    const launched = await launchApp(dataDir);
+    // launchApp takes an options object. Passing the bare path string made it
+    // ignore `dataDir`, so the app ran against a different data dir and never
+    // read the config.json seeded above (previewEvalEnabled: false), which is
+    // why the /eval test saw the dev-build default (eval ON) instead of a 403.
+    const launched = await launchApp({ dataDir });
     app = launched.app;
     const page = launched.page;
 
@@ -188,29 +190,29 @@ test.describe('Devtools inspection bridge', () => {
     }, projectPath);
 
     // The inspection server's `tryStart` runs on app.whenReady, which has
-    // already fired by the time the page is interactive. Give the server
-    // a beat to bind, write the lockfile, and start serving.
-    await page.waitForFunction(
-      async (root: string) => {
-        try {
-          const result = await window.electronAPI.system.readKangenticLockfile?.(root);
-          return result !== null && result !== undefined;
-        } catch {
-          return false;
-        }
-      },
-      projectPath,
-      { timeout: 10_000 },
-    ).catch(() => {
-      // Fallback: poll the filesystem directly. The test continues if
-      // the helper IPC isn't exposed; the bridge itself doesn't need it.
-    });
+    // already fired by the time the page is interactive, but it still has to
+    // bind the port and write the lockfile. Wait for the lockfile on disk: it
+    // is the server's readiness signal and what every test below reads.
+    //
+    // This used to be a page.waitForFunction over
+    // `window.electronAPI.system.readKangenticLockfile`, an IPC that the
+    // preload bridge does not expose. Its async predicate resolved on the first
+    // evaluation anyway, and a trailing catch swallowed any failure, so it
+    // never waited for anything. Polling the file is the check it was
+    // standing in for.
+    await expect
+      .poll(() => readLockfile(projectPath), {
+        timeout: 10_000,
+        message: 'Inspection bridge never wrote <projectRoot>/.kangentic/preview.lock',
+      })
+      .not.toBeNull();
   });
 
   test.afterAll(async () => {
     await closeApp(app);
-    if (projectPath) cleanupTempProject(projectPath);
-    if (dataDir) cleanupTestDataDir(dataDir);
+    // Both cleanup helpers take the suite name they were created with, not a path.
+    cleanupTempProject(TEST_NAME);
+    cleanupTestDataDir(TEST_NAME);
   });
 
   test('writes a lockfile under the project root', async () => {

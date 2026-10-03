@@ -22,7 +22,7 @@
  * Harness modeled on task-move-git-churn-wiring.test.ts (closest existing
  * pattern already covering both the agent-handoff and model-change respawn
  * branches with an overridable resolveTargetAgent / prepareInjectionPlan, and
- * the Priority 2 Done branch's captureSessionLeftovers / reapSessionLeftovers
+ * the Priority 2 Done branch's reapTaskLeftovers
  * mocks) and task-move-isolation-switch.test.ts (the session-switch branch).
  */
 
@@ -135,8 +135,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   // The Done branch snapshots the session's process tree before suspending and
   // reaps it before the worktree delete. Inert here (no background shells in
   // these fixtures); covered for real by session-tree-reap.test.ts.
-  captureSessionLeftovers: vi.fn(() => null),
-  reapSessionLeftovers: vi.fn(async () => {}),
+  reapTaskLeftovers: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),

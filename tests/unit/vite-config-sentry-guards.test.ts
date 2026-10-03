@@ -56,6 +56,10 @@ beforeEach(() => {
   // upload-native-debug-files.test.ts's convention for the same pick.
   vi.stubEnv('KANGENTIC_SENTRY_TOKEN', '');
   vi.stubEnv('SENTRY_AUTH_TOKEN', '');
+  // Model the CI release build, where GitHub Actions sets CI=true: a token
+  // alone does not authorize an upload on a local machine (isSentryUploadAuthorized).
+  vi.stubEnv('CI', 'true');
+  vi.stubEnv('KANGENTIC_SENTRY_UPLOAD', '');
 });
 
 afterEach(() => {
@@ -132,5 +136,31 @@ describe('vite.config.mts Sentry upload guards', () => {
     const configFactory = configModule.default as unknown as SentryConfigFactory;
 
     expect(() => configFactory({ mode: 'production' })).not.toThrow();
+  });
+
+  it('never reaches either guard on a LOCAL build even with a token set', async () => {
+    // The dogfooding machine's user-level token is not intent to upload: only
+    // CI or KANGENTIC_SENTRY_UPLOAD=1 authorizes it. NODE_ENV 'development'
+    // would throw if the plugin were built, so not throwing proves it was not.
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    vi.stubEnv('CI', '');
+    process.env.NODE_ENV = 'development';
+
+    const configModule = await import('../../vite.config.mts');
+    const configFactory = configModule.default as unknown as SentryConfigFactory;
+
+    expect(() => configFactory({ mode: 'production' })).not.toThrow();
+  });
+
+  it('a local build with KANGENTIC_SENTRY_UPLOAD=1 is authorized and reaches the guards', async () => {
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    vi.stubEnv('CI', '');
+    vi.stubEnv('KANGENTIC_SENTRY_UPLOAD', '1');
+    process.env.NODE_ENV = 'development';
+
+    const configModule = await import('../../vite.config.mts');
+    const configFactory = configModule.default as unknown as SentryConfigFactory;
+
+    expect(() => configFactory({ mode: 'production' })).toThrow(/a Sentry upload token is set, but NODE_ENV is/);
   });
 });

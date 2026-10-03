@@ -146,13 +146,13 @@ Session teardown varies by target column:
 
 ### Reaping what the session left running
 
-On the TERMINAL transitions above (move to To Do or Backlog, move to Done, and task delete), the teardown also kills processes the session left running inside the worktree. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
+On the TERMINAL transitions above (move to To Do or Backlog, move to Done, task delete, and project delete), the teardown also kills every process the task's agents left running. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
 
-The mechanism is `captureSessionLeftovers()` before the kill or suspend, then `reapSessionLeftovers()` after it and before any worktree delete (both in `src/main/ipc/helpers/task-cleanup.ts`). The capture must come first: the bg-shell watcher stops publishing once the session ends, and on POSIX the children are reparented to init at once, so there is no tree to walk afterwards.
+Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main/pty/process-tag/`), and every process the agent starts inherits it however it detached. The teardown calls `reapTaskLeftovers()` (`src/main/ipc/helpers/task-cleanup.ts`) AFTER every session of the task has exited and before any worktree delete; the pty host then kills every process carrying the task's tag AND working inside the task's project or worktree, except what is shared (something under it is not the task's), a visible app, a tmux server, Kangentic's own process tree, and any PTY it still holds. The order matters because the reap force-kills, and a young agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`).
 
-The capture reads a snapshot the watcher already computed for its own counting, so it costs nothing on the drag-to-Done path. Nothing here enumerates processes; a cold `powershell` spawn measures ~670ms even for a pid-only projection. See [worktree-strategy.md](worktree-strategy.md) for the removal-time backstop and why Windows needs the parent-chain route at all.
+The tag is the same across every session the task ran, so a dev server started by an agent that a Code Review entry suspended long before is still reaped at Done, and it lives in the processes themselves, so a task parked across an app restart is reaped at its later terminal transition too. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash. To keep one process past Done, start it with the tag cleared (`KANGENTIC_TASK_ID= npm run dev`). See [worktree-strategy.md](worktree-strategy.md) for what the reap kills and spares (measured on Linux, macOS and Windows), the per-platform readers, what the tag cannot see, and the removal-time backstop.
 
-`auto_spawn=false` columns and a user-pressed Stop are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing.
+`auto_spawn=false` columns (including a Code Review entry), a user-pressed Pause or Stop, an idle-timeout suspend, and quitting the app are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing until the task's own terminal transition.
 
 ### What is preserved on suspend (Done / auto_spawn=false)
 
@@ -229,7 +229,7 @@ gone.
 
 A caller that touches the cwd or process tree after a kill therefore waits for the PROCESS: `kill`,
 capture `awaitExit` (the row must still exist), then `remove`, then await before any `rmSync`,
-`removeWorktree`, or `reapSessionLeftovers`. `cleanupTaskSession`, `executeCleanupWorktree`, project
+`removeWorktree`, or `reapTaskLeftovers`. `cleanupTaskSession`, `executeCleanupWorktree`, project
 delete, project relocate, the MCP task delete, and `SESSION_KILL_TRANSIENT` all do. The rule and its
 scan: `.claude/rules/pty-teardown-grace.md`.
 
@@ -665,7 +665,7 @@ Lifecycle on task move (`task-move.ts`, the session switch branch inside Priorit
 
 ## Shutdown
 
-On app close, the `before-quit` handler (`createBeforeQuitHandler` in `src/main/pty/shutdown/before-quit-handler.ts`, wired in `src/main/index.ts`) calls `syncShutdownCleanup()` (`src/main/shutdown.ts`), which is fully synchronous. The `suspendAll()` method exists in `SessionManager` but is **never called during shutdown**: it is async and would break the synchronous requirement.
+On app close, the `before-quit` handler (`createBeforeQuitHandler` in `src/main/pty/shutdown/before-quit-handler.ts`, wired in `src/main/index.ts`) calls `syncShutdownCleanup()` (`src/main/shutdown.ts`), which is fully synchronous. There is no async "suspend everything" step: one would break the synchronous requirement, so the quit marks records `suspended` and kills the PTYs instead.
 
 The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`):
 

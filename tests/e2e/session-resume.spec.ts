@@ -25,6 +25,12 @@ import {
   cleanupTestDataDir,
   mockAgentPath,
   closeApp,
+  closeAppAndWaitForExit,
+  moveTaskIpc,
+  waitForScrollback,
+  waitForRunningSession,
+  waitForNoRunningSession,
+  waitForTaskSession,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -61,51 +67,6 @@ function writeTestConfig(dataDir: string): void {
       },
     }),
   );
-}
-
-/** Move a task via IPC */
-async function moveTaskIpc(page: Page, taskId: string, targetSwimlaneId: string): Promise<void> {
-  await page.evaluate(async ({ taskId, swimlaneId }) => {
-    await window.electronAPI.tasks.move({
-      taskId,
-      targetSwimlaneId: swimlaneId,
-      targetPosition: 0,
-    });
-  }, { taskId, swimlaneId: targetSwimlaneId });
-}
-
-/** Wait for at least one running session */
-async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions = await (window as any).electronAPI.sessions.list();
-    return sessions.some((s: any) => s.status === 'running');
-  }, null, { timeout: timeoutMs });
-}
-
-/**
- * Poll all session scrollback for a marker string.
- * Returns the combined scrollback text if found, throws on timeout.
- */
-async function waitForScrollback(page: Page, marker: string, timeoutMs = 15000): Promise<string> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const scrollback = await page.evaluate(async () => {
-      const sessions = await window.electronAPI.sessions.list();
-      const texts: string[] = [];
-      for (const s of sessions) {
-        const sb = await window.electronAPI.sessions.getScrollback(s.id);
-        texts.push(sb);
-      }
-      return texts.join('\n---SESSION_BOUNDARY---\n');
-    });
-
-    if (scrollback.includes(marker)) {
-      return scrollback;
-    }
-
-    await page.waitForTimeout(500);
-  }
-  throw new Error(`Timed out waiting for scrollback containing: ${marker}`);
 }
 
 /**
@@ -153,8 +114,8 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
     // --- Step 1: Move to Planning via IPC → spawns a NEW session ---
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const done = swimlanes.find((s: any) => s.role === 'done');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
+      const done = swimlanes.find((swimlane) => swimlane.role === 'done');
       return { planning: planning?.id, done: done?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -162,7 +123,7 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
 
     const taskId = await page.evaluate(async (t) => {
       const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((tk: any) => tk.title === t);
+      const task = tasks.find((candidateTask) => candidateTask.title === t);
       return task?.id;
     }, title);
     expect(taskId).toBeTruthy();
@@ -176,10 +137,7 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for a running session to appear
-    await page.waitForFunction(async () => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      return sessions.some((s: any) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    await waitForRunningSession(page, 15000);
 
     // Wait for mock Claude to output its SESSION marker (task-specific)
     const scrollback1 = await waitForScrollback(page, 'MOCK_CLAUDE_SESSION:');
@@ -196,20 +154,19 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.done! });
 
     // Wait for no running sessions (session was suspended + PTY killed)
-    await page.waitForFunction(async () => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      return !sessions.some((s: any) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    await waitForNoRunningSession(page, 15000);
 
-    // Pause for DB update + onExit handler to settle
-    await page.waitForTimeout(2000);
-
-    // Verify task is now archived
-    const archived = await page.evaluate(async (tid) => {
-      const tasks = await window.electronAPI.tasks.listArchived();
-      return tasks.some((t: any) => t.id === tid);
-    }, taskId!);
-    expect(archived).toBe(true);
+    // Verify task is now archived. Poll for it: the archive write lands with
+    // the DB update + onExit handler, which a fixed pause used to wait out.
+    await expect
+      .poll(
+        async () => page.evaluate(async (tid) => {
+          const tasks = await window.electronAPI.tasks.listArchived();
+          return tasks.some((archivedTask) => archivedTask.id === tid);
+        }, taskId!),
+        { timeout: 10_000, intervals: [100, 250, 500] },
+      )
+      .toBe(true);
 
     // --- Step 3: Unarchive back to Planning → should RESUME ---
     await page.evaluate(async ({ taskId, swimlaneId }) => {
@@ -217,10 +174,7 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
     }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for a running session to appear via IPC
-    await page.waitForFunction(async () => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      return sessions.some((s: any) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    await waitForRunningSession(page, 15000);
 
     // Wait for mock Claude to output its RESUMED marker
     const scrollback2 = await waitForScrollback(page, 'MOCK_CLAUDE_RESUMED:');
@@ -265,14 +219,14 @@ test.describe('Claude Agent -- Session Resume across App Restart', () => {
     // Move to Planning via IPC
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
       return { planning: planning?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
 
     const taskId = await page.evaluate(async (t) => {
       const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((tk: any) => tk.title === t);
+      const task = tasks.find((candidateTask) => candidateTask.title === t);
       return task?.id;
     }, title);
     expect(taskId).toBeTruthy();
@@ -289,10 +243,9 @@ test.describe('Claude Agent -- Session Resume across App Restart', () => {
     expect(originalSessionId).toBeTruthy();
 
     // === Phase 2: Close the app (triggers shutdownSessions) ===
-    await closeApp(app);
-
-    // Brief pause for shutdown to complete
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Wait for the old process to be gone, not a guessed pause: the relaunch
+    // below reuses this data dir.
+    await closeAppAndWaitForExit(app);
 
     // Re-write config in case shutdown cleared it
     writeTestConfig(dataDir);
@@ -318,11 +271,7 @@ test.describe('Claude Agent -- Session Resume across App Restart', () => {
     );
 
     // Wait for session recovery to spawn a running session for our task via IPC
-    await page.waitForFunction(async (expectedTaskId) => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      return sessions.some((s: { status: string; taskId: string }) =>
-        s.status === 'running' && s.taskId === expectedTaskId);
-    }, taskId, { timeout: 30000 });
+    await waitForTaskSession(page, taskId!, 30000);
 
     // Wait for the mock Claude to output a marker. Use a long timeout
     // because PowerShell cold-start on Windows can delay command execution.
@@ -429,8 +378,8 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     // Resolve swimlane IDs once from phase 1
     const swimlaneIds = await phase1Page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const done = swimlanes.find((s: any) => s.role === 'done');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
+      const done = swimlanes.find((swimlane) => swimlane.role === 'done');
       return { planning: planning?.id ?? null, done: done?.id ?? null };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -443,7 +392,7 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
       const tasks = await window.electronAPI.tasks.list();
       const result: Record<string, string> = {};
       for (const title of titles) {
-        const task = tasks.find((t: any) => t.title === title);
+        const task = tasks.find((candidateTask) => candidateTask.title === title);
         if (task) result[title] = task.id;
       }
       return result;
@@ -462,21 +411,28 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     await phase1Page.reload();
     await waitForBoard(phase1Page);
 
-    // Wait for both tasks to have running sessions via IPC
-    await phase1Page.waitForFunction(
-      async (ids: { taskAId: string; taskBId: string }) => {
-        const sessions = await (window as any).electronAPI.sessions.list();
-        const taskASessions = sessions.filter(
-          (s: any) => s.taskId === ids.taskAId && s.status === 'running',
-        );
-        const taskBSessions = sessions.filter(
-          (s: any) => s.taskId === ids.taskBId && s.status === 'running',
-        );
-        return taskASessions.length > 0 && taskBSessions.length > 0;
-      },
-      { taskAId, taskBId },
-      { timeout: 30000 },
-    );
+    // Wait for both tasks to have running sessions via IPC. One shared 30s
+    // budget for the pair, and the observed state is returned so a timeout
+    // reports which task never started.
+    await expect
+      .poll(
+        async () => phase1Page.evaluate(
+          async (ids: { taskAId: string; taskBId: string }) => {
+            const sessions = await window.electronAPI.sessions.list();
+            return {
+              taskARunning: sessions.some(
+                (session) => session.taskId === ids.taskAId && session.status === 'running',
+              ),
+              taskBRunning: sessions.some(
+                (session) => session.taskId === ids.taskBId && session.status === 'running',
+              ),
+            };
+          },
+          { taskAId, taskBId },
+        ),
+        { timeout: 30000, intervals: [200, 500] },
+      )
+      .toEqual({ taskARunning: true, taskBRunning: true });
 
     // Wait for task-specific SESSION markers. Poll per-task scrollback so we
     // get the correct agent_session_id for each task without cross-task
@@ -486,10 +442,12 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
       const startTime = Date.now();
       while (Date.now() - startTime < 20000) {
         const scrollback = await phase1Page.evaluate(async (id: string) => {
-          const sessions = await (window as any).electronAPI.sessions.list();
-          const taskSession = sessions.find((s: any) => s.taskId === id && s.status === 'running');
+          const sessions = await window.electronAPI.sessions.list();
+          const taskSession = sessions.find(
+            (session) => session.taskId === id && session.status === 'running',
+          );
           if (!taskSession) return '';
-          return (window as any).electronAPI.sessions.getScrollback(taskSession.id);
+          return window.electronAPI.sessions.getScrollback(taskSession.id);
         }, taskId);
         const match = scrollback.match(/MOCK_CLAUDE_SESSION:([a-f0-9-]+)/);
         if (match) return match[1];
@@ -506,11 +464,11 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
 
     // Close the app - triggers syncShutdownCleanup which marks sessions
     // 'suspended' + 'system' and clears task.session_id
-    await closeApp(phase1App);
-
-    // Allow shutdown cleanup to flush (the shutdown is sync, but process
-    // teardown races with Electron's own cleanup on Windows).
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    //
+    // The shutdown is synchronous but process teardown can trail it on Windows,
+    // so wait for the old process to be gone, not a guessed pause: phase 2
+    // reuses this data dir.
+    await closeAppAndWaitForExit(phase1App);
 
     // Re-write config so launchApp's merge doesn't strip autoResumeSessionsOnRestart
     writeTestConfigNoAutoResume(noAutoResumeDataDir);
@@ -539,20 +497,25 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
 
     // Verify both tasks have a SUSPENDED (not running) session after restart.
     // resume-suspended.ts should have registered placeholders, not live PTYs.
-    await page2.waitForFunction(
-      async (ids: { taskAId: string; taskBId: string }) => {
-        const sessions = await (window as any).electronAPI.sessions.list();
-        const taskASuspended = sessions.some(
-          (s: any) => s.taskId === ids.taskAId && s.status === 'suspended',
-        );
-        const taskBSuspended = sessions.some(
-          (s: any) => s.taskId === ids.taskBId && s.status === 'suspended',
-        );
-        return taskASuspended && taskBSuspended;
-      },
-      { taskAId, taskBId },
-      { timeout: 15000 },
-    );
+    await expect
+      .poll(
+        async () => page2.evaluate(
+          async (ids: { taskAId: string; taskBId: string }) => {
+            const sessions = await window.electronAPI.sessions.list();
+            return {
+              taskASuspended: sessions.some(
+                (session) => session.taskId === ids.taskAId && session.status === 'suspended',
+              ),
+              taskBSuspended: sessions.some(
+                (session) => session.taskId === ids.taskBId && session.status === 'suspended',
+              ),
+            };
+          },
+          { taskAId, taskBId },
+        ),
+        { timeout: 15000, intervals: [200, 500] },
+      )
+      .toEqual({ taskASuspended: true, taskBSuspended: true });
 
     // Both tasks now have suspended placeholders registered by resume-suspended.ts.
     // The test cases verify the user-visible behavior: resume-button click succeeds
@@ -583,14 +546,7 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     }, taskAId);
 
     // Wait for a running session for task A specifically
-    await page2.waitForFunction(
-      async (id: string) => {
-        const sessions = await (window as any).electronAPI.sessions.list();
-        return sessions.some((s: any) => s.taskId === id && s.status === 'running');
-      },
-      taskAId,
-      { timeout: 20000 },
-    );
+    await waitForTaskSession(page2, taskAId, 20000);
 
     // Wait for mock Claude to output RESUMED marker with the correct session ID.
     // This proves --resume <agentSessionId> was passed (not --session-id).
@@ -603,8 +559,8 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     await expect.poll(
       async () => {
         return page2.evaluate(async (id: string) => {
-          const tasks = await (window as any).electronAPI.tasks.list();
-          const task = tasks.find((t: any) => t.id === id);
+          const tasks = await window.electronAPI.tasks.list();
+          const task = tasks.find((candidateTask) => candidateTask.id === id);
           return task?.session_id ?? null;
         }, taskAId);
       },
@@ -626,8 +582,8 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     await expect.poll(
       async () => {
         return page2.evaluate(async (id: string) => {
-          const archivedTasks = await (window as any).electronAPI.tasks.listArchived();
-          return archivedTasks.some((t: any) => t.id === id);
+          const archivedTasks = await window.electronAPI.tasks.listArchived();
+          return archivedTasks.some((archivedTask) => archivedTask.id === id);
         }, taskBId);
       },
       { timeout: 10000 },
@@ -644,14 +600,7 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     );
 
     // Wait for task B to have a running session after unarchive
-    await page2.waitForFunction(
-      async (id: string) => {
-        const sessions = await (window as any).electronAPI.sessions.list();
-        return sessions.some((s: any) => s.taskId === id && s.status === 'running');
-      },
-      taskBId,
-      { timeout: 20000 },
-    );
+    await waitForTaskSession(page2, taskBId, 20000);
 
     // Wait for the RESUMED marker specific to task B's original agent_session_id.
     // We poll task B's session scrollback directly rather than all sessions to
@@ -662,10 +611,10 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
     await expect.poll(
       async () => {
         return page2.evaluate(async (ids: { taskBId: string; expectedMarker: string }) => {
-          const sessions = await (window as any).electronAPI.sessions.list();
-          const taskBSessions = sessions.filter((s: any) => s.taskId === ids.taskBId);
+          const sessions = await window.electronAPI.sessions.list();
+          const taskBSessions = sessions.filter((session) => session.taskId === ids.taskBId);
           for (const session of taskBSessions) {
-            const scrollback = await (window as any).electronAPI.sessions.getScrollback(session.id);
+            const scrollback = await window.electronAPI.sessions.getScrollback(session.id);
             if (scrollback.includes(ids.expectedMarker)) return true;
           }
           return false;

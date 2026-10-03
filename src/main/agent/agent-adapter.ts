@@ -197,6 +197,15 @@ export interface CommandOptions {
    */
   launchOptions?: Record<string, boolean>;
   /**
+   * The task's `KANGENTIC_TASK_ID` value (src/main/pty/process-tag/). Every task
+   * session's PTY already carries it in its env, and every process the agent
+   * starts inherits it, which is how a terminal transition finds what the task
+   * left running. Set by the two task spawn chokepoints and never by a Command
+   * Terminal. An adapter whose CLI can strip inherited variables from the
+   * shells it starts (Codex's `shell_environment_policy`) re-injects it here.
+   */
+  taskProcessTag?: string;
+  /**
    * Present only when this project's execution mode for this agent is
    * 'remote' (resolved by the spawn chokepoint from `agent.executionServers`
    * + `agent.execution`). Adapters that declare `remoteExecution` read this

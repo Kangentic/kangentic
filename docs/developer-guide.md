@@ -203,9 +203,10 @@ Flags:
 3. esbuild bundles main + preload + the three utility-process workers (embed, line-count, dictation), minified
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
-   Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token. A
-   missing token is a no-op; with a token present, a failed upload FAILS the build rather than
-   warning past it.
+   Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
+   the build being authorized to upload (CI, or a local `KANGENTIC_SENTRY_UPLOAD=1`). A missing
+   token or a local build is a no-op that says so; with an authorized upload, a failed upload
+   FAILS the build rather than warning past it.
 
 ### Web demo (`npm run build:demo` / `demo/vite.config.mts`)
 

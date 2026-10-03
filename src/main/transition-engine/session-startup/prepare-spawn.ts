@@ -268,6 +268,7 @@ export async function prepareAgentSpawn(input: {
       ?? (projectFallback ? input.projectDefaultEffort : undefined) ?? undefined,
     executionTarget: resolveExecutionTarget(agent, config.agent.executionServers, config.agent.execution) ?? undefined,
     launchOptions: resolveLaunchOptions(adapter, config.agent.launchOptions),
+    taskProcessTag: task.id,
   };
 
   const command = adapter.buildCommand(commandOptions);

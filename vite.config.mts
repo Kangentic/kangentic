@@ -14,7 +14,8 @@ const isWorktree = configDir.replace(/\\/g, '/').includes('.kangentic/worktrees/
 
 // Sentry sourcemap upload is a RELEASE-ONLY build step: it activates only when
 // an upload token is present (a CI/release secret, never committed - the repo
-// is public). KANGENTIC_SENTRY_TOKEN is the scoped name (matching the
+// is public) AND the build is authorized to upload (CI, or an explicit
+// KANGENTIC_SENTRY_UPLOAD=1; see sentryUploadAuthorized below). KANGENTIC_SENTRY_TOKEN is the scoped name (matching the
 // KANGENTIC_TELEMETRY convention, and immune to another repo's generic env);
 // SENTRY_AUTH_TOKEN stays accepted as the conventional CI fallback. Everything
 // is server-side after upload: hidden sourcemaps are generated, uploaded with
@@ -29,7 +30,15 @@ const isWorktree = configDir.replace(/\\/g, '/').includes('.kangentic/worktrees/
 const sentryAuthToken = [process.env.KANGENTIC_SENTRY_TOKEN, process.env.SENTRY_AUTH_TOKEN]
   .find((value) => typeof value === 'string' && value.trim() !== '')
   ?.trim();
-const uploadSourcemaps = Boolean(sentryAuthToken);
+// A token alone is not intent: the dogfooding machine carries one as a user
+// environment variable, so a local build would upload an unreleased tree. CI
+// (release.yml) or an explicit KANGENTIC_SENTRY_UPLOAD=1 authorizes it. Kept in
+// step with isSentryUploadAuthorized in scripts/build.js, where the unit test for
+// this check lives.
+const continuousIntegration = (process.env.CI ?? '').trim().toLowerCase();
+const sentryUploadAuthorized = (continuousIntegration !== '' && continuousIntegration !== 'false' && continuousIntegration !== '0')
+  || (process.env.KANGENTIC_SENTRY_UPLOAD ?? '').trim() === '1';
+const uploadSourcemaps = Boolean(sentryAuthToken) && sentryUploadAuthorized;
 /**
  * The runtime release name, `Kangentic@<version>`: what @sentry/electron builds
  * by default from productName and app version, and therefore what every event

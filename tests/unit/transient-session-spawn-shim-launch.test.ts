@@ -201,6 +201,12 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 
+  it('never hands the builder a task process tag: a Command Terminal is not task work', async () => {
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(buildCommandMock.mock.calls[0][0]).not.toHaveProperty('taskProcessTag');
+  });
+
   it('resolves after ensureTrust and before buildCommand', async () => {
     await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 

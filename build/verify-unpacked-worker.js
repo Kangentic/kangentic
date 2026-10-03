@@ -71,12 +71,14 @@ const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = ['bindings', 'file-uri-to-path'];
 
 /**
  * The pty host's esbuild externals (src/main/pty/host/pty-host-entry.ts): every
- * node-pty instance, and better-sqlite3 for the raw transcripts it writes.
+ * node-pty instance, better-sqlite3 for the raw transcripts it writes, and
+ * koffi for the Windows process-environment reader (src/main/pty/process-tag/).
  * better-sqlite3's closure is the retrieval worker's, already probed; this
- * resolves node-pty, and `verifyPtyHostLoads` spawns a real process with it
- * under the packaged Electron binary.
+ * resolves node-pty and loads koffi's per-platform binary, and
+ * `verifyPtyHostLoads` spawns a real process with node-pty under the packaged
+ * Electron binary.
  */
-const PTY_HOST_EXTERNALS = ['node-pty'];
+const PTY_HOST_EXTERNALS = ['node-pty', 'koffi'];
 const PTY_HOST_PROBE_DEPENDENCIES = [];
 
 /**

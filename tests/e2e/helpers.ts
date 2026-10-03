@@ -490,6 +490,56 @@ async function killAppProcess(app: ElectronApplication): Promise<void> {
   }
 }
 
+/**
+ * True while a process with this pid exists. Signal 0 delivers nothing and only
+ * probes, on POSIX and on Windows. EPERM means the process exists but belongs to
+ * someone else, which still counts as alive.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * closeApp, then wait until the Electron main process is actually gone.
+ *
+ * For a spec that closes an app and then relaunches against the SAME data dir,
+ * or opens that dir's project database directly. It replaces the fixed 1 to 2 s
+ * sleep those specs used to leave after closeApp, which stood in for exactly
+ * this: the old process, and with it every handle it held on config.json and
+ * the SQLite files, being gone before the next phase starts. A sleep guessed
+ * that duration; the pid says it.
+ *
+ * The pid is read BEFORE the close, because `app.process()` throws once
+ * Playwright has torn its handle down.
+ */
+export async function closeAppAndWaitForExit(
+  app: ElectronApplication | undefined,
+  timeoutMs = 10_000,
+): Promise<void> {
+  if (!app) return;
+  let pid: number | undefined;
+  try {
+    pid = app.process()?.pid;
+  } catch {
+    pid = undefined;
+  }
+  await closeApp(app);
+  if (!pid) return;
+  const closedPid = pid;
+  await expect
+    .poll(() => isPidAlive(closedPid), {
+      timeout: timeoutMs,
+      intervals: [100, 250, 500],
+      message: `Electron main process ${closedPid} was still alive after closeApp`,
+    })
+    .toBe(false);
+}
+
 // Wait for the board to load (swimlanes visible)
 export async function waitForBoard(page: Page): Promise<void> {
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });

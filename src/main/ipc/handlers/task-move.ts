@@ -13,10 +13,9 @@ import {
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
   createTransitionEngine,
-  captureSessionLeftovers,
   cleanupTaskResources,
   deleteTaskWorktree,
-  reapSessionLeftovers,
+  reapTaskLeftovers,
   reportAutomationFailures,
   spawnAgent,
 } from '../helpers';
@@ -723,12 +722,6 @@ export async function handleTaskMove(
         // handoff flash fix) would keep showing that stale label instead of
         // "Paused" through the whole archive below.
         clearSpawnProgress(context.mainWindow, task.id);
-        // Taken before the suspend below: suspending kills the PTY, which
-        // orphans whatever the agent backgrounded inside the worktree. On POSIX
-        // those children reparent to init immediately, so the tree cannot be
-        // walked afterwards. Reading it costs nothing - see
-        // captureSessionLeftovers.
-        const leftovers = captureSessionLeftovers(context, task.session_id);
         if (task.session_id) {
           const record = sessionRepo.getLatestForTask(task.id);
           // Accept 'running' AND 'exited' -- exited covers Claude natural exit.
@@ -768,12 +761,14 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
           }
         }
-        // Kill what the session left running in the worktree before anything
-        // tries to delete it. A backgrounded dev server holds the directory as
-        // its cwd, which on Windows makes the removal below fail and leaves a
-        // husk with no git admin entry - the failure that later hangs a fresh
-        // worktree creation. Must precede deleteTaskWorktree.
-        await reapSessionLeftovers(task.id, leftovers);
+        // Kill everything the task's agents left running, across every session
+        // the task ever ran (a Code Review entry or a Pause suspended earlier
+        // ones), before anything tries to delete the worktree. A backgrounded
+        // dev server holds the directory as its cwd, which on Windows makes the
+        // removal below fail and leaves a husk with no git admin entry - the
+        // failure that later hangs a fresh worktree creation. After the
+        // suspend, so the session has exited; before deleteTaskWorktree.
+        await reapTaskLeftovers(context, resolvedProjectPath, [task]);
 
         // Capture git churn (fire-and-forget, best-effort). In the PR flow the
         // branch is usually already merged by the time a task reaches Done, so
@@ -810,7 +805,7 @@ export async function handleTaskMove(
         return null;
       }
 
-      // --- Priority 2.5: TARGET HAS auto_spawn=false (and not backlog/done which are handled above) ---
+      // --- Priority 2.5: TARGET HAS auto_spawn=false (and not To Do / Done, which are handled above) ---
       // → Suspend session if one exists, do NOT spawn new agent
       if (toLane && !toLane.auto_spawn) {
         context.terminalSubmitScheduler.cancel(task.id);

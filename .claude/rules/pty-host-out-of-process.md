@@ -68,7 +68,12 @@ at the Windows timer floor.
   would boot a second app. A session's or a probe's PTY whose program is one of them is refused
   the same way.
   The background-shell watcher's process table also comes from the host (`listProcesses`), which
-  keeps the probe's PowerShell child.
+  keeps the probe's PowerShell child. So does the task leftover reap (`reapTaggedProcesses`,
+  `src/main/pty/process-tag/`): the host scans for the `KANGENTIC_TASK_ID` tag and kills, and on
+  Windows and macOS it loads koffi (an esbuild external, unpacked, and loaded by the afterPack
+  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record). The scan
+  yields to the event loop as it goes. See
+  [[task-process-tag]].
 - **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)
   starts every headless run (Ask, task summaries, auto-name, the warm answer session) through
   `spawnOffMainCli` (`off-main-cli.ts`): a `cliSpawn` command, so the handle (`RemoteCliProcess`)

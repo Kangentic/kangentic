@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphAnswerContext } from '../shared/types';
+import type { ElectronAPI, LeftoverProcessReport, AutomationInterruptedSummary,AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphAnswerContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -366,6 +366,15 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.CONFIG_WRITE_FAILED, handler);
       return () => ipcRenderer.removeListener(IPC.CONFIG_WRITE_FAILED, handler);
     },
+  },
+
+  leftoverProcesses: {
+    onReport: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, report: LeftoverProcessReport) => callback(report);
+      ipcRenderer.on(IPC.LEFTOVER_PROCESSES_REPORT, handler);
+      return () => ipcRenderer.removeListener(IPC.LEFTOVER_PROCESSES_REPORT, handler);
+    },
+    stop: (processId) => ipcRenderer.invoke(IPC.LEFTOVER_PROCESSES_STOP, processId),
   },
 
   keybindings: {

@@ -262,16 +262,25 @@ test.describe('Kimi Agent - Concurrent Spawns Same Work Dir', () => {
         await Promise.all(sessionIds.map((sessionId) => window.electronAPI.sessions.kill(sessionId)));
       }, sessionData.map((session) => session.id));
 
-      await page.waitForFunction(
-        async (targetTaskIds) => {
-          const sessions = await window.electronAPI.sessions.list();
-          return !sessions.some((session) =>
-            session.status === 'running' && targetTaskIds.includes(session.taskId),
-          );
-        },
-        [taskIdA, taskIdB],
-        { timeout: 15000 },
-      );
+      // expect.poll, not page.waitForFunction: an async predicate there
+      // resolves on its first evaluation, so the drain was never awaited. A
+      // kill of a young session lands up to 1500 ms later (the PTY teardown
+      // grace), so this really does wait.
+      await expect
+        .poll(
+          async () => page.evaluate(async (targetTaskIds) => {
+            const sessions = await window.electronAPI.sessions.list();
+            return sessions.filter((session) =>
+              session.status === 'running' && targetTaskIds.includes(session.taskId),
+            ).length;
+          }, [taskIdA, taskIdB]),
+          {
+            timeout: 15000,
+            intervals: [200, 500],
+            message: `iteration ${iteration}: killed sessions never left 'running'`,
+          },
+        )
+        .toBe(0);
     }
   });
 });

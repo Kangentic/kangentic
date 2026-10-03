@@ -17,7 +17,7 @@ import { getProjectDb, closeProjectDb } from '../../db/database';
 import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
-import { ensureGitignore } from '../helpers';
+import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone, bucketTaskCount } from '../../analytics/usage';
@@ -136,10 +136,12 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
   // 1. Kill all active PTY sessions belonging to this project's tasks
   let allTasks: Task[] = [];
+  let archivedTasks: Array<{ id: string; worktree_path: string | null }> = [];
   try {
     const db = getProjectDb(projectId);
     const taskRepo = new TaskRepository(db);
     allTasks = taskRepo.list();
+    archivedTasks = taskRepo.listArchived();
   } catch (err) {
     console.error('[PROJECT_DELETE] Failed to read tasks:', err);
   }
@@ -163,6 +165,11 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
     }
   }
+
+  // Kill whatever every task of the project left running, archived ones too,
+  // once their sessions have exited and before the worktrees go: a live
+  // process holding a worktree as its cwd blocks the removal on Windows.
+  await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks]);
 
   // 2. Cleanly detach git worktrees (keeps branches with user code intact)
   if (isGitRepo(projectPath)) {
@@ -587,7 +594,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     runWithProjectLogContext(project.name, () =>
       pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, sessionRepo)
         .then(() => {
-          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id))
+          cleanupStaleResourcesAsync(openedProject.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path));
         })
@@ -752,7 +759,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       // background and may still be in flight when activateAllProjects
       // resolves.
       await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
+      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
@@ -900,7 +907,7 @@ export function registerProjectHandlers(context: IpcContext): void {
           // completes before session recovery reads the DB; the slow
           // filesystem passes are fired without awaiting.
           await pruneOrphanedTasksAndNotify(context, project, taskRepo, sessionRepo);
-          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id))
+          cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
