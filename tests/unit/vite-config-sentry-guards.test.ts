@@ -152,6 +152,22 @@ describe('vite.config.mts Sentry upload guards', () => {
     expect(() => configFactory({ mode: 'production' })).not.toThrow();
   });
 
+  it.each(['false', '0'])('never reaches either guard when CI is "%s" even with a token set', async (continuousIntegrationValue) => {
+    // CI=false and CI=0 are how a local shell or a workflow says "not CI", so
+    // like an empty CI they do not authorize an upload. Mirrors the "false" and
+    // "0" exclusions in isSentryUploadAuthorized (scripts/build.js). NODE_ENV
+    // 'development' would throw if the plugin were built, so not throwing
+    // proves it was not.
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    vi.stubEnv('CI', continuousIntegrationValue);
+    process.env.NODE_ENV = 'development';
+
+    const configModule = await import('../../vite.config.mts');
+    const configFactory = configModule.default as unknown as SentryConfigFactory;
+
+    expect(() => configFactory({ mode: 'production' })).not.toThrow();
+  });
+
   it('a local build with KANGENTIC_SENTRY_UPLOAD=1 is authorized and reaches the guards', async () => {
     vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
     vi.stubEnv('CI', '');

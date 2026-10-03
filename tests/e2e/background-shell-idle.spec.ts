@@ -114,6 +114,7 @@ import {
   closeApp,
   getTaskIdByTitle,
   getSwimlaneIds,
+  isProcessAlive,
   moveTaskIpc,
   waitForTaskScrollback,
 } from './helpers';
@@ -162,22 +163,6 @@ function copyArtifact(src: string, name: string): string {
     fs.writeFileSync(dst, `(events.jsonl did not exist at ${src})\n`);
   }
   return dst;
-}
-
-/**
- * signal 0 is the standard "does this PID exist" probe on POSIX and is
- * supported by Node on Windows too. Returns true iff the process is
- * alive (or we lack permission to signal it, which implies it exists).
- */
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === 'EPERM';
-  }
 }
 
 /**

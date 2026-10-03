@@ -199,6 +199,23 @@ function owningTaskOf(target: ScannedProcess, byPid: ReadonlyMap<number, Scanned
   return null;
 }
 
+/** Whether an ancestor of `survivor` in the same scan is another surviving orphan of `taskId`. */
+function isUnderOrphanOfTask(
+  survivor: ScannedProcess,
+  taskId: string,
+  byPid: ReadonlyMap<number, ScannedProcess>,
+  orphanTaskByPid: ReadonlyMap<number, string>,
+): boolean {
+  let cursor = survivor;
+  for (let depth = 0; depth < 64; depth += 1) {
+    const parent = byPid.get(cursor.ppid);
+    if (!parent || parent.pid === cursor.pid) return false;
+    if (orphanTaskByPid.get(parent.pid) === taskId) return true;
+    cursor = parent;
+  }
+  return false;
+}
+
 /**
  * The valid tasks of a request, merged by id, with their directories. Main
  * already drops a filesystem root and the home directory
@@ -344,6 +361,11 @@ export async function reapTaggedOnce(
         const taskId = owningTaskOf(survivor, secondByPid, secondRootTasks);
         if (taskId !== null) orphanSurvivors.push({ survivor, taskId });
       }
+      // A survivor under another surviving orphan of its task is part of that
+      // one's tree: the report names the top only, as it does for a root.
+      const orphanTaskByPid = new Map(orphanSurvivors.map((orphan) => [orphan.survivor.pid, orphan.taskId]));
+      const topOrphans = orphanSurvivors.filter((orphan) => !isUnderOrphanOfTask(orphan.survivor, orphan.taskId, secondByPid, orphanTaskByPid));
+      orphanSurvivors.splice(0, orphanSurvivors.length, ...topOrphans);
     }
     const survivorLabels = await describeSafely(deps.reader, orphanSurvivors.map((orphan) => orphan.survivor));
     for (const [pid, label] of survivorLabels) labels.set(pid, label);

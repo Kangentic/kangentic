@@ -139,15 +139,18 @@ export function parseDefaultDistro(output: string): string | null {
  * Run the reap inside the shell's distro. Returns the pids it killed. Never
  * throws: a failure (wsl.exe missing or refusing, a timeout) kills nothing and
  * is handed to `onFailure`, so the caller can log and report it.
+ *
+ * `keepTask` is asked again just before the script runs, after the `wsl.exe`
+ * listings, which can take seconds: a task it now refuses is left out.
  */
 export async function reapTaggedProcessesInWsl(
   spec: WslShellSpec,
   tasks: readonly WslReapTask[],
   exec: WslExec,
   onFailure: (error: unknown) => void = () => {},
+  keepTask: (taskId: string) => boolean = () => true,
 ): Promise<number[]> {
-  const invocation = buildWslReapInvocation(tasks);
-  if (!invocation) return [];
+  if (!buildWslReapInvocation(tasks)) return [];
   const env = { WSL_UTF8: '1' };
   try {
     const running = parseRunningDistros(await exec('wsl.exe', ['-l', '--running', '-q'], { timeoutMs: WSL_TIMEOUT_MS, env }));
@@ -156,6 +159,8 @@ export async function reapTaggedProcessesInWsl(
     // while another one runs; naming it keeps the reap from booting it.
     const distro = spec.distro ?? parseDefaultDistro(await exec('wsl.exe', ['-l', '-v'], { timeoutMs: WSL_TIMEOUT_MS, env }));
     if (!distro || !running.some((name) => name.toLowerCase() === distro.toLowerCase())) return [];
+    const invocation = buildWslReapInvocation(tasks.filter((task) => keepTask(task.taskId)));
+    if (!invocation) return [];
     const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_TIMEOUT_MS * 2, env });
     return [...new Set(output.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number))];
   } catch (error) {

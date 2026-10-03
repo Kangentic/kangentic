@@ -165,6 +165,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
       try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
     }
   }
+  // Every other session of a task, and a spawn still in flight that no
+  // `session_id` names yet: cancelled and waited for, as every terminal
+  // transition does before its reap, so no PTY starts in a worktree about to go.
+  await Promise.all(allTasks.map((task) => context.sessionManager.removeByTaskId(task.id)));
 
   // Kill whatever every task of the project left running, archived ones too,
   // once their sessions have exited and before the worktrees go: a live

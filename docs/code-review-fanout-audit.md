@@ -820,6 +820,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 736, whole branch, pre-PR | 146f +9278 -1701 | 793KB, 14017 lines | 10 (0) | 136 | 0 | 12, sharded by area: 6 area shards, 5 gated auditors on their own ranges, integration on the delta | about 34 of 11 pack-carrying, 1 not reported | 51 raised, 46 distinct / 27 applied, 2 refuted; 6 coverage holes filled |
 | task 736, whole branch, second pass | 153f +10439 -1718 | 866KB, 15295 lines | 9 (0) | 144 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two), integration on the delta | about 70 of 13 pack-carrying, most of them greps | 41 raised, 39 distinct, plus 1 found in verification / 27 applied, 4 refuted, 9 skipped; 5 coverage holes filled |
 | task 736, whole branch, third pass | 156f +11700 -1724 | 944KB, 16632 lines | 8 (0) | 148 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 40 of 13 pack-carrying, most of them rule files and callers | 35 raised, 31 distinct / 12 applied, 7 refuted, 10 skipped; 8 coverage holes filled |
+| task 736, whole branch, fourth pass | 159f +12196 -1727 | 977KB, 17163 lines | 7 (0) | 152 | 0 | 15, sharded by area: 8 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 14 pack-carrying, most of them rule files, greps and callers | 34 raised, 30 distinct / 18 applied, 3 refuted, 9 skipped; 6 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1227,3 +1228,24 @@ three test-builders had `src/` closed, and the driver showed red-green itself by
 fix in place, running the file, and restoring it. The WSL cases are Linux-only and this host's
 Ubuntu distro has no node, so a test-builder proved the script logic, and each revert's red, in a
 WSL shell harness with the same shim text. The vitest cases themselves first run on CI.
+
+The task 736 fourth pass kept that layout at 17,163 pack lines: eight area shards of 1,582 to
+2,804 lines (the renderer and shared types got a shard of their own), six gated auditors on their
+own ranges (cross-platform in two of 4,083 and 3,572 lines), and the integration finder on an
+893-line delta. The focus ran from `11d60d38`, the third pass's fix commit, to HEAD, which added
+one commit: the WSL reap leaving out a task with a live or starting session. Before the fan-out a
+scoped run of the 48 unit files the branch changed passed, as did `bg-shell-watcher.test.ts`
+(its diff is deletions only, which a list built from changed tests misses), seven parity tests,
+and the leftover-processes UI spec against the helpers main had just merged in. Two finders
+independently found that newest commit incomplete. It read the live sessions once, before up to
+three `wsl.exe` calls, so a To Do task dragged into a running column during a slow listing could
+still lose its new agent. The reap now asks again just before the script runs and logs how many
+tasks it left out. A session that starts during the script's own second can still lose its agent,
+and the comments that said the sweep cannot reach one now say that. The other two Mediums were
+test gaps. A batching test could not fail, because its first request finished before the
+report-only request was queued, and no required check covered the Windows reader's visible-app
+and console-host roles. The rewritten batching test was shown red under both ways a merged batch
+could go wrong (the stop setting OR'd, and the first request's kept). Three candidates were
+refuted, among them a task-row read outside the reap's `try` that the same function already makes,
+unguarded, a few lines earlier. As in the third pass, `src/` was closed to the two test-builders and the driver
+reverted each fix in place to see its test go red.

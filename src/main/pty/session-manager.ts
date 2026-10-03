@@ -1885,26 +1885,40 @@ export class SessionManager extends EventEmitter {
     // while stopping is on.
     if (process.platform === 'win32' && options.stop) {
       const wslSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
-      // The distro's script cannot tell which processes run under a PTY this
-      // app holds, which the host protects, so it leaves out every task that
-      // has a live session again or is starting one, read here, after the host
-      // reap. The startup sweep is the caller that can meet one: a To Do task
-      // dragged back into a running column while its reap ran. Every other
-      // caller waited for its tasks' sessions to exit, so it loses nothing.
-      const distroTasks = reapTasks.filter((task) => !this.hasLiveOrStartingSession(task.taskId));
-      if (wslSpec && distroTasks.length > 0) {
-        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, distroTasks, async (file, args, execOptions) => {
-          const output = await execFileAsync(file, args, {
-            timeout: execOptions.timeoutMs,
-            env: { ...process.env, ...execOptions.env },
-            windowsHide: true,
-          });
-          return output.stdout;
-        }, (error) => {
-          // The error's text can name task directories: local log only.
-          console.warn('[TASK-REAP] WSL reap failed (non-fatal):', error);
-          reportTaskReapFailure('reap', 'wsl_error');
-        }));
+      if (wslSpec) {
+        // The distro's script cannot tell which processes run under a PTY this
+        // app holds, which the host protects, so it leaves out every task that
+        // has a live session again or is starting one. That is read here, after
+        // the host reap, and again just before the script runs, since the
+        // `wsl.exe` listings before it can take seconds. The startup sweep is
+        // the caller that can meet one: a To Do task dragged back into a running
+        // column while its reap ran. A session that starts during the script's
+        // own run (about a second) can still lose its agent. Every other caller
+        // waited for its tasks' sessions to exit, so it loses nothing.
+        const leftOutTaskIds = new Set<string>();
+        const reapableInDistro = (taskId: string): boolean => {
+          if (!this.hasLiveOrStartingSession(taskId)) return true;
+          leftOutTaskIds.add(taskId);
+          return false;
+        };
+        const distroTasks = reapTasks.filter((task) => reapableInDistro(task.taskId));
+        if (distroTasks.length > 0) {
+          killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, distroTasks, async (file, args, execOptions) => {
+            const output = await execFileAsync(file, args, {
+              timeout: execOptions.timeoutMs,
+              env: { ...process.env, ...execOptions.env },
+              windowsHide: true,
+            });
+            return output.stdout;
+          }, (error) => {
+            // The error's text can name task directories: local log only.
+            console.warn('[TASK-REAP] WSL reap failed (non-fatal):', error);
+            reportTaskReapFailure('reap', 'wsl_error');
+          }, reapableInDistro));
+        }
+        if (leftOutTaskIds.size > 0) {
+          console.log(`[TASK-REAP] WSL reap left out ${leftOutTaskIds.size} task(s) with a live or starting session`);
+        }
       }
     }
     if (killedPids.length > 0) {

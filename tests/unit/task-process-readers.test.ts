@@ -414,6 +414,61 @@ describe('macOS reader', () => {
       const missingTool = path.join(os.tmpdir(), 'kangentic-missing-tool-that-does-not-exist');
       expect(await runDarwinTool(missingTool, [])).toBeNull();
     });
+
+    it('resolves null soon after a short timeout for a tool that outlives it, long before the tool would have exited', async () => {
+      const startedAt = Date.now();
+      // The tool would run for 10 s. Run to completion it would exit cleanly and resolve '', not null.
+      const output = await runDarwinTool(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], 300);
+      expect(output).toBeNull();
+      expect(Date.now() - startedAt).toBeLessThan(5000);
+    });
+
+    it('kills the tool it gave up on, so a timed-out run leaves nothing running', async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-runtool-'));
+      temporaryRoots.push(directory);
+      const pidFile = path.join(directory, 'tool.pid');
+      // The tool records its own pid as its first statement, then would run for 20 s.
+      const source = "require('node:fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 20000)";
+      // A real timer, captured before the fake clock replaces the global one.
+      const realSetTimeout = globalThis.setTimeout;
+      const pause = (milliseconds: number) => new Promise<void>((resolve) => { realSetTimeout(resolve, milliseconds); });
+      const isRunning = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === 'EPERM';
+        }
+      };
+      let toolPid = 0;
+      // Only the tool's timeout is on the fake clock, so the run cannot give up before the tool has started: the
+      // test fires the timeout itself, once the tool has written its pid. A real short timeout would race its startup.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const run = runDarwinTool(process.execPath, ['-e', source, pidFile], 60_000);
+        const pidDeadline = Date.now() + 15_000;
+        while (toolPid === 0 && Date.now() < pidDeadline) {
+          await pause(25);
+          toolPid = fs.existsSync(pidFile) ? Number.parseInt(fs.readFileSync(pidFile, 'utf8'), 10) || 0 : 0;
+        }
+        // Positive control: the tool is up and running before the timeout fires.
+        expect(toolPid).toBeGreaterThan(0);
+        expect(isRunning(toolPid)).toBe(true);
+
+        vi.advanceTimersByTime(60_000);
+        expect(await run).toBeNull();
+
+        const deathDeadline = Date.now() + 5000;
+        while (isRunning(toolPid) && Date.now() < deathDeadline) await pause(25);
+        expect(isRunning(toolPid)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        // Never leave the tool running when an assertion above failed.
+        if (toolPid > 0 && isRunning(toolPid)) {
+          try { process.kill(toolPid, 'SIGKILL'); } catch { /* already gone */ }
+        }
+      }
+    }, 30_000);
   });
 
   it('kills only a pid whose start time still matches, and never one with an unknown start', async () => {

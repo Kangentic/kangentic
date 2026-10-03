@@ -120,12 +120,14 @@ const sweptProjectPaths = new Set<string>();
  * `/preview` build, a second install) and is never swept.
  *
  * It takes no task lock, unlike a transition's reap. A task dragged out of To
- * Do or unarchived while the sweep runs gets a new session, and the reap cannot
- * reach it: the pty host protects every PTY it holds and everything under it,
- * and the in-distro WSL reap leaves out any task with a live or starting
- * session. Holding the lock of every archived and To Do task instead would
- * block every drag of them for as long as the reap took, which a slow host and
- * a wedged `wsl.exe` can stretch past a minute.
+ * Do or unarchived while the sweep runs gets a new session, and the host reap
+ * cannot reach it: the pty host protects every PTY it holds and everything
+ * under it. The in-distro WSL reap leaves out any task with a live or starting
+ * session, checked again just before its script runs, so only a session that
+ * starts during the script's own run (about a second) can lose its WSL agent.
+ * Holding the lock of every archived and To Do task instead would block every
+ * drag of them for as long as the reap took, which a slow host and a wedged
+ * `wsl.exe` can stretch past a minute.
  */
 export async function sweepTerminalTaskLeftovers(
   projectPath: string,

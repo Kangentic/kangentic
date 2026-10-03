@@ -544,17 +544,23 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
 // ---------------------------------------------------------------------------
 
 describe('PROJECT_DELETE reaps every task, archived ones included', () => {
-  it('reaps after the sessions are removed and before any worktree is detached', () => {
+  it('reaps after the sessions are removed and their in-flight spawns are cancelled and awaited, and before any worktree is detached', () => {
     const projectsSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/projects.ts'), 'utf8');
     const bodyStart = projectsSource.indexOf('export async function cleanupProject(');
     expect(bodyStart).toBeGreaterThan(-1);
     const body = projectsSource.slice(bodyStart);
     const exitsAwaited = body.indexOf('await Promise.all(sessionExits)');
+    // removeByTaskId cancels a spawn still in flight (no session_id names it
+    // yet) and waits for it, so no PTY starts in a worktree about to be reaped.
+    const spawnsCancelled = body.indexOf('context.sessionManager.removeByTaskId(');
     const reap = body.indexOf('await reapTaskLeftovers(');
     const worktreeRemoval = body.indexOf('worktreeManager.removeWorktree(');
     expect(exitsAwaited).toBeGreaterThan(-1);
-    expect(reap).toBeGreaterThan(exitsAwaited);
+    expect(spawnsCancelled).toBeGreaterThan(exitsAwaited);
+    expect(reap).toBeGreaterThan(spawnsCancelled);
     expect(worktreeRemoval).toBeGreaterThan(reap);
+    // The cancel is awaited, not fired and forgotten, before the reap starts.
+    expect(body.slice(exitsAwaited, reap)).toContain('await Promise.all(allTasks.map((task) => context.sessionManager.removeByTaskId(task.id)))');
     // Archived tasks are reaped too, against the project being deleted: only
     // processes working inside it are killed.
     const reapRegion = body.slice(exitsAwaited, worktreeRemoval);

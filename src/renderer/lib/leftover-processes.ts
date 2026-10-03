@@ -82,7 +82,7 @@ export function rowDetailOf(entry: LeftoverProcess, state: LeftoverRowState): { 
   if (entry.reason === 'multiplexer') return { text: 'A tmux server. Stopping it ends all your tmux sessions.', failure: false };
   if (entry.reason === 'shared') return { text: 'Also runs work you started. Stopping it stops that too.', failure: false };
   const folder = entry.place === 'worktree' ? 'the worktree' : 'the project folder';
-  return { text: entry.outcome === 'stopped' ? `Ran in ${folder}.` : `Runs in ${folder}.`, failure: false };
+  return { text: state === 'stopped' ? `Ran in ${folder}.` : `Runs in ${folder}.`, failure: false };
 }
 
 /** The list's two sections. A row stays in the section it opened in, whatever its Stop does. */

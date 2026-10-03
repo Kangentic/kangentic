@@ -851,6 +851,9 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
         return deferred.promise;
       }),
       remove: vi.fn((sessionId: string) => { timeline.push(`remove:${sessionId}`); }),
+      // cleanupProject also cancels and awaits every task's in-flight spawn and
+      // any other session of the task, once the session rows are removed.
+      removeByTaskId: vi.fn(async (taskId: string) => { timeline.push(`removeByTaskId:${taskId}`); }),
     });
 
     // The mocked TaskRepository class only defines countAll (see the module
@@ -885,6 +888,7 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
         'kill:session-1', 'awaitExit:session-1',
         'kill:session-2', 'awaitExit:session-2',
         'remove:session-1', 'remove:session-2',
+        'removeByTaskId:task-1', 'removeByTaskId:task-2',
       ]);
     } finally {
       delete (TaskRepository.prototype as unknown as { list?: unknown }).list;

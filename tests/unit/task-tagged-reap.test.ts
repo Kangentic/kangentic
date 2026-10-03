@@ -269,6 +269,28 @@ describe('reapTaggedOnce report', () => {
     ]);
   });
 
+  it('names only the top of a survivor tree whose root already exited, never each process under it', async () => {
+    const supervisor = tagged(2003, TASK);
+    const supervisorChild = tagged(2004, TASK, 'start-2004', PROJECT, 2003);
+    const reader = new FakeReader([
+      [tagged(2001, TASK)],
+      // The root exited on the graceful kill. A tagged supervisor with a child of its own is listed now,
+      // and neither hangs under the reported root, so each is a survivor on its own.
+      [supervisor, supervisorChild],
+      // The force pass removed neither, so the last scan lists both again, with the same start keys.
+      [supervisor, supervisorChild],
+    ], { 2001: 'node (npm)', 2003: 'node (supervisor)', 2004: 'node (worker)' });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    // The child was force-killed and is still listed, so it really is a survivor the report folds away.
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`).sort()).toEqual(['2001:graceful', '2003:force', '2004:force']);
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2003, startKey: 'start-2003', label: 'node (supervisor)', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+    // Only the top is described: the command line is read for nothing under it.
+    expect(reader.described).not.toContain(2004);
+  });
+
   it('names a process when its command line could not be read', async () => {
     const reader = new FakeReader([[tagged(2001, TASK)], []]);
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
@@ -488,8 +510,11 @@ describe('TaggedReaper', () => {
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful']);
   });
 
-  it('never folds a report-only request into a batch that kills', async () => {
-    const reader = new FakeReader([[tagged(2001, TASK)]]);
+  it('never folds a report-only request into a batch that kills, nor lets it turn a killing request into a report', async () => {
+    // Every scan lists both tasks' processes and the fake never lets one go, so each
+    // batch that scans finds a target for its own task, and the report-only batch finds
+    // 2001 running whichever batch it lands in.
+    const reader = new FakeReader([[tagged(2001, TASK), tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT)]]);
     let releaseWait: () => void = () => {};
     let blocked = true;
     const reaper = new TaggedReaper({
@@ -500,11 +525,24 @@ describe('TaggedReaper', () => {
     });
     const killing = reaper.request({ tasks: [reapTask(OTHER_TASK, OTHER_PROJECT)], mainPid: MAIN_PID, stop: true });
     await new Promise((resolve) => { setTimeout(resolve, 0); });
+    // The first reap is now held in its grace wait, having signalled its one target. Without
+    // this the reaper could be idle when the next two requests arrive, and nothing would be folded.
+    expect(reader.scanCount).toBe(1);
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['3001:graceful']);
+
     const reportOnly = reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: false });
     const alsoKilling = reaper.request({ tasks: [reapTask(OTHER_TASK, OTHER_PROJECT)], mainPid: MAIN_PID, stop: true });
     releaseWait();
-    await Promise.all([killing, reportOnly, alsoKilling]);
+    const [killingResult, reportOnlyResult, alsoKillingResult] = await Promise.all([killing, reportOnly, alsoKilling]);
+
+    // The report-only request's task is never signalled, and it is told 2001 is still running.
     expect(reader.kills.map((kill) => kill.pid)).not.toContain(2001);
+    expect(reportOnlyResult.killedPids).toEqual([]);
+    expect(reportOnlyResult.entries.map((entry) => `${entry.taskId}:${entry.pid}:${entry.outcome}`)).toEqual([`${TASK}:2001:kept`]);
+    // The second killing request keeps its own stop: its batch signals 3001 again, and only 3001.
+    expect(killingResult.killedPids).toEqual([3001]);
+    expect(alsoKillingResult.killedPids).toEqual([3001]);
+    expect(reader.kills.filter((kill) => kill.pid === 3001 && kill.strength === 'graceful')).toHaveLength(2);
   });
 });
 
@@ -523,6 +561,16 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[tagged(2001, TASK, 'new')]]);
     expect(await stopProcessTree({ pid: 2001, startKey: 'old', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
     expect(await stopProcessTree({ pid: 4242, startKey: 'start-4242', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('answers ended for a request with no start key, even when the scan lists that pid with no start key either', async () => {
+    // A process whose creation time could not be read has an empty key; '' === '' must not make it the one named.
+    const reader = new FakeReader([[tagged(2001, TASK, '')]]);
+    expect(await stopProcessTree({ pid: 2001, startKey: '', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
+    // Positive control: the scan ran and listed the pid, so 'ended' is the empty-key refusal, not a missing process.
+    expect(reader.scanCount).toBe(1);
+    expect(reader.scans[0].processes.some((scanned) => scanned.pid === 2001 && scanned.startKey === '')).toBe(true);
     expect(reader.kills).toEqual([]);
   });
 

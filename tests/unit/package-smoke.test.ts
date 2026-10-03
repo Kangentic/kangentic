@@ -60,6 +60,10 @@ describe('package smoke: the leftover the reap step stops', () => {
       pid = Number(fs.readFileSync(path.join(directory, 'leftover.pid'), 'utf8'));
       expect(pid).toBeGreaterThan(0);
       expect(running(pid)).toBe(true);
+      // Linux only (CI's unit tier): /proc exposes a live process's working directory.
+      if (process.platform === 'linux') {
+        expect(fs.realpathSync(fs.readlinkSync(`/proc/${pid}/cwd`))).toBe(directory);
+      }
     } finally {
       if (pid > 0 && running(pid)) process.kill(pid, 'SIGKILL');
       // Windows holds the directory for up to ~100 ms after the process reads

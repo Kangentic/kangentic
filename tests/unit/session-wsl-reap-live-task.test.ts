@@ -32,6 +32,8 @@ import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec
 const LIVE_TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const STARTING_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
 const IDLE_TASK = '1c2d3e4f-5061-4728-9930-4b5c6d7e8f90';
+/** Has no session when a reap starts, and gets one while its `wsl.exe` listings are in flight. */
+const LATE_TASK = '2d3e4f50-6172-4839-8a41-5c6d7e8f9a01';
 const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
 
 const realPlatform = process.platform;
@@ -58,9 +60,12 @@ function setup() {
   Object.assign(manager, { getShell: async () => 'wsl -d Ubuntu' });
 
   const wslCalls: string[][] = [];
+  // A test sets `onRunningListing` to act while the `wsl.exe -l --running -q` call is in flight.
+  const hooks: { onRunningListing: (() => void) | null } = { onRunningListing: null };
   setOffMainExecutor(async (request: HostExecRequest): Promise<HostExecResult> => {
     if (request.kind !== 'execFile') throw new Error(`unexpected ${request.kind}`);
     wslCalls.push(request.args);
+    if (request.args.includes('--running')) hooks.onRunningListing?.();
     return { ok: true, stdout: request.args.includes('--running') ? 'Ubuntu\n' : '', stderr: '' };
   });
 
@@ -89,7 +94,7 @@ function setup() {
   };
 
   const distroReapArgs = (): string[] | undefined => wslCalls.find((args) => args[0] === '-d');
-  return { manager, hostRequests, wslCalls, seedLiveSession, seedStartingSpawn, distroReapArgs };
+  return { manager, hostRequests, wslCalls, hooks, seedLiveSession, seedStartingSpawn, distroReapArgs };
 }
 
 const allTasks = [LIVE_TASK, STARTING_TASK, IDLE_TASK].map((id) => ({ id, worktreePath: null }));
@@ -130,5 +135,72 @@ describe('the WSL reap and a task with a live or starting session', () => {
 
     const positional = distroReapArgs()!.slice(6);
     for (const taskId of [LIVE_TASK, STARTING_TASK, IDLE_TASK]) expect(positional).toContain(taskId);
+  });
+
+  it('leaves out a task whose spawn registered while the running-distro listing was in flight, and still reaps the one that stayed idle', async () => {
+    const { manager, hostRequests, hooks, seedStartingSpawn, distroReapArgs } = setup();
+    let runningListings = 0;
+    hooks.onRunningListing = () => {
+      runningListings += 1;
+      // Both tasks had no session when the reap started, so both passed the first check.
+      seedStartingSpawn(LATE_TASK);
+    };
+
+    await manager.reapTaskProcesses(os.tmpdir(), [IDLE_TASK, LATE_TASK].map((id) => ({ id, worktreePath: null })), { stop: true });
+
+    // Positive controls: the listing ran once and fired the hook, the host reap still got both tasks,
+    // and the script did run, for the task that stayed idle.
+    expect(runningListings).toBe(1);
+    expect(hostRequests).toHaveLength(1);
+    expect(hostRequests[0].tasks.map((task) => task.taskId).sort()).toEqual([IDLE_TASK, LATE_TASK].sort());
+    const reapArgs = distroReapArgs();
+    expect(reapArgs).toBeDefined();
+    // `-d Ubuntu -e sh -c <script> sh <task id> <count> <directories...>`
+    const positional = reapArgs!.slice(6);
+    expect(positional).toContain(IDLE_TASK);
+    expect(positional).not.toContain(LATE_TASK);
+  });
+});
+
+describe('the WSL reap log line for the tasks it left out', () => {
+  const taskIds = [LIVE_TASK, STARTING_TASK, IDLE_TASK];
+
+  function loggedLines(logSpy: { mock: { calls: unknown[][] } }): string[] {
+    return logSpy.mock.calls.map((callArguments) => callArguments.map(String).join(' '));
+  }
+
+  it('reports how many tasks it left out in one line, and names none of them', async () => {
+    const { manager, seedLiveSession, seedStartingSpawn, distroReapArgs } = setup();
+    seedLiveSession(LIVE_TASK);
+    seedStartingSpawn(STARTING_TASK);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true });
+
+      // Positive control: the reap reached the script, so the count below is that path's own line.
+      expect(distroReapArgs()).toBeDefined();
+      const lines = loggedLines(logSpy);
+      const leftOutLines = lines.filter((line) => line.includes('[TASK-REAP] WSL reap left out 2 task(s)'));
+      expect(leftOutLines).toHaveLength(1);
+      // A task id can name a project's work: the count is all that is logged.
+      for (const line of lines) {
+        for (const taskId of taskIds) expect(line).not.toContain(taskId);
+      }
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('says nothing about left-out tasks when every task was reaped in the distro', async () => {
+    const { manager, distroReapArgs } = setup();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true });
+
+      expect(distroReapArgs()).toBeDefined();
+      expect(loggedLines(logSpy).filter((line) => line.includes('left out'))).toEqual([]);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

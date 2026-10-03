@@ -251,7 +251,11 @@ test.describe('Task process reap', () => {
   async function expectSurvivorStaysAlive(record: FastDetachRecord, failure: string): Promise<void> {
     const windowEndsAt = Date.now() + SURVIVOR_HOLD_WINDOW_MS;
     for (;;) {
-      if (!isProcessAlive(record.survivorPid)) throw new Error(`${failure}\n${diagnostics(record)}`);
+      if (!isProcessAlive(record.survivorPid)) {
+        // Seen dead: afterEach must not signal a pid that may since name another process.
+        survivorKnownDead = true;
+        throw new Error(`${failure}\n${diagnostics(record)}`);
+      }
       if (Date.now() >= windowEndsAt) return;
       // Intentional fixed wait: the sampling cadence of the negative window above.
       await page.waitForTimeout(SURVIVOR_SAMPLE_INTERVAL_MS);

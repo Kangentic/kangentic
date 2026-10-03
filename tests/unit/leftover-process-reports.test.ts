@@ -123,7 +123,17 @@ describe('LeftoverProcessReports', () => {
     reports.add((report) => sent.push(report), [entry(2001)], TITLES, true);
     reports.add((report) => sent.push(report), [entry(2002, TASK, { outcome: 'kept' })], TITLES, false);
     vi.runAllTimers();
-    expect(sent.map((report) => [report.stoppingEnabled, report.processes.length])).toEqual(expect.arrayContaining([[true, 1], [false, 1]]));
+    // Exactly two reports, each holding only its own reap: no merged report and
+    // no duplicate. Sorted by the flag because the send order is not the contract.
+    expect(sent).toHaveLength(2);
+    const sentByFlag = [...sent].sort((first, second) => Number(first.stoppingEnabled) - Number(second.stoppingEnabled));
+    expect(sentByFlag.map((report) => ({
+      stoppingEnabled: report.stoppingEnabled,
+      processes: report.processes.map((reported) => [reported.pid, reported.outcome]),
+    }))).toEqual([
+      { stoppingEnabled: false, processes: [[2002, 'kept']] },
+      { stoppingEnabled: true, processes: [[2001, 'stopped']] },
+    ]);
   });
 
   it('carries no start key to the renderer, and resolves a minted id back to its identity', () => {

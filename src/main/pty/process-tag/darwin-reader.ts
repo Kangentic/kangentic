@@ -237,9 +237,9 @@ export function isTopLevelAppExecutable(executablePath: string): boolean {
  * Run a tool and resolve its stdout, or null when it cannot start, exits with
  * an error or a signal, or runs past the timeout. Only a clean exit's output
  * is an answer: an empty listing from a failed run would read as "no windows".
- * Exported for tests.
+ * Exported for tests, which pass a short `timeoutMs`.
  */
-export function runTool(command: string, args: string[]): Promise<string | null> {
+export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOUT_MS): Promise<string | null> {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
@@ -256,7 +256,7 @@ export function runTool(command: string, args: string[]): Promise<string | null>
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
       finish(null);
-    }, TOOL_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref();
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
     child.on('error', () => finish(null));

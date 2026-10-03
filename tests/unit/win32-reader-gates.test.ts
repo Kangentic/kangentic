@@ -15,7 +15,10 @@
  * - `describe` opens only a target that carries a tag (a start key alone is set
  *   before the user check, so it proves nothing about the owner).
  * - A 32-bit (WOW64) process is read through its 32-bit PEB, whose offsets the
- *   fake takes from Windows' own layout, not from the reader.
+ *   fake takes from Windows' own layout, not from the reader. When that walk
+ *   fails, the reader falls back to the native PEB and still closes every handle.
+ * - `scan` marks a process with a visible window `visible-app` (ahead of its
+ *   image name), and a `conhost.exe` or `OpenConsole.exe` row `console-host`.
  * - An environment read stops at 1 MiB however large a size the PEB claims,
  *   and a working directory longer than any Windows path is never read.
  * - An 8.3 working directory is expanded to its long form, and kept short
@@ -40,6 +43,9 @@ type ProcessEntry = Parameters<Win32Api['processFirst']>[1];
 const PROCESS_TERMINATE = 0x0001;
 const PROCESS_VM_READ = 0x0010;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+// NtQueryInformationProcess classes (winternl.h, and 26 from the public symbols).
+const PROCESS_BASIC_INFORMATION_CLASS = 0;
+const PROCESS_WOW64_INFORMATION_CLASS = 26;
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const OWN_SESSION = 1;
@@ -73,6 +79,15 @@ interface FakeProcess {
   creationUnreadable?: boolean;
   /** A 32-bit process under WOW64: only its 32-bit PEB is laid out, so nothing reads through the 64-bit one. */
   wow64?: boolean;
+  /**
+   * A 32-bit process under WOW64 whose 32-bit PEB cannot be walked, with the
+   * native PEB laid out instead (`wow64` stays off, which is what lays it out).
+   * `query`: ProcessWow64Information fails. `memory`: it answers a 32-bit PEB
+   * address that holds nothing readable.
+   */
+  wow64WalkFails?: 'query' | 'memory';
+  /** The process owns a visible top-level window, as the reader's window enumeration reports it. */
+  visible?: boolean;
   /** The EnvironmentSize its PEB claims, when not the block's real length. */
   claimedEnvironmentSize?: number;
   /** The byte length its CurrentDirectory claims, when not the text's real length. */
@@ -149,6 +164,8 @@ class FakeWin32 {
   readonly sessionLookups: number[] = [];
   /** Every ReadProcessMemory call, in order. */
   readonly reads: Array<{ pid: number; address: bigint; size: number }> = [];
+  /** Every NtQueryInformationProcess call, in order. */
+  readonly processInformationQueries: Array<{ pid: number; infoClass: number }> = [];
   /** Every GetLongPathNameW call's input. */
   readonly longPathLookups: string[] = [];
   /** What GetLongPathNameW answers for a short path; anything else fails. */
@@ -205,7 +222,8 @@ class FakeWin32 {
       return 1;
     },
     isWow64Process: (handle, wowOut) => {
-      wowOut[0] = this.byPid.get(handleOf(handle).pid)?.wow64 ? 1 : 0;
+      const fakeProcess = this.byPid.get(handleOf(handle).pid);
+      wowOut[0] = (fakeProcess?.wow64 || fakeProcess?.wow64WalkFails) ? 1 : 0;
       return 1;
     },
     getProcessTimes: (handle, creation) => {
@@ -254,12 +272,15 @@ class FakeWin32 {
     // ProcessWow64Information (the 32-bit PEB's address, 0 for a 64-bit process).
     queryInformationProcess: (handle, infoClass, buffer) => {
       const pid = handleOf(handle).pid;
+      this.processInformationQueries.push({ pid, infoClass });
+      const fakeProcess = this.byPid.get(pid);
       if (infoClass === 0) {
         buffer.writeBigUInt64LE(addressesOf(pid).peb, 8);
         return 0;
       }
       if (infoClass === 26) {
-        buffer.writeBigUInt64LE(this.byPid.get(pid)?.wow64 ? addressesOf(pid).peb32 : 0n, 0);
+        if (fakeProcess?.wow64WalkFails === 'query') return 1;
+        buffer.writeBigUInt64LE((fakeProcess?.wow64 || fakeProcess?.wow64WalkFails) ? addressesOf(pid).peb32 : 0n, 0);
         return 0;
       }
       return 1;
@@ -273,7 +294,7 @@ class FakeWin32 {
       buffer.write(`${long}\u0000`, 0, 'utf16le');
       return long.length;
     },
-    visibleWindowPids: () => new Set<number>(),
+    visibleWindowPids: () => new Set(this.processes.filter((fakeProcess) => fakeProcess.visible).map((fakeProcess) => fakeProcess.pid)),
   };
 
   startKeyOf(pid: number): string {
@@ -573,6 +594,45 @@ describe('Win32TaggedProcessReader: a 32-bit (WOW64) process', () => {
     const labels = await readerFor(fake).describe([targetFor(fake, 910)]);
 
     expect([...labels]).toEqual([[910, 'ping']]);
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it.each(['query', 'memory'] as const)('falls back to the native PEB, and closes every handle, when the 32-bit walk fails at its %s step', async (failure) => {
+    const fake = new FakeWin32([{ pid: 990, wow64WalkFails: failure, tag: TASK, workingDirectory: 'C:\\work\\native' }]);
+    const scan = await readerFor(fake).scan();
+
+    // Positive controls: the 32-bit PEB was asked for first and the native one second, and the
+    // native PEB's parameters pointer was read, so the tag below came through the fallback.
+    expect(fake.processInformationQueries.filter((query) => query.pid === 990).map((query) => query.infoClass))
+      .toEqual([PROCESS_WOW64_INFORMATION_CLASS, PROCESS_BASIC_INFORMATION_CLASS]);
+    expect(fake.reads.some((read) => read.pid === 990 && read.address === addressesOf(990).peb + 0x20n)).toBe(true);
+    expect(fake.openedPids(PROCESS_VM_READ)).toEqual([990]);
+
+    expect(scanned(scan, 990)).toMatchObject({ tagValue: TASK, workingDirectory: 'C:\\work\\native' });
+    expect(scanned(scan, 990).environmentUnreadable).toBeUndefined();
+    expect(scan.unreadableCount).toBe(0);
+    expectEveryHandleClosedOnce(fake);
+  });
+});
+
+describe('Win32TaggedProcessReader.scan: the role of a process the reap must not read as shared', () => {
+  it('marks a visible window and a console host, lets the window win, and marks nothing else', async () => {
+    const fake = new FakeWin32([
+      { pid: 1000, image: 'chrome.exe', visible: true },
+      { pid: 1010, image: 'conhost.exe' },
+      // The mixed case is what the image match has to fold, since the set holds lower case.
+      { pid: 1020, image: 'OpenConsole.exe' },
+      // A console host that owns a visible window is reported as the window, whichever check runs first.
+      { pid: 1030, image: 'conhost.exe', visible: true },
+      { pid: 1040, image: 'node.exe' },
+    ]);
+    const scan = await readerFor(fake).scan();
+
+    expect(scanned(scan, 1000).role).toBe('visible-app');
+    expect(scanned(scan, 1010).role).toBe('console-host');
+    expect(scanned(scan, 1020).role).toBe('console-host');
+    expect(scanned(scan, 1030).role).toBe('visible-app');
+    expect(scanned(scan, 1040).role).toBeUndefined();
     expectEveryHandleClosedOnce(fake);
   });
 });
