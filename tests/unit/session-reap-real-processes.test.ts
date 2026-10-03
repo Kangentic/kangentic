@@ -36,7 +36,12 @@ import { buildWslReapInvocation } from '../../src/main/pty/process-tag/wsl-reap'
 
 const execFileAsync = promisify(execFile);
 const APPEAR_TIMEOUT_MS = 20_000;
-const SCAN_TIMEOUT_MS = 10_000;
+/**
+ * The removal-time path scan the first case contrasts against. On Windows it is
+ * a cold PowerShell `Get-CimInstance`, which passed 10 s on a freshly provisioned
+ * runner right after `npm ci` (measured on windows-latest). Each case allows 60 s.
+ */
+const SCAN_TIMEOUT_MS = 30_000;
 const TASK_ID = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const OTHER_TASK_ID = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
 
