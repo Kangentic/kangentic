@@ -4,6 +4,8 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove, s
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
 import { useBoardStore } from '../../../stores/board-store';
+import { useToastStore } from '../../../stores/toast-store';
+import { describeIpcError } from '../../../lib/ipc-error';
 import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
 import { RegistryIcon } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
@@ -332,12 +334,21 @@ export function ShortcutsTab() {
     const teamActions = actions.filter((action) => action.source === 'team').map(stripSource);
     const personalActions = actions.filter((action) => action.source === 'local').map(stripSource);
 
-    // Save team and local actions separately
-    if (teamActions.length > 0 || shortcuts.some((action) => action.source === 'team')) {
-      await window.electronAPI.boardConfig.setShortcuts(teamActions, 'team');
-    }
-    if (personalActions.length > 0 || shortcuts.some((action) => action.source === 'local')) {
-      await window.electronAPI.boardConfig.setShortcuts(personalActions, 'local');
+    // Save team and local actions separately. A save is refused when its file
+    // exists but cannot be read (merge conflict markers, say), rather than
+    // replaced; say so, then reload below so the list shows what is saved.
+    try {
+      if (teamActions.length > 0 || shortcuts.some((action) => action.source === 'team')) {
+        await window.electronAPI.boardConfig.setShortcuts(teamActions, 'team');
+      }
+      if (personalActions.length > 0 || shortcuts.some((action) => action.source === 'local')) {
+        await window.electronAPI.boardConfig.setShortcuts(personalActions, 'local');
+      }
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Could not save shortcuts. ${describeIpcError(error)}`,
+        variant: 'error',
+      });
     }
 
     // Reload directly instead of waiting for boardConfig:changed event

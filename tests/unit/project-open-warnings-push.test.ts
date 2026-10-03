@@ -201,9 +201,11 @@ describe('deferBoardConfigReconcile warnings push', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
+    let loggedErrors: string[] = [];
     try {
       await openProjectByPath(context as unknown as IpcContext, project.path);
       await flushSetImmediate();
+      loggedErrors = errorSpy.mock.calls.map((call) => call.map(String).join(' '));
     } finally {
       errorSpy.mockRestore();
       warnSpy.mockRestore();
@@ -215,7 +217,9 @@ describe('deferBoardConfigReconcile warnings push', () => {
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toBe('earlier warning from the reconcile');
     expect(warnings[1]).toContain('kangentic.json could not be applied');
-    expect(warnings[1]).toContain('disk full');
+    // The raw error is logged, never bannered: it can carry an absolute path.
+    expect(warnings[1]).not.toContain('disk full');
+    expect(loggedErrors.some((message) => message.includes('disk full'))).toBe(true);
   });
 
   it('pushes nothing when the user switched projects before the deferred callback ran', async () => {

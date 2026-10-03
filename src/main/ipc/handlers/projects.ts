@@ -464,9 +464,10 @@ function deferBoardConfigReconcile(context: IpcContext, projectId: string, proje
   setImmediate(() => {
     if (context.currentProjectId !== projectId) return;
     runWithProjectLogContext(projectName, () => {
+      let configWarnings: string[] = [];
       try {
         if (context.boardConfigManager.exists()) {
-          const configWarnings = context.boardConfigManager.applyConfigOnOpen();
+          configWarnings = context.boardConfigManager.applyConfigOnOpen();
           for (const warning of configWarnings) {
             console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
           }
@@ -475,7 +476,18 @@ function deferBoardConfigReconcile(context: IpcContext, projectId: string, proje
         context.boardConfigManager.exportFromDb();
       } catch (error) {
         console.error('[PROJECT_OPEN] Deferred board config work failed:', error);
+        // The error itself goes to the log above, not to the banner: its message
+        // can carry an absolute path, and the banner is on screen in demos and
+        // screen shares.
+        configWarnings = [
+          ...configWarnings,
+          'kangentic.json could not be applied, so the board loaded from the local database. The log has the details.',
+        ];
       }
+      // These used to reach only the log, so a broken file left the board on
+      // stale data with nothing on screen saying why. Sent even when empty, so
+      // the previous project's banner does not stay up.
+      context.boardConfigManager.sendOpenWarnings(projectId, configWarnings);
     });
   });
 }

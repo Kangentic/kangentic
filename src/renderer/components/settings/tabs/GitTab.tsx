@@ -4,6 +4,8 @@ import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { useToastStore } from '../../../stores/toast-store';
+import { describeIpcError } from '../../../lib/ipc-error';
 
 /**
  * Three cards: Branches (where work starts and how current it stays),
@@ -29,7 +31,15 @@ export function GitTab({ config }: { config: AppConfig }) {
             defaultBranch="main"
             onChange={(branch) => {
               updateProject({ git: { defaultBaseBranch: branch } });
-              window.electronAPI.boardConfig.setDefaultBaseBranch(branch);
+              // The project setting above is saved either way. The team file
+              // refuses the write when it exists but cannot be read (merge
+              // conflict markers, say), and that refusal has to reach the user.
+              window.electronAPI.boardConfig.setDefaultBaseBranch(branch).catch((error: unknown) => {
+                useToastStore.getState().addToast({
+                  message: `Could not save the base branch to kangentic.json. ${describeIpcError(error)}`,
+                  variant: 'error',
+                });
+              });
             }}
           />
         </CardRow>

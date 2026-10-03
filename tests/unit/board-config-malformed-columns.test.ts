@@ -36,7 +36,7 @@ vi.mock('../../src/main/db/repositories/automation-repository', () => ({
 }));
 
 import { BoardConfigManager } from '../../src/main/config/board-config-manager';
-import { TEAM_FILE } from '../../src/main/config/board-config/config-helpers';
+import { TEAM_FILE, BoardConfigUnreadableError } from '../../src/main/config/board-config/config-helpers';
 import { planColumnAutomations } from '../../src/main/config/board-config/apply-automations';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { BoardColumnConfig } from '../../src/shared/types';
@@ -194,12 +194,14 @@ describe('board-config-manager unreadableReason edge cases', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const { warnings } = manager.applyConfig('project-1', tempDir);
-    manager.setBoardProfiles([{ id: 'p1', name: 'Heavy', columns: {} }], tempDir);
+    // Refused with an error a caller can show, not skipped in silence: the
+    // IPC caller toasts it and an MCP command returns it as its error.
+    expect(() => manager.setBoardProfiles([{ id: 'p1', name: 'Heavy', columns: {} }], tempDir)).toThrow(BoardConfigUnreadableError);
 
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('kangentic.json could not be read');
     expect(warnings[0]).toContain('not a JSON object');
-    expect(warnSpy.mock.calls.some((call) => call.map(String).join(' ').includes('setBoardProfiles skipped'))).toBe(true);
+    expect(warnSpy.mock.calls.some((call) => call.map(String).join(' ').includes('setBoardProfiles refused'))).toBe(true);
     expect(fs.readFileSync(path.join(tempDir, TEAM_FILE), 'utf-8')).toBe(content);
   });
 
@@ -217,8 +219,8 @@ describe('board-config-manager unreadableReason edge cases', () => {
 
     expect(() => {
       manager.setBoardProfiles([{ id: 'p1', name: 'Heavy', columns: {} }], tempDir);
-    }).not.toThrow();
-    expect(warnSpy.mock.calls.some((call) => call.map(String).join(' ').includes('setBoardProfiles skipped'))).toBe(true);
+    }).toThrow(BoardConfigUnreadableError);
+    expect(warnSpy.mock.calls.some((call) => call.map(String).join(' ').includes('setBoardProfiles refused'))).toBe(true);
     expect(fs.statSync(path.join(tempDir, TEAM_FILE)).isDirectory()).toBe(true);
   });
 });

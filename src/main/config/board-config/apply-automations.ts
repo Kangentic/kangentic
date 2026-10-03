@@ -8,6 +8,7 @@ import type {
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
 import { AUTOMATION_MANIFEST, isAutomationType, isRetiredActionType } from '../../../shared/automation-manifest';
 import { uniqueName } from '../../automations/column-message';
+import { isJsonObject, isMalformedList } from './config-helpers';
 
 /**
  * Convert one column's `kangentic.json` entry into the automations it should
@@ -25,6 +26,20 @@ import { uniqueName } from '../../automations/column-message';
 export interface ColumnAutomationPlan {
   rows: AutomationWriteInput[];
   warnings: string[];
+  /**
+   * The column's `automations` value, or one of its groups, is the wrong
+   * shape, so the file has said nothing usable about this column. The caller
+   * must leave the column's rows alone rather than replace them with `rows`.
+   */
+  keepExisting: boolean;
+}
+
+/**
+ * Is this `automations` value present but not an object? Null is not
+ * malformed. It reads as a column that declares none, as it always has.
+ */
+function isMalformedAutomations(value: unknown): boolean {
+  return value !== undefined && value !== null && !isJsonObject(value);
 }
 
 /**
@@ -54,16 +69,50 @@ export function configDeclaresAutomations(columns: BoardColumnConfig[]): boolean
  * whole config to "automation-aware" on the strength of the messages, and the
  * script's column, silent in the file, was emptied on the first open after the
  * upgrade. The script was gone before anyone opened the Column Manager.
+ *
+ * A malformed value does not count either. `"automations": "x"` on one column
+ * says nothing about the others, and counting it would clear every column the
+ * file is silent about.
  */
 export function configIsAutomationAware(columns: BoardColumnConfig[]): boolean {
-  return columns.some((column) => column.automations !== undefined);
+  return columns.some((column) => column.automations !== undefined && !isMalformedAutomations(column.automations));
 }
 
 export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomationPlan {
   const warnings: string[] = [];
   const rows: AutomationWriteInput[] = [];
 
+  // Read the containers through `unknown`. The declared types are what the app
+  // writes, but this came from JSON.parse. A group that is truthy and not a list
+  // (`"onEnter": {}`, or one row written without brackets) threw "is not
+  // iterable" out of the reconcile transaction (Sentry DESKTOP-1H), rolling back
+  // the whole board apply. It is reported instead, and the column keeps what it
+  // has. Planning it as empty would delete its rows, and on project open the
+  // export that follows would write that deletion into the committed file.
+  const automations: unknown = column.automations;
+  if (isMalformedAutomations(automations)) {
+    warnings.push(
+      `In "${column.name}", automations must be an object with onEnter and onExit lists. Kept the column's current automations.`,
+    );
+    return { rows, warnings, keepExisting: true };
+  }
+
   if (column.automations) {
+    const groups: Record<AutomationTrigger, unknown> = {
+      enter: column.automations.onEnter,
+      exit: column.automations.onExit,
+    };
+    const malformedKeys = (['enter', 'exit'] as const)
+      .filter((trigger) => isMalformedList(groups[trigger]))
+      .map((trigger) => (trigger === 'enter' ? 'onEnter' : 'onExit'));
+    if (malformedKeys.length > 0) {
+      const verb = malformedKeys.length === 1 ? 'must be a list' : 'must be lists';
+      warnings.push(
+        `In "${column.name}", ${malformedKeys.join(' and ')} ${verb}. Kept the column's current automations.`,
+      );
+      return { rows, warnings, keepExisting: true };
+    }
+
     // Names are unique PER COLUMN, across both groups, because that is what
     // `idx_column_automations_name` enforces. A hand-written or teammate-authored
     // file can easily carry "Notify" on enter and "Notify" on exit; left alone
@@ -73,8 +122,9 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
     // handled: the file is reported, never allowed to take the board down.
     const takenNames: string[] = [];
     for (const trigger of ['enter', 'exit'] as const) {
-      const group = trigger === 'enter' ? column.automations.onEnter : column.automations.onExit;
-      for (const entry of group ?? []) {
+      const group = groups[trigger];
+      if (!Array.isArray(group)) continue;
+      for (const entry of group as unknown[]) {
         const row = readRow(entry, trigger, column.name, warnings);
         if (!row) continue;
         const deduped = uniqueName(row.name, takenNames);
@@ -93,7 +143,9 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
   // The legacy message. Applied only when the column declares no automations of
   // its own, so a file carrying BOTH (mid-upgrade, or a hand edit) does not end
   // up with the message twice.
-  const legacyMessage = column.autoCommand?.trim();
+  // A non-string `autoCommand` (`5`, `{}`) threw "trim is not a function" out
+  // of the reconcile transaction, the same class as the containers above.
+  const legacyMessage = typeof column.autoCommand === 'string' ? column.autoCommand.trim() : undefined;
   if (legacyMessage && rows.length === 0) {
     rows.push({
       name: 'Message',
@@ -104,15 +156,22 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
     });
   }
 
-  return { rows, warnings };
+  return { rows, warnings, keepExisting: false };
 }
 
 function readRow(
-  entry: BoardAutomationConfig,
+  rawEntry: unknown,
   trigger: AutomationTrigger,
   columnName: string,
   warnings: string[],
 ): AutomationWriteInput | null {
+  // `"onEnter": [null]` used to throw reading `.name` off null.
+  if (!isJsonObject(rawEntry)) {
+    warnings.push(`An automation on "${columnName}" is not an object. Skipped.`);
+    return null;
+  }
+  const entry = rawEntry as BoardAutomationConfig;
+
   const name = typeof entry.name === 'string' ? entry.name.trim() : '';
   if (!name) {
     warnings.push(`An automation on "${columnName}" has no name. Skipped.`);

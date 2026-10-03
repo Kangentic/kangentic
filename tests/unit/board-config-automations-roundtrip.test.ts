@@ -13,7 +13,7 @@
  * Electron's ABI so a suite gated on it skips everywhere, CI included.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { BoardColumnConfig } from '../../src/shared/types';
+import type { BoardColumnAutomations, BoardColumnConfig } from '../../src/shared/types';
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -277,6 +277,60 @@ describeWithSqlite('kangentic.json automations round-trip', () => {
     });
   });
 
+  // Sentry DESKTOP-1H: `"onEnter": {}` threw "is not iterable" inside the
+  // reconcile transaction, so the whole board's apply rolled back and the
+  // file-watcher path rejected out of `boardConfig:apply`.
+  describe('a malformed automations container', () => {
+    it('warns naming the column, keeps its automations, and applies the rest of the board', () => {
+      const { lanes, automations } = freshDatabase();
+      const executing = lanes.list().find((lane) => lane.name === 'Executing')!;
+      automations.replaceForColumn(executing.id, [
+        { name: 'Setup', type: 'run_script', trigger: 'enter', enabled: true, config: { script: 'npm ci' } },
+      ]);
+
+      const config = build();
+      columnNamed(config, 'Executing')!.automations = { onEnter: {}, onExit: 'Notify' } as unknown as BoardColumnAutomations;
+      const planningColumn = columnNamed(config, 'Planning')!;
+      planningColumn.description = 'Scoped by the file';
+      planningColumn.automations = {
+        onEnter: [{ name: 'Plan ping', type: 'webhook', url: 'https://hooks.example.com/plan' }],
+      };
+
+      let warnings: string[] = [];
+      expect(() => {
+        warnings = applyBoardConfigToDb('p1', config).warnings;
+      }).not.toThrow();
+
+      expect(warnings.some((warning) => warning.includes('"Executing"'))).toBe(true);
+      // Kept, not cleared: on project open the export runs next and would
+      // otherwise write the deletion into the committed file.
+      expect(automations.listForColumn(executing.id).map((row) => row.name)).toEqual(['Setup']);
+      const planning = lanes.list().find((lane) => lane.name === 'Planning')!;
+      expect(planning.description).toBe('Scoped by the file');
+      expect(automations.listForColumn(planning.id).map((row) => row.name)).toEqual(['Plan ping']);
+    });
+
+    it('does not let a malformed value flip a legacy file to automation-aware', () => {
+      // No column carries a well-formed `automations` key, so a column the file
+      // is silent about keeps what the database has. `"automations": "x"` on
+      // one column used to count as declaring the key and cleared every other.
+      const { lanes, automations } = freshDatabase();
+      const planning = lanes.list().find((lane) => lane.name === 'Planning')!;
+      automations.replaceForColumn(planning.id, [
+        { name: 'Kept', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://example.com' } },
+      ]);
+
+      const config = build();
+      for (const column of config.columns) delete column.automations;
+      columnNamed(config, 'Executing')!.automations = 'x' as unknown as BoardColumnAutomations;
+
+      const { warnings } = applyBoardConfigToDb('p1', config);
+
+      expect(automations.listForColumn(planning.id).map((row) => row.name)).toEqual(['Kept']);
+      expect(warnings.some((warning) => warning.includes('"Executing"'))).toBe(true);
+    });
+  });
+
   describe('additive versus destructive', () => {
     it('leaves existing automations alone when the config never mentions them', () => {
       // Same rule the columns and actions already use: a hand-written file that
@@ -366,5 +420,87 @@ describe('planColumnAutomations name dedup', () => {
 
     expect(plan.rows.map((row) => row.name)).toEqual(['Notify', 'Wrap up']);
     expect(plan.warnings).toHaveLength(0);
+  });
+});
+
+// Ungated for the same reason as the block above: the DESKTOP-1H throw lives in
+// the planner, so its red run must not depend on node:sqlite being present.
+describe('planColumnAutomations with a malformed container', () => {
+  function planFor(automations: unknown) {
+    return planColumnAutomations({ name: 'Executing', automations: automations as BoardColumnAutomations });
+  }
+
+  it('keeps the column, and does not throw, when onEnter is an object and onExit is not a list', () => {
+    const plan = planFor({ onEnter: {}, onExit: 'Notify' });
+
+    expect(plan.keepExisting).toBe(true);
+    expect(plan.rows).toEqual([]);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain('"Executing"');
+    expect(plan.warnings[0]).toContain('onEnter');
+    expect(plan.warnings[0]).toContain('onExit');
+  });
+
+  it('keeps the column when one row was written without brackets, and plans no sibling group', () => {
+    const plan = planFor({
+      onEnter: { name: 'Setup', type: 'run_script', script: 'npm ci' },
+      onExit: [{ name: 'Wrap up', type: 'send_message', message: '/exit-ping' }],
+    });
+
+    expect(plan.keepExisting).toBe(true);
+    expect(plan.rows).toEqual([]);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain('onEnter');
+    expect(plan.warnings[0]).not.toContain('onExit');
+  });
+
+  it('keeps the column over a legacy message when the container is malformed', () => {
+    const plan = planColumnAutomations({
+      name: 'Executing',
+      autoCommand: '/pull-request',
+      automations: { onEnter: {} } as unknown as BoardColumnAutomations,
+    });
+
+    expect(plan.keepExisting).toBe(true);
+    expect(plan.rows).toEqual([]);
+  });
+
+  it.each([
+    ['a string', 'x'],
+    ['an array', []],
+    ['a number', 5],
+  ])('keeps the column when automations is %s', (_label, value) => {
+    const plan = planFor(value);
+
+    expect(plan.keepExisting).toBe(true);
+    expect(plan.rows).toEqual([]);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain('"Executing"');
+  });
+
+  it('skips a row that is not an object and keeps the rest of the group', () => {
+    const plan = planFor({
+      onEnter: [null, 'Setup', { name: 'Setup', type: 'run_script', script: 'npm ci' }],
+    });
+
+    expect(plan.keepExisting).toBe(false);
+    expect(plan.rows.map((row) => row.name)).toEqual(['Setup']);
+    expect(plan.warnings).toHaveLength(2);
+    for (const warning of plan.warnings) expect(warning).toContain('not an object');
+  });
+
+  it('still reads a null group and a null automations value as none', () => {
+    const nullGroup = planFor({
+      onEnter: null,
+      onExit: [{ name: 'Wrap up', type: 'send_message', message: '/exit-ping' }],
+    });
+    expect(nullGroup.keepExisting).toBe(false);
+    expect(nullGroup.rows.map((row) => row.name)).toEqual(['Wrap up']);
+    expect(nullGroup.warnings).toEqual([]);
+
+    const nullAutomations = planFor(null);
+    expect(nullAutomations.keepExisting).toBe(false);
+    expect(nullAutomations.rows).toEqual([]);
+    expect(nullAutomations.warnings).toEqual([]);
   });
 });
