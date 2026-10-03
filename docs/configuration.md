@@ -172,7 +172,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 |-----|------|---------|-------------|
 | `terminal.shell` | string \| null | `null` | Shell executable path. `null` = auto-detect. Global-only: `SessionManager` caches a single configured shell keyed to whichever project is currently focused, so per-project scoping was never reliable at the PTY-spawn level. |
 | `terminal.fontFamily` | string | `'Menlo, Consolas, "Courier New", monospace'` | Terminal font family. Global-only. |
-| `terminal.fontSize` | number | `14` | Terminal font size (px). Global-only. |
+| `terminal.fontSize` | number | `14` | Terminal font size (px). Global-only. The Settings field accepts 8 to 32. A terminal runs a smaller positive size at 8, and a missing, zero, or negative size at the default. |
 | `terminal.showPreview` | boolean | `false` | Show terminal preview in task cards. Global-only. |
 | `terminal.panelHeight` | number | `250` | Bottom panel height (px). Global-only. |
 | `terminal.panelCollapsed` | boolean | `false` | Whether the bottom terminal panel is collapsed. Global-only. |

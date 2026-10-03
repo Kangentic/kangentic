@@ -260,7 +260,8 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       {/* Terminal panes + context bar -- hidden after collapse animation completes */}
       {showContent && (
         <>
-          {/* Terminal panes -- only the active one is positioned; rest are display:none.
+          {/* Terminal panes -- only the active session's pane is mounted (see below);
+              the Activity tab is the one pane hidden with display:none.
               Sessions owned by the detail dialog are unmounted to avoid two xterm
               instances fighting over PTY dimensions (different column widths cause
               garbled TUI output). The panel recreates the terminal from scrollback

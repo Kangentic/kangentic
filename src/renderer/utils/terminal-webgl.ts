@@ -305,12 +305,15 @@ export function applyWebglAttachmentPlan(plan: WebglAttachmentPlan): void {
 
 /**
  * Force the WebGL renderer to re-rasterize every glyph from scratch. Call this
- * after a live font change: xterm's char-size measurement re-runs as soon as
- * `terminal.options.fontFamily` is assigned, and a glyph rasterized against a
- * measurement taken mid-font-swap can read back a 0-width cell, which throws
- * `IndexSizeError` in `TextureAtlas._drawToCache`'s `getImageData` call. A
- * no-op if the terminal has no live WebGL attachment (DOM fallback, or no
- * entry for this key).
+ * after a live font change, so no glyph cached under the previous font's
+ * metrics is reused. A no-op if the terminal has no live WebGL attachment (DOM
+ * fallback, or no entry for this key).
+ *
+ * This does not guard against `IndexSizeError` ("source width is 0") in
+ * `TextureAtlas._drawToCache`. A clear re-rasterizes through the same atlas
+ * config, so a cell that is 0 device pixels wide stays 0. That cell comes from
+ * a sub-pixel font size, and `resolveTerminalFontSize` keeps one out of xterm
+ * (DESKTOP-1J/1K).
  */
 export function notifyFontChanged(rendererKey: string): void {
   attachmentControllersByKey.get(rendererKey)?.clearTextureAtlas();
