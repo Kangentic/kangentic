@@ -15,8 +15,10 @@ export interface ScannedProcess {
   /**
    * The process's creation time in the platform's own unit, as an opaque
    * identity key: FILETIME on Windows, `/proc/<pid>/stat` starttime ticks on
-   * Linux, `ps` `lstart` on macOS. A pid whose key changed between two scans
-   * is a different process.
+   * Linux, libproc's start seconds and microseconds on macOS. A pid whose key
+   * changed between two scans is a different process. Empty where the reader
+   * cannot read it (another Windows session, another macOS user), and a kill
+   * never takes an empty key.
    */
   startKey: string;
   /**
@@ -73,6 +75,13 @@ export interface ProcessScan {
 export type KillStrength = 'graceful' | 'force';
 
 export interface TaggedProcessReader {
+  /**
+   * Load what the reader calls into (koffi and the OS libraries), rejecting
+   * when it cannot. Separate from `scan` so a reap can say which failed: a
+   * load failure is a packaging or platform fault, a scan failure is not.
+   * Absent where there is nothing to load (Linux reads `/proc`).
+   */
+  ready?(): Promise<void>;
   scan(): Promise<ProcessScan>;
   /**
    * Kill `target` if it is still the process the scan saw. Returns true when a

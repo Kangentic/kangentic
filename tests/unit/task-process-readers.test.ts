@@ -4,7 +4,8 @@
  * real-process half is tests/unit/session-reap-real-processes.test.ts.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,12 +14,16 @@ import {
   DarwinTaggedProcessReader,
   argumentsFromProcArgs,
   isTopLevelAppExecutable,
-  parseDarwinProcessList,
+  parseBsdInfo,
+  parseCurrentDirectory,
   parseLsappinfoUiPids,
-  parseLsofWorkingDirectories,
+  parseShortBsdInfo,
   summarizeProcArgs,
+  type DarwinProcessRow,
 } from '../../src/main/pty/process-tag/darwin-reader';
-import { findTagInWindowsEnvironment } from '../../src/main/pty/process-tag/win32-reader';
+import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
+import { findTagInWindowsEnvironment, listWin32Processes } from '../../src/main/pty/process-tag/win32-reader';
+import { toProcessInfo } from '../../src/main/pty/host/host-process-table';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const temporaryRoots: string[] = [];
@@ -175,17 +180,32 @@ describe('macOS reader', () => {
     expect(summarizeProcArgs(Buffer.alloc(2))).toBeNull();
   });
 
-  it('parses the process list, lsof directories, LaunchServices UI apps, and top-level app executables', () => {
-    expect(parseDarwinProcessList([
-      '  501     1   501 Thu Oct  2 10:00:00 2026',
-      '  502   501   501 Thu Oct 12 09:30:00 2026   ',
-      'this line does not parse',
-    ].join('\n'))).toEqual([
-      { pid: 501, ppid: 1, uid: 501, startKey: 'Thu Oct 2 10:00:00 2026' },
-      { pid: 502, ppid: 501, uid: 501, startKey: 'Thu Oct 12 09:30:00 2026' },
-    ]);
-    expect([...parseLsofWorkingDirectories(['p504', 'fcwd', 'n/Users/dev/with space', 'p505', 'fcwd', ''].join('\n')).entries()])
-      .toEqual([[504, '/Users/dev/with space']]);
+  it('parses the libproc structs at XNU\'s offsets: bsdinfo, the short bsdinfo, and the working directory', () => {
+    const bsdInfo = Buffer.alloc(136);
+    bsdInfo.writeUInt32LE(502, 12);
+    bsdInfo.writeUInt32LE(501, 16);
+    bsdInfo.writeUInt32LE(501, 20);
+    Buffer.from('zsh').copy(bsdInfo, 48);
+    bsdInfo.writeBigUInt64LE(1790000000n, 120);
+    bsdInfo.writeBigUInt64LE(4200n, 128);
+    expect(parseBsdInfo(bsdInfo)).toEqual({ pid: 502, ppid: 501, uid: 501, startKey: '1790000000.004200' });
+    expect(parseBsdInfo(Buffer.alloc(100))).toBeNull();
+
+    const shortInfo = Buffer.alloc(64);
+    shortInfo.writeUInt32LE(88, 0);
+    shortInfo.writeUInt32LE(1, 4);
+    shortInfo.writeUInt32LE(0, 36);
+    expect(parseShortBsdInfo(shortInfo)).toEqual({ pid: 88, ppid: 1, uid: 0, startKey: '' });
+
+    const vnodePath = Buffer.alloc(2352);
+    Buffer.from('/Users/dev/with space\0').copy(vnodePath, 152);
+    // pvi_rdir follows at 1176; it must not be read as the working directory.
+    Buffer.from('/\0').copy(vnodePath, 1176 + 152);
+    expect(parseCurrentDirectory(vnodePath)).toBe('/Users/dev/with space');
+    expect(parseCurrentDirectory(Buffer.alloc(2352))).toBeNull();
+  });
+
+  it('parses LaunchServices UI apps and top-level app executables', () => {
     const lsappinfo = [
       ' 1) "Google Chrome" ASN:0x0-0x1001:',
       '    pid = 3390 type="Foreground" flavor=3 Version="154.0"',
@@ -212,28 +232,36 @@ describe('macOS reader', () => {
       [504, procArgs('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['Google Chrome'], [`KANGENTIC_TASK_ID=${TASK}`])],
       [505, procArgs('/opt/homebrew/bin/tmux', ['tmux'], [`KANGENTIC_TASK_ID=${TASK}`])],
     ]);
-    const lsofCalls: string[][] = [];
+    const rows: DarwinProcessRow[] = [
+      { pid: 501, ppid: 1, uid: 501, startKey: '1790000001.000000' },
+      { pid: 502, ppid: 1, uid: 501, startKey: '1790000002.000000' },
+      { pid: 503, ppid: 300, uid: 501, startKey: '1790000003.000000' },
+      { pid: 504, ppid: 1, uid: 501, startKey: '1790000004.000000' },
+      { pid: 505, ppid: 1, uid: 501, startKey: '1790000005.000000' },
+      { pid: 506, ppid: 501, uid: 501, startKey: '1790000006.000000' },
+      // Another user's process: the short struct, no start time.
+      { pid: 600, ppid: 1, uid: 0, startKey: '' },
+    ];
+    const directoryReads: number[] = [];
+    const directories = new Map([[501, '/Users/dev/project'], [502, '/Users/dev/project/.kangentic/worktrees/task-1']]);
     const reader = new DarwinTaggedProcessReader({
       uid: 501,
-      runPs: async () => [
-        '  501     1   501 Thu Oct  2 10:00:01 2026',
-        '  502     1   501 Thu Oct  2 10:00:02 2026',
-        '  503   300   501 Thu Oct  2 10:00:03 2026',
-        '  504     1   501 Thu Oct  2 10:00:04 2026',
-        '  505     1   501 Thu Oct  2 10:00:05 2026',
-        '  506   501   501 Thu Oct  2 10:00:06 2026',
-        '  600     1     0 Thu Oct  2 10:00:07 2026',
-      ].join('\n'),
-      readProcArgs: async () => (pid) => records.get(pid) ?? null,
-      runLsof: async (args) => {
-        lsofCalls.push(args);
-        return 'p501\nfcwd\nn/Users/dev/project\np502\nfcwd\nn/Users/dev/project/.kangentic/worktrees/task-1\n';
-      },
+      loadKernel: async () => ({
+        // 700 vanished between the list and its read.
+        listPids: () => [...rows.map((row) => row.pid), 700],
+        processRow: (pid) => rows.find((row) => row.pid === pid) ?? null,
+        workingDirectory: (pid) => {
+          directoryReads.push(pid);
+          return directories.get(pid) ?? null;
+        },
+        procArgs: (pid) => records.get(pid) ?? null,
+      }),
       runLsappinfo: async () => '    pid = 504 type="Foreground" flavor=3\n',
     });
     const scan = await reader.scan();
     const byPid = new Map(scan.processes.map((entry) => [entry.pid, entry]));
-    expect(byPid.get(501)).toMatchObject({ tagValue: TASK, workingDirectory: '/Users/dev/project' });
+    expect(byPid.has(700)).toBe(false);
+    expect(byPid.get(501)).toMatchObject({ tagValue: TASK, workingDirectory: '/Users/dev/project', startKey: '1790000001.000000' });
     expect(byPid.get(502)).toMatchObject({ tagValue: null, environmentWithheld: true, workingDirectory: '/Users/dev/project/.kangentic/worktrees/task-1' });
     // 503 is a readable, untagged shell with a live parent: never looked at.
     expect(byPid.get(503)?.workingDirectory).toBeUndefined();
@@ -241,25 +269,93 @@ describe('macOS reader', () => {
     expect(byPid.get(505)?.role).toBe('multiplexer');
     // 506 has no record (gone or refused): unreadable environment, but under 501.
     expect(byPid.get(506)).toMatchObject({ environmentUnreadable: true, workingDirectory: null });
-    // Another user's process is never read.
+    // Another user's process is listed, with an unknown start key, and never read.
+    expect(byPid.get(600)).toMatchObject({ ppid: 1, startKey: '' });
     expect(byPid.get(600)?.environmentUnreadable).toBeUndefined();
     expect(scan.unreadableCount).toBe(1);
-    expect(lsofCalls).toHaveLength(1);
-    expect(lsofCalls[0].slice(0, 7)).toEqual(['-w', '-a', '-d', 'cwd', '-F', 'pn', '-p']);
-    expect(lsofCalls[0][7].split(',').map(Number).sort((left, right) => left - right)).toEqual([501, 502, 504, 505, 506]);
+    expect(directoryReads.sort((left, right) => left - right)).toEqual([501, 502, 504, 505, 506]);
   });
 
-  it('kills only a pid whose lstart still matches', async () => {
+  it('reads no working directory and spawns nothing when no process is tagged or withheld', async () => {
+    const runLsappinfo = vi.fn(async () => '');
+    const workingDirectory = vi.fn(() => null);
+    const reader = new DarwinTaggedProcessReader({
+      uid: 501,
+      loadKernel: async () => ({
+        listPids: () => [501],
+        processRow: () => ({ pid: 501, ppid: 1, uid: 501, startKey: '1790000001.000000' }),
+        workingDirectory,
+        procArgs: () => procArgs('/bin/zsh', ['-zsh'], ['HOME=/Users/dev']),
+      }),
+      runLsappinfo,
+    });
+    expect((await reader.scan()).processes).toHaveLength(1);
+    expect(runLsappinfo).not.toHaveBeenCalled();
+    expect(workingDirectory).not.toHaveBeenCalled();
+  });
+
+  it('kills only a pid whose start time still matches, and never one with an unknown start', async () => {
     const signals: Array<[number, string]> = [];
     const reader = new DarwinTaggedProcessReader({
       uid: 501,
-      runPs: async () => '  501     1   501 Thu Oct  2 10:00:00 2026',
+      loadKernel: async () => ({
+        listPids: () => [501],
+        processRow: (pid) => (pid === 501 ? { pid: 501, ppid: 1, uid: 501, startKey: '1790000000.000100' } : null),
+        workingDirectory: () => null,
+        procArgs: () => null,
+      }),
       signal: (pid, signalName) => { signals.push([pid, signalName]); },
     });
-    const target = { pid: 501, ppid: 1, startKey: 'Thu Oct 2 10:00:00 2026', startedAtMs: null, tagValue: TASK };
+    const target = { pid: 501, ppid: 1, startKey: '1790000000.000100', startedAtMs: null, tagValue: TASK };
     expect(await reader.kill(target, 'force')).toBe(true);
-    expect(await reader.kill({ ...target, startKey: 'Wed Oct 1 10:00:00 2026' }, 'force')).toBe(false);
+    // A pid reused since the scan: same pid, another start.
+    expect(await reader.kill({ ...target, startKey: '1790000000.000099' }, 'force')).toBe(false);
+    expect(await reader.kill({ ...target, startKey: '' }, 'force')).toBe(false);
+    expect(await reader.kill({ ...target, pid: 502 }, 'force')).toBe(false);
     expect(signals).toEqual([[501, 'SIGKILL']]);
+  });
+});
+
+describe.runIf(process.platform === 'darwin')('macOS libproc against ps and lsof (real)', () => {
+  /** `ps` and `lsof` read the same kernel data through their own code: the offsets must agree with them. */
+  function runTool(command: string, args: string[]): string {
+    return execFileSync(command, args, { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } });
+  }
+
+  it('reads the parent, uid, start time and working directory ps and lsof report', async () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-libproc-')));
+    temporaryRoots.push(directory);
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: directory, env: { ...process.env, [TASK_TAG]: TASK }, stdio: 'ignore' });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const childPid = child.pid!;
+      const reader = new DarwinTaggedProcessReader();
+      const scan = await reader.scan();
+      const byPid = new Map(scan.processes.map((entry) => [entry.pid, entry]));
+      const scanned = byPid.get(childPid);
+      expect(scanned).toMatchObject({ ppid: process.pid, tagValue: TASK, workingDirectory: directory });
+      expect(scanned?.startKey).toMatch(/^\d+\.\d{6}$/);
+
+      const [psPid, psParent, psUid] = runTool('ps', ['-o', 'pid=,ppid=,uid=', '-p', String(childPid)]).trim().split(/\s+/).map(Number);
+      expect([psPid, psParent]).toEqual([childPid, scanned?.ppid]);
+      expect(psUid).toBe(process.getuid?.());
+      const lsofDirectory = runTool('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(childPid)])
+        .split('\n').find((line) => line.startsWith('n'))?.slice(1);
+      expect(scanned?.workingDirectory).toBe(lsofDirectory);
+
+      // The start key is stable across reads, and matches the start time ps reports to the second.
+      const second = (await reader.scan()).processes.find((entry) => entry.pid === childPid);
+      expect(second?.startKey).toBe(scanned?.startKey);
+      const psStart = Date.parse(runTool('ps', ['-o', 'lstart=', '-p', String(childPid)]).trim());
+      expect(Math.abs(Number(scanned!.startKey.split('.')[0]) * 1000 - psStart)).toBeLessThan(1500);
+
+      // A root-owned process (launchd) is listed through the short struct, parent and all.
+      expect(byPid.get(1)).toMatchObject({ ppid: Number(runTool('ps', ['-o', 'ppid=', '-p', '1']).trim()), startKey: '' });
+
+      expect(await reader.kill(scanned!, 'force')).toBe(true);
+    } finally {
+      child.kill('SIGKILL');
+    }
   });
 });
 
@@ -277,5 +373,16 @@ describe('Windows environment block', () => {
   it('stops at the block terminator', () => {
     const block = Buffer.concat([windowsBlock(['Path=C:\\Windows']), Buffer.from(`KANGENTIC_TASK_ID=${TASK}\0`, 'utf16le')]);
     expect(findTagInWindowsEnvironment(block)).toBeNull();
+  });
+});
+
+describe.runIf(process.platform === 'win32')('Windows Toolhelp listing (real)', () => {
+  it('lists this process under its parent, with its image name', async () => {
+    const rows = await listWin32Processes();
+    expect(rows.length).toBeGreaterThan(10);
+    expect(rows.find((row) => row.pid === process.pid)).toMatchObject({ ppid: process.ppid, image: expect.stringMatching(/\.exe$/i) });
+    // The watcher's shape: the image name lowercased with `.exe` dropped.
+    const self = toProcessInfo(rows.find((row) => row.pid === process.pid)!);
+    expect(self.comm).toBe(path.basename(process.execPath).toLowerCase().replace(/\.exe$/, ''));
   });
 });

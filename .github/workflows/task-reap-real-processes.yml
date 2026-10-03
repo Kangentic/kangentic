@@ -1,8 +1,9 @@
 name: Task reap against real processes
 
 # Runs the task leftover reap against REAL processes on every platform it
-# reads differently (src/main/pty/process-tag/): Linux /proc, the macOS kernel
-# record through koffi, and the Windows PEB through koffi. CI's unit tier runs
+# reads differently (src/main/pty/process-tag/): Linux /proc, libproc and the
+# macOS kernel record through koffi (checked against ps and lsof), and the
+# Windows PEB and Toolhelp listing through koffi. CI's unit tier runs
 # the same test on Linux without a display, so this job is where the visible-app
 # case (Notepad, xterm under xvfb, Chrome) and the macOS and Windows readers run
 # at all; the team develops on Windows, and without it the macOS reader would

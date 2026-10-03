@@ -393,7 +393,8 @@ absence can be concluded) would close the whole class of structurally invisible 
 
 **Cadence.** The sweep runs on its own 60s clock (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), decoupled from
 the watcher's 2s/4s/6s poll backoff, and evaluates for free on any cycle that already enumerated for
-bg-shell work. `listAllProcesses` is a ~200ms PowerShell CIM query on Windows and the watcher
+bg-shell work. `listAllProcesses` is a pty host round trip that lists every process (a Toolhelp
+snapshot on Windows, about 8 ms, which replaced a ~200ms PowerShell CIM query), and the watcher
 deliberately skips it on idle cycles, so a per-session-per-cycle check would defeat that
 optimization exactly when the machine is saturated. A sweep-only cycle neither increments nor resets
 the bg-shell backoff counter. The counter counts consecutive OBSERVATIONS, not poll cycles: a

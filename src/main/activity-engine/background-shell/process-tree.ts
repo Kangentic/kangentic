@@ -22,12 +22,17 @@ type PowerShellChild = ChildProcessByStdio<Writable, Readable, null>;
  *     ParentProcessId filter, walked recursively in JS.
  *   - POSIX: `ps -A -o pid=,ppid=,comm=` + a JS-side parent-map walk.
  *
- * Spawn-shell-out is the only reliable cross-platform path. Node has
- * no built-in API for descendant enumeration. Each query runs with
- * a short timeout; on timeout or non-zero exit, returns an empty
- * descendant set (degrades gracefully to "process tree unknown",
- * which the watcher treats as "no orphan signal" and falls back to
- * the escape hatch).
+ * Node has no built-in API for descendant enumeration, so these probes
+ * shell out. Each query runs with a short timeout; on timeout or non-zero
+ * exit, returns an empty descendant set (degrades gracefully to "process
+ * tree unknown", which the watcher treats as "no orphan signal" and falls
+ * back to the escape hatch).
+ *
+ * In the app the watcher's probe is `HostProcessTreeProbe`, and the pty host
+ * answers it (`src/main/pty/host/host-process-table.ts`): on Windows with
+ * Toolhelp through koffi, about 8 ms against the PowerShell query's 140 ms,
+ * keeping `WindowsProbe` only as the fallback when koffi cannot load; on
+ * POSIX with `PosixProbe`.
  */
 export interface ProcessInfo {
   pid: number;
@@ -102,6 +107,9 @@ export function createProcessTreeProbe(): ProcessTreeProbe {
  *
  * `listDescendants(rootPid)` (used by resume reconciliation) remains
  * a thin wrapper around `listAllProcesses()` + `walkDescendants`.
+ *
+ * The pty host starts this probe only when its Toolhelp listing cannot load
+ * (`host-process-table.ts`).
  */
 class WindowsProbe implements ProcessTreeProbe {
   private child: PowerShellChild | null = null;

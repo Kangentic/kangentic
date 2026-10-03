@@ -92,12 +92,14 @@ export function parseRunningDistros(output: string): string[] {
 
 /**
  * Run the reap inside the shell's distro. Returns the pids it killed. Never
- * throws.
+ * throws: a failure (wsl.exe missing or refusing, a timeout) kills nothing and
+ * is handed to `onFailure`, so the caller can log and report it.
  */
 export async function reapTaggedProcessesInWsl(
   spec: WslShellSpec,
   tasks: readonly WslReapTask[],
   exec: WslExec,
+  onFailure: (error: unknown) => void = () => {},
 ): Promise<number[]> {
   const invocation = buildWslReapInvocation(tasks);
   if (!invocation) return [];
@@ -109,7 +111,8 @@ export async function reapTaggedProcessesInWsl(
     const distroArgs = spec.distro ? ['-d', spec.distro] : [];
     const output = await exec('wsl.exe', [...distroArgs, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_TIMEOUT_MS * 2, env });
     return [...new Set(output.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number))];
-  } catch {
+  } catch (error) {
+    onFailure(error);
     return [];
   }
 }

@@ -119,6 +119,20 @@ describe('LeftoverProcessReports', () => {
     expect(sent[0].processes[0].taskTitle).toBe('Task');
   });
 
+  it('hands each sent report to its listener once, and a throwing listener changes nothing', () => {
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    const heard: LeftoverProcessReport[] = [];
+    reports.setReportListener((report) => heard.push(report));
+    reports.add((report) => sent.push(report), [entry(2001), entry(2002)], TITLES, true);
+    vi.runAllTimers();
+    expect(heard).toEqual(sent);
+    reports.setReportListener(() => { throw new Error('analytics down'); });
+    reports.add((report) => sent.push(report), [entry(2003)], TITLES, true);
+    expect(() => vi.runAllTimers()).not.toThrow();
+    expect(sent).toHaveLength(2);
+  });
+
   it('never throws from its timer when the send fails', () => {
     const reports = new LeftoverProcessReports();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

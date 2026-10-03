@@ -95,8 +95,17 @@ describe('WSL reap', () => {
     expect(calls[1].slice(6)).toEqual(['sh', TASK, '1', PROJECT]);
   });
 
-  it('never throws when wsl.exe fails', async () => {
+  it('never throws when wsl.exe fails, and hands the failure to the caller instead of swallowing it', async () => {
     const exec = async () => { throw new Error('wsl.exe missing'); };
-    await expect(reapTaggedProcessesInWsl({ distro: null }, REAP_TASKS, exec)).resolves.toEqual([]);
+    const failures: unknown[] = [];
+    await expect(reapTaggedProcessesInWsl({ distro: null }, REAP_TASKS, exec, (error) => failures.push(error))).resolves.toEqual([]);
+    expect(failures).toEqual([new Error('wsl.exe missing')]);
+  });
+
+  it('reports no failure for a distro that is simply not running', async () => {
+    const failures: unknown[] = [];
+    const exec = async (_file: string, args: string[]) => (args.includes('--running') ? '' : '');
+    expect(await reapTaggedProcessesInWsl({ distro: 'Ubuntu' }, REAP_TASKS, exec, (error) => failures.push(error))).toEqual([]);
+    expect(failures).toEqual([]);
   });
 });

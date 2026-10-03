@@ -72,6 +72,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the program's name and at most one more short name (an existing script's file or package name,
   the module after `-m`, or the first word of a title the process set). Do not widen the label to
   any other argument.
+- **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing,
+  and main reports it once per kind per launch through `reportTaskReapFailure`
+  (`task-reap-failure-report.ts`) with `ReapFailureCode`, `host_error` or `wsl_error`. `failureReason` stays in
+  local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
+  stripped, since it is about this install and not about a process.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
   terminates through.
@@ -106,7 +111,19 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   tier runs it on Linux; `.github/workflows/task-reap-real-processes.yml` runs it on Linux with a
   display, macOS on Apple silicon and Intel, and Windows whenever `process-tag/` changes (not a
   required check). GitHub's macOS runners run with SIP off, so the redaction itself is never
-  observed there: `env -i` stands in for it.
+  observed there: `env -i` stands in for it. On macOS, `task-process-readers.test.ts` also checks
+  the libproc reads (parent, uid, start time, working directory, another user's process) against
+  `ps` and `lsof` on the same processes, so a wrong struct offset fails there; on Windows it runs
+  the real Toolhelp listing.
+- **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load` and
+  `empty_scan`; `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
+  fixed message, that no other failure's text reaches the event, and SessionManager's reports,
+  the WSL one included.
+- **Packaged smoke:** `scripts/package-smoke.mjs` (`package-smoke.yml`, on Windows, macOS and
+  Linux whenever `process-tag/` changes) deletes a task whose terminal left a detached process in
+  the project and fails unless the packaged app stopped it, and fails on a `[TASK-REAP] reap
+  failed` line. It is the only place the packaged pty host loads koffi, from inside the asar on
+  macOS.
 - **Review:** the privacy bullets are judgment beyond the readers' return shape; `/code-review`
   flags any reader, log line, or error path that carries environment or command-line text.
 - A new terminal transition is not caught mechanically until a wiring test names it; review is the

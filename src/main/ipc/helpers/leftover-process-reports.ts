@@ -56,6 +56,7 @@ export class LeftoverProcessReports {
   private readonly quietMs: number;
   private readonly maxWaitMs: number;
   private reapsInFlight = 0;
+  private reportListener: ((report: LeftoverProcessReport) => void) | null = null;
 
   constructor(options: LeftoverProcessReportsOptions = {}) {
     this.quietMs = options.quietMs ?? REPORT_QUIET_MS;
@@ -125,6 +126,11 @@ export class LeftoverProcessReports {
     report.quietTimer.unref?.();
   }
 
+  /** Hear every report as it goes out (the analytics count). Replaces any earlier listener. */
+  setReportListener(listener: ((report: LeftoverProcessReport) => void) | null): void {
+    this.reportListener = listener;
+  }
+
   /** The identity of a reported process, or null for an id this never minted (or long since dropped). */
   resolve(processId: string): ReportedIdentity | null {
     return this.identities.get(processId) ?? null;
@@ -136,11 +142,17 @@ export class LeftoverProcessReports {
     this.pending.delete(stoppingEnabled);
     if (report.quietTimer) clearTimeout(report.quietTimer);
     clearTimeout(report.maxTimer);
+    const outgoing: LeftoverProcessReport = { id: randomUUID(), stoppingEnabled, processes: report.processes };
     try {
-      report.send({ id: randomUUID(), stoppingEnabled, processes: report.processes });
+      report.send(outgoing);
     } catch (error) {
       // A timer callback: a throw here would be an uncaught exception in main.
       console.warn('[TASK-REAP] Could not send the leftover-process report (non-fatal):', error);
+    }
+    try {
+      this.reportListener?.(outgoing);
+    } catch {
+      // A listener is telemetry; it never breaks the report.
     }
   }
 

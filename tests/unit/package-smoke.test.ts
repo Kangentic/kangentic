@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,8 @@ import { __testing } from '../../scripts/package-smoke.mjs';
 const {
   SMOKE_MARKER,
   SMOKE_COMMAND,
+  LEFTOVER_SCRIPT,
+  LEFTOVER_COMMAND,
   FAILURE_MARKERS,
   resolveAppExecutable,
   quitRouteFor,
@@ -36,6 +39,43 @@ function sourceFiles(directory: string): string[] {
   }
   return files;
 }
+
+describe('package smoke: the leftover the reap step stops', () => {
+  it('starts a detached process that outlives its launcher, works in the project, and names its pid', async () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'package-smoke-leftover-')));
+    fs.writeFileSync(path.join(directory, 'leftover.js'), LEFTOVER_SCRIPT);
+    let pid = 0;
+    const running = (candidate: number) => {
+      try {
+        process.kill(candidate, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      expect(LEFTOVER_COMMAND).toBe('node leftover.js');
+      // The launcher returns at once: the leftover holds none of its pipes.
+      execFileSync(process.execPath, ['leftover.js'], { cwd: directory, stdio: 'ignore', timeout: 10_000 });
+      pid = Number(fs.readFileSync(path.join(directory, 'leftover.pid'), 'utf8'));
+      expect(pid).toBeGreaterThan(0);
+      expect(running(pid)).toBe(true);
+    } finally {
+      if (pid > 0 && running(pid)) process.kill(pid, 'SIGKILL');
+      // Windows holds the directory for up to ~100 ms after the process reads
+      // as gone (measured), and `rmSync`'s own retries do not cover that EPERM.
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          fs.rmSync(directory, { recursive: true, force: true });
+          break;
+        } catch (error) {
+          if (attempt >= 30) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+    }
+  });
+});
 
 describe('package smoke: the executable it runs', () => {
   let outDir: string;
@@ -127,6 +167,9 @@ describe('package smoke: the log check', () => {
       '{"level":"warn","args":["[retrieval] retrieval worker fork failed:","Error"]}',
       '{"level":"warn","args":["[retrieval-worker] sqlite-vec unavailable, semantic search disabled:","Error"]}',
       '{"level":"error","args":["[SHUTDOWN] hard-failsafe:fired"]}',
+      '{"level":"warn","args":["[TASK-REAP] reap failed (non-fatal): Cannot find module koffi"]}',
+      '{"level":"warn","args":["[TASK-REAP] host reap failed (non-fatal):","Error: pty host request timed out"]}',
+      '{"level":"warn","args":["[PTY-HOST] Toolhelp process listing failed; the watcher falls back to the PowerShell probe:","Error"]}',
     ];
     const found = findFailureMarkers(lines);
     expect(found).toHaveLength(FAILURE_MARKERS.length);

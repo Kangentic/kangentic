@@ -24,7 +24,7 @@ import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
-import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-engine/background-shell/process-tree';
+import { HostProcessTable } from './host-process-table';
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary, runHostExec } from './host-exec';
 import { HostCliProcesses } from './host-cli-processes';
@@ -126,8 +126,8 @@ export class PtyHostCore {
   private readonly focused = new Set<string>();
   private readonly tapped = new Set<string>();
   /** The background-shell watcher's process table source, created on first
-   *  use. On Windows it keeps one PowerShell child for the host's life. */
-  private processTreeProbe: ProcessTreeProbe | null = null;
+   *  use: Toolhelp on Windows, `ps` on POSIX (`host-process-table.ts`). */
+  private processTable: HostProcessTable | null = null;
   /** Kills what a finished task left running, created on first use. */
   private taggedReaper: TaggedReaper | null = null;
   /** Raw PTYs (`spawnRaw`), by ptyId. `killed` guards a second kill, which
@@ -311,8 +311,8 @@ export class PtyHostCore {
       case 'exec':
         return runHostExec(params as HostExecRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'listProcesses':
-        this.processTreeProbe ??= createProcessTreeProbe();
-        return this.processTreeProbe.listAllProcesses() as Promise<PtyHostRequestMap[M]['result']>;
+        this.processTable ??= new HostProcessTable();
+        return this.processTable.list() as Promise<PtyHostRequestMap[M]['result']>;
       case 'reapTaggedProcesses':
         return this.reapTaggedProcesses(params as TaggedReapRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'stopReportedProcess':
@@ -440,7 +440,7 @@ export class PtyHostCore {
    */
   reapTaggedProcesses(request: TaggedReapRequest): Promise<TaggedReapResult> {
     const reaper = this.ensureTaggedReaper();
-    if (!reaper) return Promise.resolve({ killedPids: [], unreadableCount: 0, failureReason: null, entries: [] });
+    if (!reaper) return Promise.resolve({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] });
     return reaper.request(request);
   }
 
@@ -479,10 +479,10 @@ export class PtyHostCore {
     return pids;
   }
 
-  /** End the process-tree probe's persistent PowerShell child, if one runs. */
+  /** End the process table's fallback PowerShell child, if one runs. */
   disposeProcessTreeProbe(): void {
-    this.processTreeProbe?.dispose();
-    this.processTreeProbe = null;
+    this.processTable?.dispose();
+    this.processTable = null;
   }
 
   /** Flush every pending transcript piece (in-process quit). */

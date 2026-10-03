@@ -114,7 +114,7 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       coalesceMs: 0,
       createTaggedProcessReader: () => null,
     });
-    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, entries: [] });
+    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] });
     await expect(core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID })).resolves.toBe('failed');
   });
 

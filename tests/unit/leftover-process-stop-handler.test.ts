@@ -17,8 +17,10 @@ vi.mock('electron', () => ({
   ipcMain: { handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => { handlers.set(channel, handler); } },
 }));
 vi.mock('../../src/main/ipc/helpers/task-cleanup', () => ({ retryDoneWorktreeRemoval }));
+const { trackEvent } = vi.hoisted(() => ({ trackEvent: vi.fn() }));
+vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent }));
 
-import { registerLeftoverProcessHandlers } from '../../src/main/ipc/handlers/leftover-processes';
+import { leftoverReportCounts, registerLeftoverProcessHandlers } from '../../src/main/ipc/handlers/leftover-processes';
 import { leftoverProcessReports } from '../../src/main/ipc/helpers/leftover-process-reports';
 import { IPC } from '../../src/shared/ipc-channels';
 
@@ -76,6 +78,14 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
   });
 
+  it('counts each report it sends for analytics, counts only', async () => {
+    trackEvent.mockClear();
+    setup('stopped');
+    await reportOne();
+    expect(trackEvent).toHaveBeenCalledWith('leftover_processes', { stopped: 0, kept: 1, failed: 0, stoppingEnabled: true });
+    expect(JSON.stringify(trackEvent.mock.calls)).not.toMatch(/chrome|4242|Fix login/);
+  });
+
   it('never stops anything for an id no report minted, a raw pid included', async () => {
     const { stopReportedProcess, stop } = setup('stopped');
     expect(await stop('4242')).toBe('ended');
@@ -83,5 +93,15 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     expect(await stop('made-up')).toBe('ended');
     expect(stopReportedProcess).not.toHaveBeenCalled();
     expect(retryDoneWorktreeRemoval).not.toHaveBeenCalled();
+  });
+});
+
+describe('leftoverReportCounts', () => {
+  it('counts stopped, kept and failed processes', () => {
+    const process = (outcome: 'stopped' | 'kept' | 'failed') => ({
+      id: outcome, taskId: TASK, taskTitle: 'Fix login', pid: 1, label: 'node', outcome, reason: null, place: 'worktree' as const,
+    });
+    expect(leftoverReportCounts({ id: 'report', stoppingEnabled: false, processes: [process('stopped'), process('stopped'), process('kept'), process('failed')] }))
+      .toEqual({ stopped: 2, kept: 1, failed: 1, stoppingEnabled: false });
   });
 });

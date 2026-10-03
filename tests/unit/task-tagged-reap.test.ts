@@ -130,8 +130,24 @@ describe('reapTaggedOnce', () => {
     const reader = new FakeReader([[]]);
     reader.failScan = true;
     await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', failureCode: 'reap_error', entries: [],
     });
+  });
+
+  it('says the reader would not load, without scanning, when its native calls cannot load', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    const loading = Object.assign(reader, { ready: async () => { throw new Error('Cannot find module koffi'); } });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(loading));
+    expect(result).toMatchObject({ failureCode: 'reader_load', failureReason: 'Cannot find module koffi', killedPids: [] });
+    expect(reader.scanCount).toBe(0);
+  });
+
+  it('treats a scan that lists no process at all as a failure, never as nothing to do', async () => {
+    const reader = new FakeReader([]);
+    reader.scans = [{ processes: [], unreadableCount: 0 }];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(result).toMatchObject({ failureCode: 'empty_scan', killedPids: [], entries: [] });
+    expect(reader.kills).toEqual([]);
   });
 
   it('kills a macOS withheld orphan only inside a reaped worktree', async () => {
@@ -303,6 +319,13 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[tagged(2001, TASK, 'new')]]);
     expect(await stopProcessTree({ pid: 2001, startKey: 'old', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
     expect(await stopProcessTree({ pid: 4242, startKey: 'start-4242', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('answers failed, not ended, when the scan lists nothing at all', async () => {
+    const reader = new FakeReader([]);
+    reader.scans = [{ processes: [], unreadableCount: 0 }];
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
     expect(reader.kills).toEqual([]);
   });
 

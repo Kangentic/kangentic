@@ -18,7 +18,12 @@
  *      from its scrollback (the PTY lives in the pty host);
  *   3. reads the Knowledge Graph snapshot, which only the retrieval worker can
  *      answer (the call rejects, with no fallback to main, when it cannot);
- *   4. quits with that terminal still running, and requires exit code 0 inside
+ *   4. creates a To Do task, runs a terminal for it that leaves a detached node
+ *      process in the project (as an agent's dev server would), deletes the
+ *      task, and requires that process to be stopped: the pty host's task reap
+ *      (src/main/pty/process-tag/), which on Windows and macOS loads koffi from
+ *      the packaged tree and on macOS from inside the asar;
+ *   5. quits with the first terminal still running, and requires exit code 0 inside
  *      the bound. On Windows and Linux that is a user's quit (the window
  *      closes), which runs the PTY exit drain; on macOS it is SIGTERM, which
  *      runs the synchronous shutdown but not the drain (see `quitRouteFor`).
@@ -52,6 +57,24 @@ export const SMOKE_MARKER = 'KANGENTIC_SMOKE_OK';
 export const SMOKE_COMMAND = 'echo KANGENTIC_SMOKE"_"OK';
 
 /**
+ * What the task's terminal runs for step 4: a script that starts a detached
+ * node process and exits at once, a fast detach like `nohup npm run dev &`.
+ * The process inherits the terminal's `KANGENTIC_TASK_ID` and works in the
+ * project, so the reap must stop it when the task is deleted. `node` is the
+ * runner's own, which every shell finds on PATH.
+ */
+export const LEFTOVER_SCRIPT_NAME = 'leftover.js';
+export const LEFTOVER_PID_FILE = 'leftover.pid';
+export const LEFTOVER_SCRIPT = [
+  "const { spawn } = require('node:child_process');",
+  "const fs = require('node:fs');",
+  "const leftover = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore', windowsHide: true });",
+  'leftover.unref();',
+  `fs.writeFileSync(${JSON.stringify(LEFTOVER_PID_FILE)}, String(leftover.pid));`,
+].join('\n');
+export const LEFTOVER_COMMAND = `node ${LEFTOVER_SCRIPT_NAME}`;
+
+/**
  * Log lines that mean a forked process failed. Each names the source text it
  * matches, and `tests/unit/package-smoke.test.ts` fails when that text leaves
  * `src/main`, so a reworded log line cannot quietly switch a check off.
@@ -72,6 +95,17 @@ export const FAILURE_MARKERS = [
   { pattern: /retrieval worker fork failed/, sourceText: 'retrieval worker fork failed', reason: 'the retrieval worker did not fork' },
   { pattern: /sqlite-vec unavailable/, sourceText: 'sqlite-vec unavailable', reason: 'the retrieval worker could not load sqlite-vec' },
   { pattern: /\[SHUTDOWN\] hard-failsafe:fired/, sourceText: '[SHUTDOWN] hard-failsafe:fired', reason: 'the quit hung until the hard failsafe killed it' },
+  {
+    pattern: /\[TASK-REAP\] reap failed/,
+    sourceText: '[TASK-REAP] reap failed (non-fatal): ',
+    reason: 'the task reap failed (a reader that would not load, or a scan that listed nothing)',
+  },
+  { pattern: /\[TASK-REAP\] host reap failed/, sourceText: '[TASK-REAP] host reap failed (non-fatal):', reason: 'the pty host did not answer the task reap' },
+  {
+    pattern: /\[PTY-HOST\] Toolhelp process listing failed/,
+    sourceText: '[PTY-HOST] Toolhelp process listing failed',
+    reason: "the background-shell watcher's Toolhelp listing failed and fell back to PowerShell",
+  },
 ];
 
 const PHASE_TIMEOUTS_MS = {
@@ -79,6 +113,7 @@ const PHASE_TIMEOUTS_MS = {
   project: 30_000,
   terminal: 45_000,
   graph: 60_000,
+  reap: 45_000,
   quit: 30_000,
 };
 const OVERALL_TIMEOUT_MS = 6 * 60_000;
@@ -286,6 +321,16 @@ function killTree(pid) {
   }
 }
 
+/** Whether a pid is running: signal 0, with EPERM (running, not ours to signal) counted as running. */
+function isRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
 function makeRepository(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const git = (...args) => execFileSync('git', ['-C', directory, ...args], { stdio: 'ignore' });
@@ -322,6 +367,8 @@ async function main() {
   // check below reads the whole run.
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ developer: { persistConsoleLogs: true } }, null, 2));
   makeRepository(repository);
+  // Untracked, like any file an agent writes; the task's terminal runs it.
+  fs.writeFileSync(path.join(repository, LEFTOVER_SCRIPT_NAME), `${LEFTOVER_SCRIPT}\n`);
 
   const startedAt = Date.now();
   const say = (text) => console.log(`[package-smoke] ${((Date.now() - startedAt) / 1000).toFixed(1)}s ${text}`);
@@ -354,6 +401,7 @@ async function main() {
   }, OVERALL_TIMEOUT_MS);
 
   let page = null;
+  let leftoverPid = null;
   const failures = [];
   try {
     const url = await pollUntil('Finding the app window', PHASE_TIMEOUTS_MS.bridge, async () => {
@@ -395,6 +443,34 @@ async function main() {
     });
     say(`retrieval worker answered the snapshot for ${snapshot.projectId}`);
 
+    const todoLaneId = await page.evaluate("window.electronAPI.swimlanes.list().then((lanes) => lanes.find((lane) => lane.role === 'todo')?.id ?? null)");
+    if (!todoLaneId) throw new Error('the board has no To Do column to create the reap task in');
+    const task = await page.evaluate(`window.electronAPI.tasks.create(${JSON.stringify({
+      title: 'Package smoke reap',
+      description: '',
+      swimlane_id: todoLaneId,
+    })}, ${JSON.stringify(project.id)}).then((created) => ({ id: created.id }))`);
+    await page.evaluate(`window.electronAPI.sessions.spawn(${JSON.stringify({
+      taskId: task.id,
+      projectId: project.id,
+      command: LEFTOVER_COMMAND,
+      cwd: repository,
+      cols: 120,
+      rows: 30,
+    })}, ${JSON.stringify(project.id)}).then((spawned) => ({ id: spawned.id }))`);
+    leftoverPid = await pollUntil("Starting the task's leftover process", PHASE_TIMEOUTS_MS.reap, async () => {
+      const pidFile = path.join(repository, LEFTOVER_PID_FILE);
+      if (!fs.existsSync(pidFile)) return undefined;
+      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+      return Number.isInteger(pid) && pid > 0 && isRunning(pid) ? pid : undefined;
+    });
+    say(`the task's terminal left process ${leftoverPid} running`);
+    await page.evaluate(`window.electronAPI.tasks.delete(${JSON.stringify(task.id)}, ${JSON.stringify(project.id)})`);
+    await pollUntil('Stopping the leftover after its task was deleted', PHASE_TIMEOUTS_MS.reap, async () => (
+      isRunning(leftoverPid) ? undefined : true
+    ));
+    say(`deleting the task stopped process ${leftoverPid} (the task reap in the pty host)`);
+
     const route = quitRouteFor(process.platform);
     if (route === 'close-window') page.fire('window.electronAPI.window.close()');
     else process.kill(child.pid, 'SIGTERM');
@@ -409,6 +485,10 @@ async function main() {
     page?.close();
     clearTimeout(watchdog);
     if (!exit) killTree(child.pid);
+    // A reap that failed leaves the process behind; the runner is not the place for it.
+    if (leftoverPid && isRunning(leftoverPid)) {
+      try { process.kill(leftoverPid, 'SIGKILL'); } catch { /* already gone */ }
+    }
     fs.closeSync(output);
   }
 
@@ -442,6 +522,8 @@ async function main() {
 export const __testing = {
   SMOKE_MARKER,
   SMOKE_COMMAND,
+  LEFTOVER_SCRIPT,
+  LEFTOVER_COMMAND,
   FAILURE_MARKERS,
   resolveAppExecutable,
   quitRouteFor,

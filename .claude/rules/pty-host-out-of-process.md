@@ -67,12 +67,16 @@ at the Windows timer floor.
   on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
   would boot a second app. A session's or a probe's PTY whose program is one of them is refused
   the same way.
-  The background-shell watcher's process table also comes from the host (`listProcesses`), which
-  keeps the probe's PowerShell child. So does the task leftover reap (`reapTaggedProcesses`,
+  The background-shell watcher's process table also comes from the host (`listProcesses`,
+  `host-process-table.ts`): a Toolhelp snapshot through koffi on Windows (about 8 ms, against
+  140 ms for the PowerShell CIM query it replaced, which the host still starts only if koffi
+  cannot load), `ps` on POSIX. So does the task leftover reap (`reapTaggedProcesses`,
   `src/main/pty/process-tag/`): the host scans for the `KANGENTIC_TASK_ID` tag and kills, and on
   Windows and macOS it loads koffi (an esbuild external, unpacked, and loaded by the afterPack
-  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record). The scan
-  yields to the event loop as it goes. See
+  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record) and, on
+  macOS, the process list and working directories from libproc. The scan yields to the event loop
+  as it goes, and a native call long enough to hold it (the Toolhelp snapshot) runs on the thread
+  pool through koffi's async call. See
   [[task-process-tag]].
 - **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)
   starts every headless run (Ask, task summaries, auto-name, the warm answer session) through
@@ -120,7 +124,8 @@ at the Windows timer floor.
 - **Packaged smoke:** `.github/workflows/package-smoke.yml` packages on Windows, macOS and Linux
   when a pull request touches the host, its clients or the packaging, and runs
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the
-  retrieval worker, a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
+  retrieval worker, a task reap that must stop a detached process a task's terminal left (koffi
+  loading in the packaged host), a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
   on macOS, which skips the exit drain), and a fail on any log line saying a forked process
   crashed or the host fell back to main. Not a required check.
   `tests/unit/package-smoke.test.ts` pins the script's pure parts and that every log line it

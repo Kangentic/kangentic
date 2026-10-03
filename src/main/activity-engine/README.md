@@ -12,7 +12,7 @@ This directory implements Kangentic's activity-detection engine. The full archit
 | `engine/watchdog.ts` | The five watchdog holds and their resets. |
 | `engine/shapes.ts` | `SessionEngineState`, `ActivityStatsSnapshot`, and the tunable defaults. |
 | `background-shell/watcher.ts` | Process-tree-based natural-exit detector. Polls every 2s when sessions have active bg shells. Two tiers: PID-aware + count-based heuristic. It does not decide what a finished task left running; that is the `KANGENTIC_TASK_ID` tag reap in `src/main/pty/process-tag/`. |
-| `background-shell/process-tree.ts` | Cross-platform descendant enumeration (POSIX `ps`, Windows `Get-CimInstance Win32_Process`). |
+| `background-shell/process-tree.ts` | Descendant walks over a process table, and the local probes (POSIX `ps`, Windows `Get-CimInstance Win32_Process`). In the app the pty host answers the table (`src/main/pty/host/host-process-table.ts`). |
 | `session-telemetry.ts` | Per-session telemetry orchestrator. Wires engine + watcher + PTY tracker + accumulator + PR detector. Owns the per-session event cache, idle-timeout sweep, and agent-session-id capture. Routes parsed events from every telemetry source. |
 | `usage-accumulator.ts` | Token / cost / per-tool stats. Pure transformations of parsed events. |
 | `pr-command-detector.ts` | Detects `gh pr ...` Bash invocations so the orchestrator can scan scrollback for the printed PR URL on the matching ToolEnd. |
@@ -50,11 +50,11 @@ Empirical data: Tier B catches 95%+ of cases in production sessions.
 
 ## Cross-platform
 
-The process-tree probe spawns a single OS query per cycle:
-- Windows: `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | ..."`
-- POSIX: `ps -A -o pid=,ppid=,comm=`
+The watcher reads one process table per cycle, answered by the pty host (`HostProcessTreeProbe`, `src/main/pty/host/host-process-table.ts`):
+- Windows: a Toolhelp snapshot through koffi, about 8 ms for 410 processes. It replaced a persistent PowerShell child running `Get-CimInstance Win32_Process` (140 ms warm), which the host still starts if koffi cannot load.
+- POSIX: `ps -A -o pid=,ppid=,comm=`, with a 1.5s timeout.
 
-Both have a 1.5s internal timeout. Probe failure degrades to the 5-min escape hatch.
+An empty table skips the cycle. Repeated failure degrades to the 5-min escape hatch.
 
 ## Kill switch
 

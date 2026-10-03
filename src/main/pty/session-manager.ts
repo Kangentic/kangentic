@@ -57,6 +57,7 @@ import { execFileAsync } from '../utility-process/off-main-exec';
 import { isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
 import { resolveTaskDirectories } from './process-tag/task-directories';
+import { reportTaskReapFailure } from './task-reap-failure-report';
 import type { LeftoverProcessEntry, StopProcessOutcome } from './process-tag/tagged-reap';
 
 /** How long a task reap may take in the host: two scans, the 1 s grace
@@ -519,8 +520,8 @@ export class SessionManager extends EventEmitter {
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
     }, {
       activityEngineOptions: this.activityEngineOptions,
-      // The background-shell watcher's process table comes from the pty host,
-      // which keeps the probe's PowerShell child off main.
+      // The background-shell watcher's process table comes from the pty host
+      // (Toolhelp on Windows, `ps` on POSIX; `host-process-table.ts`).
       processTreeProbe: new HostProcessTreeProbe(() => this.host.listProcesses()),
       // Activity-engine debug snapshots land at `<projectRoot>/.kangentic/debug/<sessionId>.json`
       // when `developer.activityDebugOverlay` is on (toggled in Settings →
@@ -1845,6 +1846,8 @@ export class SessionManager extends EventEmitter {
       entries.push(...result.entries);
       if (result.failureReason) {
         console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
+        const code = result.failureCode ?? 'reap_error';
+        reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null);
       }
       // Processes whose environment could not be read (elevated on Windows,
       // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
@@ -1854,6 +1857,7 @@ export class SessionManager extends EventEmitter {
       }
     } catch (error) {
       console.warn('[TASK-REAP] host reap failed (non-fatal):', error);
+      reportTaskReapFailure('reap', 'host_error');
     }
     // The distro's reap kills and reports nothing back by name, so it runs only
     // while stopping is on.
@@ -1867,6 +1871,10 @@ export class SessionManager extends EventEmitter {
             windowsHide: true,
           });
           return output.stdout;
+        }, (error) => {
+          // The error's text can name task directories: local log only.
+          console.warn('[TASK-REAP] WSL reap failed (non-fatal):', error);
+          reportTaskReapFailure('reap', 'wsl_error');
         }));
       }
     }
@@ -1887,6 +1895,7 @@ export class SessionManager extends EventEmitter {
       return await this.host.stopReportedProcess({ pid, startKey, mainPid: process.pid }, TASK_REAP_TIMEOUT_MS);
     } catch (error) {
       console.warn('[TASK-REAP] stop failed (non-fatal):', error);
+      reportTaskReapFailure('stop', 'host_error');
       return 'failed';
     }
   }

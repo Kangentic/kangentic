@@ -330,9 +330,9 @@ const PID_CAPTURE_RETRY_CYCLES = 3;
 export const NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES = 30;
 
 /**
- * Adaptive poll backoff. The full host-process enumeration (`listAllProcesses`,
- * a ~200ms PowerShell CIM query on Windows) fires every cycle where any session
- * "needs tree" - which, with several agents running tools, is nearly
+ * Adaptive poll backoff. The full host-process enumeration (`listAllProcesses`)
+ * fires every cycle where any session "needs tree" - which, with several
+ * agents running tools, is nearly
  * continuous. Under that sustained load the sweep burns CPU exactly when the
  * machine is already saturated. So after a run of consecutive tree cycles the
  * poll interval stretches (2s -> 4s -> 6s), and any background-shell lifecycle
@@ -343,6 +343,10 @@ export const NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES = 30;
  * (which itself runs at base cadence once a deficit is seen), so worst-case
  * ~8s vs ~4s today - well within the 5-min watchdog backstop. Multipliers are
  * applied to `pollIntervalMs` so a test's small base interval scales too.
+ *
+ * The backoff was sized against a ~200ms PowerShell CIM query per cycle. The
+ * pty host now answers on Windows with Toolhelp (about 8 ms,
+ * `host-process-table.ts`), and the stages were left as they were.
  */
 export const POLL_BACKOFF_STAGE_ONE_TREE_CYCLES = 5;
 export const POLL_BACKOFF_STAGE_TWO_TREE_CYCLES = 15;
@@ -354,9 +358,10 @@ const POLL_BACKOFF_STAGE_TWO_MULTIPLIER = 3;
  * interval and the backoff above.
  *
  * A phantom session is not urgent, and the signal it needs (the full host
- * process enumeration) is the expensive one - a ~200ms PowerShell CIM query on
- * Windows. Tying it to the 2s poll would defeat the laziness that exists to
- * protect CPU when several agents are running. At 60s it costs roughly one
+ * process enumeration) is the expensive one: a ~200ms PowerShell CIM query on
+ * Windows when this was written, about 8 ms of Toolhelp in the pty host now,
+ * and a host round trip either way. Tying it to the 2s poll would defeat the
+ * laziness that exists to protect CPU when several agents are running. At 60s it costs roughly one
  * snapshot per minute regardless of session count, and the sweep is FREE on any
  * cycle that already enumerated for bg-shell work, so a busy machine detects a
  * phantom in seconds while a fully idle one takes 60-120s.
@@ -504,9 +509,9 @@ export class BgShellWatcher {
     this.disposed = true;
     this.stopPolling();
     this.states.clear();
-    // Release the probe's long-lived resources (Windows persistent
-    // PowerShell child). Synchronous so it slots into the
-    // before-quit shutdown contract.
+    // Release the probe's long-lived resources (a local Windows probe's
+    // persistent PowerShell child; the pty host's probe holds none).
+    // Synchronous so it slots into the before-quit shutdown contract.
     this.probe.dispose();
   }
 
@@ -595,7 +600,7 @@ export class BgShellWatcher {
       // PID capture, no running foreground tool - see `sessionNeedsTree`), skip
       // the expensive OS enumeration entirely and do only the cheap per-PID
       // root-death probe. `isAlive` is a native process.kill(pid, 0);
-      // `listAllProcesses` spawns a PowerShell CIM query (~200ms) on Windows.
+      // `listAllProcesses` is a pty host round trip that lists every process.
       // Any path to a new bg shell first raises pendingToolCount or
       // activeShellCount (engine state updates synchronously on the event), so
       // the next cycle re-enters the full path before the watcher must act -

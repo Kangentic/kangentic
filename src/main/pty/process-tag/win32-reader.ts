@@ -37,6 +37,13 @@
  *
  * The loop yields to the event loop every few processes: a full scan measured
  * ~30 ms for ~460 processes, and the pty host carries every terminal byte.
+ * `CreateToolhelp32Snapshot` itself is one native call of about 5.7 ms (410
+ * processes), so it runs on the thread pool through koffi's async call; the
+ * longest stretch the listing then holds the loop measured 0.36 ms (median of
+ * 20) and 0.66 ms at most.
+ *
+ * `listWin32Processes` is that listing alone, and answers the background-shell
+ * watcher's process table in the pty host (`host-process-table.ts`).
  */
 
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
@@ -66,7 +73,8 @@ const FILETIME_UNIX_EPOCH_TICKS = 116444736000000000n;
 interface Win32Api {
   koffi: KoffiApi;
   processEntrySize: number;
-  createSnapshot(flags: number, pid: number): NativeHandle;
+  /** `CreateToolhelp32Snapshot` on the thread pool, off the event loop. */
+  createSnapshot(flags: number, pid: number): Promise<NativeHandle>;
   processFirst(snapshot: NativeHandle, entry: ProcessEntry): number;
   processNext(snapshot: NativeHandle, entry: ProcessEntry): number;
   openProcess(access: number, inherit: number, pid: number): NativeHandle;
@@ -137,10 +145,16 @@ async function loadWin32Api(): Promise<Win32Api> {
     }
     return pids;
   };
+  const createToolhelpSnapshot = kernel32.func('void *CreateToolhelp32Snapshot(uint32 flags, uint32 pid)');
   return {
     koffi,
     processEntrySize: koffi.sizeof(processEntry),
-    createSnapshot: kernel32.func('void *CreateToolhelp32Snapshot(uint32 flags, uint32 pid)'),
+    createSnapshot: (flags, pid) => new Promise((resolve, reject) => {
+      createToolhelpSnapshot.async(flags, pid, (error: unknown, snapshot: NativeHandle) => {
+        if (error) reject(error);
+        else resolve(snapshot);
+      });
+    }),
     processFirst: kernel32.func('int Process32FirstW(void *snapshot, _Inout_ KANGENTIC_PROCESSENTRY32W *entry)'),
     processNext: kernel32.func('int Process32NextW(void *snapshot, _Inout_ KANGENTIC_PROCESSENTRY32W *entry)'),
     openProcess: kernel32.func('void *OpenProcess(uint32 access, int inherit, uint32 pid)'),
@@ -347,14 +361,57 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function sharedWin32Api(): Promise<Win32Api> {
+  apiPromise ??= loadWin32Api();
+  return apiPromise;
+}
+
+/** One process as Toolhelp lists it: pid, parent pid, and image file name (`node.exe`). */
+export interface Win32ProcessRow {
+  pid: number;
+  ppid: number;
+  image: string;
+}
+
+/** Every process in a Toolhelp snapshot, or [] when the snapshot fails (it can, under heavy process churn). */
+async function enumerateProcesses(api: Win32Api): Promise<Win32ProcessRow[]> {
+  const snapshot = await api.createSnapshot(TH32CS_SNAPPROCESS, 0);
+  if (isNullHandle(api, snapshot)) return [];
+  const rows: Win32ProcessRow[] = [];
+  try {
+    const entry: ProcessEntry = { dwSize: api.processEntrySize };
+    if (!api.processFirst(snapshot, entry)) return rows;
+    do {
+      rows.push({ pid: entry.th32ProcessID ?? 0, ppid: entry.th32ParentProcessID ?? 0, image: entry.szExeFile ?? '' });
+      entry.dwSize = api.processEntrySize;
+      if (rows.length % (YIELD_EVERY_PROCESSES * 4) === 0) await yieldToEventLoop();
+    } while (api.processNext(snapshot, entry));
+  } finally {
+    api.closeHandle(snapshot);
+  }
+  return rows;
+}
+
+/**
+ * Every process on the machine as pid, parent pid and image name, with no
+ * handle opened on any of them. Rejects when koffi cannot load. Measured on
+ * 410 processes: 8 ms, against 140 ms (median of 10) for the warm
+ * `Get-CimInstance Win32_Process` query this replaced in the watcher, with
+ * the same pids, parents and names.
+ */
+export async function listWin32Processes(loadApi: () => Promise<Win32Api> = sharedWin32Api): Promise<Win32ProcessRow[]> {
+  return enumerateProcesses(await loadApi());
+}
+
 export class Win32TaggedProcessReader implements TaggedProcessReader {
   private readonly loadApi: () => Promise<Win32Api>;
 
   constructor(loadApi?: () => Promise<Win32Api>) {
-    this.loadApi = loadApi ?? (() => {
-      apiPromise ??= loadWin32Api();
-      return apiPromise;
-    });
+    this.loadApi = loadApi ?? sharedWin32Api;
+  }
+
+  async ready(): Promise<void> {
+    await this.loadApi();
   }
 
   async scan(): Promise<ProcessScan> {
@@ -363,7 +420,7 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     api.processIdToSessionId(process.pid, ownSession);
     const ownSid = readTokenUserSid(api, api.getCurrentProcess());
 
-    const rows = await this.enumerate(api);
+    const rows = await enumerateProcesses(api);
     const windowPids = api.visibleWindowPids();
     const processes: ScannedProcess[] = [];
     let unreadableCount = 0;
@@ -458,23 +515,5 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       }
     }
     return labels;
-  }
-
-  private async enumerate(api: Win32Api): Promise<Array<{ pid: number; ppid: number; image: string }>> {
-    const snapshot = api.createSnapshot(TH32CS_SNAPPROCESS, 0);
-    if (isNullHandle(api, snapshot)) return [];
-    const rows: Array<{ pid: number; ppid: number; image: string }> = [];
-    try {
-      const entry: ProcessEntry = { dwSize: api.processEntrySize };
-      if (!api.processFirst(snapshot, entry)) return rows;
-      do {
-        rows.push({ pid: entry.th32ProcessID ?? 0, ppid: entry.th32ParentProcessID ?? 0, image: entry.szExeFile ?? '' });
-        entry.dwSize = api.processEntrySize;
-        if (rows.length % (YIELD_EVERY_PROCESSES * 4) === 0) await yieldToEventLoop();
-      } while (api.processNext(snapshot, entry));
-    } finally {
-      api.closeHandle(snapshot);
-    }
-    return rows;
   }
 }

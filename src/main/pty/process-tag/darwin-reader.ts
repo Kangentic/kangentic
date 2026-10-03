@@ -1,27 +1,42 @@
 /**
- * macOS reader.
+ * macOS reader. Everything but the visible-app check comes straight from the
+ * kernel through koffi (libproc and `sysctl` in libSystem); before, every scan
+ * spawned `ps`, a reap with anything to look at spawned `lsof`, and every kill
+ * spawned `ps` again for its identity check.
  *
- * - `ps -A -o pid=,ppid=,uid=,lstart=` lists the processes, their parents and
- *   start times (the kill's identity check).
- * - The tag comes from each same-user process's `KERN_PROCARGS2` record, read
- *   directly through koffi and searched for an exact `KANGENTIC_TASK_ID=`
- *   entry. Not `ps -E`: a process that sets its title (npm, Next's
- *   `next-server`, pm2) rewrites its argument area, `ps` stops reading at the
- *   first double NUL, and the environment vanishes from its output while the
- *   kernel record still holds it intact (measured on macOS 15 and 26).
+ * - `proc_listallpids` lists the processes, and `proc_pidinfo` with
+ *   `PROC_PIDTBSDINFO` gives each one's parent, uid and start time, to the
+ *   microsecond (the kill's identity check). XNU answers that flavor only for
+ *   the caller's own processes, so another user's process is listed through
+ *   `PROC_PIDT_SHORTBSDINFO`, which carries the parent and uid but no start
+ *   time: it stays in the table with an unknown start key, which the kill
+ *   refuses, as the Windows reader does for another session's process.
+ * - The tag comes from each same-user process's `KERN_PROCARGS2` record,
+ *   searched for an exact `KANGENTIC_TASK_ID=` entry. Not `ps -E`: a process
+ *   that sets its title (npm, Next's `next-server`, pm2) rewrites its argument
+ *   area, `ps` stops reading at the first double NUL, and the environment
+ *   vanishes from its output while the kernel record still holds it intact
+ *   (measured on macOS 15 and 26).
  * - XNU's `sysctl_procargsx` leaves the environment out of that record when
  *   the target is `CS_RESTRICT` and System Integrity Protection is on, unless
  *   the caller holds an Apple-private entitlement. Apple's own `/bin` and
  *   `/usr/bin` tools are `CS_RESTRICT`; Node, Python and anything a developer
  *   builds are not. A record with nothing after its arguments is flagged
  *   `environmentWithheld` and counted as unreadable, never passed as clean.
- * - For tagged and withheld processes and their descendants only: `lsof -d
- *   cwd` for the working directory (XNU gates it on the uid alone, with no
- *   code-signing or SIP check), and the role (`process-scan.ts`): a tmux
- *   server by its executable, a visible app by LaunchServices (`lsappinfo
- *   list`, Foreground or UIElement) or by being the main executable of an app
- *   in an Applications folder (`lsappinfo` can miss an app still starting).
- *   Not "any app bundle": `/usr/bin/python3` runs from inside `Python.app`.
+ * - For tagged and withheld processes and their descendants only: the working
+ *   directory from `proc_pidinfo` with `PROC_PIDVNODEPATHINFO`, the call
+ *   `lsof -d cwd` makes (XNU gates it on the uid alone, with no code-signing or
+ *   SIP check), and the role (`process-scan.ts`): a tmux server by its
+ *   executable, a visible app by LaunchServices (`lsappinfo list`, Foreground
+ *   or UIElement, the one tool still spawned, once per scan and only when such
+ *   a process exists) or by being the main executable of an app in an
+ *   Applications folder (`lsappinfo` can miss an app still starting). Not "any
+ *   app bundle": `/usr/bin/python3` runs from inside `Python.app`.
+ *
+ * The struct offsets below are XNU's (`bsd/sys/proc_info.h`), unchanged since
+ * macOS 10.5. `tests/unit/task-process-readers.test.ts` checks them against
+ * `ps` and `lsof` on real processes on every macOS runner the reap workflow
+ * covers, so a wrong one fails there rather than reaping wrongly.
  *
  * Privacy: a `KERN_PROCARGS2` record is another application's environment. It
  * is searched in place, and only the tag value, a string count, and the
@@ -38,15 +53,26 @@ import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } f
 
 const TOOL_TIMEOUT_MS = 5000;
 const LAUNCHD_PID = 1;
-const LSOF_PATH = '/usr/sbin/lsof';
 const LSAPPINFO_PATH = '/usr/bin/lsappinfo';
 const CTL_KERN = 1;
 const KERN_PROCARGS2 = 49;
 /** `kern.argmax` on macOS: the most a `KERN_PROCARGS2` record can hold. */
 const PROCARGS_BUFFER_BYTES = 1024 * 1024;
 const YIELD_EVERY_PROCESSES = 32;
+/** Room for this many pids on the first `proc_listallpids` call; doubled while it fills. */
+const INITIAL_PID_CAPACITY = 4096;
 
-const LIST_LINE_PATTERN = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s*$/;
+/** `proc_pidinfo` flavors and the sizes of the structs they fill. */
+const PROC_PIDTBSDINFO = 3;
+const PROC_BSDINFO_SIZE = 136;
+const PROC_PIDVNODEPATHINFO = 9;
+const PROC_VNODEPATHINFO_SIZE = 2352;
+const PROC_PIDT_SHORTBSDINFO = 13;
+const PROC_BSDSHORTINFO_SIZE = 64;
+/** `pvi_cdir.vip_path`: after a 136-byte `vinfo_stat`, `vi_type`, `vi_pad` and an 8-byte `fsid_t`. */
+const CURRENT_DIRECTORY_PATH_OFFSET = 152;
+const MAXPATHLEN = 1024;
+
 const TAG_PREFIX = `${TASK_PROCESS_TAG_ENV}=`;
 /**
  * Keys of the kernel's own "apple" strings, which follow the environment in a
@@ -69,6 +95,26 @@ export interface ProcArgsSummary {
   executablePath: string;
   tagValue: string | null;
   environmentWithheld: boolean;
+}
+
+/** One process as the kernel lists it. `startKey` is '' for another user's process. */
+export interface DarwinProcessRow {
+  pid: number;
+  ppid: number;
+  uid: number;
+  startKey: string;
+}
+
+/** The kernel calls the reader makes. */
+export interface DarwinKernel {
+  /** Every pid. Throws when the kernel refuses the list. */
+  listPids(): number[];
+  /** The pid's parent, uid and start key, or null when it is gone (or a zombie). */
+  processRow(pid: number): DarwinProcessRow | null;
+  /** The pid's working directory, or null when it is gone or another user's. */
+  workingDirectory(pid: number): string | null;
+  /** The pid's `KERN_PROCARGS2` record, a view the next call overwrites, or null. */
+  procArgs(pid: number): Buffer | null;
 }
 
 /**
@@ -144,33 +190,35 @@ export function argumentsFromProcArgs(record: Buffer): { executablePath: string;
   return { executablePath, argv };
 }
 
-/** `pid ppid uid lstart` rows. Exported for fixture tests. */
-export function parseDarwinProcessList(output: string): Array<{ pid: number; ppid: number; uid: number; startKey: string }> {
-  const rows: Array<{ pid: number; ppid: number; uid: number; startKey: string }> = [];
-  for (const line of output.split('\n')) {
-    const match = LIST_LINE_PATTERN.exec(line);
-    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), uid: Number(match[3]), startKey: match[4].replace(/\s+/g, ' ') });
-  }
-  return rows;
+/**
+ * `struct proc_bsdinfo`: `pbi_pid` at 12, `pbi_ppid` 16, `pbi_uid` 20,
+ * `pbi_start_tvsec` 120 and `pbi_start_tvusec` 128. Exported for fixture tests.
+ */
+export function parseBsdInfo(record: Buffer): DarwinProcessRow | null {
+  if (record.length < PROC_BSDINFO_SIZE) return null;
+  const seconds = record.readBigUInt64LE(120);
+  const microseconds = record.readBigUInt64LE(128);
+  return {
+    pid: record.readUInt32LE(12),
+    ppid: record.readUInt32LE(16),
+    uid: record.readUInt32LE(20),
+    startKey: `${seconds}.${microseconds.toString().padStart(6, '0')}`,
+  };
 }
 
-/**
- * Working directories from `lsof -a -d cwd -F pn -p <pids>`: a `p<pid>` line
- * opens each process, and its `n<path>` line is the directory. Exported for
- * fixture tests.
- */
-export function parseLsofWorkingDirectories(output: string): Map<number, string> {
-  const directories = new Map<number, string>();
-  let currentPid: number | null = null;
-  for (const line of output.split('\n')) {
-    if (line.startsWith('p')) {
-      const pid = Number(line.slice(1));
-      currentPid = Number.isInteger(pid) && pid > 0 ? pid : null;
-    } else if (line.startsWith('n') && currentPid !== null && line.length > 1) {
-      directories.set(currentPid, line.slice(1));
-    }
-  }
-  return directories;
+/** `struct proc_bsdshortinfo`: `pbsi_pid` at 0, `pbsi_ppid` 4, `pbsi_uid` 36; no start time. Exported for fixture tests. */
+export function parseShortBsdInfo(record: Buffer): DarwinProcessRow | null {
+  if (record.length < PROC_BSDSHORTINFO_SIZE) return null;
+  return { pid: record.readUInt32LE(0), ppid: record.readUInt32LE(4), uid: record.readUInt32LE(36), startKey: '' };
+}
+
+/** `struct proc_vnodepathinfo`'s `pvi_cdir.vip_path`, or null when empty. Exported for fixture tests. */
+export function parseCurrentDirectory(record: Buffer): string | null {
+  if (record.length <= CURRENT_DIRECTORY_PATH_OFFSET) return null;
+  const limit = Math.min(record.length, CURRENT_DIRECTORY_PATH_OFFSET + MAXPATHLEN);
+  const end = record.indexOf(0, CURRENT_DIRECTORY_PATH_OFFSET);
+  const directory = record.toString('utf8', CURRENT_DIRECTORY_PATH_OFFSET, end < 0 || end > limit ? limit : end);
+  return directory.length > 0 ? directory : null;
 }
 
 /** Pids LaunchServices lists as UI apps (Foreground or UIElement). Exported for fixture tests. */
@@ -185,12 +233,8 @@ export function isTopLevelAppExecutable(executablePath: string): boolean {
   return TOP_LEVEL_APP_PATTERN.test(executablePath);
 }
 
-/**
- * Run a tool and resolve its stdout. `requireSuccess` resolves '' on a
- * non-zero exit; `lsof` exits 1 when one of several pids has already gone,
- * and its output for the rest is still good.
- */
-function runTool(command: string, args: string[], requireSuccess: boolean): Promise<string> {
+/** Run a tool and resolve its stdout, or '' when it fails or runs past the timeout. */
+function runTool(command: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
@@ -211,26 +255,55 @@ function runTool(command: string, args: string[], requireSuccess: boolean): Prom
     timer.unref();
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
     child.on('error', () => finish(''));
-    child.on('close', (code) => finish(code === 0 || !requireSuccess ? output : ''));
+    child.on('close', () => finish(output));
   });
 }
 
-type ProcArgsReader = (pid: number) => Buffer | null;
+let kernelPromise: Promise<DarwinKernel> | null = null;
 
-let procArgsReaderPromise: Promise<ProcArgsReader> | null = null;
-
-/** `sysctl(KERN_PROCARGS2)` through koffi, into one reused buffer. */
-async function loadProcArgsReader(): Promise<ProcArgsReader> {
+/** libproc and `sysctl` through koffi, each into one reused buffer. */
+async function loadDarwinKernel(): Promise<DarwinKernel> {
   const imported = await import('koffi');
   const koffi: Pick<typeof import('koffi'), 'load'> = imported.default ?? imported;
   const libSystem = koffi.load('/usr/lib/libSystem.B.dylib');
   const sysctl = libSystem.func('int sysctl(int32 *name, uint32 namelen, _Out_ uint8_t *oldp, _Inout_ size_t *oldlenp, void *newp, size_t newlen)');
-  const buffer = Buffer.alloc(PROCARGS_BUFFER_BYTES);
-  return (pid) => {
-    const length = [PROCARGS_BUFFER_BYTES];
-    if (sysctl(Int32Array.from([CTL_KERN, KERN_PROCARGS2, pid]), 3, buffer, length, null, 0) !== 0) return null;
-    // The caller summarizes this view before the next read reuses the buffer.
-    return buffer.subarray(0, Number(length[0]));
+  const listAllPids = libSystem.func('int proc_listallpids(_Out_ uint8_t *buffer, int buffersize)');
+  const pidInfo = libSystem.func('int proc_pidinfo(int pid, int flavor, uint64_t arg, _Out_ uint8_t *buffer, int buffersize)');
+  const procArgsBuffer = Buffer.alloc(PROCARGS_BUFFER_BYTES);
+  const bsdInfoBuffer = Buffer.alloc(PROC_BSDINFO_SIZE);
+  const shortInfoBuffer = Buffer.alloc(PROC_BSDSHORTINFO_SIZE);
+  const vnodePathBuffer = Buffer.alloc(PROC_VNODEPATHINFO_SIZE);
+  let pidBuffer = Buffer.alloc(INITIAL_PID_CAPACITY * 4);
+  return {
+    listPids() {
+      for (;;) {
+        // The count of pids written; a full buffer may have cut the list short.
+        const count = listAllPids(pidBuffer, pidBuffer.length);
+        if (count < 0) throw new Error('proc_listallpids failed');
+        if (count * 4 < pidBuffer.length) {
+          const pids: number[] = [];
+          for (let index = 0; index < count; index += 1) pids.push(pidBuffer.readInt32LE(index * 4));
+          return pids;
+        }
+        pidBuffer = Buffer.alloc(pidBuffer.length * 2);
+      }
+    },
+    processRow(pid) {
+      // `proc_pidinfo` returns the bytes it filled, and 0 when it refuses.
+      if (pidInfo(pid, PROC_PIDTBSDINFO, 0, bsdInfoBuffer, PROC_BSDINFO_SIZE) === PROC_BSDINFO_SIZE) return parseBsdInfo(bsdInfoBuffer);
+      if (pidInfo(pid, PROC_PIDT_SHORTBSDINFO, 0, shortInfoBuffer, PROC_BSDSHORTINFO_SIZE) === PROC_BSDSHORTINFO_SIZE) return parseShortBsdInfo(shortInfoBuffer);
+      return null;
+    },
+    workingDirectory(pid) {
+      if (pidInfo(pid, PROC_PIDVNODEPATHINFO, 0, vnodePathBuffer, PROC_VNODEPATHINFO_SIZE) !== PROC_VNODEPATHINFO_SIZE) return null;
+      return parseCurrentDirectory(vnodePathBuffer);
+    },
+    procArgs(pid) {
+      const length = [PROCARGS_BUFFER_BYTES];
+      if (sysctl(Int32Array.from([CTL_KERN, KERN_PROCARGS2, pid]), 3, procArgsBuffer, length, null, 0) !== 0) return null;
+      // The caller reads this view before the next call reuses the buffer.
+      return procArgsBuffer.subarray(0, Number(length[0]));
+    },
   };
 }
 
@@ -239,48 +312,49 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 export interface DarwinReaderOptions {
-  runPs?: (args: string[]) => Promise<string>;
-  runLsof?: (args: string[]) => Promise<string>;
+  loadKernel?: () => Promise<DarwinKernel>;
   runLsappinfo?: (args: string[]) => Promise<string>;
-  readProcArgs?: () => Promise<ProcArgsReader>;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
   uid?: number;
 }
 
 export class DarwinTaggedProcessReader implements TaggedProcessReader {
-  private readonly run: (args: string[]) => Promise<string>;
-  private readonly runLsof: (args: string[]) => Promise<string>;
+  private readonly loadKernel: () => Promise<DarwinKernel>;
   private readonly runLsappinfo: (args: string[]) => Promise<string>;
-  private readonly loadProcArgs: () => Promise<ProcArgsReader>;
   private readonly sendSignal: (pid: number, signalName: NodeJS.Signals) => void;
   private readonly ownUid: number | null;
 
   constructor(options: DarwinReaderOptions = {}) {
-    this.run = options.runPs ?? ((args) => runTool('ps', args, true));
-    this.runLsof = options.runLsof ?? ((args) => runTool(LSOF_PATH, args, false));
-    this.runLsappinfo = options.runLsappinfo ?? ((args) => runTool(LSAPPINFO_PATH, args, false));
-    this.loadProcArgs = options.readProcArgs ?? (() => {
-      procArgsReaderPromise ??= loadProcArgsReader();
-      return procArgsReaderPromise;
+    this.loadKernel = options.loadKernel ?? (() => {
+      kernelPromise ??= loadDarwinKernel();
+      return kernelPromise;
     });
+    this.runLsappinfo = options.runLsappinfo ?? ((args) => runTool(LSAPPINFO_PATH, args));
     this.sendSignal = options.signal ?? ((pid, signalName) => process.kill(pid, signalName));
     this.ownUid = options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null);
   }
 
+  async ready(): Promise<void> {
+    await this.loadKernel();
+  }
+
   async scan(): Promise<ProcessScan> {
-    const rows = parseDarwinProcessList(await this.run(['-A', '-o', 'pid=,ppid=,uid=,lstart=']));
-    const readProcArgs = await this.loadProcArgs();
+    const kernel = await this.loadKernel();
+    const pids = kernel.listPids();
     const processes: ScannedProcess[] = [];
     const executablePaths = new Map<number, string>();
     let unreadableCount = 0;
-    for (let index = 0; index < rows.length; index += 1) {
+    for (let index = 0; index < pids.length; index += 1) {
       if (index > 0 && index % YIELD_EVERY_PROCESSES === 0) await yieldToEventLoop();
-      const row = rows[index];
+      const row = kernel.processRow(pids[index]);
+      // Gone since the list, or a zombie. A row naming another pid would be a
+      // misread struct; leaving it out empties the scan, which fails loudly.
+      if (!row || row.pid !== pids[index]) continue;
       const scanned: ScannedProcess = { pid: row.pid, ppid: row.ppid, startKey: row.startKey, startedAtMs: null, tagValue: null };
       processes.push(scanned);
       if (row.uid !== this.ownUid || row.pid <= LAUNCHD_PID) continue;
-      const record = readProcArgs(row.pid);
+      const record = kernel.procArgs(row.pid);
       const summary = record ? summarizeProcArgs(record) : null;
       if (!summary) {
         scanned.environmentUnreadable = true;
@@ -293,15 +367,20 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
         unreadableCount += 1;
       }
     }
-    await this.readDirectoriesAndRoles(processes, executablePaths);
+    await this.readDirectoriesAndRoles(kernel, processes, executablePaths);
     return { processes, unreadableCount };
   }
 
   async kill(target: ScannedProcess, strength: KillStrength): Promise<boolean> {
-    // Identity: the start time `ps` reports for this pid right now.
-    const current = parseDarwinProcessList(await this.run(['-o', 'pid=,ppid=,uid=,lstart=', '-p', String(target.pid)]))
-      .find((row) => row.pid === target.pid);
-    if (!current || current.startKey !== target.startKey) return false;
+    if (!target.startKey) return false;
+    let current: DarwinProcessRow | null;
+    try {
+      // Identity: the start time the kernel reports for this pid right now.
+      current = (await this.loadKernel()).processRow(target.pid);
+    } catch {
+      return false;
+    }
+    if (!current || current.pid !== target.pid || current.startKey !== target.startKey) return false;
     try {
       this.sendSignal(target.pid, strength === 'force' ? 'SIGKILL' : 'SIGTERM');
       return true;
@@ -312,9 +391,9 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
 
   async describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>> {
     const labels = new Map<number, string>();
-    let readProcArgs: ProcArgsReader;
+    let kernel: DarwinKernel;
     try {
-      readProcArgs = await this.loadProcArgs();
+      kernel = await this.loadKernel();
     } catch {
       return labels;
     }
@@ -322,7 +401,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       try {
         // Parsed before the next read reuses the buffer. No identity re-check
         // here: a label is cosmetic, and `kill` re-checks before any signal.
-        const record = readProcArgs(target.pid);
+        const record = kernel.procArgs(target.pid);
         const parsed = record ? argumentsFromProcArgs(record) : null;
         if (!parsed) continue;
         const workingDirectory = target.workingDirectory ?? null;
@@ -340,7 +419,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
    * Working directory and role for the processes a reap could touch: tagged
    * ones, withheld orphans, and everything below them.
    */
-  private async readDirectoriesAndRoles(processes: ScannedProcess[], executablePaths: Map<number, string>): Promise<void> {
+  private async readDirectoriesAndRoles(kernel: DarwinKernel, processes: ScannedProcess[], executablePaths: Map<number, string>): Promise<void> {
     const children = new Map<number, ScannedProcess[]>();
     for (const scanned of processes) {
       const bucket = children.get(scanned.ppid);
@@ -359,14 +438,9 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       for (const child of children.get(next.pid) ?? []) if (child.pid !== next.pid) queue.push(child);
     }
     if (relevant.size === 0) return;
-    const [lsofOutput, lsappinfoOutput] = await Promise.all([
-      this.runLsof(['-w', '-a', '-d', 'cwd', '-F', 'pn', '-p', [...relevant].map((scanned) => scanned.pid).join(',')]),
-      this.runLsappinfo(['list']),
-    ]);
-    const directories = parseLsofWorkingDirectories(lsofOutput);
-    const uiPids = parseLsappinfoUiPids(lsappinfoOutput);
+    const uiPids = parseLsappinfoUiPids(await this.runLsappinfo(['list']));
     for (const scanned of relevant) {
-      scanned.workingDirectory = directories.get(scanned.pid) ?? null;
+      scanned.workingDirectory = kernel.workingDirectory(scanned.pid);
       const executablePath = executablePaths.get(scanned.pid) ?? '';
       if (path.posix.basename(executablePath) === 'tmux') scanned.role = 'multiplexer';
       else if (uiPids.has(scanned.pid) || isTopLevelAppExecutable(executablePath)) scanned.role = 'visible-app';

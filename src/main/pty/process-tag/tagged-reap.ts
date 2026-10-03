@@ -84,6 +84,14 @@ export interface LeftoverProcessEntry {
   place: 'worktree' | 'project';
 }
 
+/**
+ * Why a reap gave up, as a fixed code. `reader_load`: koffi or an OS library
+ * would not load. `empty_scan`: the scan listed no process at all, which is
+ * never true (the host and main are always running). `reap_error`: anything
+ * else threw.
+ */
+export type ReapFailureCode = 'reader_load' | 'empty_scan' | 'reap_error';
+
 export interface TaggedReapResult {
   /** Pids a kill was issued for, in either pass. */
   killedPids: number[];
@@ -92,9 +100,11 @@ export interface TaggedReapResult {
   /**
    * Why the reap gave up, or null. Carried back rather than logged here: the
    * pty host's stdout goes nowhere in a packaged build, so main does the
-   * logging (`SessionManager.reapTaskProcesses`).
+   * logging (`SessionManager.reapTaskProcesses`). Local logs only: it can
+   * come from a scan, so what leaves the machine is `failureCode`.
    */
   failureReason: string | null;
+  failureCode: ReapFailureCode | null;
   /** What the user is told: stopped, not stopped, and left running. */
   entries: LeftoverProcessEntry[];
 }
@@ -108,7 +118,11 @@ export interface TaggedReaperDeps {
   caseInsensitivePaths?: boolean;
 }
 
-const EMPTY_RESULT: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, entries: [] };
+const EMPTY_RESULT: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function defaultWait(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -184,7 +198,15 @@ export async function reapTaggedOnce(
       : 'project';
   };
   try {
+    await deps.reader.ready?.();
+  } catch (error) {
+    return { ...EMPTY_RESULT, failureReason: messageOf(error), failureCode: 'reader_load' };
+  }
+  try {
     const firstScan = await deps.reader.scan();
+    if (firstScan.processes.length === 0) {
+      return { ...EMPTY_RESULT, failureReason: 'the process scan listed nothing', failureCode: 'empty_scan' };
+    }
     const firstPlan = planReapDetailed(planInput(firstScan.processes));
     const labels = await describeSafely(deps.reader, [
       ...firstPlan.roots.map((root) => root.process),
@@ -206,6 +228,7 @@ export async function reapTaggedOnce(
         killedPids: [],
         unreadableCount: firstScan.unreadableCount,
         failureReason: null,
+        failureCode: null,
         entries: [...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, 'kept', null)), ...keptEntries],
       };
     }
@@ -252,6 +275,7 @@ export async function reapTaggedOnce(
       killedPids: [...killed].sort((left, right) => left - right),
       unreadableCount,
       failureReason: null,
+      failureCode: null,
       entries: [
         ...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, failedRootPids.has(root.process.pid) ? 'failed' : 'stopped', null)),
         ...orphanEntries,
@@ -259,7 +283,7 @@ export async function reapTaggedOnce(
       ],
     };
   } catch (error) {
-    return { ...EMPTY_RESULT, failureReason: error instanceof Error ? error.message : String(error) };
+    return { ...EMPTY_RESULT, failureReason: messageOf(error), failureCode: 'reap_error' };
   }
 }
 
@@ -288,6 +312,8 @@ export async function stopProcessTree(
   const wait = deps.wait ?? defaultWait;
   try {
     const scan = await deps.reader.scan();
+    // A scan that lists nothing failed (see `empty_scan`); it says nothing about whether the process ended.
+    if (scan.processes.length === 0) return 'failed';
     const target = scan.processes.find((scanned) => scanned.pid === request.pid && scanned.startKey === request.startKey);
     if (!target || !request.startKey) return 'ended';
     const safetyPids = buildSafetyProtectedPids({ processes: scan.processes, mainPid: request.mainPid, liveRootPids: deps.liveRootPids() });
