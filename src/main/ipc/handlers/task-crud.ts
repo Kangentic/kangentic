@@ -57,7 +57,11 @@ const PROGRESS_THROTTLE_MS = 100;
  *
  * Sized to comfortably contain the worst-case git path inside `removeWorktree`
  * (3 sequential `runGitWithTimeout` ops at 15s each) plus the fs-rm fallback,
- * so even a fully-pathological git stall surfaces as the inner timeout.
+ * so even a fully-pathological git stall surfaces as the inner timeout. The
+ * leftover reap runs first inside the same budget: up to 3 s waiting for a
+ * parked PTY and 15 s for the pty host's reap, and on a WSL shell up to 60 s
+ * more for the in-distro reap. A reap that hits those bounds leaves git less
+ * room, so this deadline can then fire before git's own timeout.
  */
 const TASK_CLEANUP_TIMEOUT_MS = 60_000;
 

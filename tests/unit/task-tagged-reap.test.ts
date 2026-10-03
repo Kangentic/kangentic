@@ -4,7 +4,8 @@
  * fake reader.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import os from 'node:os';
 import {
   TaggedReaper,
   reapTaggedOnce,
@@ -124,6 +125,21 @@ describe('reapTaggedOnce', () => {
     const result = await reapTaggedOnce({ tasks: [reapTask('not-a-task-id'), reapTask('')], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(reader.scanCount).toBe(0);
     expect(result.killedPids).toEqual([]);
+  });
+
+  it('never throws when the home directory cannot be read: kills nothing, scans nothing, reports reap_error', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)], []]);
+    // No `homeDirectory` in the deps, so the reap asks the OS for it.
+    const homedirSpy = vi.spyOn(os, 'homedir').mockImplementation(() => { throw new Error('no home'); });
+    try {
+      await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
+        killedPids: [], unreadableCount: 0, failureReason: 'no home', failureCode: 'reap_error', entries: [],
+      });
+    } finally {
+      homedirSpy.mockRestore();
+    }
+    expect(reader.scanCount).toBe(0);
+    expect(reader.kills).toEqual([]);
   });
 
   it('drops a home or filesystem-root directory main should never have sent, and a task left with none, without scanning', async () => {
@@ -327,7 +343,53 @@ describe('reapTaggedOnce when a scan after the graceful kills fails', () => {
   });
 });
 
+describe('reapTaggedOnce when a signalled root is still listed but the second plan no longer holds it', () => {
+  // The second plan drops a root whose directory moved or whose tag read as
+  // null, so nothing force-kills it and scan two alone cannot say whether it
+  // stopped. Only the last scan decides.
+  it('reports it as not stopped when the last scan still lists it, and never force-kills it', async () => {
+    const root = tagged(2001, TASK);
+    const movedAway = tagged(2001, TASK, 'start-2001', '/home/dev/elsewhere');
+    const reader = new FakeReader([[root], [movedAway], [movedAway]]);
+    const waits: number[] = [];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader, waits));
+    expect(reader.scanCount).toBe(3);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    expect(reader.kills).toEqual([{ pid: 2001, startKey: 'start-2001', strength: 'graceful' }]);
+    expect(result.killedPids).toEqual([2001]);
+    expect(result.failureCode).toBeNull();
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
+  });
+
+  it('reports it as stopped when it is gone from the last scan, after a Windows-style lag in the second', async () => {
+    const root = tagged(2001, TASK);
+    // Still listed in scan two while it exits, with its tag no longer readable.
+    const exiting: ScannedProcess = { ...root, tagValue: null };
+    const reader = new FakeReader([[root], [exiting], []]);
+    const waits: number[] = [];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader, waits));
+    // A third scan happened, so the last scan decided and not scan two.
+    expect(reader.scanCount).toBe(3);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    expect(reader.kills).toEqual([{ pid: 2001, startKey: 'start-2001', strength: 'graceful' }]);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:stopped']);
+  });
+});
+
 describe('TaggedReaper', () => {
+  it('resolves a request with reap_error, never leaving it waiting, when the home directory cannot be read', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    const reaper = new TaggedReaper({ reader, liveRootPids: () => [], caseInsensitivePaths: false, wait: async () => undefined });
+    const homedirSpy = vi.spyOn(os, 'homedir').mockImplementation(() => { throw new Error('no home'); });
+    try {
+      const result = await reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true });
+      expect(result).toMatchObject({ failureCode: 'reap_error', killedPids: [], entries: [] });
+    } finally {
+      homedirSpy.mockRestore();
+    }
+    expect(reader.scanCount).toBe(0);
+  });
+
   it('coalesces requests that arrive during a reap into one more batch, each task keeping its own directories and report', async () => {
     const reader = new FakeReader([[
       tagged(2001, TASK),
@@ -493,6 +555,28 @@ describe('stopProcessTree', () => {
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toBe('failed');
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+  });
+
+  it('answers failed when a child outlives the force kill even though the named process is gone', async () => {
+    const target = tagged(2001, TASK);
+    const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
+    // The target exits on the graceful kill. Its child ignores it, and the force kill does not remove it either.
+    const reader = new FakeReader([[target, child], [child], [child]]);
+    const waits: number[] = [];
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toBe('failed');
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful', '2002:force']);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    expect(reader.scanCount).toBe(3);
+  });
+
+  it('answers stopped when the child the graceful kill missed is gone after the force kill', async () => {
+    const target = tagged(2001, TASK);
+    const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
+    const unrelated = tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT);
+    const reader = new FakeReader([[target, child], [child], [unrelated]]);
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('stopped');
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful', '2002:force']);
+    expect(reader.scanCount).toBe(3);
   });
 
   it('never stops Kangentic, a held PTY, or anything under them', async () => {

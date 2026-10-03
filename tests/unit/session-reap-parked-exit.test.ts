@@ -44,8 +44,16 @@ function setup() {
   return { manager, order, reapTaggedProcesses, park };
 }
 
+const PARKED_GIVE_UP_WARNING = '[TASK-REAP] a parked PTY did not exit';
+
+/** The console.warn calls that carry the give-up warning, whatever else the reap logs. */
+function giveUpWarnings(warnSpy: { mock: { calls: unknown[][] } }): unknown[][] {
+  return warnSpy.mock.calls.filter((call) => typeof call[0] === 'string' && call[0].includes(PARKED_GIVE_UP_WARNING));
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 /** Wall-clock wait that works under fake timers: `setImmediate` and `Date` stay real. */
@@ -55,7 +63,8 @@ async function realDelay(ms: number): Promise<void> {
 }
 
 describe('reapTaskProcesses waits for a parked PTY of its task', () => {
-  it('scans only after the parked PTY has exited', async () => {
+  it('scans only after the parked PTY has exited, and logs no give-up warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { manager, order, park } = setup();
     park('sess-parked');
     const reaping = manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: true });
@@ -65,6 +74,7 @@ describe('reapTaskProcesses waits for a parked PTY of its task', () => {
     manager.emit('exit', 'sess-parked', 0, true);
     await reaping;
     expect(order).toEqual(['exit', 'host-reap']);
+    expect(giveUpWarnings(warnSpy)).toHaveLength(0);
   });
 
   it('does not wait when nothing of the task is parked', async () => {
@@ -75,7 +85,8 @@ describe('reapTaskProcesses waits for a parked PTY of its task', () => {
     expect(Date.now() - startedAt).toBeLessThan(KILL_GRACE_MS);
   });
 
-  it('gives up at its bound when the exit never arrives, and reaps anyway', async () => {
+  it('gives up at its bound when the exit never arrives, warns once, and reaps anyway', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager, reapTaggedProcesses, park } = setup();
     park('sess-stuck');
@@ -86,9 +97,11 @@ describe('reapTaskProcesses waits for a parked PTY of its task', () => {
     await vi.advanceTimersByTimeAsync(KILL_GRACE_MS + 1500 - 1);
     await realDelay(50);
     expect(reapTaggedProcesses).not.toHaveBeenCalled();
+    expect(giveUpWarnings(warnSpy)).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     vi.useRealTimers();
     await reaping;
     expect(reapTaggedProcesses).toHaveBeenCalledTimes(1);
+    expect(giveUpWarnings(warnSpy)).toHaveLength(1);
   });
 });

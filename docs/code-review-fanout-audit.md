@@ -819,6 +819,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
 | task 736, whole branch, pre-PR | 146f +9278 -1701 | 793KB, 14017 lines | 10 (0) | 136 | 0 | 12, sharded by area: 6 area shards, 5 gated auditors on their own ranges, integration on the delta | about 34 of 11 pack-carrying, 1 not reported | 51 raised, 46 distinct / 27 applied, 2 refuted; 6 coverage holes filled |
 | task 736, whole branch, second pass | 153f +10439 -1718 | 866KB, 15295 lines | 9 (0) | 144 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two), integration on the delta | about 70 of 13 pack-carrying, most of them greps | 41 raised, 39 distinct, plus 1 found in verification / 27 applied, 4 refuted, 9 skipped; 5 coverage holes filled |
+| task 736, whole branch, third pass | 156f +11700 -1724 | 944KB, 16632 lines | 8 (0) | 148 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 40 of 13 pack-carrying, most of them rule files and callers | 35 raised, 31 distinct / 12 applied, 7 refuted, 10 skipped; 8 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1209,3 +1210,20 @@ cleared-tag child under a withheld orphan was killed with it. Four candidates we
 among them a Windows `describe` gate one finder doubted and another showed pinned by a test. Two
 test-builders worked on disjoint files with `src/` closed to them. One showed red-green by
 applying each revert to a copy of `src/` in the scratchpad, which kept the working tree clean.
+
+The task 736 third pass kept that layout at 16,632 pack lines: seven area shards of 1,409 to
+2,835 lines, six gated auditors on their own ranges (cross-platform in two of 3,680 and 3,720
+lines, and `migration-safety` on the 85 lines of `types.ts`), and the integration finder on a
+722-line delta that keeps only the import lines of test files. The focus ran from `e56ba0af`,
+the second pass's fix commit, to HEAD. A scoped run of the 40 unit files that import the reap
+sources passed before the fan-out, so no finder had a broken test to explain. Two finders
+independently found the second pass's `lsappinfo` fix incomplete: `runTool` resolved its stdout on
+any exit, so a run that exited with an error still read as a list with no windows. The other
+Mediums were a root the second plan dropped (its directory moved, or its tag read null) reported
+as stopped while it still ran, a package smoke cleanup that could SIGKILL a recycled pid, and the
+WSL script's drive-letter case fold and `grep -z` probe, which no test would have failed without.
+Seven candidates were refuted, among them a `flushAll` gap that only the quit path can reach. The
+three test-builders had `src/` closed, and the driver showed red-green itself by reverting each
+fix in place, running the file, and restoring it. The WSL cases are Linux-only and this host's
+Ubuntu distro has no node, so a test-builder proved the script logic, and each revert's red, in a
+WSL shell harness with the same shim text. The vitest cases themselves first run on CI.

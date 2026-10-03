@@ -3121,7 +3121,7 @@ export interface LeftoverProcessReport {
   processes: LeftoverProcess[];
 }
 
-/** `ended`: it had already exited. `failed`: it is still running. */
+/** `ended`: it had already exited. `failed`: it, or a process under it, is still running. */
 export type LeftoverStopOutcome = 'stopped' | 'ended' | 'failed';
 
 export interface AppConfig {

@@ -10,10 +10,11 @@
  *    tagged supervisor that respawned a child between the first scan and its
  *    own kill. Every kill re-checks the target's start time first (see each
  *    reader), so a pid reused since its scan is never touched.
- * When the second pass had anything to kill, a last scan finds what survived
- * it, and the report names that as not stopped. A scan that fails or lists
- * nothing after the first pass's kills ends the reap there, with no force
- * pass, and the roots it signalled are reported as not stopped.
+ * When the second pass had anything to kill, or a root the first pass asked to
+ * exit is still listed, a last scan finds what survived, and the report names
+ * that as not stopped. A scan that fails or lists nothing after the first
+ * pass's kills ends the reap there, with no force pass, and the roots it
+ * signalled are reported as not stopped.
  *
  * The result reports, per task, the top of each subtree it stopped and the
  * task's own processes it left running on purpose (a window, a tmux server, a
@@ -204,6 +205,8 @@ function owningTaskOf(target: ScannedProcess, byPid: ReadonlyMap<number, Scanned
  * (`resolveTaskDirectories`); the host drops them again rather than trust
  * every caller to, since one such directory makes the directory test admit
  * nearly every tagged process. A task left with no directory is dropped.
+ * Main refuses home in both its stored and its real-path form; this backstop
+ * compares the stored form only.
  */
 function scopesOf(tasks: readonly TaggedReapTask[], homeDirectory: string): Map<string, ReapTaskScope> {
   const scopes = new Map<string, { directories: Set<string>; worktreePath: string | null }>();
@@ -227,7 +230,14 @@ export async function reapTaggedOnce(
   request: TaggedReapRequest,
   deps: TaggedReaperDeps,
 ): Promise<TaggedReapResult> {
-  const tasks = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
+  let tasks: Map<string, ReapTaskScope>;
+  try {
+    tasks = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
+  } catch (error) {
+    // `os.homedir()` throws for a user with no home. Without it home cannot be
+    // refused as a root, so the reap kills nothing.
+    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
+  }
   if (tasks.size === 0) return emptyResult();
   const wait = deps.wait ?? defaultWait;
   const caseInsensitivePaths = deps.caseInsensitivePaths ?? process.platform !== 'linux';
@@ -300,16 +310,22 @@ export async function reapTaggedOnce(
     // so an untagged one (an unreadable environment, a withheld Apple tool)
     // is named too.
     const failedRootPids = new Set<number>();
-    const orphanSurvivors: ScannedProcess[] = [];
-    const orphanTasks = new Map<number, string>();
+    const orphanSurvivors: Array<{ survivor: ScannedProcess; taskId: string }> = [];
     const secondRootTasks = new Map(secondPlan.roots.map((root) => [root.process.pid, root.taskId]));
     let unreadableCount = secondScan.unreadableCount;
-    if (secondPlan.targets.length > 0) {
+    // A root the second plan no longer holds (its directory moved, its tag read
+    // as null, a new child made it shared) was not force-killed, so only a later
+    // scan can say whether it stopped. Scan two alone cannot: on Windows a
+    // process can still be listed there while it exits.
+    const listedAfterFirst = new Set(secondScan.processes.map(identityOf));
+    const rootStillListed = firstPlan.roots.some((root) => listedAfterFirst.has(identityOf(root.process)));
+    if (secondPlan.targets.length > 0 || rootStillListed) {
       await wait(SURVIVOR_CHECK_MS);
       const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
       const alive = new Set(lastScan.processes.map(identityOf));
       const reportedRootPids = new Set(firstPlan.roots.map((root) => root.process.pid));
+      for (const root of firstPlan.roots) if (alive.has(identityOf(root.process))) failedRootPids.add(root.process.pid);
       const secondByPid = new Map(secondScan.processes.map((scanned) => [scanned.pid, scanned]));
       for (const survivor of secondPlan.targets) {
         if (!alive.has(identityOf(survivor))) continue;
@@ -326,14 +342,12 @@ export async function reapTaggedOnce(
           continue;
         }
         const taskId = owningTaskOf(survivor, secondByPid, secondRootTasks);
-        if (taskId === null) continue;
-        orphanSurvivors.push(survivor);
-        orphanTasks.set(survivor.pid, taskId);
+        if (taskId !== null) orphanSurvivors.push({ survivor, taskId });
       }
     }
-    const survivorLabels = await describeSafely(deps.reader, orphanSurvivors);
+    const survivorLabels = await describeSafely(deps.reader, orphanSurvivors.map((orphan) => orphan.survivor));
     for (const [pid, label] of survivorLabels) labels.set(pid, label);
-    const orphanEntries = orphanSurvivors.map((survivor) => entryFor(survivor, orphanTasks.get(survivor.pid) as string, 'failed', null));
+    const orphanEntries = orphanSurvivors.map((orphan) => entryFor(orphan.survivor, orphan.taskId, 'failed', null));
 
     return {
       killedPids: [...killed].sort((left, right) => left - right),
@@ -365,7 +379,7 @@ export interface StopProcessRequest {
   mainPid: number;
 }
 
-/** `ended`: it was already gone. `failed`: it is still running. */
+/** `ended`: it was already gone. `failed`: it, or a process under it, is still running. */
 export type StopProcessOutcome = 'stopped' | 'ended' | 'failed';
 
 /**
@@ -400,7 +414,10 @@ export async function stopProcessTree(
     await killAll(deps.reader, survivors, 'force');
     await wait(SURVIVOR_CHECK_MS);
     const lastScan = requireProcesses(await deps.reader.scan());
-    return lastScan.processes.some((scanned) => identityOf(scanned) === identityOf(target)) ? 'failed' : 'stopped';
+    // Any survivor, not only the target: a child that outlived its parent
+    // keeps the tree running.
+    const aliveAtLast = new Set(lastScan.processes.map(identityOf));
+    return survivors.some((survivor) => aliveAtLast.has(identityOf(survivor))) ? 'failed' : 'stopped';
   } catch {
     return 'failed';
   }

@@ -164,6 +164,49 @@ async function reap(scratch: Scratch, taskIds: string[] = [TASK_ID]) {
   );
 }
 
+/** A detached sleeper started from `cwd` with `tagValue` as its tag (or none), as the launcher's grandchild. */
+async function startDetachedSleeper(scratch: Scratch, name: string, cwd: string, tagValue: string | null): Promise<number> {
+  const pidFile = path.join(scratch.root, `${name}.pid`);
+  spawn(process.execPath, [writeDetachingLauncher(scratch.root), writeSleeper(scratch.root), pidFile], { stdio: 'ignore', cwd, env: envWithTag(tagValue) });
+  return waitForPidFile(pidFile);
+}
+
+/** An executable POSIX sh program called `name` in `directory`, to be put first on a PATH. */
+function writeShim(directory: string, name: string, body: string): void {
+  fs.mkdirSync(directory, { recursive: true });
+  const shimPath = path.join(directory, name);
+  fs.writeFileSync(shimPath, `#!/bin/sh\n${body}\n`);
+  fs.chmodSync(shimPath, 0o755);
+}
+
+interface WslReapScriptResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Run the WSL reap script for TASK_ID and one directory, with `shimDirectory`
+ * first on PATH. A failing script resolves with its exit code instead of
+ * rejecting, so a case can assert on it.
+ */
+async function runWslReapScript(shimDirectory: string, directory: string, extraEnv: Record<string, string> = {}): Promise<WslReapScriptResult> {
+  const invocation = buildWslReapInvocation([{ taskId: TASK_ID, directories: [directory] }])!;
+  const env = { ...process.env, ...extraEnv, PATH: `${shimDirectory}${path.delimiter}${process.env.PATH ?? ''}` };
+  try {
+    const { stdout, stderr } = await execFileAsync('sh', ['-c', invocation.script, 'sh', ...invocation.args], { env });
+    return { exitCode: 0, stdout, stderr };
+  } catch (error) {
+    const failure = error as { code?: number | string | null; stdout?: string; stderr?: string };
+    return { exitCode: typeof failure.code === 'number' ? failure.code : -1, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' };
+  }
+}
+
+/** The pids a reap script printed. */
+function pidsInReapOutput(stdout: string): number[] {
+  return stdout.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number);
+}
+
 function hasCommand(command: string): boolean {
   try {
     execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', [command], { stdio: 'ignore' });
@@ -490,5 +533,77 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(await waitUntilDead([insidePid])).toEqual([]);
     expect(isProcessAlive(outsidePid)).toBe(true);
     expect(isProcessAlive(untaggedPid)).toBe(true);
+  }, 60_000);
+
+  // These two cases reach the script's branches that the case above cannot,
+  // with a shim in front of PATH for a program a Linux runner lacks or has in
+  // the wrong shape. Like the case above they run on Linux only, so they never
+  // skip a leg that is provisioned for them and need no provisioning check.
+  //
+  // A drive-letter directory (`C:\...`) is translated by `wslpath -u` and then
+  // compared without case, because the Windows drive behind it is. Linux has no
+  // `wslpath`, so a shim stands in for it and answers in UPPER case, while the
+  // process works in the real, mixed-case directory. Any other directory is
+  // compared with case, so the same directory given in upper case, with no
+  // drive letter, must not match.
+  it.runIf(process.platform === 'linux')('the WSL reap script compares a drive-letter directory without case and any other directory with it', async () => {
+    const scratch = makeScratch();
+    const insidePid = await startDetachedSleeper(scratch, 'wsl-fold-inside', scratch.worktree, TASK_ID);
+    const outsidePid = await startDetachedSleeper(scratch, 'wsl-fold-outside', scratch.elsewhere, TASK_ID);
+
+    // The temp root has lower-case letters ('kng-tag-reap-'), so upper case
+    // always differs from the real path. Without that the control proves nothing.
+    const upperProject = scratch.project.toUpperCase();
+    expect(upperProject).not.toBe(scratch.project);
+    const shimDirectory = path.join(scratch.root, 'shim-wslpath');
+    writeShim(shimDirectory, 'wslpath', [
+      'case "$2" in',
+      '  [A-Za-z]:*) printf \'%s\\n\' "$SHIM_WSLPATH_RESULT" ;;',
+      '  *) exit 1 ;;',
+      'esac',
+    ].join('\n'));
+    const wslpathAnswer = { SHIM_WSLPATH_RESULT: upperProject };
+
+    // Control first. A non-drive directory in the wrong case is not the task's,
+    // so nothing is killed and the sleeper is still there for the run below.
+    const control = await runWslReapScript(shimDirectory, upperProject, wslpathAnswer);
+    expect(control.exitCode).toBe(0);
+    expect(pidsInReapOutput(control.stdout)).toEqual([]);
+    expect(isProcessAlive(insidePid)).toBe(true);
+    expect(isProcessAlive(outsidePid)).toBe(true);
+
+    // With a drive-letter directory, wslpath answers in upper case and the
+    // sleeper is found anyway. The one working outside the project is spared.
+    const drive = await runWslReapScript(shimDirectory, 'C:\\Users\\dev\\project', wslpathAnswer);
+    expect(drive.exitCode).toBe(0);
+    const killed = pidsInReapOutput(drive.stdout);
+    expect(killed).toContain(insidePid);
+    expect(killed).not.toContain(outsidePid);
+    expect(await waitUntilDead([insidePid])).toEqual([]);
+    expect(isProcessAlive(outsidePid)).toBe(true);
+  }, 60_000);
+
+  // The script's second line probes `grep -z` and fails the reap loudly, before
+  // it reads anything. A shim grep rejects every argument holding a `z`, as an
+  // old BusyBox grep rejects the option, and passes everything else through.
+  it.runIf(process.platform === 'linux')('the WSL reap script fails with exit 3 and kills nothing when grep has no -z', async () => {
+    const scratch = makeScratch();
+    const taggedPid = await startDetachedSleeper(scratch, 'wsl-no-grep-z', scratch.worktree, TASK_ID);
+    const shimDirectory = path.join(scratch.root, 'shim-grep');
+    writeShim(shimDirectory, 'grep', [
+      'for argument in "$@"; do',
+      '  case "$argument" in',
+      '    *z*) echo "grep: invalid option -- z" >&2; exit 2 ;;',
+      '  esac',
+      'done',
+      'command -p grep "$@"',
+    ].join('\n'));
+
+    const result = await runWslReapScript(shimDirectory, scratch.project);
+    expect(result.exitCode).toBe(3);
+    // Exactly the script's own message, since it sends the shim's text to /dev/null.
+    expect(result.stderr.trim()).toBe('grep has no -z');
+    expect(result.stdout).toBe('');
+    expect(isProcessAlive(taggedPid)).toBe(true);
   }, 60_000);
 });

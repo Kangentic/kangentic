@@ -18,6 +18,7 @@ import {
   parseCurrentDirectory,
   parseLsappinfoUiPids,
   parseShortBsdInfo,
+  runTool as runDarwinTool,
   summarizeProcArgs,
   type DarwinKernel,
   type DarwinProcessRow,
@@ -355,6 +356,63 @@ describe('macOS reader', () => {
       ]);
       expect([...labels.keys()]).toEqual([501]);
       expect(commandLineReads).toEqual([501]);
+    });
+
+    it('never reads the command line of a target with an empty start key: another user\'s process, which the scan never read', async () => {
+      const commandLineReads: number[] = [];
+      const reader = new DarwinTaggedProcessReader({
+        uid: 501,
+        loadKernel: async () => ({
+          listPids: () => [501, 600],
+          processRow: (pid) => {
+            if (pid === 501) return { pid: 501, ppid: 1, uid: 501, startKey: '1790000001.000000' };
+            // The short struct: another user's process, listed with no start time.
+            if (pid === 600) return { pid: 600, ppid: 1, uid: 0, startKey: '' };
+            return null;
+          },
+          workingDirectory: () => null,
+          // A readable record for every pid, so a read that wrongly happens shows up as a label.
+          procArgs: (pid) => {
+            commandLineReads.push(pid);
+            return procArgs('/usr/local/bin/node', ['node', 'server.js'], ['HOME=/Users/dev']);
+          },
+        }),
+      });
+      const labels = await reader.describe([
+        // An empty start key would otherwise pass the identity check: '' === ''.
+        { pid: 600, ppid: 1, startKey: '', startedAtMs: null, tagValue: null },
+        { pid: 501, ppid: 1, startKey: '1790000001.000000', startedAtMs: null, tagValue: TASK },
+      ]);
+      expect(commandLineReads).not.toContain(600);
+      expect(labels.has(600)).toBe(false);
+      // The skip is per target: the target after it is still labelled.
+      expect(commandLineReads).toEqual([501]);
+      expect([...labels.keys()]).toEqual([501]);
+    });
+  });
+
+  describe('runTool', () => {
+    /** Run a one-line node program as the tool, so the cases behave the same on every OS. */
+    function runNodeProgram(source: string): Promise<string | null> {
+      return runDarwinTool(process.execPath, ['-e', source]);
+    }
+
+    it('resolves the output of a tool that exits cleanly', async () => {
+      expect(await runNodeProgram("process.stdout.write('listed')")).toBe('listed');
+    });
+
+    it('resolves null for a tool that wrote output and then exited with an error: a failed run is no answer', async () => {
+      expect(await runNodeProgram("process.stdout.write('partial listing', () => process.exit(1))")).toBeNull();
+    });
+
+    it('resolves null, not an empty string, for a tool that exited with an error and no output', async () => {
+      expect(await runNodeProgram('process.exit(1)')).toBeNull();
+    });
+
+    it('resolves null for a tool that cannot start', async () => {
+      // Under os.tmpdir() and never created.
+      const missingTool = path.join(os.tmpdir(), 'kangentic-missing-tool-that-does-not-exist');
+      expect(await runDarwinTool(missingTool, [])).toBeNull();
     });
   });
 

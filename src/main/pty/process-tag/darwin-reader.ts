@@ -233,8 +233,13 @@ export function isTopLevelAppExecutable(executablePath: string): boolean {
   return TOP_LEVEL_APP_PATTERN.test(executablePath);
 }
 
-/** Run a tool and resolve its stdout, or null when it cannot start or runs past the timeout. */
-function runTool(command: string, args: string[]): Promise<string | null> {
+/**
+ * Run a tool and resolve its stdout, or null when it cannot start, exits with
+ * an error or a signal, or runs past the timeout. Only a clean exit's output
+ * is an answer: an empty listing from a failed run would read as "no windows".
+ * Exported for tests.
+ */
+export function runTool(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
@@ -255,7 +260,7 @@ function runTool(command: string, args: string[]): Promise<string | null> {
     timer.unref();
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
     child.on('error', () => finish(null));
-    child.on('close', () => finish(output));
+    child.on('close', (code, signal) => finish(code === 0 && signal === null ? output : null));
   });
 }
 
@@ -313,7 +318,7 @@ function yieldToEventLoop(): Promise<void> {
 
 export interface DarwinReaderOptions {
   loadKernel?: () => Promise<DarwinKernel>;
-  /** `lsappinfo`'s output, or null when it could not run. */
+  /** `lsappinfo`'s output, or null when it could not run or failed. */
   runLsappinfo?: (args: string[]) => Promise<string | null>;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
@@ -399,6 +404,9 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       return labels;
     }
     for (const target of targets) {
+      // As in `kill`: an empty start key is another user's process, which the
+      // scan never read and a label must not read either.
+      if (!target.startKey) continue;
       try {
         // The same identity check `kill` makes, so a pid reused since the scan
         // is not listed under another program's name.

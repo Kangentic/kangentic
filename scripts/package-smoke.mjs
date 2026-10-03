@@ -403,6 +403,7 @@ async function main() {
 
   let page = null;
   let leftoverPid = null;
+  let leftoverStopped = false;
   const failures = [];
   try {
     const url = await pollUntil('Finding the app window', PHASE_TIMEOUTS_MS.bridge, async () => {
@@ -470,6 +471,7 @@ async function main() {
     await pollUntil('Stopping the leftover after its task was deleted', PHASE_TIMEOUTS_MS.reap, async () => (
       isRunning(leftoverPid) ? undefined : true
     ));
+    leftoverStopped = true;
     say(`deleting the task stopped process ${leftoverPid} (the task reap in the pty host)`);
 
     const route = quitRouteFor(process.platform);
@@ -487,7 +489,8 @@ async function main() {
     clearTimeout(watchdog);
     if (!exit) killTree(child.pid);
     // A reap that failed leaves the process behind; the runner is not the place for it.
-    if (leftoverPid && isRunning(leftoverPid)) {
+    // Once it was seen gone its pid may name an unrelated process, so leave it alone.
+    if (leftoverPid && !leftoverStopped && isRunning(leftoverPid)) {
       try { process.kill(leftoverPid, 'SIGKILL'); } catch { /* already gone */ }
     }
     fs.closeSync(output);

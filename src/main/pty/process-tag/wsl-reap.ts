@@ -17,6 +17,8 @@
  * letter is compared without case, as the Windows drive behind it is: a
  * process that changed into `/mnt/c/users/...` is inside `C:\Users\...`. The
  * tag is still required, so that can only find more of the task's processes.
+ * `tr` folds ASCII letters only, so a non-ASCII letter typed in another case
+ * can hide a process; it never makes the reap kill one it should not.
  * A grep without `-z` (an old BusyBox) fails the reap loudly instead of
  * finding nothing.
  *
