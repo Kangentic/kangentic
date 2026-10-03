@@ -91,6 +91,20 @@ export function parseRunningDistros(output: string): string[] {
 }
 
 /**
+ * The default distro's name from `wsl.exe -l -v`, whose default row starts
+ * with `*`, or null when no row is marked. The marker is not translated, and a
+ * distro name holds no spaces, so the first word after it is the name.
+ */
+export function parseDefaultDistro(output: string): string | null {
+  for (const line of output.replace(/\u0000/g, '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('*')) continue;
+    return trimmed.slice(1).trim().split(/\s+/)[0] || null;
+  }
+  return null;
+}
+
+/**
  * Run the reap inside the shell's distro. Returns the pids it killed. Never
  * throws: a failure (wsl.exe missing or refusing, a timeout) kills nothing and
  * is handed to `onFailure`, so the caller can log and report it.
@@ -107,9 +121,11 @@ export async function reapTaggedProcessesInWsl(
   try {
     const running = parseRunningDistros(await exec('wsl.exe', ['-l', '--running', '-q'], { timeoutMs: WSL_TIMEOUT_MS, env }));
     if (running.length === 0) return [];
-    if (spec.distro && !running.some((name) => name.toLowerCase() === spec.distro!.toLowerCase())) return [];
-    const distroArgs = spec.distro ? ['-d', spec.distro] : [];
-    const output = await exec('wsl.exe', [...distroArgs, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_TIMEOUT_MS * 2, env });
+    // A shell with no `-d` runs in the default distro, which can be stopped
+    // while another one runs; naming it keeps the reap from booting it.
+    const distro = spec.distro ?? parseDefaultDistro(await exec('wsl.exe', ['-l', '-v'], { timeoutMs: WSL_TIMEOUT_MS, env }));
+    if (!distro || !running.some((name) => name.toLowerCase() === distro.toLowerCase())) return [];
+    const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_TIMEOUT_MS * 2, env });
     return [...new Set(output.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number))];
   } catch (error) {
     onFailure(error);

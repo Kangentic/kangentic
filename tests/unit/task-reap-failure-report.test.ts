@@ -55,6 +55,17 @@ describe('reportTaskReapFailure', () => {
     expect(contexts).toEqual({ task_reap: { loadError: 'dlopen(<path>): image not found' } });
   });
 
+  it('strips a load error path whose profile folder holds a space', () => {
+    reportTaskReapFailure(
+      'reap',
+      'reader_load',
+      'dlopen(C:\\Users\\First Last\\AppData\\Local\\Programs\\kangentic\\resources\\app.asar.unpacked\\node_modules\\koffi\\build\\koffi.node): not a valid Win32 application',
+    );
+    const [, , contexts] = reportHandledError.mock.calls[0];
+    expect(contexts).toEqual({ task_reap: { loadError: 'dlopen(<path>): not a valid Win32 application' } });
+    expect(JSON.stringify(contexts)).not.toContain('Last');
+  });
+
   it('drops the text of any other failure: it can come from a process scan', () => {
     reportTaskReapFailure('reap', 'reap_error', 'API_TOKEN=secret in a parse error');
     const call = JSON.stringify(reportHandledError.mock.calls[0]);
@@ -122,6 +133,14 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([{ source: 'task_reap', stage: 'reap', code: 'wsl_error' }]);
     expect(warn).toHaveBeenCalledWith('[TASK-REAP] WSL reap failed (non-fatal):', expect.any(Error));
     warn.mockRestore();
+  });
+
+  it('asks the host nothing for a task with no usable directory: no scan can find anything to kill', async () => {
+    const reapTaggedProcesses = vi.fn(async (): Promise<TaggedReapResult> => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] }));
+    const manager = managerWithHost({ reapTaggedProcesses });
+    expect(await manager.reapTaskProcesses(null, [{ id: TASK, worktreePath: null }], { stop: true })).toEqual([]);
+    expect(await manager.reapTaskProcesses(os.homedir(), [{ id: TASK, worktreePath: null }], { stop: true })).toEqual([]);
+    expect(reapTaggedProcesses).not.toHaveBeenCalled();
   });
 
   it('reports nothing for a reap that worked', async () => {

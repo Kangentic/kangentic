@@ -46,4 +46,22 @@ describe('resolveTaskDirectories', () => {
     // A worktree already deleted still contributes its stored path.
     expect(await resolveTaskDirectories(null, path.join(project, 'gone'))).toEqual([path.join(project, 'gone')]);
   });
+
+  it('refuses a home directory reached through a link, in either direction', async () => {
+    const realHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-home-'));
+    temporaryRoots.push(realHome);
+    const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-home-link-'));
+    temporaryRoots.push(linkParent);
+    const linkedHome = path.join(linkParent, 'dev');
+    // A junction needs no privilege on Windows; elsewhere a plain directory link.
+    fs.symlinkSync(realHome, linkedHome, process.platform === 'win32' ? 'junction' : 'dir');
+    // A project opened through the link while home is reported by its real path...
+    expect(await resolveTaskDirectories(linkedHome, null, realHome)).toEqual([]);
+    // ...and opened at the real path while home is reported through the link.
+    expect(await resolveTaskDirectories(realHome, null, linkedHome)).toEqual([]);
+    // A project inside that home is still a root.
+    const project = path.join(realHome, 'project');
+    fs.mkdirSync(project);
+    expect(await resolveTaskDirectories(project, null, linkedHome)).toContain(project);
+  });
 });

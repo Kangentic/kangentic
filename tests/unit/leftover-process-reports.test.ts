@@ -60,14 +60,14 @@ describe('LeftoverProcessReports', () => {
     expect(sent[0].processes.map((process) => process.pid)).toEqual([2001, 3001]);
   });
 
-  it('a reap that reported nothing does not hold a report forever', () => {
+  it('holds the report while a reap runs, and sends it once that reap is released', () => {
     const reports = new LeftoverProcessReports();
     const sent: LeftoverProcessReport[] = [];
-    const releaseEmpty = reports.beginReap();
+    const releaseRunningReap = reports.beginReap();
     reports.add((report) => sent.push(report), [entry(2001)], TITLES, true);
     vi.advanceTimersByTime(REPORT_QUIET_MS * 2);
     expect(sent).toEqual([]);
-    releaseEmpty();
+    releaseRunningReap();
     vi.advanceTimersByTime(REPORT_QUIET_MS);
     expect(sent).toHaveLength(1);
   });

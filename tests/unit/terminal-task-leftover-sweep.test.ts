@@ -82,7 +82,7 @@ describe('sweepTerminalTaskLeftovers', () => {
     expect(stoppingEnabled).toBe(true);
   });
 
-  it('kills nothing and says nothing when stopping is turned off: every launch would repeat the toast', async () => {
+  it('scans, kills and says nothing when stopping is turned off: every launch would repeat the toast', async () => {
     const { taskRepo, swimlaneRepo } = makeRepos();
     const kept: LeftoverProcessEntry = { taskId: 'archived-1', pid: 4001, startKey: 'k', label: 'node (vite)', outcome: 'kept', reason: null, place: 'worktree' };
     const reapTaskProcesses = vi.fn(async () => [kept]);
@@ -90,8 +90,12 @@ describe('sweepTerminalTaskLeftovers', () => {
 
     await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, options);
 
-    expect((reapTaskProcesses.mock.calls[0] as unknown as [string, unknown, { stop: boolean }])[2]).toEqual({ stop: false });
+    expect(reapTaskProcesses).not.toHaveBeenCalled();
     expect(options.onReport).not.toHaveBeenCalled();
+
+    // Turning stopping on later in the same launch still sweeps on the next open.
+    await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers(true));
+    expect(reapTaskProcesses).toHaveBeenCalledTimes(1);
   });
 
   it('says nothing when all it found was left running on purpose', async () => {

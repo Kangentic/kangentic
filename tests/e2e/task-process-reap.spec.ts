@@ -58,6 +58,8 @@ import {
   closeApp,
   mockAgentPath,
   getTaskIdByTitle,
+  isProcessAlive,
+  readLinuxProcessStat,
   moveTaskIpc,
   waitForTaskSession,
   waitForTaskSessionNotRunning,
@@ -78,44 +80,6 @@ interface LaneIds {
   executing: string;
   done: string;
   parking: string;
-}
-
-/**
- * Whether a pid names a live process. Signal 0 is the standard probe on POSIX and
- * Node supports it on Windows (libuv checks STILL_ACTIVE). EPERM means the process
- * exists but belongs to someone else, which is still alive.
- *
- * On Linux a process that has exited but whose parent has not reaped it still
- * answers signal 0. A survivor re-parented to an init that never reaps (a
- * container's PID 1 can be such a process) would read as alive forever even
- * though the reap killed it, so a zombie counts as dead.
- */
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-  if (process.platform === 'linux') {
-    const stat = readLinuxProcessStat(pid);
-    // Gone between the signal and the read, or exited and awaiting its reaper.
-    if (!stat || stat.state === 'Z' || stat.state === 'X') return false;
-  }
-  return true;
-}
-
-/** State and parent pid from /proc/<pid>/stat (fields 3 and 4), or null when unreadable. */
-function readLinuxProcessStat(pid: number): { state: string; parentPid: number } | null {
-  try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
-    // The command name is parenthesised and may itself contain spaces or parens,
-    // so split after the LAST closing paren.
-    const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return { state: afterCommand[0], parentPid: parseInt(afterCommand[1], 10) };
-  } catch {
-    return null;
-  }
 }
 
 test.describe('Task process reap', () => {
@@ -193,6 +157,16 @@ test.describe('Task process reap', () => {
   });
 
   test.afterEach(() => {
+    // A run that failed before reading the fixture's record never learned the
+    // survivor's pid; read it once more so that survivor is killed too.
+    if (survivorPid === null) {
+      try {
+        const record = JSON.parse(fs.readFileSync(resultFile, 'utf-8')) as Partial<FastDetachRecord>;
+        if (typeof record.survivorPid === 'number' && Number.isInteger(record.survivorPid)) survivorPid = record.survivorPid;
+      } catch {
+        // Never written: there is no survivor to kill.
+      }
+    }
     // A failed run can leave the survivor alive. Kill only a pid this test saw alive
     // and never saw die, so a recycled pid is never signalled. The launcher and the
     // agent pids are deliberately not touched: both are long dead by now and a

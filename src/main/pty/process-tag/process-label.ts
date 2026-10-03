@@ -96,7 +96,10 @@ export async function labelProcess(input: ProcessLabelInput): Promise<string> {
   // executable resolves to `python3.12`) unless the process retitled itself.
   const argumentName = programName(firstArgument);
   const argumentsUntouched = INTERPRETER_PATTERN.test(argumentName);
-  const name = (argumentsUntouched ? argumentName : executableName) || argumentName || FALLBACK_LABEL;
+  // With no executable path, argv[0] stands in for the program only when it is
+  // one short name: a retitled argv[0] can hold the whole command line.
+  const fallbackName = TITLE_WORD_PATTERN.test(argumentName) ? argumentName : '';
+  const name = (argumentsUntouched ? argumentName : executableName) || fallbackName || FALLBACK_LABEL;
   if (!INTERPRETER_PATTERN.test(name) || input.argv.length === 0) return name;
 
   // A process that set its own title has rewritten argv[0], and on Linux and

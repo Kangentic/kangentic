@@ -33,10 +33,19 @@ export function isUsableReapRoot(directory: string, homeDirectory: string = os.h
 export async function resolveTaskDirectories(
   projectPath: string | null | undefined,
   worktreePath: string | null | undefined,
+  homeDirectory: string = os.homedir(),
 ): Promise<string[]> {
   const stored = [projectPath, worktreePath].filter((directory): directory is string => (
     typeof directory === 'string' && directory.length > 0
   ));
-  const real = await Promise.all(stored.map((directory) => fsPromises.realpath(directory).catch(() => directory)));
-  return [...new Set([...stored, ...real])].filter((directory) => isUsableReapRoot(directory));
+  // Home has two forms as well (`/home` is a link to `/var/home` on some Linux
+  // distributions), so a directory with ANY form matching either form of home
+  // is dropped whole: keeping its other form would make home a root after all.
+  const realHome = await fsPromises.realpath(homeDirectory).catch(() => homeDirectory);
+  const homeForms = new Set([homeDirectory, realHome].map(comparable));
+  const groups = await Promise.all(stored.map(async (directory) => (
+    [directory, await fsPromises.realpath(directory).catch(() => directory)]
+  )));
+  const outsideHome = groups.filter((forms) => !forms.some((form) => homeForms.has(comparable(form))));
+  return [...new Set(outsideHome.flat())].filter((directory) => isUsableReapRoot(directory, homeDirectory));
 }

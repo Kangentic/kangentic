@@ -19,31 +19,25 @@ interface LeftoverProcessesStore {
   stopProcess: (processId: string) => Promise<void>;
 }
 
-interface PreservedState {
-  reports: Record<string, LeftoverProcessReport>;
-  openReportId: string | null;
-  stopStates: Record<string, LeftoverStopState>;
-}
-
-/** Preserve reports across a Vite Fast Refresh, as toast-store does for its
- *  toasts: a toast that survives the refresh keeps a Review link into this
- *  store, and a reset store would leave that link opening nothing. Production
- *  has no `import.meta.hot`, so this is a no-op there. */
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-const preserved: PreservedState | undefined = import.meta.hot?.data?.leftoverProcesses;
-
-export const useLeftoverProcessesStore = create<LeftoverProcessesStore>((set, get) => ({
-  reports: preserved?.reports ?? {},
-  openReportId: preserved?.openReportId ?? null,
-  stopStates: preserved?.stopStates ?? {},
+const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, get) => ({
+  reports: {},
+  openReportId: null,
+  stopStates: {},
 
   addReport: (report) => {
     set((state) => {
-      const ids = [...Object.keys(state.reports), report.id];
+      const ids = [...Object.keys(state.reports).filter((id) => id !== report.id), report.id];
       const kept = ids.slice(-RETAINED_REPORTS);
       const reports: Record<string, LeftoverProcessReport> = {};
       for (const id of kept) reports[id] = id === report.id ? report : state.reports[id];
-      return { reports };
+      // A Stop outcome belongs to a row of a retained report; drop the rest
+      // so the map does not outgrow the reports it describes.
+      const retainedProcessIds = new Set(kept.flatMap((id) => reports[id].processes.map((entry) => entry.id)));
+      const stopStates: Record<string, LeftoverStopState> = {};
+      for (const [processId, stopState] of Object.entries(state.stopStates)) {
+        if (retainedProcessIds.has(processId)) stopStates[processId] = stopState;
+      }
+      return { reports, stopStates };
     });
   },
 
@@ -65,11 +59,23 @@ export const useLeftoverProcessesStore = create<LeftoverProcessesStore>((set, ge
   },
 }));
 
-// @ts-expect-error -- Vite handles import.meta.hot
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module's only runtime export is the non-component hook, so it is not a
+// React Fast Refresh boundary. Pin the instance in `import.meta.hot.data` so a
+// Fast Refresh cannot hand the dialog a second store while a toast that
+// survived the refresh still opens its Review link on the first one.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedLeftoverProcessesStore: ReturnType<typeof createLeftoverProcessesStore> | undefined = import.meta.hot?.data?.leftoverProcessesStore;
+
+export const useLeftoverProcessesStore = preservedLeftoverProcessesStore ?? createLeftoverProcessesStore();
+
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    const { reports, openReportId, stopStates } = useLeftoverProcessesStore.getState();
-    data.leftoverProcesses = { reports, openReportId, stopStates } satisfies PreservedState;
-  });
+  import.meta.hot.data.leftoverProcessesStore = useLeftoverProcessesStore;
+  // Editing this module's OWN code would leave the pinned instance running
+  // stale closures; force a clean full reload instead. Rare; prod is
+  // unaffected (import.meta.hot is undefined there, so this block is dropped).
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

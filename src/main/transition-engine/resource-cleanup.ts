@@ -125,6 +125,10 @@ export async function sweepTerminalTaskLeftovers(
   leftovers: LeftoverSweepOptions,
 ): Promise<void> {
   if (sweptProjectPaths.has(projectPath)) return;
+  // With stopping off the sweep would kill nothing and report nothing (below),
+  // so it skips the scan, which reads every same-user process's environment.
+  // Not latched: a later open this launch sweeps if the user turns it on.
+  if (!leftovers.stoppingEnabled()) return;
   sweptProjectPaths.add(projectPath);
   try {
     const terminalTasks = new Map<string, { worktreePath: string | null; title: string }>();
@@ -134,19 +138,17 @@ export async function sweepTerminalTaskLeftovers(
       for (const task of taskRepo.list(lane.id)) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
     }
     if (terminalTasks.size === 0) return;
-    const stop = leftovers.stoppingEnabled();
     const entries = await sessionManager.reapTaskProcesses(
       projectPath,
       [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
-      { stop },
+      { stop: true },
     );
     // Only what this sweep did. A process it left running (a window, a tmux
-    // server, or everything while stopping is off) was reported when its task
-    // ended and is still there at every launch; naming it again would put the
-    // same toast up on every start.
+    // server) was reported when its task ended and is still there at every
+    // launch; naming it again would put the same toast up on every start.
     const acted = entries.filter((entry) => entry.outcome !== 'kept');
-    if (stop && acted.length > 0) {
-      leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), stop);
+    if (acted.length > 0) {
+      leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
     }
   } catch (error) {
     console.warn('[TASK-REAP] Startup sweep failed (non-fatal):', error);

@@ -11,7 +11,7 @@ import {
   isValidTaskTagValue,
   parseWslShellSpec,
 } from '../../src/main/pty/process-tag/task-process-tag';
-import { buildWslReapInvocation, parseRunningDistros, reapTaggedProcessesInWsl } from '../../src/main/pty/process-tag/wsl-reap';
+import { buildWslReapInvocation, parseDefaultDistro, parseRunningDistros, reapTaggedProcessesInWsl } from '../../src/main/pty/process-tag/wsl-reap';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const PROJECT = 'C:\\Users\\dev\\project';
@@ -93,6 +93,36 @@ describe('WSL reap', () => {
     expect(await reapTaggedProcessesInWsl({ distro: 'ubuntu' }, REAP_TASKS, exec)).toEqual([4242, 4243]);
     expect(calls[1].slice(0, 5)).toEqual(['-d', 'ubuntu', '-e', 'sh', '-c']);
     expect(calls[1].slice(6)).toEqual(['sh', TASK, '1', PROJECT]);
+  });
+
+  it('reads the default distro from the starred row of wsl -l -v', () => {
+    const table = '  NAME              STATE           VERSION\r\n* Ubuntu            Stopped         2\r\n  docker-desktop    Running         2\r\n';
+    expect(parseDefaultDistro(table)).toBe('Ubuntu');
+    expect(parseDefaultDistro(table.replace(/\n/g, '\u0000\n'))).toBe('Ubuntu');
+    expect(parseDefaultDistro('  NAME  STATE  VERSION\r\n  Ubuntu  Running  2\r\n')).toBeNull();
+  });
+
+  it('with no -d, never boots the default distro while only another one runs', async () => {
+    const calls: string[][] = [];
+    const exec = async (_file: string, args: string[]) => {
+      calls.push(args);
+      if (args.includes('--running')) return 'docker-desktop\n';
+      return '  NAME              STATE           VERSION\n* Ubuntu            Stopped         2\n  docker-desktop    Running         2\n';
+    };
+    expect(await reapTaggedProcessesInWsl({ distro: null }, REAP_TASKS, exec)).toEqual([]);
+    expect(calls).toEqual([['-l', '--running', '-q'], ['-l', '-v']]);
+  });
+
+  it('with no -d, runs the script in the default distro by name when it is running', async () => {
+    const calls: string[][] = [];
+    const exec = async (_file: string, args: string[]) => {
+      calls.push(args);
+      if (args.includes('--running')) return 'Ubuntu\n';
+      if (args.includes('-v')) return '  NAME      STATE      VERSION\n* Ubuntu    Running    2\n';
+      return '4242\n';
+    };
+    expect(await reapTaggedProcessesInWsl({ distro: null }, REAP_TASKS, exec)).toEqual([4242]);
+    expect(calls[2].slice(0, 5)).toEqual(['-d', 'Ubuntu', '-e', 'sh', '-c']);
   });
 
   it('never throws when wsl.exe fails, and hands the failure to the caller instead of swallowing it', async () => {

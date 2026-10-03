@@ -56,9 +56,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   read `stopLeftoverProcesses` and pass it as `stop`; with it off the host plans and reports and
   kills nothing. Every reap's result goes to `publishLeftoverProcesses`, so the user is told what
   was stopped, not stopped, and left running. A new reap path reports the same way. The startup
-  sweep is the one exception: it reports only what it stopped or failed to stop, and nothing with
-  stopping off, because what it leaves running was reported when its task ended and is still
-  there at every launch.
+  sweep is the one exception: it reports only what it stopped or failed to stop, and with stopping
+  off it does not scan at all, because what it leaves running was reported when its task ended
+  and is still there at every launch.
 - **A stop the user asks for names a reported process, never a pid.** The Stop button sends the
   id `leftover-process-reports.ts` minted; main resolves it to the pid and start key the scan saw,
   and `stopProcessTree` re-checks that identity and keeps Kangentic's tree and every held PTY out
@@ -73,7 +73,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the module after `-m`, or the first word of a title the process set). Do not widen the label to
   any other argument.
 - **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing,
-  and main reports it once per kind per launch through `reportTaskReapFailure`
+  and main reports it once per stage and code per launch through `reportTaskReapFailure`
   (`task-reap-failure-report.ts`) with `ReapFailureCode`, `host_error` or `wsl_error`. `failureReason` stays in
   local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
   stripped, since it is about this install and not about a process.

@@ -99,6 +99,43 @@ test.describe('Leftover processes', () => {
     }
   });
 
+  test('a row reads Stopping, with its button disabled, until main answers, then Stopped', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Hold main's answer open so the in-between state can be observed. The gate
+      // is test-only: the mock awaits it only when set, so every other test and the
+      // web demo get an immediate answer.
+      await page.evaluate(() => {
+        window.__mockLeftoverStopGate = new Promise<void>((resolve) => { window.__mockReleaseLeftoverStopGate = resolve; });
+      });
+      await fireReport(page, ONE_TASK);
+      await openReview(page, '2 still running.');
+
+      const chrome = row(page, 'chrome');
+      const action = chrome.locator('[data-testid="leftover-process-stop"]');
+      await expect(chrome).toHaveAttribute('data-state', 'running');
+
+      await chrome.getByRole('button', { name: 'Stop chrome' }).click();
+
+      // Stopping: a spinner in a disabled button, and no Stop button left to press twice.
+      await expect(chrome).toHaveAttribute('data-state', 'stopping', { timeout: 5000 });
+      await expect(action).toBeDisabled();
+      await expect(action).toHaveText('Stopping');
+      await expect(action.locator('svg.animate-spin')).toHaveCount(1);
+      await expect(chrome.getByRole('button', { name: 'Stop chrome' })).toHaveCount(0);
+      expect(await page.evaluate(() => window.__mockLeftoverStopCalls)).toEqual(['kept-chrome']);
+
+      await page.evaluate(() => window.__mockReleaseLeftoverStopGate?.());
+
+      await expect(chrome).toHaveAttribute('data-state', 'stopped', { timeout: 5000 });
+      await expect(action).toHaveText('Stopped');
+      await expect(action).toBeDisabled();
+      await expect(action.locator('svg.animate-spin')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a stop that fails reads red and can be tried again; one already gone reads ended', async () => {
     const { browser, page } = await launchPage();
     try {

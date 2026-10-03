@@ -2937,10 +2937,14 @@
       },
       // Answers 'stopped' unless a test sets window.__mockLeftoverStopOutcomes =
       // { '<process id>': 'failed' | 'ended' }. Every call is recorded in
-      // window.__mockLeftoverStopCalls.
+      // window.__mockLeftoverStopCalls. A test may hold every answer open by setting
+      // window.__mockLeftoverStopGate to a promise, so the row's Stopping state can
+      // be observed before it settles; unset (the default, and always in the web
+      // demo) the answer comes at once and nothing here awaits.
       stop: async function (processId) {
         if (!window.__mockLeftoverStopCalls) window.__mockLeftoverStopCalls = [];
         window.__mockLeftoverStopCalls.push(processId);
+        if (window.__mockLeftoverStopGate) await window.__mockLeftoverStopGate;
         var outcomes = window.__mockLeftoverStopOutcomes || {};
         return outcomes[processId] || 'stopped';
       },

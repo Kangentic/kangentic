@@ -18,6 +18,7 @@
 
 import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
 import { sanitizeErrorMessage } from '../analytics/analytics';
+import { redactPaths } from '../../shared/sentry-breadcrumbs';
 import type { ReapFailureCode } from './process-tag/tagged-reap';
 
 /**
@@ -37,7 +38,9 @@ export function reportTaskReapFailure(stage: TaskReapStage, code: TaskReapFailur
   if (reported.has(key)) return;
   reported.add(key);
   const contexts: ErrorReportContexts = code === 'reader_load' && loadError
-    ? { task_reap: { loadError: sanitizeErrorMessage(loadError) } }
+    // redactPaths first: sanitizeErrorMessage stops a path at its first space,
+    // which leaves the rest of a profile folder like `C:\Users\First Last\...`.
+    ? { task_reap: { loadError: sanitizeErrorMessage(redactPaths(loadError)) } }
     : {};
   reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), { source: 'task_reap', stage, code }, contexts);
 }

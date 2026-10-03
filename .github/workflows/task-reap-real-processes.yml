@@ -96,4 +96,7 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci --ignore-scripts
       - name: Reap real tagged processes
+        # A tmux, GUI-app or reader case that would skip here fails instead.
+        env:
+          KANGENTIC_REAP_REQUIRE_ALL_CASES: '1'
         run: npx vitest run tests/unit/session-reap-real-processes.test.ts tests/unit/task-process-readers.test.ts tests/unit/task-reap-plan.test.ts tests/unit/task-tagged-reap.test.ts tests/unit/process-label.test.ts

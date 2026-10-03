@@ -22,7 +22,7 @@ files:
   # Terminal Font Family picker: font-list shells out to fc-list (Linux) / a
   # PowerShell script (Windows) and ships a bundled native binary for macOS.
   - "node_modules/font-list/**"
-  # The pty host reads a process's environment through koffi on Windows to find
+  # The pty host reads a process's environment through koffi on Windows and macOS to find
   # what a task left running (src/main/pty/process-tag/). koffi loads its
   # prebuilt binary from the per-platform @koromix/koffi-* package.
   - "node_modules/koffi/**"

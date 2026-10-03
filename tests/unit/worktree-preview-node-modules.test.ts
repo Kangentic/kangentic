@@ -76,4 +76,19 @@ describe('ensureNodeModulesLink', () => {
     expect(resolvesToRoot(modules, rootDir)).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('runs the ROOT\'s packages'));
   });
+
+  it('keeps a junction that is already correct, and warns when the lockfiles differ', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { rootDir, worktreeDir, modules } = makeLayout({
+      worktreeLock: '{"lockfileVersion":3,"packages":{"node_modules/branch-only-package":{}}}\n',
+      realInstall: false,
+    });
+    fs.symlinkSync(path.join(rootDir, 'node_modules'), modules, process.platform === 'win32' ? 'junction' : 'dir');
+
+    ensureNodeModulesLink(worktreeDir, rootDir);
+
+    expect(resolvesToRoot(modules, rootDir)).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('runs the ROOT\'s packages'));
+  });
 });

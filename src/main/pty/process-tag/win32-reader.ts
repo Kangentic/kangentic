@@ -492,7 +492,10 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       return labels;
     }
     for (const target of targets) {
-      if (!target.startKey) continue;
+      // A tag is read only from a same-user process in this session, so a
+      // tagged target is one `scan` already cleared for PROCESS_VM_READ. A
+      // start key alone is not: scan sets it before the user check.
+      if (!target.startKey || target.tagValue === null) continue;
       const handle = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, target.pid);
       if (isNullHandle(api, handle)) continue;
       try {

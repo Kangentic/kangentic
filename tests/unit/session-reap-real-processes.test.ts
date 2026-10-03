@@ -168,6 +168,12 @@ function hasCommand(command: string): boolean {
   }
 }
 
+// Without a reader the whole suite below skips; on the workflow's runners that
+// is a failure, not a pass.
+it.runIf(process.env.KANGENTIC_REAP_REQUIRE_ALL_CASES === '1')('has a process reader on this platform', () => {
+  expect(reader).not.toBeNull();
+});
+
 describe.skipIf(reader === null)('task reap against real processes', () => {
   it('kills a cwd-only grandchild whose launcher is gone, which the path scan cannot see', async () => {
     const scratch = makeScratch();
@@ -378,14 +384,29 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     app.unref();
     const appPid = app.pid!;
     startedPids.push(appPid);
-    // Long enough to map its window and, on macOS, register with LaunchServices.
-    await new Promise((resolve) => { setTimeout(resolve, 6000); });
+    // Wait until the reader sees its window (on macOS, until LaunchServices has
+    // it) instead of a fixed delay a loaded runner can outlast. Past the
+    // deadline the reap runs anyway, and the assertions below say what happened.
+    const visibleBy = Date.now() + 30_000;
+    while (Date.now() < visibleBy) {
+      const scan = await reader!.scan();
+      if (scan.processes.some((scanned) => scanned.pid === appPid && scanned.role === 'visible-app')) break;
+      await new Promise((resolve) => { setTimeout(resolve, 500); });
+    }
     expect(isProcessAlive(appPid)).toBe(true);
 
     const result = await reap(scratch);
     expect(result.killedPids).not.toContain(appPid);
     expect(isProcessAlive(appPid)).toBe(true);
   }, 60_000);
+
+  // task-reap-real-processes.yml provisions tmux and a GUI app on every runner
+  // and sets this flag, so a case that would skip there fails the job instead
+  // of reading as a pass. CI's unit tier has neither and does not set it.
+  it.runIf(process.env.KANGENTIC_REAP_REQUIRE_ALL_CASES === '1')('ran every case this runner was provisioned for', () => {
+    if (process.platform !== 'win32') expect(hasCommand('tmux'), 'tmux is not installed, so the tmux case skipped').toBe(true);
+    expect(guiLaunch, 'no GUI app could be launched, so the visible-app case skipped').not.toBeNull();
+  });
 
   // On a user's Mac, SIP hides the environment of Apple's own tools from the
   // kernel record, so a tagged `nohup sleep` reads as untagged. GitHub's macOS

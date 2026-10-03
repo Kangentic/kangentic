@@ -92,6 +92,10 @@ declare global {
     __mockLeftoverStopOutcomes?: Record<string, import('../../src/shared/types').LeftoverStopOutcome>;
     /** Every process id `leftoverProcesses.stop` was called with, in order. */
     __mockLeftoverStopCalls?: string[];
+    /** When set to a promise, `leftoverProcesses.stop` awaits it before answering, so a spec can observe the row's Stopping state. Unset by default: the answer comes at once. Read per call. */
+    __mockLeftoverStopGate?: Promise<void>;
+    /** Settles `__mockLeftoverStopGate`. Set by the spec that creates the gate; the mock never reads it. */
+    __mockReleaseLeftoverStopGate?: () => void;
 
     /** Forces `config.set` / `setProjectOverrides` / `setProjectOverridesByPath` to resolve `{ persisted: false }`, the "write did not reach disk" path the settings panel toasts. Read per call, so it can be flipped mid-test. Set in addInitScript or at runtime. */
     __mockConfigSetPersisted?: boolean;

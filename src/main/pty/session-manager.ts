@@ -1832,11 +1832,14 @@ export class SessionManager extends EventEmitter {
     if (validTasks.length === 0) return [];
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
-    const reapTasks = await Promise.all(validTasks.map(async (task) => ({
+    // A task with no usable directory can have nothing killed or reported, so
+    // it costs no scan of every process's environment.
+    const reapTasks = (await Promise.all(validTasks.map(async (task) => ({
       taskId: task.id,
       directories: await resolveTaskDirectories(projectPath, task.worktreePath),
       worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
-    })));
+    })))).filter((task) => task.directories.length > 0);
+    if (reapTasks.length === 0) return [];
     try {
       const result = await this.host.reapTaggedProcesses(
         { tasks: reapTasks, mainPid: process.pid, stop: options.stop },

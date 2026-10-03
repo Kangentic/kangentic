@@ -545,7 +545,7 @@ One caveat since exempt shells were added: `getActiveShellCount` sums them (it h
 
 ### Cross-platform
 
-The table comes from the pty host (`HostProcessTreeProbe`, `src/main/pty/host/host-process-table.ts`), so no enumeration runs on main.
+The table comes from the pty host (`HostProcessTreeProbe` in `src/main/pty/host/host-process-tree-probe.ts`, over the listing in `host-process-table.ts`), so no enumeration runs on main.
 
 - **Windows:** a Toolhelp snapshot through koffi (`listWin32Processes`, the listing the task reap's reader makes). Measured on 410 processes: about 8 ms, with the snapshot call on the thread pool so the host's event loop is held at most 0.66 ms at a time. It replaced a persistent PowerShell child running `Get-CimInstance Win32_Process` (140 ms median warm, 584 ms cold), which returned the same pids, parents and names. That PowerShell probe is still started if koffi cannot load. Walks the parent map in JS.
 - **POSIX:** `ps -A -o pid=,ppid=,comm=`. Walks the parent map in JS. Times out at 1.5s.

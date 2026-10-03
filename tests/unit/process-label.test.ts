@@ -84,6 +84,14 @@ describe('labelProcess', () => {
     expect(await label(null, [])).toBe('process');
   });
 
+  it('never shows a retitled argv[0] as the program name when the executable path is unknown', async () => {
+    const titled = await label(null, [`myapp --api-key=${SECRET}`]);
+    expect(titled).toBe('process');
+    const pathTitled = await label(null, [`/opt/app/bin/server --token=${SECRET}`]);
+    expect(pathTitled).toBe('process');
+    expect(await label(null, ['/usr/local/bin/redis-server'])).toBe('redis-server');
+  });
+
   it('treats an isFile failure as not a file', async () => {
     const shown = await labelProcess({ executablePath: '/usr/bin/node', argv: ['node', 'server.js'], isFile: async () => { throw new Error('denied'); } });
     expect(shown).toBe('node');

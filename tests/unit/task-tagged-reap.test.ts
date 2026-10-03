@@ -192,6 +192,26 @@ describe('reapTaggedOnce report', () => {
     expect(result.entries).toEqual([expect.objectContaining({ pid: 2001, outcome: 'failed', label: 'node (vite)' })]);
   });
 
+  it('reports a survivor of the force pass on its own when the root it hung under has already exited', async () => {
+    const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
+    const reader = new FakeReader([
+      [tagged(2001, TASK), child],
+      // The root exited on the graceful kill; its child ignored it and no longer has a listed parent.
+      [child],
+      // The force pass did not remove the child either.
+      [child],
+    ], { 2001: 'node (npm)', 2002: 'node (vite)' });
+    const waits: number[] = [];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader, waits));
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful', '2002:force']);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    // The root is stopped. The child is reported under its own tag's task, with its own label, since no reported root owns it.
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2002, startKey: 'start-2002', label: 'node (vite)', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+  });
+
   it('names a process when its command line could not be read', async () => {
     const reader = new FakeReader([[tagged(2001, TASK)], []]);
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
@@ -263,7 +283,13 @@ describe('TaggedReaper', () => {
   });
 
   it('gives each request only its own tasks in the report', async () => {
-    const reader = new FakeReader([[tagged(2001, TASK), tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT)], []]);
+    const reader = new FakeReader([
+      [tagged(2001, TASK), tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT)],
+      // The holder's second scan: its process is gone, so it needs no survivor check.
+      [],
+      // The report-only batch scans last, and finds one running process for each task.
+      [tagged(2001, TASK), tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT)],
+    ]);
     let releaseWait: () => void = () => {};
     let blocked = true;
     const reaper = new TaggedReaper({
@@ -278,10 +304,14 @@ describe('TaggedReaper', () => {
     const forTask = reaper.request({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: false });
     const forOther = reaper.request({ tasks: [reapTask(OTHER_TASK, OTHER_PROJECT)], mainPid: MAIN_PID, stop: false });
     releaseWait();
-    await holder;
-    const [taskResult, otherResult] = await Promise.all([forTask, forOther]);
-    expect(taskResult.entries.every((entry) => entry.taskId === TASK)).toBe(true);
-    expect(otherResult.entries.every((entry) => entry.taskId === OTHER_TASK)).toBe(true);
+    const [holderResult, taskResult, otherResult] = await Promise.all([holder, forTask, forOther]);
+    // Both report-only requests share one batch (one scan served them), yet each is
+    // handed back only its own task's process. An unfiltered batch would give both the same two entries.
+    expect(reader.scanCount).toBe(3);
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful']);
+    expect(holderResult.entries.map((entry) => `${entry.taskId}:${entry.pid}:${entry.outcome}`)).toEqual([`${TASK}:2001:stopped`]);
+    expect(taskResult.entries.map((entry) => `${entry.taskId}:${entry.pid}:${entry.outcome}`)).toEqual([`${TASK}:2001:kept`]);
+    expect(otherResult.entries.map((entry) => `${entry.taskId}:${entry.pid}:${entry.outcome}`)).toEqual([`${OTHER_TASK}:3001:kept`]);
   });
 
   it('never folds a report-only request into a batch that kills', async () => {

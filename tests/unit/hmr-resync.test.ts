@@ -291,6 +291,7 @@ describe('HMR store re-sync', () => {
       { file: 'monitor-store.ts', key: 'monitorStore', selfAccepts: true },
       { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true },
       { file: 'knowledge-graph-store.ts', key: 'knowledgeGraphStore', selfAccepts: true },
+      { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true },
     ];
     const violations: string[] = [];
     for (const { file: fileName, key, selfAccepts: mustSelfAccept } of PATTERN_E_STORES) {

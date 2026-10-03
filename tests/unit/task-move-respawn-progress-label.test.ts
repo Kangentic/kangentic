@@ -132,9 +132,9 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
   autoSpawnForTask: vi.fn(async () => {}),
-  // The Done branch snapshots the session's process tree before suspending and
-  // reaps it before the worktree delete. Inert here (no background shells in
-  // these fixtures); covered for real by session-tree-reap.test.ts.
+  // The Done branch reaps what the task left running after its session exits
+  // and before the worktree delete. Inert here; covered for real by
+  // session-reap-real-processes.test.ts.
   reapTaskLeftovers: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({

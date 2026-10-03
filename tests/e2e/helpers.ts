@@ -491,16 +491,40 @@ async function killAppProcess(app: ElectronApplication): Promise<void> {
 }
 
 /**
- * True while a process with this pid exists. Signal 0 delivers nothing and only
- * probes, on POSIX and on Windows. EPERM means the process exists but belongs to
- * someone else, which still counts as alive.
+ * Whether a pid names a live process. Signal 0 is the standard probe on POSIX and
+ * Node supports it on Windows (libuv checks STILL_ACTIVE). EPERM means the process
+ * exists but belongs to someone else, which is still alive.
+ *
+ * On Linux a process that has exited but whose parent has not reaped it still
+ * answers signal 0. A process re-parented to an init that never reaps (a
+ * container's PID 1 can be such a process) would read as alive forever, so a
+ * zombie counts as dead.
  */
-function isPidAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+  if (process.platform === 'linux') {
+    const stat = readLinuxProcessStat(pid);
+    // Gone between the signal and the read, or exited and awaiting its reaper.
+    if (!stat || stat.state === 'Z' || stat.state === 'X') return false;
+  }
+  return true;
+}
+
+/** State and parent pid from /proc/<pid>/stat (fields 3 and 4), or null when unreadable. */
+export function readLinuxProcessStat(pid: number): { state: string; parentPid: number } | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    // The command name is parenthesised and may itself contain spaces or parens,
+    // so split after the LAST closing paren.
+    const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return { state: afterCommand[0], parentPid: parseInt(afterCommand[1], 10) };
+  } catch {
+    return null;
   }
 }
 
@@ -532,7 +556,7 @@ export async function closeAppAndWaitForExit(
   if (!pid) return;
   const closedPid = pid;
   await expect
-    .poll(() => isPidAlive(closedPid), {
+    .poll(() => isProcessAlive(closedPid), {
       timeout: timeoutMs,
       intervals: [100, 250, 500],
       message: `Electron main process ${closedPid} was still alive after closeApp`,

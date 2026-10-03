@@ -50,7 +50,7 @@ Empirical data: Tier B catches 95%+ of cases in production sessions.
 
 ## Cross-platform
 
-The watcher reads one process table per cycle, answered by the pty host (`HostProcessTreeProbe`, `src/main/pty/host/host-process-table.ts`):
+The watcher reads one process table per cycle, answered by the pty host (`HostProcessTreeProbe` in `src/main/pty/host/host-process-tree-probe.ts`, over the listing in `host-process-table.ts`):
 - Windows: a Toolhelp snapshot through koffi, about 8 ms for 410 processes. It replaced a persistent PowerShell child running `Get-CimInstance Win32_Process` (140 ms warm), which the host still starts if koffi cannot load.
 - POSIX: `ps -A -o pid=,ppid=,comm=`, with a 1.5s timeout.
 

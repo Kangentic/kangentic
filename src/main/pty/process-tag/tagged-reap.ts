@@ -118,7 +118,10 @@ export interface TaggedReaperDeps {
   caseInsensitivePaths?: boolean;
 }
 
-const EMPTY_RESULT: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+/** A fresh result each time, so no caller can share another's arrays. */
+function emptyResult(): TaggedReapResult {
+  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -181,7 +184,7 @@ export async function reapTaggedOnce(
   deps: TaggedReaperDeps,
 ): Promise<TaggedReapResult> {
   const tasks = scopesOf(request.tasks);
-  if (tasks.size === 0) return EMPTY_RESULT;
+  if (tasks.size === 0) return emptyResult();
   const wait = deps.wait ?? defaultWait;
   const caseInsensitivePaths = deps.caseInsensitivePaths ?? process.platform !== 'linux';
   const planInput = (processes: ScannedProcess[]): ReapPlanInput => ({
@@ -200,12 +203,12 @@ export async function reapTaggedOnce(
   try {
     await deps.reader.ready?.();
   } catch (error) {
-    return { ...EMPTY_RESULT, failureReason: messageOf(error), failureCode: 'reader_load' };
+    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reader_load' };
   }
   try {
     const firstScan = await deps.reader.scan();
     if (firstScan.processes.length === 0) {
-      return { ...EMPTY_RESULT, failureReason: 'the process scan listed nothing', failureCode: 'empty_scan' };
+      return { ...emptyResult(), failureReason: 'the process scan listed nothing', failureCode: 'empty_scan' };
     }
     const firstPlan = planReapDetailed(planInput(firstScan.processes));
     const labels = await describeSafely(deps.reader, [
@@ -283,7 +286,7 @@ export async function reapTaggedOnce(
       ],
     };
   } catch (error) {
-    return { ...EMPTY_RESULT, failureReason: messageOf(error), failureCode: 'reap_error' };
+    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
   }
 }
 
