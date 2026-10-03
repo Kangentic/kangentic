@@ -819,6 +819,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 | task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
+| task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped; 4 tests added, 1 hole skipped as unreachable |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1181,3 +1182,12 @@ selectors above it and the project switcher below it. Two were in the mock, whos
 `HUNK_CONTEXT_LINES` would have carried them. One was a grep of `project-store.ts` for every writer
 of `projects`. The one Medium, a stale initial tab applied by the new relocate re-key, came from the
 maintainability finder, and the driver found it on its own while verifying.
+
+The task 741 second pass reviewed the same change plus the first pass's two commits. Of its 15 reads
+beyond the pack, 9 were outside the changed set: the IPC auditor's five greps across the channel
+layers, the relocation hook, `App.tsx`, one rule file, and one repo-wide grep. The other 6 were gaps
+or searches in pack-carried files, and `SettingsPanel.tsx` again drew two of them, since its one
+window over lines 47-101 leaves out the selectors above it and the switcher below it. The integration
+finder read three file bodies although its prompt carried only the signature delta. The one kept
+correctness finding, an explicit-target write that merged over `{}` while the panel's refetch was in
+flight, needed main's `saveProjectOverrides` to confirm, because main replaces the whole file.
