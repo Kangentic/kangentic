@@ -818,6 +818,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, first-build progress follow-up | 29f +1093 -287 | 192KB, 3315 lines | 11 (8) | 18 | 0 | 8 | 4 of 7 pack-carrying, 2 not reported | 20 / 19, plus 1 found while filling holes |
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
+| task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1169,3 +1170,14 @@ its rename guards, `worktree-preview.js` for its own liveness check, and `worktr
 The `dev.js` gate sat 8 lines above its hunk, so a wider window would have carried that one. Seven
 of the 19 distinct findings were refuted, and the two that needed an owner's decision were asked
 during the pass and fixed in it.
+
+The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
+mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and
+repository behind the default writes, `config-store.ts`, `App.tsx`, the walkthrough hook, and four
+sibling specs. The other 5 were gaps in pack-carried files. Two were in `SettingsPanel.tsx`, packed
+as one window over lines 47-101, where the correctness and maintainability finders both needed the
+selectors above it and the project switcher below it. Two were in the mock, whose `setDefault*`,
+`rename` and `relocate` methods sit 60 or more lines from its nearest hunk, so no plausible
+`HUNK_CONTEXT_LINES` would have carried them. One was a grep of `project-store.ts` for every writer
+of `projects`. The one Medium, a stale initial tab applied by the new relocate re-key, came from the
+maintainability finder, and the driver found it on its own while verifying.
