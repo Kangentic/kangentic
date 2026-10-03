@@ -97,6 +97,34 @@ describe('preview clone git isolation', () => {
     await expect(runPreviewGit(missingGitClone, ['rev-parse', '--show-toplevel'])).rejects.toThrow();
   });
 
+  it('forwards the env a caller passes, which is how the seed backdates its commits', async () => {
+    // seed-git-changes.ts hands GIT_AUTHOR_DATE and GIT_COMMITTER_DATE through the
+    // helper's third argument. Every other case here calls it without one, so a
+    // helper that dropped the argument would pass them all and the seeded history
+    // would silently carry the current time. A fresh repo, because `outerRepo`
+    // holds staged work and a `--no-checkout` clone has no index to commit from.
+    const seededRepo = path.join(tempDir, 'seeded');
+    fs.mkdirSync(seededRepo);
+    git(seededRepo, ['init', '-b', 'main']);
+    // The same shape the seed passes (Date.toISOString).
+    const backdated = new Date('2020-01-02T03:04:05Z').toISOString();
+
+    await runPreviewGit(
+      seededRepo,
+      ['-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'backdated'],
+      { GIT_AUTHOR_DATE: backdated, GIT_COMMITTER_DATE: backdated },
+    );
+
+    // Epoch seconds, so the machine's timezone cannot change the comparison.
+    expect(git(seededRepo, ['log', '-1', '--format=%at %ct'])).toBe('1577934245 1577934245');
+  });
+
+  it('applies its own ceiling after the caller\'s env, so a caller cannot lift it', async () => {
+    await expect(
+      runPreviewGit(missingGitClone, ['rev-parse', '--show-toplevel'], { GIT_CEILING_DIRECTORIES: '' }),
+    ).rejects.toThrow();
+  });
+
   it('still fills a real clone and resolves its task worktrees', async () => {
     const realClone = path.join(previewProjectsDir, 'project-2');
     git(tempDir, ['clone', '--no-checkout', '--local', outerRepo, realClone]);
