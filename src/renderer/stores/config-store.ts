@@ -189,8 +189,13 @@ interface ConfigStore {
   loadProjectOverrides: () => Promise<void>;
   /** Persist a project-override partial. Same `persisted` contract as `updateConfig`;
    *  resolves `{ persisted: true }` for the no-project-open no-op, since no write was
-   *  attempted. */
-  updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
+   *  attempted.
+   *
+   *  Writes to the project the panel is editing when the write runs, unless
+   *  `targetProjectPath` names one. Pass it from a handler that awaits before it
+   *  writes, captured at the gesture. The switcher can move the panel during the
+   *  await, and the write has to land on the project the user changed. */
+  updateProjectOverride: (partial: DeepPartial<AppConfig>, targetProjectPath?: string) => Promise<ConfigSetResult>;
 
 }
 
@@ -590,7 +595,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       }
     },
 
-    updateProjectOverride: (partial) => {
+    updateProjectOverride: (partial, targetProjectPath) => {
       // Captured synchronously, at call time - NOT lazily inside the deferred `write`
       // below, which only runs once the write chain's tail settles (at least one
       // microtask later). A SettingTextInput's unmount-flush effect can call this as
@@ -602,7 +607,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       // setSettingsOpen(false) also blurs the focused field before it clears state,
       // which is what lets a NORMAL blur-triggered commit (routed through here) see
       // these still-valid values in the first place.
-      const capturedProjectPath = get().projectSettingsPath;
+      const capturedProjectPath = targetProjectPath ?? get().projectSettingsPath;
       const capturedProjectOverrides = get().projectOverrides;
       // Each write merges over the PREVIOUS write's result, not over the snapshot
       // both read at call time. The Theme tab commits on every arrow key and can
@@ -612,12 +617,24 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       // first - the capture above is a FALLBACK for when the live copy has been
       // cleared by a close that raced this same commit, not a replacement for it.
       const write = async (): Promise<ConfigSetResult> => {
-        const projectPath = get().projectSettingsPath ?? capturedProjectPath;
+        const projectPath = targetProjectPath ?? get().projectSettingsPath ?? capturedProjectPath;
         // Nothing was attempted, so nothing failed. Reporting `persisted: false` here
         // would make the settings panel toast "this setting did not save" for the
         // no-project-open no-op, which is a different thing entirely.
         if (!projectPath) return { persisted: true };
-        const current = get().projectOverrides ?? capturedProjectOverrides ?? {};
+        // An explicit target merges over the panel's live copy only while the panel
+        // is on that project AND holds its loaded overrides. Otherwise it merges over
+        // what main holds. The panel may be on another project, or back on this one
+        // with its refetch still in flight, since `openProjectSettings` nulls the copy
+        // on every path change. Main replaces the whole file, so merging over `{}`
+        // would drop every other key. The chain has already landed every earlier
+        // write, so main's copy is current.
+        const liveTargetOverrides = targetProjectPath && get().projectSettingsPath === targetProjectPath
+          ? get().projectOverrides
+          : null;
+        const current = targetProjectPath
+          ? liveTargetOverrides ?? (await window.electronAPI.config.getProjectOverridesByPath(targetProjectPath)) ?? {}
+          : get().projectOverrides ?? capturedProjectOverrides ?? {};
         const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
         const result = await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
         // Only the project still being edited gets the optimistic local update, the same

@@ -832,13 +832,13 @@ State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentList`, `gitInfo
 - **App version** -- `loadAppVersion()` fetches the Electron app version via IPC.
 - **Agent inventory** - `loadAgentList()` probes every registered agent adapter and returns per-agent found/path/version/displayName (`AgentDetectionInfo[]`); consumers look up their own agent's entry rather than reading a single Claude-only detection result.
 - **Git detection** -- `detectGit()` checks for git installation, version, and minimum version requirement.
-- **Project overrides** -- `loadProjectOverrides()`, `updateProjectOverride()`, `removeProjectOverride()` manage per-project config overrides by filesystem path.
+- **Project overrides** -- `loadProjectOverrides()` and `updateProjectOverride()` manage per-project config overrides by filesystem path. A write goes to the project the Settings panel is editing (`projectSettingsPath`) unless the caller passes an explicit target path, which a handler that awaits before it writes captures at the gesture so a project-switcher move cannot redirect it.
 
 ### ProjectStore (`project-store.ts`)
 
 State: `projects`, `currentProject`, `loading`
 
-Standard CRUD. `openProject()` triggers main process initialization (DB open, worktree pruning). Session recovery and reconciliation run in the background (fire-and-forget) so the board renders immediately; sessions appear reactively as PTYs come online via IPC status events.
+Standard CRUD. `setDefaultAgent()`, `setDefaultModel()`, and `setDefaultEffort()` write a project's defaults and apply main's returned row to both `projects` and `currentProject`, because `openProject()` copies its row from the list. `openProject()` triggers main process initialization (DB open, worktree pruning). Session recovery and reconciliation run in the background (fire-and-forget) so the board renders immediately; sessions appear reactively as PTYs come online via IPC status events.
 
 ### BacklogStore (`backlog-store.ts`)
 

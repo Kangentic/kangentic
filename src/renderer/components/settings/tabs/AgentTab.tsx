@@ -12,6 +12,7 @@ import { Combobox } from '../../dialogs/Combobox';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { useSettingsProject } from '../use-settings-project';
 import { AgentExecutionFields } from './agent-execution-fields';
 import { AgentLaunchOptionFields } from './agent-launch-option-fields';
 
@@ -22,8 +23,12 @@ export function AgentTab({ config, globalConfig, agentList }: {
 }) {
   const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
-  const currentProject = useProjectStore((state) => state.currentProject);
-  const refreshCurrentProject = useProjectStore((state) => state.loadCurrent);
+  // The project the panel is editing (the switcher's pick), which is the one
+  // `updateProject` writes to. Not `currentProject`, the board's project.
+  const project = useSettingsProject();
+  const setDefaultAgent = useProjectStore((state) => state.setDefaultAgent);
+  const setDefaultModel = useProjectStore((state) => state.setDefaultModel);
+  const setDefaultEffort = useProjectStore((state) => state.setDefaultEffort);
   const refreshAgentList = useConfigStore((state) => state.loadAgentList);
   const [refreshing, setRefreshing] = useState(false);
   const [copiedAgent, setCopiedAgent] = useState<string | null>(null);
@@ -52,7 +57,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
     setRefreshing(false);
   };
 
-  const effectiveAgent = currentProject?.default_agent ?? DEFAULT_AGENT;
+  const effectiveAgent = project?.default_agent ?? DEFAULT_AGENT;
   const agentPermissions: AgentPermissionEntry[] = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
   const detectedAgents = useMemo(() => agentList.filter((agent) => agent.found), [agentList]);
   const undetectedAgents = useMemo(() => agentList.filter((agent) => !agent.found), [agentList]);
@@ -68,30 +73,29 @@ export function AgentTab({ config, globalConfig, agentList }: {
   const showDefaultEffortPicker = defaultEffortOptions.length > 0;
 
   const handleDefaultAgentChange = async (agentName: string) => {
-    if (!currentProject) return;
-    await window.electronAPI.projects.setDefaultAgent(currentProject.id, agentName);
-    // Switch to the new agent's recommended default permission mode
+    if (!project) return;
+    await setDefaultAgent(project.id, agentName);
+    // Switch to the new agent's recommended default permission mode. The path is
+    // this render's, captured at the gesture. The switcher can move the panel
+    // during the await above, and the mode belongs with the agent just written.
     const newDefault = getAgentDefaultPermission(agentList, agentName);
     if (newDefault !== config.agent.permissionMode) {
-      updateProject({ agent: { permissionMode: newDefault } });
+      updateProject({ agent: { permissionMode: newDefault } }, project.path);
     }
     // Previous model/effort defaults were valid for the previous agent's
     // capability matrix; clear so the user re-picks from the new agent.
-    await window.electronAPI.projects.setDefaultModel(currentProject.id, null);
-    await window.electronAPI.projects.setDefaultEffort(currentProject.id, null);
-    await refreshCurrentProject();
+    await setDefaultModel(project.id, null);
+    await setDefaultEffort(project.id, null);
   };
 
   const handleDefaultModelChange = async (model: string) => {
-    if (!currentProject) return;
-    await window.electronAPI.projects.setDefaultModel(currentProject.id, model || null);
-    await refreshCurrentProject();
+    if (!project) return;
+    await setDefaultModel(project.id, model || null);
   };
 
   const handleDefaultEffortChange = async (effort: string) => {
-    if (!currentProject) return;
-    await window.electronAPI.projects.setDefaultEffort(currentProject.id, effort || null);
-    await refreshCurrentProject();
+    if (!project) return;
+    await setDefaultEffort(project.id, effort || null);
   };
 
   return (
@@ -112,14 +116,14 @@ export function AgentTab({ config, globalConfig, agentList }: {
               : [{ value: DEFAULT_AGENT, label: agentDisplayName(DEFAULT_AGENT) }]
           }
           allowClear={false}
-          disabled={!currentProject}
+          disabled={!project}
           testId="project-default-agent"
         />
       </CardRow>
       {showDefaultModelPicker && (
         <CardRow {...settingProps('project.defaultModel')}>
           <ModelCombobox
-            value={currentProject?.default_model ?? ''}
+            value={project?.default_model ?? ''}
             onChange={handleDefaultModelChange}
             availableModels={defaultModelOptions}
             placeholder="Agent default"
@@ -135,7 +139,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
       {showDefaultEffortPicker && (
         <CardRow {...settingProps('project.defaultEffort')}>
           <Combobox
-            value={currentProject?.default_effort ?? ''}
+            value={project?.default_effort ?? ''}
             onChange={handleDefaultEffortChange}
             options={defaultEffortOptions.map((level) => ({ value: level, label: level }))}
             placeholder="Agent default"

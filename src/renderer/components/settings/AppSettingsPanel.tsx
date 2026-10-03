@@ -151,7 +151,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
    *  This is the only caller that knows a write represents a deliberate user gesture -
    *  `config.set` also carries window layouts, model caches and announcement
    *  dismissals - which is why the check lives here and not in the IPC handler. */
-  const updateSetting = useCallback((partial: DeepPartial<AppConfig>, scope: SettingScope) => {
+  const updateSetting = useCallback((partial: DeepPartial<AppConfig>, scope: SettingScope, projectPath?: string) => {
     const reportFailure = (message: string) => {
       // One user gesture can still be many writes: NUMBER fields commit on every
       // keystroke (typing "120" writes 1, then 12, then 120), the Theme tab commits on
@@ -166,7 +166,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       useToastStore.getState().addToast({ message, variant: 'error', duration: 12000 });
     };
 
-    const write = scope === 'project' ? updateProjectOverride(partial) : updateConfig(partial);
+    const write = scope === 'project' ? updateProjectOverride(partial, projectPath) : updateConfig(partial);
     void write.then(
       ({ persisted }) => {
         if (persisted) return;
