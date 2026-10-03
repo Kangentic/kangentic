@@ -6,8 +6,9 @@
  * rebuilt. It is built from the Settings card's own pieces (`SettingsCard`,
  * `CardSourceList` read-only), so the two cannot drift apart.
  *
- * It sits at the bottom of the controls stack on the map, and on its own while
- * there is no map yet (the first build, the Knowledge Graph off).
+ * It sits at the bottom of the controls stack, and only on a map: while there
+ * is none, the centre card is the one place the index shows
+ * (`KnowledgeGraphNoMap`), and this card arrives with the map's other cards.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -15,12 +16,10 @@ import { Database } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { SettingsCard, CardSourceList } from '../settings/settings-card';
 import { settingProps } from '../settings/settings-registry';
-import { sourceRequirements } from '../settings/tabs/index-sources';
-import { useConfigStore } from '../../stores/config-store';
-import { agentJobChoice, answerSetupGap, taskSummariesOn } from '../../../shared/answer-agent';
 import type { KnowledgeGraphCoverageSummary, KnowledgeGraphIndexSummary } from '../../../shared/types';
 import { CARD_CLASS, OpenSettingsButton, SectionHeader } from './panel-card';
-import { indexMapLines, indexSourceLines } from './index-panel-lines';
+import { indexMapLines } from './index-panel-lines';
+import { useIndexSourceLines } from './use-index-source-lines';
 
 /** Without the graph's left chrome to measure, air kept from the viewport's
  *  edges: the bottom one clears the app's status bar. */
@@ -32,8 +31,8 @@ const FLYOUT_MIN_HEIGHT = 160;
 /**
  * The band the flyout may occupy: the left panel's own column, so it never
  * rises over the graph's header or the app's title bar, nor sinks under the
- * status bar. The panel and the no-map screen both sit in a
- * `data-graph-chrome="left"` column inset from the graph surface.
+ * status bar. The panel sits in a `data-graph-chrome="left"` column inset from
+ * the graph surface.
  */
 function flyoutBand(trigger: HTMLElement): { top: number; bottom: number } {
   const column = trigger.closest('[data-graph-chrome="left"]');
@@ -61,55 +60,24 @@ export interface KnowledgeGraphIndexCardProps {
   index: KnowledgeGraphIndexSummary;
   coverage: KnowledgeGraphCoverageSummary;
   semanticAvailable: boolean;
-  /** A map is drawn for this scope; without one the map line says it is building. */
-  hasMap: boolean;
-  building: boolean;
   edgeCount: number;
   /** Opens Settings > Knowledge Graph. Absent in the detached window, which has no settings. */
   onOpenSettings?: () => void;
-  /** Open on mount. Only while the first map builds in a window with room
-   *  beside the building card, when these counts are what there is to look
-   *  at; on the map they are reference, so closed. */
-  defaultOpen?: boolean;
 }
 
 export function KnowledgeGraphIndexCard({
-  index, coverage, semanticAvailable, hasMap, building, edgeCount, onOpenSettings, defaultOpen = false,
+  index, coverage, semanticAvailable, edgeCount, onOpenSettings,
 }: KnowledgeGraphIndexCardProps) {
-  const [open, setOpen] = useState(defaultOpen);
-  // Opened on its own as the screen arrives, which may be a project switch:
-  // that paints flat. A click on the header opens it with its entrance.
-  const [openedByDefault, setOpenedByDefault] = useState(defaultOpen);
+  const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [placement, setPlacement] = useState<FlyoutPlacement | null>(null);
 
-  // What each source line still waits for, through the rule the Settings card
-  // reads. The agent's half comes from config, so choosing one shows at once;
-  // whether the Knowledge Graph is on comes from the snapshot, the same signal
-  // that shows the map's off card, so the two never disagree.
-  const knowledgeGraphConfig = useConfigStore((state) => state.config.knowledgeGraph);
-  const agentList = useConfigStore((state) => state.agentList);
-  const sourceLines = useMemo(() => {
-    const choice = agentJobChoice(knowledgeGraphConfig, 'answer');
-    const requirements = sourceRequirements({
-      semanticEnabled: semanticAvailable,
-      answerCapableAgents: agentList.filter((agent) => agent.found && agent.supportsAnswerFromContext).length,
-      agentSetup: answerSetupGap({ agents: agentList, configured: choice.agent, configuredModel: choice.model, requireFound: true }),
-      agentChosen: Boolean(choice.agent),
-    });
-    return indexSourceLines({
-      index,
-      semanticAvailable,
-      summariesOn: taskSummariesOn(knowledgeGraphConfig),
-      codeOn: knowledgeGraphConfig?.sourceCode !== false,
-      requirements,
-    });
-  }, [index, semanticAvailable, knowledgeGraphConfig, agentList]);
+  const sourceLines = useIndexSourceLines(index, semanticAvailable);
   const mapLines = useMemo(
-    () => indexMapLines({ hasMap, building, edgeCount, coverage, storageBytes: index.storageBytes }),
-    [hasMap, building, edgeCount, coverage, index.storageBytes],
+    () => indexMapLines({ edgeCount, coverage, storageBytes: index.storageBytes }),
+    [edgeCount, coverage, index.storageBytes],
   );
   const indexSetting = settingProps('knowledgeGraph.indexingEnabled');
 
@@ -218,10 +186,7 @@ export function KnowledgeGraphIndexCard({
           icon={<Database size={13} aria-hidden />}
           label="Index"
           collapsed={!open}
-          onToggle={() => {
-            setOpenedByDefault(false);
-            setOpen((current) => !current);
-          }}
+          onToggle={() => setOpen((current) => !current)}
           testId="knowledge-graph-index-toggle"
           opens="side"
         />
@@ -230,7 +195,6 @@ export function KnowledgeGraphIndexCard({
         open={open}
         popoverRef={popoverRef}
         portal
-        skipEnter={openedByDefault}
         style={placement
           ? { left: placement.left, top: placement.top, maxHeight: placement.maxHeight }
           // Measured before it is placed, so the first frame is invisible.

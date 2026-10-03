@@ -20,13 +20,10 @@ const MAX_LISTED_BRANCHES = 10;
  *   branch from yet; the caller runs the task in the project directory, same
  *   as before this module existed.
  * - `resolved`: a usable ref was found. `baseBranch` is the logical name
- *   (drives the branch-naming namespace and the `kangentic.baseBranch` git
- *   config write); `startPoint` is the EXACT ref form that was observed to
- *   resolve (`master` or `origin/master`) - the two differ only when a base
- *   was fetched but never checked out locally. `substitutedFor` is the
- *   originally-configured default when a fallback candidate won instead
- *   (e.g. `'main'` when `baseBranch` ended up `'master'`), or null when the
- *   first candidate resolved outright.
+ *   (what the `kangentic.baseBranch` git config write records); `startPoint`
+ *   is the EXACT ref form that was observed to resolve (`master` or
+ *   `origin/master`) - the two differ only when a base was fetched but never
+ *   checked out locally.
  * - `unresolvable`: nothing in the candidate list resolves, even after a
  *   fetch retry. `explicit` distinguishes a task-chosen base (never
  *   substituted - see `resolveWorktreeBase`) from an unconfigured project
@@ -34,7 +31,7 @@ const MAX_LISTED_BRANCHES = 10;
  */
 export type WorktreeBaseResolution =
   | { kind: 'no-commits' }
-  | { kind: 'resolved'; baseBranch: string; startPoint: string; substitutedFor: string | null }
+  | { kind: 'resolved'; baseBranch: string; startPoint: string }
   | { kind: 'unresolvable'; attempted: string[]; explicit: boolean; availableBranches: string[] };
 
 /** True if `ref` resolves to a commit in `projectPath`, without touching the network. */
@@ -114,22 +111,12 @@ export async function resolveWorktreeBase(
 
   // Local pass: no network, and this is the common case (the base branch
   // exists and was already fetched or created locally).
-  for (const [index, candidate] of candidates.entries()) {
+  for (const candidate of candidates) {
     if (await refResolvesLocally(projectPath, candidate)) {
-      return {
-        kind: 'resolved',
-        baseBranch: candidate,
-        startPoint: candidate,
-        substitutedFor: index === 0 ? null : candidates[0],
-      };
+      return { kind: 'resolved', baseBranch: candidate, startPoint: candidate };
     }
     if (await refResolvesLocally(projectPath, `origin/${candidate}`)) {
-      return {
-        kind: 'resolved',
-        baseBranch: candidate,
-        startPoint: `origin/${candidate}`,
-        substitutedFor: index === 0 ? null : candidates[0],
-      };
+      return { kind: 'resolved', baseBranch: candidate, startPoint: `origin/${candidate}` };
     }
   }
 
@@ -138,7 +125,7 @@ export async function resolveWorktreeBase(
   // using the ref), so skipping this would regress repos that currently
   // succeed.
   const git = simpleGit(projectPath);
-  for (const [index, candidate] of candidates.entries()) {
+  for (const candidate of candidates) {
     // Each candidate fetch is capped at fetchIfStale's own timeout, so an unreachable
     // remote could otherwise hold a cancelled task move for the full chain. Forwarding
     // the caller's signal lets an abort cut the chain short rather than run it out.
@@ -150,12 +137,7 @@ export async function resolveWorktreeBase(
     // only populated FETCH_HEAD, would both report success here). Re-verify locally before
     // trusting it as a startPoint.
     if (fetched === `origin/${candidate}` && await refResolvesLocally(projectPath, fetched)) {
-      return {
-        kind: 'resolved',
-        baseBranch: candidate,
-        startPoint: fetched,
-        substitutedFor: index === 0 ? null : candidates[0],
-      };
+      return { kind: 'resolved', baseBranch: candidate, startPoint: fetched };
     }
   }
 

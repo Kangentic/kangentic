@@ -37,6 +37,7 @@ import type {
   SearchHit,
   SearchRequest,
   KnowledgeGraphStatus,
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphSnapshotWire,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphRebuildPlan,
@@ -213,6 +214,12 @@ export function registerSearchHandlers(context: IpcContext): void {
   graphService.setOnChanged((projectId: string) => {
     if (context.mainWindow.isDestroyed()) return;
     broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_CHANGED, projectId);
+  });
+  // A first build's progress carries its figure, so the building card's bar
+  // moves without each window reading the whole snapshot again.
+  graphService.setOnBuildProgress((projectId: string, progress: KnowledgeGraphBuildProgress) => {
+    if (context.mainWindow.isDestroyed()) return;
+    broadcast(context.mainWindow, IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS, projectId, progress);
   });
 
   ipcMain.handle(
@@ -714,16 +721,17 @@ export function registerSearchHandlers(context: IpcContext): void {
 
   ipcMain.handle(
     IPC.KNOWLEDGE_GRAPH_REFRESH,
-    async (_event, projectId?: string | null): Promise<void> => {
+    async (_event, projectId?: string | null): Promise<KnowledgeGraphBuildProgress | null> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!resolvedProjectId) return;
+      if (!resolvedProjectId) return null;
       // A scope or a pop-out can still hold a deleted project's id, and opening
       // its store would create an empty database for it again.
-      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return;
+      if (!context.projectRepo.list().some((entry) => entry.id === resolvedProjectId)) return null;
       const model = resolveEmbeddingModel(context.configManager.load().knowledgeGraph?.localModel);
-      // Returns immediately. The pass is self-paced in the background, so a
-      // handler never performs the scan or the vector math itself.
-      graphService.markDirty(resolvedProjectId, model.modelTag, model.dimensions);
+      // Answers at once. The pass is self-paced in the background, so a handler
+      // never performs the scan or the vector math itself; the answer is the
+      // first build's progress, which the renderer paints before its first push.
+      return graphService.markDirty(resolvedProjectId, model.modelTag, model.dimensions);
     },
   );
 }

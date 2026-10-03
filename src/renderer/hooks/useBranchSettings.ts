@@ -90,11 +90,10 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
 
   const branchPlaceholder = useMemo(() => {
     if (effectiveWorktree && !blocker) {
-      const slug = slugify(title.trim()) || 'task-title';
-      return computeAutoBranchName(effectiveBaseBranch, defaultBaseBranch || 'main', slug, 'ab12cd34');
+      return computeAutoBranchName(slugify(title.trim()) || 'task-title', 'ab12cd34');
     }
     return effectiveBaseBranch;
-  }, [effectiveWorktree, blocker, title, effectiveBaseBranch, defaultBaseBranch]);
+  }, [effectiveWorktree, blocker, title, effectiveBaseBranch]);
 
   const branchHint = useMemo<ReactNode>(() => computeBranchHint({
     customBranchName,

@@ -202,14 +202,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         console.log(`[TASK_UPDATE] Skipping branch rename - worktree path missing: ${existing.worktree_path}`);
       } else {
         const worktreeManager = new WorktreeManager(resolvedProjectPath);
-        const effectiveConfig = context.configManager.getEffectiveConfig(resolvedProjectPath);
-        const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
-        const defaultBaseBranch = boardDefaultBranch || effectiveConfig.git.defaultBaseBranch || 'main';
         const newBranchName = await worktreeManager.withLock(
-          () => worktreeManager.renameBranch(input.id, existing.branch_name!, input.title, {
-            baseBranch: existing.base_branch,
-            defaultBaseBranch,
-          }),
+          () => worktreeManager.renameBranch(input.id, existing.branch_name!, input.title),
           { label: `rename-branch:${input.id.slice(0, 8)}` },
         );
         if (newBranchName) {

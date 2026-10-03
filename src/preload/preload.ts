@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, LeftoverProcessReport, AutomationInterruptedSummary,AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphAnswerContext } from '../shared/types';
+import type { ElectronAPI, LeftoverProcessReport, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -818,6 +818,11 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
       ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
+    },
+    onGraphBuildProgress: (callback: (projectId: string, progress: KnowledgeGraphBuildProgress) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string, progress: KnowledgeGraphBuildProgress) => callback(projectId, progress);
+      ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC.KNOWLEDGE_GRAPH_BUILD_PROGRESS, handler);
     },
     onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, push: KnowledgeGraphAnswerStreamPush) => callback(push);

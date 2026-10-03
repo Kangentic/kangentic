@@ -27,7 +27,7 @@ The CLA is modeled after the [Apache Individual Contributor License Agreement](h
 
 - [Node.js](https://nodejs.org/) 22+ (building from source; CI runs on Node 22)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
-- Git 2.25+
+- Git 2.26+
 
 Native modules (`better-sqlite3`) are compiled on install, so you also need a C/C++ toolchain:
 Visual Studio Build Tools on Windows, Xcode Command Line Tools on macOS, or `build-essential` and

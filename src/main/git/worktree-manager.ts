@@ -1,6 +1,7 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import type { WorktreeSkipReason } from '../../shared/types';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
@@ -25,6 +26,64 @@ import {
   describeHolder,
   type WorktreeHolder,
 } from './zombie-reaper';
+import { getInstalledGitVersion, isVersionAtLeast } from './git-version';
+import { WORKTREE_SPARSE_PATTERNS } from './sparse-exclusion';
+
+/**
+ * First git whose `sparse-checkout set` accepts `--no-cone`. Older git does
+ * not reject the flag: it stores `--no-cone` as one more pattern and exits 0,
+ * so the version decides the command form, not a try-and-fall-back.
+ */
+const SPARSE_SET_NO_CONE_MIN_GIT_VERSION = '2.35.0';
+
+/**
+ * Upper bound on the parallel checkout workers `git worktree add` gets. Measured
+ * `worktree add` on a 3,388-file repo on Windows: 1 worker 1.65 s, 2 workers
+ * 1.53 s, 4 workers 0.89 s, 8 workers 0.66 s, and one per core (32) no better
+ * than 8. On Linux, 8 workers took it from 269 ms to 111 ms.
+ */
+const MAX_CHECKOUT_WORKERS = 8;
+
+/**
+ * Record a worktree's base branch as `kangentic.baseBranch` in that worktree's
+ * OWN config (`config.worktree`). `/pull-request`, `/merge-pull-request`,
+ * `/merge-back` and local-only-commits read it to pick the target branch.
+ *
+ * A plain `git config` from a linked worktree writes the repo's SHARED
+ * `.git/config`, so every worktree used to read whichever base was written
+ * last: worktree A wrote `develop`, worktree B wrote `main`, and A then read
+ * `main`. `--worktree` needs `extensions.worktreeConfig`, which the
+ * sparse-checkout step turns on. Without it git refuses with exit 128 and
+ * writes nothing (git 2.25 and 2.51 both), so the shared write stays as the
+ * fallback. Readers keep calling plain `git config kangentic.baseBranch`: a
+ * worktree's own value wins, and one created before this reads the shared one.
+ */
+export async function writeWorktreeBaseBranch(worktreeGit: SimpleGit, baseBranch: string): Promise<void> {
+  try {
+    await worktreeGit.raw(['config', '--worktree', 'kangentic.baseBranch', baseBranch]);
+  } catch {
+    await worktreeGit.raw(['config', 'kangentic.baseBranch', baseBranch]);
+  }
+}
+
+/**
+ * `-c checkout.workers=N` for `git worktree add`, so its checkout writes files
+ * with up to MAX_CHECKOUT_WORKERS processes instead of one. git hands `-c` on to
+ * the inner `reset --hard` and to each worker, `core.longpaths` included. Files
+ * that need a filter driver (Git LFS), symlinks, and case-colliding paths are
+ * still written one at a time, git stays sequential below 100 files, and git
+ * before 2.32 ignores the key. Empty when the user set checkout.workers
+ * themselves, so their value applies exactly as it did before.
+ */
+async function parallelCheckoutConfig(git: SimpleGit): Promise<string[]> {
+  try {
+    if ((await git.raw(['config', '--get', 'checkout.workers'])).trim()) return [];
+  } catch {
+    // `git config --get` exits 1 when the key is unset.
+  }
+  const workers = Math.min(os.availableParallelism(), MAX_CHECKOUT_WORKERS);
+  return workers > 1 ? ['-c', `checkout.workers=${workers}`] : [];
+}
 
 /**
  * Re-emit the `init-script` progress label this often while the init script
@@ -150,6 +209,10 @@ export interface WorktreeCreateResult {
    * long-lived `feature/x` and stamped with `main` would sit on `feature/x`'s
    * tip, fail the base-tip bail against the wrong branch, and magnet onto
    * `feature/x`'s own PR - the exact mislink that bail exists to prevent.
+   *
+   * One attach still reports it: the task's own auto-generated branch whose tip
+   * IS the resolved start point. That is what a creation aborted during its
+   * post-worktree script leaves behind, and attaching to it is the same cut.
    */
   baseBranch: string | null;
 }
@@ -726,22 +789,12 @@ export class WorktreeManager {
       throw new Error(describeUnresolvableBase(resolution));
     }
 
-    // A substituted fallback (e.g. 'master' for an unconfigured 'main' default) becomes the
-    // new default too, so computeAutoBranchName sees base === default and keeps the branch
-    // name unprefixed instead of namespacing every branch under the substitute
-    // (e.g. `master/fix-thing-ab12cd34`). An unsubstituted resolution (including every
-    // explicit per-task base) keeps the originally configured default.
-    const defaultBaseBranch = resolution.substitutedFor
-      ? resolution.baseBranch
-      : (gitConfig.defaultBaseBranch || 'main');
-
     // The fetch outcome is NOT threaded into resolveWorktreeBase's own fetch
     // pass: a candidate miss there either resolves via another candidate (not
     // a stale-base event) or ends in the already-loud unresolvable throw above.
     return this.createWorktree(task, resolution.baseBranch, gitConfig.copyFiles, task.branch_name, {
       onProgress: options?.onProgress,
       signal: options?.signal,
-      defaultBaseBranch,
       initScript: gitConfig.initScript,
       linkNodeModules: gitConfig.linkNodeModules,
       verifiedStartPoint: resolution.startPoint,
@@ -789,7 +842,6 @@ export class WorktreeManager {
     options?: {
       onProgress?: (phase: string) => void;
       signal?: AbortSignal;
-      defaultBaseBranch?: string;
       initScript?: string | null;
       linkNodeModules?: boolean;
       /**
@@ -813,7 +865,6 @@ export class WorktreeManager {
     },
   ): Promise<WorktreeCreateResult> {
     const shortId = task.id.slice(0, 8);
-    const defaultBaseBranch = options?.defaultBaseBranch ?? 'main';
 
     // `display_id` is `INTEGER DEFAULT NULL` in SQL but `number` in TypeScript,
     // and rowToTask spreads the raw row. Fail loudly rather than materializing a
@@ -836,12 +887,7 @@ export class WorktreeManager {
     // The branch stays title-derived and readable, independent of the folder. A
     // caller-supplied custom name always wins verbatim.
     const branchName = customBranchName
-      ?? computeAutoBranchName(
-        baseBranch,
-        defaultBaseBranch,
-        slugify(task.title) || 'task',
-        shortId,
-      );
+      ?? computeAutoBranchName(slugify(task.title) || 'task', shortId);
 
     const worktreesDir = worktreesRootFor(this.projectPath);
     const worktreePath = path.join(worktreesDir, folderName);
@@ -860,6 +906,8 @@ export class WorktreeManager {
     // in the queue flips from the "Waiting..." label to "Fetching latest..."
     // the instant it actually starts the fetch.
     options?.onProgress?.('fetching');
+    // Read alongside the fetch; it only shapes the `worktree add` below and never rejects.
+    const checkoutWorkersConfigPromise = parallelCheckoutConfig(this.git);
     const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
       signal: options?.signal,
       onOutcome: options?.onFetchOutcome,
@@ -886,6 +934,13 @@ export class WorktreeManager {
     } catch {
       // Branch does not exist -- will create it
     }
+    // This task's own auto-generated branch, still at the start point, is what an
+    // aborted creation leaves behind (see the init-script catch below). Attaching
+    // to it is the same cut a new branch would be, so its base is known. Any
+    // other existing branch keeps its base withheld (see the return below).
+    const attachesAtStartPoint = branchExists
+      && branchName === computeAutoBranchName(slugify(task.title) || 'task', shortId)
+      && await this.branchTipEquals(branchName, startPoint);
     options?.signal?.throwIfAborted();
 
     // Create worktree: attach to existing branch or create a new one.
@@ -945,38 +1000,33 @@ export class WorktreeManager {
     // the husk path so the normal create still surfaces a genuine "branch
     // already checked out in another worktree" error.
     const forceFlag = reuseEmptyHusk ? ['--force'] : [];
+    const commandConfig = [...longPathsConfig, ...await checkoutWorkersConfigPromise];
     try {
       if (branchExists) {
-        await this.git.raw([...longPathsConfig, 'worktree', 'add', ...forceFlag, worktreePath, branchName]);
+        await this.git.raw([...commandConfig, 'worktree', 'add', ...forceFlag, worktreePath, branchName]);
         console.log(`[WORKTREE] Created worktree (existing branch): ${branchName}`);
       } else {
-        await this.git.raw([...longPathsConfig, 'worktree', 'add', ...forceFlag, '-b', branchName, worktreePath, startPoint]);
+        await this.git.raw([...commandConfig, 'worktree', 'add', ...forceFlag, '-b', branchName, worktreePath, startPoint]);
         console.log(`[WORKTREE] Created worktree (new branch): ${branchName} from ${startPoint}`);
       }
     } catch (error) {
       throw withPathLengthCause(error, worktreePath);
     }
 
-    // Post-creation configuration: these steps all write to the new
-    // worktree's `.git/config` (base-branch key, Windows longpaths, and
-    // sparse-checkout's `extensions.worktreeConfig`). They were previously
-    // wrapped in Promise.all under the assumption they touched independent
-    // parts of the .git state - but on Windows concurrent writes to the same
-    // config file intermittently race on the lock ("could not lock config
-    // file... File exists"), silently swallowing sparse-checkout init and
-    // leaving `.claude/commands/` materialized. Serial execution costs a
-    // handful of milliseconds and eliminates the race.
+    // Post-creation configuration. `core.longpaths` and sparse-checkout's
+    // `extensions.worktreeConfig` land in the repo's SHARED `.git/config` (a
+    // plain `git config` from a linked worktree writes there); the sparse
+    // settings and the base branch land in this worktree's own
+    // `config.worktree`. They were previously wrapped in Promise.all under the
+    // assumption they touched independent parts of the .git state - but on
+    // Windows concurrent writes to the same config file intermittently race on
+    // the lock ("could not lock config file... File exists"), silently
+    // swallowing sparse-checkout init and leaving `.claude/commands/`
+    // materialized. Serial execution costs a handful of milliseconds and
+    // eliminates the race.
     const wtGit = simpleGit(worktreePath);
 
-    // Store the base branch in git config so agents can read it via
-    // `git config kangentic.baseBranch` without accessing files outside the worktree.
-    try {
-      await wtGit.raw(['config', 'kangentic.baseBranch', baseBranch]);
-    } catch {
-      // Non-fatal -- merge-back falls back to 'main'
-    }
-
-    // Persist long paths in the worktree's local config (Windows only).
+    // Persist long paths for later git commands in every worktree (Windows only).
     if (process.platform === 'win32') {
       try {
         await wtGit.raw(['config', 'core.longpaths', 'true']);
@@ -985,15 +1035,31 @@ export class WorktreeManager {
       }
     }
 
-    // Exclude .claude/commands/ from worktree via sparse-checkout.
-    // Commands walk up the directory tree from worktree CWD to the main repo's
-    // .claude/commands/, so excluding them prevents duplicate discovery.
-    // Requires git 2.25+; older versions skip gracefully.
+    // Exclude .claude/commands/ via sparse-checkout (see WORKTREE_SPARSE_PATTERNS).
+    // On git 2.35+ one `set --no-cone` turns sparse-checkout on and removes only
+    // the excluded paths. Older git needs `init` first, and `init` applies its
+    // own top-level-files-only default before `set` runs: it deletes every file
+    // below the root and `set` writes them all back, which was about half of a
+    // 4 s worktree creation on a 3,400-file repo on Windows. On git 2.25.0 both
+    // forms fail in a linked worktree (it cannot create the worktree's `info/`
+    // directory, fixed in 2.26), and the worktree keeps the full tree.
+    const gitVersion = await getInstalledGitVersion();
     try {
-      await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
-      await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
+      if (gitVersion && isVersionAtLeast(gitVersion, SPARSE_SET_NO_CONE_MIN_GIT_VERSION)) {
+        await wtGit.raw(['sparse-checkout', 'set', '--no-cone', ...WORKTREE_SPARSE_PATTERNS]);
+      } else {
+        await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
+        await wtGit.raw(['sparse-checkout', 'set', ...WORKTREE_SPARSE_PATTERNS]);
+      }
     } catch (sparseError) {
-      console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
+      console.warn('[WORKTREE] Sparse-checkout not available (worktrees need git 2.26+), skipping:', sparseError);
+    }
+
+    // After sparse-checkout, which turns on the per-worktree config this needs.
+    try {
+      await writeWorktreeBaseBranch(wtGit, baseBranch);
+    } catch {
+      // Non-fatal -- merge-back falls back to 'main'
     }
 
     // Copy specified files into the worktree (skip .claude/ entries --
@@ -1026,8 +1092,10 @@ export class WorktreeManager {
 
     // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
     // copied files and the linked (or deliberately absent) node_modules. A
-    // non-zero exit, timeout, or abort is FATAL: it rejects createWorktree,
-    // failing the task move / agent spawn, exactly like a failed copyFile above.
+    // non-zero exit or timeout is FATAL: it rejects createWorktree, failing the
+    // task move / agent spawn, exactly like a failed copyFile above. An abort
+    // (a superseding move, a cancelled spawn, shutdown) rejects with an
+    // AbortError instead, see the catch below.
     const initScript = options?.initScript?.trim();
     if (initScript) {
       options?.onProgress?.('init-script');
@@ -1044,6 +1112,21 @@ export class WorktreeManager {
         if (stderr.trim()) console.log(`[INIT-SCRIPT] stderr:\n${stderr.trim()}`);
         console.log('[INIT-SCRIPT] Post-worktree script completed');
       } catch (error) {
+        // An abort is not a failure. Every caller skips its failure handling
+        // for an AbortError, and task-move's failure handling queues a stale
+        // cleanup behind the per-project git lock. The superseding move's own
+        // create job is usually queued there first, so the cleanup used to run
+        // after it and delete the worktree it had just made, auto-generated
+        // branch included (reproduced twice in /preview). The half-made
+        // worktree left here is never recorded, so the next creation at this
+        // path clears its directory through the stale-directory branch above.
+        // Its branch survives, so that creation attaches to it, and still
+        // reports the base while the branch sits at the start point
+        // (`attachesAtStartPoint`).
+        if (options?.signal?.aborted) {
+          console.log(`[INIT-SCRIPT] Post-worktree script stopped in ${worktreePath}: creation was aborted`);
+          throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');
+        }
         console.error(`[INIT-SCRIPT] Post-worktree script failed in ${worktreePath}:`, error);
         throw withPathLengthCause(error, worktreePath);
       } finally {
@@ -1053,13 +1136,25 @@ export class WorktreeManager {
 
     // `branchExists` took the no-start-point form of `worktree add` above, so
     // `baseBranch` describes a cut that never happened. Report nothing rather
-    // than a guess (see `WorktreeCreateResult.baseBranch`).
+    // than a guess (see `WorktreeCreateResult.baseBranch`), unless the branch is
+    // this task's own and still at the start point.
     return {
       worktreePath,
       branchName,
       worktreeFolder: folderName,
-      baseBranch: branchExists ? null : baseBranch,
+      baseBranch: branchExists && !attachesAtStartPoint ? null : baseBranch,
     };
+  }
+
+  /** True when local branch `branchName` and `startPoint` name the same commit. Never rejects. */
+  private async branchTipEquals(branchName: string, startPoint: string): Promise<boolean> {
+    try {
+      const branchTip = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
+      const startPointTip = (await this.git.raw(['rev-parse', '--verify', `${startPoint}^{commit}`])).trim();
+      return branchTip !== '' && branchTip === startPointTip;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1071,13 +1166,10 @@ export class WorktreeManager {
     taskId: string,
     oldBranchName: string,
     newTitle: string,
-    options?: { baseBranch?: string | null; defaultBaseBranch?: string },
   ): Promise<string | null> {
-    const slug = slugify(newTitle) || 'task';
-    const shortId = taskId.slice(0, 8);
-    const baseBranch = options?.baseBranch ?? '';
-    const defaultBaseBranch = options?.defaultBaseBranch ?? 'main';
-    const newBranchName = computeAutoBranchName(baseBranch, defaultBaseBranch, slug, shortId);
+    // A branch named the older way, with its base as a folder, comes out in
+    // the current form, which also frees it from that folder's ref conflict.
+    const newBranchName = computeAutoBranchName(slugify(newTitle) || 'task', taskId.slice(0, 8));
 
     if (newBranchName === oldBranchName) return null; // slug didn't change
 
@@ -1288,7 +1380,9 @@ export class WorktreeManager {
    * Fetches from origin first (fails silently if offline).
    */
   async listRemoteBranches(): Promise<string[]> {
-    try { await this.git.raw(['fetch', '--prune']); } catch { /* offline OK */ }
+    // --no-auto-gc: the branch picker waits on this, and on Windows a due gc
+    // would run inside the fetch (see fetchIfStale).
+    try { await this.git.raw(['fetch', '--prune', '--no-auto-gc']); } catch { /* offline OK */ }
     // %(refname:short) shortens origin/HEAD to bare "origin" -- filter by
     // requiring the origin/ prefix before stripping it, which excludes both
     // the HEAD symref and any non-origin remotes.

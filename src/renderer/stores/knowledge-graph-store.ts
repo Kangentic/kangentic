@@ -24,6 +24,7 @@
 import { create } from 'zustand';
 import type {
   KnowledgeGraphAnswerHistoryTurn,
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphProjection,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphSnapshot,
@@ -186,6 +187,8 @@ let fetchOrdinal: number = import.meta.hot?.data?.knowledgeGraphFetchOrdinal ?? 
 let pendingSnapshotRead: { projectId: string | null; fromPush: boolean } | null = import.meta.hot?.data?.knowledgeGraphPendingSnapshotRead ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot
 let unsubscribeStream: (() => void) | null = import.meta.hot?.data?.knowledgeGraphUnsubscribeStream ?? null;
+// @ts-expect-error -- Vite handles import.meta.hot
+let unsubscribeProgress: (() => void) | null = import.meta.hot?.data?.knowledgeGraphUnsubscribeProgress ?? null;
 // The turn whose stream events are wanted. An event carrying any other id is
 // from a turn the user has already moved past (or ended) and is dropped.
 // @ts-expect-error -- Vite handles import.meta.hot
@@ -250,6 +253,95 @@ async function readSnapshot(
   return snapshotFromWire(await window.electronAPI.knowledgeGraph.graphSnapshot(projectId, null), null) ?? null;
 }
 
+const BUILD_STAGE_ORDER: Record<KnowledgeGraphBuildProgress['stage'], number> = { reading: 0, placing: 1, naming: 2 };
+
+/**
+ * The later of two figures for one project's first build. A newer pass wins
+ * even when lower: the build started again, after a worker restart. Within a
+ * pass the higher percent wins, since a read reply produced before a push can
+ * land after it, and at the same percent the later stage: reading ends at 95,
+ * where placing starts. No incoming figure means no first build runs.
+ */
+export function newerProgress(
+  held: KnowledgeGraphBuildProgress | null,
+  incoming: KnowledgeGraphBuildProgress | null,
+): KnowledgeGraphBuildProgress | null {
+  if (!incoming) return null;
+  if (!held) return incoming;
+  if (incoming.pass !== held.pass) return incoming.pass > held.pass ? incoming : held;
+  if (incoming.percent !== held.percent) return incoming.percent > held.percent ? incoming : held;
+  return BUILD_STAGE_ORDER[incoming.stage] >= BUILD_STAGE_ORDER[held.stage] ? incoming : held;
+}
+
+/** The snapshot shows this project with no map yet, where a first build's
+ *  figure belongs. */
+function holdsFirstBuild(snapshot: KnowledgeGraphSnapshot | null | undefined, projectId: string): snapshot is KnowledgeGraphSnapshot {
+  return snapshot !== null && snapshot !== undefined && snapshot.projectId === projectId && snapshot.projection === null;
+}
+
+/** A read's snapshot, keeping a later figure a push already brought. */
+function withHeldProgress(
+  next: KnowledgeGraphSnapshot | null,
+  held: KnowledgeGraphSnapshot | null | undefined,
+): KnowledgeGraphSnapshot | null {
+  if (!next || !holdsFirstBuild(held, next.projectId) || next.projection !== null) return next;
+  const buildProgress = newerProgress(held.buildProgress, next.buildProgress);
+  return buildProgress === next.buildProgress ? next : { ...next, buildProgress };
+}
+
+/**
+ * A reply's snapshot against what the store holds for its project NOW, so read
+ * inside `set`. A push that landed while the read or the refresh was in flight
+ * carries a later figure than either reply, and the merge keeps it.
+ */
+function withLiveProgress(next: KnowledgeGraphSnapshot | null, state: KnowledgeGraphState): KnowledgeGraphSnapshot | null {
+  if (!next) return next;
+  return withHeldProgress(withHeldProgress(next, state.snapshot), state.scopeSnapshots[next.projectId]);
+}
+
+/** Two figures for the same moment of the same pass. Compared by value: every
+ *  push arrives as a fresh object, so the same figure twice is never `===`. */
+function sameProgress(first: KnowledgeGraphBuildProgress | null, second: KnowledgeGraphBuildProgress | null): boolean {
+  if (first === second) return true;
+  if (!first || !second) return false;
+  return first.pass === second.pass && first.stage === second.stage && first.percent === second.percent;
+}
+
+/** A held snapshot with a pushed figure applied. It also marks the project
+ *  building, which covers a pass started by another window or before this one
+ *  opened. The same object when nothing changed, so a repeat push sets nothing. */
+function withPushedProgress(
+  held: KnowledgeGraphSnapshot | null,
+  projectId: string,
+  progress: KnowledgeGraphBuildProgress,
+): KnowledgeGraphSnapshot | null {
+  if (!holdsFirstBuild(held, projectId)) return held;
+  const buildProgress = newerProgress(held.buildProgress, progress);
+  if (held.building && sameProgress(buildProgress, held.buildProgress)) return held;
+  return { ...held, building: true, buildProgress };
+}
+
+/** A project with no map yet and none building, which a read may start. */
+function needsFirstBuild(snapshot: KnowledgeGraphSnapshot | null): snapshot is KnowledgeGraphSnapshot {
+  return snapshot !== null && !snapshot.building && snapshot.projection === null && snapshot.semanticAvailable;
+}
+
+/**
+ * Start a project's first build, and paint it building from main's answer.
+ * Main answers with the build's progress, so the screen goes straight to the
+ * building card. Painting the read first showed "No map yet" until the first
+ * push, which nothing sent until the pass ended.
+ */
+async function startFirstBuild(projectId: string, snapshot: KnowledgeGraphSnapshot): Promise<KnowledgeGraphSnapshot> {
+  rebuildsAsked.add(projectId);
+  try {
+    const progress = await window.electronAPI.knowledgeGraph.refreshGraph(projectId);
+    return progress ? { ...snapshot, building: true, buildProgress: progress } : snapshot;
+  } catch {
+    return snapshot;
+  }
+}
+
 /** Ask main to rebuild a stale map: always on a read the reader caused, and on
  *  a push only to carry on a rebuild this surface asked for. */
 function rebuildIfStale(projectId: string, snapshot: KnowledgeGraphSnapshot | null, fromPush: boolean): void {
@@ -273,6 +365,7 @@ if (import.meta.hot) {
     data.knowledgeGraphFetchOrdinal = fetchOrdinal;
     data.knowledgeGraphPendingSnapshotRead = pendingSnapshotRead;
     data.knowledgeGraphUnsubscribeStream = unsubscribeStream;
+    data.knowledgeGraphUnsubscribeProgress = unsubscribeProgress;
     data.knowledgeGraphActiveRequestId = activeRequestId;
     data.knowledgeGraphChatId = chatId;
   });
@@ -533,13 +626,21 @@ function createKnowledgeGraphStore() {
         try {
           const own = get().snapshot;
           const held = get().scopeSnapshots[projectId] ?? (own?.projectId === projectId ? own : null);
-          const snapshot = await readSnapshot(projectId, held);
+          const read = await readSnapshot(projectId, held);
           // Dropped once the project has left the scope, or the graph closed.
           if (!get().scopeProjectIds?.includes(projectId)) return;
-          set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: snapshot } }));
           // Only a SELECTED project is ever asked to build, never one merely
           // listed in the picker.
-          rebuildIfStale(projectId, snapshot, options?.fromPush === true);
+          const fromPush = options?.fromPush === true;
+          let snapshot = read;
+          let firstBuild = false;
+          if (needsFirstBuild(read) && (!fromPush || rebuildsAsked.has(projectId))) {
+            firstBuild = true;
+            snapshot = await startFirstBuild(projectId, read);
+            if (!get().scopeProjectIds?.includes(projectId)) return;
+          }
+          set((state) => ({ scopeSnapshots: { ...state.scopeSnapshots, [projectId]: withLiveProgress(snapshot, state) } }));
+          if (!firstBuild) rebuildIfStale(projectId, snapshot, fromPush);
         } catch {
           // A failed re-read keeps the island already drawn, as `loadSnapshot`
           // keeps its snapshot; only a project with nothing yet is marked empty.
@@ -598,6 +699,20 @@ function createKnowledgeGraphStore() {
             // until the settled answer lands.
           });
         }
+        // A first build's progress, carried by the push itself: no read.
+        if (!unsubscribeProgress) {
+          unsubscribeProgress = window.electronAPI.knowledgeGraph.onGraphBuildProgress((progressProjectId, progress) => {
+            const state = get();
+            const snapshot = withPushedProgress(state.snapshot, progressProjectId, progress);
+            const scoped = state.scopeSnapshots[progressProjectId];
+            const scopedNext = scoped === undefined ? undefined : withPushedProgress(scoped, progressProjectId, progress);
+            if (snapshot === state.snapshot && scopedNext === scoped) return;
+            set({
+              snapshot,
+              ...(scopedNext !== scoped ? { scopeSnapshots: { ...state.scopeSnapshots, [progressProjectId]: scopedNext ?? null } } : {}),
+            });
+          });
+        }
         if (unsubscribeChanged) return;
         unsubscribeChanged = window.electronAPI.knowledgeGraph.onGraphChanged((changedProjectId) => {
           // A scoped project's map finished: re-read just that one. The open
@@ -627,6 +742,8 @@ function createKnowledgeGraphStore() {
         unsubscribeConfig = null;
         unsubscribeStream?.();
         unsubscribeStream = null;
+        unsubscribeProgress?.();
+        unsubscribeProgress = null;
       },
 
       loadSnapshot: async (projectId, options) => {
@@ -659,13 +776,26 @@ function createKnowledgeGraphStore() {
             const held = targetProjectId === null || own?.projectId === targetProjectId
               ? own
               : get().scopeSnapshots[targetProjectId] ?? null;
-            const snapshot = await readSnapshot(targetProjectId, held);
+            const read = await readSnapshot(targetProjectId, held);
             // A newer fetch already landed: dropping this one keeps a slow reply
             // from overwriting fresher state.
             if (ordinal !== fetchOrdinal) return;
             // A different project means a different chat: the tasks a thread
             // names belong to the project it was asked in.
-            const nextProjectId = snapshot?.projectId ?? targetProjectId;
+            const nextProjectId = read?.projectId ?? targetProjectId;
+            // A project with no map starts its first build before the read is
+            // painted, under the rebuild rule below: a reader's read, or a push
+            // that carries on what this surface asked for or moved a following
+            // window to another project.
+            const fromPushOnly = options?.fromPush === true && nextProjectId === get().projectId;
+            let snapshot = read;
+            let firstBuild = false;
+            if (nextProjectId !== null && closeCount === closesAtStart && needsFirstBuild(read)
+              && (!fromPushOnly || rebuildsAsked.has(nextProjectId))) {
+              firstBuild = true;
+              snapshot = await startFirstBuild(nextProjectId, read);
+              if (ordinal !== fetchOrdinal) return;
+            }
             const previousProjectId = get().projectId;
             const switched = nextProjectId !== previousProjectId;
             // A first load is not a switch for the chat: a question queued from
@@ -681,13 +811,16 @@ function createKnowledgeGraphStore() {
             // holds it takes it from here rather than reading it a second time.
             const scoped = snapshot !== null && nextProjectId !== null
               && (get().scopeProjectIds?.includes(nextProjectId) ?? false);
-            set((state) => ({
-              snapshot,
-              projectId: nextProjectId,
-              loading: false,
-              loaded: true,
-              ...(scoped && nextProjectId ? { scopeSnapshots: { ...state.scopeSnapshots, [nextProjectId]: snapshot } } : {}),
-            }));
+            set((state) => {
+              const shown = withLiveProgress(snapshot, state);
+              return {
+                snapshot: shown,
+                projectId: nextProjectId,
+                loading: false,
+                loaded: true,
+                ...(scoped && nextProjectId ? { scopeSnapshots: { ...state.scopeSnapshots, [nextProjectId]: shown } } : {}),
+              };
+            });
             // After the switch, so the next chat's session warms for the new project.
             if (projectChanged) get().endChat();
 
@@ -698,7 +831,7 @@ function createKnowledgeGraphStore() {
             // window's switch, the reader's act, so it may start one.
             // Not when the graph closed while this read was in flight: `close`
             // cleared what was asked so the next open asks for its own.
-            if (nextProjectId && closeCount === closesAtStart) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
+            if (!firstBuild && nextProjectId && closeCount === closesAtStart) rebuildIfStale(nextProjectId, snapshot, options?.fromPush === true && !switched);
           } catch {
             if (ordinal === fetchOrdinal) set({ loading: false, loaded: true });
           } finally {

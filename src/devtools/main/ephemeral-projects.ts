@@ -49,6 +49,33 @@ export function previewProjectsRoot(): string {
 }
 
 /**
+ * Run git in `repoPath`'s OWN repository, never one above it. Every devtools git call
+ * against a preview clone or its task worktrees goes through here.
+ *
+ * Every preview clone sits inside the worktree the preview runs from
+ * (`<worktree>/.kangentic/data/preview-projects/`). With a plain `git -C <clone>`, a
+ * clone whose `.git` is missing makes git search the parent folders and act on that
+ * worktree instead. That happened: a preview restart overlapped the previous preview's
+ * exit cleanup, which deleted the new clone's `.git`, and `fillPreviewClone`'s
+ * `reset --hard` then wiped every uncommitted change in the developer's worktree.
+ * `GIT_CEILING_DIRECTORIES` at the repo's parent stops that search, so a missing `.git`
+ * fails the command instead. A linked worktree's `.git` file is found before the search
+ * would go up, so task worktrees resolve normally.
+ */
+export function runPreviewGit(
+  repoPath: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<{ stdout: string; stderr: string }> {
+  const ceilingDirectories = [process.env.GIT_CEILING_DIRECTORIES, path.dirname(path.resolve(repoPath))]
+    .filter((entry): entry is string => Boolean(entry))
+    .join(path.delimiter);
+  return execFileAsync('git', ['-C', repoPath, ...args], {
+    env: { ...process.env, ...env, GIT_CEILING_DIRECTORIES: ceilingDirectories },
+  });
+}
+
+/**
  * Check out the committed team board config (kangentic.json) into the clone's working
  * tree right after the --no-checkout clone, BEFORE the DB is seeded and the board opens.
  * Without it, the default-seed columns (random uuids) exist before the team config is on
@@ -60,7 +87,7 @@ export function previewProjectsRoot(): string {
  */
 export async function checkoutTeamConfig(cloneDir: string): Promise<void> {
   try {
-    await execFileAsync('git', ['-C', cloneDir, 'checkout', 'HEAD', '--', 'kangentic.json']);
+    await runPreviewGit(cloneDir, ['checkout', 'HEAD', '--', 'kangentic.json']);
   } catch (checkoutError) {
     console.warn(`[DEV] Preview team-config checkout failed for ${cloneDir}:`, checkoutError);
   }
@@ -237,6 +264,24 @@ export async function forcePreviewCheapModels(cloneDir: string): Promise<void> {
 }
 
 /**
+ * Make `cloneDir` a `--no-checkout` clone of `worktreePath`, adopting one already on
+ * disk. A folder there WITHOUT `.git` is debris, from a data-dir wipe that got the
+ * `.git` but not everything around it, and is removed first. `git clone` refuses a
+ * non-empty destination, and a failed clone used to drop the preview back onto the
+ * worktree itself. Only ever removes a direct child of the preview-projects root.
+ */
+export async function ensurePreviewClone(cloneDir: string, worktreePath: string): Promise<void> {
+  if (fs.existsSync(path.join(cloneDir, '.git'))) return;
+  if (fs.existsSync(cloneDir)) {
+    if (path.dirname(path.resolve(cloneDir)) !== path.resolve(previewProjectsRoot())) {
+      throw new Error(`Refusing to clear ${cloneDir}: it is not a preview clone folder under ${previewProjectsRoot()}`);
+    }
+    await fs.promises.rm(cloneDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+  await execFileAsync('git', ['clone', '--no-checkout', '--local', worktreePath, cloneDir]);
+}
+
+/**
  * Clone the worktree into an isolated preview project ("Project N") and register
  * it. FAST: `--no-checkout` copies only the hardlinked .git (~instant), so the
  * working tree is empty until fillPreviewClone() runs - except kangentic.json, which
@@ -254,9 +299,7 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   // disk: the /preview script pre-clones Project 1 before launch to overlap the build,
   // so on boot the main process just creates the project rather than cloning again.
   // On-demand projects (the button) have no pre-clone and are cloned here.
-  if (!fs.existsSync(path.join(cloneDir, '.git'))) {
-    await execFileAsync('git', ['clone', '--no-checkout', '--local', worktreePath, cloneDir]);
-  }
+  await ensurePreviewClone(cloneDir, worktreePath);
   // Put the committed team board config on disk BEFORE seeding the DB / opening the board,
   // so the default-seed columns get cleanly reconciled (deleted/adopted by config id) at
   // open instead of being ghosted by the late, post-task reconciliation. Runs on the adopt
@@ -341,7 +384,7 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
  */
 export async function fillPreviewClone(clonePath: string): Promise<void> {
   try {
-    await execFileAsync('git', ['-C', clonePath, 'reset', '--hard', 'HEAD']);
+    await runPreviewGit(clonePath, ['reset', '--hard', 'HEAD']);
   } catch (fillError) {
     console.warn(`[DEV] Background working-tree fill failed for ${clonePath}:`, fillError);
   }

@@ -706,12 +706,14 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     // With the Knowledge Graph off this is deliberately NOT a structural
     // fallback graph: without embeddings there is no meaningful notion of
     // "near", and a structural tree would imply a meaning the data cannot
-    // support. The Index panel's counts are accurate either way.
+    // support. Keyed on the project, so a switch between two projects with no
+    // map paints the new one's card flat rather than animating its bar.
     return (
       <KnowledgeGraphNoMap
+        key={snapshot.projectId}
         mode={snapshot.semanticAvailable ? 'pending' : 'off'}
         building={snapshot.building}
-        coverage={snapshot.coverage}
+        buildProgress={snapshot.buildProgress}
         index={snapshot.index}
         projectsPicker={projectsPicker}
         onOpenSettings={onOpenSettings}
@@ -859,7 +861,6 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
           index={snapshot.index}
           semanticAvailable={snapshot.semanticAvailable}
           edgeCount={projection.edges.length}
-          building={snapshot.building}
           projectsPicker={projectsPicker}
           onOpenSettings={onOpenSettings}
         />

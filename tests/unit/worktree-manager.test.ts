@@ -146,7 +146,7 @@ vi.mock('node:child_process', () => ({
       const ref = commandArgs[commandArgs.length - 1];
       const branch = ref.startsWith('origin/') ? ref.slice('origin/'.length) : null;
       const alreadyFetched = branch !== null && recordedSpawnCalls.some(
-        (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === branch,
+        (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[call.args.length - 1] === branch,
       );
       if (alreadyFetched) {
         callback?.(null, { stdout: 'abc1234\n', stderr: '' });
@@ -166,7 +166,15 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
   removeNodeModulesPath: vi.fn(() => Promise.resolve()),
 }));
 
+// The installed git version picks the sparse-checkout command form. Default to a
+// current git; tests of the older form override it with mockResolvedValueOnce.
+vi.mock('../../src/main/git/git-version', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-version')>()),
+  getInstalledGitVersion: vi.fn(() => Promise.resolve('2.51.0')),
+}));
+
 import fs from 'node:fs';
+import os from 'node:os';
 import {
   WorktreeManager,
   GitQueuePriority,
@@ -177,6 +185,8 @@ import type { WorktreeHolder } from '../../src/main/git/zombie-reaper';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 import { linkNodeModules } from '../../src/main/git/node-modules-link';
+import { getInstalledGitVersion } from '../../src/main/git/git-version';
+import { isAbortError } from '../../src/shared/abort-utils';
 import { worktreeFolderFromPath } from '../../src/shared/worktree-folder';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -225,22 +235,81 @@ describe('WorktreeManager -- sparse-checkout', () => {
     vi.clearAllMocks();
   });
 
-  it('initializes sparse-checkout with --no-cone and excludes .claude/commands/', async () => {
+  /** Every sparse-checkout call the worktree git received, in order. */
+  function sparseCheckoutCalls(): string[][] {
+    return mockWorktreeGit.raw.mock.calls
+      .map((call: string[][]) => call[0])
+      .filter((args: string[]) => args[0] === 'sparse-checkout');
+  }
+
+  it('on git 2.35+ applies sparse-checkout in one `set --no-cone` pass that excludes only .claude/commands/', async () => {
     setupCreateWorktreeMocks();
+
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    // No `init`: its top-level-only default would delete the whole tree and
+    // `set` would write it back. Skills and agents do NOT walk up the
+    // directory tree, so only commands/ is excluded.
+    expect(sparseCheckoutCalls()).toEqual([
+      ['sparse-checkout', 'set', '--no-cone', '/*', '!/.claude/commands/'],
+    ]);
+  });
+
+  it('on git before 2.35 keeps `init --no-cone` + `set`, because older `set` stores `--no-cone` as a pattern', async () => {
+    setupCreateWorktreeMocks();
+    vi.mocked(getInstalledGitVersion).mockResolvedValueOnce('2.34.1');
 
     const mgr = new WorktreeManager('/project');
     await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
-    // Verify sparse-checkout init was called
-    expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
-      'sparse-checkout', 'init', '--no-cone',
+    expect(sparseCheckoutCalls()).toEqual([
+      ['sparse-checkout', 'init', '--no-cone'],
+      ['sparse-checkout', 'set', '/*', '!/.claude/commands/'],
     ]);
+  });
 
-    // Verify sparse-checkout set was called to exclude .claude/commands/ only
-    // (skills and agents do NOT walk up the directory tree, so they must stay in worktrees)
-    expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
-      'sparse-checkout', 'set', '/*', '!/.claude/commands/',
+  it('on git 2.35.0 exactly, the first release that accepts `set --no-cone`, uses the single pass', async () => {
+    // The 2.34.1 case above only proves the form below the boundary. Without this
+    // one a gate raised a release too far would still pass both, and git 2.35.0
+    // would pay the `init` pass that deletes and rewrites the whole tree.
+    setupCreateWorktreeMocks();
+    vi.mocked(getInstalledGitVersion).mockResolvedValueOnce('2.35.0');
+
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(sparseCheckoutCalls()).toEqual([
+      ['sparse-checkout', 'set', '--no-cone', '/*', '!/.claude/commands/'],
     ]);
+  });
+
+  it('keeps `init --no-cone` + `set` when the git version is unknown', async () => {
+    setupCreateWorktreeMocks();
+    vi.mocked(getInstalledGitVersion).mockResolvedValueOnce(null);
+
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(sparseCheckoutCalls()).toEqual([
+      ['sparse-checkout', 'init', '--no-cone'],
+      ['sparse-checkout', 'set', '/*', '!/.claude/commands/'],
+    ]);
+  });
+
+  it('a sparse-checkout failure is non-fatal and the worktree is still created', async () => {
+    setupCreateWorktreeMocks();
+    mockWorktreeGit.raw.mockImplementation((args: string[]) => (
+      args[0] === 'sparse-checkout'
+        ? Promise.reject(new Error("fatal: Unable to create '.../info/sparse-checkout.lock'"))
+        : Promise.resolve('')
+    ));
+
+    const worktreeManager = new WorktreeManager('/project');
+    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
+
+    expect(result.worktreePath).toBeDefined();
+    expect(fs.promises.copyFile).toHaveBeenCalledTimes(1);
   });
 
   it('sparse-checkout runs before copyFiles', async () => {
@@ -249,21 +318,17 @@ describe('WorktreeManager -- sparse-checkout', () => {
     const mgr = new WorktreeManager('/project');
     await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
 
-    // Find the call order indices
-    const calls = mockWorktreeGit.raw.mock.calls;
-    const sparseInitIdx = calls.findIndex(
-      (c: string[][]) => c[0]?.[0] === 'sparse-checkout' && c[0]?.[1] === 'init',
+    // Cross-mock order: the sparse `set` must land before the first copied file,
+    // or a later sparse pass could act on a tree copyFiles already wrote into.
+    const rawCalls = mockWorktreeGit.raw.mock.calls;
+    const sparseSetIndex = rawCalls.findIndex(
+      (call: string[][]) => call[0]?.[0] === 'sparse-checkout' && call[0]?.[1] === 'set',
     );
-    const sparseSetIdx = calls.findIndex(
-      (c: string[][]) => c[0]?.[0] === 'sparse-checkout' && c[0]?.[1] === 'set',
-    );
-
-    // sparse-checkout should have been called
-    expect(sparseInitIdx).toBeGreaterThanOrEqual(0);
-    expect(sparseSetIdx).toBeGreaterThan(sparseInitIdx);
-
-    // copyFile (async) should have been called (for README.md)
+    expect(sparseSetIndex).toBeGreaterThanOrEqual(0);
     expect(fs.promises.copyFile).toHaveBeenCalled();
+    const sparseSetOrder = mockWorktreeGit.raw.mock.invocationCallOrder[sparseSetIndex];
+    const firstCopyOrder = vi.mocked(fs.promises.copyFile).mock.invocationCallOrder[0];
+    expect(sparseSetOrder).toBeLessThan(firstCopyOrder);
   });
 
   it('skips .claude/ entries in copyFiles', async () => {
@@ -311,6 +376,85 @@ describe('WorktreeManager -- sparse-checkout', () => {
       (c) => String(c[0]).includes('.claude'),
     );
     expect(rmCalls).toHaveLength(0);
+  });
+});
+
+describe('WorktreeManager -- parallel checkout workers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** The `git worktree add` argument list the project git received. */
+  function worktreeAddArgs(): string[] {
+    const call = mockProjectGit.raw.mock.calls.find(
+      (candidate: string[][]) => candidate[0]?.includes('worktree') && candidate[0]?.includes('add'),
+    );
+    expect(call).toBeDefined();
+    return call![0];
+  }
+
+  it.each([
+    [16, 'checkout.workers=8'],
+    [4, 'checkout.workers=4'],
+  ])('with %i cores passes -c %s before `worktree add`', async (cores, expected) => {
+    setupCreateWorktreeMocks();
+    vi.spyOn(os, 'availableParallelism').mockReturnValue(cores);
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    const args = worktreeAddArgs();
+    const configIndex = args.indexOf(expected);
+    expect(configIndex).toBeGreaterThan(0);
+    expect(args[configIndex - 1]).toBe('-c');
+    expect(configIndex).toBeLessThan(args.indexOf('worktree'));
+  });
+
+  it('passes the workers to the attach form of `worktree add` as well', async () => {
+    // The `-b` form above is only half the call sites. A task re-entering a
+    // column after a Done round-trip, and a creation retried after an aborted
+    // post-worktree script, find their branch already there and take the attach
+    // form instead.
+    setupCreateWorktreeMocks();
+    vi.spyOn(os, 'availableParallelism').mockReturnValue(16);
+    // Every project git call resolves, `rev-parse --verify` included: the branch exists.
+    mockProjectGit.raw.mockImplementation(() => Promise.resolve(''));
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    const args = worktreeAddArgs();
+    // The attach form takes no `-b`, which proves this is the branch under test.
+    expect(args).not.toContain('-b');
+    const configIndex = args.indexOf('checkout.workers=8');
+    expect(configIndex).toBeGreaterThan(0);
+    expect(args[configIndex - 1]).toBe('-c');
+    expect(configIndex).toBeLessThan(args.indexOf('worktree'));
+  });
+
+  it('passes no checkout.workers on a single core', async () => {
+    setupCreateWorktreeMocks();
+    vi.spyOn(os, 'availableParallelism').mockReturnValue(1);
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(worktreeAddArgs().some((arg) => arg.startsWith('checkout.workers='))).toBe(false);
+  });
+
+  it('leaves a checkout.workers the user configured in charge', async () => {
+    setupCreateWorktreeMocks();
+    vi.spyOn(os, 'availableParallelism').mockReturnValue(16);
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') return Promise.reject(new Error('fatal: not a valid object name'));
+      if (args[0] === 'config' && args[1] === '--get' && args[2] === 'checkout.workers') return Promise.resolve('2\n');
+      return Promise.resolve('');
+    });
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(worktreeAddArgs().some((arg) => arg.startsWith('checkout.workers='))).toBe(false);
   });
 });
 
@@ -426,10 +570,29 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
 
     controller.abort();
 
-    // The abort propagates through runInitScript's externalAbortHandler, which
-    // aborts the internal controller, which triggers the child's AbortError event,
-    // which makes runInitScript reject with "external abort".
-    await expect(creationPromise).rejects.toThrow(/external abort/);
+    // The abort reaches runInitScript, which rejects with "external abort", and
+    // createWorktree reports it as an AbortError, NOT a failure. Callers skip
+    // their failure handling for an AbortError; task-move's failure handling
+    // queues a stale cleanup that ran after the superseding move's own create
+    // job and deleted the worktree and branch it had just made (reproduced in
+    // /preview, twice in two runs).
+    const rejection = await creationPromise.catch((error: unknown) => error);
+    expect(isAbortError(rejection)).toBe(true);
+  });
+
+  it('a script that fails on its own is still a failure, not an abort', async () => {
+    spawnOverrides.push({
+      match: (_args, command) => command === 'failing-script',
+      behavior: { exitCode: 1, stderr: 'boom' },
+    });
+
+    const rejection = await new WorktreeManager('/project').createWorktree(
+      worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null,
+      { initScript: 'failing-script', signal: new AbortController().signal },
+    ).catch((error: unknown) => error);
+
+    expect(isAbortError(rejection)).toBe(false);
+    expect(String(rejection)).toMatch(/code 1.*boom/s);
   });
 });
 
@@ -460,7 +623,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     // Fetch now goes through child_process.spawn (runGitWithTimeout), not git.raw
     const fetchSpawn = recordedSpawnCalls.find(
-      (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === 'develop',
+      (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[call.args.length - 1] === 'develop',
     );
     expect(fetchSpawn).toBeDefined();
 
@@ -478,7 +641,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     // Make the spawn-based fetch fail with a non-zero exit code
     spawnOverrides.push({
-      match: (args) => args[0] === 'fetch' && args[1] === 'origin',
+      match: (args) => args[0] === 'fetch' && args.includes('origin'),
       behavior: { exitCode: 128, stderr: 'fatal: no remote' },
     });
 
@@ -505,7 +668,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     mockWorktreeGit.raw.mockResolvedValue('');
     spawnOverrides.push({
-      match: (args) => args[0] === 'fetch' && args[1] === 'origin',
+      match: (args) => args[0] === 'fetch' && args.includes('origin'),
       behavior: { exitCode: 128, stderr: "fatal: unable to access 'https://github.com/acme/app.git/': Could not resolve host: github.com" },
     });
     mockProjectGit.raw.mockImplementation((args: string[]) => {
@@ -553,7 +716,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
     expect(outcomes).toEqual([{ kind: 'fetched' }]);
   });
 
-  it('stores kangentic.baseBranch in worktree git config', async () => {
+  it('stores kangentic.baseBranch in the worktree\'s OWN config, after sparse-checkout enables it', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     mockProjectGit.raw.mockImplementation((args: string[]) => {
       if (args[0] === 'rev-parse' && args[1] === '--verify') {
@@ -566,9 +729,34 @@ describe('WorktreeManager -- fetch and base branch', () => {
     const mgr = new WorktreeManager('/project');
     await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Config test'), 'develop');
 
-    expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
-      'config', 'kangentic.baseBranch', 'develop',
-    ]);
+    // A plain `git config` from a linked worktree writes the SHARED .git/config,
+    // so every worktree read the last-written base.
+    const calls = mockWorktreeGit.raw.mock.calls.map((call: string[][]) => call[0]);
+    const baseBranchIndex = calls.findIndex((args: string[]) => args.includes('kangentic.baseBranch'));
+    expect(calls[baseBranchIndex]).toEqual(['config', '--worktree', 'kangentic.baseBranch', 'develop']);
+    // `--worktree` needs extensions.worktreeConfig, which the sparse step turns on.
+    const sparseIndex = calls.findIndex((args: string[]) => args[0] === 'sparse-checkout');
+    expect(sparseIndex).toBeGreaterThanOrEqual(0);
+    expect(baseBranchIndex).toBeGreaterThan(sparseIndex);
+  });
+
+  it('falls back to the shared config when git refuses --worktree (sparse-checkout unavailable)', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+    mockWorktreeGit.raw.mockImplementation((args: string[]) => (
+      args[1] === '--worktree'
+        ? Promise.reject(new Error('fatal: --worktree cannot be used with multiple working trees unless the config extension worktreeConfig is enabled'))
+        : Promise.resolve('')
+    ));
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Config test'), 'develop');
+
+    expect(mockWorktreeGit.raw).toHaveBeenCalledWith(['config', 'kangentic.baseBranch', 'develop']);
   });
 
   it('kangentic.baseBranch config failure is non-fatal', async () => {
@@ -743,33 +931,20 @@ describe('WorktreeManager -- renameBranch', () => {
     errorSpy.mockRestore();
   });
 
-  it('preserves the base-branch namespace prefix when renaming', async () => {
+  it('renames an older base-folder branch into the current form', async () => {
     const mgr = new WorktreeManager('/project');
     const result = await mgr.renameBranch(
       'abcd1234-0000-0000-0000-000000000000',
       'bugfix-inacc-adjustments/old-title-abcd1234',
       'New Title',
-      { baseBranch: 'bugfix/inacc-adjustments', defaultBaseBranch: 'main' },
-    );
-
-    expect(result).toBe('bugfix-inacc-adjustments/new-title-abcd1234');
-    expect(mockProjectGit.raw).toHaveBeenCalledWith([
-      'branch', '-m',
-      'bugfix-inacc-adjustments/old-title-abcd1234',
-      'bugfix-inacc-adjustments/new-title-abcd1234',
-    ]);
-  });
-
-  it('drops the prefix when base equals the default', async () => {
-    const mgr = new WorktreeManager('/project');
-    const result = await mgr.renameBranch(
-      'abcd1234-0000-0000-0000-000000000000',
-      'old-title-abcd1234',
-      'New Title',
-      { baseBranch: 'main', defaultBaseBranch: 'main' },
     );
 
     expect(result).toBe('new-title-abcd1234');
+    expect(mockProjectGit.raw).toHaveBeenCalledWith([
+      'branch', '-m',
+      'bugfix-inacc-adjustments/old-title-abcd1234',
+      'new-title-abcd1234',
+    ]);
   });
 
   it('falls back to "task" slug when the title produces an empty slug', async () => {
@@ -969,13 +1144,13 @@ describe('WorktreeManager -- ensureWorktree', () => {
     );
 
     expect(result).toHaveProperty('worktreePath');
-    // Branch name encodes the non-default base as a namespace prefix so the
-    // worktree's origin is visible at-a-glance in git log / GitHub branch lists.
-    expect(result!.branchName).toBe('develop/test-abcd1234');
+    // The base stays out of the branch name: a 'develop/...' folder cannot
+    // coexist with a 'develop' branch (see computeAutoBranchName).
+    expect(result!.branchName).toBe('test-abcd1234');
     // Should have used 'develop' (task override) not 'main' (config default).
     // Fetch goes through child_process.spawn (runGitWithTimeout), not git.raw.
     const fetchSpawn = recordedSpawnCalls.find(
-      (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[2] === 'develop',
+      (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[call.args.length - 1] === 'develop',
     );
     expect(fetchSpawn).toBeDefined();
   });
@@ -1398,7 +1573,7 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
     expect(afterRename.branchName).not.toBe(first.branchName);
   });
 
-  it('the branch stays title-derived and namespaced while the folder stays numeric', async () => {
+  it('the branch stays title-derived on a non-default base while the folder stays numeric', async () => {
     const mgr = new WorktreeManager('/project');
 
     const result = await mgr.createWorktree(
@@ -1406,7 +1581,7 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
       'bugfix-x',
     );
 
-    expect(result.branchName).toBe('bugfix-x/fix-login-deadbeef');
+    expect(result.branchName).toBe('fix-login-deadbeef');
     expect(result.worktreeFolder).toBe('88');
   });
 

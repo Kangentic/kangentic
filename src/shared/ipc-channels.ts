@@ -583,11 +583,16 @@ export const IPC = {
    *  single-digit milliseconds across a machine's projects. */
   KNOWLEDGE_GRAPH_PROJECTS: 'knowledgeGraph:graphProjects',
   /** Ask for a background refresh of one project's projection. Returns
-   *  immediately; completion arrives via KNOWLEDGE_GRAPH_CHANGED. */
+   *  immediately, with a first build's progress when one runs; completion
+   *  arrives via KNOWLEDGE_GRAPH_CHANGED. */
   KNOWLEDGE_GRAPH_REFRESH: 'knowledgeGraph:graphRefresh',
   /** Push: a projection pass finished for a project. Declared in that surface's
    *  POP_OUT_SURFACES `channels` too, or a detached window never updates. */
   KNOWLEDGE_GRAPH_CHANGED: 'knowledgeGraph:graphChanged',
+  /** Push: a first build's progress, `(projectId, KnowledgeGraphBuildProgress)`,
+   *  throttled. Carries the figure, so the bar moves without a snapshot read.
+   *  Declared in the surface's `channels` too, or a detached window's bar stalls. */
+  KNOWLEDGE_GRAPH_BUILD_PROGRESS: 'knowledgeGraph:graphBuildProgress',
   KNOWLEDGE_GRAPH_ANSWER: 'knowledgeGraph:graphAnswer',
   /** Push: progress on an answer in flight - text as the agent writes it, a
    *  tool call as it starts, and a terminal `done`. Keyed by the renderer's

@@ -20,6 +20,7 @@ import {
   type SourceLineState,
 } from '../settings/tabs/index-sources';
 import type {
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphCodeStatus,
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphIndexCorpus,
@@ -130,9 +131,6 @@ export function indexSourceLines(input: IndexSourceLinesInput): CardSourceLinePr
 }
 
 export interface IndexMapLinesInput {
-  /** A map has been drawn for this scope. */
-  hasMap: boolean;
-  building: boolean;
   edgeCount: number;
   coverage: KnowledgeGraphCoverageSummary;
   storageBytes: number;
@@ -142,13 +140,15 @@ const LINKS_INFO = 'Links are computed in full embedding dimensionality and are 
 const TRANSCRIPT_GONE_INFO = 'The agent\'s transcript file is gone, but the indexed text and its embeddings are still here and still searchable.';
 const NOT_YET_INDEXED_INFO = 'The background sweep has not reached these conversations yet.';
 
-/** What only the map has: its links (or that it is being built), and what the index holds beyond the sources. */
+/**
+ * What only the map has: its links, and what the index holds beyond the
+ * sources. The Index panel shows only on a map; while there is none, the
+ * centre card says so.
+ */
 export function indexMapLines(input: IndexMapLinesInput): CardSourceLineProps[] {
-  const { hasMap, building, edgeCount, coverage, storageBytes } = input;
+  const { edgeCount, coverage, storageBytes } = input;
   const lines: CardSourceLineProps[] = [
-    hasMap
-      ? { label: 'Links', info: LINKS_INFO, value: edgeCount.toLocaleString(), testId: 'knowledge-graph-index-fact-map' }
-      : { label: 'Map', value: building ? 'Building' : 'No map yet', testId: 'knowledge-graph-index-fact-map' },
+    { label: 'Links', info: LINKS_INFO, value: edgeCount.toLocaleString(), testId: 'knowledge-graph-index-fact-map' },
   ];
   if (coverage.sourceMissingButSearchable.documents > 0) {
     lines.push({ label: 'Transcript gone', info: TRANSCRIPT_GONE_INFO, value: coverage.sourceMissingButSearchable.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-transcript-gone' });
@@ -163,4 +163,20 @@ export function indexMapLines(input: IndexMapLinesInput): CardSourceLineProps[] 
     lines.push({ label: 'Size on disk', value: formatBytes(storageBytes), testId: 'knowledge-graph-index-fact-size' });
   }
   return lines;
+}
+
+const BUILD_STAGE_LABELS: Record<KnowledgeGraphBuildProgress['stage'], string> = {
+  reading: 'Reading conversations',
+  placing: 'Placing conversations',
+  naming: 'Naming regions',
+};
+
+/**
+ * The building card's status row: what the first build is doing and how far it
+ * has got. Before its first figure arrives it reads as just begun.
+ */
+export function buildProgressRow(progress: KnowledgeGraphBuildProgress | null): { label: string; value: string; percent: number } {
+  const stage = progress?.stage ?? 'reading';
+  const percent = Math.max(0, Math.min(99, progress?.percent ?? 0));
+  return { label: BUILD_STAGE_LABELS[stage], value: `${percent}%`, percent };
 }

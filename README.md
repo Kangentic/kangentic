@@ -93,7 +93,7 @@ Bring your own backlog. Pull tasks in from the tools your team already uses, inc
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+ (for npx)
-- [Git 2.25+](https://git-scm.com/)
+- [Git 2.26+](https://git-scm.com/)
 - At least one supported agent CLI (see [Supported Agents](#supported-agents))
 
 ## Setup

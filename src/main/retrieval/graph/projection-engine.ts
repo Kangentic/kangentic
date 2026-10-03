@@ -26,7 +26,7 @@
 
 import type { DocSumRow, DocSumWrite, RetrievalStore } from '../retrieval-store';
 import { CONVERSATION_CORPUS } from '../corpora';
-import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
+import type { KnowledgeGraphBuildProgress, KnowledgeGraphNode, KnowledgeGraphProjection } from '../../../shared/types';
 import { KNOWLEDGE_GRAPH_GRANULARITIES } from '../../../shared/types';
 import {
   addVectorInto,
@@ -156,7 +156,30 @@ export interface ProjectionPassDeps {
   /** Awaited before each sums write: the worker's background writes share one
    *  turn of the lock (`write-budget.ts`). None in tests. */
   readonly awaitWriteTurn?: () => Promise<void>;
+  /** How far the pass has got, for a first build's progress row. */
+  readonly onProgress?: (progress: ProjectionProgress) => void;
 }
+
+/**
+ * How far a pass has got. `reading` is the share of the conversations' vectors
+ * whose sums are in hand, weighted by vectors because one long conversation can
+ * hold more of them than a hundred short ones. `placing` is the share of the
+ * steps after it: the neighbours, the layout, the metadata, the regions.
+ */
+export interface ProjectionProgress {
+  /** The build's stages but naming, which runs after the pass. */
+  readonly stage: Exclude<KnowledgeGraphBuildProgress['stage'], 'naming'>;
+  /** 0 to 1. */
+  readonly fraction: number;
+}
+
+/**
+ * Where each step after reading ends, as a share of `placing`: the neighbours
+ * take the first half, then the layout and the metadata, and each
+ * granularity's regions the rest. Placing is a few seconds against the minutes
+ * reading takes, so the split is coarse.
+ */
+const PLACING_DONE_AFTER = { neighbors: 0.5, layout: 0.75, metadata: 0.85 } as const;
 
 /** A document's sums as a pass holds them. */
 interface DocumentSums {
@@ -339,6 +362,10 @@ export interface ProjectionReadCounts {
  * Every conversation's sums: the stored ones that still hold, and the changed
  * and new documents read again, each stored as it is read. Stored rows of
  * documents gone from the index are deleted. Paged and paced throughout.
+ *
+ * `reportRead` gets the share of the vectors whose sums are in hand. Stored
+ * sums count as read, so a first build cut short and started again begins
+ * where the stored ones end rather than at nothing.
  */
 async function readDocumentSums(
   store: RetrievalStore,
@@ -348,6 +375,7 @@ async function readDocumentSums(
   pace: (workedMs: number) => Promise<void>,
   aborted: () => boolean,
   awaitWriteTurn: (() => Promise<void>) | undefined,
+  reportRead: (fraction: number) => void,
 ): Promise<{ sums: Map<string, DocumentSums>; embeddedChunks: number; counts: ProjectionReadCounts } | null> {
   // Both are index reads: the counts come off the covering
   // (corpus, doc_id, embedded_model) index, about 10 ms on 94k chunks.
@@ -379,6 +407,11 @@ async function readDocumentSums(
     await pace(Date.now() - startedAt);
   }
 
+  let vectorsInHand = 0;
+  for (const docId of sums.keys()) vectorsInHand += live.get(docId)?.embeddedCount ?? 0;
+  const report = (): void => reportRead(embeddedChunks === 0 ? 1 : vectorsInHand / embeddedChunks);
+  report();
+
   const counts: ProjectionReadCounts = { documents: live.size, documentsRead: 0, vectorsRead: 0 };
   for (const document of live.values()) {
     if (sums.has(document.docId)) continue;
@@ -390,6 +423,8 @@ async function readDocumentSums(
     if (awaitWriteTurn) await awaitWriteTurn();
     if (aborted()) return null;
     timeSyncWork('graph:write-sums', () => store.writeDocSums('conversation', [read.write]));
+    vectorsInHand += document.embeddedCount;
+    report();
   }
   if (gone.length > 0) await store.deleteDocSums('conversation', gone, awaitWriteTurn, () => !aborted());
   return { sums, embeddedChunks, counts };
@@ -411,11 +446,13 @@ export async function runProjectionPass(
   // No single step may hold the worker for more than a slice; each is followed
   // by a sleep that keeps the pass to its share of wall time.
   const pace = (workedMs: number): Promise<void> => delay(computeProjectionSleepMs(workedMs, dutyCycle));
+  const reportRead = (fraction: number): void => deps.onProgress?.({ stage: 'reading', fraction });
+  const reportPlacing = (fraction: number): void => deps.onProgress?.({ stage: 'placing', fraction });
 
   // The map is drawn from conversations. Task records and session changes are
   // searched, never drawn, so they stay out of the scan and out of the
   // signature: a board edit must not rebuild the map.
-  const documents = await readDocumentSums(store, modelTag, dimensions, scanBatch, pace, aborted, deps.awaitWriteTurn);
+  const documents = await readDocumentSums(store, modelTag, dimensions, scanBatch, pace, aborted, deps.awaitWriteTurn, reportRead);
   if (documents === null || aborted()) return null;
 
   const accumulator = createMeanPoolAccumulator(dimensions);
@@ -425,8 +462,13 @@ export async function runProjectionPass(
     if (document.fullSum) setDocumentSum(accumulator, `conversation::${docId}`, document.fullSum, document.foldedCount);
   }
 
+  // Placing reports at the end of each step (`PLACING_DONE_AFTER`).
   const pooled = finalizeMeanPool(accumulator);
-  const neighbors = await computeNeighborsChunked(pooled.matrix, pooled.rowCount, dimensions, delay, dutyCycle, aborted);
+  reportPlacing(0);
+  const neighbors = await computeNeighborsChunked(
+    pooled.matrix, pooled.rowCount, dimensions, delay, dutyCycle, aborted,
+    (rowsDone) => reportPlacing(PLACING_DONE_AFTER.neighbors * (rowsDone / pooled.rowCount)),
+  );
   if (neighbors === null) return null;
 
   // ONE layout, in three components. Measured on the real 638-document corpus,
@@ -446,6 +488,7 @@ export async function runProjectionPass(
   );
   if (embedded === null) return null;
   const positions = fitLayoutToPercentileBoxN(embedded, pooled.rowCount, LAYOUT_COMPONENTS);
+  reportPlacing(PLACING_DONE_AFTER.layout);
 
   // Metadata is what turns a point into something worth clicking: a title to
   // read, a session to open, a timestamp to colour by. Read a page of
@@ -461,6 +504,7 @@ export async function runProjectionPass(
     afterDocId = page[page.length - 1].docId;
     await pace(Date.now() - startedAt);
   }
+  reportPlacing(PLACING_DONE_AFTER.metadata);
 
   // Clustered in the SAME space the map is drawn in, so a label always names the
   // blob the eye sees. While a flat view existed this had to be done in 2D and
@@ -496,6 +540,8 @@ export async function runProjectionPass(
     const assignment = assignClusters(positions, pooled.rowCount, clusterCount, LAYOUT_COMPONENTS);
     const regions = labelClusters(assignment, labelSources, positions, LAYOUT_COMPONENTS);
     clusterings.push({ granularity, assignment, regions });
+    const regionsDone = clusterings.length / KNOWLEDGE_GRAPH_GRANULARITIES.length;
+    reportPlacing(PLACING_DONE_AFTER.metadata + (1 - PLACING_DONE_AFTER.metadata) * regionsDone);
     await pace(Date.now() - startedAt);
   }
 
@@ -595,6 +641,7 @@ async function computeNeighborsChunked(
   delay: (ms: number) => Promise<void>,
   dutyCycle: number,
   aborted: () => boolean,
+  onRowsDone: (rowsDone: number) => void,
 ): Promise<ReturnType<typeof computeCosineNeighbors> | null> {
   if (rowCount === 0) return [];
   const lists: ReturnType<typeof computeCosineNeighbors> = [];
@@ -608,6 +655,7 @@ async function computeNeighborsChunked(
     // corpus, so the result is identical to an unchunked pass.
     const slice = computeCosineNeighbors(matrix, rowCount, dimensions, NEIGHBOR_COUNT, start, end);
     lists.push(...slice);
+    onRowsDone(end);
 
     await delay(computeProjectionSleepMs(Date.now() - startedAt, dutyCycle));
   }

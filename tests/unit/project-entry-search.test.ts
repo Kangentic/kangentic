@@ -94,6 +94,59 @@ describe('searchProjectEntries', () => {
     expect(paths.some((entryPath) => entryPath.startsWith('.kangentic/'))).toBe(false);
   });
 
+  it('leaves out tracked files sparse-checkout keeps off disk, as in a task worktree', async () => {
+    // `ls-files --cached` lists skip-worktree entries too, so a task worktree's
+    // file picker offered `.claude/commands/` files that were not there.
+    const cwd = makeTempDir('kangentic-project-search-sparse-');
+    runGit(cwd, ['init']);
+    runGit(cwd, ['config', 'user.email', 'dev@example.com']);
+    runGit(cwd, ['config', 'user.name', 'Dev']);
+    runGit(cwd, ['config', 'core.excludesFile', path.join(cwd, 'no-global-excludes')]);
+    writeFile(cwd, 'src/keep.ts', 'export {};');
+    writeFile(cwd, '.claude/commands/review.md', '# review');
+    writeFile(cwd, '.claude/skills/review/SKILL.md', '# skill');
+    runGit(cwd, ['add', '-A']);
+    runGit(cwd, ['commit', '-m', 'init']);
+    // `init` then `set`: git before 2.35 (the supported floor is 2.26) stores
+    // `set --no-cone` as a pattern, the reason worktree-manager.ts gates that form.
+    runGit(cwd, ['sparse-checkout', 'init', '--no-cone']);
+    runGit(cwd, ['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
+    writeFile(cwd, 'untracked-note.md', 'note');
+    expect(fs.existsSync(path.join(cwd, '.claude', 'commands', 'review.md'))).toBe(false);
+
+    const result = await searchProjectEntries({ cwd, query: '', limit: 100 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    expect(paths).toContain('src/keep.ts');
+    expect(paths).toContain('.claude/skills/review/SKILL.md');
+    expect(paths).toContain('untracked-note.md');
+    expect(paths).not.toContain('.claude/commands/review.md');
+    expect(paths).not.toContain('.claude/commands');
+  });
+
+  it('keeps a skip-worktree file that is still on disk', async () => {
+    // `git update-index --skip-worktree` is also how developers keep local edits to a
+    // tracked file (a config) out of git status. That file is on disk and must stay
+    // searchable; only entries sparse-checkout actually left off disk are dropped.
+    const cwd = makeTempDir('kangentic-project-search-skip-worktree-');
+    runGit(cwd, ['init']);
+    runGit(cwd, ['config', 'user.email', 'dev@example.com']);
+    runGit(cwd, ['config', 'user.name', 'Dev']);
+    runGit(cwd, ['config', 'core.excludesFile', path.join(cwd, 'no-global-excludes')]);
+    writeFile(cwd, 'config/local-settings.json', '{}');
+    writeFile(cwd, 'src/keep.ts', 'export {};');
+    runGit(cwd, ['add', '-A']);
+    runGit(cwd, ['commit', '-m', 'init']);
+    runGit(cwd, ['update-index', '--skip-worktree', 'config/local-settings.json']);
+    writeFile(cwd, 'config/local-settings.json', '{"mine":true}');
+
+    const result = await searchProjectEntries({ cwd, query: '', limit: 100 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    expect(paths).toContain('config/local-settings.json');
+    expect(paths).toContain('src/keep.ts');
+  });
+
   it('tracks truncation when matches exceed the provided limit', async () => {
     const cwd = makeTempDir('kangentic-project-search-limit-');
     writeFile(cwd, 'src/components/Composer.tsx');

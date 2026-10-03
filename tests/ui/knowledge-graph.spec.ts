@@ -33,6 +33,8 @@ function bucket(documents: number, chunks: number, tone: string): string {
 function snapshotScript(options: {
   projection?: string;
   building?: boolean;
+  /** A first build's progress, as a JS literal (`null` when none runs). */
+  buildProgress?: string;
   semanticAvailable?: boolean;
   stale?: boolean;
   /** Whether the answering agent and model are chosen. They have no fallback,
@@ -52,6 +54,7 @@ function snapshotScript(options: {
   const {
     projection = 'null',
     building = false,
+    buildProgress = 'null',
     semanticAvailable = true,
     stale = false,
     answerAgentChosen = true,
@@ -74,6 +77,7 @@ function snapshotScript(options: {
         projectId: 'project-1',
         projection: ${projection},
         building: ${building},
+        buildProgress: ${buildProgress},
         stale: ${stale},
         semanticAvailable: ${semanticAvailable},
         coverage: {
@@ -356,7 +360,7 @@ async function openKnowledgeGraph(page: Page): Promise<void> {
 
 test.describe('knowledge graph', () => {
   test('opens from the title bar and shows reconciled counts in the Index panel', async () => {
-    const { browser, page } = await launchWithState(snapshotScript());
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
@@ -365,7 +369,7 @@ test.describe('knowledge graph', () => {
       // The reconciled total, not the naive memory_index_state read (224).
       await expect(conversations).toHaveText('638');
       // The full-width strip that carried its own copy of these counts is gone:
-      // the Index panel is their one home, with or without a map.
+      // on the map the Index panel is their one home.
       await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -397,12 +401,10 @@ test.describe('knowledge graph', () => {
       await expect(card).toContainText('Knowledge Graph');
       await expect(card).toContainText('Off');
       await expect(card).toContainText('Places conversations by meaning');
-      // The counts are still accurate and still shown, in the Index panel.
-      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      await expect(page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]')).toHaveText('638');
-      // The waiting sources say what they wait for, as Settings does.
-      await expect(page.locator('[data-testid="knowledge-graph-index-source-summaries"]')).toContainText('Needs the Knowledge Graph');
-      await page.keyboard.press('Escape');
+      // No map, so no left panel: the off card is the one thing on the screen,
+      // and the Index card arrives with a map.
+      await expect(page.locator('[data-testid="knowledge-graph-index-toggle"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="knowledge-graph-no-map-panel"]')).toHaveCount(0);
       // One button, not a paragraph, to where it is switched on.
       await page.locator('[data-testid="knowledge-graph-off-settings"]').click();
       await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
@@ -412,43 +414,233 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('shows a building card and opens the Index beside it on the first pass', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ building: true, stale: true }));
+  test('shows the first build in one centred card: its progress, what the index holds, and Settings', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({
+      building: true,
+      stale: true,
+      buildProgress: "{ pass: 1, stage: 'reading', percent: 41 }",
+    }));
     try {
       await openKnowledgeGraph(page);
       const card = page.locator('[data-testid="knowledge-graph-building-card"]');
       await expect(card).toContainText('Building the map');
-      await expect(page.locator('[data-testid="knowledge-graph-building-conversations-value"]')).toHaveText('638');
-      await expect(page.locator('[data-testid="knowledge-graph-building-embeddings-value"]')).toHaveText('51,365');
-      // While the map builds, the counts are what there is to look at, so the
-      // Index opens on its own (on the map it starts closed).
-      const panel = page.locator('[data-testid="knowledge-graph-index-panel"]');
-      await expect(panel).toBeVisible();
-      await expect(page.locator('[data-testid="knowledge-graph-index-fact-map"]')).toContainText('Building');
-      // The card sits beside the open panel rather than under it.
+      await expect(page.locator('[data-testid="knowledge-graph-building-progress-label"]')).toHaveText('Reading conversations');
+      await expect(page.locator('[data-testid="knowledge-graph-building-progress-text"]')).toHaveText('41%');
+      // The Index panel's own lines, in the card: the one place they show
+      // while there is no map.
+      await expect(card.locator('[data-testid="knowledge-graph-index-source-conversations-value"]')).toHaveText('638');
+      await expect(card.locator('[data-testid="knowledge-graph-building-settings"]')).toBeVisible();
+      await expect(page.locator('[data-testid="knowledge-graph-index-toggle"]')).toHaveCount(0);
+      // On the page centre, the line the map's Ask box sits on.
       await expect.poll(async () => {
-        const panelBox = await panel.boundingBox();
-        const cardBox = await card.boundingBox();
-        return panelBox && cardBox ? cardBox.x - (panelBox.x + panelBox.width) : null;
-      }).toBeGreaterThanOrEqual(0);
+        const bodyBox = await page.locator('[data-testid="knowledge-graph-body"]').boundingBox();
+        const cardBox = await page.locator('[data-testid="knowledge-graph-no-map"]').boundingBox();
+        return bodyBox && cardBox ? Math.abs((cardBox.x + cardBox.width / 2) - (bodyBox.x + bodyBox.width / 2)) : null;
+      }).toBeLessThanOrEqual(2);
     } finally {
       await browser.close();
     }
   });
 
-  test('in a window too narrow for both, the first build leaves the Index closed and the card uncovered', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ building: true, stale: true }));
+  test('at the 900 x 600 floor the building card clears the Projects picker and fits', async () => {
+    // Conversations still embedding as well as tasks: two tracks, the tallest
+    // the card gets while the summaries and code wait for an agent.
+    const twoTracks = snapshotScript({ building: true, stale: true }).replace(
+      "{ corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 51365, embeds: true }",
+      "{ corpus: 'conversation', documents: 638, chunks: 51365, embeddedChunks: 50000, embeds: true }",
+    );
+    const { browser, page } = await launchWithState(`${twoTracks}
+      window.__mockPreConfigure(function () {
+        return {
+          knowledgeGraphProjects: [
+            { id: 'project-1', name: 'Kangentic', conversations: 638, taskRecords: 412, lastActivityMs: 1700000100000 },
+            { id: 'project-2', name: 'Mobile App', conversations: 10, taskRecords: 12, lastActivityMs: 1700000050000 },
+          ],
+        };
+      });`);
     try {
       await page.setViewportSize({ width: 900, height: 600 });
       await openKnowledgeGraph(page);
-      const card = page.locator('[data-testid="knowledge-graph-building-card"]');
-      await expect(card).toContainText('Building the map');
-      await expect(page.locator('[data-testid="knowledge-graph-index-panel"]')).toHaveCount(0);
-      // Centred beside the left panel, as the other no-map states are.
+      await expect(page.locator('[data-testid="knowledge-graph-building-card"]')).toBeVisible();
       const panelBox = (await page.locator('[data-testid="knowledge-graph-no-map-panel"]').boundingBox())!;
-      const cardBox = (await card.boundingBox())!;
+      const cardBox = (await page.locator('[data-testid="knowledge-graph-no-map"]').boundingBox())!;
+      const bodyBox = (await page.locator('[data-testid="knowledge-graph-body"]').boundingBox())!;
       expect(cardBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width);
       expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(900);
+      // Open Settings in view without scrolling, with a track on two lines as
+      // a real first build shows (Conversations and Tasks both embedding).
+      expect(cardBox.y).toBeGreaterThanOrEqual(bodyBox.y);
+      expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(bodyBox.y + bodyBox.height);
+      // And no scrollbar: the centring box's padding fits too.
+      const overflow = await page.locator('[data-testid="knowledge-graph-no-map"]').evaluate((card) => {
+        const scroller = card.closest('.overflow-y-auto');
+        return scroller ? scroller.scrollHeight - scroller.clientHeight : null;
+      });
+      expect(overflow).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a first build shows its building card straight from main\'s answer, never "No map yet" first', async () => {
+    // Red-green: paint the read before asking main to build (the old order)
+    // and the empty card shows until a push arrives, which the observer sees.
+    const { browser, page } = await launchWithState(`${snapshotScript()}
+      window.__mockRefreshGraphResult = { pass: 1, stage: 'reading', percent: 0 };`);
+    try {
+      await page.evaluate(() => {
+        const flags = window as unknown as { __emptyCardSeen: boolean };
+        flags.__emptyCardSeen = false;
+        new MutationObserver(() => {
+          if (document.querySelector('[data-testid="knowledge-graph-empty-card"]')) flags.__emptyCardSeen = true;
+        }).observe(document.body, { childList: true, subtree: true });
+      });
+      await openKnowledgeGraph(page);
+      await expect(page.locator('[data-testid="knowledge-graph-building-progress-text"]')).toHaveText('0%');
+      expect(await page.evaluate(() => (window as unknown as { __emptyCardSeen: boolean }).__emptyCardSeen)).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('moves the bar on a progress push, and turns a screen with no map into the building card', async () => {
+    const { browser, page } = await launchWithState(snapshotScript());
+    try {
+      await openKnowledgeGraph(page);
+      await expect(page.locator('[data-testid="knowledge-graph-empty-card"]')).toBeVisible();
+      const fire = (stage: string, percent: number) => page.evaluate(({ stage: pushedStage, percent: pushedPercent }) => {
+        (window as unknown as { __mockFireGraphBuildProgress: (id: string, progress: unknown) => void })
+          .__mockFireGraphBuildProgress('project-1', { pass: 1, stage: pushedStage, percent: pushedPercent });
+      }, { stage, percent });
+
+      await fire('reading', 12);
+      const value = page.locator('[data-testid="knowledge-graph-building-progress-text"]');
+      await expect(value).toHaveText('12%');
+      await fire('placing', 96);
+      await expect(value).toHaveText('96%');
+      await expect(page.locator('[data-testid="knowledge-graph-building-progress-label"]')).toHaveText('Placing conversations');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * A project with no map whose first build runs, shaped like a snapshot main
+   * answers with. The Knowledge Graph is on (`semanticAvailable`) and the build
+   * is under way (`building`), so the surface draws the building card.
+   */
+  function buildingSnapshotLiteral(projectId: string, percent: number): string {
+    return `{
+      projectId: '${projectId}',
+      projection: null,
+      building: true,
+      buildProgress: { pass: 1, stage: 'reading', percent: ${percent} },
+      stale: true,
+      semanticAvailable: true,
+      coverage: {
+        indexed: ${bucket(0, 0, 'ok')},
+        sourceMissingButSearchable: ${bucket(0, 0, 'neutral')},
+        empty: ${bucket(0, 0, 'neutral')},
+        failed: ${bucket(0, 0, 'ok')},
+        notYetIndexed: ${bucket(0, 0, 'ok')},
+        totalDocumentsWithChunks: 0,
+        totalChunks: 0,
+        totalEmbeddedChunks: 0,
+        embeddedFraction: 0,
+        knownDocumentIdsMatched: 0,
+      },
+      index: {
+        corpora: [
+          { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 300, embeds: true },
+          { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 0, embeds: true },
+        ],
+        summaries: { written: 0, finishedTasks: 5, skipped: 0 },
+        storageBytes: 1048576,
+      },
+    }`;
+  }
+
+  test('the building card\'s bar carries the build\'s figure, and a progress push moves it', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({
+      building: true,
+      stale: true,
+      buildProgress: "{ pass: 1, stage: 'reading', percent: 41 }",
+    }));
+    try {
+      await openKnowledgeGraph(page);
+      // Scoped to the progress tile: the source list under it draws bars of its
+      // own, so a card-wide role selector would match several.
+      const bar = page.locator('[data-testid="knowledge-graph-building-progress"] [role="progressbar"]');
+      const fill = bar.locator(':scope > div');
+      await expect(bar).toHaveAttribute('aria-valuenow', '41');
+      // The figure is drawn as well as announced: the fill's inline width.
+      await expect(fill).toHaveAttribute('style', /width:\s*41%/);
+
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireGraphBuildProgress: (id: string, progress: unknown) => void })
+          .__mockFireGraphBuildProgress('project-1', { pass: 1, stage: 'reading', percent: 63 });
+      });
+      await expect(bar).toHaveAttribute('aria-valuenow', '63');
+      await expect(fill).toHaveAttribute('style', /width:\s*63%/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a switch between two projects that both have no map remounts the building card, so the new figure paints flat', async () => {
+    // The card is keyed on the project. Without the key, React reuses the one
+    // card for both projects and its bar animates from the first project's
+    // figure to the second's (`transition-[width]`), which a project switch
+    // must not do (restore-no-animation-replay). A remount is read off the DOM
+    // node itself: an attribute set on the card before the switch is gone from
+    // the card that is there after it. No timing and no pixels.
+    const { browser, page } = await launchWithState(`${snapshotScript({
+      building: true,
+      stale: true,
+      buildProgress: "{ pass: 1, stage: 'reading', percent: 41 }",
+    })}
+      window.__mockPreConfigure(function () {
+        return {
+          knowledgeGraphSnapshotsByProject: {
+            'project-2': ${buildingSnapshotLiteral('project-2', 63)},
+          },
+        };
+      });`);
+    try {
+      await openKnowledgeGraph(page);
+      const card = page.locator('[data-testid="knowledge-graph-building-card"]');
+      const bar = page.locator('[data-testid="knowledge-graph-building-progress"] [role="progressbar"]');
+      await expect(bar).toHaveAttribute('aria-valuenow', '41');
+      await card.evaluate((element) => element.setAttribute('data-mounted-for', 'project-1'));
+      await expect(card).toHaveAttribute('data-mounted-for', 'project-1');
+
+      // Re-point the open graph at the second project, as a window following
+      // the main window's project does. The store keeps the surface mounted
+      // and swaps the snapshot in one write: no loading notice in between, so
+      // nothing but the key can remount the card. (Closing and reopening the
+      // graph would unmount the whole page and prove nothing about the key.)
+      await page.evaluate(async () => {
+        const stores = (window as unknown as {
+          __zustandStores: { knowledgeGraph: { getState: () => { loadSnapshot: (projectId: string) => Promise<void> } } };
+        }).__zustandStores;
+        await stores.knowledgeGraph.getState().loadSnapshot('project-2');
+      });
+
+      // The second project's figure is up, and it landed on a fresh card. Both
+      // arrive in one commit, so once the figure shows the tag question is
+      // settled and a single read answers it.
+      await expect(bar).toHaveAttribute('aria-valuenow', '63');
+      expect(await card.getAttribute('data-mounted-for')).toBeNull();
+
+      // Within one project the card is kept: a push moves the bar on the same
+      // node, which is what lets it animate along a single build.
+      await card.evaluate((element) => element.setAttribute('data-mounted-for', 'project-2'));
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireGraphBuildProgress: (id: string, progress: unknown) => void })
+          .__mockFireGraphBuildProgress('project-2', { pass: 1, stage: 'reading', percent: 77 });
+      });
+      await expect(bar).toHaveAttribute('aria-valuenow', '77');
+      await expect(card).toHaveAttribute('data-mounted-for', 'project-2');
     } finally {
       await browser.close();
     }
@@ -3861,6 +4053,7 @@ test.describe('knowledge graph', () => {
               projectId: 'project-2',
               projection: ${other},
               building: ${options.otherBuilding === true},
+              buildProgress: null,
               stale: false,
               semanticAvailable: true,
               coverage: {

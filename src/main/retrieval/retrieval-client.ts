@@ -19,7 +19,7 @@
  *   database's write lock, and main's own writes would otherwise wait on it
  *   until SQLite's busy timeout. The kill counts as a crash, so a worker that
  *   keeps sticking latches off rather than looping.
- * - Worker events (`graph-changed`) and, after a crash, a
+ * - Worker events (`graph-changed`, `graph-progress`) and, after a crash, a
  *   `respawned` event, so the retrieval service can replay what a new worker
  *   has not seen.
  */
@@ -42,6 +42,7 @@ import type {
   RetrievalEventName,
   RetrievalMethod,
 } from './worker/protocol';
+import type { KnowledgeGraphBuildProgress } from '../../shared/types';
 
 const SERVICE_NAME = 'kangentic-retrieval';
 const MAX_CRASHES = 3;
@@ -73,7 +74,8 @@ interface PendingCall {
 }
 
 export interface RetrievalClientEvents {
-  event: [event: RetrievalEventName, projectId: string];
+  /** `progress` comes with `graph-progress` only. */
+  event: [event: RetrievalEventName, projectId: string, progress?: KnowledgeGraphBuildProgress];
   /** A worker is up and answering (the first, or a replacement). */
   ready: [];
   /** A worker became ready after an earlier one exited. */
@@ -220,7 +222,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       return;
     }
     if (record.type === 'event') {
-      this.emit('event', record.event, record.projectId);
+      this.emit('event', record.event, record.projectId, record.progress);
       return;
     }
     if (record.type === 'slow-span') {

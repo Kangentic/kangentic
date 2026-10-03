@@ -10,6 +10,7 @@
 import { useMemo } from 'react';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import type {
+  KnowledgeGraphBuildProgress,
   KnowledgeGraphCoverageBucket,
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphGranularity,
@@ -17,7 +18,7 @@ import type {
   KnowledgeGraphIndexCorpusSummary,
   KnowledgeGraphIndexSummary,
 } from '../../../shared/types';
-import { composeIslands, type Island, type IslandSource } from './compose-islands';
+import { composeIslands, type ComposedIslands, type Island, type IslandSource } from './compose-islands';
 
 export interface GraphView {
   snapshot: KnowledgeGraphSnapshot | null;
@@ -90,6 +91,45 @@ export function sumIndex(summaries: ReadonlyArray<KnowledgeGraphIndexSummary>): 
   };
 }
 
+/**
+ * A scope's first-build progress while no map in it is ready: the least
+ * advanced of the projects building, so the bar never says more than the slowest
+ * map has done. One that has not sent a figure yet counts as just begun.
+ */
+export function leastBuildProgress(snapshots: ReadonlyArray<KnowledgeGraphSnapshot>): KnowledgeGraphBuildProgress | null {
+  let least: KnowledgeGraphBuildProgress | null = null;
+  for (const entry of snapshots) {
+    if (!entry.building || entry.projection !== null) continue;
+    const progress = entry.buildProgress;
+    if (!progress) return null;
+    if (!least || progress.percent < least.percent) least = progress;
+  }
+  return least;
+}
+
+// hmr-safe: a cache lost across a Fast Refresh costs one recomposition
+let lastComposition: { sources: ReadonlyArray<IslandSource>; composed: ComposedIslands } | null = null;
+
+/**
+ * `composeIslands`, reused while the ready maps are the same maps in the same
+ * order under the same names. A first build's progress push replaces the
+ * building project's snapshot a few times a second but never a map, and must
+ * not copy every node and edge of the maps beside it each time.
+ */
+function composeIslandsOnce(sources: ReadonlyArray<IslandSource>): ComposedIslands {
+  const held = lastComposition;
+  const unchanged = held !== null && held.sources.length === sources.length
+    && held.sources.every((source, position) => (
+      source.projectId === sources[position].projectId
+      && source.name === sources[position].name
+      && source.projection === sources[position].projection
+    ));
+  if (unchanged) return held.composed;
+  const composed = composeIslands(sources);
+  lastComposition = { sources, composed };
+  return composed;
+}
+
 export function useGraphView(): GraphView {
   const snapshot = useKnowledgeGraphStore((state) => state.snapshot);
   const openProjectId = useKnowledgeGraphStore((state) => state.projectId);
@@ -97,9 +137,10 @@ export function useGraphView(): GraphView {
   const scopeSnapshots = useKnowledgeGraphStore((state) => state.scopeSnapshots);
   const projects = useKnowledgeGraphStore((state) => state.projects);
 
-  // Recomposed only when a scoped snapshot loads or the scope changes, both
-  // rare; the composed signature moves only when a member's map does, so a
-  // recomposition that changes nothing does not rebuild the scene.
+  // Re-derived when a scoped snapshot changes, which a first build's progress
+  // push does a few times a second. The islands are composed again only when a
+  // member's map changes (`composeIslandsOnce`), and the composed signature
+  // moves only then, so the scene is not rebuilt either.
   return useMemo((): GraphView => {
     if (!scope) {
       return { snapshot, islands: null, nodeProjectIds: null, regionProjectNames: null, pendingProjectIds: [], worldExtent: 1 };
@@ -141,6 +182,7 @@ export function useGraphView(): GraphView {
       // Surface-wide "building" only while there is nothing to draw at all; a
       // project still building beside ready ones is named on its own.
       building: ready.length === 0 && snapshots.some((entry) => entry.building),
+      buildProgress: ready.length === 0 ? leastBuildProgress(snapshots) : null,
       stale: snapshots.some((entry) => entry.stale),
       semanticAvailable: snapshots.every((entry) => entry.semanticAvailable),
     };
@@ -165,7 +207,7 @@ export function useGraphView(): GraphView {
         worldExtent: 1,
       };
     }
-    const composed = composeIslands(ready);
+    const composed = composeIslandsOnce(ready);
     return {
       snapshot: { ...base, projection: composed.projection },
       islands: composed.islands,

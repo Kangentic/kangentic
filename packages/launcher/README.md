@@ -49,7 +49,7 @@ The launcher version matches the app version. Specifying a version downloads tha
 ## Prerequisites
 
 - **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** installed and on your PATH
-- **[Git 2.25+](https://git-scm.com/)** for worktree support
+- **[Git 2.26+](https://git-scm.com/)** for worktree support
 
 ## Links
 

@@ -815,6 +815,8 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, sixth pass | 674f +83014 -7629 | 5896KB, 105950 lines | 2 (0) | 672 | 1 | 30, one shard file each, 9 over tests | about 190 of 29 pack-carrying | 40 / 34 applied, 2 refuted |
 | task 529, whole branch, seventh pass | 675f +84956 -7640 | 5895KB, 105732 lines | 4 (0) | 671 | 2 | 30, one shard file each, 9 over tests, 8 resumed to finish their shards | about 140 of 29 pack-carrying | 38 raised, 31 distinct / 29 applied, 2 refuted |
 | task 529, whole branch, eighth pass | 676f +86115 -7734 | 5974KB, 107091 lines | 4 (0) | 672 | 2 | 31, one shard file each, 10 over tests, none resumed | about 110 of 30 pack-carrying | 23 raised, 22 distinct / 19 applied, 3 refuted |
+| task 529, first-build progress follow-up | 29f +1093 -287 | 192KB, 3315 lines | 11 (8) | 18 | 0 | 8 | 4 of 7 pack-carrying, 2 not reported | 20 / 19, plus 1 found while filling holes |
+| task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1140,3 +1142,29 @@ failures and sits inside the user's decision to sweep kept copies once a run. An
 said to read a closed database after the last page's pace: the loop checks its abort at the top of
 each page with no await before the read. The driver applied that last one before a test-builder,
 asked to pin it, showed no test could go red, and the checks came out again.
+
+The task 529 first-build progress row reviewed one commit on top of the merged branch. The pack in
+`.kangentic/` was gone before any UI spec or preview ran in the pass, so the driver rebuilt it,
+copied it to the session scratchpad, and gave every finder that path. The HMR auditor hit the
+25,000-token Read cap on a 2000-line call and loaded the pack in targeted ranges, as the task 734
+passes did. The correctness finder's 3 reads beyond the pack were all into window gaps: two in
+Partial files (the store's `close` and `open`, and `resolveEmbedding` in the graph service) and one
+in a Changed hunks file (the `readDocumentSums` fraction in the projection engine). That last one is
+the only read this row can charge to `HUNK_CONTEXT_LINES`. The IPC auditor's one was
+`window-broadcast.ts` by grep, outside the changed set. The performance and conventions finders did
+not report their reads, though both cite `settings-card.tsx`. The driver kept 19 of 20 candidates
+and refuted one: a width transition on the shared progress track, a file the diff did not touch,
+under a composited-motion rule that governs only the activity marks. A test-builder filling a
+coverage hole found a twentieth issue the finders missed: a repeat progress push arrives as a fresh
+object, so the identity guard meant to make it a no-op never held.
+
+The task 735 pre-PR pass is hunk-heavy: 40 of its 49 files were hunk sections. Its 259KB pack
+passed the Read tool's cap, as row six's did, so every pack-carrying finder loaded it in 6 to 9
+calls instead of the 3 its prompt sized. Of the 10 file reads beyond the pack, 3 were outside the
+changed set (`task-git.ts`, `task-move.ts`, `child-tree-stop.ts`). The other 7 were gaps in
+hunk-tier files: `dev.js` for the ephemeral gate above its boot sweep, `index.ts` for the condition
+around its preview branch, `spawn-with-abort.ts` for its external-signal wiring, `task-crud.ts` for
+its rename guards, `worktree-preview.js` for its own liveness check, and `worktree-manager.ts` twice.
+The `dev.js` gate sat 8 lines above its hunk, so a wider window would have carried that one. Seven
+of the 19 distinct findings were refuted, and the two that needed an owner's decision were asked
+during the pass and fixed in it.

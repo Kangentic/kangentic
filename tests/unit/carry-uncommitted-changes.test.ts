@@ -158,6 +158,24 @@ describe('carryUncommittedChanges', () => {
     expect(fs.mkdirSync).toHaveBeenCalledTimes(2);
   });
 
+  it('leaves changes under the sparse-excluded .claude/commands/ in the main checkout', async () => {
+    mockProjectGit.status.mockResolvedValue(
+      makeStatus(
+        [{ path: 'src/app.ts', index: 'M', working_dir: ' ' }],
+        ['.claude/commands/new-command.md', 'new-util.ts'],
+      ),
+    );
+    mockProjectGit.diff.mockResolvedValue('diff --git a/src/app.ts ...');
+    mockWorktreeGit.raw.mockResolvedValue('');
+
+    const result = await carryUncommittedChanges(PROJECT_PATH, WORKTREE_PATH, TASK_SLUG);
+
+    // Carried, `git apply --3way` re-materialized the excluded file in the worktree.
+    expect(mockProjectGit.diff).toHaveBeenCalledWith(['HEAD', '--', '.', ':(exclude).claude/commands/']);
+    expect(result.carriedUntracked).toEqual(['new-util.ts']);
+    expect(fs.copyFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it('handles mixed tracked and untracked changes', async () => {
     mockProjectGit.status.mockResolvedValue(
       makeStatus(

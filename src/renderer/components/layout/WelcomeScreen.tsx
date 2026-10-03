@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
 import { DOCS_URLS } from '../../../shared/docs-links';
+import { MINIMUM_GIT_VERSION_DISPLAY } from '../../../shared/git-minimum-version';
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
@@ -363,7 +364,7 @@ export function WelcomeScreen() {
 
               {gitInfo?.found && !gitInfo.meetsMinimum && (
                 <p className="text-xs text-warning text-left">
-                  Git {gitInfo.version} is older than the recommended 2.25 - worktrees may not work.
+                  Git {gitInfo.version} is older than the recommended {MINIMUM_GIT_VERSION_DISPLAY} - worktrees may not work.
                 </p>
               )}
 

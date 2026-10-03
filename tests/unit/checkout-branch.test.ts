@@ -378,7 +378,7 @@ describe('ensureTaskBranchCheckout', () => {
     // worktrees-off task ran the agent on however-stale local develop).
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       '/project',
-      ['fetch', 'origin', 'develop'],
+      ['fetch', '--no-auto-gc', 'origin', 'develop'],
       expect.objectContaining({ timeoutMs: 15_000 }),
     );
     expect(mockGit.checkout).toHaveBeenCalledWith('develop');
@@ -448,7 +448,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     // Fetch now goes through runGitWithTimeout (spawn) instead of git.raw
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       '/project',
-      ['fetch', 'origin', 'maint/59294'],
+      ['fetch', '--no-auto-gc', 'origin', 'maint/59294'],
       expect.objectContaining({ timeoutMs: 15_000 }),
     );
   });
@@ -610,7 +610,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
 
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       '/project',
-      ['fetch', 'origin', 'feature/offline'],
+      ['fetch', '--no-auto-gc', 'origin', 'feature/offline'],
       expect.objectContaining({ timeoutMs: 15_000 }),
     );
     // Should still proceed to create and checkout

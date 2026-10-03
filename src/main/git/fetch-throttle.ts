@@ -194,7 +194,14 @@ export async function fetchIfStale(
   }
 
   try {
-    await runGitWithTimeout(projectPath, ['fetch', 'origin', branch], {
+    // --no-auto-gc: skip the `git maintenance run --auto` a fetch ends with.
+    // Windows cannot detach it, so when loose objects (every agent commit adds
+    // some) pass gc.auto, the gc runs inside this fetch: measured 1.7 s against
+    // 0.12 s without, on a small repo. A gc that outlasts FETCH_TIMEOUT_MS would
+    // even turn a successful fetch into a timeout and a stale start point.
+    // Every Kangentic fetch skips it, so maintenance runs on the next commit,
+    // or on a fetch the developer runs themselves.
+    await runGitWithTimeout(projectPath, ['fetch', '--no-auto-gc', 'origin', branch], {
       timeoutMs: FETCH_TIMEOUT_MS,
       signal: options?.signal,
     });
@@ -261,7 +268,13 @@ export async function fetchAllRemotesIfStale(checkPath: string, options?: FetchA
 
   const fetchPromise = (async () => {
     try {
-      await runGitWithTimeout(checkPath, ['fetch', '--all', '--prune', '--quiet'], {
+      // --no-auto-gc for the same reason as fetchIfStale, plus two of this
+      // fetch's own. It is capped at 5 s, so on Windows a due gc running inside
+      // it gets killed and the fetch counts as failed (stale counts, a slower
+      // Done check). And the background scheduler runs it while holding the
+      // project's git queue, where that gc would hold up worktree creation.
+      // Commits, the agents' and the user's, still run git's maintenance.
+      await runGitWithTimeout(checkPath, ['fetch', '--all', '--prune', '--quiet', '--no-auto-gc'], {
         timeoutMs: PROBE_FETCH_TIMEOUT_MS,
         env,
       });

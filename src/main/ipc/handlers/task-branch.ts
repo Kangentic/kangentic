@@ -16,7 +16,8 @@ import { resolveProjectContext } from '../helpers/project-repos';
 // barrel should keep exercising the real resolution.
 import { resolveEffectiveBaseBranch, findLiveSessionInDirectory } from '../helpers/task-git';
 import { withTaskLock } from '../task-lifecycle-lock';
-import { WorktreeManager } from '../../git/worktree-manager';
+import { WorktreeManager, writeWorktreeBaseBranch } from '../../git/worktree-manager';
+import { WORKTREE_EXCLUDED_DIRECTORY } from '../../git/sparse-exclusion';
 import { fetchIfStale, type FetchFailureReason } from '../../git/fetch-throttle';
 import { refResolvesLocally } from '../../git/base-branch';
 import type { IpcContext } from '../ipc-context';
@@ -53,8 +54,13 @@ export async function carryUncommittedChanges(
       return result;
     }
 
-    // Carry tracked changes (staged + unstaged) via diff/apply
-    const diff = await mainGit.diff(['HEAD']);
+    // Carry tracked changes (staged + unstaged) via diff/apply, except under the
+    // directory the worktree's sparse-checkout leaves out. `git apply --3way`
+    // applies there cleanly, which put the excluded command file back on disk
+    // and staged it in the worktree (measured), bringing back the duplicate
+    // commands the exclusion exists to prevent. Those changes stay in the main
+    // checkout, which is where the worktree's agent reads commands from anyway.
+    const diff = await mainGit.diff(['HEAD', '--', '.', `:(exclude)${WORKTREE_EXCLUDED_DIRECTORY}`]);
     if (diff) {
       const worktreeGit = simpleGit(worktreePath);
       const patchFile = path.join(os.tmpdir(), `kangentic-patch-${taskIdSlug}.patch`);
@@ -69,8 +75,9 @@ export async function carryUncommittedChanges(
       }
     }
 
-    // Carry untracked files (git diff HEAD ignores these)
-    const untrackedFiles = status.not_added;
+    // Carry untracked files (git diff HEAD ignores these), with the same
+    // exclusion as the diff above.
+    const untrackedFiles = status.not_added.filter((filePath) => !filePath.startsWith(WORKTREE_EXCLUDED_DIRECTORY));
     for (const filePath of untrackedFiles) {
       const source = path.join(projectPath, filePath);
       const destination = path.join(worktreePath, filePath);
@@ -178,7 +185,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
       if (input.newBaseBranch) {
         try {
           const worktreeGit = simpleGit(updatedTask.worktree_path);
-          await worktreeGit.addConfig('kangentic.baseBranch', input.newBaseBranch);
+          await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
         } catch {
           // Non-fatal
         }
@@ -195,10 +202,11 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
 
       tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
 
-      // Update git config in the worktree (best-effort)
+      // Update git config in the worktree (best-effort). This worktree's own
+      // config, so the switch cannot change any other task's base.
       try {
         const worktreeGit = simpleGit(task.worktree_path);
-        await worktreeGit.addConfig('kangentic.baseBranch', input.newBaseBranch);
+        await writeWorktreeBaseBranch(worktreeGit, input.newBaseBranch);
       } catch {
         console.warn(`[TASK_SWITCH_BRANCH] Could not update git config in worktree`);
       }

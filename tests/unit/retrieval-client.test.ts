@@ -376,13 +376,18 @@ describe('RetrievalClient', () => {
     });
   });
 
-  it('relays worker events', async () => {
+  it('relays worker events, with a first build\'s progress when one comes', async () => {
     const client = new RetrievalClient();
-    const events: Array<[string, string]> = [];
-    client.on('event', (event, projectId) => events.push([event, projectId]));
+    const events: Array<[string, string, unknown]> = [];
+    client.on('event', (event, projectId, progress) => events.push([event, projectId, progress]));
     void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
     lastChild().emit('message', { type: 'event', event: 'graph-changed', projectId: 'project-1' });
-    expect(events).toEqual([['graph-changed', 'project-1']]);
+    const progress = { pass: 7, stage: 'reading', percent: 41 };
+    lastChild().emit('message', { type: 'event', event: 'graph-progress', projectId: 'project-1', progress });
+    expect(events).toEqual([
+      ['graph-changed', 'project-1', undefined],
+      ['graph-progress', 'project-1', progress],
+    ]);
     client.dispose();
   });
 
