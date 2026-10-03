@@ -817,6 +817,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, whole branch, eighth pass | 676f +86115 -7734 | 5974KB, 107091 lines | 4 (0) | 672 | 2 | 31, one shard file each, 10 over tests, none resumed | about 110 of 30 pack-carrying | 23 raised, 22 distinct / 19 applied, 3 refuted |
 | task 529, first-build progress follow-up | 29f +1093 -287 | 192KB, 3315 lines | 11 (8) | 18 | 0 | 8 | 4 of 7 pack-carrying, 2 not reported | 20 / 19, plus 1 found while filling holes |
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
+| task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
