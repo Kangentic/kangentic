@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { slugify } from '../../shared/slugify';
+import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task } from '../../shared/types';
 
@@ -36,15 +36,16 @@ type WorktreeCandidateTask = Pick<Task, 'id' | 'title' | 'display_id'>
   & Partial<Pick<Task, 'worktree_path' | 'worktree_folder'>>;
 
 /**
- * The auto-generated branch name for a task, as `createWorktree` would compose
- * it (without the base-branch namespace, which cleanup does not know).
+ * The auto-generated branch name for a task, as `createWorktree` composes it.
+ * A branch from before the base branch was dropped from the name may also carry
+ * it as a folder; cleanup cannot know that base, so it does not try.
  *
  * Kept deliberately separate from the folder name. They used to be the same
  * string, so cleanup could derive one from the other; now that folders are
  * numeric, doing so would try to delete a branch called "460".
  */
 export function legacyAutoBranchNameFor(task: Pick<Task, 'id' | 'title'>): string {
-  return `${slugify(task.title) || 'task'}-${task.id.slice(0, 8)}`;
+  return computeAutoBranchName(slugify(task.title) || 'task', task.id.slice(0, 8));
 }
 
 /**

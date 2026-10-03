@@ -1476,10 +1476,15 @@ const createWindow = () => {
             .catch(() => {});
           return opened;
         } catch (cloneError) {
-          console.error('[DEV] Preview clone seeding failed; falling back to the worktree:', cloneError);
-          // fall through to the normal open below
+          console.error('[DEV] Preview clone seeding failed; opening no project rather than the worktree:', cloneError);
+          return null;
         }
       }
+      // Never fall through to the normal open below. `cwd` is the worktree this
+      // preview runs from, and a board on it would let task moves and agents act
+      // on the real repo. Opening no project is the safe failure.
+      console.error('[DEV] Preview has no IPC context; opening no project rather than the worktree');
+      return null;
     }
 
     if (!projectPath) return null;

@@ -55,9 +55,11 @@ describe('fetchIfStale', () => {
 
     expect(result).toBe(`origin/${BRANCH}`);
     expect(mockRunGitWithTimeout).toHaveBeenCalledTimes(1);
+    // --no-auto-gc: on Windows the fetch's auto maintenance cannot detach, so
+    // without it a due gc runs inside this foreground fetch.
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       PROJECT_PATH,
-      ['fetch', 'origin', BRANCH],
+      ['fetch', '--no-auto-gc', 'origin', BRANCH],
       expect.objectContaining({ timeoutMs: 15_000 }),
     );
   });
@@ -126,7 +128,7 @@ describe('fetchIfStale', () => {
 
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       PROJECT_PATH,
-      ['fetch', 'origin', BRANCH],
+      ['fetch', '--no-auto-gc', 'origin', BRANCH],
       expect.objectContaining({ signal: controller.signal }),
     );
   });
@@ -315,14 +317,16 @@ describe('fetchAllRemotesIfStale', () => {
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  it('fetches all remotes with prune and quiet using the probe timeout', async () => {
+  it('fetches all remotes with prune and quiet, and no auto-gc, using the probe timeout', async () => {
     routeByGitSubcommand(() => Promise.resolve({ stdout: '', stderr: '' }));
 
     await fetchAllRemotesIfStale(WORKTREE_PATH);
 
+    // --no-auto-gc: on Windows a due gc would run inside this 5 s-capped fetch
+    // and get killed, and the scheduler runs it holding the project's git queue.
     expect(mockRunGitWithTimeout).toHaveBeenCalledWith(
       WORKTREE_PATH,
-      ['fetch', '--all', '--prune', '--quiet'],
+      ['fetch', '--all', '--prune', '--quiet', '--no-auto-gc'],
       expect.objectContaining({ timeoutMs: 5_000 }),
     );
   });

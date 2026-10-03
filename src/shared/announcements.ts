@@ -240,7 +240,7 @@ export function parseAnnouncementsFeed(raw: unknown): Announcement[] | null {
  * Numeric dotted-part version compare; pre-release/build suffixes after '-'
  * or '+' are stripped (0.4.0-beta.1 compares as 0.4.0), missing parts are 0.
  * Local because the only existing helper (`isVersionAtLeast` in
- * src/main/git/git-detector.ts) lives in the main process and shared code
+ * src/main/git/git-version.ts) lives in the main process and shared code
  * cannot import it.
  */
 export function compareVersions(a: string, b: string): -1 | 0 | 1 {

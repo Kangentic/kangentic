@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Claude Code CLI** -- installed and on your PATH. [Get Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-- **Git 2.25+** -- required for worktree support. Run `git --version` to check.
+- **Git 2.26+** -- required for worktree support. Run `git --version` to check.
 
 ## Quick Install (Recommended)
 

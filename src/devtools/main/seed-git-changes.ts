@@ -64,14 +64,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
-import { previewProjectsRoot } from './ephemeral-projects';
+import { previewProjectsRoot, runPreviewGit } from './ephemeral-projects';
 import type { DevSeedGitChangesResult } from '../../shared/types';
-
-const execFileAsync = promisify(execFile);
 
 // Generic commit identity so a commit succeeds even when the clone inherits no
 // user config. No personal info (the repo is public). See no-personal-info.md.
@@ -117,8 +113,10 @@ function isUnderPreviewRoot(targetPath: string): boolean {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
+// Through runPreviewGit, not a bare `git -C`: a target under the preview root whose
+// `.git` is missing would otherwise commit the seed fixtures onto the source worktree.
 function runGit(repoPath: string, args: string[], env?: NodeJS.ProcessEnv): Promise<unknown> {
-  return execFileAsync('git', ['-C', repoPath, ...args], env ? { env: { ...process.env, ...env } } : undefined);
+  return runPreviewGit(repoPath, args, env);
 }
 
 /** ISO timestamp `hoursAgo` hours before now, for backdating seed commits
