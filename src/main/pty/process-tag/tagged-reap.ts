@@ -11,7 +11,9 @@
  *    own kill. Every kill re-checks the target's start time first (see each
  *    reader), so a pid reused since its scan is never touched.
  * When the second pass had anything to kill, a last scan finds what survived
- * it, and the report names that as not stopped.
+ * it, and the report names that as not stopped. A scan that fails or lists
+ * nothing after the first pass's kills ends the reap there, with no force
+ * pass, and the roots it signalled are reported as not stopped.
  *
  * The result reports, per task, the top of each subtree it stopped and the
  * task's own processes it left running on purpose (a window, a tmux server, a

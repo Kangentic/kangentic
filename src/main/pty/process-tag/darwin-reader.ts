@@ -443,8 +443,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     }
     if (relevant.size === 0) return;
     // The window list is the only protection a dev-built app outside an
-    // Applications folder has. Without it the scan fails, and a failed reap
-    // kills nothing, rather than treating every process as windowless.
+    // Applications folder has. Without it the scan fails, so the reap stops
+    // before its next kill, rather than treating every process as windowless.
     const listing = await this.runLsappinfo(['list']);
     if (listing === null) throw new Error('lsappinfo list did not run');
     const uiPids = parseLsappinfoUiPids(listing);

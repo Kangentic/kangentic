@@ -72,8 +72,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the program's name and at most one more short name (an existing script's file or package name,
   the module after `-m`, or the first word of a title the process set). Do not widen the label to
   any other argument.
-- **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing,
-  and main reports it once per stage and code per launch through `reportTaskReapFailure`
+- **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing
+  after the failure: one that fails after its graceful pass skips the force pass and reports what
+  it signalled as not stopped (an empty later scan is a failure too, never "all gone"). Main
+  reports it once per stage and code per launch through `reportTaskReapFailure`
   (`task-reap-failure-report.ts`) with `ReapFailureCode`, `host_error` or `wsl_error`. `failureReason` stays in
   local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
   stripped, since it is about this install and not about a process.

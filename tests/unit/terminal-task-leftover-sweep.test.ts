@@ -190,9 +190,10 @@ describe('sweepTerminalTaskLeftovers', () => {
   it('never fails the project open when the reap throws', async () => {
     const { taskRepo, swimlaneRepo } = makeRepos();
     const reapTaskProcesses = vi.fn(async () => { throw new Error('host gone'); });
-    vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await expect(sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftovers())).resolves.toBeUndefined();
+    warn.mockRestore();
   });
 
   it('releases its once-per-launch latch when the sweep fails, so the next open of the project sweeps again', async () => {
