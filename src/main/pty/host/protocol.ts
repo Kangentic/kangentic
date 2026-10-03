@@ -218,7 +218,8 @@ export interface PtyHostRequestMap {
   /** Run a one-shot child process here, so its CreateProcess (synchronous on
    *  the calling thread on Windows) does not block main. */
   exec: { params: HostExecRequest; result: HostExecResult };
-  /** The whole process table, from the host's persistent probe. */
+  /** The whole process table, from `host-process-table.ts`: a Toolhelp
+   *  snapshot on Windows, `ps` on POSIX. */
   listProcesses: { params: Record<string, never>; result: HostProcessInfo[] };
   /** Kill what these tasks left running: processes carrying a task's
    *  `KANGENTIC_TASK_ID` tag and working inside its directories, minus what is

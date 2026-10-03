@@ -245,6 +245,47 @@ describe('reapTaggedOnce report', () => {
   });
 });
 
+/** A scan that lists no process at all. Main and the host always run, so it failed. */
+const EMPTY_SCAN: ProcessScan = { processes: [], unreadableCount: 0 };
+
+describe('reapTaggedOnce when a scan after the graceful kills fails', () => {
+  // FakeReader puts main in every scan it is given, so an empty one is set by hand.
+  it('reports the signalled root as not stopped when the second scan lists nothing, never as stopped', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)], []]);
+    reader.scans[1] = EMPTY_SCAN;
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(result.failureCode).toBe('empty_scan');
+    expect(result.killedPids).toEqual([2001]);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
+    // No second plan to force-kill from: the empty scan said nothing about what is running.
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
+  });
+
+  it('reports the signalled root as not stopped, and keeps what it left running, when the second scan throws', async () => {
+    const window: ScannedProcess = { ...tagged(2002, TASK), role: 'visible-app' };
+    const reader = new FakeReader([[tagged(2001, TASK), window], []]);
+    // The wait sits between the graceful kills and the second scan.
+    const failingAfterKills = { ...deps(reader), wait: async () => { reader.failScan = true; } };
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, failingAfterKills);
+    expect(result).toMatchObject({ failureCode: 'reap_error', failureReason: 'probe failed', killedPids: [2001] });
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed', '2002:kept']);
+  });
+
+  it('reports what the force pass signalled as not stopped when the survivor check lists nothing', async () => {
+    const reader = new FakeReader([
+      [tagged(2001, TASK)],
+      [tagged(2001, TASK)],
+      [],
+    ]);
+    reader.scans[2] = EMPTY_SCAN;
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
+    expect(result.failureCode).toBe('empty_scan');
+    expect(result.killedPids).toEqual([2001]);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
+  });
+});
+
 describe('TaggedReaper', () => {
   it('coalesces requests that arrive during a reap into one more batch, each task keeping its own directories and report', async () => {
     const reader = new FakeReader([[
@@ -314,6 +355,36 @@ describe('TaggedReaper', () => {
     expect(otherResult.entries.map((entry) => `${entry.taskId}:${entry.pid}:${entry.outcome}`)).toEqual([`${OTHER_TASK}:3001:kept`]);
   });
 
+  it('runs stops one at a time: a second stop scans only after the first has finished', async () => {
+    const reader = new FakeReader([
+      [tagged(2001, TASK), tagged(2002, TASK)],
+      // The first stop's rescan: 2001 is gone.
+      [tagged(2002, TASK)],
+      // The second stop's scan finds 2002, then its rescan finds it gone.
+      [tagged(2002, TASK)],
+      [],
+    ]);
+    let releaseWait: () => void = () => {};
+    let blocked = true;
+    const reaper = new TaggedReaper({
+      reader,
+      liveRootPids: () => [],
+      caseInsensitivePaths: false,
+      wait: () => (blocked ? new Promise<void>((resolve) => { blocked = false; releaseWait = resolve; }) : Promise.resolve()),
+    });
+    const first = reaper.stop({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID });
+    const second = reaper.stop({ pid: 2002, startKey: 'start-2002', mainPid: MAIN_PID });
+    // Let the first stop reach its grace wait. The second must not have scanned.
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(reader.scanCount).toBe(1);
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful']);
+    releaseWait();
+    expect(await first).toBe('stopped');
+    expect(await second).toBe('stopped');
+    expect(reader.scanCount).toBe(4);
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful']);
+  });
+
   it('never folds a report-only request into a batch that kills', async () => {
     const reader = new FakeReader([[tagged(2001, TASK)]]);
     let releaseWait: () => void = () => {};
@@ -357,6 +428,21 @@ describe('stopProcessTree', () => {
     reader.scans = [{ processes: [], unreadableCount: 0 }];
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
     expect(reader.kills).toEqual([]);
+  });
+
+  it('answers failed, not stopped, when the scan after the graceful kill lists nothing', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)], []]);
+    reader.scans[1] = EMPTY_SCAN;
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
+  });
+
+  it('answers failed, not stopped, when the scan after the force kill lists nothing', async () => {
+    const survivor = tagged(2001, TASK);
+    const reader = new FakeReader([[survivor], [survivor], []]);
+    reader.scans[2] = EMPTY_SCAN;
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
   });
 
   it('force-kills what ignored the first signal, and answers failed for what survives even that', async () => {

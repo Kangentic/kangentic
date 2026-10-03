@@ -233,12 +233,12 @@ export function isTopLevelAppExecutable(executablePath: string): boolean {
   return TOP_LEVEL_APP_PATTERN.test(executablePath);
 }
 
-/** Run a tool and resolve its stdout, or '' when it fails or runs past the timeout. */
-function runTool(command: string, args: string[]): Promise<string> {
+/** Run a tool and resolve its stdout, or null when it cannot start or runs past the timeout. */
+function runTool(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
-    const finish = (value: string) => {
+    const finish = (value: string | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -250,11 +250,11 @@ function runTool(command: string, args: string[]): Promise<string> {
     });
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      finish('');
+      finish(null);
     }, TOOL_TIMEOUT_MS);
     timer.unref();
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
-    child.on('error', () => finish(''));
+    child.on('error', () => finish(null));
     child.on('close', () => finish(output));
   });
 }
@@ -313,7 +313,8 @@ function yieldToEventLoop(): Promise<void> {
 
 export interface DarwinReaderOptions {
   loadKernel?: () => Promise<DarwinKernel>;
-  runLsappinfo?: (args: string[]) => Promise<string>;
+  /** `lsappinfo`'s output, or null when it could not run. */
+  runLsappinfo?: (args: string[]) => Promise<string | null>;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
   uid?: number;
@@ -321,7 +322,7 @@ export interface DarwinReaderOptions {
 
 export class DarwinTaggedProcessReader implements TaggedProcessReader {
   private readonly loadKernel: () => Promise<DarwinKernel>;
-  private readonly runLsappinfo: (args: string[]) => Promise<string>;
+  private readonly runLsappinfo: (args: string[]) => Promise<string | null>;
   private readonly sendSignal: (pid: number, signalName: NodeJS.Signals) => void;
   private readonly ownUid: number | null;
 
@@ -399,8 +400,11 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     }
     for (const target of targets) {
       try {
-        // Parsed before the next read reuses the buffer. No identity re-check
-        // here: a label is cosmetic, and `kill` re-checks before any signal.
+        // The same identity check `kill` makes, so a pid reused since the scan
+        // is not listed under another program's name.
+        const current = kernel.processRow(target.pid);
+        if (!current || current.pid !== target.pid || current.startKey !== target.startKey) continue;
+        // Parsed before the next read reuses the buffer.
         const record = kernel.procArgs(target.pid);
         const parsed = record ? argumentsFromProcArgs(record) : null;
         if (!parsed) continue;
@@ -438,7 +442,12 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       for (const child of children.get(next.pid) ?? []) if (child.pid !== next.pid) queue.push(child);
     }
     if (relevant.size === 0) return;
-    const uiPids = parseLsappinfoUiPids(await this.runLsappinfo(['list']));
+    // The window list is the only protection a dev-built app outside an
+    // Applications folder has. Without it the scan fails, and a failed reap
+    // kills nothing, rather than treating every process as windowless.
+    const listing = await this.runLsappinfo(['list']);
+    if (listing === null) throw new Error('lsappinfo list did not run');
+    const uiPids = parseLsappinfoUiPids(listing);
     for (const scanned of relevant) {
       scanned.workingDirectory = kernel.workingDirectory(scanned.pid);
       const executablePath = executablePaths.get(scanned.pid) ?? '';

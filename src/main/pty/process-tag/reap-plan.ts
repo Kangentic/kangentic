@@ -53,9 +53,10 @@
  * cleared-tag process in the worktree is left alone. A withheld process that
  * still has a live parent is left alone too (the user's own terminal shell
  * `cd`'d into the worktree is one). Under such a root the descendants in the
- * worktree go too, tag or none: Apple's `/bin/sh` keeps the `cd X && cmd &`
- * subshell alive as `cmd`'s parent, and on a machine with SIP off `cmd` reads
- * as untagged.
+ * worktree go too, a reaped task's tag or none: Apple's `/bin/sh` keeps the
+ * `cd X && cmd &` subshell alive as `cmd`'s parent, and on a machine with SIP
+ * off `cmd` reads as untagged. A descendant that cleared the tag still saves
+ * the root, as it does under a tagged one.
  */
 
 import type { ScannedProcess } from './process-scan';
@@ -214,8 +215,8 @@ function protectedPidsOf(input: Pick<ReapPlanInput, 'processes' | 'mainPid' | 'l
 /**
  * Whether anything under `root` shows it serves more than this task (see the
  * module comment). `taskId` is null for a macOS withheld root, whose
- * descendants may read untagged on a SIP-off machine; only another task's tag
- * or a directory outside counts there.
+ * descendants may read untagged on a SIP-off machine; only a cleared tag,
+ * another task's tag or a directory outside counts there.
  */
 function isShared(
   root: ScannedProcess,
@@ -242,7 +243,8 @@ function isShared(
       const environmentKnown = !child.environmentUnreadable && !child.environmentWithheld;
       if (!environmentKnown) continue;
       if (taskId !== null && child.tagValue !== taskId) return true;
-      if (taskId === null && child.tagValue && !reapedTaskIds.has(child.tagValue)) return true;
+      // A cleared tag ('') is the documented opt-out, not an absent one.
+      if (taskId === null && child.tagValue !== null && !reapedTaskIds.has(child.tagValue)) return true;
     }
   }
   return false;
@@ -341,11 +343,12 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     if (sparedPids.has(scanned.pid)) continue;
     // What goes with the root: descendants inside its directories that carry
     // its tag or whose environment could not be read (a withheld Apple tool
-    // between two tagged node processes). Under a withheld root, any tag state.
+    // between two tagged node processes). Under a withheld root, no tag or a
+    // reaped task's, never a cleared one.
     collectSubtree(scanned, children, collectedPids, blockedPids, (child) => (
       isInsideAny(child.workingDirectory, root.scope, caseInsensitive)
       && (root.taskId === null
-        ? !child.tagValue || reapedTaskIds.has(child.tagValue)
+        ? child.tagValue === null || reapedTaskIds.has(child.tagValue)
         : child.tagValue === root.taskId || Boolean(child.environmentUnreadable) || Boolean(child.environmentWithheld))
     ));
   }

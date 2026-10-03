@@ -136,7 +136,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
   // 1. Kill all active PTY sessions belonging to this project's tasks
   let allTasks: Task[] = [];
-  let archivedTasks: Array<{ id: string; worktree_path: string | null }> = [];
+  let archivedTasks: Task[] = [];
   try {
     const db = getProjectDb(projectId);
     const taskRepo = new TaskRepository(db);

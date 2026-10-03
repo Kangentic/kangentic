@@ -38,7 +38,7 @@ import {
   type ReapPlanInput,
   type ReapTaskScope,
 } from './reap-plan';
-import type { ScannedProcess, TaggedProcessReader } from './process-scan';
+import type { ProcessScan, ScannedProcess, TaggedProcessReader } from './process-scan';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -127,6 +127,19 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A scan that listed nothing failed. It never means every process has gone. */
+class EmptyScanError extends Error {
+  constructor() {
+    super('the process scan listed nothing');
+  }
+}
+
+/** A later scan's result, or an `EmptyScanError` when it listed nothing. */
+function requireProcesses(scan: ProcessScan): ProcessScan {
+  if (scan.processes.length === 0) throw new EmptyScanError();
+  return scan;
+}
+
 function defaultWait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -205,6 +218,10 @@ export async function reapTaggedOnce(
   } catch (error) {
     return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reader_load' };
   }
+  const killed = new Set<number>();
+  // Set once the graceful kills went out: a scan that fails after them still
+  // owes the user a report, with what was signalled listed as not stopped.
+  let signalledEntries: (() => LeftoverProcessEntry[]) | null = null;
   try {
     const firstScan = await deps.reader.scan();
     if (firstScan.processes.length === 0) {
@@ -236,9 +253,13 @@ export async function reapTaggedOnce(
       };
     }
 
-    const killed = new Set(await killAll(deps.reader, firstPlan.targets, 'graceful'));
+    for (const pid of await killAll(deps.reader, firstPlan.targets, 'graceful')) killed.add(pid);
+    signalledEntries = () => [
+      ...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, 'failed', null)),
+      ...keptEntries,
+    ];
     await wait(REAP_GRACE_MS);
-    const secondScan = await deps.reader.scan();
+    const secondScan = requireProcesses(await deps.reader.scan());
     const secondPlan = planReapDetailed(planInput(secondScan.processes));
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
 
@@ -249,7 +270,7 @@ export async function reapTaggedOnce(
     let unreadableCount = secondScan.unreadableCount;
     if (secondPlan.targets.length > 0) {
       await wait(SURVIVOR_CHECK_MS);
-      const lastScan = await deps.reader.scan();
+      const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
       const alive = new Set(lastScan.processes.map(identityOf));
       const reportedRootPids = new Set(firstPlan.roots.map((root) => root.process.pid));
@@ -286,7 +307,13 @@ export async function reapTaggedOnce(
       ],
     };
   } catch (error) {
-    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
+    return {
+      ...emptyResult(),
+      killedPids: [...killed].sort((left, right) => left - right),
+      failureReason: messageOf(error),
+      failureCode: error instanceof EmptyScanError ? 'empty_scan' : 'reap_error',
+      entries: signalledEntries ? signalledEntries() : [],
+    };
   }
 }
 
@@ -325,13 +352,14 @@ export async function stopProcessTree(
     if (tree.length === 0) return 'failed';
     await killAll(deps.reader, tree, 'graceful');
     await wait(REAP_GRACE_MS);
-    const secondScan = await deps.reader.scan();
+    // An empty later scan throws, so it reads as `failed`, never as `stopped`.
+    const secondScan = requireProcesses(await deps.reader.scan());
     const aliveAfterFirst = new Set(secondScan.processes.map(identityOf));
     const survivors = tree.filter((scanned) => aliveAfterFirst.has(identityOf(scanned)));
     if (survivors.length === 0) return 'stopped';
     await killAll(deps.reader, survivors, 'force');
     await wait(SURVIVOR_CHECK_MS);
-    const lastScan = await deps.reader.scan();
+    const lastScan = requireProcesses(await deps.reader.scan());
     return lastScan.processes.some((scanned) => identityOf(scanned) === identityOf(target)) ? 'failed' : 'stopped';
   } catch {
     return 'failed';

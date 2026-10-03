@@ -68,6 +68,13 @@ import {
 const TEST_NAME = 'task-process-reap';
 const runId = Date.now();
 const PARKING_COLUMN_NAME = 'Parking';
+/**
+ * How long the survivor must stay alive after a suspend or a resume. A reap is
+ * a scan, a graceful kill, a one second wait and a second scan, so a wrongly
+ * wired one finishes well inside this.
+ */
+const SURVIVOR_HOLD_WINDOW_MS = 3_000;
+const SURVIVOR_SAMPLE_INTERVAL_MS = 250;
 
 interface FastDetachRecord {
   agentPid: number;
@@ -236,6 +243,21 @@ test.describe('Task process reap', () => {
     return lines.join('\n');
   }
 
+  /**
+   * Hold "the survivor is alive" over a window. One read taken the moment the
+   * agent is gone can land before a reap that was not awaited (one started from
+   * the PTY's exit, say) has finished its scan and kill.
+   */
+  async function expectSurvivorStaysAlive(record: FastDetachRecord, failure: string): Promise<void> {
+    const windowEndsAt = Date.now() + SURVIVOR_HOLD_WINDOW_MS;
+    for (;;) {
+      if (!isProcessAlive(record.survivorPid)) throw new Error(`${failure}\n${diagnostics(record)}`);
+      if (Date.now() >= windowEndsAt) return;
+      // Intentional fixed wait: the sampling cadence of the negative window above.
+      await page.waitForTimeout(SURVIVOR_SAMPLE_INTERVAL_MS);
+    }
+  }
+
   test('a detached process survives a mid-board suspend and is reaped when the task reaches Done', async () => {
     const title = `Reap Survivor ${runId}`;
     await createTask(page, title, 'Agent fast-detaches a long-lived process');
@@ -274,20 +296,13 @@ test.describe('Task process reap', () => {
         message: 'the agent process should be gone once the session is suspended',
       })
       .toBe(false);
-    // The pinned decision: a suspend must not reap. The move IPC resolves only
-    // after the whole move, so an awaited reap would already have killed it.
-    expect(
-      isProcessAlive(record.survivorPid),
-      `a mid-board suspend killed the survivor, but only a terminal transition may reap\n${diagnostics(record)}`,
-    ).toBe(true);
+    // The pinned decision: a suspend must not reap.
+    await expectSurvivorStaysAlive(record, 'a mid-board suspend killed the survivor, but only a terminal transition may reap');
 
     // 3. Resume into a spawning column. Still no reap.
     await moveTaskIpc(page, taskId, lanes.executing);
     await waitForTaskSession(page, taskId);
-    expect(
-      isProcessAlive(record.survivorPid),
-      `resuming the session killed the survivor\n${diagnostics(record)}`,
-    ).toBe(true);
+    await expectSurvivorStaysAlive(record, 'resuming the session killed the survivor');
 
     // 4. Terminal transition. The reap runs after the session exits and is a scan,
     // a graceful kill, a one second wait, a second scan and a force kill, so give
@@ -320,7 +335,7 @@ test.describe('Task process reap', () => {
     // 5. The user is told: one toast for the move, counts only, and Review lists
     // the survivor by pid as stopped. This is the whole report path for real:
     // the host's plan and label, main's burst collector, the push, the toast.
-    const toast = page.locator('[data-testid="toast"]', { hasText: `leftover process from "${title}"` });
+    const toast = page.locator('[data-testid="toast"]', { hasText: new RegExp(`leftover process(es)? from "${title}"`) });
     await expect(toast).toBeVisible({ timeout: 10_000 });
     await expect(toast).toContainText(/Stopped \d+ leftover process(es)? from/);
     await toast.getByRole('button', { name: 'Review' }).click();

@@ -23,7 +23,8 @@ name: Task reap against real processes
 # note at the top of that file), and this only has something to say when the
 # reap's own code or tests change, or its dependencies do: a koffi bump changes
 # every native call the Windows and macOS readers make, so package.json and the
-# lockfile are in the filter too.
+# lockfile are in the filter too, as are the three source files outside
+# process-tag/ the tests import (the Windows Toolhelp listing among them).
 
 on:
   pull_request:
@@ -32,6 +33,9 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'src/main/pty/process-tag/**'
+      - 'src/main/pty/host/host-process-table.ts'
+      - 'src/main/git/zombie-reaper.ts'
+      - 'src/main/shared/process-liveness.ts'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
       - 'tests/unit/task-reap-plan.test.ts'
@@ -44,6 +48,9 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'src/main/pty/process-tag/**'
+      - 'src/main/pty/host/host-process-table.ts'
+      - 'src/main/git/zombie-reaper.ts'
+      - 'src/main/shared/process-liveness.ts'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
       - 'tests/unit/task-reap-plan.test.ts'

@@ -82,6 +82,33 @@ describe('LeftoverProcessReports', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('sends by the longest wait even while a reap never finishes, and holds the next burst until that reap is released', () => {
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    // Never released: a hung reap must not keep the user from hearing what the others found.
+    const releaseHungReap = reports.beginReap();
+    reports.add((report) => sent.push(report), [entry(2001)], TITLES, true);
+
+    // The quiet window ends many times over while the reap is held, and sends nothing.
+    vi.advanceTimersByTime(REPORT_MAX_WAIT_MS - 1);
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].processes.map((process) => process.pid)).toEqual([2001]);
+
+    // The reap is still running, so the next burst waits for its release as before.
+    reports.add((report) => sent.push(report), [entry(3001, OTHER_TASK)], TITLES, true);
+    vi.advanceTimersByTime(REPORT_QUIET_MS * 2);
+    expect(sent).toHaveLength(1);
+
+    releaseHungReap();
+    // Exactly one quiet window, not runAllTimers: that would also fire the second
+    // burst's longest wait and hide a release that did not re-arm the quiet timer.
+    vi.advanceTimersByTime(REPORT_QUIET_MS);
+    expect(sent).toHaveLength(2);
+    expect(sent[1].processes.map((process) => process.pid)).toEqual([3001]);
+  });
+
   it('sends nothing for a reap that reported nothing', () => {
     const reports = new LeftoverProcessReports();
     const send = vi.fn();

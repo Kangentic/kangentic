@@ -237,6 +237,42 @@ describe('planReap, macOS withheld-environment orphans in the worktree', () => {
     expect(plannedPids([main, withheld(2001, 1, WORKTREE), scanned(2002, 2001, { tag: OTHER_TASK })])).toEqual([]);
   });
 
+  it('spares a withheld orphan whose child cleared the tag, and reports the orphan as shared: the opt-out saves its parent', () => {
+    const plan = detailed([
+      main,
+      withheld(2001, 1, WORKTREE),
+      // A readable environment with the tag cleared on purpose, in the worktree.
+      scanned(2002, 2001, { tag: '', workingDirectory: WORKTREE }),
+    ]);
+    expect(plan.targets).toEqual([]);
+    expect(plan.roots).toEqual([]);
+    expect(plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.taskId])).toEqual([[2001, 'shared', TASK]]);
+  });
+
+  it('still takes an untagged child of a withheld orphan with it: no tag is not a cleared one', () => {
+    const plan = detailed([
+      main,
+      withheld(2001, 1, WORKTREE),
+      scanned(2002, 2001, { tag: null, workingDirectory: WORKTREE }),
+    ]);
+    expect(plan.targets.map((target) => target.pid)).toEqual([2001, 2002]);
+    expect(plan.roots.map((root) => root.process.pid)).toEqual([2001]);
+    expect(plan.kept).toEqual([]);
+  });
+
+  it('never collects a cleared-tag child through a withheld orphan, even when its own environment is unknown', () => {
+    // Synthetic: no reader reports a cleared tag together with a withheld
+    // environment. It keeps this on the collection filter alone, because the
+    // shared check takes no evidence from a child whose environment is unknown.
+    const plan = detailed([
+      main,
+      withheld(2001, 1, WORKTREE),
+      scanned(2002, 2001, { tag: '', environmentWithheld: true, workingDirectory: WORKTREE }),
+    ]);
+    expect(plan.targets.map((target) => target.pid)).toEqual([2001]);
+    expect(plan.kept).toEqual([]);
+  });
+
   it('trusts a readable environment over the directory: untagged and cleared-tag orphans in the worktree survive', () => {
     expect(plannedPids([main, scanned(2001, 1, { tag: null }), scanned(2002, 1, { tag: '' })])).toEqual([]);
   });

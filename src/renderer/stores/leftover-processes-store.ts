@@ -55,7 +55,11 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
     } catch {
       outcome = 'failed';
     }
-    set((state) => ({ stopStates: { ...state.stopStates, [processId]: outcome } }));
+    // A newer report may have evicted this row's report while main answered,
+    // and addReport dropped its state with it: do not bring it back.
+    set((state) => (Object.hasOwn(state.stopStates, processId)
+      ? { stopStates: { ...state.stopStates, [processId]: outcome } }
+      : state));
   },
 }));
 

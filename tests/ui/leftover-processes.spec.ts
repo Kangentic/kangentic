@@ -2,16 +2,22 @@
  * The leftover-process toast and its Review list, driven over the mock bridge:
  * a report main pushes after a task ends becomes a counts-only toast, Review
  * opens the list, and a row's Stop walks Stop, Stopping, then Stopped, Ended
- * or a red failure in the same slot.
+ * or a red failure in the same slot. A toast for a report that leaves something
+ * running or could not be stopped stays until the user closes it (Review is the
+ * only way into the list), while one for a report where every process was
+ * stopped closes on its own like any other toast.
  *
  * Every test launches its own page (cross-platform-parity.md).
  *
  * Tier: UI (headless Chromium). No PTY, no Electron main process.
  */
-import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
-import { launchPage } from './helpers';
+import { test, expect, chromium } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
+import path from 'node:path';
+import { launchPage, waitForViteReady, gotoVite } from './helpers';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../src/shared/types';
+
+const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -198,6 +204,106 @@ test.describe('Leftover processes', () => {
       await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toHaveCount(0);
       await expect(page.locator('[data-testid="setting-row-stopLeftoverProcesses"]')).toBeVisible({ timeout: 5000 });
       await expect(page.locator('[data-testid="setting-row-stopLeftoverProcesses"]')).toHaveAttribute('aria-checked', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * `launchPage` with a short `notifications.toasts.durationSeconds`, so a timed
+ * toast closes in a second or two instead of the mock's four.
+ *
+ * The override rides `window.__mockConfigOverrides`, which must be set BEFORE
+ * the mock script reads it (the same order session-exit-intentional.spec.ts
+ * uses), so the config main hands the renderer already carries it. Patching the
+ * config store after load would race the boot-time `loadConfig`, which can land
+ * later and put the default back. It replaces the whole `notifications` object
+ * (a shallow merge), so the full shape is restated.
+ */
+async function launchPageWithToastSeconds(durationSeconds: number): Promise<{ browser: Browser; page: Page }> {
+  await waitForViteReady();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+    const page = await context.newPage();
+    await page.addInitScript(`
+      window.__mockConfigOverrides = {
+        notifications: {
+          desktop: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true },
+          toasts: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true, durationSeconds: ${durationSeconds}, maxCount: 5 },
+          cooldownSeconds: 10,
+        },
+      };
+    `);
+    await page.addInitScript({ path: MOCK_SCRIPT });
+    await gotoVite(page);
+    await page.waitForLoadState('load');
+    await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+
+    // A toast reads its lifetime from the store when it is raised. Wait for the
+    // store to hold the override, so a toast fired next cannot get the default.
+    await expect
+      .poll(() => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { config: { notifications: { toasts: { durationSeconds: number } } } } } };
+        }).__zustandStores;
+        return stores?.config.getState().config.notifications.toasts.durationSeconds ?? null;
+      }), { timeout: 5000 })
+      .toBe(durationSeconds);
+    return { browser, page };
+  } catch (error) {
+    await browser.close();
+    throw error;
+  }
+}
+
+test.describe('Leftover processes toast lifetime', () => {
+  test('a toast that leaves a process running outlives the auto-dismiss time, so Review stays reachable', async () => {
+    const { browser, page } = await launchPageWithToastSeconds(1);
+    try {
+      // ONE_TASK stopped one process and left two running, which makes the toast sticky.
+      await fireReport(page, ONE_TASK);
+      const toast = page.locator('[data-testid="toast"]', { hasText: '2 still running.' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+
+      // A timed toast would be gone after its 1 s, plus its exit (250 ms, or the
+      // 1 s fallback in ToastItem when the transition never ends). Give it that
+      // and 1 s more to leave. Leaving is polled for rather than slept through,
+      // so a regression to a timed toast fails as soon as it leaves; the cost
+      // of the passing case is the full budget, because "it never leaves" is a
+      // non-occurrence that cannot be polled for. `toBeVisible` alone would not
+      // do: a toast mid-exit sits at opacity 0 and still reads as visible.
+      const leftOnItsOwn = await toast.waitFor({ state: 'detached', timeout: 3000 }).then(() => true, () => false);
+      expect(leftOnItsOwn).toBe(false);
+
+      // And it still does its job: Review opens the list well past the 1 s.
+      await toast.getByRole('button', { name: 'Review' }).click();
+      await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a toast for a report where every process was stopped closes on its own', async () => {
+    // 2 s rather than 1: this test has to SEE the toast before it can see it
+    // leave, and a starved worker should not lose it in the gap between the
+    // report firing and the first look.
+    const { browser, page } = await launchPageWithToastSeconds(2);
+    try {
+      await fireReport(page, {
+        id: 'report-all-stopped',
+        stoppingEnabled: true,
+        processes: [leftover('only-vite')],
+      });
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'Stopped 1 leftover process from "Fix login".' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+
+      // Nothing is left to review, so the toast takes the configured 2 s, plus its
+      // exit, plus slack for a loaded runner. Polled, so it passes as soon as it
+      // leaves. A retrying zero-count assertion is avoided on purpose (see
+      // toastCountRightNow in helpers.ts).
+      await toast.waitFor({ state: 'detached', timeout: 6000 });
     } finally {
       await browser.close();
     }

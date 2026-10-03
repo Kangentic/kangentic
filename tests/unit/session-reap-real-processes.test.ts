@@ -356,7 +356,7 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     });
     const tmuxEnv = { ...envWithTag(TASK_ID), TERM: 'xterm-256color' };
     const sessionPidFile = path.join(scratch.root, 'tmux-pane.pid');
-    execFileSync('tmux', ['-L', socket, 'new-session', '-d', '-s', 'task', `${process.execPath} "${writeSleeper(scratch.root)}" "${sessionPidFile}"`], { cwd: scratch.worktree, env: tmuxEnv });
+    execFileSync('tmux', ['-L', socket, 'new-session', '-d', '-s', 'task', `"${process.execPath}" "${writeSleeper(scratch.root)}" "${sessionPidFile}"`], { cwd: scratch.worktree, env: tmuxEnv });
     const panePid = await waitForPidFile(sessionPidFile);
     const serverPid = Number(execFileSync('tmux', ['-L', socket, 'display-message', '-p', '#{pid}']).toString().trim());
     startedPids.push(serverPid);

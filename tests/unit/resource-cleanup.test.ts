@@ -815,6 +815,10 @@ describe('pruneOrphanedWorktreeTasks ordering contract', () => {
       swimlaneRepo as never,
       sessionRepo as never,
       sessionManager as never,
+      undefined as never,
+      () => {},
+      // The leftover sweep runs first and reads this; off, it skips the scan.
+      { stoppingEnabled: () => false, onReport: () => {} },
     );
   });
 

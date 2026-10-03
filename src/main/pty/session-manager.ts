@@ -1840,9 +1840,14 @@ export class SessionManager extends EventEmitter {
     // everything under it, so a reap now would leave the agent's children
     // running. That happens on a Done move whose session was stopped just
     // before, where suspend() has no PTY left to wait for.
+    // A mature session's kill() parks nothing, so this does not cover one
+    // killed without its exit awaited; every terminal transition awaits it.
     const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(validTasks.map((task) => task.id)));
     if (parkedSessionIds.length > 0) {
-      await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
+      const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
+      if (exited.includes(false)) {
+        console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
+      }
     }
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
@@ -1881,10 +1886,10 @@ export class SessionManager extends EventEmitter {
     if (process.platform === 'win32' && options.stop) {
       const wslSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
       if (wslSpec) {
-        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, reapTasks, async (file, args, options) => {
+        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, reapTasks, async (file, args, execOptions) => {
           const output = await execFileAsync(file, args, {
-            timeout: options.timeoutMs,
-            env: { ...process.env, ...options.env },
+            timeout: execOptions.timeoutMs,
+            env: { ...process.env, ...execOptions.env },
             windowsHide: true,
           });
           return output.stdout;

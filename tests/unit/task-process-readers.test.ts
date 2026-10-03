@@ -19,6 +19,7 @@ import {
   parseLsappinfoUiPids,
   parseShortBsdInfo,
   summarizeProcArgs,
+  type DarwinKernel,
   type DarwinProcessRow,
 } from '../../src/main/pty/process-tag/darwin-reader';
 import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
@@ -82,6 +83,8 @@ describe('Linux reader', () => {
     writeProcess(10, 1, 500, [`KANGENTIC_TASK_ID=${TASK}`], { cwd: '/home/dev/project (deleted)', maps: '7f00 r-xp /usr/lib/libc.so.6\n' });
     writeProcess(11, 10, 600, ['HOME=/home/dev'], { cwd: '/home/dev/project', maps: '7f00 r-xp /usr/lib/x86_64-linux-gnu/libX11.so.6.4.0\n' });
     writeProcess(14, 1, 900, [`KANGENTIC_TASK_ID=${TASK}`], { exe: '/usr/bin/tmux', maps: '' });
+    // A tmux server whose binary a package upgrade replaced: the kernel marks the link.
+    writeProcess(16, 1, 960, [`KANGENTIC_TASK_ID=${TASK}`], { exe: '/usr/bin/tmux (deleted)', maps: '' });
     // Non-dumpable and the caller's own: counted. Another user's: not counted.
     writeProcess(12, 1, 700, null);
     writeProcess(13, 1, 800, null, { uid: 0 });
@@ -103,6 +106,8 @@ describe('Linux reader', () => {
       // The " (deleted)" suffix of a removed directory is dropped.
       expect(byPid.get(10)?.workingDirectory).toBe('/home/dev/project');
       expect(byPid.get(14)?.role).toBe('multiplexer');
+      // The " (deleted)" mark on the executable does not hide a tmux server.
+      expect(byPid.get(16)?.role).toBe('multiplexer');
     }
 
     expect(await reader.kill(byPid.get(10)!, 'graceful')).toBe(true);
@@ -292,6 +297,65 @@ describe('macOS reader', () => {
     expect((await reader.scan()).processes).toHaveLength(1);
     expect(runLsappinfo).not.toHaveBeenCalled();
     expect(workingDirectory).not.toHaveBeenCalled();
+  });
+
+  describe('the window list and the label identity check', () => {
+    /** One tagged process of the caller's own: the scan needs the window list for it. */
+    function kernelWithOneTaggedProcess(): DarwinKernel {
+      return {
+        listPids: () => [501],
+        processRow: () => ({ pid: 501, ppid: 1, uid: 501, startKey: '1790000001.000000' }),
+        workingDirectory: () => '/Users/dev/project',
+        procArgs: () => procArgs('/usr/local/bin/node', ['node', 'server.js'], [`KANGENTIC_TASK_ID=${TASK}`]),
+      };
+    }
+
+    it('fails the scan when lsappinfo could not run: the window list is the only protection a dev-built app has', async () => {
+      const runLsappinfo = vi.fn(async (): Promise<string | null> => null);
+      const reader = new DarwinTaggedProcessReader({ uid: 501, loadKernel: async () => kernelWithOneTaggedProcess(), runLsappinfo });
+      await expect(reader.scan()).rejects.toThrow(/lsappinfo/);
+      expect(runLsappinfo).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets the scan resolve when lsappinfo ran and listed no window', async () => {
+      const runLsappinfo = vi.fn(async (): Promise<string | null> => '');
+      const reader = new DarwinTaggedProcessReader({ uid: 501, loadKernel: async () => kernelWithOneTaggedProcess(), runLsappinfo });
+      const scan = await reader.scan();
+      expect(runLsappinfo).toHaveBeenCalledTimes(1);
+      const scanned = scan.processes.find((entry) => entry.pid === 501);
+      expect(scanned).toMatchObject({ tagValue: TASK, workingDirectory: '/Users/dev/project' });
+      expect(scanned?.role).toBeUndefined();
+    });
+
+    it('labels only a target whose start key still matches, and never reads a reused pid\'s command line', async () => {
+      const rows = new Map<number, DarwinProcessRow>([
+        [501, { pid: 501, ppid: 1, uid: 501, startKey: '1790000001.000000' }],
+        // 502 was reused by another program since the scan: same pid, another start.
+        [502, { pid: 502, ppid: 1, uid: 501, startKey: '1790000099.000000' }],
+      ]);
+      const commandLineReads: number[] = [];
+      const reader = new DarwinTaggedProcessReader({
+        uid: 501,
+        loadKernel: async () => ({
+          listPids: () => [...rows.keys()],
+          processRow: (pid) => rows.get(pid) ?? null,
+          workingDirectory: () => null,
+          procArgs: (pid) => {
+            commandLineReads.push(pid);
+            return procArgs('/usr/local/bin/node', ['node', 'server.js'], ['HOME=/Users/dev']);
+          },
+        }),
+      });
+      const target = (pid: number, startKey: string) => ({ pid, ppid: 1, startKey, startedAtMs: null, tagValue: TASK });
+      const labels = await reader.describe([
+        target(501, '1790000001.000000'),
+        target(502, '1790000002.000000'),
+        // Gone since the scan.
+        target(503, '1790000003.000000'),
+      ]);
+      expect([...labels.keys()]).toEqual([501]);
+      expect(commandLineReads).toEqual([501]);
+    });
   });
 
   it('kills only a pid whose start time still matches, and never one with an unknown start', async () => {

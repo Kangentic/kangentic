@@ -14,7 +14,9 @@
  *    position, and never lists it twice, so a refreshed report is the last one
  *    evicted rather than the first;
  *  - `stopProcess` writes `stopping` at once, then whatever outcome the bridge
- *    answers, and `failed` when the bridge rejects.
+ *    answers, and `failed` when the bridge rejects, except that a row whose
+ *    report a newer report evicted while main was still answering gets no
+ *    outcome back (the final write checks the row is still in `stopStates`).
  *
  * `window.electronAPI.leftoverProcesses.stop` is stubbed per test with
  * `vi.stubGlobal`, mirroring config-store-project-override.test.ts for a Node
@@ -212,5 +214,72 @@ describe('leftover-processes-store stopProcess', () => {
     await useLeftoverProcessesStore.getState().stopProcess('process-a');
 
     expect(useLeftoverProcessesStore.getState().stopStates).toEqual({ 'process-other': 'ended', 'process-a': 'stopped' });
+  });
+});
+
+describe('leftover-processes-store stopProcess while newer reports arrive', () => {
+  /** A Stop whose answer from main is held open: settle it with `answer` or `fail`. */
+  function holdStopAnswer(): { answer: (outcome: LeftoverStopOutcome) => void; fail: (error: Error) => void } {
+    const settle = { answer: (_outcome: LeftoverStopOutcome) => {}, fail: (_error: Error) => {} };
+    stopMock.mockImplementation(() => new Promise<LeftoverStopOutcome>((resolve, reject) => {
+      settle.answer = resolve;
+      settle.fail = reject;
+    }));
+    return { answer: (outcome) => settle.answer(outcome), fail: (error) => settle.fail(error) };
+  }
+
+  // 'report-target' is not one of report-0 .. report-19, which addNumberedReports
+  // names: re-adding an id moves that report to the newest slot instead of
+  // evicting anything.
+  function addTargetReport(): void {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-target', ['process-target']));
+  }
+
+  it('records the outcome when the row\'s report is still retained after newer ones arrived', async () => {
+    const held = holdStopAnswer();
+    addTargetReport();
+    const pending = useLeftoverProcessesStore.getState().stopProcess('process-target');
+    expect(useLeftoverProcessesStore.getState().stopStates['process-target']).toBe('stopping');
+
+    // 19 newer reports plus the target make exactly the 20 the store keeps.
+    addNumberedReports(RETAINED_REPORT_COUNT - 1);
+    expect(reportIds()).toContain('report-target');
+    expect(useLeftoverProcessesStore.getState().stopStates['process-target']).toBe('stopping');
+
+    held.answer('stopped');
+    await pending;
+
+    expect(useLeftoverProcessesStore.getState().stopStates['process-target']).toBe('stopped');
+  });
+
+  it('does not bring a Stop outcome back for a row whose report was evicted while main answered', async () => {
+    const held = holdStopAnswer();
+    addTargetReport();
+    const pending = useLeftoverProcessesStore.getState().stopProcess('process-target');
+
+    // 20 newer reports push the target out, and addReport drops its stopping state with it.
+    addNumberedReports(RETAINED_REPORT_COUNT);
+    expect(reportIds()).not.toContain('report-target');
+    expect(Object.hasOwn(useLeftoverProcessesStore.getState().stopStates, 'process-target')).toBe(false);
+
+    held.answer('stopped');
+    await pending;
+
+    // Nothing lists the process any more, so the map must not regrow an entry for it.
+    expect(Object.hasOwn(useLeftoverProcessesStore.getState().stopStates, 'process-target')).toBe(false);
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
+  });
+
+  it('does not record a failure for an evicted row either, when the bridge rejects after the eviction', async () => {
+    const held = holdStopAnswer();
+    addTargetReport();
+    const pending = useLeftoverProcessesStore.getState().stopProcess('process-target');
+    addNumberedReports(RETAINED_REPORT_COUNT);
+    expect(Object.hasOwn(useLeftoverProcessesStore.getState().stopStates, 'process-target')).toBe(false);
+
+    held.fail(new Error('ipc channel closed'));
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(useLeftoverProcessesStore.getState().stopStates).toEqual({});
   });
 });

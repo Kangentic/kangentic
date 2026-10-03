@@ -54,7 +54,9 @@ export async function cleanupStaleResources(
   sessionManager: SessionManager,
   automationRunRepo: AutomationRunRepository,
   onRunsInterrupted: (count: number) => void = () => {},
-  leftovers: LeftoverSweepOptions = { stoppingEnabled: () => true, onReport: () => {} },
+  // Off unless a caller passes the user's setting: a default that kills would
+  // ignore it. The production path calls cleanupStaleResourcesAsync instead.
+  leftovers: LeftoverSweepOptions = { stoppingEnabled: () => false, onReport: () => {} },
 ): Promise<void> {
   await pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
   await cleanupStaleResourcesAsync(
@@ -151,6 +153,8 @@ export async function sweepTerminalTaskLeftovers(
       leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
     }
   } catch (error) {
+    // Let a later open this launch try again.
+    sweptProjectPaths.delete(projectPath);
     console.warn('[TASK-REAP] Startup sweep failed (non-fatal):', error);
   }
 }

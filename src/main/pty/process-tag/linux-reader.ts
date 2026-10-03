@@ -34,6 +34,15 @@ const GUI_LIBRARY_PATTERN = /\/lib(?:X11\.so|xcb\.so|wayland-client\.so|gtk-[34]
 const DELETED_SUFFIX = ' (deleted)';
 
 /**
+ * A `/proc` link target without the mark the kernel adds when its file was
+ * removed or replaced (a package upgrade swaps a running binary's file). The
+ * path before the mark is still the one the process runs or works in.
+ */
+function withoutDeletedSuffix(linkTarget: string): string {
+  return linkTarget.endsWith(DELETED_SUFFIX) ? linkTarget.slice(0, -DELETED_SUFFIX.length) : linkTarget;
+}
+
+/**
  * The tag's value inside a NUL-separated environment block, or null. Only the
  * value is ever copied out of the buffer.
  */
@@ -136,7 +145,7 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
         const executablePath = await fsPromises.readlink(this.procPath(target.pid, 'exe')).catch(() => null);
         const workingDirectory = target.workingDirectory ?? null;
         labels.set(target.pid, await labelProcess({
-          executablePath: executablePath?.endsWith(DELETED_SUFFIX) ? executablePath.slice(0, -DELETED_SUFFIX.length) : executablePath,
+          executablePath: executablePath === null ? null : withoutDeletedSuffix(executablePath),
           argv,
           isFile: (candidate) => isFileFrom(workingDirectory, candidate),
         }));
@@ -174,10 +183,9 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     }
     let workingDirectory: string | null = null;
     try {
-      workingDirectory = await fsPromises.readlink(this.procPath(pid, 'cwd'));
-      // A directory removed while the process sits in it reads with this
-      // suffix; the path before it is still where the process was working.
-      if (workingDirectory.endsWith(DELETED_SUFFIX)) workingDirectory = workingDirectory.slice(0, -DELETED_SUFFIX.length);
+      // A directory removed while the process sits in it reads with the
+      // deleted mark; the path before it is still where the process was working.
+      workingDirectory = withoutDeletedSuffix(await fsPromises.readlink(this.procPath(pid, 'cwd')));
     } catch { /* not ours, or gone */ }
     return {
       process: {
@@ -213,7 +221,8 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     for (let offset = 0; offset < list.length; offset += READ_BATCH_SIZE) {
       await Promise.all(list.slice(offset, offset + READ_BATCH_SIZE).map(async (scanned) => {
         try {
-          if (path.basename(await fsPromises.readlink(this.procPath(scanned.pid, 'exe'))) === 'tmux') {
+          // A tmux server outlives the upgrade that replaced its binary.
+          if (path.basename(withoutDeletedSuffix(await fsPromises.readlink(this.procPath(scanned.pid, 'exe')))) === 'tmux') {
             scanned.role = 'multiplexer';
             return;
           }
