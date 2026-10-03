@@ -704,9 +704,10 @@ Branches follow the pattern `{slug}-{taskId8}` (e.g., `fix-auth-bug-a1b2c3d4`).
 
 Priority order:
 1. Task's base branch (per-task override)
-2. Action config's base branch (per-transition override)
-3. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
-4. Per-user `git.defaultBaseBranch` (default: `main`)
+2. `kangentic.json` `defaultBaseBranch` (team-shared, overridable via `kangentic.local.json`)
+3. Per-user `git.defaultBaseBranch` (default: `main`)
+
+The base is not part of the branch name; the task's worktree records it as `kangentic.baseBranch`.
 
 ## Session Queue
 

@@ -199,7 +199,8 @@ export async function fetchIfStale(
     // some) pass gc.auto, the gc runs inside this fetch: measured 1.7 s against
     // 0.12 s without, on a small repo. A gc that outlasts FETCH_TIMEOUT_MS would
     // even turn a successful fetch into a timeout and a stale start point.
-    // Maintenance still runs on the next commit or background fetch.
+    // Every Kangentic fetch skips it, so maintenance runs on the next commit,
+    // or on a fetch the developer runs themselves.
     await runGitWithTimeout(projectPath, ['fetch', '--no-auto-gc', 'origin', branch], {
       timeoutMs: FETCH_TIMEOUT_MS,
       signal: options?.signal,
