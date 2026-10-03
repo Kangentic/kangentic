@@ -1241,10 +1241,12 @@ independently found that newest commit incomplete. It read the live sessions onc
 three `wsl.exe` calls, so a To Do task dragged into a running column during a slow listing could
 still lose its new agent. The reap now asks again just before the script runs and logs how many
 tasks it left out. A session that starts during the script's own second can still lose its agent,
-and the comments that said the sweep cannot reach one now say that. The other two Mediums were
-test gaps. A batching test could not fail, because its first request finished before the
+and the comments that said the sweep cannot reach one now say that. Of the three other Mediums,
+two were test gaps. A batching test could not fail, because its first request finished before the
 report-only request was queued, and no required check covered the Windows reader's visible-app
-and console-host roles. The rewritten batching test was shown red under both ways a merged batch
+and console-host roles. The third was skipped as an owner decision: a bulk delete's 60 s
+per-task deadline now also covers the reap, whose WSL leg alone can take that long when
+`wsl.exe` wedges, so such a delete reports a cleanup failure while its removal finishes later. The rewritten batching test was shown red under both ways a merged batch
 could go wrong (the stop setting OR'd, and the first request's kept). Three candidates were
 refuted, among them a task-row read outside the reap's `try` that the same function already makes,
 unguarded, a few lines earlier. As in the third pass, `src/` was closed to the two test-builders and the driver
