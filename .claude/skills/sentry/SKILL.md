@@ -70,16 +70,17 @@ The endpoints that matter:
 
 The latest-event payload is large; extract what you need rather than dumping it: `entries`
 with `type: "exception"` carries the stack frames, `type: "breadcrumbs"` the trail, `tags`
-carries `source`/`reason` (stamped by `reportHandledError` for handled forwards), release,
-environment, and the anonymous install id under `user.id` (non-reversible; `userCount` on the
-issue = affected installs).
+carries `source`/`reason` (stamped by `reportHandledError` or `reportHandledRendererError` for
+handled forwards), release, environment, and the anonymous install id under `user.id`
+(non-reversible; `userCount` on the issue = affected installs).
 
 ## Diagnosis
 
 - **Mechanism first.** `mechanism` on the exception says how it was caught: `onunhandledrejection`
-  / `onerror` (renderer globals), `generic` via `captureException` (a boundary or
-  `reportHandledError` - check the `source` tag: `updater`, `pty_spawn`, `spawn`, `global_db_read`,
-  `utility_process`). A `utility_process` event carries a `utility_process` context block under
+  / `onerror` (renderer globals), `generic` via `captureException` (a boundary, main's
+  `reportHandledError`, or the renderer's `reportHandledRendererError` - check the `source` tag:
+  `updater`, `pty_spawn`, `spawn`, `global_db_read`, `utility_process`, and from the renderer
+  `monaco_line_number`). A `utility_process` event carries a `utility_process` context block under
   `contexts` with the worker's stderr tail; read that before the stack, since the stack is only the
   restart policy's report site and the tail is what the worker printed before it died.
 - **Symbolication caveat:** packaged-release events resolve to real file/line only once a
@@ -110,8 +111,9 @@ issue = affected installs).
   event carries a `stack_truncated: 'true'` tag; every event from before it must be counted by
   hand, and so must any event with no such tag, since its absence is ambiguous until that
   release is the only one reporting. DESKTOP-19 cost a whole investigation round to this: six
-  events, fifty monaco frames each, no in-app frame, and the app frame that armed the call
-  truncated away.
+  events, fifty monaco frames each, and no in-app frame. Two different caps cut it. V8's own
+  50-frame limit cut the ORIGINAL error's outer frames when monaco's listener threw, and the SDK's
+  parser then cut the one frame of monaco's rethrow (see the `mechanism` bullet below).
 - **Read the `context` lines rather than reasoning from function names.** When sourcemaps are
   uploaded every frame carries `context` (the source line plus surrounding lines). That is
   authoritative and beats reading `node_modules` locally. Print it for the load-bearing frames:
@@ -125,12 +127,25 @@ issue = affected installs).
 - **Same-timestamp event pairs are not always double reports.** Compare the pair's stacks before
   dividing the event count: DESKTOP-19's pairs have different outermost frames, so each incident
   threw twice rather than being reported twice.
-- **The `mechanism` tag is evidence about the SCHEDULER, and it is checkable.**
-  `auto.browser.browserapierrors.setTimeout` means the chain ran inside a real `setTimeout`
-  callback, so enumerate the candidate timers in the implicated subsystem and rule them out one
-  by one. On DESKTOP-19 the obvious suspect (Monaco's background tokenizer) was eliminated from
-  source - it schedules with `runWhenGlobalIdle` and yields with `setTimeout0`, which uses
-  `postMessage` in a renderer - which left exactly one app-owned timer.
+- **The `mechanism` tag names the timer the error was RETHROWN from, which may not be the one the
+  failing chain ran under.** Read the exception value before trusting it. Monaco's default
+  `unexpectedErrorHandler` (`vs/base/common/errors.js`) catches an error and rethrows it from its
+  own `setTimeout(..., 0)` as `new Error(message + '\n\n' + stack)`. So a value that reads as a
+  message, a blank line, then a second stack is that rethrow. The
+  `auto.browser.browserapierrors.setTimeout` mechanism is monaco's timer, the frames Sentry shows
+  are parsed out of the embedded original stack, and the frame the 50-frame cap cut is the rethrow
+  itself. Look for the innermost catcher instead. That is the frame directly above the listener
+  that threw, which for a monaco event listener is `Emitter._deliver` in `event.js`. DESKTOP-19 is this
+  case. An earlier pass read its `setTimeout` as the scheduler and ruled out timers until one
+  app-owned timer was left, which answered the wrong question. Monaco caught the original throw
+  synchronously, so whatever scheduled the chain sits in outer frames that V8's own 50-frame limit
+  cut when the original error was built. The renderer's monaco funnel
+  (`src/renderer/monaco-error-funnel.ts`) now reports that error as handled
+  (`source: monaco_line_number`). Each live diff viewer's state is a `diff_viewer_N` context, and
+  the funnel's own call stack, captured with a raised limit, is the `call_site` context. Its
+  locations are bare bundle file names, so resolve them against the release's uploaded sourcemaps
+  by hand. The funnel sends at most one report per 30 seconds, so the event count understates
+  the throws: `funnel.suppressed_since_last_report` is how many it absorbed before that report.
 - **A default-off setting can be the missing precondition.** When an issue hits very few installs,
   check whether the code path needs a non-default setting before concluding it is unreproducible.
   DESKTOP-19 needs "Collapse Unchanged Regions" on, which defaults to off.

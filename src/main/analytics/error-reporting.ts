@@ -230,8 +230,8 @@ export const SENTRY_STACK_FRAME_LIMIT = 50;
  *
  * That is not hypothetical. Every event on DESKTOP-19 ("Illegal value for
  * lineNumber") carried exactly 50 monaco-editor frames and no in-app frame,
- * which is what made it look like a pure upstream bug; the app frame that
- * actually armed the call had been truncated away. This tag makes the
+ * which is what made it look like a pure upstream bug (docs/analytics.md says
+ * which frames were cut and where they now arrive). This tag makes the
  * difference between "no app frames" and "no app frames survived" visible in
  * the issue stream instead of leaving it to be rediscovered by hand.
  *

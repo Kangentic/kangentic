@@ -543,7 +543,9 @@ test.describe('Changes view: diff scroll memory', () => {
         .toBe(true);
 
       // monacoConfig's funnel only swallows the DiffEditor disposal error, so a
-      // genuine internal throw would still surface here.
+      // genuine internal throw still surfaces here: as a page error, or, for
+      // the "Illegal value for lineNumber" error the funnel reports as handled,
+      // as its [MONACO] console line, which collectPageErrors also collects.
       expect(getPageErrors()).toHaveLength(0);
     } finally {
       // Leave the shared page as this test found it for any later spec run.
@@ -658,8 +660,10 @@ test.describe('Changes view: diff scroll memory', () => {
       expect(originalState.lineCount).toBeGreaterThan(0);
       expect(originalState.maxVisibleLine).toBeLessThanOrEqual(originalState.lineCount);
 
-      // A throw on this path escapes a setTimeout to window.onerror and never
-      // reaches monacoConfig's funnel, so it surfaces here as a page error.
+      // A throw on this path is caught by monaco's Emitter and handed to
+      // monacoConfig's funnel, which reports it as handled instead of letting
+      // monaco rethrow it to window.onerror. It surfaces here through the
+      // funnel's [MONACO] console line, which collectPageErrors collects.
       expect(getPageErrors()).toHaveLength(0);
     } finally {
       await setCollapseUnchanged(page, false);

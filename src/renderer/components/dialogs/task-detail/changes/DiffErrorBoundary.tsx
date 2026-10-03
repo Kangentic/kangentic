@@ -24,9 +24,11 @@ export class DiffErrorBoundary extends React.Component<
     // crash reached the console and nothing else.
     //
     // It still catches only RENDER-phase throws. The diff subsystem's known
-    // crash class (Sentry DESKTOP-19) is thrown asynchronously from inside
-    // Monaco, so it bypasses React entirely and reaches Sentry through the
-    // global handlers instead. Do not read this boundary as covering it.
+    // crash class (Sentry DESKTOP-19) is thrown inside a Monaco event listener
+    // and caught by Monaco itself, so it bypasses React entirely and reaches
+    // Sentry as a handled report from monaco's error funnel instead
+    // (src/renderer/monaco-error-funnel.ts). Do not read this boundary as
+    // covering it.
     reportBoundaryError(error);
   }
 
