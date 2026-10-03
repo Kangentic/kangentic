@@ -269,6 +269,21 @@ describe('WorktreeManager -- sparse-checkout', () => {
     ]);
   });
 
+  it('on git 2.35.0 exactly, the first release that accepts `set --no-cone`, uses the single pass', async () => {
+    // The 2.34.1 case above only proves the form below the boundary. Without this
+    // one a gate raised a release too far would still pass both, and git 2.35.0
+    // would pay the `init` pass that deletes and rewrites the whole tree.
+    setupCreateWorktreeMocks();
+    vi.mocked(getInstalledGitVersion).mockResolvedValueOnce('2.35.0');
+
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    expect(sparseCheckoutCalls()).toEqual([
+      ['sparse-checkout', 'set', '--no-cone', '/*', '!/.claude/commands/'],
+    ]);
+  });
+
   it('keeps `init --no-cone` + `set` when the git version is unknown', async () => {
     setupCreateWorktreeMocks();
     vi.mocked(getInstalledGitVersion).mockResolvedValueOnce(null);
@@ -393,6 +408,27 @@ describe('WorktreeManager -- parallel checkout workers', () => {
 
     const args = worktreeAddArgs();
     const configIndex = args.indexOf(expected);
+    expect(configIndex).toBeGreaterThan(0);
+    expect(args[configIndex - 1]).toBe('-c');
+    expect(configIndex).toBeLessThan(args.indexOf('worktree'));
+  });
+
+  it('passes the workers to the attach form of `worktree add` as well', async () => {
+    // The `-b` form above is only half the call sites. A task re-entering a
+    // column after a Done round-trip, and a creation retried after an aborted
+    // post-worktree script, find their branch already there and take the attach
+    // form instead.
+    setupCreateWorktreeMocks();
+    vi.spyOn(os, 'availableParallelism').mockReturnValue(16);
+    // Every project git call resolves, `rev-parse --verify` included: the branch exists.
+    mockProjectGit.raw.mockImplementation(() => Promise.resolve(''));
+
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+
+    const args = worktreeAddArgs();
+    // The attach form takes no `-b`, which proves this is the branch under test.
+    expect(args).not.toContain('-b');
+    const configIndex = args.indexOf('checkout.workers=8');
     expect(configIndex).toBeGreaterThan(0);
     expect(args[configIndex - 1]).toBe('-c');
     expect(configIndex).toBeLessThan(args.indexOf('worktree'));
