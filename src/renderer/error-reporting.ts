@@ -42,3 +42,28 @@ export function reportBoundaryError(error: unknown): void {
     // Error reporting must never cascade into the boundary's own render path.
   }
 }
+
+/** Named context blocks for a handled report, the same shape main's reportHandledError takes. */
+export type RendererErrorContexts = Record<string, Record<string, unknown>>;
+
+/**
+ * Report an error the renderer CAUGHT and recovered from, with tags for
+ * grouping and contexts for diagnosis. The renderer counterpart of main's
+ * reportHandledError (src/main/analytics/error-reporting.ts): tags hold short
+ * enum-like values and never content, and the diagnosis goes in `contexts`,
+ * which Sentry shows as named blocks and never groups on. captureException
+ * marks the event handled. Like reportBoundaryError it is a safe no-op when
+ * the SDK did not initialize, and it never throws, because its callers sit in
+ * catch blocks of their own.
+ */
+export function reportHandledRendererError(
+  error: unknown,
+  tags: Record<string, string>,
+  contexts: RendererErrorContexts,
+): void {
+  try {
+    captureException(error, { tags, contexts });
+  } catch {
+    // Error reporting must never cascade into the failing path itself.
+  }
+}
