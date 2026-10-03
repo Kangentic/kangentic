@@ -1885,8 +1885,15 @@ export class SessionManager extends EventEmitter {
     // while stopping is on.
     if (process.platform === 'win32' && options.stop) {
       const wslSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
-      if (wslSpec) {
-        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, reapTasks, async (file, args, execOptions) => {
+      // The distro's script cannot tell which processes run under a PTY this
+      // app holds, which the host protects, so it leaves out every task that
+      // has a live session again or is starting one, read here, after the host
+      // reap. The startup sweep is the caller that can meet one: a To Do task
+      // dragged back into a running column while its reap ran. Every other
+      // caller waited for its tasks' sessions to exit, so it loses nothing.
+      const distroTasks = reapTasks.filter((task) => !this.hasLiveOrStartingSession(task.taskId));
+      if (wslSpec && distroTasks.length > 0) {
+        killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, distroTasks, async (file, args, execOptions) => {
           const output = await execFileAsync(file, args, {
             timeout: execOptions.timeoutMs,
             env: { ...process.env, ...execOptions.env },
@@ -2685,6 +2692,19 @@ export class SessionManager extends EventEmitter {
    */
   hasLiveSessionForTask(taskId: string): boolean {
     return this.registry.hasLiveSessionForTask(taskId);
+  }
+
+  /**
+   * Whether the task has a running or queued session, one being torn down
+   * included, or a spawn still in flight: anything whose PTY the pty host
+   * holds or is about to.
+   */
+  private hasLiveOrStartingSession(taskId: string): boolean {
+    if (this.registry.findLiveSessionByTaskId(taskId)) return true;
+    for (const inFlight of this.spawnsInFlight.values()) {
+      if (inFlight.taskId === taskId) return true;
+    }
+    return false;
   }
 
   /**

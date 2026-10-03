@@ -93,7 +93,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `cleanupTaskSession` orderings (exit, then reap, then worktree removal), a Done move whose
   session ended earlier, the `auto_spawn=false` and Pause/Stop negatives, and `PROJECT_DELETE`'s
   order; `tests/unit/mcp-project-context.test.ts` pins the MCP delete, including a task with no
-  worktree; `tests/unit/terminal-task-leftover-sweep.test.ts` pins the startup sweep. Runs in CI.
+  worktree; `tests/unit/terminal-task-leftover-sweep.test.ts` pins the startup sweep, and
+  `tests/unit/session-wsl-reap-live-task.test.ts` that the in-distro WSL reap leaves out a task
+  with a live or starting session (the sweep takes no task lock). Runs in CI.
 - **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, its
   absence on a transient one, and `WSLENV`. `transition-engine.test.ts` and
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,
