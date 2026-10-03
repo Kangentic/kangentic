@@ -818,7 +818,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 529, first-build progress follow-up | 29f +1093 -287 | 192KB, 3315 lines | 11 (8) | 18 | 0 | 8 | 4 of 7 pack-carrying, 2 not reported | 20 / 19, plus 1 found while filling holes |
 | task 735, pre-PR | 49f +2098 -492, 10 new files, 1 deleted | 259KB, 4432 lines | 9 (2) | 40 | 0 | 8 | 10 of 7 pack-carrying | 21 raised, 19 distinct / 12 applied, 7 refuted; 6 coverage holes filled |
 | task 736, whole branch, pre-PR | 146f +9278 -1701 | 793KB, 14017 lines | 10 (0) | 136 | 0 | 12, sharded by area: 6 area shards, 5 gated auditors on their own ranges, integration on the delta | about 34 of 11 pack-carrying, 1 not reported | 51 raised, 46 distinct / 27 applied, 2 refuted; 6 coverage holes filled |
-| task 736, whole branch, second pass | 153f +10439 -1718 | 866KB, 15295 lines | 9 (0) | 144 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two), integration on the delta | about 70 of 13 pack-carrying, most of them greps | 41 raised, 39 distinct, plus 1 found in verification / 27 applied, 5 refuted; 5 coverage holes filled |
+| task 736, whole branch, second pass | 153f +10439 -1718 | 866KB, 15295 lines | 9 (0) | 144 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two), integration on the delta | about 70 of 13 pack-carrying, most of them greps | 41 raised, 39 distinct, plus 1 found in verification / 27 applied, 4 refuted, 9 skipped; 5 coverage holes filled |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1205,7 +1205,7 @@ options the branch made required and reads first. Tests are not typechecked and 
 tests, so that run, made before the test-builders started, is the only step that could catch it.
 The Mediums were reap safety at reader edges: a tmux server whose binary an upgrade replaced lost
 its protection on Linux, a failed `lsappinfo` dropped the visible-app protection on macOS, and a
-cleared-tag child under a withheld orphan was killed with it. Five candidates were refuted,
+cleared-tag child under a withheld orphan was killed with it. Four candidates were refuted,
 among them a Windows `describe` gate one finder doubted and another showed pinned by a test. Two
 test-builders worked on disjoint files with `src/` closed to them. One showed red-green by
 applying each revert to a copy of `src/` in the scratchpad, which kept the working tree clean.
