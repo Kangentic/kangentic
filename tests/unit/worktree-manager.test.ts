@@ -245,8 +245,8 @@ describe('WorktreeManager -- sparse-checkout', () => {
   it('on git 2.35+ applies sparse-checkout in one `set --no-cone` pass that excludes only .claude/commands/', async () => {
     setupCreateWorktreeMocks();
 
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     // No `init`: its top-level-only default would delete the whole tree and
     // `set` would write it back. Skills and agents do NOT walk up the
@@ -273,8 +273,8 @@ describe('WorktreeManager -- sparse-checkout', () => {
     setupCreateWorktreeMocks();
     vi.mocked(getInstalledGitVersion).mockResolvedValueOnce(null);
 
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
 
     expect(sparseCheckoutCalls()).toEqual([
       ['sparse-checkout', 'init', '--no-cone'],
@@ -290,8 +290,8 @@ describe('WorktreeManager -- sparse-checkout', () => {
         : Promise.resolve('')
     ));
 
-    const mgr = new WorktreeManager('/project');
-    const result = await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
+    const worktreeManager = new WorktreeManager('/project');
+    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
 
     expect(result.worktreePath).toBeDefined();
     expect(fs.promises.copyFile).toHaveBeenCalledTimes(1);

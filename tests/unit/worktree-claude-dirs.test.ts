@@ -131,8 +131,8 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
     git('add -A');
     git('commit -m "add nested files"');
 
-    const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main');
+    const worktreeManager = new WorktreeManager(tmpDir);
+    const { worktreePath } = await worktreeManager.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main');
 
     const tracked = wtGit(worktreePath, 'ls-files').split('\n').filter(Boolean);
     const expectedOnDisk = tracked.filter((file) => !file.startsWith('.claude/commands/'));

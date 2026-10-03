@@ -107,7 +107,10 @@ describe('searchProjectEntries', () => {
     writeFile(cwd, '.claude/skills/review/SKILL.md', '# skill');
     runGit(cwd, ['add', '-A']);
     runGit(cwd, ['commit', '-m', 'init']);
-    runGit(cwd, ['sparse-checkout', 'set', '--no-cone', '/*', '!/.claude/commands/']);
+    // `init` then `set`: git before 2.35 (the supported floor is 2.26) stores
+    // `set --no-cone` as a pattern, the reason worktree-manager.ts gates that form.
+    runGit(cwd, ['sparse-checkout', 'init', '--no-cone']);
+    runGit(cwd, ['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
     writeFile(cwd, 'untracked-note.md', 'note');
     expect(fs.existsSync(path.join(cwd, '.claude', 'commands', 'review.md'))).toBe(false);
 

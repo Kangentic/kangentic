@@ -41,7 +41,9 @@ afterEach(() => {
     try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
   }
   for (const directory of createdDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    // Retries: on Windows the killed processes' handles on their cwd can outlive
+    // taskkill by a few milliseconds.
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
 

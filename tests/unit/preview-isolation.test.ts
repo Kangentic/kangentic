@@ -58,7 +58,9 @@ describe('previewGitCeilingDirectories', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-ceiling-'));
+    // Canonical, because git reports real paths: macOS's tmpdir is a symlink into
+    // /private, and a Windows tmpdir can be an 8.3 short name.
+    tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'preview-ceiling-')));
   });
 
   afterEach(async () => {
