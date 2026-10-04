@@ -13,11 +13,10 @@ import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
 //    `SettingsCard`s (plus its dialogs and the dev-only sections), never a loose
 //    row, so every tab in the panel flows the same way.
 // 2. Every child of a card body is a tile component (`CardRow`,
-//    `CardToggleRow`, `CardChoiceRow`, `CardTile`, or a component whose every
-//    return is one). A
+//    `CardToggleRow`, `CardChoiceRow`, `CardGroupTile`, `CardTile`, or a
+//    component whose every return is one). A
 //    raw `<div>` in a body renders as a bare block among tiles: no fill, no
-//    inset, and a label off the card's left edge. A `wideBody` card holds a grid
-//    directly by design.
+//    inset, and a label off the card's left edge.
 // 3. A `CardTile` never sets its own fill or padding.
 // 4. Every description a card SHOWS (a header's, or a toggle row's with
 //    `inlineDescription`) fits on one line. The settings panel is a fixed 720px,
@@ -44,7 +43,7 @@ const TABS_ROOT = path.join(SETTINGS_ROOT, 'tabs');
 /** Dev-only cards rendered inside the Developer tab; build-excluded, but the same design. */
 const DEV_SECTIONS_FILE = path.join(REPO_ROOT, 'src/devtools/renderer/DevToolsSections.tsx');
 
-const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardTile'];
+const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile', 'CardTile'];
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */
@@ -322,8 +321,7 @@ function scanUnit(unit: SourceUnit, tileComponents: Set<string>, isTabFile: bool
           }
         }
         // (2) Every body child is a tile.
-        const wideBody = attributeNamed(opening, 'wideBody', sourceFile) !== undefined;
-        if (ts.isJsxElement(node) && !wideBody) {
+        if (ts.isJsxElement(node)) {
           for (const child of node.children) {
             for (const bad of disallowedRenders(child, (childTag) => tileComponents.has(childTag), () => false, sourceFile)) {
               violations.push({ file: fileLabel, line: lineOf(bad), where: `card "${card}"`, found: ts.isJsxElement(bad) || ts.isJsxSelfClosingElement(bad) ? `<${tagName(bad, sourceFile)}>` : bad.getText(sourceFile).slice(0, 40) });
@@ -553,16 +551,19 @@ describe('settings card design', () => {
     expect(violations.map((violation) => violation.found)).toEqual(Array(3).fill('short fixed choice as a dropdown: use CardChoiceRow or SegmentedControl'));
   });
 
-  it('lets a wideBody card hold its grid directly', () => {
-    const { violations } = scanSnippet('wide.tsx', `
-      export function Wide() {
+  it('takes a CardGroupTile as a tile and still flags a bare grid beside it', () => {
+    const { violations } = scanSnippet('groups.tsx', `
+      export function Groups() {
         return (
-          <SettingsCard icon={null} label="Wide" description="ok" wideBody>
+          <SettingsCard icon={null} label="Groups" description="ok">
+            <CardGroupTile label="Tasks" count={2} open onToggle={() => {}}>
+              <ul className="grid grid-cols-3" />
+            </CardGroupTile>
             <div data-testid="grid" />
           </SettingsCard>
         );
       }
     `);
-    expect(violations).toEqual([]);
+    expect(violations.map((violation) => violation.found)).toEqual(['<div>']);
   });
 });

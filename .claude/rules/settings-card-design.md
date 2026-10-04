@@ -28,12 +28,13 @@ stated here and held by the components.
   settings registry.
 - **Every child of a card body is a tile.** Use `CardRow` for a control under its label,
   `CardToggleRow` for a label with a switch, `CardChoiceRow` for a choice between two named
-  options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, and `CardTile`
+  options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, `CardGroupTile`
+  for a titled group of items that collapses (MCP Server's tool groups), and `CardTile`
   for anything custom: an action row, a group of controls, a sortable list item. A component of your own may sit in a
   body when every one of its returns is a tile (`NotifyChannelRow`, `HotkeyRow`). Never put a raw
   element in a body, and never give a `CardTile` its own fill or padding (its `className` is for
-  layout only). The one exception is `wideBody`, for a grid with no label column (MCP Server's
-  tool list).
+  layout only). There is no exception: the MCP Server tool list, the one body that used to hold
+  a bare grid, is a stack of `CardGroupTile`s.
 - **A status is one `CardStatusRow`, whatever it reports.** The state is the label ("Local model",
   "Downloading", "Download failed"), the figure sits at the switches' right edge, and a running
   state passes `percent` for the track. `tone` is the only styling: `ready` puts a check beside the

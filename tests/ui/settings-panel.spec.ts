@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
-import { MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
+import { MCP_SERVER_DOCS_URL, MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
 
 let browser: Browser;
 let page: Page;
@@ -1356,49 +1356,53 @@ test.describe('Settings Panel', () => {
     // No user-tunable task-creation cap anymore (it is now a fixed internal backstop).
     await expect(page.getByText('Max Tasks Per Session')).toHaveCount(0);
 
-    // The tools list renders from MCP_TOOL_MANIFEST, grouped by category as pills.
-    // Spot-check each section header by its heading role (short labels like "Board"
-    // are substrings of tool names AND collide with the board view-toggle button
-    // behind the panel) plus a representative tool from each group. Backlog tools
-    // and the unified Search tool live under Board; sessions under Sessions. "Search"
-    // needs `exact: true` - without it, the substring match also hits "Search Tasks".
-    await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
-    await expect(page.getByText('Create Task')).toBeVisible();
-    // exact: true - without it, the substring match also hits "Move Task to Project".
-    await expect(page.getByText('Move Task', { exact: true })).toBeVisible();
-    await expect(page.getByText('Delete Task')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible();
-    await expect(page.getByText('List Backlog')).toBeVisible();
-    // Scoped to the tool list: "Search" also appears elsewhere in the panel.
-    await expect(page.getByTestId('mcp-tool-list').getByText('Search', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
-    await expect(page.getByText('Session History')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Browser Automation', exact: true })).toBeVisible();
-    await expect(page.getByText('Bounding Box')).toBeVisible();
+    // The docs come first, as a row of their own.
+    await expect(page.getByTestId('mcp-docs-row')).toContainText('Documentation');
 
-    // The complete catalogue (including the dev-leaning diagnostics group) is now
-    // rendered as pills, one per manifest entry. Pinning the pill count to the
-    // manifest length is the red-green anchor: dropping a tool, or a category that
-    // fails to render, fails here, and a newly-added tool is covered for free.
-    await expect(page.getByTestId('mcp-tool-pill')).toHaveCount(MCP_TOOL_MANIFEST.length);
-    // The diagnostics tools that the panel used to omit now appear under their header.
-    await expect(page.getByRole('heading', { name: 'Diagnostics', exact: true })).toBeVisible();
-    await expect(page.getByText('Tail Logs', { exact: true })).toBeVisible();
-    await expect(page.getByText('Query Database', { exact: true })).toBeVisible();
-    await expect(page.getByText('List Worktrees', { exact: true })).toBeVisible();
+    // The tools render from MCP_TOOL_MANIFEST, one collapsible tile per category,
+    // every one open on arrival. Each tile's header names the group and its count.
+    for (const category of MCP_TOOL_CATEGORIES) {
+      const toolCount = MCP_TOOL_MANIFEST.filter((tool) => tool.category === category.id).length;
+      const toggle = page.getByTestId(`mcp-tool-group-${category.id}-toggle`);
+      await expect(toggle).toContainText(category.label);
+      await expect(toggle).toContainText(String(toolCount));
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    }
+    // A representative tool from each group. Backlog tools and the unified Search
+    // tool live under Board. Scoped to each group: short names like "Search" also
+    // appear elsewhere in the panel, and `exact: true` keeps "Move Task" from
+    // matching "Move Task to Project".
+    const group = (categoryId: string) => page.getByTestId(`mcp-tool-group-${categoryId}`);
+    await expect(group('tasks').getByText('Create Task')).toBeVisible();
+    await expect(group('tasks').getByText('Move Task', { exact: true })).toBeVisible();
+    await expect(group('tasks').getByText('Delete Task')).toBeVisible();
+    await expect(group('board').getByText('List Backlog')).toBeVisible();
+    await expect(group('board').getByText('Search', { exact: true })).toBeVisible();
+    await expect(group('sessions').getByText('Session History')).toBeVisible();
+    await expect(group('browser').getByText('Bounding Box')).toBeVisible();
+    await expect(group('diagnostics').getByText('Tail Logs', { exact: true })).toBeVisible();
+    await expect(group('diagnostics').getByText('Query Database', { exact: true })).toBeVisible();
+    await expect(group('diagnostics').getByText('List Worktrees', { exact: true })).toBeVisible();
 
-    // Each pill deep-links to its docs section. Patch the mock's no-op openExternal
-    // to record the URL, click one pill, and assert it opened the derived docs URL.
+    // One cell per manifest entry. Pinning the cell count to the manifest length
+    // is the red-green anchor: dropping a tool, or a category that fails to
+    // render, fails here, and a newly-added tool is covered for free.
+    await expect(page.getByTestId('mcp-tool-cell')).toHaveCount(MCP_TOOL_MANIFEST.length);
+
+    // Each cell deep-links to its docs entry, and the docs row opens the page.
+    // Patch the mock's no-op openExternal to record URLs, click both, and assert
+    // what they opened.
     await page.evaluate(() => {
       window.__openedExternalUrls = [];
       window.electronAPI.shell.openExternal = async function (url: string) {
         window.__openedExternalUrls?.push(url);
       };
     });
-    await page.getByTestId('mcp-tool-pill').filter({ hasText: 'Create Task' }).click();
+    await page.getByTestId('mcp-tool-cell').filter({ hasText: 'Create Task' }).click();
+    await page.getByTestId('mcp-docs-link').click();
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual([mcpToolDocsUrl('kangentic_create_task')]);
+      .toEqual([mcpToolDocsUrl('kangentic_create_task'), MCP_SERVER_DOCS_URL]);
     // Restore the mock's default no-op so this patch does not leak into later tests
     // on the shared page (matches mock-electron-api.js shell.openExternal).
     await page.evaluate(() => {
@@ -1410,6 +1414,46 @@ test.describe('Settings Panel', () => {
     // "How it works" is the card header's info tooltip now, not a section.
     await expect(page.getByRole('button', { name: /^About MCP server: Each agent session gets a local MCP server/ })).toBeVisible();
 
+    await closeSettings();
+  });
+
+  test('MCP Server tool groups collapse one at a time and all open again on the next visit', async () => {
+    await openSettings();
+    // By test id: Settings reopens to the last tab, and when that is MCP Server
+    // the card's "About MCP server" info button also matches the tab's name.
+    await page.getByTestId('settings-tab-mcpServer').click();
+
+    // A closed group keeps its cells mounted (they animate shut) but hidden, so
+    // the counts read visible cells only.
+    const visibleCells = page.locator('[data-testid="mcp-tool-cell"]:visible');
+    const boardToggle = page.getByTestId('mcp-tool-group-board-toggle');
+    const boardBody = page.getByTestId('mcp-tool-group-board-body');
+    const boardCount = MCP_TOOL_MANIFEST.filter((tool) => tool.category === 'board').length;
+    await expect(boardBody).toBeVisible();
+    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+
+    // Closing Board hides only its tools.
+    await boardToggle.click();
+    await expect(boardToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(boardBody).toBeHidden();
+    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length - boardCount);
+
+    await boardToggle.click();
+    await expect(boardToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(boardBody).toBeVisible();
+    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+
+    // Closed again, then the panel closes. Settings reopens to the MCP Server
+    // tab, and a collapse is not remembered, so every group is open.
+    await boardToggle.click();
+    await expect(boardBody).toBeHidden();
+    await closeSettings();
+    await openSettings();
+    await expect(page.getByTestId('mcp-tool-group-board-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+
+    // Reset to General so later tests start from a known tab.
+    await page.getByRole('button', { name: 'General', exact: true }).click();
     await closeSettings();
   });
 

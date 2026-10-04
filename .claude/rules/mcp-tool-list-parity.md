@@ -26,7 +26,7 @@ under `src/main/agent/mcp-http/*-tools.ts`, keep its user-facing surfaces in syn
 1. **Manifest:** add / rename / remove the matching entry in `MCP_TOOL_MANIFEST`
    (`src/shared/mcp-tool-manifest.ts`). The entry's `name` MUST equal the registered tool name.
    Give it a `label`, a one-line `blurb`, and a `category`.
-2. **Panel:** `McpServerTab.tsx` renders every manifest entry as a pill, grouped by category.
+2. **Panel:** `McpServerTab.tsx` renders every manifest entry as a cell in its category's group.
    You do not edit the panel for a new tool - listing it in the manifest is enough.
 3. **Docs:** document the tool in `docs/mcp-server.md` (the exhaustive reference). This couples to
    [[docs-stay-in-sync]]: the MCP tool list is a doc anchor.
