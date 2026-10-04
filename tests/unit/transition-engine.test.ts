@@ -630,6 +630,48 @@ describe('TransitionEngine - migrateResumeCwdIfRenamed wiring', () => {
   });
 });
 
+describe('TransitionEngine - recorded grid on a resume (executeSpawnAgent chokepoint)', () => {
+  // A Resume or a move after a desktop restart has no in-memory predecessor
+  // with a grid, so the spawn takes the one recorded on the record it retires.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+  });
+
+  function resumableRecord(grid: { last_pty_cols: number | null; last_pty_rows: number | null }) {
+    return {
+      id: 'session-record-grid',
+      agent_session_id: 'agent-sess-uuid',
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: '/some/project',
+      ...grid,
+    };
+  }
+
+  it('hands the retired record grid to the spawn', async () => {
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(resumableRecord({ last_pty_cols: 210, last_pty_rows: 48 }));
+
+    const { runSpawn, sessionManager } = makeEngine({ sessionRepo });
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ restoredGrid: { cols: 210, rows: 48 } }),
+    );
+  });
+
+  it('passes no grid when the retired record has none', async () => {
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(resumableRecord({ last_pty_cols: null, last_pty_rows: null }));
+
+    const { runSpawn, sessionManager } = makeEngine({ sessionRepo });
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn.mock.calls[0][0]).not.toHaveProperty('restoredGrid');
+  });
+});
+
 describe('TransitionEngine - resume-time agent-session-id reconcile wiring (executeSpawnAgent chokepoint)', () => {
   // Coverage hole (issue #481 review): executeSpawnAgent's resume branch
   // computes `agentSessionId` by awaiting `reconcileResumeAgentSessionId`

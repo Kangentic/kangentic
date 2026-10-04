@@ -78,6 +78,12 @@ export interface SpawnFlowContext {
    * lives with the caller. A context built without this never inherits.
    */
   inheritedGrid?: (predecessor: ManagedSession) => { cols: number; rows: number } | undefined;
+  /**
+   * Vet a grid read from the replaced session record (`input.restoredGrid`):
+   * the grid to spawn at, or undefined to fall through to the default. A
+   * context built without this never restores.
+   */
+  restoredGrid?: (grid: { cols: number; rows: number }) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
   /**
    * True once a teardown aimed at this session or its task (a kill, remove or
@@ -302,8 +308,13 @@ export async function performSpawn(
   const inheritedGrid = carryoverSource && carryoverSource.id !== id
     ? context.inheritedGrid?.(carryoverSource)
     : undefined;
-  const spawnCols = pendingResize?.cols ?? requestedCols ?? inheritedGrid?.cols ?? DEFAULT_PTY_COLS;
-  const spawnRows = pendingResize?.rows ?? requestedRows ?? inheritedGrid?.rows ?? DEFAULT_PTY_ROWS;
+  // Last before the default: the grid recorded on the session record this
+  // spawn replaces, for the resumes no in-memory row can speak for (after a
+  // desktop restart the registry is empty; after a pty host crash the lost row
+  // is exited, which inheritedGrid refuses).
+  const restoredGrid = input.restoredGrid ? context.restoredGrid?.(input.restoredGrid) : undefined;
+  const spawnCols = pendingResize?.cols ?? requestedCols ?? inheritedGrid?.cols ?? restoredGrid?.cols ?? DEFAULT_PTY_COLS;
+  const spawnRows = pendingResize?.rows ?? requestedRows ?? inheritedGrid?.rows ?? restoredGrid?.rows ?? DEFAULT_PTY_ROWS;
 
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name

@@ -1143,6 +1143,35 @@ describe('performSpawn - cols/rows precedence', () => {
       expect(spawnGrid()).toEqual([DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS]);
     });
 
+    it('case (j): a restored grid applies only when nothing above it names one', async () => {
+      const restored = { cols: 210, rows: 48 };
+
+      // No predecessor: the restored grid, as vetted by the caller's policy.
+      const bare = makeContext();
+      bare.restoredGrid = vi.fn((grid: { cols: number; rows: number }) => grid);
+      await performSpawn(makeInput({ restoredGrid: restored }), bare);
+      expect(spawnGrid()).toEqual([210, 48]);
+      expect(bare.restoredGrid).toHaveBeenCalledWith(restored);
+
+      // An inherited grid wins over it.
+      ptySpawnMock.mockClear();
+      const withPredecessor = contextWithPredecessor();
+      withPredecessor.restoredGrid = vi.fn((grid: { cols: number; rows: number }) => grid);
+      await performSpawn(makeInput({ restoredGrid: restored }), withPredecessor);
+      expect(spawnGrid()).toEqual([190, 50]);
+
+      // A policy that refuses it, or a context without one, leaves the default.
+      ptySpawnMock.mockClear();
+      const refusing = makeContext();
+      refusing.restoredGrid = vi.fn(() => undefined);
+      await performSpawn(makeInput({ restoredGrid: restored }), refusing);
+      expect(spawnGrid()).toEqual([DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS]);
+
+      ptySpawnMock.mockClear();
+      await performSpawn(makeInput({ restoredGrid: restored }), makeContext());
+      expect(spawnGrid()).toEqual([DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS]);
+    });
+
     it('case (i): the new row records its spawn grid for its own successor', async () => {
       const context = contextWithPredecessor();
 

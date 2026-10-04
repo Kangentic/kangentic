@@ -417,6 +417,21 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE sessions ADD COLUMN applied_effort TEXT DEFAULT NULL');
   }
 
+  // Migration: record the PTY grid a session last had (its spawn grid, then
+  // every applied resize except a phone's), so a resume after a desktop restart
+  // or a pty host crash spawns at it instead of the 120x30 default. In memory a
+  // respawn already starts at its predecessor's grid; this is the copy that
+  // survives the registry. NULL = never recorded (rows from before this column,
+  // or a session whose grid never reached the record).
+  const sessionGridCols = new Set(
+    (db.pragma('table_info(sessions)') as Array<{ name: string }>).map((col) => col.name),
+  );
+  for (const gridColumn of ['last_pty_cols', 'last_pty_rows']) {
+    if (!sessionGridCols.has(gridColumn)) {
+      db.exec(`ALTER TABLE sessions ADD COLUMN ${gridColumn} INTEGER DEFAULT NULL`);
+    }
+  }
+
   // Migration: rename permission_strategy column -> permission_mode
   const currentSwimlaneCols = new Set(
     (db.pragma('table_info(swimlanes)') as Array<{ name: string }>).map((col) => col.name),

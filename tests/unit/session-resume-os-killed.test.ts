@@ -513,6 +513,55 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
   });
 });
 
+/**
+ * After a desktop restart the registry is empty, so the resume spawn has no
+ * in-memory predecessor to take a grid from. It takes the one recorded on the
+ * session record it replaces, or every resume comes up at 120x30 and a phone
+ * opening the task pays a park mid-boot.
+ */
+describe('resumeSuspendedSessions: the resume spawns at the grid recorded on its record', () => {
+  async function resumeOne(record: SessionRecord) {
+    sessionRepoGetResumable.mockReturnValue([record]);
+    dbRecords = [record];
+    taskRepoList.mockReturnValue([makeTask({ id: record.task_id, swimlane_id: 'lane-exec' })]);
+    wirePrepareAgentSpawnEcho();
+    const sessionManager = makeSessionManager();
+    await resumeSuspendedSessions('proj-1', '/project', sessionManager as never, makeConfigManager(true) as never);
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    return sessionManager.spawn.mock.calls[0][0] as { restoredGrid?: { cols: number; rows: number } };
+  }
+
+  const suspendedBySystem = {
+    status: 'suspended' as const,
+    suspended_by: 'system' as const,
+    suspended_at: '2026-06-06T12:00:00.000Z',
+    exit_code: null,
+    exited_at: null,
+  };
+
+  it('hands the recorded grid to the spawn', async () => {
+    const spawnArg = await resumeOne(makeExitedRecord({
+      ...suspendedBySystem,
+      id: 'rec-grid',
+      task_id: 'task-grid',
+      last_pty_cols: 210,
+      last_pty_rows: 48,
+    }));
+
+    expect(spawnArg.restoredGrid).toEqual({ cols: 210, rows: 48 });
+  });
+
+  it('passes no grid for a record that never recorded one', async () => {
+    const spawnArg = await resumeOne(makeExitedRecord({
+      ...suspendedBySystem,
+      id: 'rec-no-grid',
+      task_id: 'task-no-grid',
+    }));
+
+    expect(spawnArg).not.toHaveProperty('restoredGrid');
+  });
+});
+
 describe('resumeSuspendedSessions: scoped to the sessions a pty host crash took down (onlySessionIds)', () => {
   // The pty host's crash path runs this mid-run. Its gather would otherwise
   // also find sessions the host never held (an agent that exited non-zero on

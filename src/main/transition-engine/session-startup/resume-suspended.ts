@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { recordedPtyGrid } from '../../db/recorded-pty-grid';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
@@ -514,6 +515,10 @@ export async function resumeSuspendedSessions(
       // Stamped inside the lock, as the auto-spawn's is, so a record another
       // holder wrote while this one waited never sorts after the one written here.
       const now = new Date().toISOString();
+      // The grid the session being replaced last had. After a desktop restart
+      // no registry row remembers it, so without this every resume came up at
+      // 120x30 and a phone opening the task paid a park mid-boot.
+      const restoredGrid = recordedPtyGrid(input.record);
 
       const newSession = await sessionManager.spawn({
         id: input.sessionRecordId,
@@ -536,6 +541,7 @@ export async function resumeSuspendedSessions(
         // does not alter it - it only drives the seed and the resume overlay.
         resuming: true,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+        ...(restoredGrid ? { restoredGrid } : {}),
       });
 
       retireRecord(sessionRepo, input.record.id);
