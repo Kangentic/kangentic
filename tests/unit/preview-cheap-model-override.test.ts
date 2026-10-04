@@ -24,7 +24,7 @@ interface EmittedPreviewColumn {
   modelOverride: string;
   effortOverride: string;
   permissionMode?: string;
-  automations?: { onEnter?: EmittedPreviewAutomation[]; onExit?: EmittedPreviewAutomation[] };
+  automations?: { onEnter?: EmittedPreviewAutomation[]; onTurnEnd?: EmittedPreviewAutomation[]; onExit?: EmittedPreviewAutomation[] };
 }
 
 interface EmittedPreviewLocalConfig {
@@ -122,7 +122,7 @@ describe('forcePreviewCheapModels (preview cheap-model local override)', () => {
     const byId = new Map(emitted.columns.map((column) => [column.id, column]));
     const rowsOf = (id: string) => {
       const fixtures = byId.get(id)?.automations;
-      return [...(fixtures?.onEnter ?? []), ...(fixtures?.onExit ?? [])];
+      return [...(fixtures?.onEnter ?? []), ...(fixtures?.onTurnEnd ?? []), ...(fixtures?.onExit ?? [])];
     };
 
     // Every stable type across the seeded columns, so adding an adapter without
@@ -131,11 +131,12 @@ describe('forcePreviewCheapModels (preview cheap-model local override)', () => {
     const allRows = [...rowsOf('col-executing'), ...rowsOf('col-planning'), ...rowsOf('col-todo')];
     expect([...new Set(allRows.map((row) => row.type))].sort()).toEqual([...stableAutomationTypes()].sort());
 
-    // Executing is the variety column: one of every type, both groups.
+    // Executing is the variety column: one of every type, all three groups.
     const executing = byId.get('col-executing')?.automations;
     expect([...new Set(rowsOf('col-executing').map((row) => row.type))].sort())
       .toEqual([...stableAutomationTypes()].sort());
     expect(executing?.onEnter?.length).toBeGreaterThan(0);
+    expect(executing?.onTurnEnd?.length).toBeGreaterThan(0);
     expect(executing?.onExit?.length).toBeGreaterThan(0);
 
     // Planning populates both group headings without running long, which is the

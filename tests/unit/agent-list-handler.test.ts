@@ -85,6 +85,7 @@ type MockAdapter = {
     probeServer: (server: AgentExecutionServer) => Promise<RemoteServerStatus>;
   };
   launchOptions?: readonly AgentLaunchOptionInfo[];
+  runtime: { reportsTurnEnd: boolean };
 };
 
 let mockRegistryAdapters: MockAdapter[] = [];
@@ -151,6 +152,7 @@ function makeAdapter(overrides: Partial<MockAdapter> & { name: string }): MockAd
     defaultPermission: 'default',
     detect: vi.fn(async () => ({ found: true, path: `/usr/bin/${overrides.name}`, version: '1.0.0' })),
     invalidateDetectionCache: vi.fn(),
+    runtime: { reportsTurnEnd: false },
     ...overrides,
   };
 }

@@ -42,6 +42,7 @@ import {
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
+import { getWorkflowEngine } from '../../main/workflows/workflow-engine-host';
 import { retrievalClient } from '../../main/retrieval/retrieval-client';
 import { captureCpuProfile, getStallProfiles, isStallProfilerRunning, stallProfileDirectory } from './stall-profiler';
 import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
@@ -619,7 +620,12 @@ async function respondEventLoopLag(
       worker = { error: error instanceof Error ? error.message : String(error) };
     }
   }
-  respondJson(response, 200, { ts: new Date().toISOString(), main, worker, stallProfiler, renderer });
+  // The workflow engine's evaluations (the synchronous read and plan of every
+  // running workflow), against its 2 ms p95 budget. Its own spans, since one
+  // evaluation is far below the 16 ms floor `recentSlowSyncWork` records.
+  const engine = getWorkflowEngine();
+  const workflowEngine = engine ? { budgetMs: 2, ...engine.stats() } : { unavailable: 'not-registered' };
+  respondJson(response, 200, { ts: new Date().toISOString(), main, worker, workflowEngine, stallProfiler, renderer });
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses

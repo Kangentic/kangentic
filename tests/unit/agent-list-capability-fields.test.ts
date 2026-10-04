@@ -35,6 +35,7 @@ function buildFakeAdapter() {
     pastedImageReferenceTemplate: PASTED_IMAGE_REFERENCE_TEMPLATE,
     invalidateDetectionCache: () => {},
     detect: async () => ({ found: false, path: null, version: null }),
+    runtime: { reportsTurnEnd: true },
   };
 }
 
@@ -53,5 +54,7 @@ describe('listAgents - pasted-image capability fields', () => {
     expect(entry.pastedImageNativeExtensions).toEqual(PASTED_IMAGE_NATIVE_EXTENSIONS);
     expect(entry.pastedImageReferenceTemplate).toBe(PASTED_IMAGE_REFERENCE_TEMPLATE);
     expect(entry.supportsSummarize).toBe(false);
+    // The runtime's turn-end capability rides the entry, for the column dialogs.
+    expect(entry.reportsTurnEnd).toBe(true);
   });
 });

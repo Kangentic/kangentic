@@ -53,5 +53,7 @@ export function resolveMoveTarget(
 
 /** The route to pass `resolveMoveTarget` for a task: its own when it is in a workflow, else none. */
 export function routeOf(task: RouteFields & { workflow_id: string | null }): RouteFields | null {
-  return task.workflow_id !== null ? task : null;
+  // Truthiness, not `!== null`: a Task assembled without the column carries
+  // `undefined`, which is no workflow.
+  return task.workflow_id ? task : null;
 }

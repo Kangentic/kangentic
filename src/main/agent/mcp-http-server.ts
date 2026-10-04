@@ -57,6 +57,7 @@ import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import {
   registerBrowserTools,
+  resolveCallerTaskId,
   type AutomationConfigReader,
   type BrowserToolDependencies,
 } from './mcp-http/browser-tools';
@@ -359,12 +360,11 @@ export function buildConfiguredMcpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  // The calling agent's task, for the move tool's workflow lock: a task's own
-  // agent may move it while its workflow runs.
-  const callerTaskId = browser.callerSessionId && browser.sessions
-    ? browser.sessions.getSessionTaskId(browser.callerSessionId) ?? null
-    : null;
-  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId);
+  // The calling agent's task, looked up once for the request: the browser
+  // tools scope their default pane to it, and the move tool's workflow lock
+  // lets a task's own agent move it while its workflow runs.
+  const callerTaskId = resolveCallerTaskId(browser);
+  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null);
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver);
   registerWorkflowTools(mcpServer, resolver);
@@ -374,7 +374,7 @@ export function buildConfiguredMcpServer(
   registerUsageTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
   if (browserAutomationEnabled) {
-    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser);
+    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser, callerTaskId);
   }
   // Steering needs live main-process singletons. They are absent only before
   // the IPC context exists (the server starts ahead of createWindow), which is

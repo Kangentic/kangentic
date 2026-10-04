@@ -119,8 +119,9 @@ function createMockDb(swimlaneRows: MockSwimlaneRow[] = [], taskRows: unknown[] 
           run: vi.fn(),
         };
       }
-      // Fallback for any unexpected prepare call
-      return { all: vi.fn(() => []), get: vi.fn(() => undefined), run: vi.fn() };
+      // Fallback for any other prepare call, such as the rename's rewrite of
+      // automations naming the column. `run` answers as better-sqlite3 does.
+      return { all: vi.fn(() => []), get: vi.fn(() => undefined), run: vi.fn(() => ({ changes: 0 })) };
     }),
   };
 }

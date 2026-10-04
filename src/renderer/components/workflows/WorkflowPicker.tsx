@@ -72,6 +72,7 @@ function useAgentNote(summary: WorkflowSummary): string | null {
   });
   if (agent?.state === 'active') return 'Agent active';
   if (agent?.state === 'paused') return 'Agent paused';
+  // activity-state-ok: the workflow agent's own summary state, one label per state, not an idle-vs-active bucket.
   if (agent?.state === 'idle') return agent.lastReplyAt ? `Agent idle, last message ${formatClockTime(agent.lastReplyAt)}` : 'Agent idle';
   return idleTasks > 0 ? `${idleTasks} idle` : null;
 }

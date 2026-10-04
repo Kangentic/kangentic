@@ -472,7 +472,8 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   // turn too, and is as good a moment.
   // The same edge also dates its last reply and refreshes the picker's note.
   context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
-    const session = context.sessionManager.listSessions().find((candidate) => candidate.id === sessionId);
+    // One lookup, not a list: this runs on every activity edge of every session.
+    const session = context.sessionManager.getSession(sessionId);
     const workflowId = session?.workflowId;
     if (!session || !workflowId) return;
     const idle = activity === 'idle'; // activity-state-ok: a permission prompt is mid-turn, and only an idle agent may be restarted
@@ -487,7 +488,7 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
     agentActivity.delete(sessionId);
     // A stop Kangentic made captured the spend first; one the CLI made is
     // caught here, while its usage is still in the manager.
-    const ended = context.sessionManager.listSessions().find((session) => session.id === sessionId);
+    const ended = context.sessionManager.getSession(sessionId);
     if (!intentional && ended?.workflowId) captureSpend(context, ended);
     if (intentional) {
       resumedSessions.delete(sessionId);

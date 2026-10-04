@@ -153,8 +153,9 @@ interface PreviewTeamConfig {
  * carries a different SHAPE, so one pass down the rail shows every way a list
  * can look:
  *
- * - Executing: one row of every type, across both groups. The variety case,
- *   and the only list long enough to judge spacing and per-group numbering.
+ * - Executing: one row of every type, across all three groups (Move to column
+ *   runs at a turn end only). The variety case, and the only list long enough
+ *   to judge spacing and per-group numbering.
  * - Planning: one row in each group. The ordinary case, and the one that shows
  *   both group headings populated without the list running long.
  * - To Do: exit-only, and deliberately a `send_message` on a column whose
@@ -186,6 +187,7 @@ interface PreviewTeamConfig {
  */
 const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
   onEnter?: Record<string, unknown>[];
+  onTurnEnd?: Record<string, unknown>[];
   onExit?: Record<string, unknown>[];
 }> = {
   Executing: {
@@ -193,6 +195,11 @@ const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
       { name: 'Tell the agent', type: 'send_message', enabled: false, message: 'Pick up {{title}} and start on {{branchName}}.', mode: 'immediate' },
       { name: 'Install dependencies', type: 'run_script', enabled: false, script: 'npm ci', timeoutMinutes: 5 },
       { name: 'Notify me', type: 'notify', enabled: false, title: '{{title}}', body: 'moved to {{toColumn}}' },
+    ],
+    // Move to column runs at a turn end only. With a Condition and a
+    // Frequency, so the row shows its guard line too.
+    onTurnEnd: [
+      { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: 'The plan needs revising', maxRuns: 2, targetColumn: 'Planning', message: '{{agentReply}}' },
     ],
     onExit: [
       { name: 'Ping the channel', type: 'webhook', enabled: false, url: 'https://hooks.example.com/kangentic', method: 'POST' },
