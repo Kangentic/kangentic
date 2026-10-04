@@ -236,7 +236,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_request_project_access',
     {
-      description: 'For a workflow\'s own agent: read another registered project\'s code while planning, such as when a task\'s work is in that repository. Granted at once, with no approval. Your session restarts on this conversation when your turn ends, with that project\'s checkout readable, and you are told where; end your turn after calling this. Projects your workflow\'s tasks are on are readable already.',
+      description: 'Read another registered project\'s code while planning a workflow: call this instead of searching the disk when a task\'s work is in a project your workflow has no task on yet. Granted at once, with no approval. Your session restarts on this conversation when your turn ends, with that project\'s checkout readable, and you are told where; end your turn after calling this. Projects your workflow\'s tasks are on are readable already.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         readProject: z.string().describe('The project to read: its name or id, as kangentic_list_projects shows it.'),

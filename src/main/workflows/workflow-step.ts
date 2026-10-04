@@ -8,6 +8,7 @@ import { handleTaskMove } from '../ipc/handlers/task-move';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { TurnEndedPayload } from '../pty/session-manager';
 import { checkAutomationConditions } from '../automations/condition-check/condition-check';
+import { describeStepRoute, workflowStepCondition } from './workflow-step-condition';
 
 /**
  * A workflow task's own step, at a turn end, after the column's turn-end rows.
@@ -27,14 +28,10 @@ import { checkAutomationConditions } from '../automations/condition-check/condit
  * - With no Automation agent set up there is no one to judge, and the column is
  *   a human gate: a person drags the card on (the lock lets that drag through).
  * - The answer goes to the run log either way (`recordWorkflowStep`).
+ * - The check is told the route, and at the route's last column it asks only
+ *   whether the agent still needs the user (`workflow-step-condition.ts`).
  */
 export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
-
-export function workflowStepCondition(column: Pick<Swimlane, 'name' | 'description'>): string {
-  const purpose = column.description?.trim();
-  return `The work of the ${column.name} step is done${purpose ? ` (the column's purpose: ${purpose})` : ''}, `
-    + 'and the final message is not waiting on the user for an answer, a decision or an approval.';
-}
 
 /** Does this task's turn end get a workflow step check? Cheap: one row read. */
 export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): boolean {
@@ -76,13 +73,14 @@ export async function runWorkflowStep(
   const agentReply = await input.readAgentReply();
   if (input.signal.aborted) return;
   const { task, column } = subject;
+  const route = describeStepRoute(getProjectRepos(context, payload.projectId).swimlanes.list(), task, column.id);
   const outcome = await checkAutomationConditions(conditionCheckDeps(context), {
     task: { title: task.title, description: task.description, labels: task.labels, prUrl: task.pr_url, prState: task.pr_state },
     column: column.name,
     trigger: 'turn_end',
     move: null,
     agentReply,
-    rows: [{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column) }],
+    rows: [{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route) }],
   });
   // No Automation agent, or it could not run: a human gate until one can.
   if (!outcome.ok) return;
@@ -111,7 +109,9 @@ export async function runWorkflowStep(
     }
   };
   if (!answer.met) {
-    record(false, `Not done yet: ${answer.reason ?? 'the agent is not finished.'}`);
+    record(false, route.isLast
+      ? `Waiting on you: ${answer.reason ?? 'the agent asked something.'}`
+      : `Not done yet: ${answer.reason ?? 'the agent is not finished.'}`);
     return;
   }
 

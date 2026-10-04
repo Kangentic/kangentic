@@ -237,6 +237,52 @@ describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only i
     expect(link?.inputSchema.required ?? []).not.toContain('workflow');
   });
 
+  describe('its instructions', () => {
+    async function readInstructions(): Promise<{ instructions: string; toolNames: string[] }> {
+      const server = buildWorkflowAgentMcpServer(makeResolver(), fakeTaskCounter, 'wf-1');
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: 'guard', version: '1.0.0' });
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const instructions = client.getInstructions() ?? '';
+      const { tools } = await client.listTools();
+      await client.close();
+      await server.close();
+      return { instructions, toolNames: tools.map((tool) => tool.name) };
+    }
+
+    it('name kangentic_request_project_access as the way to read another project, and that the grant ends the turn', async () => {
+      const { instructions, toolNames } = await readInstructions();
+
+      // Claude Code defers MCP tools when there are many, so the agent sees a
+      // tool's name and not its description until it searches: the instructions
+      // are where it learns what the tool is for.
+      expect(instructions).toContain('READING ANOTHER PROJECT');
+      expect(instructions).toContain('kangentic_request_project_access');
+      expect(instructions).toContain('kangentic_list_projects');
+      expect(instructions).toContain('then end your turn');
+      // ...and the tool it names is one this server registers.
+      expect(toolNames).toContain('kangentic_request_project_access');
+      // The paragraph is the workflow agent's own, not the shared base text.
+      expect(buildServerInstructions(makeResolver(), false)).not.toContain('kangentic_request_project_access');
+    });
+
+    it('tell the agent not to search the disk for another project\'s folder', async () => {
+      const { instructions } = await readInstructions();
+
+      expect(instructions).toContain('Do not search the disk for another project\'s folder');
+      expect(instructions).toContain('outside what you can read until access is granted');
+    });
+
+    it('keep the shared server rules and the planning scope ahead of the project-access paragraph', async () => {
+      const { instructions } = await readInstructions();
+
+      expect(instructions).toContain('PROJECT ROUTING RULE');
+      expect(instructions).toContain('You are planning one workflow.');
+      expect(instructions.indexOf('You are planning one workflow.')).toBeLessThan(instructions.indexOf('READING ANOTHER PROJECT'));
+    });
+  });
+
   it('is what a workflow agent URL routes to', () => {
     const url = appendWorkflowAgentCaller('http://127.0.0.1:1/mcp/p1', 'wf-1');
     const parsed = parseMcpRequestPath(new URL(url ?? '').pathname);

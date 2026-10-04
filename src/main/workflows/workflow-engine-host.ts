@@ -3,11 +3,13 @@ import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
+import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { forgetRecentFetches } from '../git/fetch-throttle';
 import { handleTaskMove } from '../ipc/handlers/task-move';
+import { BranchCheckoutBlockedError, notifySpawnBlocked, type SpawnFailureStep } from '../ipc/helpers/task-git';
 import type { IpcContext } from '../ipc/ipc-context';
 import {
   inFlightKey,
@@ -39,19 +41,35 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  *   lock, which can take seconds; nothing here waits on that.
  * - **Measured.** Each evaluation (the synchronous read and plan) is timed, and
  *   `stats()` reports its p95 against the 2 ms budget (#732, Open questions 2).
+ * - **A start that fails is retried, with backoff, until it starts** (user's
+ *   call, 2026-10-04: one retry is not enough for a network or git blip). A
+ *   worktree or git failure has already put the task back in To Do; each retry
+ *   is a one-shot timer for that one task, never a polling loop. Pause stops
+ *   it (a paused workflow starts nothing), Resume retries at once, and a task
+ *   that leaves To Do or its workflow drops its backoff. The user sees the
+ *   toast a failed move shows, once per reason, and nothing new on the card.
  */
 
 const DEBOUNCE_MS = 150;
-/** How long a start that failed waits before the engine tries it again. */
-const START_RETRY_MS = 60_000;
+/** The waits between retries of a start that failed: 30 s, 1 m, 2 m, then every 5 m. */
+const START_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
 const TIMING_WINDOW = 200;
+
+interface FailedStart {
+  workflowId: string;
+  attempts: number;
+  retryAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** The last failure's message: a new reason toasts again, the same one does not. */
+  reason: string;
+}
 
 export class WorkflowEngineHost {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private evaluating = false;
   private dirtyAgain = false;
   private readonly inFlight = new Set<string>();
-  private readonly failedStarts = new Map<string, number>();
+  private readonly failedStarts = new Map<string, FailedStart>();
   private readonly durationsMs: number[] = [];
 
   constructor(private readonly context: IpcContext) {}
@@ -80,6 +98,59 @@ export class WorkflowEngineHost {
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    for (const failure of this.failedStarts.values()) {
+      if (failure.timer) clearTimeout(failure.timer);
+    }
+    this.failedStarts.clear();
+  }
+
+  /** A resume: the workflow's failed starts are tried on the next pass, not when their backoff runs out. */
+  retryFailedStarts(workflowId: string): void {
+    for (const [key, failure] of this.failedStarts) {
+      if (failure.workflowId === workflowId) this.forgetFailedStart(key);
+    }
+  }
+
+  /** How many times a task's start has failed in a row, and when it is next tried. Null when it has not failed. */
+  failedStart(projectId: string, taskId: string): { attempts: number; retryAt: number } | null {
+    const failure = this.failedStarts.get(inFlightKey(projectId, taskId));
+    return failure ? { attempts: failure.attempts, retryAt: failure.retryAt } : null;
+  }
+
+  private forgetFailedStart(key: string): void {
+    const failure = this.failedStarts.get(key);
+    if (failure?.timer) clearTimeout(failure.timer);
+    this.failedStarts.delete(key);
+  }
+
+  private recordFailedStart(key: string, intent: Extract<CoreIntent, { kind: 'start' }>, error: unknown): void {
+    const previous = this.failedStarts.get(key);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const attempts = (previous?.attempts ?? 0) + 1;
+    const delayMs = START_RETRY_DELAYS_MS[Math.min(attempts, START_RETRY_DELAYS_MS.length) - 1];
+    const reason = error instanceof Error ? error.message : String(error);
+    const failure: FailedStart = { workflowId: intent.workflowId, attempts, retryAt: Date.now() + delayMs, timer: null, reason };
+    failure.timer = setTimeout(() => {
+      failure.timer = null;
+      this.wake();
+    }, delayMs);
+    // A pending retry never keeps the app from quitting.
+    failure.timer.unref?.();
+    this.failedStarts.set(key, failure);
+    console.error(`[WORKFLOW] Start of task ${intent.taskId.slice(0, 8)} failed (attempt ${attempts}, retrying in ${Math.round(delayMs / 1000)}s):`, error);
+    if (previous?.reason !== reason) this.toastFailedStart(intent, error);
+  }
+
+  /** The toast a failed move shows the user, for a start nobody dragged. */
+  private toastFailedStart(intent: Extract<CoreIntent, { kind: 'start' }>, error: unknown): void {
+    try {
+      const task = new TaskRepository(getProjectDb(intent.projectId)).getById(intent.taskId);
+      if (!task) return;
+      const { step, cause } = spawnFailureOf(error);
+      notifySpawnBlocked(this.context, task, step, cause, intent.projectId);
+    } catch (toastError) {
+      console.warn('[WORKFLOW] Could not report a failed start:', toastError);
+    }
   }
 
   private async flush(): Promise<void> {
@@ -132,12 +203,21 @@ export class WorkflowEngineHost {
         snapshots.push(snapshot);
       }
     }
+    // A backoff lasts only while its task still waits in To Do of an open workflow.
+    const waiting = new Set<string>();
+    for (const snapshot of snapshots) {
+      for (const task of snapshot.tasks) {
+        if (task.place === 'todo') waiting.add(inFlightKey(task.projectId, task.taskId));
+      }
+    }
+    for (const key of [...this.failedStarts.keys()]) {
+      if (!waiting.has(key)) this.forgetFailedStart(key);
+    }
     if (snapshots.length === 0) return { intents: [], titles, taskCounts };
     const now = Date.now();
     const blocked = new Set(this.inFlight);
-    for (const [key, failedAt] of this.failedStarts) {
-      if (now - failedAt < START_RETRY_MS) blocked.add(key);
-      else this.failedStarts.delete(key);
+    for (const [key, failure] of this.failedStarts) {
+      if (now < failure.retryAt) blocked.add(key);
     }
     return { intents: planPass(snapshots, this.context.sessionManager.getFreeAgentSlots(), blocked), titles, taskCounts };
   }
@@ -193,10 +273,8 @@ export class WorkflowEngineHost {
     const key = inFlightKey(intent.projectId, intent.taskId);
     this.inFlight.add(key);
     void this.startTask(intent, titles.get(intent.workflowId) ?? 'its workflow')
-      .catch((error: unknown) => {
-        this.failedStarts.set(key, Date.now());
-        console.error(`[WORKFLOW] Start of task ${intent.taskId.slice(0, 8)} failed:`, error);
-      })
+      .then(() => this.forgetFailedStart(key))
+      .catch((error: unknown) => this.recordFailedStart(key, intent, error))
       .finally(() => {
         this.inFlight.delete(key);
         this.wake();
@@ -266,7 +344,15 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
   // A slot freed.
   context.sessionManager.on('session-removed', wake);
   context.sessionManager.on('exit', wake);
-  setWorkflowWake(wake);
+  // A task deleted on another board takes its links with it, in the home
+  // database that holds them, as a delete on the home board does.
+  setHomeLinkRemover((task) => {
+    new TaskLinkRepository(getProjectDb(task.workflow_project_id!)).deleteForTask(task.id);
+  });
+  setWorkflowWake((retryWorkflowId) => {
+    if (retryWorkflowId) engine.retryFailedStarts(retryWorkflowId);
+    wake();
+  });
   // Boot: recover what a restart interrupted.
   wake();
   return engine;
@@ -274,6 +360,17 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
 
 export function getWorkflowEngine(): WorkflowEngineHost | null {
   return host;
+}
+
+/**
+ * Which step a failed start died in, for the toast's wording. The move wraps a
+ * worktree failure as "Worktree setup failed: ...", so the toast gets its cause
+ * and adds that label itself, once.
+ */
+function spawnFailureOf(error: unknown): { step: SpawnFailureStep; cause: unknown } {
+  if (error instanceof Error && error.message.startsWith('Worktree setup failed: ')) return { step: 'worktree', cause: error.cause ?? error };
+  if (error instanceof BranchCheckoutBlockedError) return { step: 'checkout', cause: error };
+  return { step: 'agent', cause: error };
 }
 
 function notifyOpenWorkflows(projectId: string): void {

@@ -6,6 +6,7 @@ import { sumToolResultTokens } from '../../../shared/tool-call-totals';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { SessionManager } from '../../pty/session-manager';
 import type { SessionRecord, Session } from '../../../shared/types';
+import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -142,7 +143,9 @@ export function captureWorkflowAgentUsage(
       modelDisplayName: usage.model.displayName ?? null,
       compactionCount: sessionManager.getCompactionCount(session.id),
       agent: agentName,
-      effort: usage.model.effort ?? null,
+      // The status line's effort when it reports one, else what the agent was
+      // started with: it has no session record to carry `applied_effort`.
+      effort: usage.model.effort ?? workflowAgentEffort(session.id),
     });
   } catch {
     // Metrics capture is best-effort -- never break the calling flow

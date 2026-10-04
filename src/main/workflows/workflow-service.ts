@@ -533,7 +533,8 @@ export async function resumeWorkflow(context: IpcContext, homeProjectId: string,
       console.warn(`[WORKFLOW] Could not resume #${task.display_id}:`, error);
     }
   }
-  wakeWorkflowEngine();
+  // Resume is also the user's way to retry a start that keeps failing.
+  wakeWorkflowEngine(workflowId);
   return { workflow: requireWorkflow(homeProjectId, workflowId), resumed };
 }
 

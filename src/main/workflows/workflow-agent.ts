@@ -13,11 +13,14 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { UsageHistoryRepository } from '../db/repositories/usage-history-repository';
 import { captureWorkflowAgentUsage } from '../ipc/handlers/session-metrics';
 import { agentRegistry } from '../agent/agent-registry';
+import { retrievalClient } from '../retrieval/retrieval-client';
+import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from './workflow-agent-effort';
 
 /**
  * A workflow's own agent: the agent that plans it, in the Workflows view's left
@@ -259,6 +262,36 @@ function captureSpend(context: IpcContext, session: Session): void {
   } catch {
     // Best-effort: a project database closing under a quit or a delete.
   }
+  recordTurnTokens(context, session);
+}
+
+/**
+ * Its turns' tokens into the ledger Stats reads, in the retrieval worker, off
+ * main. A task's turns get there through the conversation indexer; this agent
+ * has no session record, and its planning conversation stays out of the
+ * Knowledge Graph. Fire and forget: a missed write is recovered by the next
+ * stop of the same conversation, since the ledger upserts by turn.
+ */
+function recordTurnTokens(context: IpcContext, session: Session): void {
+  const warn = (error: unknown): void => {
+    console.warn(`[WORKFLOW-AGENT] Could not record the agent's turn tokens for ${session.id.slice(0, 8)}:`, error);
+  };
+  // Never throws: it runs on Pause, on end and in the exit listener.
+  try {
+    const agentName = context.sessionManager.getSessionAgentName(session.id);
+    const sessionType = agentName ? agentRegistry.get(agentName)?.sessionType : undefined;
+    if (!sessionType || !session.agentSessionId || !session.cwd) return;
+    retrievalClient.call('index.workflowAgentTurns', {
+      projectId: session.projectId,
+      sessionId: session.id,
+      agentSessionId: session.agentSessionId,
+      sessionType,
+      cwd: session.cwd,
+      remoteTargets: collectRemoteTargets(agentRegistry),
+    }).catch(warn);
+  } catch (error) {
+    warn(error);
+  }
 }
 
 /**
@@ -331,6 +364,14 @@ async function startWorkflowAgent(
   const workflow = repository.getById(workflowId);
   if (!workflow) return unavailable('This workflow no longer exists.');
   if (workflow.state === 'done') return unavailable(`${workflow.title} is complete.`);
+  // With no grid measured for this start, the size it last ran at: the latest
+  // resize recorded on the workflow, else this run's last start, so a start
+  // after a restart draws its first frame at the pane's size rather than the
+  // spawn default.
+  if (grid.cols === undefined || grid.rows === undefined) {
+    const recorded = repository.getAgentGrid(workflowId) ?? lastGrid.get(workflowId);
+    if (recorded?.cols !== undefined && recorded.rows !== undefined) grid = { cols: recorded.cols, rows: recorded.rows };
+  }
   const project = context.projectRepo.getById(homeProjectId);
   if (!project) return unavailable('This workflow\'s project is no longer in Kangentic.');
 
@@ -421,6 +462,7 @@ async function startWorkflowAgent(
   // Recorded on every start, so a conversation from before `agent_cwd` existed
   // gains its checkout on its next resume.
   repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
+  recordWorkflowAgentEffort(session.id, commandOptions.effort ?? null);
   if (resume) resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
   grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
   lastGrid.set(workflow.id, grid);
@@ -496,4 +538,6 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
     }
     startOverIfResumeFailed(sessionId, exitCode);
   });
+  // Every capture of a session's spend happens while its row is registered.
+  context.sessionManager.on('session-removed', (sessionId: string) => forgetWorkflowAgentEffort(sessionId));
 }

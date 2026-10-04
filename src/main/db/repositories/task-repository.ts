@@ -4,6 +4,7 @@ import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMovePro
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
+import { removeLinksInWorkflowHome } from './workflow-home-links';
 
 /** Raw row from SQLite - labels and skipped columns stored as JSON strings. */
 interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids'> {
@@ -828,16 +829,23 @@ export class TaskRepository {
       this.db.prepare('UPDATE tasks SET position = position - 1 WHERE swimlane_id = ? AND position > ?')
         .run(task.swimlane_id, task.position);
       // A deleted task's links go with it, so a task that waited for it stops
-      // waiting. Here because every delete passes through this method. Links
-      // live in the workflow's HOME database: a task on another board leaves
-      // its links in place, and the engine never reads a link whose blocker is
-      // gone as satisfied, so its dependents wait for the user instead of
-      // starting unannounced.
+      // waiting. Here because every delete passes through this method.
       if (task.workflow_id !== null) {
         this.db.prepare('DELETE FROM task_links WHERE blocker_task_id = ? OR blocked_task_id = ?').run(id, id);
       }
     });
     tx();
+
+    // Links live in the workflow's HOME database, so a task on another board
+    // has none here: its home removes them, as a delete on the home board does.
+    // After the transaction, because it writes another project's database.
+    if (task.workflow_id !== null && task.workflow_project_id !== null) {
+      try {
+        removeLinksInWorkflowHome(task);
+      } catch (error) {
+        console.warn(`[TaskRepository] Could not remove the links of deleted task ${id.slice(0, 8)} in its workflow's home:`, error);
+      }
+    }
 
     // Return the task's dev-server ports to the pool.
     //

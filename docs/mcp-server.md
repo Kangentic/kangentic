@@ -1117,6 +1117,11 @@ checkout is. The agent already reads every project its workflow's tasks are on, 
 missing from disk is left out. An agent whose CLI cannot widen its reads
 (`supportsReadableDirectories`) keeps reading its own project only.
 
+The workflow agent's server instructions name this tool, since Claude Code defers MCP tools when
+there are many and the agent then sees only a tool's name until it searches. In the preview
+journey a small model searched the disk for the other project instead, and hit Claude's own
+permission prompt for a read outside its directories.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow` | string | Yes | The workflow's id or exact title. The workflow's own agent leaves it out. |

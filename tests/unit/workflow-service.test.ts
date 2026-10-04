@@ -37,6 +37,7 @@ const { TaskRepository } = await import('../../src/main/db/repositories/task-rep
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const service = await import('../../src/main/workflows/workflow-service');
+const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -137,6 +138,24 @@ describeWithSqlite('workflow operations', () => {
     emit.mockClear();
     service.renameWorkflow(context, 'home', workflow.id, 'Spend limits');
     expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+  });
+
+  it('wakes the engine with the workflow\'s id on a resume only, so Resume retries its failed starts at once', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const wake = vi.fn();
+    setWorkflowWake(wake);
+    try {
+      await service.pauseWorkflow(context, 'home', workflow.id);
+      expect(wake.mock.calls.every(([retryWorkflowId]) => retryWorkflowId === undefined)).toBe(true);
+
+      wake.mockClear();
+      await service.resumeWorkflow(context, 'home', workflow.id);
+      expect(wake).toHaveBeenCalledWith(workflow.id);
+    } finally {
+      setWorkflowWake(null);
+    }
   });
 
   it('starts: tasks in To Do on their boards, with routes and cross-board links', async () => {

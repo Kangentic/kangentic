@@ -245,6 +245,78 @@ describe('persistPtyGrid (the pty-resize listener)', () => {
     expect(getOpenProjectDb).toHaveBeenCalledWith('project-2');
   });
 
+  describe('a workflow agent\'s grid', () => {
+    // The agent is a transient session carrying `workflowId`, with no `sessions`
+    // row, so its grid is kept on its workflow row instead.
+    function contextWithSession(session: { workflowId?: string } | undefined) {
+      const getSession = vi.fn(() => session);
+      const context = {
+        sessionManager: { getSessionProjectId: () => 'project-1', getSession },
+      } as unknown as Pick<IpcContext, 'sessionManager'>;
+      return { context, getSession };
+    }
+
+    it('goes to its workflow\'s row and not to sessions', () => {
+      const { context, getSession } = contextWithSession({ workflowId: 'workflow-1' });
+
+      persistPtyGrid(context, 'pty-workflow-agent', { cols: 190, rows: 50 }, 'desktop');
+
+      expect(getSession).toHaveBeenCalledWith('pty-workflow-agent');
+      expect(capture.prepared).toHaveLength(1);
+      expect(capture.prepared[0]).toContain('UPDATE workflows');
+      expect(capture.prepared[0]).toContain('agent_pty_cols = ?');
+      expect(capture.prepared[0]).toContain('agent_pty_rows = ?');
+      expect(capture.prepared.some((sql) => sql.includes('UPDATE sessions'))).toBe(false);
+      expect(capture.runParams).toEqual([[190, 50, 'workflow-1']]);
+    });
+
+    it('goes to its workflow\'s row for a spawn too, once the spawn\'s macrotask has passed', async () => {
+      const { context } = contextWithSession({ workflowId: 'workflow-1' });
+
+      persistPtyGrid(context, 'pty-workflow-agent', { cols: 120, rows: 30 }, 'spawn');
+      expect(capture.runParams).toEqual([]);
+      await nextMacrotask();
+
+      expect(capture.prepared[0]).toContain('UPDATE workflows');
+      expect(capture.runParams).toEqual([[120, 30, 'workflow-1']]);
+    });
+
+    it('is not recorded for a phone, like a task session\'s', async () => {
+      const { context } = contextWithSession({ workflowId: 'workflow-1' });
+
+      persistPtyGrid(context, 'pty-workflow-agent', { cols: 80, rows: 40 }, 'mobile');
+      await nextMacrotask();
+
+      expect(capture.runParams).toEqual([]);
+    });
+
+    it('leaves a task session\'s grid on its session record', () => {
+      const { context } = contextWithSession({});
+
+      persistPtyGrid(context, 'session-1', { cols: 190, rows: 50 }, 'desktop');
+
+      expect(capture.prepared[0]).toContain('last_pty_cols = ?');
+      expect(capture.prepared.some((sql) => sql.includes('UPDATE workflows'))).toBe(false);
+      expect(capture.runParams).toEqual([[190, 50, 'session-1']]);
+    });
+
+    it('writes the task path for a session the manager no longer has', () => {
+      const { context } = contextWithSession(undefined);
+
+      persistPtyGrid(context, 'session-1', { cols: 190, rows: 50 }, 'desktop');
+
+      expect(capture.prepared[0]).toContain('last_pty_cols = ?');
+      expect(capture.runParams).toEqual([[190, 50, 'session-1']]);
+    });
+
+    it('writes the task path from a session manager that has no getSession', () => {
+      persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 190, rows: 50 }, 'desktop');
+
+      expect(capture.prepared[0]).toContain('last_pty_cols = ?');
+      expect(capture.runParams).toEqual([[190, 50, 'session-1']]);
+    });
+  });
+
   describe('when the write fails', () => {
     // The listener runs synchronously inside EventEmitter.emit, from
     // SessionManager.resize and from performSpawn, and a spawn's write runs

@@ -498,6 +498,8 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | agent_session_id | TEXT | | NULL |
 | agent_cwd | TEXT | | NULL |
 | agent_read_project_ids | TEXT | NOT NULL | '[]' |
+| agent_pty_cols | INTEGER | | NULL |
+| agent_pty_rows | INTEGER | | NULL |
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
 reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
@@ -519,6 +521,11 @@ the history under it (Claude keys the file by it), so the conversation viewer an
 agent asked to read (`kangentic_request_project_access`). It reads these, and every project its
 workflow's tasks are on, through the adapter's readable directories (Claude's `--add-dir`). Kept,
 so every later start and resume reads them; it changes no plan, so `revision` stays.
+
+`agent_pty_cols` / `agent_pty_rows` are the workflow agent's last PTY grid, written on every resize the
+desktop makes (`persistPtyGrid`), as a task session's are on `sessions.last_pty_cols/rows`. A start
+with no grid measured (after a restart) spawns at it, so the agent's first frame is drawn at the
+pane's size rather than the spawn default.
 
 Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
 
@@ -1151,6 +1158,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 76. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read.
 77. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
 78. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
+79. **`agent_pty_cols` / `agent_pty_rows` on workflows** - both `INTEGER DEFAULT NULL`, the workflow agent's last PTY grid (see the `workflows` table above), so a start after a restart spawns at the pane's size. Guarded `ALTER TABLE`s on the same `table_info` read.
 
 ### Key Migrations (Global DB)
 
@@ -1292,6 +1300,7 @@ Operates on the workflow's home project DB.
 | `bumpRevision(id)` | Any change to a started workflow's tasks, links or routes |
 | `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
+| `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |
 | `delete(id)` | Delete; its links cascade |
 
 ### TaskLinkRepository

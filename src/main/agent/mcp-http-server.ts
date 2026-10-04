@@ -438,7 +438,15 @@ export function buildWorkflowAgentMcpServer(
 ): McpServer {
   const instructions = `${buildServerInstructions(resolver, false)}\n\n`
     + 'You are planning one workflow. The workflow tools here act on it, so leave out `workflow`. '
-    + 'You can read the code and the board, and change only this workflow\'s plan.';
+    + 'You can read the code and the board, and change only this workflow\'s plan.\n\n'
+    // Named here because Claude Code defers MCP tools when there are many: the
+    // agent sees a tool's name, not its description, until it searches, and a
+    // small model went to the disk instead (#732, the preview journey).
+    + 'READING ANOTHER PROJECT: you can read the checkouts of the projects this workflow\'s tasks are on. '
+    + 'To read any other registered project (kangentic_list_projects names them), call '
+    + 'kangentic_request_project_access with its name, then end your turn: it is granted at once, and your '
+    + 'session comes back on this conversation with that checkout readable. Do not search the disk for another '
+    + 'project\'s folder: it is outside what you can read until access is granted.';
   const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
   const scoped = scopeServerToWorkflowAgent(mcpServer, workflowId);
   registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);

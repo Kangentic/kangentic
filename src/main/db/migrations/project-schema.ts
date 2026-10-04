@@ -1886,6 +1886,14 @@ function runWorkflowsMigration(db: Database.Database): void {
   if (!workflowColumnNames.has('agent_read_project_ids')) {
     db.exec("ALTER TABLE workflows ADD COLUMN agent_read_project_ids TEXT NOT NULL DEFAULT '[]'");
   }
+  // The workflow agent's last PTY grid, what a task session keeps in
+  // `sessions.last_pty_cols/rows`, so a start after a restart draws its first
+  // frame at the pane's size instead of the spawn default.
+  for (const columnName of ['agent_pty_cols', 'agent_pty_rows']) {
+    if (!workflowColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} INTEGER DEFAULT NULL`);
+    }
+  }
 
   const taskColumnNames = new Set(
     (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),

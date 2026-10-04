@@ -11,9 +11,16 @@
  * the real one does, which is what makes "before" observable: a capture that ran
  * after the stop finds nothing to write and leaves no row.
  *
+ * Turns. Alongside the spend row, every capture asks the retrieval worker to
+ * write the conversation's turns to the token ledger (`index.workflowAgentTurns`),
+ * fire and forget: a rejection is logged and never breaks the stop.
+ *
  * Start. Every start records the conversation on the workflow row, resumes
  * included, so a row from before `agent_cwd` existed gains its checkout the next
- * time it is resumed, and keeps the conversation id it resumes by.
+ * time it is resumed, and keeps the conversation id it resumes by. It also
+ * records the effort the agent started with (until its session is removed), and
+ * spawns at the size the pane last had: a measured grid wins, then the grid
+ * recorded on the workflow row, then this run's last start.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -31,7 +38,7 @@ try {
 }
 const describeWithSqlite = sqlite ? describe : describe.skip;
 
-const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), adapter: null as unknown }));
+const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), adapter: null as unknown, retrievalCall: vi.fn() }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
     const db = harness.dbs.get(projectId);
@@ -42,7 +49,10 @@ vi.mock('../../src/main/db/database', () => ({
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 // The agent CLI itself is out of reach of a unit test: the registry hands back a
 // fake adapter that is found, launches read-only, and builds a fixed command.
-vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter } }));
+// `list` is what the real remote-targets collector walks, with no remote servers.
+vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter, list: () => [] } }));
+// The retrieval worker is another process: the agent's turn recording is a call to it.
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: harness.retrievalCall } }));
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
 }));
@@ -51,6 +61,7 @@ vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({ buildWorkflow
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const agent = await import('../../src/main/workflows/workflow-agent');
+const { workflowAgentEffort, forgetWorkflowAgentEffort } = await import('../../src/main/workflows/workflow-agent-effort');
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -94,6 +105,8 @@ interface SpawnOptions {
   transient: boolean;
   workflowId: string;
   agentSessionId: string;
+  cols?: number;
+  rows?: number;
 }
 
 const LIVE_USAGE: FakeUsage = {
@@ -178,6 +191,7 @@ describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
   let manager: FakeSessionManager;
   let context: IpcContext;
   let workflowId: string;
+  let projects: Array<{ id: string; name: string; path: string; default_agent: null; default_model: null; default_effort: string | null }>;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-workflow-spend-'));
@@ -202,10 +216,12 @@ describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
       buildCommand: vi.fn(() => 'mock-agent-command'),
       getExitSequence: () => ['\x03'],
     };
-    const projects = [
-      { id: 'home', name: 'kangentic', path: paths.home, default_agent: null, default_model: null, default_effort: null },
-      { id: 'mobile', name: 'kangentic-mobile', path: paths.mobile, default_agent: null, default_model: null, default_effort: null },
+    projects = [
+      { id: 'home', name: 'kangentic', path: paths.home, default_agent: null, default_model: null, default_effort: null as string | null },
+      { id: 'mobile', name: 'kangentic-mobile', path: paths.mobile, default_agent: null, default_model: null, default_effort: null as string | null },
     ];
+    harness.retrievalCall.mockReset();
+    harness.retrievalCall.mockResolvedValue({ outcome: 'indexed' });
     manager = new FakeSessionManager();
     context = {
       projectRepo: {
@@ -359,6 +375,85 @@ describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
     });
   });
 
+  describe('its turns reach the token ledger through the retrieval worker', () => {
+    const TURNS_CALL = (cwd: string) => ['index.workflowAgentTurns', {
+      projectId: 'home',
+      sessionId: 'pty-agent',
+      agentSessionId: 'conv-1',
+      sessionType: 'claude_agent',
+      cwd,
+      remoteTargets: [],
+    }];
+
+    it('on Pause, with the session\'s project, id, conversation, session type and checkout', async () => {
+      addAgentSession();
+
+      await agent.pauseWorkflowAgent(context, workflowId);
+
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall.mock.calls[0]).toEqual(TURNS_CALL(paths.home));
+    });
+
+    it('on the end of the workflow', async () => {
+      addAgentSession();
+
+      await agent.endWorkflowAgent(context, workflowId);
+
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall.mock.calls[0]).toEqual(TURNS_CALL(paths.home));
+    });
+
+    it('when the CLI exits on its own', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('exit', 'pty-agent', 1, false);
+
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall.mock.calls[0]).toEqual(TURNS_CALL(paths.home));
+    });
+
+    it('not for a stop Kangentic asked for from the exit listener, whose own stop already asked', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('exit', 'pty-agent', 0, true);
+
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
+    });
+
+    it('not for a task\'s session, which the conversation indexer already records', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
+
+      manager.emit('exit', 'pty-task', 1, false);
+
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
+    });
+
+    it('not for a session with no conversation id to read the transcript by', async () => {
+      addAgentSession({ agentSessionId: null });
+
+      await agent.pauseWorkflowAgent(context, workflowId);
+
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
+      expect(manager.suspend).toHaveBeenCalledWith('pty-agent');
+    });
+
+    it('logs a rejection and breaks neither Pause nor the end', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      harness.retrievalCall.mockRejectedValue(new Error('The retrieval worker is restarting.'));
+      addAgentSession();
+
+      await expect(agent.pauseWorkflowAgent(context, workflowId)).resolves.toBeUndefined();
+
+      expect(manager.suspend).toHaveBeenCalledWith('pty-agent');
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+      expect(String(warn.mock.calls[0][0])).toContain('pty-agen');
+      expect(warn.mock.calls[0][1]).toEqual(expect.objectContaining({ message: 'The retrieval worker is restarting.' }));
+    });
+  });
+
   describe('a start records the conversation', () => {
     function spawnOptions(): SpawnOptions {
       return manager.spawn.mock.calls[0][0];
@@ -391,6 +486,90 @@ describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
       expect(workflow.agent_session_id).toBe('conv-old');
       expect(workflow.agent_name).toBe('claude');
       expect(workflow.agent_cwd).toBe(paths.home);
+    });
+
+    describe('and the effort it started with, for Stats', () => {
+      afterEach(() => {
+        forgetWorkflowAgentEffort('pty-spawned-1');
+      });
+
+      it('is the project\'s default effort, kept under the new session\'s id', async () => {
+        projects[0].default_effort = 'high';
+
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+        expect(workflowAgentEffort('pty-spawned-1')).toBe('high');
+      });
+
+      it('is null for a project on the CLI\'s own default', async () => {
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+        expect(workflowAgentEffort('pty-spawned-1')).toBeNull();
+      });
+
+      it('is dropped when the session is removed', async () => {
+        agent.registerWorkflowAgentLifecycle(context);
+        projects[0].default_effort = 'high';
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+        expect(workflowAgentEffort('pty-spawned-1')).toBe('high');
+
+        manager.emit('session-removed', 'pty-spawned-1');
+
+        expect(workflowAgentEffort('pty-spawned-1')).toBeNull();
+      });
+    });
+  });
+
+  describe('a start draws its first frame at the size the pane last had', () => {    const lastSpawn = (): SpawnOptions => manager.spawn.mock.calls[manager.spawn.mock.calls.length - 1][0];
+
+    /** Pause the running agent and resume it with no grid measured, as a restart's start does. */
+    async function restartWithoutGrid(): Promise<SpawnOptions> {
+      await agent.pauseWorkflowAgent(context, workflowId);
+      await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+      return lastSpawn();
+    }
+
+    it('spawns at the grid recorded on the workflow when none is passed, as after a restart of the app', async () => {
+      new WorkflowRepository(homeDb()).setAgentGrid(workflowId, { cols: 150, rows: 50 });
+
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(manager.spawn).toHaveBeenCalledTimes(1);
+      expect(lastSpawn()).toMatchObject({ cols: 150, rows: 50 });
+    });
+
+    it('lets a grid the pane measured win over the one recorded', async () => {
+      new WorkflowRepository(homeDb()).setAgentGrid(workflowId, { cols: 150, rows: 50 });
+
+      await agent.openWorkflowAgent(context, 'home', workflowId, { cols: 90, rows: 20 });
+
+      expect(lastSpawn()).toMatchObject({ cols: 90, rows: 20 });
+    });
+
+    it('prefers the recorded grid to this run\'s last start once the pane has been resized since', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, { cols: 100, rows: 40 });
+      // The pane was resized after that start: the resize listener recorded it.
+      new WorkflowRepository(homeDb()).setAgentGrid(workflowId, { cols: 150, rows: 50 });
+
+      const restarted = await restartWithoutGrid();
+
+      expect(restarted).toMatchObject({ cols: 150, rows: 50 });
+    });
+
+    it('falls back to this run\'s last start grid when the workflow has none recorded', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, { cols: 100, rows: 40 });
+
+      const restarted = await restartWithoutGrid();
+
+      expect(manager.spawn).toHaveBeenCalledTimes(2);
+      expect(restarted).toMatchObject({ cols: 100, rows: 40 });
+    });
+
+    it('spawns with no size when nothing has recorded one', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(lastSpawn().cols).toBeUndefined();
+      expect(lastSpawn().rows).toBeUndefined();
     });
   });
 });

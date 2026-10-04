@@ -160,13 +160,14 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
       return replyRead;
     };
 
-    if (pending.length > 0) {
-      await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply });
-    }
+    const rows = pending.length > 0
+      ? await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply })
+      : { messagedAgent: false };
     // The workflow's own step comes after the column's rows: a row that moved
     // the task leaves the step nothing to do, and the step reads where the task
-    // is now.
-    if (stepApplies && !controller.signal.aborted) {
+    // is now. A row that gave the agent a message started its next turn, so this
+    // turn end gets no workflow decision; the turn that answers the message does.
+    if (stepApplies && !controller.signal.aborted && !rows.messagedAgent) {
       await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
     }
   } finally {
@@ -189,8 +190,9 @@ async function runRows(
     controller: AbortController;
     readReply: () => Promise<string | null>;
   },
-): Promise<void> {
+): Promise<{ messagedAgent: boolean }> {
   const { task, column, repos, sessionRepo, pending, visitStartedAt, controller } = input;
+  const none = { messagedAgent: false };
   const runs = repos.automationRuns;
   const project = context.projectRepo.getById(payload.projectId);
   const projectPath = project?.path ?? null;
@@ -221,16 +223,17 @@ async function runRows(
         || !runs.hasSkipSince(row.id, task.id, visitStartedAt, outcome.reason));
     }
   }
-  if (runnable.length === 0 || controller.signal.aborted) return;
+  if (runnable.length === 0 || controller.signal.aborted) return none;
 
   // The check can take a while. Run nothing unless the turn it judged is
   // still the latest: same session, same column, and the agent still idle.
   const current = resolveSubject(context, payload);
-  if (!current || current.column.id !== column.id) return;
+  if (!current || current.column.id !== column.id) return none;
   // activity-state-ok: granular, a row must not land on a running turn or a
   // permission prompt.
-  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return;
+  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return none;
 
+  let messagedAgent = false;
   const summary = await engine.executeTransition(current.task, column, 'turn_end', {
     // Classified in spawn-entry-point-parity.test.ts: no `startAgent`, so a
     // turn end never spawns; it acts on the agent that just finished.
@@ -239,19 +242,24 @@ async function runRows(
     agentReply,
     conditionAnswers: answers,
     conditionUnavailableReason,
-    deliverToAgent: (message, mode, runSignal) => deliverMessageToSession(context, {
-      taskId: task.id,
-      sessionId: payload.sessionId,
-      message,
-      mode,
-      verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
-      signal: runSignal,
-    }),
+    deliverToAgent: async (message, mode, runSignal) => {
+      await deliverMessageToSession(context, {
+        taskId: task.id,
+        sessionId: payload.sessionId,
+        message,
+        mode,
+        verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
+        signal: runSignal,
+      });
+      // Counted once it landed: a delivery that failed starts no turn.
+      messagedAgent = true;
+    },
     moveTask: (moveInput) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, moveInput),
     showNotification: (notification) => showDesktopNotification(context, notification),
     onProgress: createProgressCallback(context.mainWindow, task.id),
   });
   reportAutomationFailures(context, summary, current.task, payload.projectId);
+  return { messagedAgent };
 }
 
 function mentionsAgentReply(row: ColumnAutomation): boolean {

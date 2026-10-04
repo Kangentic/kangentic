@@ -161,6 +161,19 @@ export class WorkflowRepository {
       .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, conversation?.cwd ?? null, id);
   }
 
+  /** The agent's PTY grid, on every resize the desktop makes. Changes no plan, so the revision stays. */
+  setAgentGrid(id: string, grid: { cols: number; rows: number }): void {
+    this.db.prepare('UPDATE workflows SET agent_pty_cols = ?, agent_pty_rows = ? WHERE id = ?').run(grid.cols, grid.rows, id);
+  }
+
+  /** The agent's last recorded PTY grid, or null before it has one. */
+  getAgentGrid(id: string): { cols: number; rows: number } | null {
+    const row = this.db.prepare('SELECT agent_pty_cols, agent_pty_rows FROM workflows WHERE id = ?')
+      .get(id) as { agent_pty_cols: number | null; agent_pty_rows: number | null } | undefined;
+    if (row?.agent_pty_cols == null || row.agent_pty_rows == null) return null;
+    return { cols: row.agent_pty_cols, rows: row.agent_pty_rows };
+  }
+
   /**
    * Let the workflow agent read another registered project, from now on. Changes
    * no plan, so the revision stays. Returns false when it already could.

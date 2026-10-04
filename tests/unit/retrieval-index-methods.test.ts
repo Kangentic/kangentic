@@ -20,8 +20,15 @@ vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
     sweepProject = vi.fn(async () => { order.push('conversations'); });
     indexSession = vi.fn(async () => { order.push('session'); return 'indexed'; });
     indexSubagentUsage = vi.fn(async () => { order.push('subagents'); return 'indexed'; });
+    recordWorkflowAgentTurns = vi.fn(async (projectId: string, owner: unknown) => {
+      order.push('workflow-agent-turns');
+      workflowTurnCalls.push({ projectId, owner, adoptedBefore: adopted.length });
+      return workflowTurnOutcome.value;
+    });
   },
 }));
+const workflowTurnCalls = vi.hoisted(() => [] as Array<{ projectId: string; owner: unknown; adoptedBefore: number }>);
+const workflowTurnOutcome = vi.hoisted(() => ({ value: 'indexed' as string }));
 vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
   sweepTaskRecords: vi.fn(async () => {
     order.push('tasks');
@@ -64,6 +71,8 @@ describe('retrieval worker index methods', () => {
   beforeEach(() => {
     order.length = 0;
     adopted.length = 0;
+    workflowTurnCalls.length = 0;
+    workflowTurnOutcome.value = 'indexed';
     gates.taskSweep = null;
     vi.clearAllMocks();
   });
@@ -150,5 +159,37 @@ describe('retrieval worker index methods', () => {
     }, context);
     expect(order).toEqual(['session']);
     expect(live).toEqual({ outcome: 'indexed', changesIndexed: 0 });
+  });
+
+  it('records a workflow agent\'s turns with the owner main named, after learning the remote servers, and answers the outcome alone', async () => {
+    const result = await indexHandlers['index.workflowAgentTurns']({
+      projectId: 'project-1',
+      sessionId: 'pty-agent-1',
+      agentSessionId: 'conversation-1',
+      sessionType: 'claude_agent',
+      cwd: '/mock/project',
+      remoteTargets: [{ adapter: 'remote-agent', targets: [['/mock/worktree', TARGET as never]] }],
+    }, context);
+
+    expect(result).toEqual({ outcome: 'indexed' });
+    // Only the ledger write: no search-index step, no subagent walk, no change sweep.
+    expect(order).toEqual(['workflow-agent-turns']);
+    expect(workflowTurnCalls).toEqual([{
+      projectId: 'project-1',
+      owner: { sessionId: 'pty-agent-1', agentSessionId: 'conversation-1', sessionType: 'claude_agent', cwd: '/mock/project' },
+      // The worker's adapter already knew the remote server by the time the transcript was read.
+      adoptedBefore: 1,
+    }]);
+    expect(adopted).toEqual([[['/mock/worktree', TARGET]]]);
+  });
+
+  it('passes the indexer\'s outcome through unchanged', async () => {
+    for (const outcome of ['unsupported', 'missing-source', 'error']) {
+      workflowTurnOutcome.value = outcome;
+      const result = await indexHandlers['index.workflowAgentTurns']({
+        projectId: 'project-1', sessionId: 'pty-agent-1', agentSessionId: 'conversation-1', sessionType: 'claude_agent', cwd: '/mock/project', remoteTargets: [],
+      }, context);
+      expect(result).toEqual({ outcome });
+    }
   });
 });

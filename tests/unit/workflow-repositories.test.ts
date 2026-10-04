@@ -211,6 +211,88 @@ describeWithSqlite('workflow tables', () => {
     expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
   });
 
+  describe('the workflow agent\'s PTY grid', () => {
+    const columnsOf = (database: ReturnType<typeof freshDatabase>['database']) =>
+      database.pragma('table_info(workflows)') as Array<{ name: string; type: string; notnull: number }>;
+
+    it('has both columns, nullable integers, added once however often the migration runs', () => {
+      const { database } = freshDatabase();
+      runProjectMigrations(database);
+      runProjectMigrations(database);
+
+      const columns = columnsOf(database);
+      for (const name of ['agent_pty_cols', 'agent_pty_rows']) {
+        const matching = columns.filter((column) => column.name === name);
+        expect(matching).toHaveLength(1);
+        expect(matching[0].type).toBe('INTEGER');
+        expect(matching[0].notnull).toBe(0);
+      }
+    });
+
+    it('is added in place to a table made before it, keeping its rows with no grid', () => {
+      const { database, workflows } = freshDatabase();
+      const workflow = workflows.create({ title: 'Made before the grid columns' });
+      database.exec('ALTER TABLE workflows DROP COLUMN agent_pty_cols');
+      database.exec('ALTER TABLE workflows DROP COLUMN agent_pty_rows');
+      expect(columnsOf(database).map((column) => column.name)).not.toContain('agent_pty_cols');
+
+      runProjectMigrations(database);
+      runProjectMigrations(database);
+
+      const names = columnsOf(database).map((column) => column.name);
+      expect(names.filter((name) => name === 'agent_pty_cols')).toHaveLength(1);
+      expect(names.filter((name) => name === 'agent_pty_rows')).toHaveLength(1);
+      expect(workflows.getById(workflow.id)!.title).toBe('Made before the grid columns');
+      expect(workflows.getAgentGrid(workflow.id)).toBeNull();
+    });
+
+    it('reads null before any write, and for a workflow that does not exist', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({});
+
+      expect(workflows.getAgentGrid(workflow.id)).toBeNull();
+      expect(workflows.getAgentGrid('no-such-workflow')).toBeNull();
+    });
+
+    it('round-trips a grid, and a later one replaces it', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({});
+
+      workflows.setAgentGrid(workflow.id, { cols: 190, rows: 50 });
+      expect(workflows.getAgentGrid(workflow.id)).toEqual({ cols: 190, rows: 50 });
+
+      workflows.setAgentGrid(workflow.id, { cols: 120, rows: 30 });
+      expect(workflows.getAgentGrid(workflow.id)).toEqual({ cols: 120, rows: 30 });
+    });
+
+    it('changes no plan: the revision stays, so a save built on the agent\'s last read still goes through', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({});
+
+      workflows.setAgentGrid(workflow.id, { cols: 190, rows: 50 });
+
+      expect(workflows.getById(workflow.id)!.revision).toBe(workflow.revision);
+    });
+
+    it('is kept per workflow', () => {
+      const { workflows } = freshDatabase();
+      const first = workflows.create({ title: 'First' });
+      const second = workflows.create({ title: 'Second' });
+
+      workflows.setAgentGrid(first.id, { cols: 190, rows: 50 });
+
+      expect(workflows.getAgentGrid(second.id)).toBeNull();
+    });
+
+    it('reads null when only one of the two columns holds a value', () => {
+      const { database, workflows } = freshDatabase();
+      const workflow = workflows.create({});
+      database.prepare('UPDATE workflows SET agent_pty_cols = 190 WHERE id = ?').run(workflow.id);
+
+      expect(workflows.getAgentGrid(workflow.id)).toBeNull();
+    });
+  });
+
   it('keeps the projects its agent asked to read, once each, without changing the revision', () => {
     const { workflows } = freshDatabase();
     const workflow = workflows.create({});

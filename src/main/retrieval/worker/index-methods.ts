@@ -66,6 +66,14 @@ export interface IndexMethods {
     };
     result: { outcome: IndexOutcome; changesIndexed: number };
   };
+  /**
+   * A workflow's own agent's turns into the token ledger only (Stats), never the
+   * search index: it has no session record and its conversation is not task work.
+   */
+  'index.workflowAgentTurns': {
+    params: { projectId: string; sessionId: string; agentSessionId: string; sessionType: string; cwd: string; remoteTargets: RemoteTargets };
+    result: { outcome: IndexOutcome };
+  };
   /** Run some of a project's sweeps in order (`IndexSweepSteps`). */
   'index.sweep': {
     params: IndexSweepSteps & { projectId: string; jobId?: string; remoteTargets: RemoteTargets };
@@ -190,6 +198,12 @@ export const indexHandlers: IndexHandlers = {
     if (subagents) await indexer.indexSubagentUsage(projectId, sessionId);
     const changed = changes ? await sweepChangeRecords(projectId, changes.projectPath, undefined, { getDb: context.getDb }) : null;
     return { outcome, changesIndexed: changed?.indexed ?? 0 };
+  },
+
+  'index.workflowAgentTurns': async ({ projectId, sessionId, agentSessionId, sessionType, cwd, remoteTargets }, context) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    const outcome = await indexerFor(context).recordWorkflowAgentTurns(projectId, { sessionId, agentSessionId, sessionType, cwd });
+    return { outcome };
   },
 
   'index.sweep': ({ projectId, jobId, remoteTargets, ...steps }, context) => runJob(jobId, async (shouldContinue) => {
