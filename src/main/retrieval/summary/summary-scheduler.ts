@@ -129,8 +129,8 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
    * A pass whose agent call failed with no batch answered holds up every
    * project, not only its own: the agent is the same for all of them, so asking every project would
    * turn one broken agent into a failing call per project every backoff. Other
-   * projects' requests wait in `pending`, and the failed project's retry starts
-   * the queue again.
+   * projects' requests wait in `pending`, and the failed project's timer starts
+   * the queue again, with the failed project at its back.
    */
   let callBackoff: { projectId: string; context: Context; retryAt: number } | null = null;
   /** Tasks the agent was asked about and did not answer for, this run of the app. */
@@ -232,19 +232,29 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
     }, delayMs));
   };
 
-  /** A call failed with no batch answered: every project waits, and this one's retry restarts the queue. */
+  /**
+   * A call failed with no batch answered: every project waits, and when the wait
+   * ends the queue starts again with the failed project at its back. The next
+   * pass is still the one call that tests the agent, so a broken agent costs one
+   * failing call per backoff whichever project makes it. Put first instead, a
+   * project whose own batch fails every time would hold every other project back
+   * for good.
+   */
   const startCallBackoff = (context: Context, projectId: string): void => {
     timers.get(projectId)?.cancel();
     retryAtByProject.delete(projectId);
     callBackoff = { projectId, context, retryAt: now() + FAILURE_BACKOFF_MS };
     timers.set(projectId, setTimer(() => {
       timers.delete(projectId);
+      // Cleared first: `runNextPending` starts nothing while the backoff holds.
       if (callBackoff?.projectId === projectId) callBackoff = null;
-      // Run now rather than again from the queue once this pass ends.
+      // Delete then set moves it to the back; a request queued during the wait
+      // keeps its own context.
+      const queuedContext = pending.get(projectId) ?? context;
       pending.delete(projectId);
-      request(context, projectId);
-      // Switched off during the wait, `request` starts nothing: start the
-      // queue here, or the projects waiting in it read as writing with no pass.
+      pending.set(projectId, queuedContext);
+      // Switched off during the wait, this drops every queued project, so none
+      // reads as writing with no pass coming.
       if (!running) runNextPending();
       reportChanges();
     }, FAILURE_BACKOFF_MS));

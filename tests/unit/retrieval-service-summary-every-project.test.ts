@@ -194,6 +194,17 @@ function untilSettled(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** A promise held open until the test settles it, for a resolve that must land late. */
+function deferred<Value>(): { promise: Promise<Value>; resolve: (value: Value) => void; reject: (reason: Error) => void } {
+  let resolve!: (value: Value) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<Value>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('task summaries in every project', () => {
   let retrievalService: typeof import('../../src/main/retrieval/retrieval-service')['retrievalService'];
 
@@ -361,6 +372,76 @@ describe('task summaries in every project', () => {
       retrievalService.reconcileEmbedWorker(context);
       await vi.waitFor(() => expect(requestedProjects()).toEqual(['open', 'open', 'other']));
     });
+
+    // A settings change forces a new refresh (`reconcileEmbedWorker`), and the
+    // refresh already in flight read the old settings: its result must be
+    // dropped, not noted. Here the older refresh resolves a writer AFTER the
+    // newer one found none.
+    //
+    // Red-green: `if (generation !== summaryChoiceGeneration) return;` in the
+    // resolve's `.then` of `refreshSummaryChoice`, the line ahead of
+    // `noteRefreshedWriter`. Remove it and the stale writer is noted: the latch,
+    // false after the newer refresh found none, flips to true and
+    // `requestEveryProject` asks `other`, so the "nothing asked" expectation
+    // goes red. The last reconcile then goes red as well: its writer is no
+    // longer new (the stale one already flipped the latch), so it asks only
+    // `open`. The last reconcile is also the control that a found writer does
+    // reach `other` in this setup, after the launch delay.
+    it('drops a stale refresh that resolves a writer after a newer forced one found none', async () => {
+      const context = makeContext('open', [folderProject('open'), folderProject('other')]);
+      vi.advanceTimersByTime(LAUNCH_DELAY_MS);
+      const olderRefresh = deferred<typeof WRITER>();
+      answerRunMock.resolveAnswerRun.mockReturnValueOnce(olderRefresh.promise).mockResolvedValueOnce(NO_WRITER);
+
+      // The first reconcile's resolve is held open; the second forces a new one.
+      retrievalService.reconcileEmbedWorker(context);
+      retrievalService.reconcileEmbedWorker(context);
+      // Past the two reconciles' own requests for the open project.
+      summarySchedulerMock.request.mockClear();
+      await untilSettled();
+
+      // The older refresh lands last, with a writer.
+      olderRefresh.resolve(WRITER);
+      await untilSettled();
+      expect(requestedProjects()).toEqual([]);
+      summarySchedulerMock.request.mockClear();
+
+      // The next refresh that finds a writer is a new one: it asks every project.
+      retrievalService.reconcileEmbedWorker(context);
+      await vi.waitFor(() => expect(requestedProjects()).toEqual(['open', 'open', 'other']));
+    });
+
+    // The mirror: a refresh superseded by a newer one that then fails.
+    //
+    // Red-green: `if (generation !== summaryChoiceGeneration) return;` in the
+    // resolve's `.catch` of `refreshSummaryChoice`. Remove it and the stale
+    // failure is read as a refresh that found no writer
+    // (`noteRefreshedWriter(context, false)`): it clears the latch the newer
+    // refresh set, so the writer found by the last reconcile reads as new and
+    // asks every project, where it must ask only `open`. The wait on the
+    // newer refresh's own ask of every project is the control that its writer
+    // was noted.
+    it('drops a stale refresh that fails after a newer forced one found a writer', async () => {
+      const context = makeContext('open', [folderProject('open'), folderProject('other')]);
+      vi.advanceTimersByTime(LAUNCH_DELAY_MS);
+      const olderRefresh = deferred<typeof WRITER>();
+      answerRunMock.resolveAnswerRun.mockReturnValueOnce(olderRefresh.promise).mockResolvedValueOnce(WRITER);
+
+      retrievalService.reconcileEmbedWorker(context);
+      retrievalService.reconcileEmbedWorker(context);
+      // The newer refresh found a writer where none was: the two reconciles' own
+      // requests for the open project, then every project.
+      await vi.waitFor(() => expect(requestedProjects()).toEqual(['open', 'open', 'open', 'other']));
+      summarySchedulerMock.request.mockClear();
+
+      olderRefresh.reject(new Error('the agent could not be resolved'));
+      await untilSettled();
+
+      // The same writer again: nothing new was found, so only the reconcile's own request.
+      retrievalService.reconcileEmbedWorker(context);
+      await untilSettled();
+      expect(requestedProjects()).toEqual(['open']);
+    });
   });
 
   describe('the push to an open Knowledge Graph', () => {
@@ -371,11 +452,21 @@ describe('task summaries in every project', () => {
       return deps.onStatusChanged;
     }
 
+    /** Attach, and read the project's activity once, as a map's snapshot does. */
+    async function mapShowing(projectId: string): Promise<void> {
+      const { graphService } = await import('../../src/main/retrieval/graph-facade');
+      retrievalService.attach(makeContext(projectId, [folderProject(projectId)]));
+      const provider = vi.mocked(graphService.setSummaryActivity).mock.calls.at(-1)?.[0] as ((id: string) => unknown) | undefined;
+      if (!provider) throw new Error('attach gave the graph no summary activity provider');
+      provider(projectId);
+    }
+
     // Every board change asks for a pass, and on a caught-up board the pass is
     // writing for a few milliseconds before the fingerprint skips it. Pushing
     // each of those would re-read the snapshot twice per drag.
     it('says nothing for a pass that ended as it started, and once for a state that holds', async () => {
       const { graphService } = await import('../../src/main/retrieval/graph-facade');
+      await mapShowing('project');
       const onStatusChanged = await statusChanged();
 
       summarySchedulerMock.status.mockImplementation(() => ({ state: 'writing', retryAtMs: null }));
@@ -519,6 +610,73 @@ describe('task summaries in every project', () => {
 
       await retrievalService.getStatus(makeContext('codeoff-open', projects));
       expect(embedEngineMock.markDirty).toHaveBeenCalledWith('codeoff-other');
+    });
+  });
+
+  // `registeredProjects` answers an empty list when the registry cannot be read,
+  // for each of its three readers: the status poll, the graph's project ids, and
+  // the launch's ask of every project. Summaries and indexing are on, so each
+  // reader would act on a list if it had one.
+  describe('a project registry that cannot be read', () => {
+    /** A context whose `projectRepo.list` throws, while the open project still resolves by id. */
+    function contextWithUnreadableRegistry(projectId: string): IpcContext {
+      const openProject = folderProject(projectId);
+      return {
+        ...makeContext(projectId, [openProject]),
+        projectRepo: {
+          list: () => {
+            throw new Error('the registry could not be read');
+          },
+          getById: (id: string) => (id === openProject.id ? openProject : null),
+        },
+      } as unknown as IpcContext;
+    }
+
+    // Red-green: the `try { return context.projectRepo.list(); } catch { return []; }`
+    // in `registeredProjects`. Remove the catch and `registeredProjectIds` throws
+    // inside `getStatus`, so the poll rejects instead of answering. The call
+    // assertion says why `sources` is missing: the poll never asked the worker.
+    it('lets the status poll answer, with no index read and no sources line', async () => {
+      const { retrievalClient } = await import('../../src/main/retrieval/retrieval-client');
+      indexState.byProject.set('unreadable-status', { conversations: 5, conversationChunks: 50, waiting: 0, written: 0, finishedTasks: 0 });
+
+      const status = await retrievalService.getStatus(contextWithUnreadableRegistry('unreadable-status'));
+
+      expect(status.indexingEnabled).toBe(true);
+      expect(status.sources).toBeUndefined();
+      const methodsCalled = vi.mocked(retrievalClient.call).mock.calls.map((call) => call[0]);
+      expect(methodsCalled).not.toContain('status.indexAll');
+    });
+
+    // Red-green: the same `catch { return []; }`. Remove it and the provider
+    // `attach` hands the graph throws when the graph asks for the project ids,
+    // instead of answering none. The readable registry first is the control
+    // that the provider reads the registry at all.
+    it('gives the graph no project ids', async () => {
+      const { graphService } = await import('../../src/main/retrieval/graph-facade');
+      const projectIdsProvider = (): (() => string[]) => {
+        const provider = vi.mocked(graphService.setProjectIds).mock.calls.at(-1)?.[0];
+        if (!provider) throw new Error('attach gave the graph no project ids provider');
+        return provider;
+      };
+
+      retrievalService.attach(makeContext('ids-open', [folderProject('ids-open'), folderProject('ids-other')]));
+      expect(projectIdsProvider()()).toEqual(['ids-open', 'ids-other']);
+
+      retrievalService.attach(contextWithUnreadableRegistry('ids-unreadable'));
+      expect(projectIdsProvider()()).toEqual([]);
+    });
+
+    // Red-green: the same `catch { return []; }`. Remove it and
+    // `requestEveryProject` throws out of the launch timer, which fake timers
+    // rethrow from `advanceTimersByTime`. The launch ask itself is the one the
+    // first case of "once a launch" pins with a readable registry.
+    it('asks no project at the launch, and does not throw from the launch timer', () => {
+      retrievalService.attach(contextWithUnreadableRegistry('launch-unreadable'));
+
+      expect(() => vi.advanceTimersByTime(LAUNCH_DELAY_MS)).not.toThrow();
+
+      expect(summarySchedulerMock.request).not.toHaveBeenCalled();
     });
   });
 });

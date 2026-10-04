@@ -287,7 +287,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: when task summary passes are asked for (project open, board change, the once-a-launch ask of every project, a settings change that resolves a writer, Rebuild), what the Settings Index card counts (every indexed project), and Rebuild's reach are described in configuration.md's Knowledge Graph section, user-guide.md's Index card paragraphs, and architecture.md's `knowledgeGraph:status` and `knowledgeGraph:rebuildIndex` rows. None of those are enumerable, so this is a prose check: the open-project wording survived a change to all projects once before.
 
 - `src/shared/index-summary.ts`
-  WHY: one fold and one set of line rules for both Index surfaces (`sumIndexCounts` and the panel's `sumIndex`, `summaryStatusOf`, `sourceStatusOf`, and `isIndexedProject`, the set "All projects" means). user-guide.md and configuration.md say what each surface counts and that the two read the same; a change here changes both.
+  WHY: one fold and one set of line rules for both Index views, the Settings card and the map's Index panel (`sumIndexCounts` and the panel's `sumIndex`, `summaryStatusOf`, `sourceStatusOf`, and `isIndexedProject`, the set "All projects" means). user-guide.md and configuration.md say what each view counts and that the two read the same; a change here changes both.
 
 - `electron-builder.yml`
   WHY: native deps allowlist, asarUnpack, signing, and packaging targets are described in cross-platform.md and developer-guide.md.

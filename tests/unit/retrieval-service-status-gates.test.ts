@@ -455,6 +455,38 @@ describe('the retrieval service status paths', () => {
       expect(status.code).toBeUndefined();
       expect(branchSizesMock.get).not.toHaveBeenCalled();
     });
+
+    // With no project registered the poll has nothing to read, so it does not
+    // ask the worker: `index` stays null, and no line is summed from an empty
+    // index.
+    //
+    // Red-green: the `projectIds.length > 0` half of
+    // `if (indexingEnabled && projectIds.length > 0)` in getStatus. Drop it and
+    // the worker is asked about no projects at all and answers an empty index,
+    // which `sumIndexCounts` sums into a `sources` line ("Not yet indexed") and a
+    // `summaries` line instead of nothing, so those assertions and the
+    // `status.indexAll` one go red. `code` is undefined either way here (an open
+    // project that is not registered has no path to size), so it is asserted as
+    // the line's contract, not as the discriminator. The registered project
+    // afterwards is the control that the worker is asked when there is one.
+    it('asks the worker nothing, and reads no lines, while no project is registered', async () => {
+      const { retrievalClient } = await import('../../src/main/retrieval/retrieval-client');
+      branchSizesMock.get.mockImplementation(() => BRANCH);
+
+      const status = await retrievalService.getStatus(makeContext('none-open', []));
+
+      expect(status.indexingEnabled).toBe(true);
+      expect(vi.mocked(retrievalClient.call).mock.calls.map((call) => call[0])).not.toContain('status.indexAll');
+      expect(status.sources).toBeUndefined();
+      expect(status.summaries).toBeUndefined();
+      expect(status.code).toBeUndefined();
+      expect(branchSizesMock.get).not.toHaveBeenCalled();
+
+      indexState.byProject.set('none-control', caughtUp());
+      const controlStatus = await retrievalService.getStatus(makeContext('none-control', [folderProject('none-control')]));
+      expect(retrievalClient.call).toHaveBeenCalledWith('status.indexAll', expect.objectContaining({ projectIds: ['none-control'] }));
+      expect(controlStatus.sources?.conversations.count).toBe(5);
+    });
   });
 
   describe('retryInMs', () => {
@@ -544,9 +576,8 @@ describe('the retrieval service status paths', () => {
 
     // Red-green: `shownSummaryActivity.set(...)` inside the setSummaryActivity
     // wrapper in `attach`. Without it the map's read leaves nothing behind, the
-    // timer compares idle with the idle default of a project never read, and
-    // returns without pushing: the map keeps showing "writing" for a pass that
-    // has ended.
+    // timer finds the project on no map, and returns without pushing: the map
+    // keeps showing "writing" for a pass that has ended.
     it('pushes when the pass ends after the map read it writing and before the push timer', async () => {
       const { graphService, provider } = await attachedGraph();
       const onStatusChanged = await statusChanged();
@@ -580,9 +611,8 @@ describe('the retrieval service status paths', () => {
       expect(graphService.notifyChanged).not.toHaveBeenCalled();
     });
 
-    // Red-green: the same line. Without it the map's read is forgotten, and the
-    // timer takes "writing" for news against the idle default and pushes a
-    // snapshot the map already carries.
+    // The map's read is what the timer compares with: "writing" again is no
+    // news, so no snapshot the map already carries is pushed.
     it('says nothing when the state at the push timer is the one the map already read', async () => {
       const { graphService, provider } = await attachedGraph();
       const onStatusChanged = await statusChanged();
@@ -593,6 +623,73 @@ describe('the retrieval service status paths', () => {
       vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
 
       expect(graphService.notifyChanged).not.toHaveBeenCalled();
+    });
+
+    // The time to a retry is counted down by the line itself from each snapshot,
+    // so a retry that slips, or a clock that moves, under a state the map
+    // already read is no reason to push a snapshot.
+    //
+    // Red-green: `${activity.state}|${activity.skipped}` in `summaryActivityKey`.
+    // Add `|${activity.retryInMs}` to it and the map's read (90 s left) differs
+    // from the timer's (150 s less the 250 ms the debounce itself moved the
+    // clock), so the "retrying" phase pushes and the first assertion goes red.
+    // The switch to "writing" afterwards is the control that a real change
+    // still pushes, once.
+    it('says nothing when only the retry time moves under a state the map already read', async () => {
+      const { graphService, provider } = await attachedGraph();
+      const onStatusChanged = await statusChanged();
+
+      // The map reads the project retrying, 90 s from its next attempt.
+      summarySchedulerMock.status.mockImplementation(() => ({ state: 'retrying', retryAtMs: NOW_MS + 90_000 }));
+      expect(provider(PROJECT)).toMatchObject({ state: 'retrying', skipped: 0, retryInMs: 90_000 });
+
+      // The retry slips to another time. State and skipped count are the same.
+      summarySchedulerMock.status.mockImplementation(() => ({ state: 'retrying', retryAtMs: NOW_MS + 150_000 }));
+      onStatusChanged(PROJECT);
+      vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
+      expect(graphService.notifyChanged).not.toHaveBeenCalled();
+
+      // A state that differs from the one the map read is a push.
+      schedulerIs('writing');
+      onStatusChanged(PROJECT);
+      vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
+      expect(vi.mocked(graphService.notifyChanged).mock.calls).toEqual([[PROJECT]]);
+    });
+
+    // `shownSummaryActivity` has an entry only for a project a snapshot has read,
+    // and the push timer returns for a project with none: it is on no map, and
+    // an open map re-reads its own snapshot on a push for any project.
+    //
+    // Red-green: `if (shown === undefined) return;` in the timer of
+    // `pushSummaryActivity`. Remove it and nothing stops the comparison, which
+    // finds `undefined` unequal to every key: the writing project and the idle
+    // one with a skipped task each push, so the first two assertions go red.
+    // The provider read afterwards is the control: once a map has read the
+    // project, a changed state pushes. The control's state differs from the one
+    // read ("writing" against "idle"), or the equality check would suppress it.
+    it('pushes nothing for a project no snapshot has read, and pushes it once a map has', async () => {
+      const { graphService, provider } = await attachedGraph();
+      const onStatusChanged = await statusChanged();
+
+      // Writing: not a state the map ever read.
+      schedulerIs('writing');
+      onStatusChanged(PROJECT);
+      vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
+      expect(graphService.notifyChanged).not.toHaveBeenCalled();
+
+      // Idle with a task the agent passed over: the line would change, if a map showed it.
+      schedulerIs('idle');
+      summarySchedulerMock.skipped.mockImplementation(() => 1);
+      onStatusChanged(PROJECT);
+      vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
+      expect(graphService.notifyChanged).not.toHaveBeenCalled();
+
+      // A map reads the project, idle with one skipped. Writing is then a change.
+      expect(provider(PROJECT)).toMatchObject({ state: 'idle', skipped: 1 });
+      schedulerIs('writing');
+      onStatusChanged(PROJECT);
+      vi.advanceTimersByTime(PUSH_DEBOUNCE_MS);
+      expect(vi.mocked(graphService.notifyChanged).mock.calls).toEqual([[PROJECT]]);
     });
   });
 });

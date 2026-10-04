@@ -136,7 +136,7 @@ export function waitingCorporaOf(corpora: ReadonlyArray<KnowledgeGraphIndexCorpu
 
 /** Summaries still to write at the run's rate: unwritten tasks the agent has
  *  not passed over, and summaries marked for rewriting. */
-export function summariesRemaining(summaries: KnowledgeGraphSummaryCounts): number {
+function summariesRemaining(summaries: KnowledgeGraphSummaryCounts): number {
   return Math.max(0, summaries.finishedTasks - summaries.written - summaries.skipped) + summaries.awaitingRewrite;
 }
 

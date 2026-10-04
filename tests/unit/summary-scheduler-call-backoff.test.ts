@@ -153,12 +153,11 @@ describe('summary scheduler call backoff', () => {
   });
 
   // Summaries switched off while a project waited out the call backoff: the
-  // failed project's retry finds nothing to run (`request` starts nothing), so
-  // the queue behind it must be settled right there, or the projects in it read
-  // as writing with no pass ever coming.
+  // failed project's timer finds nothing to run, so the queue must be settled
+  // right there, or the projects in it read as writing with no pass ever coming.
   //
   // Red-green: `if (!running) runNextPending();` in `startCallBackoff`'s
-  // timer. Without it project-b stays in `pending` after the timer fires,
+  // timer. Without it both projects stay in `pending` after the timer fires,
   // `callBackoff` is already null, and status reads `writing`. A `runNextPending`
   // that did not drop a disabled entry (its `!deps.isEnabled(nextContext)`
   // check) would instead start project-b's run, which
@@ -187,5 +186,70 @@ describe('summary scheduler call backoff', () => {
     expect(resolveWriter).toHaveBeenCalledTimes(1);
     expect(runPass).toHaveBeenCalledTimes(1);
     expect(scheduler.busy).toBe(false);
+  });
+
+  // A project whose only batch fails every time must not starve the projects
+  // queued behind it. When the app-wide backoff ends, the project that failed
+  // goes to the BACK of the queue and the head of the queue runs first.
+  //
+  // Red-green: the re-queue in `startCallBackoff`'s timer,
+  // `pending.delete(projectId); pending.set(projectId, queuedContext);`, then
+  // `runNextPending()`. With the old timer body (`pending.delete(projectId);
+  // request(context, projectId);` and no re-queue), step 3 starts project-a
+  // again and project-b never starts, so the `startedProjectIds` assertion
+  // right after the first timer fires fails.
+  it('starts the project queued behind a failed call first when the backoff ends, and the failed project after it', async () => {
+    const { scheduler, runPass, startedProjectIds, timers, finishNext } = createHarness();
+
+    // 1. project-a runs and its call fails: the app-wide backoff starts.
+    scheduler.request('context', 'project-a');
+    await settle();
+    await finishNext({ written: 0, remaining: 5, failed: true, callFailed: true });
+    expect(startedProjectIds).toEqual(['project-a']);
+    expect(timers.map((timer) => timer.delayMs)).toEqual([CALL_BACKOFF_MS]);
+
+    // 2. project-b asks during the wait: it queues and does not run.
+    scheduler.request('context', 'project-b');
+    await settle();
+    expect(runPass).toHaveBeenCalledTimes(1);
+    expect(scheduler.status('project-b')).toEqual({ state: 'retrying', retryAtMs: CLOCK_MS + CALL_BACKOFF_MS });
+
+    // 3. The backoff ends: project-b starts next, not the project that failed.
+    timers[0].fire();
+    await settle();
+    expect(startedProjectIds).toEqual(['project-a', 'project-b']);
+    expect(scheduler.status('project-b')).toEqual({ state: 'writing', retryAtMs: null });
+    // project-a is queued at the back, no longer waiting out a backoff.
+    expect(scheduler.status('project-a')).toEqual({ state: 'writing', retryAtMs: null });
+
+    // 4. project-b finishes healthy: project-a runs from the back of the queue.
+    await finishNext({ written: 3, remaining: 0 });
+    expect(startedProjectIds).toEqual(['project-a', 'project-b', 'project-a']);
+    expect(scheduler.status('project-b')).toEqual({ state: 'idle', retryAtMs: null });
+    expect(scheduler.status('project-a')).toEqual({ state: 'writing', retryAtMs: null });
+
+    // 5. project-a fails again. A project that arrives during this new wait
+    // still runs before it when the backoff ends: a batch that fails every
+    // time no longer starves the others.
+    await finishNext({ written: 0, remaining: 5, failed: true, callFailed: true });
+    expect(timers.map((timer) => timer.delayMs)).toEqual([CALL_BACKOFF_MS, CALL_BACKOFF_MS]);
+    scheduler.request('context', 'project-c');
+    await settle();
+    expect(runPass).toHaveBeenCalledTimes(3);
+    expect(scheduler.status('project-c')).toEqual({ state: 'retrying', retryAtMs: CLOCK_MS + CALL_BACKOFF_MS });
+
+    timers[1].fire();
+    await settle();
+    expect(startedProjectIds).toEqual(['project-a', 'project-b', 'project-a', 'project-c']);
+
+    await finishNext({ written: 2, remaining: 0 });
+    expect(startedProjectIds).toEqual(['project-a', 'project-b', 'project-a', 'project-c', 'project-a']);
+
+    await finishNext({ written: 5, remaining: 0 });
+    expect(runPass).toHaveBeenCalledTimes(5);
+    expect(scheduler.busy).toBe(false);
+    expect(scheduler.status('project-a')).toEqual({ state: 'idle', retryAtMs: null });
+    expect(scheduler.status('project-b')).toEqual({ state: 'idle', retryAtMs: null });
+    expect(scheduler.status('project-c')).toEqual({ state: 'idle', retryAtMs: null });
   });
 });

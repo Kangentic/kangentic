@@ -1190,7 +1190,7 @@ describe('the summary scheduler', () => {
       expect(pushes).toEqual(['project', 'project', 'project']);
     });
 
-    it('holds every project back after a failed agent call, then resumes them from the failed one\'s retry', async () => {
+    it('holds every project back after a failed agent call, then resumes the queue with the failed project last', async () => {
       const { scheduler, runPass, timers, finish } = controlled();
       scheduler.request('context', 'first');
       scheduler.request('context', 'second');
@@ -1209,12 +1209,12 @@ describe('the summary scheduler', () => {
       expect(timers.map((timer) => timer.delayMs)).toEqual([5 * 60_000]);
       timers[0].fire();
       await settle();
-      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'first']);
+      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'second']);
       await finish();
       await finish();
       await finish();
-      // The failed project first, then the rest, each once.
-      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'first', 'second', 'third']);
+      // The rest first, then the failed project, each once.
+      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'second', 'third', 'first']);
     });
 
     it('keeps a failed read to its own project: the others go on', async () => {
