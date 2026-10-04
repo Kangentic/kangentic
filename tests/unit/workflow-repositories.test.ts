@@ -211,6 +211,18 @@ describeWithSqlite('workflow tables', () => {
     expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
   });
 
+  it('keeps the projects its agent asked to read, once each, without changing the revision', () => {
+    const { workflows } = freshDatabase();
+    const workflow = workflows.create({});
+    expect(workflow.agent_read_project_ids).toEqual([]);
+    expect(workflows.addAgentReadProject(workflow.id, 'mobile')).toBe(true);
+    expect(workflows.addAgentReadProject(workflow.id, 'mobile')).toBe(false);
+    expect(workflows.addAgentReadProject(workflow.id, 'relay')).toBe(true);
+    const read = workflows.getById(workflow.id)!;
+    expect(read.agent_read_project_ids).toEqual(['mobile', 'relay']);
+    expect(read.revision).toBe(workflow.revision);
+  });
+
   it('counts which columns the most recently finished tasks went through', () => {
     const { database, tasks, todo } = freshDatabase();
     const lanes = new SwimlaneRepository(database).list();

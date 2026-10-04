@@ -221,6 +221,12 @@ export interface CommandOptions {
    */
   readOnly?: boolean;
   /**
+   * More directories the agent may read, beyond its `cwd`: other projects'
+   * checkouts, for a workflow agent planning tasks on their boards. Set only on
+   * an adapter that declares `supportsReadableDirectories`.
+   */
+  readableDirectories?: readonly string[];
+  /**
    * Present only when this project's execution mode for this agent is
    * 'remote' (resolved by the spawn chokepoint from `agent.executionServers`
    * + `agent.execution`). Adapters that declare `remoteExecution` read this
@@ -429,6 +435,13 @@ export interface AgentAdapter {
    * a CLI can let a user's own approval settings outrank them.
    */
   readonly supportsReadOnlyLaunch?: boolean;
+
+  /**
+   * True when `buildCommand` honours `CommandOptions.readableDirectories`, so a
+   * read-only agent can read other projects' code without a permission prompt.
+   * A workflow agent without it reads only its own project.
+   */
+  readonly supportsReadableDirectories?: boolean;
 
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;

@@ -1107,6 +1107,25 @@ describe('CommandBuilder buildClaudeCommand: read-only launch', () => {
     expect(cmd).not.toContain('--tools');
     expect(cmd).not.toContain('--strict-mcp-config');
     expect(cmd).not.toContain('--no-chrome');
+    expect(cmd).not.toContain('--add-dir');
+  });
+
+  it('gives each readable directory its own --add-dir, before the prompt\'s --', () => {
+    const cmd = new CommandBuilder().buildClaudeCommand({
+      cliPath: 'C:\\tools\\claude.exe',
+      taskId: 'wf-1',
+      cwd: 'C:\\projects\\home',
+      permissionMode: 'default',
+      shell: 'powershell',
+      readOnly: true,
+      readableDirectories: ['C:\\projects\\mobile app', 'C:\\projects\\relay'],
+      prompt: 'Plan it',
+    });
+    expect(cmd).toContain('--add-dir "C:\\projects\\mobile app"');
+    expect(cmd).toContain('--add-dir "C:\\projects\\relay"');
+    // `--add-dir` takes a list, so the prompt must sit behind the end-of-options marker.
+    expect(cmd.indexOf('--add-dir')).toBeLessThan(cmd.indexOf('"--"'));
+    expect(cmd.endsWith('"Plan it"')).toBe(true);
   });
 });
 

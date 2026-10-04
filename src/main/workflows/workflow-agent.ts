@@ -3,7 +3,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
 import { DEFAULT_AGENT } from '../../shared/types';
-import type { Session, WorkflowAgentStatus } from '../../shared/types';
+import type { ActivityState, Session, Workflow, WorkflowAgentStatus } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
@@ -14,6 +14,7 @@ import { agentRegistry } from '../agent/agent-registry';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
+import { workflowTasks } from './workflow-tasks';
 
 /**
  * A workflow's own agent: the agent that plans it, in the Workflows view's left
@@ -47,6 +48,124 @@ const opening = new Map<string, Promise<WorkflowAgentStatus>>();
 
 /** Sessions spawned as a resume, until they end. A resume the CLI cannot honour ends here. */
 const resumedSessions = new Map<string, { homeProjectId: string; workflowId: string; grid: WorkflowAgentGrid }>();
+
+/** The other checkouts each workflow's running agent was started able to read, by workflow id. */
+const grantedDirectories = new Map<string, ReadonlySet<string>>();
+
+/** A restart owed at the agent's next idle, to read more checkouts, with the line it is told after it. */
+const pendingAccess = new Map<string, { homeProjectId: string; message: string }>();
+
+/** The grid each workflow's agent last started at, so a restart keeps the pane's size. */
+const lastGrid = new Map<string, WorkflowAgentGrid>();
+
+/** Another project's checkout the workflow agent reads. */
+export interface ReadableProject {
+  projectId: string;
+  name: string;
+  path: string;
+}
+
+/**
+ * The other projects' checkouts a workflow's agent reads beyond its own: every
+ * project one of its tasks is on (planned or created), and every one it asked
+ * for (`agent_read_project_ids`). A checkout gone from disk is left out, since
+ * the CLI refuses to start with a directory that does not exist.
+ */
+export function readableProjectsOf(context: IpcContext, homeProjectId: string, workflow: Workflow): ReadableProject[] {
+  const projectIds = new Set<string>();
+  for (const planned of workflow.draft?.tasks ?? []) {
+    if (planned.project_id) projectIds.add(planned.project_id);
+  }
+  for (const { projectId } of workflowTasks(context, homeProjectId, workflow.id)) projectIds.add(projectId);
+  for (const projectId of workflow.agent_read_project_ids) projectIds.add(projectId);
+  projectIds.delete(homeProjectId);
+  const readable: ReadableProject[] = [];
+  for (const projectId of projectIds) {
+    const project = context.projectRepo.getById(projectId);
+    if (!project) continue;
+    const projectRoot = resolveProjectRoot(project.path);
+    if (!fs.existsSync(projectRoot)) continue;
+    readable.push({ projectId, name: project.name, path: projectRoot });
+  }
+  return readable;
+}
+
+/** What a request for another project's code came to. */
+export interface ProjectAccessResult {
+  name: string;
+  path: string;
+  /**
+   * `home`: its own project. `already`: its running agent reads it. `now` and
+   * `next-turn`: its agent restarts with it, at once (idle) or when its turn
+   * ends. `next-start`: no agent runs; the next start reads it. `unsupported`:
+   * the agent's CLI cannot read another checkout.
+   */
+  when: 'home' | 'already' | 'now' | 'next-turn' | 'next-start' | 'unsupported';
+}
+
+/**
+ * Let a workflow's agent read another registered project's checkout: granted at
+ * once with no approval, and kept on the workflow so a resume reads it too (#732,
+ * the user's call: the workflow's projects, plus any registered project it needs,
+ * automatically). A running agent picks it up at its next idle, resumed on its
+ * own conversation with the directory added and told it is ready, so it carries
+ * on by itself.
+ */
+export function requestWorkflowAgentProjectAccess(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  projectId: string,
+): ProjectAccessResult {
+  const project = context.projectRepo.getById(projectId);
+  if (!project) throw new Error('That project is no longer in Kangentic.');
+  const projectRoot = resolveProjectRoot(project.path);
+  if (projectId === homeProjectId) return { name: project.name, path: projectRoot, when: 'home' };
+  new WorkflowRepository(getProjectDb(homeProjectId)).addAgentReadProject(workflowId, projectId);
+  return { name: project.name, path: projectRoot, when: syncWorkflowAgentAccess(context, homeProjectId, workflowId) };
+}
+
+/**
+ * Compare what the workflow's running agent reads with what it should, and owe
+ * it a restart when it lacks a checkout: at once when it is idle, otherwise at
+ * its next idle (the `'activity'` listener in `registerWorkflowAgentLifecycle`).
+ */
+function syncWorkflowAgentAccess(context: IpcContext, homeProjectId: string, workflowId: string): ProjectAccessResult['when'] {
+  const session = findWorkflowAgentSession(context, workflowId);
+  if (!session || session.status !== 'running') return 'next-start';
+  const agentName = context.sessionManager.getSessionAgentName(session.id);
+  const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+  if (!adapter?.supportsReadableDirectories) return 'unsupported';
+  const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
+  if (!workflow) return 'next-start';
+  const granted = grantedDirectories.get(workflowId) ?? new Set<string>();
+  const missing = readableProjectsOf(context, homeProjectId, workflow).filter((readable) => !granted.has(readable.path));
+  if (missing.length === 0) return 'already';
+  const list = missing.map((readable) => `${readable.name} at ${readable.path}`).join(', ');
+  pendingAccess.set(workflowId, {
+    homeProjectId,
+    message: `Kangentic restarted you on this conversation so you can read ${list}. Carry on where you left off.`,
+  });
+  if (isActive(context.sessionManager.getActivityCache()[session.id])) return 'next-turn';
+  setImmediate(() => void restartWithAccess(context, workflowId));
+  return 'now';
+}
+
+/** Resume the agent on its conversation with the checkouts it is owed, and tell it so. */
+async function restartWithAccess(context: IpcContext, workflowId: string): Promise<void> {
+  const pending = pendingAccess.get(workflowId);
+  if (!pending) return;
+  pendingAccess.delete(workflowId);
+  const session = findWorkflowAgentSession(context, workflowId);
+  // A paused agent reads the grant when it is resumed, from the workflow row.
+  if (!session || session.status !== 'running') return;
+  try {
+    await context.sessionManager.suspend(session.id);
+    await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
+  } catch (error) {
+    console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
+  }
+}
 
 function unavailable(reason: string): WorkflowAgentStatus {
   return { session: null, unavailable: reason };
@@ -116,6 +235,9 @@ export async function pauseWorkflowAgent(context: IpcContext, workflowId: string
  */
 export async function endWorkflowAgent(context: IpcContext, workflowId: string): Promise<void> {
   const sessions = context.sessionManager.listSessions().filter((session) => session.workflowId === workflowId);
+  grantedDirectories.delete(workflowId);
+  pendingAccess.delete(workflowId);
+  lastGrid.delete(workflowId);
   const exits: Promise<void>[] = [];
   for (const session of sessions) {
     resumedSessions.delete(session.id);
@@ -143,20 +265,31 @@ export async function endWorkflowAgentsOfProject(context: IpcContext, projectId:
   await Promise.all([...workflowIds].map((workflowId) => endWorkflowAgent(context, workflowId)));
 }
 
-function startOnce(context: IpcContext, homeProjectId: string, workflowId: string, grid: WorkflowAgentGrid): Promise<WorkflowAgentStatus> {
+function startOnce(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  grid: WorkflowAgentGrid,
+  continuation?: string,
+): Promise<WorkflowAgentStatus> {
   const pending = opening.get(workflowId);
   if (pending) return pending;
-  const started = startWorkflowAgent(context, homeProjectId, workflowId, grid)
+  const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation)
     .finally(() => opening.delete(workflowId));
   opening.set(workflowId, started);
   return started;
 }
 
+/**
+ * `continuation` is the message a resumed agent gets on starting, when
+ * Kangentic restarted it for a reason it should hear (new checkouts to read).
+ */
 async function startWorkflowAgent(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
   grid: WorkflowAgentGrid,
+  continuation?: string,
 ): Promise<WorkflowAgentStatus> {
   const repository = new WorkflowRepository(getProjectDb(homeProjectId));
   const workflow = repository.getById(workflowId);
@@ -184,10 +317,14 @@ async function startWorkflowAgent(
 
   const resume = workflow.agent_session_id !== null && workflow.agent_name === agentName;
   const agentSessionId = resume && workflow.agent_session_id ? workflow.agent_session_id : uuidv4();
-  // A resumed agent gets no message: its conversation already holds the first one.
+  // A resumed agent gets no first message (its conversation holds it), only the
+  // reason Kangentic restarted it, when there is one.
   const prompt = resume
-    ? undefined
+    ? continuation
     : buildWorkflowAgentFirstMessage(context, homeProjectId, workflow, readWorkflowAgentTemplate(context));
+  // The other boards' checkouts it may read; an agent whose CLI cannot widen
+  // its reads gets none, and its own project only.
+  const readable = adapter.supportsReadableDirectories ? readableProjectsOf(context, homeProjectId, workflow) : [];
 
   const shell = await context.sessionManager.getShell();
   const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', workflow.id);
@@ -222,6 +359,7 @@ async function startWorkflowAgent(
     model: projectTierApplies ? project.default_model ?? undefined : undefined,
     effort: projectTierApplies ? project.default_effort ?? undefined : undefined,
     readOnly: true,
+    readableDirectories: readable.map((entry) => entry.path),
   };
   const command = adapter.buildCommand(commandOptions);
   const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
@@ -246,6 +384,8 @@ async function startWorkflowAgent(
   });
   if (!resume) repository.setAgentConversation(workflow.id, { agentName, agentSessionId });
   if (resume) resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
+  grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
+  lastGrid.set(workflow.id, grid);
   return { session, unavailable: null };
 }
 
@@ -288,6 +428,16 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   // The sweep that retires a session whose CLI is gone kills it on purpose, so
   // its exit arrives intentional; this is the moment the CLI's last words are read.
   context.sessionManager.on('agent-absent', (sessionId: string) => startOverIfResumeFailed(sessionId, 0));
+  // An agent owed new checkouts restarts when it goes idle, which is when the
+  // turn that asked for them has ended. A transient session gets no
+  // 'turn-ended', so this reads the idle edge itself; an interrupt ends the
+  // turn too, and is as good a moment.
+  context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
+    if (activity !== 'idle') return; // activity-state-ok: a permission prompt is mid-turn, and only an idle agent may be restarted
+    const workflowId = context.sessionManager.listSessions().find((session) => session.id === sessionId)?.workflowId;
+    if (!workflowId || !pendingAccess.has(workflowId)) return;
+    setImmediate(() => void restartWithAccess(context, workflowId));
+  });
   context.sessionManager.on('exit', (sessionId: string, exitCode: number, intentional?: boolean) => {
     if (intentional) {
       resumedSessions.delete(sessionId);

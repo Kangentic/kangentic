@@ -124,6 +124,7 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'unlink_workflow_tasks',
   'set_task_route',
   'remove_from_workflow',
+  'request_project_access',
   'delete_workflow',
 ]);
 

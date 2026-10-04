@@ -223,7 +223,7 @@ describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only i
     // Every tool it has is read-only, or one of the planning tools.
     for (const tool of tools) {
       if (tool.annotations?.readOnlyHint === true) continue;
-      expect(['kangentic_save_workflow', 'kangentic_add_workflow_task', 'kangentic_link_workflow_tasks', 'kangentic_unlink_workflow_tasks', 'kangentic_set_task_route', 'kangentic_remove_from_workflow']).toContain(tool.name);
+      expect(['kangentic_save_workflow', 'kangentic_add_workflow_task', 'kangentic_link_workflow_tasks', 'kangentic_unlink_workflow_tasks', 'kangentic_set_task_route', 'kangentic_remove_from_workflow', 'kangentic_request_project_access']).toContain(tool.name);
     }
   });
 

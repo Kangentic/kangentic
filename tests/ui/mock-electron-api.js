@@ -4724,7 +4724,7 @@
             projectId: seed.projectId || null,
             workflow: Object.assign({
               brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
-              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null,
+              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null, agent_read_project_ids: [],
             }, JSON.parse(JSON.stringify(row))),
           });
         });
@@ -4952,7 +4952,7 @@
             brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
             source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
             color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null,
-            agent_name: null, agent_session_id: null,
+            agent_name: null, agent_session_id: null, agent_read_project_ids: [],
           };
           entries.unshift({ projectId: projectId, workflow: workflow });
           emit(projectId, workflow.id, false);

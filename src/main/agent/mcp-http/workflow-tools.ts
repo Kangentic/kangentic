@@ -234,6 +234,25 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   );
 
   server.registerTool(
+    'kangentic_request_project_access',
+    {
+      description: 'For a workflow\'s own agent: read another registered project\'s code while planning, such as when a task\'s work is in that repository. Granted at once, with no approval. Your session restarts on this conversation when your turn ends, with that project\'s checkout readable, and you are told where; end your turn after calling this. Projects your workflow\'s tasks are on are readable already.',
+      inputSchema: z.object({
+        workflow: z.string().describe(WORKFLOW_DESCRIPTION),
+        readProject: z.string().describe('The project to read: its name or id, as kangentic_list_projects shows it.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ workflow, readProject, project }) => withProject(resolver, project, (ctx) => callHandler(
+      'request_project_access',
+      { workflow, readProject },
+      ctx,
+      'Failed to grant access to the project',
+    )),
+  );
+
+  server.registerTool(
     'kangentic_delete_workflow',
     {
       description: 'Delete a workflow. One not started loses its plan and nothing else changes. A started one\'s unfinished tasks stay where they are as ordinary tasks; its tasks in Done stay in Done. Delete only when the user asks to.',

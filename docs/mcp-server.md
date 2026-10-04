@@ -1105,6 +1105,22 @@ removed. A task in Done stays with its workflow.
 | `taskProject` | string | No | The project it is on, when not the workflow's. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
+### kangentic_request_project_access
+
+For a workflow's own agent: read another registered project's code while planning. It is granted
+at once, with no approval, and kept on the workflow (`agent_read_project_ids`), so every later
+start and resume reads it too. A running agent picks it up at its next idle: Kangentic resumes it
+on the same conversation with that checkout added (Claude's `--add-dir`) and tells it where the
+checkout is. The agent already reads every project its workflow's tasks are on, and a checkout
+missing from disk is left out. An agent whose CLI cannot widen its reads
+(`supportsReadableDirectories`) keeps reading its own project only.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. The workflow's own agent leaves it out. |
+| `readProject` | string | Yes | The project to read, by name or id. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
 ### kangentic_delete_workflow
 
 Delete a workflow. One not started loses its plan and nothing else changes. A started one's

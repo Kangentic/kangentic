@@ -28,6 +28,7 @@ import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { endWorkflowAgent } from './workflow-agent';
+import { workflowTasks } from './workflow-tasks';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -91,22 +92,7 @@ export function requireWorkflow(homeProjectId: string, workflowId: string): Work
   return workflow;
 }
 
-/** Every created task of a workflow, across every project, with its project id. */
-export function workflowTasks(context: IpcContext, homeProjectId: string, workflowId: string): Array<{ projectId: string; task: Task }> {
-  const found: Array<{ projectId: string; task: Task }> = [];
-  for (const project of context.projectRepo.list()) {
-    let tasks: Task[];
-    try {
-      tasks = new TaskRepository(getProjectDb(project.id)).listByWorkflow(workflowId);
-    } catch {
-      continue;
-    }
-    for (const task of tasks) {
-      if ((task.workflow_project_id ?? project.id) === homeProjectId) found.push({ projectId: project.id, task });
-    }
-  }
-  return found;
-}
+export { workflowTasks };
 
 export function readWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowView {
   const workflow = requireWorkflow(homeProjectId, workflowId);

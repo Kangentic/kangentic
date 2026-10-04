@@ -97,6 +97,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_unlink_workflow_tasks', label: 'Unlink Workflow Tasks', blurb: 'remove a link between two workflow tasks', category: 'workflows' },
   { name: 'kangentic_set_task_route', label: 'Set Task Route', blurb: 'change which columns a workflow task visits', category: 'workflows' },
   { name: 'kangentic_remove_from_workflow', label: 'Remove from Workflow', blurb: 'make a workflow task an ordinary task again', category: 'workflows' },
+  { name: 'kangentic_request_project_access', label: 'Request Project Access', blurb: 'let a workflow agent read another project\'s code', category: 'workflows' },
   { name: 'kangentic_delete_workflow', label: 'Delete Workflow', blurb: 'delete a workflow, leaving unfinished tasks as ordinary ones', category: 'workflows' },
   { name: 'kangentic_list_board_profiles', label: 'List Board Profiles', blurb: 'see the board\'s named per-column agent/model/effort presets', category: 'board' },
   { name: 'kangentic_create_board_profile', label: 'Create Board Profile', blurb: 'add a named preset of per-column agent/model/effort settings', category: 'board' },

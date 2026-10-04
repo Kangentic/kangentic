@@ -1879,6 +1879,11 @@ function runWorkflowsMigration(db: Database.Database): void {
       db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} TEXT DEFAULT NULL`);
     }
   }
+  // The other registered projects the workflow agent asked to read, a JSON
+  // array of project ids, so a resume grants them again.
+  if (!workflowColumnNames.has('agent_read_project_ids')) {
+    db.exec("ALTER TABLE workflows ADD COLUMN agent_read_project_ids TEXT NOT NULL DEFAULT '[]'");
+  }
 
   const taskColumnNames = new Set(
     (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),

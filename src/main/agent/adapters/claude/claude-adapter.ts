@@ -267,6 +267,9 @@ export class ClaudeAdapter implements AgentAdapter {
   // `--tools` is the CLI's own restriction of the built-in set, honoured in an
   // interactive session; unlike plan mode it does not reroute the model.
   readonly supportsReadOnlyLaunch = true;
+  // `--add-dir` per directory (command-builder.ts): the CLI's own way to widen
+  // what a session may read and search without a prompt.
+  readonly supportsReadableDirectories = true;
   // Claude streams account-wide rate-limit windows in its status line, so the
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.

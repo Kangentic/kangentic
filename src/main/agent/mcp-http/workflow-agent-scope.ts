@@ -24,6 +24,8 @@ export const WORKFLOW_AGENT_PLANNING_TOOLS: ReadonlySet<string> = new Set([
   'kangentic_unlink_workflow_tasks',
   'kangentic_set_task_route',
   'kangentic_remove_from_workflow',
+  // Reads another project's code: granted by Kangentic, never a write.
+  'kangentic_request_project_access',
 ]);
 
 /** Read-only, but about one workflow, so it reads the agent's own when none is named. */

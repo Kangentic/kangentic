@@ -90,6 +90,8 @@ describe('workflow agent MCP scope', () => {
     expect(workflowAgentMayUse('kangentic_find_task', true)).toBe(true);
     expect(workflowAgentMayUse('kangentic_move_task', false)).toBe(false);
     expect(workflowAgentMayUse('kangentic_remove_from_workflow', false)).toBe(true);
+    // Asking to read another project's code is its own, bound to its workflow.
+    expect(workflowAgentMayUse('kangentic_request_project_access', false)).toBe(true);
     expect(workflowAgentMayUse('kangentic_browser_list_panes', true)).toBe(false);
   });
 });

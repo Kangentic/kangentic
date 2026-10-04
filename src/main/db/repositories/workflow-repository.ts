@@ -27,6 +27,7 @@ interface WorkflowRow {
   finished_at: string | null;
   agent_name: string | null;
   agent_session_id: string | null;
+  agent_read_project_ids?: string | null;
 }
 
 /** How many colors the categorical palette has (`--kng-chart-1..6`). */
@@ -159,6 +160,18 @@ export class WorkflowRepository {
       .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, id);
   }
 
+  /**
+   * Let the workflow agent read another registered project, from now on. Changes
+   * no plan, so the revision stays. Returns false when it already could.
+   */
+  addAgentReadProject(id: string, projectId: string): boolean {
+    const current = this.getById(id);
+    if (!current || current.agent_read_project_ids.includes(projectId)) return false;
+    this.db.prepare('UPDATE workflows SET agent_read_project_ids = ? WHERE id = ?')
+      .run(JSON.stringify([...current.agent_read_project_ids, projectId]), id);
+    return true;
+  }
+
   /** Its links cascade with it (`task_links.workflow_id`). */
   delete(id: string): void {
     this.db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
@@ -211,7 +224,19 @@ function mapRow(row: WorkflowRow): Workflow {
     finished_at: row.finished_at,
     agent_name: row.agent_name ?? null,
     agent_session_id: row.agent_session_id ?? null,
+    agent_read_project_ids: parseProjectIds(row.agent_read_project_ids),
   };
+}
+
+/** A stored list of project ids; anything malformed reads as none. */
+function parseProjectIds(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Read a stored draft defensively: a malformed entry is dropped, never thrown. */

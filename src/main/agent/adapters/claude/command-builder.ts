@@ -199,6 +199,12 @@ export class CommandBuilder {
     if (options.readOnly) {
       parts.push('--tools', quoteArg(READ_ONLY_TOOLS, shell), '--strict-mcp-config', '--no-chrome');
     }
+    // Other checkouts the agent may read with no permission prompt (a workflow
+    // agent's other projects). One flag per directory: `--add-dir` takes a list,
+    // and the prompt, which would otherwise join it, comes after `--` below.
+    for (const directory of options.readableDirectories ?? []) {
+      parts.push('--add-dir', quoteArg(directory, shell));
+    }
 
     // Session: --resume for existing conversations, --session-id for new ones
     if (options.sessionId) {

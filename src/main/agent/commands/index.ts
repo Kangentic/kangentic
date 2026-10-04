@@ -37,6 +37,7 @@ import {
   handleUnlinkWorkflowTasks,
   handleSetTaskRoute,
   handleRemoveFromWorkflow,
+  handleRequestProjectAccess,
   handleDeleteWorkflow,
 } from './workflow-commands';
 import type { CommandHandler } from './types';
@@ -100,5 +101,6 @@ export const commandHandlers: Record<string, CommandHandler> = {
   unlink_workflow_tasks: handleUnlinkWorkflowTasks,
   set_task_route: handleSetTaskRoute,
   remove_from_workflow: handleRemoveFromWorkflow,
+  request_project_access: handleRequestProjectAccess,
   delete_workflow: handleDeleteWorkflow,
 };

@@ -1,6 +1,7 @@
 import type { Workflow } from '../../../shared/types';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
+import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
 import {
   WorkflowRequestError,
   addWorkflowTask,
@@ -10,6 +11,7 @@ import {
   pauseWorkflow,
   readWorkflow,
   removeFromWorkflow,
+  resolveProjectId,
   resolveWorkflow,
   resumeWorkflow,
   savePlan,
@@ -312,6 +314,26 @@ export const handleRemoveFromWorkflow: CommandHandler = (params, context) => {
       project: stringParam(params, 'taskProject'),
     });
     return { success: true, message: `Removed #${removed.display_id} from "${workflow.title}". It stays where it is, as an ordinary task.` };
+  } catch (error) {
+    return fail(error);
+  }
+};
+
+export const handleRequestProjectAccess: CommandHandler = (params, context) => {
+  try {
+    const workflow = workflowParam(params, context);
+    const runtime = requireWorkflowRuntimeContext();
+    const projectId = resolveProjectId(runtime, context.projectId, stringParam(params, 'readProject', true));
+    const access = requestWorkflowAgentProjectAccess(runtime, context.projectId, workflow.id, projectId);
+    const messages: Record<typeof access.when, string> = {
+      home: `${access.name} is this workflow's own project, which you read already.`,
+      already: `${access.name} is readable already, at ${access.path}.`,
+      'next-turn': `Granted: ${access.name}, at ${access.path}. End your turn now; Kangentic restarts you on this conversation with it readable and tells you when it is ready.`,
+      now: `Granted: ${access.name}, at ${access.path}. Kangentic is restarting you on this conversation with it readable.`,
+      'next-start': `Granted: ${access.name}, at ${access.path}. The workflow's agent reads it from its next start.`,
+      unsupported: `Granted: ${access.name}, but this agent cannot read another project's checkout, so the grant takes effect only for an agent that can.`,
+    };
+    return { success: true, message: messages[access.when], data: { projectId, path: access.path } };
   } catch (error) {
     return fail(error);
   }
