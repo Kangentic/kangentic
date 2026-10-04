@@ -1561,6 +1561,87 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('MCP Server groups stop animating with Animations off and with reduced motion', async () => {
+    // `.no-motion *` in index.css zeroes `animation-duration` only. A group's
+    // open and close is a TRANSITION (the body's grid row, the chevron's turn),
+    // so the explicit `.no-motion .card-group-*` rule and its reduced-motion
+    // twin are the only things that stop it. `transition-duration` is the read:
+    // a list with one entry per transitioned property.
+    const readTransitionSeconds = (target: Locator) =>
+      target.evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((entry) => {
+        const text = entry.trim();
+        return text.endsWith('ms') ? parseFloat(text) / 1000 : parseFloat(text);
+      }));
+    const readGroupMotion = async () => ({
+      body: await readTransitionSeconds(page.getByTestId('mcp-tool-group-board-body')),
+      chevron: await readTransitionSeconds(page.getByTestId('mcp-tool-group-board-toggle').locator('.card-group-chevron')),
+    });
+    const isMoving = (seconds: number[]) => seconds.length > 0 && seconds.every((duration) => duration > 0);
+    const isStill = (seconds: number[]) => seconds.length > 0 && seconds.every((duration) => duration === 0);
+    const html = page.locator('html');
+    const openTab = async (tabName: string) => {
+      await page.getByTestId('settings-tab-list').getByRole('button', { name: tabName, exact: true }).click();
+    };
+
+    await openSettings();
+    await openTab('MCP Server');
+    try {
+      // Control: with motion on, both transition for a real duration, so the
+      // zeros below come from the rules under test and not from a declaration
+      // that never existed.
+      await expect(html).not.toHaveClass(/(^|\s)no-motion(\s|$)/);
+      const animated = await readGroupMotion();
+      expect(isMoving(animated.body), `body durations ${animated.body}`).toBe(true);
+      expect(isMoving(animated.chevron), `chevron durations ${animated.chevron}`).toBe(true);
+
+      // Animations off, through its real switch on the Performance tab.
+      await openTab('Performance');
+      const animationsSwitch = page.getByTestId('setting-row-animationsEnabled');
+      await expect(animationsSwitch).toHaveAttribute('aria-checked', 'true');
+      await animationsSwitch.click();
+      await expect(html).toHaveClass(/(^|\s)no-motion(\s|$)/);
+      await openTab('MCP Server');
+      const withoutAnimations = await readGroupMotion();
+      expect(isStill(withoutAnimations.body), `body durations ${withoutAnimations.body}`).toBe(true);
+      expect(isStill(withoutAnimations.chevron), `chevron durations ${withoutAnimations.chevron}`).toBe(true);
+
+      // Animations back on: the groups move again, so the zeros above were the
+      // switch's doing.
+      await openTab('Performance');
+      await animationsSwitch.click();
+      await expect(html).not.toHaveClass(/(^|\s)no-motion(\s|$)/);
+      await openTab('MCP Server');
+      const animatedAgain = await readGroupMotion();
+      expect(isMoving(animatedAgain.body), `body durations ${animatedAgain.body}`).toBe(true);
+      expect(isMoving(animatedAgain.chevron), `chevron durations ${animatedAgain.chevron}`).toBe(true);
+
+      // The OS reduced-motion preference, with Animations on, stops them too.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      // Proves the emulation took effect, so the zeros below are not read off
+      // the normal path.
+      expect(await page.evaluate(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+      await expect(html).not.toHaveClass(/(^|\s)no-motion(\s|$)/);
+      const reduced = await readGroupMotion();
+      expect(isStill(reduced.body), `body durations ${reduced.body}`).toBe(true);
+      expect(isStill(reduced.chevron), `chevron durations ${reduced.chevron}`).toBe(true);
+    } finally {
+      // The page is shared with later tests: put the media preference and the
+      // setting back whatever happened above.
+      await page.emulateMedia({ reducedMotion: null });
+      await page.evaluate(async () => {
+        await window.electronAPI.config.set({ animationsEnabled: true });
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
+        }).__zustandStores;
+        await stores?.config.getState().loadConfig();
+      });
+    }
+
+    // Reset to General so later tests start from a known tab.
+    await page.getByRole('button', { name: 'General', exact: true }).click();
+    await closeSettings();
+  });
+
   test('reopens to the last viewed tab after closing', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git', exact: true }).click();
