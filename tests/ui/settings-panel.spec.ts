@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 import { MCP_SERVER_DOCS_URL, MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
 
 let browser: Browser;
@@ -1464,6 +1464,97 @@ test.describe('Settings Panel', () => {
     await expect(page.getByTestId('mcp-tool-group-board-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('mcp-tool-group-diagnostics-toggle')).toHaveAttribute('aria-expanded', 'false');
     await expect(visibleCells).toHaveCount(openOnArrival);
+
+    // Reset to General so later tests start from a known tab.
+    await page.getByRole('button', { name: 'General', exact: true }).click();
+    await closeSettings();
+  });
+
+  test('a closed MCP Server tool group leaves the tab order, and each toggle names its body', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-mcpServer').click();
+
+    // The collapse test above counts visible cells. This one pins the focus
+    // contract directly: a closed body stays mounted, and `visibility: hidden`
+    // is what takes its cells out of the Tab order, so assert that and that
+    // focus() cannot land on one.
+    async function focusLandsOn(cell: Locator) {
+      return cell.evaluate((element) => {
+        const focusable = element as HTMLElement;
+        focusable.focus();
+        const landed = document.activeElement === focusable;
+        focusable.blur();
+        return landed;
+      });
+    }
+    const readVisibility = (body: Locator) => body.evaluate((element) => getComputedStyle(element).visibility);
+
+    const diagnosticsBody = page.getByTestId('mcp-tool-group-diagnostics-body');
+    const diagnosticsCell = diagnosticsBody.getByTestId('mcp-tool-cell').first();
+    const boardBody = page.getByTestId('mcp-tool-group-board-body');
+    const boardCell = boardBody.getByTestId('mcp-tool-cell').first();
+
+    // Control: an open group's cell takes focus, so a refusal below is the
+    // closed group's doing and not the probe's.
+    await expect(page.getByTestId('mcp-tool-group-board-toggle')).toHaveAttribute('aria-expanded', 'true');
+    expect(await focusLandsOn(boardCell)).toBe(true);
+
+    // Diagnostics arrives closed.
+    await expect(page.getByTestId('mcp-tool-group-diagnostics-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect.poll(() => readVisibility(diagnosticsBody), { timeout: 3000 }).toBe('hidden');
+    expect(await focusLandsOn(diagnosticsCell)).toBe(false);
+
+    // Board, closed by the user. Visibility stays `visible` for the whole 200ms
+    // close and flips at the end, so poll for it rather than wait.
+    await page.getByTestId('mcp-tool-group-board-toggle').click();
+    await expect.poll(() => readVisibility(boardBody), { timeout: 3000 }).toBe('hidden');
+    expect(await focusLandsOn(boardCell)).toBe(false);
+
+    // Opening it again returns its cells to the focus order.
+    await page.getByTestId('mcp-tool-group-board-toggle').click();
+    await expect.poll(() => readVisibility(boardBody), { timeout: 3000 }).toBe('visible');
+    expect(await focusLandsOn(boardCell)).toBe(true);
+
+    // aria-controls on a toggle resolves to that group's body element.
+    const controlledId = (await page.getByTestId('mcp-tool-group-tasks-toggle').getAttribute('aria-controls')) ?? '';
+    expect(controlledId).not.toBe('');
+    const resolvesToBody = await page.getByTestId('mcp-tool-group-tasks-body').evaluate(
+      (element, id) => document.getElementById(id) === element,
+      controlledId,
+    );
+    expect(resolvesToBody).toBe(true);
+
+    // Reset to General so later tests start from a known tab.
+    await page.getByRole('button', { name: 'General', exact: true }).click();
+    await closeSettings();
+  });
+
+  test('an MCP Server group chevron turns with the rotate property its transition covers', async () => {
+    await openSettings();
+    await page.getByTestId('settings-tab-mcpServer').click();
+
+    // Tailwind 4's `rotate-180` sets the CSS `rotate` property, not `transform`,
+    // so the chevron only animates if `.card-group-chevron` transitions `rotate`.
+    // The durations are not asserted: `.no-motion` and reduced motion zero them
+    // but still declare the property list.
+    const readChevron = (toggleTestId: string) =>
+      page.getByTestId(toggleTestId).locator('.card-group-chevron').evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          rotate: style.rotate,
+          transitionProperties: style.transitionProperty.split(',').map((property) => property.trim()),
+        };
+      });
+
+    // Open (Tasks) points the other way from closed (Diagnostics, closed on arrival).
+    await expect(page.getByTestId('mcp-tool-group-tasks-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('mcp-tool-group-diagnostics-toggle')).toHaveAttribute('aria-expanded', 'false');
+    const open = await readChevron('mcp-tool-group-tasks-toggle');
+    const closed = await readChevron('mcp-tool-group-diagnostics-toggle');
+    expect(open.rotate).toBe('180deg');
+    expect(closed.rotate).toBe('none');
+    expect(open.transitionProperties).toContain('rotate');
+    expect(closed.transitionProperties).toContain('rotate');
 
     // Reset to General so later tests start from a known tab.
     await page.getByRole('button', { name: 'General', exact: true }).click();

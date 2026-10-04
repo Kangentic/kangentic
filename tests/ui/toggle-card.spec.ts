@@ -9,7 +9,8 @@
  *    fire the click handler.
  * 4. Context bar rows - clicking one row's label flips that row only.
  * 5. Card header (McpServerTab) - the icon, the header switch, a header click,
- *    the info icon, and one right edge for every switch on a tab.
+ *    the info icon, one right edge for every switch on a tab, and one left
+ *    edge for a card's icon and its tiles' content.
  * 6. Filter detach - when search hides a row's searchId the element is removed
  *    from the DOM (not.toBeAttached()).
  * 7. Persistence - clicking a CardToggleRow saves the new value to global
@@ -281,6 +282,39 @@ test.describe('Settings card header', () => {
     );
     expect(rightEdges.length).toBeGreaterThan(3);
     expect(Math.max(...rightEdges) - Math.min(...rightEdges)).toBeLessThan(1);
+    await closeSettings();
+  });
+
+  test('a card\'s icon and its tiles\' content start on one left edge', async () => {
+    // Tiles used to sit 40px in, so each label stood right of the card's icon,
+    // on the title's line. A tile and the header's click target now
+    // share one inset (settings-card.tsx `TILE_INSET_PX`), so the icon's column
+    // and the first tile's first content element begin at the same x. Measured on
+    // every Git card that has a body: Branches, Worktrees and Pull requests.
+    await setGlobalConfigAndSync({ git: { worktreesEnabled: true } });
+    await openTab('Git');
+    await expect(page.getByRole('switch', { name: 'Worktrees', exact: true })).toBeVisible();
+    const cards = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="settings-panel"] section[aria-label]')).flatMap((card) => {
+        const iconColumn = card.children[0]?.querySelector('span[aria-hidden="true"]');
+        const firstTile = card.children[1]?.children[0];
+        const firstContent = firstTile?.firstElementChild;
+        if (!iconColumn || !firstContent) return [];
+        return [{
+          label: card.getAttribute('aria-label') ?? '',
+          iconLeft: iconColumn.getBoundingClientRect().left,
+          contentLeft: firstContent.getBoundingClientRect().left,
+        }];
+      }),
+    );
+    // Pins that the measurement found the cards, so an empty or renamed DOM
+    // cannot pass this vacuously.
+    expect(cards.map((card) => card.label)).toEqual(expect.arrayContaining(['Branches', 'Worktrees', 'Pull requests']));
+    // A real tolerance, not zero: sub-pixel rounding differs by platform. The old
+    // 40px indent put the two edges 24px apart, far outside it.
+    for (const card of cards) {
+      expect(Math.abs(card.iconLeft - card.contentLeft), `${card.label}: icon left ${card.iconLeft}, tile content left ${card.contentLeft}`).toBeLessThanOrEqual(1.5);
+    }
     await closeSettings();
   });
 

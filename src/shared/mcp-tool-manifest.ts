@@ -3,7 +3,7 @@
  *
  * The Kangentic MCP server registers tools across the `*-tools.ts` files in
  * `src/main/agent/mcp-http/`. Two surfaces enumerate those tools for humans:
- * the Settings -> MCP Server "Available Tools" list (`McpServerTab.tsx`) and
+ * the Settings -> MCP Server tool list (`McpServerTab.tsx`) and
  * `docs/mcp-server.md`. Before this manifest existed both hardcoded their own
  * copies and drifted: the panel listed 10 of 46 registered tools.
  *

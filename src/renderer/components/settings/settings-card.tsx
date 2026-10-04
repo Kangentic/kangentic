@@ -55,16 +55,13 @@ const TILE_GAP_PX = 6;
  * trailing button ends on one right edge.
  *
  * Tiles used to sit 40px in, putting each label on the card title's line. That
- * indent went (user's call, #732): the card and its tiles already group a
- * feature, and a dialog's cards (the Edit automation dialog) use this flush
- * geometry, so Settings and dialogs now share one tile shape.
+ * indent went: the card and its tiles already group a feature, and a dialog's
+ * cards (the Edit automation dialog) use this flush geometry, so Settings and
+ * dialogs now share one tile shape.
  */
-const TILE_RIGHT_PADDING_PX = 16;
-const HEADER_ICON_INSET_PX = TILE_RIGHT_PADDING_PX;
+const TILE_INSET_PX = 16;
 const HEADER_ICON_COLUMN_PX = 16;
 const HEADER_ICON_GAP_PX = 12;
-/** A tile's content starts under the header's icon: the same inset as its right side. */
-const TILE_LEFT_PADDING_PX = TILE_RIGHT_PADDING_PX;
 /**
  * The header's click target is tile-shaped: inset from the card's sides like a
  * tile, with a tile gap above it and a tile gap between it and the first tile,
@@ -90,7 +87,7 @@ const GROUP_BODY_TOP_GAP_PX = 4;
 const TILE_FILL_CLASS = 'rounded-md bg-surface-hover/40';
 /** The fill, corners and vertical padding every tile shares. The horizontal padding is `TILE_STYLE`. */
 const TILE_CLASS = `${TILE_FILL_CLASS} py-3`;
-const TILE_STYLE: React.CSSProperties = { paddingLeft: TILE_LEFT_PADDING_PX, paddingRight: TILE_RIGHT_PADDING_PX };
+const TILE_STYLE: React.CSSProperties = { paddingLeft: TILE_INSET_PX, paddingRight: TILE_INSET_PX };
 
 /** Controls inside a toggle's row that own their click. */
 const OWN_CLICK_SELECTOR = 'button, a, input, select, textarea, [role="switch"]';
@@ -182,8 +179,8 @@ export function SettingsCard({
         <div
           onClick={rowClickToggle(toggle)}
           style={{
-            paddingLeft: HEADER_ICON_INSET_PX,
-            paddingRight: TILE_RIGHT_PADDING_PX,
+            paddingLeft: TILE_INSET_PX,
+            paddingRight: TILE_INSET_PX,
             paddingTop: HEADER_TARGET_VERTICAL_PADDING_PX,
             paddingBottom: HEADER_TARGET_VERTICAL_PADDING_PX,
             columnGap: HEADER_ICON_GAP_PX,
@@ -307,8 +304,8 @@ interface CardGroupTileProps {
 
 /** The header target's padding: the tile's insets less the target's own inset, so the content does not move. */
 const GROUP_HEADER_TARGET_STYLE: React.CSSProperties = {
-  paddingLeft: TILE_LEFT_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
-  paddingRight: TILE_RIGHT_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
+  paddingLeft: TILE_INSET_PX - GROUP_HEADER_TARGET_INSET_PX,
+  paddingRight: TILE_INSET_PX - GROUP_HEADER_TARGET_INSET_PX,
   paddingTop: TILE_VERTICAL_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
   paddingBottom: TILE_VERTICAL_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
 };
@@ -461,7 +458,7 @@ export interface CardSourceLineProps {
   /**
    * `ready` puts a green check by the value; `muted` reads it as what the
    * source would cover while it is off; `caution` tints `problem` before the
-   * value and puts its icon in the gutter, the rest staying neutral.
+   * value and puts its icon before the line's name, the rest staying neutral.
    */
   tone?: 'neutral' | 'ready' | 'muted' | 'caution';
   /** With `caution`: the state word ("A call failed"). */

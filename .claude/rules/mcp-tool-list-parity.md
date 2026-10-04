@@ -9,7 +9,7 @@ paths:
 
 The Kangentic MCP server registers its tools across the `*-tools.ts` files in
 `src/main/agent/mcp-http/`. Two human-facing surfaces enumerate those tools: the Settings -> MCP
-Server "Available Tools" list (`McpServerTab.tsx`) and `docs/mcp-server.md`. Nothing forced either
+Server tool list (`McpServerTab.tsx`) and `docs/mcp-server.md`. Nothing forced either
 to track the registrations, so both drifted: the panel hardcoded 10 of 46 registered tools, missing
 the entire browser and backlog families, `list_projects`, `search_everything`, and move/delete task.
 A user reading the panel had no idea most of the agent's board, browser, and session capabilities
@@ -31,9 +31,10 @@ under `src/main/agent/mcp-http/*-tools.ts`, keep its user-facing surfaces in syn
 3. **Docs:** document the tool in `docs/mcp-server.md` (the exhaustive reference). This couples to
    [[docs-stay-in-sync]]: the MCP tool list is a doc anchor.
 4. **Diagnostics group:** the dev-leaning diagnostics tools (and the read-only `kangentic_query_db`)
-   carry `category: 'diagnostics'`, so they render last under their own header. They are listed in
-   full like every other tool - there is no hidden flag. Do not drop a tool from the manifest to keep
-   it out of the panel; every registered tool belongs in the list.
+   carry `category: 'diagnostics'`, so they render last, in a group that starts closed
+   (`startsClosed` on the category). They are listed in full like every other tool: no flag drops a
+   tool from the panel. Do not drop a tool from the manifest to keep it out of the panel; every
+   registered tool belongs in the list.
 
 The dev-only `kangentic_devtools_*` tools live under `src/devtools/`, outside the scanned glob, and
 are intentionally not part of this surface.
