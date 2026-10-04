@@ -282,6 +282,39 @@ test.describe('Workflows inspector', () => {
     }
   });
 
+  test('a card\'s right-click menu is the board\'s, with Open on board and the locked rows disabled', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      await card(page, 't414').click({ button: 'right' });
+      const menu = byTestId(page, 'workflow-card-menu');
+      await expect(menu).toBeVisible();
+      await expect(menu.locator('[data-testid="workflow-card-menu-open-on-board"]')).toBeVisible();
+      // The canvas draws every link, so the menu does not offer to show them.
+      await expect(menu.locator('[data-testid="context-show-workflow-links"]')).toHaveCount(0);
+      await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'Code Review' }))
+        .toHaveAttribute('title', '#414 is locked while Usage budgets runs.');
+      await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAttribute('aria-disabled', 'true');
+
+      // Open on board: Board, with the task's window open.
+      await menu.locator('[data-testid="workflow-card-menu-open-on-board"]').click();
+      await expect(page.locator('[data-swimlane-name="To Do"]').first()).toBeVisible();
+      await expect(page.locator('[data-testid="task-detail-dialog"] [data-testid="task-title-text"]')).toHaveText('Refuse to spawn past the hard cap');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a planned card has no board menu', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await card(page, 'task-1').click({ button: 'right' });
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'true');
+      await expect(byTestId(page, 'workflow-card-menu')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a task in Done cannot be removed, and says why', async () => {
     const { browser, page } = await launch('running');
     try {

@@ -16,6 +16,7 @@ import { TaskContextMenu } from './TaskContextMenu';
 import { ArchivedTaskContextMenu } from './ArchivedTaskContextMenu';
 import { TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from './task-card-view';
 import { WorkflowTaskCardBody } from './WorkflowTaskCardBody';
+import { DeleteTaskDialog } from './DeleteTaskDialog';
 import { OpenWorkflowMenuItem, ShowWorkflowLinksMenuItem } from './workflow-menu-items';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
@@ -300,18 +301,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       )}
 
       {confirmDelete && (
-        <ConfirmDialog
-          title="Delete task"
-          message={<>
-            <p>This will permanently delete &quot;{task.title}&quot; and its session data.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
-          </>}
-          confirmLabel="Delete"
-          variant="danger"
-          showDontAskAgain
-          onConfirm={handleContextDelete}
-          onCancel={() => setConfirmDelete(false)}
-        />
+        <DeleteTaskDialog title={task.title} onConfirm={handleContextDelete} onCancel={() => setConfirmDelete(false)} />
       )}
     </>
   );

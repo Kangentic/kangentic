@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, ListTree } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -138,6 +138,10 @@ interface TaskDetailHeaderProps {
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
+  /** The task is in a workflow: the Workflow panel can open. */
+  canShowWorkflow?: boolean;
+  workflowPanelOpen?: boolean;
+  onToggleWorkflow?: () => void;
   isMaximized: boolean;
   onToggleMaximized: () => void;
   /** When provided (the window is tiled), render a "pop out" control that floats
@@ -224,6 +228,9 @@ export function TaskDetailHeader({
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
+  canShowWorkflow = false,
+  workflowPanelOpen = false,
+  onToggleWorkflow,
   isMaximized,
   onToggleMaximized,
   onUndock,
@@ -273,6 +280,9 @@ export function TaskDetailHeader({
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
+    // A workflow task's route and blockers, kept above Changes: it is the one
+    // view a blocked task in To Do has to offer.
+    if (canShowWorkflow && onToggleWorkflow) specs.push({ id: 'workflow', priority: 35 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
     specs.push({ id: 'conversation', priority: 18 });
@@ -280,7 +290,7 @@ export function TaskDetailHeader({
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [task.worktree_path, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -393,6 +403,20 @@ export function TaskDetailHeader({
                 title={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
                 ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
                 testId="branch-pill"
+              />
+            </div>
+          )}
+
+          {/* Workflow panel toggle pill */}
+          {showPill('workflow') && canShowWorkflow && onToggleWorkflow && (
+            <div data-pill-id="workflow" className="flex-shrink-0">
+              <HeaderActionButton
+                icon={ListTree}
+                onClick={onToggleWorkflow}
+                active={workflowPanelOpen}
+                title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+                ariaLabel="Toggle workflow"
+                testId="workflow-toggle"
               />
             </div>
           )}
@@ -522,6 +546,9 @@ export function TaskDetailHeader({
               canShowDescription={canShowDescription}
               descriptionPeekOpen={descriptionPeekOpen}
               onToggleDescription={onToggleDescription}
+              canShowWorkflow={canShowWorkflow}
+              workflowPanelOpen={workflowPanelOpen}
+              onToggleWorkflow={onToggleWorkflow}
               conversationAvailable={conversationAvailable}
             />
           )}
@@ -591,6 +618,9 @@ interface TaskDetailKebabItemsProps {
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
+  canShowWorkflow?: boolean;
+  workflowPanelOpen?: boolean;
+  onToggleWorkflow?: () => void;
   /** Whether this task has any session (live or historical) to view. Disables
    *  the "View conversation" item rather than letting it resolve to nothing. */
   conversationAvailable: boolean;
@@ -626,6 +656,9 @@ function TaskDetailKebabItems({
   canShowDescription = false,
   descriptionPeekOpen = false,
   onToggleDescription,
+  canShowWorkflow = false,
+  workflowPanelOpen = false,
+  onToggleWorkflow,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
@@ -773,6 +806,16 @@ function TaskDetailKebabItems({
           icon={<GitCompare size={14} />}
           label={changesOpen ? 'Hide changes' : 'Show changes'}
           onClick={() => { closeAll(); onToggleChanges(); }}
+        />
+      )}
+
+      {/* Workflow panel (parity with the header pill; an archived task shows no pills) */}
+      {canShowWorkflow && onToggleWorkflow && (
+        <KebabMenuItem
+          icon={<ListTree size={14} />}
+          label={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+          onClick={() => { closeAll(); onToggleWorkflow(); }}
+          data-testid="kebab-toggle-workflow"
         />
       )}
 

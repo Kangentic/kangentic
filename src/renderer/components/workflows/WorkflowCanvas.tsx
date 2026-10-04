@@ -102,6 +102,11 @@ interface WorkflowCanvasProps {
   onAddTask: () => void;
   /** Put every hand-placed card back in the automatic layout. */
   onAutoLayout: () => void;
+  /**
+   * A card was right-clicked. The view draws the menu, outside React Flow: a
+   * fixed menu inside the transformed viewport would land offset.
+   */
+  onCardContextMenu?: (key: string, position: { x: number; y: number }) => void;
 }
 
 export function WorkflowCanvas({
@@ -117,6 +122,7 @@ export function WorkflowCanvas({
   addTaskRefusal,
   onAddTask,
   onAutoLayout,
+  onCardContextMenu,
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
@@ -197,6 +203,11 @@ export function WorkflowCanvas({
 
   const handleNodeClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onSelectTask(node.id), [onSelectTask]);
   const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onOpenTask(node.id), [onOpenTask]);
+  const handleNodeContextMenu = useCallback<NodeMouseHandler<WorkflowFlowNode>>((event, node) => {
+    event.preventDefault();
+    onSelectTask(node.id);
+    onCardContextMenu?.(node.id, { x: event.clientX, y: event.clientY });
+  }, [onSelectTask, onCardContextMenu]);
   const handlePaneClick = useCallback(() => onSelectTask(null), [onSelectTask]);
   const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, _node, moved) => {
     onMoveCards(moved.map((node) => ({ key: node.id, x: node.position.x, y: node.position.y })));
@@ -230,6 +241,7 @@ export function WorkflowCanvas({
         onNodesChange={onNodesChange}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
+        onNodeContextMenu={handleNodeContextMenu}
         onPaneClick={handlePaneClick}
         onNodeDragStop={handleDragStop}
         onConnect={handleConnect}

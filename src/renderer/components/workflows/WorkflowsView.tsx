@@ -9,6 +9,8 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useToastStore } from '../../stores/toast-store';
+import { useConfigStore } from '../../stores/config-store';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { boardTaskFilter, isOpenFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
@@ -16,6 +18,8 @@ import { WorkflowCanvas } from './WorkflowCanvas';
 import { WorkflowHeader } from './WorkflowHeader';
 import { WorkflowInspector } from './WorkflowInspector';
 import { DeleteWorkflowDialog, RemoveTaskDialog, RenameWorkflowDialog, StartWorkflowDialog } from './WorkflowDialogs';
+import { WorkflowCardMenu } from './WorkflowCardMenu';
+import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
 import { findTask } from './workflow-graph';
 
 /**
@@ -35,13 +39,30 @@ type ViewDialog =
   | { kind: 'rename' }
   | { kind: 'remove'; key: string }
   | { kind: 'addTask' }
-  | { kind: 'editPlanned'; key: string };
+  | { kind: 'editPlanned'; key: string }
+  | { kind: 'deleteTask'; task: Task; projectId: string };
 
 /** The workflow agent arrives in a later step; until then nothing holds the plan. */
 const PLAN_HELD = false;
 
 function refuse(message: string): void {
   useToastStore.getState().addToast({ message, variant: 'warning' });
+}
+
+/** Delete a workflow task from its canvas menu: as the board card does on its own board, by id elsewhere. */
+async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<void> {
+  if (taskProjectId === useProjectStore.getState().currentProject?.id) {
+    const session = useSessionStore.getState()._sessionByTaskId.get(task.id);
+    if (session) await useSessionStore.getState().killSession(session.id);
+    // The board store reports its own failure.
+    await useBoardStore.getState().deleteTask(task.id).catch(() => undefined);
+    return;
+  }
+  try {
+    await window.electronAPI.tasks.delete(task.id, taskProjectId);
+  } catch (error) {
+    useToastStore.getState().addToast({ message: `Failed to delete "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });
+  }
 }
 
 export function WorkflowsView() {
@@ -70,6 +91,7 @@ export function WorkflowsView() {
   const priorityFilters = useBoardStore((state) => state.priorityFilters);
   const labelFilters = useBoardStore((state) => state.labelFilters);
   const [dialog, setDialog] = useState<ViewDialog | null>(null);
+  const [cardMenu, setCardMenu] = useState<{ key: string; position: { x: number; y: number } } | null>(null);
   // React Flow keeps internal subscription state: re-key its provider on a
   // Fast Refresh, as every DndContext is (hmr-patterns.md, Pattern C).
   const hmrGeneration = useHmrGeneration();
@@ -126,6 +148,32 @@ export function WorkflowsView() {
     void useProjectStore.getState().openProject(viewTask.projectId);
   }, []);
 
+  /** Open on board: Board, with the task's window open; on another board, that project first. */
+  const openOnBoard = useCallback((viewTask: WorkflowViewTask) => {
+    if (!viewTask.task) return;
+    const taskId = viewTask.task.id;
+    useBoardStore.getState().setActiveView('board');
+    if (viewTask.projectId === useProjectStore.getState().currentProject?.id) {
+      useSessionStore.getState().setDetailTaskId(taskId);
+      return;
+    }
+    useSessionStore.getState().setPendingOpenTaskId(taskId);
+    void useProjectStore.getState().openProject(viewTask.projectId);
+  }, []);
+
+  const deleteTask = useCallback((task: Task, taskProjectId: string) => {
+    if (useConfigStore.getState().config.skipDeleteConfirm) {
+      void deleteWorkflowTask(task, taskProjectId);
+      return;
+    }
+    setDialog({ kind: 'deleteTask', task, projectId: taskProjectId });
+  }, []);
+
+  const handleCardContextMenu = useCallback((key: string, position: { x: number; y: number }) => {
+    // A planned task is not a board task yet: it has no board menu.
+    if (useWorkflowStore.getState().detail?.tasks.find((task) => task.key === key)?.task) setCardMenu({ key, position });
+  }, []);
+
   const moveCards = useCallback((positions: Array<{ key: string; x: number; y: number }>) => {
     void setPositions(positions);
   }, [setPositions]);
@@ -152,6 +200,7 @@ export function WorkflowsView() {
     return source && todoLane && source.swimlane_id === todoLane.id ? `#${source.display_id}` : null;
   }, [selected, boardTasks, todoLane]);
 
+  const menuTask = cardMenu ? findTask(detail, cardMenu.key) : null;
   const removing: WorkflowViewTask | null = dialog?.kind === 'remove' ? findTask(detail, dialog.key) : null;
   const editing: WorkflowViewTask | null = dialog?.kind === 'editPlanned' ? findTask(detail, dialog.key) : null;
 
@@ -215,6 +264,7 @@ export function WorkflowsView() {
                 addTaskRefusal={PLAN_HELD ? WORKFLOW_REFUSALS.agentWorking : null}
                 onAddTask={() => setDialog({ kind: 'addTask' })}
                 onAutoLayout={() => { void setPositions(null); }}
+                onCardContextMenu={handleCardContextMenu}
               />
             </ReactFlowProvider>
           )}
@@ -236,6 +286,29 @@ export function WorkflowsView() {
         )}
       </div>
 
+      {cardMenu && menuTask?.task && (
+        <WorkflowCardMenu
+          // Keyed by the card, so a right-click on another card starts its own menu.
+          key={menuTask.key}
+          viewTask={{ ...menuTask, task: menuTask.task }}
+          position={cardMenu.position}
+          onClose={() => setCardMenu(null)}
+          onOpenOnBoard={openOnBoard}
+          onDelete={deleteTask}
+        />
+      )}
+      {dialog?.kind === 'deleteTask' && (
+        <DeleteTaskDialog
+          title={dialog.task.title}
+          onConfirm={(dontAskAgain) => {
+            if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
+            const { task, projectId: taskProjectId } = dialog;
+            setDialog(null);
+            void deleteWorkflowTask(task, taskProjectId);
+          }}
+          onCancel={() => setDialog(null)}
+        />
+      )}
       {dialog?.kind === 'start' && selected && (
         <StartWorkflowDialog
           summary={selected}
@@ -260,7 +333,7 @@ export function WorkflowsView() {
       )}
       {dialog?.kind === 'remove' && selected && removing && (
         <RemoveTaskDialog
-          summary={selected}
+          workflow={selected.workflow}
           task={removing}
           onConfirm={() => { setDialog(null); void removeTask(removing.key); }}
           onCancel={() => setDialog(null)}

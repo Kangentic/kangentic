@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, CircleDashed, ListTree, Pause } from 'lucide-react';
-import type { WorkflowSummary } from '../../../shared/types';
+import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, ListTree, Pause } from 'lucide-react';
+import type { WorkflowState, WorkflowSummary } from '../../../shared/types';
 import { OverlayPopover } from '../OverlayPopover';
 import { ActivityMark } from '../ActivityMark';
 import { Pill, TINTED_PILL_EDGE, TINTED_PILL_FILL } from '../Pill';
@@ -26,20 +26,27 @@ function tasksText(count: number): string {
   return `${count} ${count === 1 ? 'task' : 'tasks'}`;
 }
 
-function StateChip({ summary }: { summary: WorkflowSummary }) {
-  const state = summary.workflow.state;
+/** A workflow's state as a list row or a panel names it (a header says it with its buttons instead). */
+export function WorkflowStateChip({ state }: { state: WorkflowState }) {
   const shape = 'inline-flex items-center gap-1 h-5 px-1.5 rounded text-[11px] font-medium whitespace-nowrap shrink-0';
   if (state === 'running') {
     return (
-      <span className={`${shape} text-active bg-active/10 ring-1 ring-inset ring-active/25`}>
+      <span className={`${shape} text-active bg-active/10 ring-1 ring-inset ring-active/25`} data-testid="workflow-state-chip" data-state={state}>
         <ActivityMark mark="agent-working" size={12} />Running
       </span>
     );
   }
   if (state === 'paused') {
-    return <span className={`${shape} text-fg-muted bg-surface-hover/60`}><Pause size={11} />Paused</span>;
+    return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><Pause size={11} />Paused</span>;
   }
-  return <span className={`${shape} text-fg-muted bg-surface-hover/60`}><CircleDashed size={11} />Not started</span>;
+  if (state === 'done') {
+    return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleCheckBig size={11} />Complete</span>;
+  }
+  return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleDashed size={11} />Not started</span>;
+}
+
+function StateChip({ summary }: { summary: WorkflowSummary }) {
+  return <WorkflowStateChip state={summary.workflow.state} />;
 }
 
 interface WorkflowPickerProps {

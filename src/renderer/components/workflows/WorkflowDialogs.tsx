@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ListTree } from 'lucide-react';
-import type { WorkflowSummary, WorkflowViewTask } from '../../../shared/types';
+import type { Workflow, WorkflowSummary, WorkflowViewTask } from '../../../shared/types';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { taskLabel, workflowColor } from './workflow-graph';
@@ -92,8 +92,8 @@ export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
 }
 
 /** Remove one task from its workflow. The line says which outcome: gone for good before Start, an ordinary task after. */
-export function RemoveTaskDialog({ summary, task, onConfirm, onCancel }: {
-  summary: WorkflowSummary;
+export function RemoveTaskDialog({ workflow, task, onConfirm, onCancel }: {
+  workflow: Workflow;
   task: WorkflowViewTask;
   onConfirm: () => void;
   onCancel: () => void;
@@ -101,8 +101,8 @@ export function RemoveTaskDialog({ summary, task, onConfirm, onCancel }: {
   const planned = task.place === 'planned';
   return (
     <ConfirmDialog
-      title={`Remove ${taskLabel(task)} from ${summary.workflow.title}?`}
-      icon={<WorkflowIcon summary={summary} />}
+      title={`Remove ${taskLabel(task)} from ${workflow.title}?`}
+      icon={<ListTree size={16} style={{ color: workflowColor(workflow.color_slot) }} />}
       message={<p>{planned ? 'It exists only in this workflow, so it is gone for good.' : 'It stays where it is, as an ordinary task.'}</p>}
       confirmLabel="Remove"
       testId="workflow-remove-confirm"

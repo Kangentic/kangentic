@@ -81,6 +81,15 @@ interface WorkflowStore {
   linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail } | null;
   showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
   clearLinks: () => void;
+
+  /**
+   * Workflows a task detail's workflow panel shows, by workflow id, kept
+   * current on every change push while at least one panel watches it. Any
+   * workflow, whatever the Workflows view has selected.
+   */
+  watchedDetails: Record<string, { homeProjectId: string; watchers: number; detail: WorkflowDetail | null }>;
+  /** Start watching a workflow; the returned function stops. */
+  watchDetail: (homeProjectId: string, workflowId: string) => () => void;
 }
 
 /** Bumped per detail request, so a slow answer cannot overwrite a newer one. */
@@ -163,6 +172,22 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     }
   }
 
+  /** Reload a watched workflow (a task detail's panel), keeping what did not change. */
+  async function refreshWatched(workflowId: string): Promise<void> {
+    const watched = get().watchedDetails[workflowId];
+    if (!watched) return;
+    let detail: WorkflowDetail;
+    try {
+      detail = await window.electronAPI.workflows.get(watched.homeProjectId, workflowId);
+    } catch (error) {
+      console.warn('[workflow-store] Failed to load a task\'s workflow:', describeIpcError(error));
+      return;
+    }
+    const current = get().watchedDetails[workflowId];
+    if (!current) return;
+    set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail) } } });
+  }
+
   /** One change against a workflow named by its home and id. */
   async function onWorkflow(failure: string, run: () => Promise<unknown>): Promise<boolean> {
     try {
@@ -183,6 +208,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     homeSummaries: {},
     pendingOpen: null,
     linkFocus: null,
+    watchedDetails: {},
 
     loadWorkflows: async () => {
       const projectId = currentProjectId();
@@ -265,6 +291,23 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     clearLinks: () => set({ linkFocus: null }),
 
+    watchDetail: (homeProjectId, workflowId) => {
+      const existing = get().watchedDetails[workflowId];
+      set({
+        watchedDetails: {
+          ...get().watchedDetails,
+          [workflowId]: { homeProjectId, watchers: (existing?.watchers ?? 0) + 1, detail: existing?.detail ?? null },
+        },
+      });
+      if (!existing) void refreshWatched(workflowId);
+      return () => {
+        const current = get().watchedDetails[workflowId];
+        if (!current) return;
+        const { [workflowId]: _removed, ...rest } = get().watchedDetails;
+        set({ watchedDetails: current.watchers <= 1 ? rest : { ...rest, [workflowId]: { ...current, watchers: current.watchers - 1 } } });
+      };
+    },
+
     selectWorkflow: (workflowId, taskKey = null) => {
       if (workflowId === get().selectedWorkflowId) {
         set({ selectedTaskKey: taskKey });
@@ -310,6 +353,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (linkFocus && linkFocus.detail.workflow.id === event.workflowId) {
         void get().showLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId);
       }
+      if (get().watchedDetails[event.workflowId]) void refreshWatched(event.workflowId);
     },
 
     createWorkflow: async (sourceTaskId) => {

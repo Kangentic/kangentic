@@ -18,7 +18,9 @@ import {
   stepRefusal,
   toggledRoute,
   unlinkRefusal,
+  workflowColor,
 } from './workflow-graph';
+import { WorkflowStateChip } from './WorkflowPicker';
 
 /**
  * The Workflows inspector, always open so the canvas never shifts. With no
@@ -441,6 +443,9 @@ function TaskPanel({
   const removeReason = held ? WORKFLOW_REFUSALS.agentWorking : removeRefusal(task);
   const onAnotherBoard = task.projectId !== detail.homeProjectId;
   const openLabel = variant === 'taskDetail' ? 'Open workflow' : onAnotherBoard ? `Open on ${detail.projectNames[task.projectId] ?? 'its board'}` : 'Open task';
+  // A finished workflow has left the picker, so there is nothing to open; the
+  // panel stays as the task's history, its controls disabled by their guards.
+  const openRefusal = variant === 'taskDetail' && detail.workflow.state === 'done' ? `${detail.workflow.title} is complete.` : null;
 
   const toggleStep = (step: WorkflowRouteStep) => {
     const next = toggledRoute(task.steps, step.swimlaneId);
@@ -458,9 +463,10 @@ function TaskPanel({
         </div>
       )}
       {variant === 'taskDetail' && (
-        <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60">
-          <ListTree size={14} className="shrink-0 text-fg-muted" />
-          <span className="flex-1 min-w-0 truncate text-[13px] font-medium text-fg">{detail.workflow.title}</span>
+        <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60" data-testid="workflow-panel-workflow">
+          <ListTree size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />
+          <span className="flex-1 min-w-0 truncate text-sm font-semibold text-fg" title={detail.workflow.title}>{detail.workflow.title}</span>
+          <WorkflowStateChip state={detail.workflow.state} />
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -524,8 +530,9 @@ function TaskPanel({
         <button
           type="button"
           onClick={() => (variant === 'taskDetail' ? onOpenWorkflow?.() : onOpenTask(task.key))}
-          title={openLabel}
-          className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded bg-accent-emphasis hover:bg-accent text-accent-on text-[13px] transition-colors"
+          disabled={openRefusal !== null}
+          title={openRefusal ?? openLabel}
+          className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded bg-accent-emphasis enabled:hover:bg-accent text-accent-on text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-open-task"
         >
           {variant === 'taskDetail' ? <ListTree size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}

@@ -283,6 +283,49 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('task detail\'s Workflow panel edits the task\'s own route and links, with the same guards', async () => {
+    const { browser, page } = await launch();
+    try {
+      // #414 is in Executing: its window opens on the session view.
+      await boardCard(page, 't414').click();
+      await byTestId(page, 'task-detail-dialog').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
+      const panel = byTestId(page, 'task-workflow-panel');
+      await expect(panel.locator('[data-testid="workflow-panel-workflow"]')).toContainText('Usage budgets');
+      await expect(panel.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'running');
+      await expect(panel.locator('[data-testid="workflow-route-switch-lane-1"]')).toHaveAttribute('title', '#414 has reached Executing. Only the columns after it can change.');
+      await expect(panel.locator('[data-testid="workflow-link-row"][data-task-key="t412"] [data-testid="workflow-unlink"]')).toBeDisabled();
+
+      // A step still ahead switches off, in the task's own workflow.
+      await panel.locator('[data-testid="workflow-route-switch-lane-3"]').click();
+      await expect(panel.locator('[data-testid="workflow-route-row"]').nth(2)).toHaveAttribute('data-step-state', 'skipped');
+
+      // Open workflow lands on the Workflows view with this task selected.
+      await panel.locator('[data-testid="workflow-open-task"]').click();
+      await expect(byTestId(page, 'workflows-view')).toBeVisible();
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Refuse to spawn past the hard cap');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a To Do task opens in the form, and its Workflow panel is there too', async () => {
+    const { browser, page } = await launch();
+    try {
+      await boardCard(page, 't415').click();
+      await byTestId(page, 'task-detail-edit-scroll').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
+      const panel = byTestId(page, 'task-workflow-panel');
+      // It waits for #413, which is not done, so the link is live and Add blocker is offered.
+      await expect(panel.locator('[data-testid="workflow-link-row"][data-task-key="t413"] [data-testid="workflow-unlink"]')).toBeEnabled();
+      await expect(panel.locator('[data-testid="workflow-add-blocker"]')).toBeEnabled();
+      await page.locator('[data-testid="task-workflow-panel-close"]').click();
+      await expect(panel).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('New workflow on an ordinary To Do card opens a new workflow from it', async () => {
     const { browser, page } = await launch();
     try {
