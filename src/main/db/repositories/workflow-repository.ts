@@ -69,6 +69,11 @@ export class WorkflowRepository {
     return this.db.prepare("SELECT 1 FROM workflows WHERE state = 'running' LIMIT 1").get() !== undefined;
   }
 
+  /** Any workflow running or paused: what the engine has to read at all. */
+  hasActive(): boolean {
+    return this.db.prepare("SELECT 1 FROM workflows WHERE state IN ('running', 'paused') LIMIT 1").get() !== undefined;
+  }
+
   listRunning(): Workflow[] {
     const rows = this.db
       .prepare("SELECT * FROM workflows WHERE state = 'running' ORDER BY started_at ASC, rowid ASC")

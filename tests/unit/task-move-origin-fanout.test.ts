@@ -347,6 +347,9 @@ describe('the origin literal at each handleTaskMove call site', () => {
     // A Move to column automation is Kangentic acting, not an agent: it must not
     // toast "Task updated by agent".
     expect(byFile['src/main/automations/turn-end/turn-end-runner.ts']).toBe("'automation'");
+    // A workflow starting a task, and its step moving one on.
+    expect(byFile['src/main/workflows/workflow-engine-host.ts']).toBe("'workflow'");
+    expect(byFile['src/main/workflows/workflow-step.ts']).toBe("'workflow'");
   });
 
   it('routes its pushes through sendToRenderer, never a raw webContents.send', () => {

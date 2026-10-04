@@ -129,6 +129,20 @@ export function clearFetchCache(): void {
 }
 
 /**
+ * Make the next `fetchIfStale` for this project fetch, whatever fetched it in
+ * the last 30 seconds. A workflow start calls it: the task it starts waited for
+ * a blocker to reach Done, which usually means that blocker's work was just
+ * merged, and a throttled fetch would cut the new worktree from the base as it
+ * was before the merge.
+ */
+export function forgetRecentFetches(projectPath: string): void {
+  const prefix = fetchCacheKey(projectPath, '');
+  for (const key of [...fetchCache.keys()]) {
+    if (key.startsWith(prefix)) fetchCache.delete(key);
+  }
+}
+
+/**
  * Environment for a fetch that runs with no user gesture behind it (the
  * background scheduler). `GIT_TERMINAL_PROMPT=0` makes git fail instead of
  * prompting on the terminal path (stdin is already closed, so that path could

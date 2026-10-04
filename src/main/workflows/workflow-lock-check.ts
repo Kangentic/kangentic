@@ -64,6 +64,40 @@ export function checkWorkflowMove(
 }
 
 /**
+ * The lock for an agent's move (`kangentic_move_task`), asked by its handler
+ * before it fires the move. An agent never drags out of a human gate, so this
+ * needs no IPC context: only the task, its workflow and the destination.
+ */
+export function checkWorkflowMoveForAgent(
+  projectId: string,
+  task: Task,
+  toSwimlaneId: string,
+  moverIsTaskAgent: boolean,
+): string | null {
+  if (!task.workflow_id) return null;
+  const homeProjectId = task.workflow_project_id ?? projectId;
+  try {
+    const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(task.workflow_id);
+    if (!workflow) return null;
+    const toLane = new SwimlaneRepository(getProjectDb(projectId)).getById(toSwimlaneId);
+    return workflowMoveRefusal({
+      displayId: task.display_id,
+      workflowTitle: workflow.title,
+      workflowState: workflow.state,
+      origin: 'agent',
+      fromSwimlaneId: task.swimlane_id,
+      toSwimlaneId,
+      toRole: toLane?.role ?? null,
+      moverIsTaskAgent,
+      humanGateTargetId: null,
+    });
+  } catch {
+    // The move path asks again inside the task lock, with the same rule.
+    return null;
+  }
+}
+
+/**
  * The task row for the lock's pre-check, the one `handleTaskMove` asks before
  * it aborts anything. Null on any read failure: the pre-check only spares
  * in-flight work from a move that will be refused, and the check inside the

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, LeftoverProcessReport, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
+import type { ElectronAPI, WorkflowCompletedEvent, LeftoverProcessReport, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -178,6 +178,11 @@ const api: ElectronAPI = {
         callback(projectId);
       ipcRenderer.on(IPC.TASK_MOVED_BY_AUTOMATION, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_MOVED_BY_AUTOMATION, handler);
+    },
+    onWorkflowCompleted: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, completed: WorkflowCompletedEvent) => callback(completed);
+      ipcRenderer.on(IPC.WORKFLOW_COMPLETED, handler);
+      return () => ipcRenderer.removeListener(IPC.WORKFLOW_COMPLETED, handler);
     },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>

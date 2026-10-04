@@ -99,8 +99,16 @@ export interface CommandContext {
    */
   onTaskMove: (
     input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
-    options?: { message?: string | null },
+    options?: { message?: string | null; moverIsTaskAgent?: boolean },
   ) => Promise<void>;
+  /**
+   * The task whose agent made this call (from the MCP request's caller
+   * segment), or undefined for a caller with no task: an outside MCP client, a
+   * Command Terminal, the phone. A running workflow lets a task's OWN agent
+   * move it. Never taken from tool parameters, which the phone's board-tool
+   * path passes straight through.
+   */
+  callerTaskId?: string | null;
   /**
    * Tasks were re-sequenced WITHIN one column. Distinct from `onTaskMove`
    * because a reorder is presentation only: no column change, no session

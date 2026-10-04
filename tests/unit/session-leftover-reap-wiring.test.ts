@@ -534,6 +534,8 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
   });
 
   it('SESSION_SUSPEND (the Pause toggle) never references reapTaskLeftovers / reapTaskProcesses', () => {
+    // The handler delegates to `pauseTaskSession`, which Pause workflow calls
+    // for each of its tasks too, so the body to check is that function's.
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_SUSPEND');
     expect(handlerRegion).toContain('pauseTaskSession');
     expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);

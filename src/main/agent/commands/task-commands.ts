@@ -7,7 +7,8 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
-import { resolveMoveTarget } from '../../automations/move-target';
+import { resolveMoveTarget, routeOf } from '../../automations/move-target';
+import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
 import {
   clampSlot,
   computeIdsWithTaskAtSlot,
@@ -819,7 +820,8 @@ export const handleMoveTask: CommandHandler = (
   let resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
   if ('error' in resolution && columnName.trim().toLowerCase() === 'next') {
     const allSwimlanes = new SwimlaneRepository(db).list();
-    const next = resolveMoveTarget(allSwimlanes, task.swimlane_id, null);
+    // A workflow task's next column is the next one on its route.
+    const next = resolveMoveTarget(allSwimlanes, task.swimlane_id, null, routeOf(task));
     if (!next.ok) return { success: false, error: next.reason };
     resolution = { swimlane: next.column, allSwimlanes };
   }
@@ -881,6 +883,16 @@ export const handleMoveTask: CommandHandler = (
     };
   }
 
+  // A workflow task's lock, asked here because the move below fires and
+  // forgets: a refusal inside it would never reach the agent. The task's own
+  // agent (its main session or an isolated column's) may move it; any other
+  // caller may not while its workflow runs.
+  const moverIsTaskAgent = context.callerTaskId === task.id;
+  const refusal = checkWorkflowMoveForAgent(context.projectId, task, targetSwimlane.id, moverIsTaskAgent);
+  if (refusal) {
+    return { success: false, error: refusal };
+  }
+
   // Cross-column. The task is not in the target lane yet, so its length is a
   // legal (appending) slot. An ordinal has to be translated into a RAW position
   // before it reaches the repository: the two diverge as soon as archiving has
@@ -896,7 +908,14 @@ export const handleMoveTask: CommandHandler = (
   // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
   // The MCP response confirms intent; the LLM should re-query to verify state if needed.
   const moveInput = { taskId: task.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
-  void (message ? context.onTaskMove(moveInput, { message }) : context.onTaskMove(moveInput)).catch((error) => {
+  const moveOptions = {
+    ...(message ? { message } : {}),
+    ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
+  };
+  const moving = Object.keys(moveOptions).length > 0
+    ? context.onTaskMove(moveInput, moveOptions)
+    : context.onTaskMove(moveInput);
+  void moving.catch((error) => {
     console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
   });
 

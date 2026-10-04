@@ -231,7 +231,10 @@ export function buildCommandContextForProject(
     // origin passed in - which also drops the raw-SQL re-read this used to need
     // purely to recover a title for the toast.
     onTaskMove: async (input, options) => {
-      await handleTaskMove(ipcContext, input, 'agent', projectId, projectPath);
+      await handleTaskMove(
+        ipcContext, input, 'agent', projectId, projectPath,
+        options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : undefined,
+      );
       const message = options?.message?.trim();
       if (!message) return;
       // Only once the task really landed: a refused or superseded move has

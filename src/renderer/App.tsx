@@ -1124,6 +1124,30 @@ export function App() {
         }
       }));
     }
+    // Every task in a workflow reached Done. Shaped like Plan Complete: a toast
+    // for the project on screen, a desktop notification through the same
+    // focus gate and cooldown for one that is not.
+    if (tasks?.onWorkflowCompleted) {
+      cleanups.push(tasks.onWorkflowCompleted((completed) => {
+        const notifyConfig = useConfigStore.getState().config.notifications;
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (completed.projectId === activeProjectId && notifyConfig.toasts.onWorkflowComplete) {
+          useToastStore.getState().addToast({
+            message: `Workflow complete. All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
+            variant: 'success',
+          });
+        }
+        if (notifyConfig.desktop.onWorkflowComplete) {
+          const notificationKey = `workflow-complete:${completed.workflowId}`;
+          shouldNotify(notificationKey, completed.projectId).then((notify) => {
+            if (!notify) return;
+            const project = useProjectStore.getState().projects.find((candidate) => candidate.id === completed.projectId);
+            // No task: a click on it goes to the workflow's project.
+            sendNotification(notificationKey, `Workflow complete: ${completed.title}`, project?.name ?? 'A project', completed.projectId, '');
+          });
+        }
+      }));
+    }
 
     return () => {
       cleanups.forEach((fn) => fn());

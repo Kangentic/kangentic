@@ -1427,6 +1427,15 @@ export class SessionManager extends EventEmitter {
     return this.sessionQueue.length;
   }
 
+  /**
+   * Agent slots free right now: the app-wide cap less every running, starting
+   * and queued session. The workflow engine starts no more tasks than this, so
+   * To Do stays its durable queue and nothing piles into the in-memory one.
+   */
+  getFreeAgentSlots(): number {
+    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - this.sessionQueue.length);
+  }
+
   /** Lightweight session counts without allocating mapped Session objects. */
   getSessionCounts(): { active: number; suspended: number; total: number } {
     return this.registry.getSessionCounts();

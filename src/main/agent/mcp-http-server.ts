@@ -357,7 +357,12 @@ export function buildConfiguredMcpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices);
+  // The calling agent's task, for the move tool's workflow lock: a task's own
+  // agent may move it while its workflow runs.
+  const callerTaskId = browser.callerSessionId && browser.sessions
+    ? browser.sessions.getSessionTaskId(browser.callerSessionId) ?? null
+    : null;
+  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId);
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver);
   registerSessionTools(mcpServer, resolver);

@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type {
   AutomationRun,
@@ -125,6 +126,42 @@ export class AutomationRunRepository {
   recordDeliveredByCaller(input: StartRunInput, detail: string): void {
     this.start(input);
     this.finish(input.id, 'succeeded', detail, 1);
+  }
+
+  /**
+   * Record a workflow's own step check at a turn end, beside the column's runs,
+   * so "why did the task not move on" has an answer in the same log. Its
+   * automation id is `workflow-step:<workflowId>`, which names no column
+   * automation, and its type `workflow_step` is none of the registry's: a reader
+   * of the log shows it as written. A yes that moved the task is `succeeded`, a
+   * no is `skipped` (as a Condition's no is), each with the answer's reason.
+   */
+  recordWorkflowStep(input: {
+    taskId: string;
+    swimlaneId: string;
+    workflowId: string;
+    met: boolean;
+    reason: string | null;
+    detail: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO automation_runs
+        (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
+         started_at, finished_at, condition_met, condition_reason)
+      VALUES (?, ?, 'Workflow step', 'workflow_step', ?, ?, 'turn_end', ?, ?, 1, ?, ?, ?, ?)
+    `).run(
+      uuidv4(),
+      `workflow-step:${input.workflowId}`,
+      input.taskId,
+      input.swimlaneId,
+      input.met ? 'succeeded' : 'skipped',
+      input.detail,
+      now,
+      now,
+      input.met ? 1 : 0,
+      input.reason,
+    );
   }
 
   /**

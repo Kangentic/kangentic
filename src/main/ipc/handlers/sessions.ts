@@ -11,6 +11,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { nextOnRoute } from '../../../shared/workflow-route';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
@@ -40,10 +41,6 @@ const sessionStartTimes = new Map<string, number>();
 const sessionSpawnAnalyticsFired = new Set<string>();
 
 export function registerSessionHandlers(context: IpcContext): void {
-  /** Renderers whose focus-set teardown is already wired, so repeated
-   *  SESSION_SET_FOCUSED calls do not stack duplicate listeners. */
-  const focusTeardownWatched = new Set<number>();
-
   // === Sessions ===
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
@@ -115,9 +112,18 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   // The Resume button. The whole path lives in resumeTaskSession
   // (session-resume.ts), shared with the phone's start-session verb for a
-  // paused task, so a desktop and a phone Resume cannot drift.
+  // paused task and with Resume workflow, so the three cannot drift.
   ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) =>
     resumeTaskSession(context, taskId, { projectId, resumePrompt }));
+
+  registerSessionRecoveryHandlers(context);
+}
+
+/** Reset, reconcile, and the session listeners: the rest of the session handlers. */
+function registerSessionRecoveryHandlers(context: IpcContext): void {
+  /** Renderers whose focus-set teardown is already wired, so repeated
+   *  SESSION_SET_FOCUSED calls do not stack duplicate listeners. */
+  const focusTeardownWatched = new Set<number>();
 
   // === Session Reset (safety-net recovery for unrecoverable sessions) ===
   ipcMain.handle(IPC.SESSION_RESET, (_, taskId: string, projectId?: string | null) => {
@@ -848,9 +854,11 @@ export function registerSessionHandlers(context: IpcContext): void {
         loadTaskProfile(context, task, resolvedProjectPath),
         swimlanes.list(),
       );
-      if (!lane?.plan_exit_target_id) return;
-
-      const target = swimlanes.getById(lane.plan_exit_target_id);
+      // A workflow task's plan approval finishes its step: it moves to the next
+      // column on its ROUTE, wherever the column would send an ordinary task.
+      const target = task.workflow_id
+        ? nextOnRoute(swimlanes.list(), task, task.swimlane_id)
+        : (lane?.plan_exit_target_id ? swimlanes.getById(lane.plan_exit_target_id) : null);
       if (!target) return;
 
       const position = tasks.list(target.id).length;

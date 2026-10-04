@@ -319,7 +319,9 @@ describe('registerAllIpc idempotency', () => {
     //
     // The counts are DIFFERENT and that asymmetry is the point:
     //   activity: desktopNotifier (1) + activityIntervalRecorder (1)       = 2
-    //   exit:     those two, plus registerMonitorHandlers (1)              = 3
+    //   exit:     those two, plus registerMonitorHandlers (1), plus the
+    //             workflow engine (1: a session ending frees an agent slot,
+    //             so a waiting workflow task may start)                  = 4
     //
     // `registerMonitorHandlers` is deliberately NOT mocked below, so its real
     // `sessionManager.on('exit', schedulePush)` attaches here - that is how the
@@ -332,7 +334,7 @@ describe('registerAllIpc idempotency', () => {
     // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
     expect(getSessionManager().listenerCount('activity')).toBe(2);
-    expect(getSessionManager().listenerCount('exit')).toBe(3);
+    expect(getSessionManager().listenerCount('exit')).toBe(4);
   }, 30000);
 
   it('second call updates mainWindow without re-registering handlers', async () => {
@@ -408,9 +410,10 @@ describe('registerAllIpc idempotency', () => {
     // stops being reused across a second registerAllIpc call.
     //
     // Counts as attributed in the first test: activity is the notifier plus the
-    // recorder; exit is those two plus registerMonitorHandlers.
+    // recorder; exit is those two plus registerMonitorHandlers and the workflow
+    // engine.
     expect(getSessionManager().listenerCount('activity')).toBe(2);
-    expect(getSessionManager().listenerCount('exit')).toBe(3);
+    expect(getSessionManager().listenerCount('exit')).toBe(4);
   }, 30000);
 
   it('second call preserves existing services', async () => {

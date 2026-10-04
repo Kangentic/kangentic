@@ -16,7 +16,8 @@ import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { agentRegistry } from '../../agent/agent-registry';
 import { frequencyLimitReason, hasCondition } from '../automation-runner';
 import { automationRegistry } from '../automation-registry';
-import { resolveMoveTarget } from '../move-target';
+import { resolveMoveTarget, routeOf } from '../move-target';
+import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
 import type { RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
 import { trackTurnEndGroup } from './turn-end-passes';
@@ -121,9 +122,11 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   if (!subject) return;
   const { task, column, repos } = subject;
 
-  // The fast path: most columns have no turn-end rows.
+  // The fast path: most columns have no turn-end rows, and most tasks are in
+  // no workflow.
   const rows = repos.automations.getForTrigger(column.id, 'turn_end');
-  if (rows.length === 0) return;
+  const stepApplies = workflowStepApplies(task, payload.projectId);
+  if (rows.length === 0 && !stepApplies) return;
 
   const visitStartedAt = repos.taskMoves.visitStartedAt(task.id, column.id);
   if (visitStartedAt && payload.turnStartedAt !== null && payload.turnStartedAt < Date.parse(visitStartedAt)) {
@@ -140,7 +143,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     && canColumnRun(row.type, facts, 'turn_end').ok
     && !runs.hasRunSince(row.id, task.id, visitStartedAt)
     && frequencyLimitReason(row, runs, task.id) === null);
-  if (pending.length === 0) return;
+  if (pending.length === 0 && !stepApplies) return;
 
   const controller = new AbortController();
   const releaseGroup = trackTurnEndGroup(task.id, controller);
@@ -149,71 +152,106 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
     if (settled !== 'completed') return;
 
-    const project = context.projectRepo.getById(payload.projectId);
-    const projectPath = project?.path ?? null;
+    // One read of the agent's final reply, shared by the rows and the step.
     const sessionRepo = new SessionRepository(getProjectDb(payload.projectId));
-    const engine = createTransitionEngine(
-      context, repos.automations, repos.automationRuns, repos.tasks, sessionRepo, repos.attachments,
-      payload.projectId, projectPath,
-    );
+    let replyRead: Promise<string | null> | null = null;
+    const readReply = (): Promise<string | null> => {
+      replyRead ??= readAgentReply(context, payload, sessionRepo);
+      return replyRead;
+    };
 
-    const needsReply = pending.some((row) => hasCondition(row) || mentionsAgentReply(row));
-    const agentReply = needsReply ? await readAgentReply(context, payload, sessionRepo) : null;
-
-    // Conditions: one check for every pending row that has one.
-    const conditional = pending.filter((row) => hasCondition(row));
-    const answers = new Map<string, RunConditionAnswer>();
-    let conditionUnavailableReason: string | undefined;
-    let runnable = pending;
-    if (conditional.length > 0) {
-      const templateVars = engine.resolveGroupTemplateVars(task, column, 'turn_end', { agentReply });
-      const outcome = await engine.checkConditions(
-        engine.conditionCheckInput(task, column, 'turn_end', conditional, templateVars, { agentReply }),
-      );
-      if (outcome.ok) {
-        for (const [automationId, answer] of outcome.answers) answers.set(automationId, answer);
-      } else {
-        conditionUnavailableReason = outcome.reason;
-        // Recorded once per visit, not at every turn end of a long chat.
-        runnable = pending.filter((row) => !hasCondition(row)
-          || !runs.hasSkipSince(row.id, task.id, visitStartedAt, outcome.reason));
-      }
+    if (pending.length > 0) {
+      await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply });
     }
-    if (runnable.length === 0 || controller.signal.aborted) return;
-
-    // The check can take a while. Run nothing unless the turn it judged is
-    // still the latest: same session, same column, and the agent still idle.
-    const current = resolveSubject(context, payload);
-    if (!current || current.column.id !== column.id) return;
-    // activity-state-ok: granular, a row must not land on a running turn or a
-    // permission prompt.
-    if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return;
-
-    const summary = await engine.executeTransition(current.task, column, 'turn_end', {
-      // Classified in spawn-entry-point-parity.test.ts: no `startAgent`, so a
-      // turn end never spawns; it acts on the agent that just finished.
-      signal: controller.signal,
-      onlyIds: new Set(runnable.map((row) => row.id)),
-      agentReply,
-      conditionAnswers: answers,
-      conditionUnavailableReason,
-      deliverToAgent: (message, mode, runSignal) => deliverMessageToSession(context, {
-        taskId: task.id,
-        sessionId: payload.sessionId,
-        message,
-        mode,
-        verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
-        signal: runSignal,
-      }),
-      moveTask: (input) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, input),
-      showNotification: (notification) => showDesktopNotification(context, notification),
-      onProgress: createProgressCallback(context.mainWindow, task.id),
-    });
-    reportAutomationFailures(context, summary, current.task, payload.projectId);
+    // The workflow's own step comes after the column's rows: a row that moved
+    // the task leaves the step nothing to do, and the step reads where the task
+    // is now.
+    if (stepApplies && !controller.signal.aborted) {
+      await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
+    }
   } finally {
     releaseGroup();
     clearSpawnProgress(context.mainWindow, task.id);
   }
+}
+
+/** The column's pending turn-end rows: one Condition check, a re-check, then the rows. */
+async function runRows(
+  context: IpcContext,
+  payload: TurnEndedPayload,
+  input: {
+    task: Task;
+    column: Swimlane;
+    repos: ReturnType<typeof getProjectRepos>;
+    sessionRepo: SessionRepository;
+    pending: ColumnAutomation[];
+    visitStartedAt: string | null;
+    controller: AbortController;
+    readReply: () => Promise<string | null>;
+  },
+): Promise<void> {
+  const { task, column, repos, sessionRepo, pending, visitStartedAt, controller } = input;
+  const runs = repos.automationRuns;
+  const project = context.projectRepo.getById(payload.projectId);
+  const projectPath = project?.path ?? null;
+  const engine = createTransitionEngine(
+    context, repos.automations, repos.automationRuns, repos.tasks, sessionRepo, repos.attachments,
+    payload.projectId, projectPath,
+  );
+
+  const needsReply = pending.some((row) => hasCondition(row) || mentionsAgentReply(row));
+  const agentReply = needsReply ? await input.readReply() : null;
+
+  // Conditions: one check for every pending row that has one.
+  const conditional = pending.filter((row) => hasCondition(row));
+  const answers = new Map<string, RunConditionAnswer>();
+  let conditionUnavailableReason: string | undefined;
+  let runnable = pending;
+  if (conditional.length > 0) {
+    const templateVars = engine.resolveGroupTemplateVars(task, column, 'turn_end', { agentReply });
+    const outcome = await engine.checkConditions(
+      engine.conditionCheckInput(task, column, 'turn_end', conditional, templateVars, { agentReply }),
+    );
+    if (outcome.ok) {
+      for (const [automationId, answer] of outcome.answers) answers.set(automationId, answer);
+    } else {
+      conditionUnavailableReason = outcome.reason;
+      // Recorded once per visit, not at every turn end of a long chat.
+      runnable = pending.filter((row) => !hasCondition(row)
+        || !runs.hasSkipSince(row.id, task.id, visitStartedAt, outcome.reason));
+    }
+  }
+  if (runnable.length === 0 || controller.signal.aborted) return;
+
+  // The check can take a while. Run nothing unless the turn it judged is
+  // still the latest: same session, same column, and the agent still idle.
+  const current = resolveSubject(context, payload);
+  if (!current || current.column.id !== column.id) return;
+  // activity-state-ok: granular, a row must not land on a running turn or a
+  // permission prompt.
+  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return;
+
+  const summary = await engine.executeTransition(current.task, column, 'turn_end', {
+    // Classified in spawn-entry-point-parity.test.ts: no `startAgent`, so a
+    // turn end never spawns; it acts on the agent that just finished.
+    signal: controller.signal,
+    onlyIds: new Set(runnable.map((row) => row.id)),
+    agentReply,
+    conditionAnswers: answers,
+    conditionUnavailableReason,
+    deliverToAgent: (message, mode, runSignal) => deliverMessageToSession(context, {
+      taskId: task.id,
+      sessionId: payload.sessionId,
+      message,
+      mode,
+      verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
+      signal: runSignal,
+    }),
+    moveTask: (moveInput) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, moveInput),
+    showNotification: (notification) => showDesktopNotification(context, notification),
+    onProgress: createProgressCallback(context.mainWindow, task.id),
+  });
+  reportAutomationFailures(context, summary, current.task, payload.projectId);
 }
 
 function mentionsAgentReply(row: ColumnAutomation): boolean {
@@ -260,7 +298,8 @@ async function moveFromTurnEnd(
   input: { column: string | null; message: string | null; reason: string },
 ): Promise<{ columnName: string }> {
   const repos = getProjectRepos(context, projectId);
-  const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, input.column);
+  // A workflow task's Next column is the next one on its route.
+  const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, input.column, routeOf(task));
   if (!target.ok) throw new Error(target.reason);
 
   await handleTaskMove(

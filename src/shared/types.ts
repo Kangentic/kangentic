@@ -2825,6 +2825,8 @@ export interface NotificationConfig {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
     onPlanComplete: boolean;
+    /** Every task in a workflow reached Done. */
+    onWorkflowComplete: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
   };
@@ -2832,6 +2834,8 @@ export interface NotificationConfig {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
     onPlanComplete: boolean;
+    /** Every task in a workflow reached Done. */
+    onWorkflowComplete: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
     durationSeconds: number;
@@ -4154,12 +4158,14 @@ export const DEFAULT_CONFIG: AppConfig = {
       onAgentIdle: true,
       onAgentCrash: true,
       onPlanComplete: true,
+      onWorkflowComplete: true,
       onSpawnStalled: true,
     },
     toasts: {
       onAgentIdle: true,
       onAgentCrash: true,
       onPlanComplete: true,
+      onWorkflowComplete: true,
       onSpawnStalled: true,
       durationSeconds: 4,
       maxCount: 5,
@@ -4913,6 +4919,15 @@ export interface Workflow {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/** Pushed when every task in a workflow reaches Done. */
+export interface WorkflowCompletedEvent {
+  workflowId: string;
+  title: string;
+  taskCount: number;
+  /** The workflow's home project. */
+  projectId: string;
 }
 
 /**
@@ -6344,6 +6359,8 @@ export interface ElectronAPI {
      * workflow can move many cards an hour and the run log already records why.
      */
     onMovedByAutomation: (callback: (projectId?: string) => void) => () => void;
+    /** Every task in a workflow reached Done (`WorkflowCompletedEvent`). */
+    onWorkflowCompleted: (callback: (event: WorkflowCompletedEvent) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

@@ -26,6 +26,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { wakeWorkflowEngine } from '../../workflows/workflow-wake';
 import type { IpcContext } from '../ipc-context';
 import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
 
@@ -282,6 +283,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       tasks.delete(id);
     });
     drainAutoNameAskedIds(context, [id]);
+    // A deleted blocker's links went with it, so what waited for it may start.
+    wakeWorkflowEngine();
   });
 
   ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[], projectId?: string | null): Promise<TaskBulkDeleteResult> => {
@@ -365,6 +368,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
             attachments.deleteByTaskId(id);
             tasks.delete(id);
           });
+          wakeWorkflowEngine();
 
           if (cleanupError) {
             const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
