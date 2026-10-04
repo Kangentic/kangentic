@@ -277,6 +277,9 @@ async function uploadNativeDebugFiles() {
  *      three lazy is that it imports the graph through `LazyKnowledgeGraph`. A
  *      stray static import there would be invisible in dev and would parse all
  *      of three at every cold start in production.
+ *   5. The same pair for `xyflow-*.js` (React Flow), reachable only through
+ *      LazyWorkflowsView, so the board and the web demo pay nothing for the
+ *      Workflows canvas until the view first opens.
  * Falls back to asserting index.html carries no reference to the recharts
  * chunk if the manifest is ever unavailable.
  */
@@ -344,6 +347,23 @@ function assertVendorChunksLazy(rendererOutDir) {
     );
   }
 
+  const xyflowChunk = assetFiles.find((name) => name.startsWith('xyflow-') && name.endsWith('.js'));
+  if (!xyflowChunk) {
+    throw new Error(
+      '[build] No xyflow-*.js chunk in the renderer output. Either React Flow became statically bundled '
+      + 'into another chunk (check the manualChunks entry in vite.config.mts) or the dependency layout '
+      + 'changed; the lazy Workflows view bundle assertion cannot run.',
+    );
+  }
+  const xyflowFile = `assets/${xyflowChunk}`;
+  if (staticFiles.has(xyflowFile)) {
+    throw new Error(
+      `[build] ${xyflowChunk} is in the entry's STATIC import closure. Something imports @xyflow/react `
+      + '(or a Workflows view module that pulls it) statically from the startup path - route it '
+      + 'through the LazyWorkflowsView boundary instead.',
+    );
+  }
+
   // Monaco: marker-string scan. These literals appear in monaco's editor
   // sources and nowhere in first-party code; web workers are separate
   // entries loaded inside worker contexts, not part of the startup path.
@@ -370,7 +390,7 @@ function assertVendorChunksLazy(rendererOutDir) {
       + 'blind (markers rotted on a monaco upgrade?). Update MONACO_MARKERS in scripts/build.js.',
     );
   }
-  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk} and all monaco chunks are reachable only via dynamic import`);
+  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk}, ${xyflowChunk} and all monaco chunks are reachable only via dynamic import`);
 }
 
 const esbuildCommon = {

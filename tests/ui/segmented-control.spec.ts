@@ -44,6 +44,7 @@ test.afterAll(async () => {
 const group = () => page.locator('[data-testid="view-toggle-group"]');
 const boardOption = () => page.locator('[data-testid="view-toggle-board"]');
 const backlogOption = () => page.locator('[data-testid="view-toggle-backlog"]');
+const workflowsOption = () => page.locator('[data-testid="view-toggle-workflows"]');
 
 /** Leave the board view selected, whichever test ran last. */
 test.afterEach(async () => {
@@ -94,12 +95,14 @@ test.describe('SegmentedControl', () => {
     // Selection is the view, not just a highlight.
     await expect(page.locator('[data-testid="backlog-view"]')).toBeVisible();
 
-    // Wraps, so a two-option control toggles on a repeated press.
+    // On to the third option, then wraps back to the first.
+    await page.keyboard.press('ArrowRight');
+    await expect(workflowsOption()).toHaveAttribute('aria-checked', 'true');
     await page.keyboard.press('ArrowRight');
     await expect(boardOption()).toHaveAttribute('aria-checked', 'true');
 
     await page.keyboard.press('End');
-    await expect(backlogOption()).toHaveAttribute('aria-checked', 'true');
+    await expect(workflowsOption()).toHaveAttribute('aria-checked', 'true');
     await page.keyboard.press('Home');
     await expect(boardOption()).toHaveAttribute('aria-checked', 'true');
   });

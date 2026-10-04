@@ -212,6 +212,9 @@ export default defineConfig(({ mode }) => ({
           // LazyKnowledgeGraph; the name match cannot hit first-party sources,
           // which live under components/knowledge-graph/.
           if (/node_modules[\\/](three|camera-controls)[\\/]/.test(id)) return 'three';
+          // React Flow (and the copy of zustand it nests), reachable ONLY through
+          // LazyWorkflowsView, so assertVendorChunksLazy can check it by name.
+          if (/node_modules[\\/]@xyflow[\\/]/.test(id)) return 'xyflow';
         },
       },
     },

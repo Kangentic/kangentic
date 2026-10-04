@@ -5,6 +5,7 @@ import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
 import { CollapsedRail } from '../sidebar/CollapsedRail';
 import { KanbanBoard } from '../board/KanbanBoard';
+import { LazyWorkflowsView } from '../workflows/LazyWorkflowsView';
 import { ViewToggle } from '../board/ViewToggle';
 import { BacklogView } from '../backlog/BacklogView';
 import { BacklogDialogs } from '../backlog/BacklogDialogs';
@@ -143,10 +144,13 @@ export function AppLayout() {
   // The content column the panel's available height is measured against. Owned
   // here and attached below, rather than returned by the hook (see its docblock).
   const terminalContentColRef = useRef<HTMLDivElement>(null);
+  // The Workflows view collapses the panel for the most canvas, through the same
+  // input a detached task window uses, so the user's own preference is never
+  // overwritten and comes back on the way out.
   const terminal = useTerminalResize(
     config,
     terminalContentColRef,
-    everyTerminalDetached,
+    everyTerminalDetached || activeView === 'workflows',
     `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
   );
   const commandBar = useCommandBar();
@@ -178,10 +182,11 @@ export function AppLayout() {
     if (commandBarIsOpen) closeCommandBar();
     else openCommandBar();
   }, [commandBarIsOpen, openCommandBar, closeCommandBar]);
-  // Plain Ctrl+F focuses the board search on the board view; otherwise it falls
-  // back to the global search palette (resolved inside useSearchPalette).
+  // Plain Ctrl+F focuses the board search on the board view (and on Workflows,
+  // which shares it); otherwise it falls back to the global search palette
+  // (resolved inside useSearchPalette).
   const handlePlainFindKey = useCallback(() => {
-    if (activeView !== 'board') return false;
+    if (activeView === 'backlog') return false;
     requestBoardSearchFocus();
     return true;
   }, [activeView, requestBoardSearchFocus]);
@@ -509,10 +514,10 @@ export function AppLayout() {
           {currentProject ? (
             <>
               <ViewToggle />
-              {activeView === 'board' ? (
+              {activeView !== 'backlog' ? (
                 <>
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    <KanbanBoard />
+                    {activeView === 'workflows' ? <LazyWorkflowsView /> : <KanbanBoard />}
                   </div>
 
                   {/* Terminal panel -- completely hidden when disabled in Appearance settings */}

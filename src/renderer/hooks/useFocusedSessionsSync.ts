@@ -193,7 +193,8 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     }
 
     const plan = planTerminalVisibility({
-      boardLayerParked: activeView !== 'board',
+      // The board layer's windows show over Board and Workflows alike.
+      boardLayerParked: activeView === 'backlog',
       windows,
       panelSessionId,
       // Minus whatever non-terminal consumers hold (the Knowledge Graph's three.js

@@ -64,6 +64,29 @@ function reportFailure(action: string, error: unknown): void {
   useToastStore.getState().addToast({ message: `${action}. ${describeIpcError(error)}`, variant: 'error' });
 }
 
+/**
+ * Keep every task and link object a reload did not change, so the canvas
+ * re-renders only the cards that did. Every push reloads the whole workflow,
+ * and without this one moved card repaints all 100 (measured with
+ * `scripts/drag-perf-rig.mjs`, W100). A JSON compare costs about a
+ * millisecond for 100 tasks, once per reload.
+ */
+export function shareUnchanged(previous: WorkflowDetail | null, next: WorkflowDetail): WorkflowDetail {
+  if (!previous || previous.workflow.id !== next.workflow.id) return next;
+  const previousTasks = new Map(previous.tasks.map((task) => [task.key, task]));
+  const tasks = next.tasks.map((task) => {
+    const before = previousTasks.get(task.key);
+    return before && JSON.stringify(before) === JSON.stringify(task) ? before : task;
+  });
+  const sameTasks = tasks.length === previous.tasks.length && tasks.every((task, index) => task === previous.tasks[index]);
+  const sameLinks = JSON.stringify(previous.links) === JSON.stringify(next.links);
+  return {
+    ...next,
+    tasks: sameTasks ? previous.tasks : tasks,
+    links: sameLinks ? previous.links : next.links,
+  };
+}
+
 const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   /**
    * Run one change against the workflow on screen. `projectId` is read when the
@@ -149,7 +172,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (generation !== detailGeneration || get().selectedWorkflowId !== selectedWorkflowId) return;
       const selectedTaskKey = get().selectedTaskKey;
       set({
-        detail,
+        detail: shareUnchanged(get().detail, detail),
         // A selected task that left the workflow leaves the inspector.
         selectedTaskKey: selectedTaskKey && detail.tasks.some((task) => task.key === selectedTaskKey) ? selectedTaskKey : null,
       });

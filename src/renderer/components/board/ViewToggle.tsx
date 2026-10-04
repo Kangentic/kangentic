@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Columns3, ListTodo, Plus } from 'lucide-react';
+import { Columns3, ListTodo, ListTree, Plus } from 'lucide-react';
 import { CountBadge } from '../CountBadge';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
@@ -9,10 +9,13 @@ import { PrioritiesPopover } from '../backlog/manage-labels/PrioritiesPopover';
 import { useBoardStore } from '../../stores/board-store';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
+import { useWorkflowStore } from '../../stores/workflow-store';
 import {
   BACKLOG_TOOLBAR_COLLAPSE,
   BOARD_TOOLBAR_COLLAPSE,
   TOOLBAR_ROW_CONTAINER_CLASS,
+  WORKFLOWS_TOOLBAR_COLLAPSE,
 } from './toolbar-collapse';
 
 export const ViewToggle = React.memo(function ViewToggle() {
@@ -46,12 +49,25 @@ export const ViewToggle = React.memo(function ViewToggle() {
   const priorities = useConfigStore((state) => state.config.backlog.priorities);
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
 
+  // The project's unfinished workflows: the count on the Workflows segment.
+  // Loaded per project here, since this row is mounted whenever a project is.
+  const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const workflowCount = useWorkflowStore((state) => (state.projectId === currentProjectId ? state.summaries.length : 0));
+  useEffect(() => {
+    if (currentProjectId) void useWorkflowStore.getState().loadWorkflows();
+  }, [currentProjectId]);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Per branch, because the two carry different content and so run out of room at
-  // genuinely different widths: backlog has two actions where board has one, and
-  // New Task is wider than Add column. The derivation is in toolbar-collapse.ts.
-  const collapse = activeView === 'board' ? BOARD_TOOLBAR_COLLAPSE : BACKLOG_TOOLBAR_COLLAPSE;
+  // Per branch, because the three carry different content and so run out of room at
+  // genuinely different widths: backlog has two actions where board has one, New
+  // Task is wider than Add column, and Workflows has none. The derivation is in
+  // toolbar-collapse.ts.
+  const collapse = activeView === 'board'
+    ? BOARD_TOOLBAR_COLLAPSE
+    : activeView === 'workflows' ? WORKFLOWS_TOOLBAR_COLLAPSE : BACKLOG_TOOLBAR_COLLAPSE;
+  // Workflows shares the board's search and filter: its cards are board tasks.
+  const boardSearch = activeView !== 'backlog';
 
   const boardLabels = useMemo(() => {
     const labelSet = new Set<string>();
@@ -83,7 +99,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
     if (
       boardSearchFocusNonce > 0 &&
       boardSearchFocusNonce !== lastHandledFocusNonce.current &&
-      activeView === 'board'
+      activeView !== 'backlog'
     ) {
       lastHandledFocusNonce.current = boardSearchFocusNonce;
       searchInputRef.current?.focus();
@@ -111,6 +127,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
         testId="view-toggle-group"
         className="shrink-0"
         labelClassName={collapse.viewSwitcherLabel}
+        optionPaddingClassName={collapse.viewSwitcherPadding}
         value={activeView}
         onChange={setActiveView}
         options={[
@@ -144,6 +161,18 @@ export const ViewToggle = React.memo(function ViewToggle() {
               ? <CountBadge count={backlogItems.length} variant={activeView === 'backlog' ? 'accent' : 'muted'} />
               : undefined,
           },
+          {
+            value: 'workflows' as const,
+            label: 'Workflows',
+            testId: 'view-toggle-workflows',
+            title: 'Workflows',
+            ariaLabel: workflowCount > 0 ? `Workflows, ${workflowCount} unfinished` : 'Workflows',
+            icon: <span className={collapse.viewSwitcherIcon}><ListTree size={16} /></span>,
+            // Unfinished workflows only: a finished one leaves the picker.
+            trailing: workflowCount > 0
+              ? <CountBadge count={workflowCount} variant={activeView === 'workflows' ? 'accent' : 'muted'} />
+              : undefined,
+          },
         ]}
       />
 
@@ -162,7 +191,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           and border both change when `hasActiveFilters` differs between the
           two views' independent filter sets) interpolates from the old
           view's palette instead of painting the new one immediately. */}
-      {activeView === 'board' ? (
+      {boardSearch ? (
         <ToolbarSearchFilter
           key="board-search"
           searchValue={boardSearchQuery}
@@ -224,7 +253,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             <span className={collapse.primaryAction.label}>Add column</span>
           </button>
         </div>
-      ) : (
+      ) : activeView === 'workflows' ? null : (
         <div key="backlog-actions" className="ml-2 flex items-center gap-2 shrink-0">
           <button
             type="button"

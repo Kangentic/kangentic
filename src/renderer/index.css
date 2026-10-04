@@ -477,6 +477,16 @@
   transform: rotate(3deg);
 }
 
+/* The Workflows canvas viewport is its own compositor layer. Without it Blink
+   re-layerizes every card's paint chunks on every frame: 5.7ms a frame at 100
+   cards, measured with scripts/drag-perf-rig.mjs (W100), which missed one
+   refresh in four at 144Hz while idle and more during a drag. With it, 0.3ms.
+   Zooming in still re-rasters the layer at the new scale (checked against
+   screenshots at 2x), so the cards stay sharp. */
+.workflow-canvas .react-flow__viewport {
+  will-change: transform;
+}
+
 /* Swirling drop zone border */
 @keyframes spin-border {
   from { transform: rotate(0deg); }

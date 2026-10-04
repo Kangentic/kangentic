@@ -1300,6 +1300,7 @@ General:
 - **Mod+Shift+A** - Toggle the Knowledge Graph (a map of what this project's conversation index has learned)
 - **Mod+Shift+M** - Toggle the Agent Monitor (every running agent, across all projects)
 - **Mod+Shift+B** - Switch between Board and Backlog view
+- **Mod+Shift+L** - Open the Workflows view; pressed there, return to the view you came from
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window

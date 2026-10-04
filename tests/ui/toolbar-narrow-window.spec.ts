@@ -181,6 +181,12 @@ async function switchToBacklog(page: Page): Promise<void> {
   await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
+/** The project has no workflows, so the view lands on its empty state. */
+async function switchToWorkflows(page: Page): Promise<void> {
+  await page.locator('[data-testid="view-toggle-workflows"]').click();
+  await page.locator('[data-testid="workflows-empty"]').waitFor({ state: 'visible', timeout: 10000 });
+}
+
 interface RowReading {
   height: number;
   /** Right edge of each control, and of the row's own content box, rounded. */
@@ -265,9 +271,19 @@ const BACKLOG_CONTROLS = [
   'import-sources-btn',
 ];
 
+/** The Workflows view shares the board's search and filter and has no toolbar action. */
+const WORKFLOWS_CONTROLS = [
+  'view-toggle-group',
+  'manage-labels-btn',
+  'manage-priorities-btn',
+  'board-search',
+  'board-filter-btn',
+];
+
 /** Every label that must still be text at the wide baseline. */
-const BOARD_LABELS = ['Board', 'Backlog', 'Labels', 'Priorities', 'Filter', 'Add column'];
-const BACKLOG_LABELS = ['Board', 'Backlog', 'Labels', 'Priorities', 'Filter', 'New Task', 'Import Tasks'];
+const BOARD_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'Add column'];
+const BACKLOG_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'New Task', 'Import Tasks'];
+const WORKFLOWS_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter'];
 
 /**
  * The shared body of all four toolbar cases: measure the row wide, narrow the
@@ -366,28 +382,39 @@ test.describe('Chrome rows at the 900x600 floor', () => {
     }
   });
 
+  test('workflows toolbar survives the floor with the sidebar at its 400px default', async () => {
+    const { browser, page } = await launch();
+    try {
+      await switchToWorkflows(page);
+      await expectRowSurvivesTheFloor(page, WORKFLOWS_CONTROLS, WORKFLOWS_LABELS);
+    } finally {
+      await browser.close();
+    }
+  });
+
   /**
    * The two-width checks above would both pass with a threshold set so badly that
    * the row breaks somewhere in between. With a 400px sidebar the toolbar's own
    * width is the viewport minus 405, so this range walks the container from 495 to
-   * 945 and crosses every step in BOTH ladders.
+   * 1045 and crosses every step in all three ladders.
    *
-   * The ceiling is set by the widest threshold either branch has, the backlog's
-   * filter controls at 920. Stopping at a 1300px viewport tops the container out
-   * at 895 and never crosses it, which leaves the widest and last-crossed step in
+   * The ceiling is set by the widest threshold any branch has, the backlog's
+   * filter controls at 1000 (a content box of 1000 is a 1032px row, a 1437px
+   * viewport). Stopping short of it leaves the widest and last-crossed step in
    * the whole ladder covered only by the two fixed-width tests on either side of
    * it.
    */
-  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS]] as const) {
+  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS], ['workflows', WORKFLOWS_CONTROLS]] as const) {
     test(`the ${view} toolbar holds at every width across the ladder`, async () => {
       const { browser, page } = await launch();
       try {
         if (view === 'backlog') await switchToBacklog(page);
+        if (view === 'workflows') await switchToWorkflows(page);
 
         const baseline = await settledHeight(page);
         const broken: string[] = [];
 
-        for (let width = 900; width <= 1350; width += 25) {
+        for (let width = 900; width <= 1450; width += 25) {
           await page.setViewportSize({ width, height: FLOOR.height });
           const height = await settledHeight(page);
           if (Math.abs(height - baseline) > 1) {

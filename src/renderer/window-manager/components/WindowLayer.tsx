@@ -321,16 +321,17 @@ const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 poin
  * in `AppLayout`.
  *
  * Stays mounted even when the Backlog view is active (so live agent sessions and
- * the board bridges never tear down) but the overlay goes `invisible` off the
- * board, so windows don't bleed over the backlog. `visibility:hidden` (not
+ * the board bridges never tear down) but the overlay goes `invisible` on the
+ * backlog, so windows don't bleed over it. `visibility:hidden` (not
  * `display:none`) keeps the overlay's measured size and each frame's layout
  * intact, so returning to the board needs no re-fit and replays no entrance
- * animation.
+ * animation. The Workflows view shows them: its cards are the board's tasks,
+ * and opening one opens its window there.
  */
 export function WindowLayer() {
   const activeView = useBoardStore((state) => state.activeView);
   const overlayClassName =
-    activeView === 'board' ? BOARD_OVERLAY_BASE_CLASS : `${BOARD_OVERLAY_BASE_CLASS} invisible`;
+    activeView === 'backlog' ? `${BOARD_OVERLAY_BASE_CLASS} invisible` : BOARD_OVERLAY_BASE_CLASS;
   return (
     // The task-detail surface reads every project-scoped value from this host
     // rather than from ambient `currentProject` / board state, so a second layer

@@ -183,6 +183,43 @@ scope for a sticky drop. Two findings:
 | Early exit in `probePendingChanges` on a dirty status | Declined | The confirm dialog reports the unpushed count even when dirty; skipping it under-reports the loss |
 | Re-add the write-queue drag hold or re-park session pushes | Not considered | Commit e84099e1's reasons hold and S2 confirms the pushes cost nothing |
 
+## The Workflows canvas (2026-10-04, #732)
+
+The Workflows view draws real `TaskCard` bodies as React Flow nodes. Scenarios `W30` and `W100`
+seed a started workflow of 30 or 100 linked tasks (with 5 and 8 mock sessions pushing activity),
+open the view, and measure idle, a card drag, a pan on empty canvas, and a link drag, on the same
+144Hz-class display (7.5ms refresh) as the board numbers above.
+
+The first run at 100 cards missed the board's bar. Idle missed 18 to 87 refreshes in 3 seconds,
+and a card drag ran at a 15ms p95 with up to 12ms of pointer-event processing. Script time was
+about 50ms across a 3-second window, so React was not the cost. A trace (`--trace`) put it in
+Blink: `Layerize` (`PaintArtifactCompositor::Update`) cost 5.7ms on every main frame, re-deciding
+the compositor layers of 100 cards' paint chunks. An A/B over stylesheets (`--experiments`)
+measured the candidates:
+
+| Variant | Layerize per frame | Idle, missed | Drag, missed |
+|---|---|---|---|
+| As built | 5.7ms | 49 | 108 |
+| Activity marks still | 5.6ms | 6 | 36 |
+| Links hidden | 5.6ms | 42 | 110 |
+| `contain: layout paint style` on each node | 5.7ms | 47 | 96 |
+| `content-visibility: auto` on each node | 5.8ms | 55 | 101 |
+| `will-change: transform` on each node | 0.2ms | 0 | 2 |
+| `will-change: transform` on the viewport | 0.3ms | 2 | 2 |
+
+The viewport shipped (`index.css`): one compositor layer instead of 100. Zooming in to 2x still
+re-rasters it at the new scale, checked with screenshots, so the cards stay sharp. Two React
+changes ship with it: the node's `memo` ignores the position props React Flow passes every drag
+frame, so a drag never re-renders the card; and a reload keeps every node and task object it did
+not change (`reseedNodes`, `shareUnchanged`), so dropping one card no longer re-renders all 100.
+
+After, at 100 cards, 5 runs: idle 0 missed; card drag at an 8ms p95 with 3.8ms of event
+processing; link drag at an 8ms p95. At 30 cards every scenario is flat at 8ms. A pan at 100
+cards still misses a single refresh on 3 to 8% of frames, never a frame over 16ms (so nothing a
+60Hz display would show); two identical baselines measured 25 and 62 misses, and no variant beat
+that spread. About 1ms of each frame's paint is the activity marks' stroke animation, which runs
+on the main thread on the board too.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in
@@ -196,7 +233,10 @@ node scripts/drag-perf-rig.mjs --scenarios=S1,S3 --runs=5 --label=before
 ```
 
 It writes `tests/.tmp/drag-perf-<label>.json` and prints the per-scenario table, and
-`--analyze=<json>` re-prints a saved run. Keep the window unoccluded for the duration: a hidden
+`--analyze=<json>` re-prints a saved run. For the Workflows scenarios, `--cpu-profile` and
+`--trace` record the first run of each gesture and print where its time went (scripts by chunk,
+or rendering phases per thread), and `--experiments=<json>` takes a list of
+`{ "name", "css" }` and prints the per-frame cost of each stylesheet against the same canvas. Keep the window unoccluded for the duration: a hidden
 Chromium page stops `requestAnimationFrame` and throttles timers to once a second. Build again
 after any `npm start` or `/preview` of the same checkout: `scripts/dev.js` writes its dev main
 bundle to the same `.vite/build/index.js`, and the rig refuses to run against it.
