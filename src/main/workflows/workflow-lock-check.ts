@@ -47,7 +47,14 @@ export function checkWorkflowMove(
   const toLane = swimlanes.find((lane) => lane.id === args.toSwimlaneId) ?? null;
   const fromLane = swimlanes.find((lane) => lane.id === task.swimlane_id) ?? null;
   const byHand = args.origin === 'renderer' || args.origin === 'mobile';
-  const humanGateTargetId = byHand && workflowState === 'running' && fromLane && isHumanGate(context, args.projectId, task, fromLane)
+  // A gate is a column of the route a started task sits in. To Do runs no
+  // agent either, but it is the queue: only the engine starts a task from it,
+  // once its blockers are done, so a hand never drags one out. The board's
+  // lock reads the same rule (`humanGateExit` in workflow-view-service.ts asks
+  // only for a started task).
+  const humanGateTargetId = byHand && workflowState === 'running' && fromLane
+    && fromLane.role !== 'todo' && fromLane.role !== 'done'
+    && isHumanGate(context, args.projectId, task, fromLane)
     ? nextOnRoute(swimlanes, task, fromLane.id)?.id ?? null
     : null;
   return workflowMoveRefusal({

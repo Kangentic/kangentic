@@ -35,6 +35,7 @@ const { SwimlaneRepository } = await import('../../src/main/db/repositories/swim
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 const view = await import('../../src/main/workflows/workflow-view-service');
+const lock = await import('../../src/main/workflows/workflow-lock-check');
 const { setWorkflowChangedWindow } = await import('../../src/main/workflows/workflow-changed');
 const { IPC } = await import('../../src/shared/ipc-channels');
 
@@ -216,6 +217,28 @@ describeWithSqlite('the Workflows view operations', () => {
       const [after] = view.listWorkflowSummaries(context, 'home');
       expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review') });
       expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
+    });
+
+    it('lets a hand drag a started task out of a gate, and never a task out of To Do', async () => {
+      const { api, ui, docs } = await started();
+      const tasks = new TaskRepository(homeDb());
+      const byHand = (taskId: string, column: string) => lock.checkWorkflowMove(context, {
+        projectId: 'home',
+        task: tasks.getById(taskId)!,
+        toSwimlaneId: laneId('home', column),
+        origin: 'renderer',
+        moverIsTaskAgent: false,
+      });
+      // To Do runs no agent, but it is the queue, not a gate: a ready task and
+      // a waiting one both stay for the engine, as the board's lock shows them.
+      expect(byHand(docs.id, 'Planning')).toMatch(/is locked while/);
+      expect(byHand(ui.id, 'Planning')).toMatch(/is locked while/);
+
+      // Started, in a column no agent judges (none is chosen here): the drag to
+      // the next column on its route is the report, and only that one.
+      tasks.move({ taskId: api.id, targetSwimlaneId: laneId('home', 'Executing'), targetPosition: 0 }, { origin: 'workflow' });
+      expect(byHand(api.id, 'Code Review')).toBeNull();
+      expect(byHand(api.id, 'Testing')).toMatch(/is locked while/);
     });
 
     it('shows a moved task as current, the columns before it done and the rest ahead', async () => {

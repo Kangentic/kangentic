@@ -28,7 +28,7 @@ vi.mock('../../src/main/git/git-spawn', () => ({
   isGitTimeoutError: mockIsGitTimeoutError,
 }));
 
-import { fetchIfStale, fetchAllRemotesIfStale, clearFetchCache, classifyFetchFailure, nonInteractiveGitEnv } from '../../src/main/git/fetch-throttle';
+import { fetchIfStale, fetchAllRemotesIfStale, clearFetchCache, classifyFetchFailure, nonInteractiveGitEnv, forgetRecentFetches } from '../../src/main/git/fetch-throttle';
 import type { FetchFailureReason, FetchIfStaleOutcome } from '../../src/main/git/fetch-throttle';
 import type { SimpleGit } from 'simple-git';
 
@@ -75,6 +75,23 @@ describe('fetchIfStale', () => {
 
     expect(result).toBe(`origin/${BRANCH}`);
     expect(mockRunGitWithTimeout).not.toHaveBeenCalled();
+  });
+
+  it('fetches again within the window once the project\'s recent fetches are forgotten, and only that project\'s', async () => {
+    const otherProject = '/mock/project-two';
+    mockRunGitWithTimeout.mockResolvedValue({ stdout: '', stderr: '' });
+    await fetchIfStale(stubGit, PROJECT_PATH, BRANCH);
+    await fetchIfStale(stubGit, otherProject, BRANCH);
+    expect(mockRunGitWithTimeout).toHaveBeenCalledTimes(2);
+
+    mockRunGitWithTimeout.mockClear();
+    forgetRecentFetches(PROJECT_PATH);
+    await fetchIfStale(stubGit, PROJECT_PATH, BRANCH);
+    await fetchIfStale(stubGit, otherProject, BRANCH);
+
+    // A workflow start fetched its own project afresh; the other kept its throttle.
+    expect(mockRunGitWithTimeout).toHaveBeenCalledTimes(1);
+    expect(mockRunGitWithTimeout).toHaveBeenCalledWith(PROJECT_PATH, ['fetch', '--no-auto-gc', 'origin', BRANCH], expect.anything());
   });
 
   it('falls back to local branch and logs warning on timeout', async () => {
