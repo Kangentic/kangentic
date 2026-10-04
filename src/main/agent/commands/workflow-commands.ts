@@ -62,6 +62,10 @@ function workflowParam(params: Record<string, unknown>, context: CommandContext)
   return resolveWorkflow(context.projectId, stringParam(params, 'workflow', true));
 }
 
+function agentCount(count: number): string {
+  return `${count} ${count === 1 ? 'agent' : 'agents'}`;
+}
+
 function describeState(workflow: Workflow): string {
   return workflow.state === 'draft' ? 'not started' : workflow.state === 'done' ? 'complete' : workflow.state;
 }
@@ -194,7 +198,7 @@ export const handleStartWorkflow: CommandHandler = async (params, context) => {
     const superseded = result.supersededSource ? ` #${result.supersededSource} moved to Done.` : '';
     return {
       success: true,
-      message: `Started "${result.workflow.title}": ${total} tasks, ${result.linkCount} links. Tasks with nothing to wait for start as agent slots allow.${superseded}`,
+      message: `Started "${result.workflow.title}": ${total} ${total === 1 ? 'task' : 'tasks'}, ${result.linkCount} ${result.linkCount === 1 ? 'link' : 'links'}. Tasks with nothing to wait for start as agent slots allow.${superseded}`,
       data: { id: result.workflow.id },
     };
   } catch (error) {
@@ -206,7 +210,7 @@ export const handlePauseWorkflow: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
     const result = await pauseWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
-    return { success: true, message: `Paused "${result.workflow.title}" (${result.paused} agents paused). Nothing starts or moves until it is resumed.` };
+    return { success: true, message: `Paused "${result.workflow.title}" (${agentCount(result.paused)} paused). Nothing starts or moves until it is resumed.` };
   } catch (error) {
     return fail(error);
   }
@@ -216,7 +220,7 @@ export const handleResumeWorkflow: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
     const result = await resumeWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
-    return { success: true, message: `Resumed "${result.workflow.title}" (${result.resumed} agents resumed).` };
+    return { success: true, message: `Resumed "${result.workflow.title}" (${agentCount(result.resumed)} resumed).` };
   } catch (error) {
     return fail(error);
   }

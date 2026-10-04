@@ -499,6 +499,16 @@ export async function handleTaskMove(
       // design). That second emit is what corrects a committed-then-rolled-back
       // move. Same row, same shape, two emits.
       emitBoardChanged();
+      // Kangentic's own moves (a Move to column row, a workflow step or start)
+      // have no optimistic renderer write behind them, so without this the card
+      // sat in its old column until the move settled: through a Done move's
+      // suspend, reap and worktree removal, while the Workflow Complete toast
+      // had already said it was done. Their push is the quiet board reload
+      // (no toast), so sending it now and again at settle costs one extra
+      // reload, never a second toast.
+      if (announceProjectId && (origin === 'automation' || origin === 'workflow')) {
+        MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, task.title);
+      }
 
       // Commit signal for a caller that answers on the row landing (the mobile
       // bridge verb). Bus first, so the board event is already queued on the

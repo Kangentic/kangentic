@@ -453,7 +453,9 @@ describe('what each origin announces', () => {
     for (const origin of ['automation', 'workflow'] as TaskMoveOrigin[]) {
       vi.clearAllMocks();
       const context = await move(origin);
-      expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_AUTOMATION]);
+      // Twice: at the commit point, so the card moves before a Done move's
+      // cleanup finishes, and again at settle. Both are the quiet reload.
+      expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_AUTOMATION, IPC.TASK_MOVED_BY_AUTOMATION]);
       expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_MOVED_BY_AUTOMATION, 'proj-test');
     }
   });

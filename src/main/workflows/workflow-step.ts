@@ -120,7 +120,7 @@ export async function runWorkflowStep(
     record(true, 'Done, with nowhere left to go on this board.');
     return;
   }
-  record(true, `Done. Moving on to ${next.name}.`);
+  record(true, next.role === 'done' ? 'Step done. The route is finished, so the task moves to Done.' : `Step done. Moving on to ${next.name}.`);
   const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
   await handleTaskMove(
     context,
