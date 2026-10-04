@@ -15,8 +15,8 @@
  * documented in `.claude/rules/mcp-tool-list-parity.md`.
  *
  * The panel renders every entry as a cell in its `category`'s group, in
- * `MCP_TOOL_CATEGORIES` order, so the complete tool catalogue is visible
- * (the dev-leaning diagnostics group sorts last). The array below is ordered
+ * `MCP_TOOL_CATEGORIES` order, so the complete tool catalogue is listed
+ * (the dev-leaning diagnostics group sorts last and starts closed). The array below is ordered
  * to mirror that grouping; `category`, not array position, is what drives the
  * panel grouping.
  *
@@ -41,13 +41,21 @@ export interface McpToolManifestEntry {
   category: McpToolCategoryId;
 }
 
-/** Categories in panel render order. The diagnostics group sorts last. Labels are sentence case, like every settings label. */
-export const MCP_TOOL_CATEGORIES: { id: McpToolCategoryId; label: string }[] = [
+export interface McpToolCategory {
+  id: McpToolCategoryId;
+  /** Sentence case, like every settings label. */
+  label: string;
+  /** The panel shows this group closed on every visit: dev-leaning tools most users never open. */
+  startsClosed?: boolean;
+}
+
+/** Categories in panel render order. The diagnostics group sorts last and starts closed. */
+export const MCP_TOOL_CATEGORIES: McpToolCategory[] = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'board', label: 'Board' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'browser', label: 'Browser automation' },
-  { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'diagnostics', label: 'Diagnostics', startsClosed: true },
 ];
 
 export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
