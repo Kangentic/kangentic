@@ -27,8 +27,8 @@ const conn = vi.hoisted(() => ({
   byCommit: null as unknown,
 }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: () => ({
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => ({
     revparse: async () => 'HEAD',
     raw: async () => '0',
   }),

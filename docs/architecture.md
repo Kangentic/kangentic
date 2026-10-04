@@ -1050,8 +1050,21 @@ src/main/workflows/
   every one was a synchronous git spawn through simple-git, about 25 per task lifecycle (worktree
   creation and removal, the diff reads). Eight ordinary tasks moved by hand made the same 25 per
   task with no stall, because their lifecycles did not overlap: the workflow adds no git work, it
-  runs up to 8 lifecycles at once. Moving simple-git's spawns off main is a change to the git
-  layer, not to workflows.
+  runs up to 8 lifecycles at once. So the fix went into the git layer, not into workflows. The
+  lifecycle's git calls now start in the pty host: `gitAt` (`src/main/git/git-client.ts`) keeps
+  simple-git's method shapes, success rule and error text over `execFileAsync`, and
+  `spawnWithAbort` hands a git binary to `spawnOffMainCli` and keeps its timeout and abort. A
+  suspend fires two churn captures for the same stopped agent (the move's and the exit handler's),
+  and while they overlap they share one read. `tests/unit/git-lifecycle-off-main.test.ts` runs one
+  lifecycle (start, a respawning move, Done, two PR resolves) against a real repository and spies
+  on every spawn: 49 git processes with 45 on main before, 37 with none on main after. The 12
+  saved are the share at its best case, both captures fired together; at a quiet Done the exit
+  handler's read can settle before the Done branch asks, and then both run. The Changes
+  panel's diff and file reads moved too, since they share `DiffService` with the churn capture. Still on
+  main through simple-git, and outside a workflow's lifecycle: the Changes panel's header and its
+  watcher, blame, file history, the commit graph, the worktree list, a task's branch switch and
+  update from base, the Command Terminal's branch calls, and the pending-changes probe of a Done
+  drop.
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.

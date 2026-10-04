@@ -741,7 +741,7 @@ Uses real temp files with mocked `os.homedir()`.
 - Parses `git worktree list --porcelain` output correctly
 - Returns empty array for bare output
 
-Uses vi.mock for `simple-git` and `node:fs`.
+Uses vi.mock for the git client (`src/main/git/git-client.ts`) and `node:fs`.
 
 ### Process reaping (`zombie-reaper.test.ts`, the `task-*` reap tests, `session-reap-real-processes.test.ts`)
 

@@ -1,4 +1,4 @@
-import simpleGit from 'simple-git';
+import { gitAt, type GitClient } from './git-client';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
@@ -104,7 +104,7 @@ const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
  * exactly when their merge-base is A. That reads an oid rather than
  * `--is-ancestor`'s bare exit code, which a git wrapper can report as success.
  */
-async function mergeBaseOf(git: ReturnType<typeof simpleGit>, first: string, second: string): Promise<string | null> {
+async function mergeBaseOf(git: GitClient, first: string, second: string): Promise<string | null> {
   try {
     const oid = (await git.raw(['merge-base', first, second])).trim();
     return oid || null;
@@ -119,7 +119,7 @@ async function mergeBaseOf(git: ReturnType<typeof simpleGit>, first: string, sec
  * Null on a detached HEAD, with reflogs off, or once git has expired the entry
  * (entries for commits a rebase left unreachable expire after 30 days).
  */
-async function branchCreationPoint(git: ReturnType<typeof simpleGit>): Promise<string | null> {
+async function branchCreationPoint(git: GitClient): Promise<string | null> {
   try {
     const branch = (await git.raw(['symbolic-ref', '-q', '--short', 'HEAD'])).trim();
     if (!branch) return null;
@@ -151,7 +151,7 @@ export class DiffService {
    * retried on the next fetch instead of permanently poisoning this commit's
    * diff to "every file added against the empty tree".
    */
-  private async resolveParentRef(git: ReturnType<typeof simpleGit>, commitOid: string): Promise<string> {
+  private async resolveParentRef(git: GitClient, commitOid: string): Promise<string> {
     const cached = this.parentRefCache.get(commitOid);
     if (cached) return cached;
     try {
@@ -183,7 +183,7 @@ export class DiffService {
    * the task started. A rebase or a merge of the base moves the merge-base past
    * the creation point, and the merge-base is then kept, as before.
    */
-  private async getMergeBase(git: ReturnType<typeof simpleGit>, baseBranch: string): Promise<string> {
+  private async getMergeBase(git: GitClient, baseBranch: string): Promise<string> {
     const cached = this.mergeBaseCache.get(baseBranch);
     if (cached) return cached;
 
@@ -221,7 +221,7 @@ export class DiffService {
    *   shows only uncommitted working-tree changes.
    */
   private async resolveScopeDiffArgs(
-    git: ReturnType<typeof simpleGit>,
+    git: GitClient,
     scope: GitDiffScope,
     baseBranch: string,
   ): Promise<{ summaryArgs: string[]; nameStatusArgs: string[]; includeUntracked: boolean }> {
@@ -241,7 +241,7 @@ export class DiffService {
    * so there is no untracked-files concept here.
    */
   private async resolveCommitDiffArgs(
-    git: ReturnType<typeof simpleGit>,
+    git: GitClient,
     commitOid: string,
   ): Promise<{ summaryArgs: string[]; nameStatusArgs: string[]; includeUntracked: boolean }> {
     const parentRef = await this.resolveParentRef(git, commitOid);
@@ -253,7 +253,7 @@ export class DiffService {
   }
 
   async getDiffFiles(input: GitDiffFilesInput): Promise<GitDiffFilesResult> {
-    const git = simpleGit(this.gitDirectory);
+    const git = gitAt(this.gitDirectory);
     const { baseBranch, commitOid } = input;
     const scope = input.scope ?? 'branch';
 
@@ -376,7 +376,7 @@ export class DiffService {
    * getDiffFiles so churn capture (git-stats-capture.ts) and the diff panel
    * share one merge-base implementation instead of two diverging copies.
    */
-  async getChurnSummary(baseBranch: string): Promise<{ linesAdded: number; linesRemoved: number; filesChanged: number }> {
+  async getChurnSummary(baseBranch: string): Promise<ChurnSummary> {
     const result = await this.getDiffFiles({ baseBranch, scope: 'branch', projectPath: this.gitDirectory });
     return {
       linesAdded: result.totalInsertions,
@@ -388,7 +388,7 @@ export class DiffService {
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
     const language = inferLanguage(input.filePath);
     if (!isSafeContentInput(input)) return { original: '', modified: '', language };
-    const git = simpleGit(this.gitDirectory);
+    const git = gitAt(this.gitDirectory);
     const { needsOriginal, needsModified } = sidesForStatus(input.status);
 
     // Fetch original and modified in parallel - independent I/O whose overlap
@@ -415,7 +415,7 @@ export class DiffService {
     if (!isSafeContentInput(input)) {
       return { original: needsOriginal ? { kind: 'unreadable' } : null, modified: needsModified ? { kind: 'unreadable' } : null };
     }
-    const git = simpleGit(this.gitDirectory);
+    const git = gitAt(this.gitDirectory);
     const known = input.knownFingerprints;
 
     const [original, modified] = await Promise.all([
@@ -437,7 +437,7 @@ export class DiffService {
    *   staged  -> HEAD    (vs the index blob)
    *   branch  -> base    (vs working tree on disk)
    */
-  private async resolveOriginalSource(git: ReturnType<typeof simpleGit>, input: GitFileContentInput): Promise<FileSideSource> {
+  private async resolveOriginalSource(git: GitClient, input: GitFileContentInput): Promise<FileSideSource> {
     const scope = input.scope ?? 'branch';
     const showPath = input.oldPath ?? input.filePath;
     let revision: string;
@@ -505,7 +505,7 @@ function resolveModifiedSource(input: GitFileContentInput): FileSideSource {
 type SideSourceResolver = () => FileSideSource | Promise<FileSideSource>;
 
 /** Any failure (missing object, missing file, unresolvable merge base) reads as empty text. */
-async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: SideSourceResolver): Promise<string> {
+async function readSideAsText(git: GitClient, resolveSource: SideSourceResolver): Promise<string> {
   try {
     const source = await resolveSource();
     if (source.kind === 'revision') return await git.show([source.spec]);
@@ -594,4 +594,11 @@ const MISSING_PATH_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR', 'E
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && typeof error.code === 'string' && MISSING_PATH_CODES.has(error.code);
+}
+
+/** Branch churn against its base, as `getChurnSummary` counts it. */
+export interface ChurnSummary {
+  linesAdded: number;
+  linesRemoved: number;
+  filesChanged: number;
 }

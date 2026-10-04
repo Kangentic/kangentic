@@ -9,8 +9,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockProjectGit = { raw: vi.fn() };
 const mockWorktreeGit = { raw: vi.fn() };
 
-vi.mock('simple-git', () => ({
-  default: vi.fn((cwd: string) =>
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn((cwd: string) =>
     // path.join uses backslashes on Windows, forward slashes elsewhere
     cwd.includes('.kangentic\\worktrees') || cwd.includes('.kangentic/worktrees')
       ? mockWorktreeGit

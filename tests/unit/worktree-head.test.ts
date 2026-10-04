@@ -2,7 +2,7 @@
  * Unit tests for readWorktreeHead - the helper that reads the live HEAD
  * branch and tip SHA from a worktree without a real git repository.
  *
- * The function wraps two `simpleGit(path).revparse()` calls:
+ * The function wraps two `gitAt(path).revparse()` calls:
  *   1. `--abbrev-ref HEAD` -> the symbolic branch name, or the literal string
  *      "HEAD" when the repo is in a detached-HEAD state.
  *   2. `HEAD` -> the full commit SHA.
@@ -22,13 +22,13 @@ const mockGit = {
   raw: vi.fn<(args: string[]) => Promise<string>>(),
 };
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => mockGit),
 }));
 
 import { readWorktreeHead, readWorktreeHeadUnqueued, hasCommitsAheadOfBase, isShaContainedInRef, readRefsPointingAtSha, readLocalBranchSha } from '../../src/main/git/worktree-head';
 import { viaGitRead } from '../../src/main/git/git-read-queue';
-import { simpleGit } from 'simple-git';
+import { gitAt } from '../../src/main/git/git-client';
 
 describe('readWorktreeHead', () => {
   beforeEach(() => {
@@ -76,7 +76,7 @@ describe('readWorktreeHead', () => {
   });
 
   it('returns { branch: null, sha: null } when git throws', async () => {
-    // If the worktree directory is gone or not a git repo, simpleGit throws.
+    // If the worktree directory is gone or not a git repo, gitAt throws.
     // The catch block returns the all-null safe default.
     mockGit.revparse.mockRejectedValue(new Error('not a git repository'));
 
@@ -86,15 +86,15 @@ describe('readWorktreeHead', () => {
     expect(result.sha).toBeNull();
   });
 
-  it('invokes simpleGit with the caller-supplied path', async () => {
-    const { simpleGit } = await import('simple-git');
+  it('invokes gitAt with the caller-supplied path', async () => {
+    const { gitAt } = await import('../../src/main/git/git-client');
     mockGit.revparse
       .mockResolvedValueOnce('main\n')
       .mockResolvedValueOnce('cafebabe00000000000000000000000000000000\n');
 
     await readWorktreeHead('/mock/specific-path');
 
-    expect(simpleGit).toHaveBeenCalledWith('/mock/specific-path');
+    expect(gitAt).toHaveBeenCalledWith('/mock/specific-path');
   });
 
   it('calls revparse with --abbrev-ref HEAD and HEAD in order', async () => {
@@ -266,22 +266,22 @@ describe('isShaContainedInRef', () => {
     expect(mockGit.raw).not.toHaveBeenCalled();
   });
 
-  it('resolves null (never rejects) when the simpleGit factory itself throws', async () => {
-    // simpleGit(baseDir) throws GitConstructError synchronously when baseDir
+  it('resolves null (never rejects) when the gitAt factory itself throws', async () => {
+    // gitAt(baseDir) throws synchronously when baseDir
     // does not exist (a relocated project, a reclaimed worktree). Red-green:
-    // fails if the outer try/catch wrapping `simpleGit(repoCwd)` is ever
+    // fails if the outer try/catch wrapping `gitAt(repoCwd)` is ever
     // removed, since the rejection would then escape the queued job and reach
     // dropCandidatesSharingBaseHistory -> resolveByCommit -> viaGh untranslated,
     // landing in pr-linking.ts's generic catch-all, which clears the task's
     // existing PR link.
-    const { simpleGit } = await import('simple-git');
-    vi.mocked(simpleGit).mockImplementationOnce(() => {
+    const { gitAt } = await import('../../src/main/git/git-client');
+    vi.mocked(gitAt).mockImplementationOnce(() => {
       throw new Error('fatal: cwd does not exist');
     });
 
     await expect(isShaContainedInRef('/mock/missing-repo', 'develop', 'abc123')).resolves.toBeNull();
 
-    expect(simpleGit).toHaveBeenCalledTimes(1);
+    expect(gitAt).toHaveBeenCalledTimes(1);
     expect(mockGit.raw).not.toHaveBeenCalled();
   });
 });
@@ -536,7 +536,7 @@ describe('readRefsPointingAtSha', () => {
   });
 
   it('ignores a line that is not a refs/ path, and a bare remote with no branch', async () => {
-    // Load-bearing, not defensive: several unit suites mock simple-git's `raw`
+    // Load-bearing, not defensive: several unit suites mock the git client's `raw`
     // with a single catch-all string, so a lenient parser would read "0" as a
     // branch name and spend a provider round trip on it.
     mockGit.raw.mockResolvedValue(output('0', 'not-a-ref', 'refs/tags/v1', 'refs/remotes/origin'));
@@ -554,12 +554,12 @@ describe('readRefsPointingAtSha', () => {
     expect(result).toEqual({ remoteBranches: [], pointsAtBaseTip: false });
   });
 
-  it('resolves rather than rejects when the simpleGit factory itself throws', async () => {
-    // simpleGit(baseDir) throws synchronously when baseDir does not exist (a
+  it('resolves rather than rejects when the gitAt factory itself throws', async () => {
+    // gitAt(baseDir) throws synchronously when baseDir does not exist (a
     // relocated project, a reclaimed worktree). Red-green: a rejection escaping
     // here reaches pr-linking.ts as a non-PRResolver error, which suppresses its
     // confident-not-found clear. Same contract as isShaContainedInRef.
-    vi.mocked(simpleGit).mockImplementationOnce(() => { throw new Error('fatal: cwd does not exist'); });
+    vi.mocked(gitAt).mockImplementationOnce(() => { throw new Error('fatal: cwd does not exist'); });
 
     await expect(readRefsPointingAtSha('/mock/missing', SHA, 'develop'))
       .resolves.toEqual({ remoteBranches: [], pointsAtBaseTip: false });
@@ -637,12 +637,12 @@ describe('readLocalBranchSha', () => {
     expect(mockGit.revparse).toHaveBeenCalledWith(['--verify', '--quiet', 'refs/heads/feature/my-branch']);
   });
 
-  it('invokes simpleGit with the caller-supplied repo path (the main repo, not a worktree)', async () => {
+  it('invokes gitAt with the caller-supplied repo path (the main repo, not a worktree)', async () => {
     mockGit.revparse.mockResolvedValueOnce('cafebabe00000000000000000000000000000000\n');
 
     await readLocalBranchSha('/mock/main-repo', 'main');
 
-    expect(simpleGit).toHaveBeenCalledWith('/mock/main-repo');
+    expect(gitAt).toHaveBeenCalledWith('/mock/main-repo');
   });
 
   it('returns null when the branch does not exist (git exits non-zero; --quiet only suppresses the message)', async () => {
@@ -654,13 +654,13 @@ describe('readLocalBranchSha', () => {
   });
 
   it('returns null WITHOUT reaching git for an unsafe branch name (leading dash)', async () => {
-    // isSafeBranchName refuses this before viaGitRead/simpleGit is ever
+    // isSafeBranchName refuses this before viaGitRead/gitAt is ever
     // touched - a leading dash would otherwise let `--verify` parse the
     // "branch name" as a further option.
     const result = await readLocalBranchSha('/mock/repo', '--output=pwned');
 
     expect(result).toBeNull();
-    expect(simpleGit).not.toHaveBeenCalled();
+    expect(gitAt).not.toHaveBeenCalled();
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
 
@@ -668,7 +668,7 @@ describe('readLocalBranchSha', () => {
     const result = await readLocalBranchSha('/mock/repo', 'feature/../etc');
 
     expect(result).toBeNull();
-    expect(simpleGit).not.toHaveBeenCalled();
+    expect(gitAt).not.toHaveBeenCalled();
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
 
@@ -679,7 +679,7 @@ describe('readLocalBranchSha', () => {
     const result = await readLocalBranchSha('/mock/repo', 'feature; rm -rf');
 
     expect(result).toBeNull();
-    expect(simpleGit).not.toHaveBeenCalled();
+    expect(gitAt).not.toHaveBeenCalled();
     expect(mockGit.revparse).not.toHaveBeenCalled();
   });
 
@@ -691,8 +691,8 @@ describe('readLocalBranchSha', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null (never rejects) when the simpleGit factory itself throws (missing directory)', async () => {
-    vi.mocked(simpleGit).mockImplementationOnce(() => {
+  it('returns null (never rejects) when the gitAt factory itself throws (missing directory)', async () => {
+    vi.mocked(gitAt).mockImplementationOnce(() => {
       throw new Error('fatal: cwd does not exist');
     });
 

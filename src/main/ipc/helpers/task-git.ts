@@ -1,5 +1,5 @@
 import path from 'node:path';
-import simpleGit from 'simple-git';
+import { gitAt } from '../../git/git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { WorktreeManager, GitQueuePriority, type GitWaitProgress } from '../../git/worktree-manager';
@@ -485,7 +485,7 @@ async function surfaceWorktreeBaseDrift(
       // baseline now that the probe is actually running (see spawn-progress).
       touchSpawnStaleProbe(task.id);
       const baseBranch = resolveEffectiveBaseBranch(context, task, projectPath);
-      await fetchIfStale(simpleGit(projectPath), projectPath, baseBranch, {
+      await fetchIfStale(gitAt(projectPath), projectPath, baseBranch, {
         signal,
         onOutcome: makeBaseFetchOutcomeHandler(context, task, baseBranch, projectId, probeGeneration),
       });
@@ -567,7 +567,7 @@ export async function ensureTaskBranchCheckout(
       // withTaskLock (per-task, deliberately parallel across tasks) and
       // projectQueues would be a deadlock surface.
       assertNoOtherAgentInDirectory(context, task.id, projectPath);
-      const git = simpleGit(projectPath);
+      const git = gitAt(projectPath);
 
       // Emit 'fetching' once the job actually starts (after any queue wait) so
       // the card flips from the "Waiting..." label to "Fetching latest...".
@@ -656,7 +656,7 @@ export async function ensureTaskBranchCheckout(
   const worktreeManager = new WorktreeManager(projectPath);
   await worktreeManager.withLock(async () => {
     assertNoOtherAgentInDirectory(context, task.id, projectPath);
-    const git = simpleGit(projectPath);
+    const git = gitAt(projectPath);
     // Emit 'fetching' once the job actually starts (after any queue wait) so
     // the card flips from the "Waiting..." label to "Fetching latest...".
     options?.onProgress?.('fetching');

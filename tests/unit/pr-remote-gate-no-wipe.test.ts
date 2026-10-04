@@ -33,8 +33,8 @@ vi.mock('which', () => ({
 }));
 
 // Tier 3's commits-ahead-of-base probe; '1' keeps the tier open.
-vi.mock('simple-git', () => ({
-  simpleGit: () => ({
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => ({
     revparse: async () => 'sha-current',
     raw: async () => '1',
   }),

@@ -4,8 +4,8 @@ import { MINIMUM_GIT_VERSION, MINIMUM_GIT_VERSION_DISPLAY } from '../../src/shar
 
 const { mockRaw } = vi.hoisted(() => ({ mockRaw: vi.fn() }));
 
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => ({ raw: mockRaw })),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => ({ raw: mockRaw })),
 }));
 
 describe('isVersionAtLeast', () => {

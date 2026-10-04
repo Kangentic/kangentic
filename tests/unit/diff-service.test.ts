@@ -14,8 +14,8 @@ const mockGit = {
   status: vi.fn(),
 };
 
-vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => mockGit),
 }));
 
 vi.mock('node:fs', () => ({

@@ -1,5 +1,5 @@
 import { execFileAsync } from '../utility-process/off-main-exec';
-import simpleGit from 'simple-git';
+import { gitAt } from './git-client';
 import { hasCommits } from './git-checks';
 import { fetchIfStale } from './fetch-throttle';
 
@@ -124,7 +124,7 @@ export async function resolveWorktreeBase(
   // origin and was never fetched works today (createWorktree fetches before
   // using the ref), so skipping this would regress repos that currently
   // succeed.
-  const git = simpleGit(projectPath);
+  const git = gitAt(projectPath);
   for (const candidate of candidates) {
     // Each candidate fetch is capped at fetchIfStale's own timeout, so an unreachable
     // remote could otherwise hold a cancelled task move for the full chain. Forwarding

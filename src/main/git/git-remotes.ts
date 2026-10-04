@@ -1,4 +1,4 @@
-import { simpleGit } from 'simple-git';
+import { gitAt } from './git-client';
 import path from 'node:path';
 import { viaGitRead } from './git-read-queue';
 
@@ -113,9 +113,9 @@ export async function readRemoteUrls(repoCwd: string): Promise<readonly string[]
 
   const read = viaGitRead(async (): Promise<readonly string[] | null> => {
     try {
-      // simpleGit() itself throws synchronously when the directory is missing,
+      // gitAt() itself throws synchronously when the directory is missing,
       // so the constructor has to be inside the try, not above it.
-      const git = simpleGit(key);
+      const git = gitAt(key);
       return parseRemoteOutput(await git.raw(['remote', '-v']));
     } catch {
       return null;

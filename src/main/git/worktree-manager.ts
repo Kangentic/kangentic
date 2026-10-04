@@ -1,4 +1,3 @@
-import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,6 +18,7 @@ import {
   type WorktreeRemovalTimeoutError,
 } from './rm-with-retry';
 import { runGitWithTimeout as runGitWithTimeoutShared } from './git-spawn';
+import { gitAt, type GitClient } from './git-client';
 import { runInitScript, INIT_SCRIPT_TIMEOUT_MS } from './run-init-script';
 import {
   reapProcessesForWorktree,
@@ -58,7 +58,7 @@ const MAX_CHECKOUT_WORKERS = 8;
  * fallback. Readers keep calling plain `git config kangentic.baseBranch`: a
  * worktree's own value wins, and one created before this reads the shared one.
  */
-export async function writeWorktreeBaseBranch(worktreeGit: SimpleGit, baseBranch: string): Promise<void> {
+export async function writeWorktreeBaseBranch(worktreeGit: Pick<GitClient, 'raw'>, baseBranch: string): Promise<void> {
   try {
     await worktreeGit.raw(['config', '--worktree', 'kangentic.baseBranch', baseBranch]);
   } catch {
@@ -75,7 +75,7 @@ export async function writeWorktreeBaseBranch(worktreeGit: SimpleGit, baseBranch
  * before 2.32 ignores the key. Empty when the user set checkout.workers
  * themselves, so their value applies exactly as it did before.
  */
-async function parallelCheckoutConfig(git: SimpleGit): Promise<string[]> {
+async function parallelCheckoutConfig(git: Pick<GitClient, 'raw'>): Promise<string[]> {
   try {
     if ((await git.raw(['config', '--get', 'checkout.workers'])).trim()) return [];
   } catch {
@@ -549,10 +549,11 @@ interface GitLockOptions {
 // ---------------------------------------------------------------------------
 
 export class WorktreeManager {
-  private git: SimpleGit;
+  private git: GitClient;
 
-  constructor(private projectPath: string, git?: SimpleGit) {
-    this.git = git ?? simpleGit(projectPath);
+  /** `git` is for tests; the default runs each git command in the pty host (`git-client.ts`). */
+  constructor(private projectPath: string, git?: GitClient) {
+    this.git = git ?? gitAt(projectPath);
   }
 
   /**
@@ -1024,7 +1025,7 @@ export class WorktreeManager {
     // swallowing sparse-checkout init and leaving `.claude/commands/`
     // materialized. Serial execution costs a handful of milliseconds and
     // eliminates the race.
-    const wtGit = simpleGit(worktreePath);
+    const wtGit = gitAt(worktreePath);
 
     // Persist long paths for later git commands in every worktree (Windows only).
     if (process.platform === 'win32') {

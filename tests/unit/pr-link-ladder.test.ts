@@ -8,7 +8,7 @@ import type { Task } from '../../src/shared/types';
  * throttle (force bypasses), and transient-error surfacing that preserves an
  * existing link.
  *
- * The connectors, simple-git, and project-repos are mocked so the core logic is
+ * The connectors, the git client, and project-repos are mocked so the core logic is
  * tested in isolation (no gh CLI, no native DB).
  *
  * Every task is built by one of the builders below, each of which produces a
@@ -60,8 +60,8 @@ const conn = vi.hoisted(() => ({
   selfVerifiesCommits: true,
 }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: () => ({
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: () => ({
     revparse: async (args: string[]) => {
       git.revparseCalls += 1;
       return args.includes('--abbrev-ref') ? (git.branch ?? 'HEAD') : git.sha;

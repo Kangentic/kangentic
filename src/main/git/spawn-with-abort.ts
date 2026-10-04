@@ -1,6 +1,7 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 import { killChildTreeByPid } from '../shared/child-tree-stop';
+import { spawnOffMainCli, toHostEnvironment, type CliChildProcess } from '../utility-process/off-main-cli';
 
 /**
  * Per-stream cap on captured stdout/stderr. A verbose child (e.g. an
@@ -58,6 +59,15 @@ export interface SpawnWithAbortTarget {
  * place means a fix to the abort-vs-close ordering or the ABORT_ERR guard lands
  * once, not twice. Each caller keeps its own error wording via `label` and
  * `signalKillAssertsTimeout`.
+ *
+ * A binary (git) starts in the pty host when one is registered
+ * (`spawnOffMainCli`), because on Windows the spawn is CreateProcess on the
+ * calling thread, 15 to 30 ms each. The lifecycle around it stays here: the
+ * timeout and the external signal stop the host's run (`stopTree`) and settle
+ * with the same "aborted (...)" wording the local spawn's abort produces, which
+ * `isGitTimeoutError` and `classifyFetchFailure` read. A shell command (the
+ * init script) always runs here: it can start anything, and on macOS it goes
+ * through the spawn-helper.
  */
 export function spawnWithAbort(
   target: SpawnWithAbortTarget,
@@ -107,6 +117,75 @@ export function spawnWithAbort(
       reject(error);
     };
 
+    const abortedError = (): Error => {
+      const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
+      return new Error(`${label} aborted (${reason}) (child process killed)`);
+    };
+
+    let stdout = '';
+    let stderr = '';
+    const onStdout = (chunk: Buffer): void => {
+      if (stdout.length < MAX_CAPTURED_OUTPUT_CHARS) stdout += chunk.toString('utf8');
+    };
+    const onStderr = (chunk: Buffer): void => {
+      if (stderr.length < MAX_CAPTURED_OUTPUT_CHARS) stderr += chunk.toString('utf8');
+    };
+    const onError = (error: NodeJS.ErrnoException): void => {
+      if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
+        settleReject(abortedError());
+        return;
+      }
+      settleReject(error);
+    };
+    const onClose = (code: number | null, signalName: NodeJS.Signals | null): void => {
+      if (signalName) {
+        // `error` and `close` race on an aborted child (first settle wins).
+        // When `close` wins for an EXTERNAL abort, use the same wording the
+        // `error` path produces: asserting the timeout here would classify a
+        // deliberate cancellation (a superseding move's AbortController) as a
+        // 'timeout' failure downstream (classifyFetchFailure), turning a
+        // clean cancel into a spurious staleness toast.
+        if (externalSignal?.aborted) {
+          settleReject(new Error(`${label} aborted (external abort) (child process killed)`));
+          return;
+        }
+        const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
+        settleReject(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`));
+        return;
+      }
+      if (code !== 0) {
+        settleReject(new Error(`${label} exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
+        return;
+      }
+      settleResolve({ stdout, stderr });
+    };
+
+    // A binary starts in the pty host when one is registered. The host's stop
+    // ends the child's tree with no exit signal to report on Windows, so an
+    // abort settles here at once, with the wording a local abort gives.
+    const remoteChild: CliChildProcess | null = args === undefined
+      ? null
+      : spawnOffMainCli(command, [...args], {
+        cwd,
+        shell: false,
+        env: toHostEnvironment(env ?? process.env),
+        detached: false,
+      });
+    if (remoteChild) {
+      controller.signal.addEventListener('abort', () => {
+        if (remoteChild.stopTree) remoteChild.stopTree();
+        else remoteChild.kill();
+        settleReject(abortedError());
+      }, { once: true });
+      remoteChild.stdout.on('data', onStdout);
+      remoteChild.stderr.on('data', onStderr);
+      remoteChild.on('error', onError);
+      remoteChild.on('close', onClose);
+      // The local spawn's stdin is 'ignore'; an ended pipe reads the same.
+      remoteChild.stdin.end();
+      return;
+    }
+
     // A command string is the post-worktree init script, which can start
     // anything, so on macOS it runs through the spawn-helper and keeps nothing
     // it starts on Crashpad's exception port (see shell-launch.ts). A binary
@@ -143,50 +222,13 @@ export function spawnWithAbort(
       // the children through their parent, which a dead shell no longer is.
       controller.signal.addEventListener('abort', () => {
         if (child.pid !== undefined) killChildTreeByPid(child.pid);
-        const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
-        settleReject(new Error(`${label} aborted (${reason}) (child process killed)`));
+        settleReject(abortedError());
       }, { once: true });
     }
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      if (stdout.length < MAX_CAPTURED_OUTPUT_CHARS) stdout += chunk.toString('utf8');
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < MAX_CAPTURED_OUTPUT_CHARS) stderr += chunk.toString('utf8');
-    });
-
-    child.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
-        const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
-        settleReject(new Error(`${label} aborted (${reason}) (child process killed)`));
-        return;
-      }
-      settleReject(error);
-    });
-
-    child.on('close', (code, signalName) => {
-      if (signalName) {
-        // `error` and `close` race on an aborted child (first settle wins).
-        // When `close` wins for an EXTERNAL abort, use the same wording the
-        // `error` path produces: asserting the timeout here would classify a
-        // deliberate cancellation (a superseding move's AbortController) as a
-        // 'timeout' failure downstream (classifyFetchFailure), turning a
-        // clean cancel into a spurious staleness toast.
-        if (externalSignal?.aborted) {
-          settleReject(new Error(`${label} aborted (external abort) (child process killed)`));
-          return;
-        }
-        const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
-        settleReject(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`));
-        return;
-      }
-      if (code !== 0) {
-        settleReject(new Error(`${label} exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
-        return;
-      }
-      settleResolve({ stdout, stderr });
-    });
+    child.stdout?.on('data', onStdout);
+    child.stderr?.on('data', onStderr);
+    child.on('error', onError);
+    child.on('close', onClose);
   });
 }
