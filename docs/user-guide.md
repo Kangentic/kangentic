@@ -1110,7 +1110,8 @@ The **Index** card below it lists what the index searches, one line per source:
 that cannot be turned off, each with its count and a check once caught up. **Task summaries** and
 **Source code** have their own switches and are on by default. A running source keeps its line and
 shows the share done and the time left over a progress track ("22%, 3 min left"). Switched off, a
-line shows what switching it on would cover ("674 tasks", "1,488 files"). The figures are every
+line shows what switching it on would cover ("674 tasks", "1,488 files"), or for Task summaries
+the count with a check once every Done task already has one. The figures are every
 indexed project's (each project with a conversation in the index), the same projects the Knowledge
 Graph's All projects map draws, so the two read the same. Source code switched off is the exception:
 its estimate is the open project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
@@ -1136,7 +1137,8 @@ it is retried. When a call fails and no other call of the pass came back answere
 summaries wait until then, since the agent is the same for all of them. One call failing beside
 another that answered holds back only its own project. Switching summaries off stops new calls and keeps the
 summaries already written, so they go on helping search. A new model applies to new and changed
-tasks, and the line loses its check until **Rebuild** rewrites the rest; Rebuild asks first when it
+tasks, and the line loses its check until **Rebuild** rewrites the rest, showing the share
+rewritten over a track while those rewrites are being written; Rebuild asks first when it
 will rewrite summaries, and says how many and about how many calls. Measured on this project's own
 tasks, a mid-size model at low effort (Sonnet) wrote as well as a larger one and higher effort
 changed nothing; the larger models (Opus, Fable) add a little detail at two to seven times the
@@ -1161,7 +1163,8 @@ something (the Knowledge Graph, an agent, a model). The sources are **Conversati
 draws), **Tasks** (each task's and backlog item's own text), **Commits** (the commits on the
 project's default branch, each tied to the task whose conversation wrote it), **Task summaries**
 (how many Done tasks have one, a track only while a pass is writing them) and **Source code** (the
-default branch's files). A source with nothing in it yet says **Not yet indexed**. Session changes
+default branch's files). A source with nothing in it yet says **Not yet indexed**, and Task summaries with no Done
+task says **No Done tasks yet**. Session changes
 are kept as text for the task summaries and never searched, so they have no line. On All projects
 the panel reads the same figures as the Settings card. With the Knowledge Graph switched off it
 reads as off here too, even while the map it already drew is still shown: counts without a share,
