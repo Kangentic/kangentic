@@ -287,6 +287,7 @@ export class MobileBridgeService extends EventEmitter {
     this.pushNotifier = new PushNotifier({
       sessionManager: context.sessionManager,
       registrationStore: this.pushRegistrations,
+      isBridgeEnabled: () => this.config.enabled,
       // Presence = a bridge session reporting 'connected' for that device;
       // the user is already watching from it, so it is never pinged.
       // Deliberately not isEstablished - see collectConnectedDeviceIds's
@@ -387,7 +388,7 @@ export class MobileBridgeService extends EventEmitter {
     this.emitStateChanged();
   }
 
-  /** Push a workflow's completion to the paired phones (a no-op while the bridge is off). */
+  /** Push a workflow's completion to the paired phones. The notifier sends nothing while the bridge is off. */
   notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
     this.pushNotifier?.notifyWorkflowComplete(input);
   }

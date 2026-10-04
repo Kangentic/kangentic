@@ -264,6 +264,23 @@ plain run's variance. The taller cards' activation cost described in the M4 bull
 `releaseToSettle` reads 8,030ms for the workflow card because the lock refuses the drop and the
 card never lands in Executing, so the settle wait runs to its 8-second timeout.
 
+### The final tree (2026-10-04, #732 production-readiness pass)
+
+`W30` and `W100`, 5 runs each, on the production build of the branch as it stands after the
+journey fixes, medians:
+
+- At 30 cards every canvas scenario (idle, card drag, pan, link drag) is flat: an 8.1ms p95, no
+  missed refresh, no frame over 8.6ms. The board drag of a workflow card misses 1 refresh with a
+  52ms overlay latency, against 48ms for the same cards with no workflow.
+- At 100 cards idle, card drag and pan are flat, and the link drag misses none (2 in its worst
+  run). The board drag of a workflow card reads 97ms overlay latency and a 53.4ms drag-start
+  frame, against 79ms and 39.4ms for the plain board. That is below M5's 111ms and 62.5ms, and
+  the gap is the taller cards' activation cost described in the M4 bullet.
+- The start burst is new to this audit: the 4 seconds after Start, once the first sessions run,
+  while the rest of the free slots spawn. At 30 cards it is flat. At 100 cards it missed 10
+  refreshes with one 46.6ms frame and 62ms of stall over 16ms in all. It happens once per Start,
+  and nothing in it is a gesture.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in

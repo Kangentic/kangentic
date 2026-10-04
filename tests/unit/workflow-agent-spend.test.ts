@@ -1,0 +1,396 @@
+/**
+ * A workflow's own agent on real, migrated SQLite (#732): where its spend goes,
+ * and what a start records about its conversation.
+ *
+ * Spend. The agent has no `sessions` row, so its cost reaches Stats only through
+ * a `usage_history` row written under its PTY session id. A stop clears the
+ * session manager's live usage, so every stop that Kangentic makes (Pause, a
+ * restart for new checkouts, the end of the workflow) has to write that row
+ * first, and a stop the CLI makes (its exit) writes it from the exit listener.
+ * The fake session manager clears the live usage on suspend, kill and remove as
+ * the real one does, which is what makes "before" observable: a capture that ran
+ * after the stop finds nothing to write and leaves no row.
+ *
+ * Start. Every start records the conversation on the workflow row, resumes
+ * included, so a row from before `agent_cwd` existed gains its checkout the next
+ * time it is resumed, and keeps the conversation id it resumes by.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type Database from 'better-sqlite3';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+
+const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), adapter: null as unknown }));
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: (projectId: string) => {
+    const db = harness.dbs.get(projectId);
+    if (!db) throw new Error(`No database for ${projectId}`);
+    return db;
+  },
+}));
+vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+// The agent CLI itself is out of reach of a unit test: the registry hands back a
+// fake adapter that is found, launches read-only, and builds a fixed command.
+vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter } }));
+vi.mock('../../src/main/agent/shared/shim-launch', () => ({
+  resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
+}));
+vi.mock('../../src/main/workflows/workflow-agent-prompt', () => ({ buildWorkflowAgentFirstMessage: () => 'FIRST MESSAGE' }));
+
+const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
+const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const agent = await import('../../src/main/workflows/workflow-agent');
+
+import { adaptDatabase } from './helpers/node-sqlite-database';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+
+interface FakeSession {
+  id: string;
+  taskId: string;
+  projectId: string;
+  pid: number;
+  status: string;
+  shell: string;
+  cwd: string;
+  startedAt: string;
+  exitCode: number | null;
+  resuming: boolean;
+  transient: boolean;
+  workflowId?: string;
+  agentSessionId: string | null;
+}
+
+interface FakeUsage {
+  cost: { totalCostUsd: number; totalDurationMs: number };
+  contextWindow: { totalInputTokens: number; totalOutputTokens: number };
+  model: { id: string; displayName: string; effort: string | null };
+}
+
+interface LedgerRow {
+  session_record_id: string;
+  conversation_id: string | null;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  agent: string | null;
+  session_type: string | null;
+}
+
+interface SpawnOptions {
+  taskId: string;
+  projectId: string;
+  cwd: string;
+  resuming: boolean;
+  transient: boolean;
+  workflowId: string;
+  agentSessionId: string;
+}
+
+const LIVE_USAGE: FakeUsage = {
+  cost: { totalCostUsd: 1.5, totalDurationMs: 90_000 },
+  contextWindow: { totalInputTokens: 1_000, totalOutputTokens: 200 },
+  model: { id: 'model-a', displayName: 'Model A', effort: null },
+};
+
+/** The slice of SessionManager the workflow agent drives, with the real manager's habit of dropping live usage on a stop. */
+class FakeSessionManager extends EventEmitter {
+  sessions: FakeSession[] = [];
+  usageCache: Record<string, FakeUsage> = {};
+  activity: Record<string, string> = {};
+  private spawnCount = 0;
+
+  suspend = vi.fn(async (sessionId: string) => {
+    this.stop(sessionId, 'suspended');
+  });
+  kill = vi.fn((sessionId: string) => {
+    this.stop(sessionId, 'exited');
+  });
+  awaitExit = vi.fn(async (_sessionId: string) => undefined);
+  remove = vi.fn((sessionId: string) => {
+    this.sessions = this.sessions.filter((session) => session.id !== sessionId);
+    delete this.usageCache[sessionId];
+  });
+  getShell = vi.fn(async () => 'bash');
+  spawn = vi.fn(async (options: SpawnOptions) => {
+    this.spawnCount += 1;
+    const session: FakeSession = {
+      id: `pty-spawned-${this.spawnCount}`,
+      taskId: options.taskId,
+      projectId: options.projectId,
+      pid: 5000 + this.spawnCount,
+      status: 'running',
+      shell: 'bash',
+      cwd: options.cwd,
+      startedAt: '2026-09-02T10:00:00.000Z',
+      exitCode: null,
+      resuming: options.resuming,
+      transient: options.transient,
+      workflowId: options.workflowId,
+      agentSessionId: options.agentSessionId,
+    };
+    this.sessions.push(session);
+    return session;
+  });
+
+  listSessions(): FakeSession[] {
+    return this.sessions;
+  }
+  getSession(sessionId: string): FakeSession | undefined {
+    return this.sessions.find((session) => session.id === sessionId);
+  }
+  getUsageCache(): Record<string, FakeUsage> {
+    return this.usageCache;
+  }
+  getActivityCache(): Record<string, string> {
+    return this.activity;
+  }
+  getSessionAgentName(): string {
+    return 'claude';
+  }
+  getToolCallCount(): number {
+    return 4;
+  }
+  getCompactionCount(): number {
+    return 1;
+  }
+  getRawScrollback = vi.fn(async (_sessionId: string) => '');
+
+  private stop(sessionId: string, status: string): void {
+    delete this.usageCache[sessionId];
+    const session = this.getSession(sessionId);
+    if (session) session.status = status;
+  }
+}
+
+describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
+  let root: string;
+  let paths: Record<string, string>;
+  let manager: FakeSessionManager;
+  let context: IpcContext;
+  let workflowId: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-workflow-spend-'));
+    paths = { home: path.join(root, 'home'), mobile: path.join(root, 'mobile') };
+    for (const checkout of Object.values(paths)) fs.mkdirSync(checkout);
+    harness.dbs.clear();
+    for (const projectId of ['home', 'mobile']) {
+      const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+      db.exec('PRAGMA foreign_keys = ON');
+      runProjectMigrations(db);
+      harness.dbs.set(projectId, db);
+    }
+    harness.adapter = {
+      name: 'claude',
+      displayName: 'Claude Code',
+      sessionType: 'claude_agent',
+      supportsReadOnlyLaunch: true,
+      supportsCallerSessionId: true,
+      supportsReadableDirectories: true,
+      detect: vi.fn(async () => ({ found: true, path: '/mock/bin/claude' })),
+      ensureTrust: vi.fn(async () => undefined),
+      buildCommand: vi.fn(() => 'mock-agent-command'),
+      getExitSequence: () => ['\x03'],
+    };
+    const projects = [
+      { id: 'home', name: 'kangentic', path: paths.home, default_agent: null, default_model: null, default_effort: null },
+      { id: 'mobile', name: 'kangentic-mobile', path: paths.mobile, default_agent: null, default_model: null, default_effort: null },
+    ];
+    manager = new FakeSessionManager();
+    context = {
+      projectRepo: {
+        list: () => projects,
+        getById: (id: string) => projects.find((project) => project.id === id),
+      },
+      sessionManager: manager,
+      configManager: {
+        load: () => ({}),
+        getEffectiveConfig: () => ({ mcpServer: { enabled: true }, agent: { cliPaths: {} } }),
+      },
+      mcpServerHandle: { urlForProject: (projectId: string) => `http://127.0.0.1:9/mcp/${projectId}`, token: 'test-token' },
+    } as unknown as IpcContext;
+    workflowId = new WorkflowRepository(homeDb()).create({ title: 'Usage budgets' }).id;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const homeDb = () => harness.dbs.get('home') as Database.Database;
+  const readWorkflow = () => new WorkflowRepository(homeDb()).getById(workflowId)!;
+
+  function ledgerRows(sessionId: string, projectId = 'home'): LedgerRow[] {
+    const db = harness.dbs.get(projectId) as Database.Database;
+    return db.prepare(`
+      SELECT session_record_id, conversation_id, total_cost_usd, total_input_tokens, agent, session_type
+        FROM usage_history WHERE session_record_id = ?
+    `).all(sessionId) as unknown as LedgerRow[];
+  }
+
+  /** The agent's session, running, with spend on the meter. */
+  function addAgentSession(overrides: Partial<FakeSession> = {}): FakeSession {
+    const session: FakeSession = {
+      id: 'pty-agent',
+      taskId: workflowId,
+      projectId: 'home',
+      pid: 4242,
+      status: 'running',
+      shell: 'bash',
+      cwd: paths.home,
+      startedAt: '2026-09-01T10:00:00.000Z',
+      exitCode: null,
+      resuming: false,
+      transient: true,
+      workflowId,
+      agentSessionId: 'conv-1',
+      ...overrides,
+    };
+    manager.sessions.push(session);
+    manager.usageCache[session.id] = LIVE_USAGE;
+    return session;
+  }
+
+  function expectBookedOnce(sessionId: string): void {
+    const rows = ledgerRows(sessionId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].conversation_id).toBe('conv-1');
+    expect(rows[0].total_cost_usd).toBe(1.5);
+    expect(rows[0].total_input_tokens).toBe(1_000);
+    expect(rows[0].agent).toBe('claude');
+    expect(rows[0].session_type).toBe('claude_agent');
+  }
+
+  describe('spend reaches the home project\'s ledger', () => {
+    it('on Pause, before the suspend drops the live usage', async () => {
+      addAgentSession();
+
+      await agent.pauseWorkflowAgent(context, workflowId);
+
+      expect(manager.suspend).toHaveBeenCalledWith('pty-agent');
+      expectBookedOnce('pty-agent');
+      // Another project's ledger is not the agent's.
+      expect(ledgerRows('pty-agent', 'mobile')).toHaveLength(0);
+    });
+
+    it('on the end of the workflow, before the kill and the removal drop the live usage', async () => {
+      addAgentSession();
+
+      await agent.endWorkflowAgent(context, workflowId);
+
+      expect(manager.kill).toHaveBeenCalledWith('pty-agent');
+      expect(manager.remove).toHaveBeenCalledWith('pty-agent');
+      expectBookedOnce('pty-agent');
+    });
+
+    it('on a restart for new checkouts, before the suspend drops the live usage', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      addAgentSession();
+      manager.activity['pty-agent'] = 'idle';
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+      await vi.waitFor(() => expect(manager.suspend).toHaveBeenCalledWith('pty-agent'));
+      expectBookedOnce('pty-agent');
+
+      // Let the restart finish its start, so nothing runs on past the test: the
+      // spawn is its last awaited step, and a macrotask turn drains what follows.
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('when the CLI exits on its own, from the exit listener', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('exit', 'pty-agent', 1, false);
+
+      expectBookedOnce('pty-agent');
+    });
+
+    it('when an exit arrives with no intentional flag, as a spawn failure does', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('exit', 'pty-agent', 1);
+
+      expectBookedOnce('pty-agent');
+    });
+
+    it('not from the exit listener when Kangentic asked for the exit: the stop that asked captured it first', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession();
+
+      manager.emit('exit', 'pty-agent', 0, true);
+
+      expect(ledgerRows('pty-agent')).toHaveLength(0);
+    });
+
+    it('not for a task\'s session, which has a sessions row and its own writer', () => {
+      agent.registerWorkflowAgentLifecycle(context);
+      addAgentSession({ id: 'pty-task', taskId: 'task-1', workflowId: undefined, transient: false });
+
+      manager.emit('exit', 'pty-task', 1, false);
+
+      expect(ledgerRows('pty-task')).toHaveLength(0);
+    });
+
+    it('and a project database that will not open breaks neither Pause nor the end', async () => {
+      // The session names a project with no database: the lookup throws in
+      // captureSpend's own argument list, outside the capture's try.
+      addAgentSession({ projectId: 'ghost' });
+
+      await expect(agent.pauseWorkflowAgent(context, workflowId)).resolves.toBeUndefined();
+      expect(manager.suspend).toHaveBeenCalledWith('pty-agent');
+
+      await expect(agent.endWorkflowAgent(context, workflowId)).resolves.toBeUndefined();
+      expect(manager.kill).toHaveBeenCalledWith('pty-agent');
+      expect(manager.remove).toHaveBeenCalledWith('pty-agent');
+    });
+  });
+
+  describe('a start records the conversation', () => {
+    function spawnOptions(): SpawnOptions {
+      return manager.spawn.mock.calls[0][0];
+    }
+
+    it('on a fresh start: the agent, a new conversation id and the checkout it ran in', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status.unavailable).toBeNull();
+      expect(spawnOptions().resuming).toBe(false);
+      const workflow = readWorkflow();
+      expect(workflow.agent_name).toBe('claude');
+      expect(workflow.agent_session_id).toBeTruthy();
+      expect(workflow.agent_session_id).toBe(spawnOptions().agentSessionId);
+      expect(workflow.agent_cwd).toBe(paths.home);
+    });
+
+    it('on a resume too: a row with no checkout recorded gains it and keeps its conversation id', async () => {
+      // A conversation from before `agent_cwd` existed.
+      homeDb()
+        .prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ?, agent_cwd = NULL WHERE id = ?')
+        .run('claude', 'conv-old', workflowId);
+      expect(readWorkflow().agent_cwd).toBeNull();
+
+      const status = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status.unavailable).toBeNull();
+      expect(spawnOptions()).toMatchObject({ resuming: true, agentSessionId: 'conv-old', cwd: paths.home, workflowId });
+      const workflow = readWorkflow();
+      expect(workflow.agent_session_id).toBe('conv-old');
+      expect(workflow.agent_name).toBe('claude');
+      expect(workflow.agent_cwd).toBe(paths.home);
+    });
+  });
+});

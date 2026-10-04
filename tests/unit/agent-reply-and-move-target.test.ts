@@ -9,10 +9,13 @@
  *
  * `resolveMoveTarget` is where Move to column and `kangentic_move_task`'s
  * `column: "next"` land, so the two can never pick different columns.
+ *
+ * `routeOf` decides which of the two orders applies: a task in a workflow follows
+ * its own route, anything else follows the board.
  */
 import { describe, it, expect } from 'vitest';
 import { finalAgentReply } from '../../src/main/agent/shared/agent-reply';
-import { resolveMoveTarget } from '../../src/main/automations/move-target';
+import { resolveMoveTarget, routeOf } from '../../src/main/automations/move-target';
 import type { Swimlane, TranscriptEntry } from '../../src/shared/types';
 
 let clock = 0;
@@ -95,5 +98,47 @@ describe('resolveMoveTarget', () => {
     const missing = resolveMoveTarget(BOARD, 'exec', 'Testing');
     expect(missing.ok).toBe(false);
     expect(missing.ok ? '' : missing.reason).toContain('No column named "Testing"');
+  });
+});
+
+describe('routeOf', () => {
+  type RouteOfTask = Parameters<typeof routeOf>[0];
+
+  const routeFields = {
+    route_start_swimlane_id: 'exec',
+    route_last_swimlane_id: 'review',
+    skipped_swimlane_ids: ['review'],
+  };
+
+  // A Task assembled without the workflow_id column (a hand-built row, an older
+  // payload) carries `undefined`, not null. Cast through unknown: the type says
+  // string | null, and the point is what happens when the value is not honest.
+  const withWorkflowId = (workflowId: unknown): RouteOfTask => ({ ...routeFields, workflow_id: workflowId }) as unknown as RouteOfTask;
+
+  it('is no route for a task outside a workflow, however the column reads', () => {
+    expect(routeOf(withWorkflowId(null))).toBeNull();
+    expect(routeOf(withWorkflowId(undefined))).toBeNull();
+    expect(routeOf(withWorkflowId(''))).toBeNull();
+  });
+
+  it('is the task\'s own route for a task in a workflow', () => {
+    expect(routeOf(withWorkflowId('wf-1'))).toMatchObject(routeFields);
+  });
+
+  it('sends a workflow task along its route and any other task along the board', () => {
+    // exec -> review is the board's next column; skipping review on the route
+    // sends a workflow task from exec straight to Done instead.
+    const columns = [
+      column('todo', 'To Do', 0, { role: 'todo' }),
+      column('exec', 'Executing', 1),
+      column('ghost', 'Hidden', 2, { is_ghost: true }),
+      column('review', 'Code Review', 3),
+      column('done', 'Done', 4, { role: 'done' }),
+    ];
+
+    expect(resolveMoveTarget(columns, 'exec', null, routeOf(withWorkflowId('wf-1')))).toMatchObject({ ok: true, column: { id: 'done' } });
+    // The same route fields on a task with no workflow are not a route.
+    expect(resolveMoveTarget(columns, 'exec', null, routeOf(withWorkflowId(undefined)))).toMatchObject({ ok: true, column: { id: 'review' } });
+    expect(resolveMoveTarget(columns, 'exec', null, routeOf(withWorkflowId('')))).toMatchObject({ ok: true, column: { id: 'review' } });
   });
 });

@@ -15,7 +15,7 @@
  * a real socket (the relay client itself is covered by
  * relay-pairing-integration.test.ts).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   CAPABILITY_VERBS,
@@ -134,6 +134,7 @@ const { MobileBridgeService } = await import('../../../src/main/mobile-bridge/mo
 const { loadBridgeIdentity } = await import('../../../src/main/mobile-bridge/identity');
 const { addOrReplaceDevice } = await import('../../../src/main/mobile-bridge/roster-store');
 const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
+const { PushNotifier } = await import('../../../src/main/mobile-bridge/push/push-notifier');
 
 /**
  * Creates and persists a real identity via the actual startPairing()
@@ -863,5 +864,53 @@ describe('MobileBridgeService.renameDevice() sanitizes the renderer-supplied nam
 
     const renamedDevice = service.listDevices().find((device) => device.deviceId === deviceId);
     expect(renamedDevice?.displayName).toBe('Paired Device');
+  });
+});
+
+describe('MobileBridgeService.notifyWorkflowComplete()', () => {
+  // The service owns no push logic of its own: it hands a finished workflow to
+  // the PushNotifier it builds in attachContext(), and has nothing to hand it
+  // to before that and after dispose(). The notifier's own sealing, presence
+  // and cooldown are pinned in push-notifier.test.ts.
+  const finished = { projectId: 'home', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 };
+
+  function attachableContext(): never {
+    return { sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('is a no-op before the context is attached', () => {
+    const notifierSpy = vi.spyOn(PushNotifier.prototype, 'notifyWorkflowComplete').mockImplementation(() => {});
+    const service = new MobileBridgeService({ enabled: false, relayUrl: 'wss://relay.example.com' });
+
+    expect(() => service.notifyWorkflowComplete(finished)).not.toThrow();
+
+    expect(notifierSpy).not.toHaveBeenCalled();
+  });
+
+  it('hands the finished workflow to the notifier once the context is attached', () => {
+    const notifierSpy = vi.spyOn(PushNotifier.prototype, 'notifyWorkflowComplete').mockImplementation(() => {});
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    service.attachContext(attachableContext());
+
+    service.notifyWorkflowComplete(finished);
+
+    expect(notifierSpy).toHaveBeenCalledTimes(1);
+    expect(notifierSpy).toHaveBeenCalledWith(finished);
+    service.dispose();
+  });
+
+  it('is a no-op again after the service is disposed', () => {
+    const notifierSpy = vi.spyOn(PushNotifier.prototype, 'notifyWorkflowComplete').mockImplementation(() => {});
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    service.attachContext(attachableContext());
+    service.dispose();
+
+    expect(() => service.notifyWorkflowComplete(finished)).not.toThrow();
+
+    expect(notifierSpy).not.toHaveBeenCalled();
   });
 });

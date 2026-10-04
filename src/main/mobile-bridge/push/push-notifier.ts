@@ -162,6 +162,11 @@ export function redactPushTokens(text: string): string {
 export interface PushNotifierOptions {
   sessionManager: Pick<SessionManager, 'on' | 'off' | 'getActivityStatsSnapshot'>;
   registrationStore: Pick<PushRegistrationStore, 'list' | 'remove'>;
+  /**
+   * The Mobile bridge switch, read at every notification. Off, nothing is sent: a
+   * push goes to Expo directly, so closing the relay sessions alone would not stop it.
+   */
+  isBridgeEnabled: () => boolean;
   /** Devices whose bridge session reports 'connected' - already watching, never pinged. */
   getConnectedDeviceIds: () => Set<string>;
   resolveTaskContext: (sessionId: string) => PushTaskContext | null;
@@ -339,6 +344,7 @@ export class PushNotifier {
   }
 
   private notifyWithContext(taskContext: PushTaskContext, cooldownSubject: string, envelopeSessionId: string, category: PushCategory, detail: string): void {
+    if (!this.options.isBridgeEnabled()) return;
     const connectedDeviceIds = this.options.getConnectedDeviceIds();
     const now = Date.now();
 

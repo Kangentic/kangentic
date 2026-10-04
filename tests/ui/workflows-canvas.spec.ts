@@ -108,6 +108,17 @@ async function launch(seed: boolean | 'started' | 'acrossBoards'): Promise<{ bro
 
 const card = (page: Page, key: string) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`);
 
+/**
+ * One of a card's two link ports, the one links arrive at (left) or leave from
+ * (right). The editable canvas also gives each node a whole-card drop target
+ * (handle id "card") on the left, which is not a port and is left out here.
+ */
+const port = (page: Page, key: string, side: 'left' | 'right') =>
+  page.locator(`.react-flow__node[data-id="${key}"] .react-flow__handle-${side}:not([data-handleid="card"])`);
+
+/** The ports sit on the title row, so the node sets where from its own inline `top`, state rather than measured pixels. */
+const portTop = (offset: number) => new RegExp(`(^|;)\\s*top:\\s*${offset}px`);
+
 test.describe('Workflows canvas', () => {
   test('a project with no workflows shows the empty state', async () => {
     const { browser, page } = await launch(false);
@@ -135,6 +146,12 @@ test.describe('Workflows canvas', () => {
       await expect(card(page, 'task-1')).not.toContainText('#');
       // Every task on one board: no card names its project (board 17).
       await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(0);
+      // So the title row is the first thing under the strip, and the link ports
+      // stay at the middle of it, 49px down.
+      for (const key of ['task-1', 'task-2', 'task-3']) {
+        await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(49));
+        await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(49));
+      }
     } finally {
       await browser.close();
     }
@@ -149,6 +166,12 @@ test.describe('Workflows canvas', () => {
       await expect(card(page, 'task-1').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-canvas');
       await expect(card(page, 'task-3').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-mobile');
       await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(3);
+      // The project row (24px) pushes the title row down, and the ports with it:
+      // 49 + 24 = 73px on every card, the home ones as well as the other board's.
+      for (const key of ['task-1', 'task-2', 'task-3']) {
+        await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(73));
+        await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(73));
+      }
     } finally {
       await browser.close();
     }
