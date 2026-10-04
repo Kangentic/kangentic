@@ -72,8 +72,10 @@ export interface ProcessScan {
 /**
  * The processes `isSeed` picks and everything below them, by parent link. A
  * POSIX reader reads roles (and on macOS working directories) for these only,
- * since a reap can touch nothing else. A process listed as its own parent is
- * not its own child, so the walk ends.
+ * since a reap can touch nothing else. Never their ancestors: a desktop shell
+ * or a terminal emulator would read as a visible app and protect everything
+ * under it. A process listed as its own parent is not its own child, so the
+ * walk ends.
  */
 export function seedsAndDescendants(
   processes: readonly ScannedProcess[],

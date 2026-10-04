@@ -13,7 +13,10 @@
  *
  * The roles (`process-scan.ts`) are read only for tagged processes and their
  * descendants, the only ones a reap could touch: `maps` for a GUI toolkit
- * (`visible-app`), and the executable for a tmux server (`multiplexer`).
+ * (`visible-app`), and the executable for a tmux server (`multiplexer`). Not
+ * for their ancestors, on purpose: a desktop shell or a terminal emulator maps
+ * a GUI toolkit, and reading one as a window would protect everything under
+ * it. An app or tmux server the agent started carries the tag and is read.
  * `describe` reads `cmdline` and `exe` for the few processes a reap reports and
  * returns only the label `process-label.ts` derives.
  *

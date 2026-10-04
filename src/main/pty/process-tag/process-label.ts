@@ -91,7 +91,11 @@ export async function isFileFrom(workingDirectory: string | null, candidate: str
   // unreachable one holds the stat, and the report waiting on it, until the
   // SMB timeout. The label drops the script name instead. On Linux and macOS a
   // leading `//` is an ordinary path, so such a script loses its name too; the
-  // label is all that costs.
+  // label is all that costs. A mapped drive letter or an NFS mount reads like
+  // a local path and is still stat'ed, so an unreachable one holds the report
+  // until its timeout. That is left as is, on purpose: a time limit would free
+  // the report but not the thread pool thread the stat holds, and it only bites
+  // a script on a dead mount, whose process is most likely hung itself.
   if (NETWORK_PATH_PATTERN.test(path.isAbsolute(candidate) ? candidate : workingDirectory ?? '')) return false;
   const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(workingDirectory ?? '', candidate);
   try {
