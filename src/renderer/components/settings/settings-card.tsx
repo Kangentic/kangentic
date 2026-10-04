@@ -20,9 +20,10 @@ import type { SegmentedControlOption } from '../SegmentedControl';
  *  - Every child of a card body is a tile: `CardRow`, `CardToggleRow`, or
  *    `CardTile` for anything custom. Tabs never style a tile by hand.
  *  - Every switch, trailing button and dropdown arrow in a card ends on one
- *    right edge, the header's switch included, and the header's title and
- *    every tile's label start on one left edge. Both follow from the geometry
- *    below, which is why it is numbers rather than classes.
+ *    right edge, the header's switch included, and the header's icon and every
+ *    tile's content start on one left edge, the same inset on both sides. Both
+ *    follow from the geometry below, which is why it is numbers rather than
+ *    classes.
  *  - A card's body shows only while its switch is on. The caller decides, by
  *    passing `children` only then, because some bodies keep a line visible
  *    while off (Mobile Devices keeps its two docs links).
@@ -44,15 +45,20 @@ import type { SegmentedControlOption } from '../SegmentedControl';
 const CARD_BODY_INSET_PX = 12;
 /** The gap between one tile and the next. */
 const TILE_GAP_PX = 6;
-/** How far a tile's content sits in from the tile's right edge. */
-const TILE_RIGHT_PADDING_PX = 16;
 /**
- * How far the header's icon sits inside the header's click target, so the
- * hover fill clears the icon with room to spare rather than grazing it.
+ * How far a tile's content sits in from the tile's edges, and how far the
+ * header's icon and switch sit inside the header's click target. ONE inset on
+ * both sides of every tile and of the header's row, so the card's icon and
+ * every tile's content start on one left edge, and every switch, arrow and
+ * trailing button ends on one right edge.
+ *
+ * Tiles used to sit 40px in, putting each label on the card title's line. That
+ * indent went (user's call, #732): the card and its tiles already group a
+ * feature, and a dialog's cards (the Edit automation dialog) use this flush
+ * geometry, so Settings and dialogs now share one tile shape.
  */
-const HEADER_ICON_INSET_PX = 12;
-/** The header icon's distance from the card edge: the tiles' inset plus the icon's own inset. */
-const HEADER_LEFT_PADDING_PX = CARD_BODY_INSET_PX + HEADER_ICON_INSET_PX;
+const TILE_RIGHT_PADDING_PX = 16;
+const HEADER_ICON_INSET_PX = TILE_RIGHT_PADDING_PX;
 const HEADER_ICON_COLUMN_PX = 16;
 const HEADER_ICON_GAP_PX = 12;
 /**
@@ -60,17 +66,8 @@ const HEADER_ICON_GAP_PX = 12;
  * header's switch ends on the same edge as every switch in the tiles below it.
  */
 const HEADER_RIGHT_INSET_PX = CARD_BODY_INSET_PX + TILE_RIGHT_PADDING_PX;
-/**
- * A tile's left padding puts its label where the header's title starts: past
- * the header's padding, icon column and gap, less the tile's own inset.
- */
-const TILE_LEFT_PADDING_PX = HEADER_LEFT_PADDING_PX + HEADER_ICON_COLUMN_PX + HEADER_ICON_GAP_PX - CARD_BODY_INSET_PX;
-/**
- * Where a tile's gutter slot (`CardTileGutter`) starts, measured from the
- * tile's content edge: back across the tile's left padding to the header's
- * icon column, so a drag handle sits under the card's icon.
- */
-const TILE_GUTTER_OFFSET_PX = HEADER_LEFT_PADDING_PX - CARD_BODY_INSET_PX - TILE_LEFT_PADDING_PX;
+/** A tile's content starts under the header's icon: the same inset as its right side. */
+const TILE_LEFT_PADDING_PX = TILE_RIGHT_PADDING_PX;
 /**
  * The header's click target is tile-shaped: inset from the card's sides like a
  * tile, with a tile gap above it and a tile gap between it and the first tile,
@@ -178,8 +175,8 @@ export function SettingsCard({
       {/* The outer layer insets the header like a tile and leaves a tile gap
           above and below; the inner layer is the click target, so its hover
           fill is a tile-shaped rect that never touches the first tile. The
-          icon lands in the tiles' gutter, the title on their label line, and
-          the switch on their right edge. */}
+          icon lines up with the tiles' content, and the switch with their
+          right edge. */}
       <div
         style={{ padding: `${TILE_GAP_PX}px ${CARD_BODY_INSET_PX}px` }}
       >
@@ -299,23 +296,6 @@ export function CardTile({ children, className, style, ref, testId }: CardTilePr
   );
 }
 
-/**
- * A slot in a tile's left gutter, under the card header's icon, for a row's
- * drag handle. It keeps the row's own content (a shortcut's icon and name) on
- * the header title's line instead of pushing it right. Put it inside a
- * `relative` row of a `CardTile`; it centres on that row's height.
- */
-export function CardTileGutter({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="absolute inset-y-0 flex items-center justify-center"
-      style={{ left: TILE_GUTTER_OFFSET_PX, width: HEADER_ICON_COLUMN_PX }}
-    >
-      {children}
-    </div>
-  );
-}
-
 /** What a status row is saying: nothing to flag, done, worth a look, or broken. */
 export type CardStatusTone = 'neutral' | 'ready' | 'caution' | 'failure';
 
@@ -342,23 +322,23 @@ interface CardStatusRowProps {
  * same way. A card's list of sources takes `CardSourceList`, which keeps the
  * same value, check, tone and track on one line per source.
  *
- * A problem (caution, failure) tints the state word and puts its icon in the
- * gutter under the card's own icon, so the word stays on the title's line; the
- * value stays neutral. Ready puts a green check by the value. The track is the
- * edge token, lighter than the tile, so its unfilled part shows.
+ * A problem (caution, failure) tints the state word and puts its icon right
+ * before it; the value stays neutral. Ready puts a green check by the value.
+ * The track is the edge token, lighter than the tile, so its unfilled part
+ * shows.
  */
 export function CardStatusRow({ label, value, tone = 'neutral', percent = null, progressLabel, testId, valueTestId }: CardStatusRowProps) {
   const labelTone = tone === 'caution' ? 'text-warning' : tone === 'failure' ? 'text-danger' : 'text-fg';
   const width = percent === null ? 0 : Math.max(0, Math.min(100, percent));
   return (
     <CardTile className="flex flex-col gap-2" testId={testId}>
-      <div className="relative flex items-center justify-between gap-3">
-        {tone === 'caution' || tone === 'failure' ? (
-          <CardTileGutter>
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex flex-shrink-0 items-center gap-1.5">
+          {tone === 'caution' || tone === 'failure' ? (
             <TriangleAlert size={14} className={labelTone} aria-hidden="true" />
-          </CardTileGutter>
-        ) : null}
-        <span className={`flex-shrink-0 text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
+          ) : null}
+          <span className={`text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
+        </span>
         {/* Shrinks and ends in an ellipsis past the tile's edge, with the whole
             value on hover: a failure's value is its error, which can carry a
             URL far wider than the tile. */}
@@ -461,13 +441,11 @@ function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent
   const valueTone = tone === 'muted' ? 'text-fg-muted' : 'text-fg-secondary';
   return (
     <div className="flex flex-col gap-2 py-3" data-testid={testId}>
-      <div className="relative flex items-center gap-3">
-        {tone === 'caution' && !unavailable ? (
-          <CardTileGutter>
-            <TriangleAlert size={14} className="text-warning" aria-hidden="true" />
-          </CardTileGutter>
-        ) : null}
+      <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {tone === 'caution' && !unavailable ? (
+            <TriangleAlert size={14} className="flex-shrink-0 text-warning" aria-hidden="true" />
+          ) : null}
           <span className={`${SETTING_LABEL_CLASS} ${dimmed}`}>{label}</span>
           {info ? <InfoTip label={label} text={info} /> : null}
         </div>

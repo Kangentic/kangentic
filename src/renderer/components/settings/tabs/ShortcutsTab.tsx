@@ -11,7 +11,7 @@ import { RegistryIcon } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { INPUT_CLASS } from '../shared';
-import { SettingsCard, CardTile, CardTileGutter } from '../settings-card';
+import { SettingsCard, CardTile } from '../settings-card';
 import { Pill } from '../../Pill';
 import { SegmentedControl } from '../../SegmentedControl';
 import { OverlayPopover } from '../../OverlayPopover';
@@ -119,28 +119,26 @@ function SortableActionItem({
   return (
     <CardTile ref={setNodeRef} style={style} className="flex flex-col">
       {/* Summary row. The tile draws the fill and insets, so the row adds none.
-          The grip sits in the tile's gutter, under the card's icon, so the
-          shortcut's own icon and name start on the card title's line. */}
+          The grip leads the row, starting under the card's icon like every
+          tile's content. */}
       <div
-        className="relative flex items-center gap-2 cursor-pointer select-none"
+        className="flex items-center gap-2 cursor-pointer select-none"
         onClick={onToggleEdit}
       >
-        <CardTileGutter>
-          {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
-              subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
-              cannot dismiss a task window. That is the fail-safe the marker placement buys; this
-              `cursor-grab` handle needs no marker of its own. */}
-          {/* select-none-ok: the handle draws a grip icon and no text, and it
-              inherits the summary row's `select-none` anyway. */}
-          <div
-            className="flex cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
-            {...attributes}
-            {...listeners}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <GripVertical size={14} />
-          </div>
-        </CardTileGutter>
+        {/* light-dismiss-ok: the settings panel mounts as a SIBLING of AppLayout's marked shell
+            subtree, so a click anywhere in it resolves to no `data-dismiss-layer` scope and
+            cannot dismiss a task window. That is the fail-safe the marker placement buys; this
+            `cursor-grab` handle needs no marker of its own. */}
+        {/* select-none-ok: the handle draws a grip icon and no text, and it
+            inherits the summary row's `select-none` anyway. */}
+        <div
+          className="flex flex-shrink-0 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted"
+          {...attributes}
+          {...listeners}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <GripVertical size={14} />
+        </div>
         <RegistryIcon name={action.icon ?? 'zap'} fallback={Zap} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
         <span

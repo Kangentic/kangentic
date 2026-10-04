@@ -37,7 +37,7 @@ stated here and held by the components.
 - **A status is one `CardStatusRow`, whatever it reports.** The state is the label ("Local model",
   "Downloading", "Download failed"), the figure sits at the switches' right edge, and a running
   state passes `percent` for the track. `tone` is the only styling: `ready` puts a check beside the
-  value, `caution` and `failure` tint the label and put a warning icon in the tile's gutter, and
+  value, `caution` and `failure` tint the label and put a warning icon right before it, and
   the value stays neutral. Do not hand-roll a status line or a progress bar; the Knowledge
   Graph and Dictation tabs read the same way because they share this row.
 - **A list of sources is one `CardSourceList`, one line per source.** Each line is the source's
@@ -45,7 +45,7 @@ stated here and held by the components.
   always on). The value follows one pattern: the count with a check once caught up, the share and
   the time left over a track while it runs (no verb: the name says what runs), what it would cover
   while off (muted), and a tag in place of the value while a prerequisite is missing. A problem
-  tints its state word and puts the icon in the gutter, as the status row does. The Knowledge
+  tints its state word and puts the icon before its name, as the status row does. The Knowledge
   Graph tab's Index card is the one that exists; its line states are pure (`tabs/index-sources.ts`).
 - **The old row components are gone.** `SectionHeader`, `SettingRow`, `SettingToggleRow` and
   `CompactToggleList` were removed from `settings/shared.tsx` when every tab moved to cards. Do not
@@ -62,13 +62,16 @@ stated here and held by the components.
   (`bg-surface-hover/40`). Nothing inside a card is darker than the panel it sits on. Recessed
   wells were compared and rejected as heavy and dim. Form controls keep their shared fills
   (`INPUT_CLASS`, `Select`, `SegmentedControl`'s track), which are the control's, not a surface.
-- **Alignment is computed, not styled.** The header's right inset is the tiles' inset plus their
-  right padding, and a tile's left padding puts its label where the header's title starts. Those
-  are numbers in one constants block at the top of `settings-card.tsx`. Change a constant and the
-  sums follow; do not reach for a padding class. The result is that every switch, trailing button
-  and dropdown arrow in a card ends on one right edge, the header's switch included. A row's drag
-  handle goes in `CardTileGutter`, under the header's icon, so it never pushes the row's label off
-  that left edge.
+- **Alignment is computed, not styled, and tiles sit flush.** One inset (16px) on both sides of
+  every tile and of the header's row: the card's icon and every tile's content start on one left
+  edge, and every switch, trailing button and dropdown arrow ends on one right edge, the header's
+  switch included. The numbers live in one constants block at the top of `settings-card.tsx`;
+  change a constant and the sums follow, and do not reach for a padding class. Tiles used to sit
+  40px in, with each label on the card title's line; that indent was removed on every tab
+  (user's call, #732), since the card and its tiles already group a feature, and dialogs built
+  from the same cards (the Edit automation dialog) use the flush shape too. A row's own leading
+  glyph (a drag handle, a warning icon) sits inline before its label. A nested tile still starts
+  further in (`nested`), because that indent shows a dependency.
 - **A `CardToggleRow` tile is one click target.** A click anywhere on it flips the switch, and the
   hover tint fills the tile. A click on a control of its own (the switch, an `InfoTip`, a link) is
   left to that control. A header with a switch behaves the same way, and its click target is
