@@ -48,6 +48,16 @@ describe('isUsableReapRoot with a long-path prefix', () => {
     expect(isUsableReapRoot('//?/C:/work/project', HOME)).toBe(true);
   });
 
+  it('refuses a share root or a drive root behind the other device prefix, `\\\\.\\`, in its forward-slash form', () => {
+    // `//./UNC/server/share` is the same share root; process-label.ts reads it as a share too.
+    expect(isUsableReapRoot('//./UNC/server/share', HOME)).toBe(false);
+    expect(isUsableReapRoot('//./unc/server/share/', HOME)).toBe(false);
+    expect(isUsableReapRoot('//./C:/', HOME)).toBe(false);
+    // Positive controls: something inside the share, and a project on the drive, is still a root.
+    expect(isUsableReapRoot('//./UNC/server/share/project', HOME)).toBe(true);
+    expect(isUsableReapRoot('//./C:/work/project', HOME)).toBe(true);
+  });
+
   it('refuses the home directory written with the prefix', () => {
     expect(isUsableReapRoot('//?/C:/Users/dev', HOME)).toBe(false);
     expect(isUsableReapRoot('//?/C:/Users/dev/', HOME)).toBe(false);

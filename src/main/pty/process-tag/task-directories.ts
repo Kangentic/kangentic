@@ -17,7 +17,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { normalizeDirectory } from './reap-plan';
 
-/** A root as the plan compares it, so a `\\?\UNC\server\share` root reads as the share root it is and is refused. */
+/**
+ * A root as the plan compares it, so a `\\?\UNC\server\share` root reads as the
+ * share root it is and is refused. It folds case on macOS too, on purpose: APFS
+ * is case-insensitive by default, and a process can report its directory in
+ * another case than the stored one.
+ */
 function comparable(directory: string): string {
   return normalizeDirectory(directory, process.platform !== 'linux');
 }

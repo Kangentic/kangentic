@@ -154,22 +154,34 @@ async function waitUntilDead(pids: number[]): Promise<number[]> {
     await new Promise((resolve) => { setTimeout(resolve, 50); });
   }
   const stillAlive = pids.filter((pid) => isProcessAlive(pid));
-  // Seen dead: afterEach must not signal these. Windows hands a freed pid to a
-  // new process within seconds, so a later SIGKILL could end an unrelated one.
+  // Seen dead: afterEach must not signal these.
+  forgetPids(pids.filter((pid) => !stillAlive.includes(pid)));
+  return stillAlive;
+}
+
+/**
+ * Take pids off afterEach's list. Windows hands a freed pid to a new process
+ * within seconds, so a later SIGKILL of one could end an unrelated process.
+ */
+function forgetPids(pids: readonly number[]): void {
   for (const pid of pids) {
-    if (stillAlive.includes(pid)) continue;
     const index = startedPids.indexOf(pid);
     if (index !== -1) startedPids.splice(index, 1);
   }
-  return stillAlive;
 }
 
 async function reap(scratch: Scratch, taskIds: string[] = [TASK_ID]) {
   const directories = await resolveTaskDirectories(scratch.project, scratch.worktree);
-  return reapTaggedOnce(
+  const result = await reapTaggedOnce(
     { tasks: taskIds.map((taskId) => ({ taskId, directories, worktreePath: scratch.worktree })), mainPid: process.pid, stop: true },
     { reader: reader!, liveRootPids: () => [] },
   );
+  // What the reap signalled is no longer this test's to signal: an assertion
+  // that fails before waitUntilDead sees it die must not leave afterEach a pid
+  // that may be reused by then. A sleeper the reap failed to stop ends on its
+  // own within a minute.
+  forgetPids(result.killedPids);
+  return result;
 }
 
 /** A detached sleeper started from `cwd` with `tagValue` as its tag (or none), as the launcher's grandchild. */

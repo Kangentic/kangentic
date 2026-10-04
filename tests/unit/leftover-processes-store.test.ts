@@ -113,6 +113,34 @@ describe('leftover-processes-store addReport and the toasts that link to reports
     expect(useLeftoverProcessesStore.getState().reportToasts['report-newest']).toBe('toast-newest');
   });
 
+  it('keeps the report the list shows, with its toast and its Stop outcomes, until the list closes', () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-open', ['process-open']), 'toast-open');
+    useLeftoverProcessesStore.getState().openReport('report-open');
+    useLeftoverProcessesStore.setState({ stopStates: { 'process-open': 'stopping' } });
+    for (let index = 0; index < RETAINED_REPORT_COUNT - 1; index += 1) {
+      useLeftoverProcessesStore.getState().addReport(makeReport(`report-${index}`, [`process-${index}`]), `toast-${index}`);
+    }
+
+    // The 21st report would evict the open one. It evicts nothing: the list stays.
+    const evictedWhileOpen = useLeftoverProcessesStore.getState().addReport(makeReport('report-newest', ['process-newest']), 'toast-newest');
+    expect(evictedWhileOpen).toEqual([]);
+    const openState = useLeftoverProcessesStore.getState();
+    expect(openState.openReportId).toBe('report-open');
+    expect(openState.reports['report-open']).toEqual(makeReport('report-open', ['process-open']));
+    expect(openState.reportToasts['report-open']).toBe('toast-open');
+    expect(openState.stopStates['process-open']).toBe('stopping');
+    expect(reportIds()[0]).toBe('report-open');
+    expect(reportIds()).toHaveLength(RETAINED_REPORT_COUNT + 1);
+
+    // Closed, it is the oldest again, so the next report evicts it, and the one
+    // the open list held back, and closes both toasts.
+    useLeftoverProcessesStore.getState().closeReport();
+    const evictedAfterClose = useLeftoverProcessesStore.getState().addReport(makeReport('report-after-close'), 'toast-after-close');
+    expect(evictedAfterClose).toEqual(['toast-open', 'toast-0']);
+    expect(reportIds()).not.toContain('report-open');
+    expect(reportIds()).toHaveLength(RETAINED_REPORT_COUNT);
+  });
+
   it('returns nothing for an evicted report that was added without a toast', () => {
     useLeftoverProcessesStore.getState().addReport(makeReport('report-quiet'));
     addNumberedReports(RETAINED_REPORT_COUNT - 1);

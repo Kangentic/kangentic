@@ -2,7 +2,10 @@ import { create } from 'zustand';
 import type { LeftoverProcessReport } from '../../shared/types';
 import type { LeftoverStopState } from '../lib/leftover-processes';
 
-/** Reports kept for Review. A toast whose report is evicted closes with it. */
+/**
+ * Reports kept for Review, besides the one the list shows. A toast whose
+ * report is evicted closes with it.
+ */
 const RETAINED_REPORTS = 20;
 
 interface LeftoverProcessesStore {
@@ -37,6 +40,11 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
     const state = get();
     const ids = [...Object.keys(state.reports).filter((id) => id !== report.id), report.id];
     const kept = ids.slice(-RETAINED_REPORTS);
+    // The report the list shows stays while it is open, with its toast and its
+    // rows' Stop outcomes, so the list never vanishes under the user. The next
+    // report after it closes evicts it.
+    const openReportId = state.openReportId;
+    if (openReportId !== null && state.reports[openReportId] && !kept.includes(openReportId)) kept.unshift(openReportId);
     const keptIds = new Set(kept);
     const reports: Record<string, LeftoverProcessReport> = {};
     for (const id of kept) reports[id] = id === report.id ? report : state.reports[id];

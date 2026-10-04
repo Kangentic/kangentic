@@ -249,12 +249,14 @@ test.describe('Task process reap', () => {
 
   /**
    * Whether `pid` still has the start time the survivor had when its record
-   * arrived. True where there is no reading to compare: off Linux, or when the
-   * pid came from the record file after a failure.
+   * arrived. True off Linux, which has no reading to compare. On Linux a pid
+   * with no reading (it came from the record file after a failure, or was gone
+   * when its record arrived) is left alone, since it may name another process
+   * by now: the survivor's own 300 s lifetime bounds what that leaks.
    */
   function stillTheSurvivor(pid: number): boolean {
-    if (process.platform !== 'linux' || survivorStartTicks === null) return true;
-    return readLinuxProcessStat(pid)?.startTicks === survivorStartTicks;
+    if (process.platform !== 'linux') return true;
+    return survivorStartTicks !== null && readLinuxProcessStat(pid)?.startTicks === survivorStartTicks;
   }
 
   function diagnostics(record: FastDetachRecord): string {

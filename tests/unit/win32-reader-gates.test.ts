@@ -9,7 +9,9 @@
  *   cannot be read (it would otherwise compare against session 0, where
  *   services run).
  * - `scan` opens PROCESS_VM_READ only on a same-session process whose token
- *   user is the caller's, and never when the caller's own token is unreadable.
+ *   user is the caller's, and never when the caller's own token is unreadable
+ *   (it will not open, or opens and its user cannot be read or is not a SID),
+ *   which fails the scan and still closes the token it opened.
  * - `kill` terminates only through a handle whose creation time still matches
  *   the scan's start key, and closes that handle on every path.
  * - Every handle a call opens is closed, including when a memory read fails or
@@ -58,6 +60,8 @@ const OTHER_SID = 2002;
 const CREATION_BASE = 133_500_000_000_000_000n;
 const CURRENT_PROCESS_HANDLE_ID = 1_000_000;
 const WORKING_DIRECTORY = 'C:\\work\\project';
+
+type OwnTokenFault = 'query' | 'revision' | 'truncated' | 'overrun' | 'too-many-sub-authorities';
 
 interface FakeHandle {
   id: number;
@@ -176,6 +180,16 @@ class FakeWin32 {
   failedReads = 0;
   throwOnFailingRead = false;
   ownTokenReadable = true;
+  /**
+   * The caller's own token opens, but reading its user fails or comes back
+   * malformed (other processes' tokens are never affected). `query`:
+   * GetTokenInformation reports failure, with a valid SID already in the
+   * buffer so nothing but its result shows the failure. The rest are TOKEN_USER buffers the
+   * reader must refuse: a SID revision other than 1, a returned length too
+   * short to hold a SID header, a sub-authority count that overruns the
+   * returned length, and a count past the 15 a SID can carry.
+   */
+  ownTokenFault: OwnTokenFault | null = null;
   /** ProcessIdToSessionId reports failure for the caller's own pid. */
   ownSessionLookupFails = false;
 
@@ -263,13 +277,28 @@ class FakeWin32 {
     },
     getTokenInformation: (token, _infoClass, buffer, _length, returnLength) => {
       const owner = handleOf(token).pid;
-      const authority = owner === process.pid ? OWN_SID : (this.byPid.get(owner)?.sid ?? OWN_SID);
+      const ownerIsCaller = owner === process.pid;
+      const authority = ownerIsCaller ? OWN_SID : (this.byPid.get(owner)?.sid ?? OWN_SID);
       // TOKEN_USER: 16 bytes of header, then the SID (revision, count, 6-byte authority, sub-authorities).
       buffer[16] = 1;
       buffer[17] = 1;
       buffer.set([0, 0, 0, 0, 0, 5], 18);
       buffer.writeUInt32LE(authority, 24);
       returnLength[0] = 28;
+      if (ownerIsCaller) {
+        if (this.ownTokenFault === 'revision') buffer[16] = 2;
+        // Under 16 + 8 bytes, so not even a SID with no sub-authorities fits.
+        if (this.ownTokenFault === 'truncated') returnLength[0] = 20;
+        // Claims 5 sub-authorities (44 bytes of TOKEN_USER) in the 28 it returns.
+        if (this.ownTokenFault === 'overrun') buffer[17] = 5;
+        // 16 sub-authorities fit the 100 bytes returned, so only the count itself is wrong.
+        if (this.ownTokenFault === 'too-many-sub-authorities') {
+          buffer[17] = 16;
+          returnLength[0] = 100;
+        }
+        // Reports failure after the buffer holds a valid SID, so only the call's own result says it failed.
+        if (this.ownTokenFault === 'query') return 0;
+      }
       return 1;
     },
     // 0 is STATUS_SUCCESS, unlike the BOOL calls around it. Class 0 is
@@ -511,6 +540,30 @@ describe('Win32TaggedProcessReader.scan: who may be read with PROCESS_VM_READ', 
     expect(fake.opens).toEqual([]);
     expect(fake.createdHandleIds).toEqual([]);
   });
+
+  // The other two ways the caller's own user comes back null: its token OPENS,
+  // then GetTokenInformation fails, or the TOKEN_USER it fills is not a SID.
+  it.each(['query', 'revision', 'truncated', 'overrun', 'too-many-sub-authorities'] as const)(
+    'fails the scan, opening no process and closing the token it did open, when the caller\'s own token user is unreadable (%s)',
+    async (fault) => {
+      const table: FakeProcess[] = [{ pid: 500, tag: TASK }, { pid: 510, tag: TASK }];
+
+      // Positive control: the same table with a well-formed token user is opened and read.
+      const control = new FakeWin32(table);
+      const controlScan = await readerFor(control).scan();
+      expect(control.openedPids(PROCESS_VM_READ)).toEqual(expect.arrayContaining([500, 510]));
+      expect(scanned(controlScan, 500).tagValue).toBe(TASK);
+
+      const fake = new FakeWin32(table);
+      fake.ownTokenFault = fault;
+      // Without the caller's user no process could be told apart as its own, so the scan would read as clean.
+      await expect(readerFor(fake).scan()).rejects.toThrow('could not read its own user');
+      expect(fake.opens).toEqual([]);
+      // Unlike an unopenable token, this one was created: it is the call's only handle, and it was closed.
+      expect(fake.createdHandleIds).toHaveLength(1);
+      expectEveryHandleClosedOnce(fake);
+    },
+  );
 });
 
 describe('Win32TaggedProcessReader.scan: handles close when a read goes wrong', () => {
@@ -528,12 +581,12 @@ describe('Win32TaggedProcessReader.scan: handles close when a read goes wrong', 
     expectEveryHandleClosedOnce(fake);
   });
 
-  it('closes every handle when a memory read throws', async () => {
+  it('rejects the scan, and closes every handle, when a memory read throws', async () => {
     const fake = new FakeWin32([{ pid: 600, tag: TASK }]);
     fake.failEnvironmentRead(600);
     fake.throwOnFailingRead = true;
-    // Whether scan rejects or recovers is not the contract here; leaking a handle is.
-    await readerFor(fake).scan().catch(() => undefined);
+    // A throw is not a failed read: the scan does not turn it into an unreadable process, it fails.
+    await expect(readerFor(fake).scan()).rejects.toThrow('access violation');
 
     expect(fake.failedReads).toBe(1);
     expect(fake.openedPids(PROCESS_VM_READ)).toEqual([600]);

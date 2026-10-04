@@ -56,7 +56,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   see the shared-subtree, visible-app or tmux signals. It runs only while the distro is running,
   leaves out a task with a live or starting session (asked again just before the script runs),
   validates task ids before they enter the script text, and takes directories only as positional
-  arguments. Do not interpolate a directory or any other caller value into the script.
+  arguments. Do not interpolate a directory or any other caller value into the script. Its
+  `wsl.exe` runs without the tag main holds when Kangentic itself runs from a task's terminal, so
+  the script's own subshells never read as a task's.
 - **A mid-board suspend never reaps.** Pause, Stop, an `auto_spawn=false` column (Code Review
   entry), a handoff or settings respawn, an idle-timeout suspend, and quit leave the processes
   running, by decision: the task is parked, and its dev server stays up for testing.
@@ -104,7 +106,8 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   order; `tests/unit/mcp-project-context.test.ts` pins the MCP delete, including a task with no
   worktree; `tests/unit/terminal-task-leftover-sweep.test.ts` pins the startup sweep, and
   `tests/unit/session-wsl-reap-live-task.test.ts` that the in-distro WSL reap leaves out a task
-  with a live or starting session (the sweep takes no task lock). Runs in CI.
+  with a live or starting session (the sweep takes no task lock) and that its `wsl.exe` carries no
+  task tag. Runs in CI.
 - **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, its
   absence on a transient one, and `WSLENV`. `transition-engine.test.ts` and
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,
@@ -138,7 +141,8 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 - **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load` and
   `empty_scan`; `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
   fixed message, that no other failure's text reaches the event, and SessionManager's reports,
-  the WSL one included.
+  the WSL one included. `tests/unit/wsl-reap-script-budget.test.ts` pins that a WSL reap whose
+  shared script budget runs out reports it once and still returns what earlier batches killed.
 - **Packaged smoke:** `scripts/package-smoke.mjs` (`package-smoke.yml`, on Windows, macOS and
   Linux whenever `process-tag/` changes) deletes a task whose terminal left a detached process in
   the project and fails unless the packaged app stopped it, and fails on a `[TASK-REAP] reap

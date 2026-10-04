@@ -6,6 +6,9 @@
  * task dragged back into a running column while the startup sweep reaped it
  * would have its new WSL agent killed. The host reap still gets every task.
  *
+ * It also pins that no `wsl.exe` call of that reap carries a task tag in its
+ * environment, even when main holds one (Kangentic run from a task's terminal).
+ *
  * `process.platform` is faked as win32, and `wsl.exe` is answered by a fake
  * off-main executor, so this runs on every OS.
  */
@@ -28,6 +31,7 @@ import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 import type { HostExecRequest, HostExecResult } from '../../src/main/pty/host/protocol';
 import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec';
+import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 
 const LIVE_TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const STARTING_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
@@ -60,11 +64,14 @@ function setup() {
   Object.assign(manager, { getShell: async () => 'wsl -d Ubuntu' });
 
   const wslCalls: string[][] = [];
+  // The same calls as `wslCalls`, whole, so a test can read the environment each one carried.
+  const wslRequests: Array<Extract<HostExecRequest, { kind: 'execFile' }>> = [];
   // A test sets `onRunningListing` to act while the `wsl.exe -l --running -q` call is in flight.
   const hooks: { onRunningListing: (() => void) | null } = { onRunningListing: null };
   setOffMainExecutor(async (request: HostExecRequest): Promise<HostExecResult> => {
     if (request.kind !== 'execFile') throw new Error(`unexpected ${request.kind}`);
     wslCalls.push(request.args);
+    wslRequests.push(request);
     if (request.args.includes('--running')) hooks.onRunningListing?.();
     return { ok: true, stdout: request.args.includes('--running') ? 'Ubuntu\n' : '', stderr: '' };
   });
@@ -94,7 +101,7 @@ function setup() {
   };
 
   const distroReapArgs = (): string[] | undefined => wslCalls.find((args) => args[0] === '-d');
-  return { manager, hostRequests, wslCalls, hooks, seedLiveSession, seedStartingSpawn, distroReapArgs };
+  return { manager, hostRequests, wslCalls, wslRequests, hooks, seedLiveSession, seedStartingSpawn, distroReapArgs };
 }
 
 const allTasks = [LIVE_TASK, STARTING_TASK, IDLE_TASK].map((id) => ({ id, worktreePath: null }));
@@ -201,6 +208,50 @@ describe('the WSL reap log line for the tasks it left out', () => {
       expect(loggedLines(logSpy).filter((line) => line.includes('left out'))).toEqual([]);
     } finally {
       logSpy.mockRestore();
+    }
+  });
+});
+
+describe('the environment of the WSL reap\'s wsl.exe calls', () => {
+  /** The task Kangentic itself is running inside, when it is started from that task's terminal. */
+  const OUTER_TASK = '3e4f5061-7283-4948-9b52-6d7e8f9a0b12';
+  const PROBE_VARIABLE = 'KANGENTIC_REAP_ENV_PROBE';
+
+  /** Set a variable on `process.env` for the run, then put back what was there, even when the run throws. */
+  async function withEnvironmentVariables(overrides: Record<string, string>, run: () => Promise<void>): Promise<void> {
+    const priorValues = new Map(Object.keys(overrides).map((name): [string, string | undefined] => [name, process.env[name]]));
+    Object.assign(process.env, overrides);
+    try {
+      await run();
+    } finally {
+      for (const [name, priorValue] of priorValues) {
+        if (priorValue === undefined) delete process.env[name];
+        else process.env[name] = priorValue;
+      }
+    }
+  }
+
+  it('never carries a task tag, though main holds one and the rest of main\'s environment is passed on', async () => {
+    const { manager, wslRequests } = setup();
+
+    await withEnvironmentVariables({ [TASK_PROCESS_TAG_ENV]: OUTER_TASK, [PROBE_VARIABLE]: 'present' }, async () => {
+      await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true });
+    });
+
+    // The spec names its distro, so there is no `-l -v` listing: one running-distro listing, then the script.
+    const runningListings = wslRequests.filter((request) => request.args.includes('--running'));
+    const distroReaps = wslRequests.filter((request) => request.args[0] === '-d');
+    expect(runningListings).toHaveLength(1);
+    expect(distroReaps).toHaveLength(1);
+    for (const request of [...runningListings, ...distroReaps]) {
+      const environment = request.options.env;
+      expect(request.file).toBe('wsl.exe');
+      expect(environment).toBeDefined();
+      // Positive controls: an environment did reach the call, `WSL_UTF8` from the reap and the probe from main's own,
+      // so a tag missing from it is the reap's doing and not an empty environment.
+      expect(environment!.WSL_UTF8).toBe('1');
+      expect(environment![PROBE_VARIABLE]).toBe('present');
+      expect(Object.keys(environment!).filter((name) => name.toUpperCase() === TASK_PROCESS_TAG_ENV)).toEqual([]);
     }
   });
 });

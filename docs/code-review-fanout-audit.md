@@ -824,6 +824,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 736, whole branch, fifth pass | 159f +12596 -1743 | 1007KB, 17608 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 16 pack-carrying, most of them the WSL sources the focus questions named; the integration finder read no body | 36 raised, 18 distinct / 4 applied, 6 refuted (2 by measurement), 6 skipped; 2 coverage holes filled |
 | task 736, whole branch, sixth pass | 159f +12958 -1743 | 1029KB, 17970 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 70 of 16 pack-carrying, most of them rule files, callers and greps; the integration finder read 4 bodies | 43 raised, 42 distinct / 9 applied, 4 refuted, 22 skipped; 7 coverage holes filled |
 | task 736, whole branch, seventh pass | 164f +13570 -1747 | 1076KB, 18670 lines | 6 (0) | 158 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 16 pack-carrying, most of them rule files, callers and greps; the integration finder read no body | 30 raised, 22 distinct / 8 applied, 2 refuted, 9 skipped; 3 coverage holes filled |
+| task 736, whole branch, eighth pass | 164f +14097 -1751 | 1111KB, 19217 lines | 6 (0) | 158 | 0 | 18, sharded by area: 11 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 90 of 17 pack-carrying, most of them greps, callers and rule files; the integration finder read 4 narrow ranges | 29 raised, 28 distinct / 7 applied, 10 refuted, 7 skipped; 4 coverage holes filled |
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 | task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
 | task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped, plus 3 found in verification (2 applied, 1 skipped); 4 tests added, 1 hole skipped as unreachable |
@@ -1330,6 +1331,34 @@ counting the skipped rows, because `unreadableCount` reaches only a log line whi
 `reap_error`. The driver showed four of the fixes red in place: the scan failure, the toast that now
 closes with its evicted report (in the store and in a UI case against `App.tsx`), the upload parity
 table, and the lockfile comparison. The reap E2E's Linux start-time check first runs on CI.
+
+The task 736 eighth pass kept that layout at 19,217 pack lines: eleven area shards of 860 to 2,215
+lines, six gated auditors on their own ranges (cross-platform in two of 4,514 and 4,328 lines), and
+the integration finder on a 1,023-line delta. The focus ran from `727bf24b` to HEAD: the seventh
+pass's fixes, the follow-up for its nine skipped Lows, and a doc commit on Stop and late children.
+Before the fan-out the driver ran the 51 changed unit files, 31 unchanged importers and parity
+tests, and the leftover-processes UI spec, and all passed. It also grepped the whole repo once for
+the branch's removed surface and told every finder there were no survivors, so none repeated that
+grep. Every finder reported reading all of its shard, and nothing above Low survived. The one gap
+two finders raised was `normalizeDirectory` stripping the `\\?\` device prefix but not `\\.\`, so a
+`\\.\UNC\server\share` root was not refused as a share root, although `process-label.ts` already
+read that form as a share. The other kept fixes were small. The Review list vanished when twenty
+newer reports evicted the report it showed; that report now stays while the list is open. Two test
+cleanups could signal a recycled pid: the reap E2E's Linux start-time check failed open with no
+reading, and the real-process unit test kept the pids its reap had killed when an assertion failed
+first. The WSL reap's `wsl.exe` inherited main's own tag when Kangentic runs from a task's
+terminal. The real-process workflow's path filter now names `vitest.config.ts`. Ten candidates were
+refuted, among them the macOS titled-process undercount, which `darwin-reader.ts` already
+documents, and a WSL leave-out gap for a parked session that is past its grace and force-kill by
+the time the wait gives up. Seven were skipped. The one that needs an owner is that Linux and macOS
+read roles only for tagged processes and their descendants, so an untagged visible app above a
+tagged child is not protected. Reading ancestors too could classify a desktop shell as visible and
+protect everything under it, so it needs measurement first. One coverage claim was half wrong:
+`task-process-tag.test.ts` already pinned the WSL script budget's decrement and exhaustion, so the
+new `wsl-reap-script-budget.test.ts` keeps only the cases it missed. Two test-builders worked with
+`src/` closed and showed red-green on mutated copies through a scratch vitest alias. The driver then
+reverted the device-prefix fix, the open-report exemption, the label pattern's backslash half, the
+token query check and the tag strip in place, and saw each test go red.
 
 The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
 mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and

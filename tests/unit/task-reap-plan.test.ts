@@ -322,6 +322,12 @@ describe('normalizeDirectory', () => {
     expect(normalizeDirectory('/home/dev/project/', false)).toBe('/home/dev/project');
   });
 
+  it('reads the `\\\\.\\` device prefix as it reads `\\\\?\\`', () => {
+    expect(normalizeDirectory('\\\\.\\UNC\\srv\\share\\proj', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('//./unc/srv/share/proj/', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('\\\\.\\C:\\Users\\dev\\project', false)).toBe('C:/Users/dev/project');
+  });
+
   it('lowercases only when the file system ignores case', () => {
     expect(normalizeDirectory('\\\\?\\UNC\\SRV\\Share\\Proj', true)).toBe('//srv/share/proj');
     expect(normalizeDirectory('\\\\?\\UNC\\SRV\\Share\\Proj', false)).toBe('//SRV/Share/Proj');
@@ -336,6 +342,14 @@ describe('isInsideDirectory', () => {
     expect(isInsideDirectory('/anything', '/')).toBe(false);
     expect(isInsideDirectory('C:\\anything', 'C:\\')).toBe(false);
     expect(isInsideDirectory('/anything', '')).toBe(false);
+  });
+
+  it('puts a share path inside its root whichever device prefix either one is written with', () => {
+    expect(isInsideDirectory('\\\\srv\\share\\proj\\src', '\\\\.\\UNC\\srv\\share\\proj')).toBe(true);
+    expect(isInsideDirectory('\\\\.\\UNC\\srv\\share\\proj\\src', '\\\\srv\\share\\proj')).toBe(true);
+    expect(isInsideDirectory('\\\\.\\UNC\\srv\\share\\proj\\src', '\\\\?\\UNC\\srv\\share\\proj')).toBe(true);
+    // Negative control: a sibling on the same share.
+    expect(isInsideDirectory('\\\\srv\\share\\proj2', '\\\\.\\UNC\\srv\\share\\proj')).toBe(false);
   });
 
   it('is case-sensitive only when asked to be', () => {

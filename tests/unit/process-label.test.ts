@@ -168,6 +168,23 @@ describe('isFileFrom', () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
+  it('answers false for a relative candidate under any backslash share form, on every OS, without asking the filesystem', async () => {
+    // A relative candidate makes the check read the working directory as written,
+    // so the backslash half of the pattern runs on Linux and macOS too.
+    const stat = failingStat();
+    expect(await isFileFrom('\\\\host\\share\\work', 'app.js')).toBe(false);
+    expect(await isFileFrom('\\\\?\\UNC\\host\\share\\work', 'app.js')).toBe(false);
+    expect(await isFileFrom('\\\\.\\UNC\\host\\share\\work', 'app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it('does not take a backslash local device path for a share, on every OS, and still asks the filesystem', async () => {
+    const stat = failingStat();
+    expect(await isFileFrom('\\\\.\\pipe\\work', 'app.js')).toBe(false);
+    expect(await isFileFrom('\\\\?\\C:\\work', 'app.js')).toBe(false);
+    expect(stat).toHaveBeenCalledTimes(2);
+  });
+
   it('does not take a local device path for a share, and still asks the filesystem about it', async () => {
     const stat = failingStat();
     expect(await isFileFrom(null, '//?/C:/work/app.js')).toBe(false);
