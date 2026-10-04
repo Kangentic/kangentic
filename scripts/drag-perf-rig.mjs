@@ -898,6 +898,42 @@ async function runWorkflowScenario(id, count, perColumn) {
     });
     if (handle) record(`${id}-link-drag`, await canvasDrag(handle, { x: handle.x + 320, y: handle.y + 180 }, 1500, { run, cards }));
   }
+
+  // The board with this workflow's cards on it: every card carries the
+  // workflow strip, and a To Do card's footer says what it waits for. The
+  // drag is the lock's own case, refused at the drop, so Escape clears the
+  // links overlay the refusal shows before the next run.
+  await page.locator('[data-testid="view-toggle-board"]').click();
+  await page.locator('[data-board-lanes]').waitFor({ state: 'visible', timeout: 10000 });
+  await sleep(1000);
+  const boardTaskId = await page.evaluate(() => {
+    const cards = document.querySelectorAll('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="To Do"] [data-task-id]');
+    for (const card of cards) {
+      if (card.querySelector('[data-testid="workflow-card-strip"]')) return card.getAttribute('data-task-id');
+    }
+    return null;
+  });
+  if (!boardTaskId) throw new Error('no workflow card in To Do on the board');
+  for (let run = 0; run < RUNS; run++) {
+    const boardRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'Executing', extra: { run, cards } });
+    record(`${id}-board-drag`, await (run === 0 ? profiled(`${id}-board-drag`, boardRun) : boardRun()));
+    await sleep(400);
+    await page.keyboard.press('Escape');
+    await sleep(400);
+  }
+
+  // The same board and the same cards with no workflow (a deleted workflow
+  // leaves its unfinished tasks as ordinary tasks): what the workflow strip
+  // and its subscriptions cost, apart from the number of cards.
+  await page.evaluate(async (previous) => window.electronAPI.workflows.delete(previous.projectId, previous.workflowId), lastWorkflow);
+  lastWorkflow = null;
+  await pollUntil(async () => (await page.locator('[data-board-lanes] [data-testid="workflow-card-strip"]').count()) === 0, 15000, 250);
+  await sleep(1000);
+  for (let run = 0; run < RUNS; run++) {
+    const plainRun = () => heldDrag(boardTaskId, '[data-board-lanes] [data-swimlane-name="Executing"]', { holdMs: 1500, sweep: true, laneName: 'Executing', extra: { run, cards } });
+    record(`${id}-board-drag-plain`, await (run === 0 ? profiled(`${id}-board-drag-plain`, plainRun) : plainRun()));
+    await resetToTodo(boardTaskId);
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
-import React, { useContext, useEffect } from 'react';
-import { Handle, Position, useConnection, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
+import React, { useContext } from 'react';
+import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
 import type { WorkflowViewTask } from '../../../shared/types';
 import { PORT_OFFSET_Y } from './workflow-layout';
 import { WorkflowCanvasCard, type WorkflowWaiting } from './WorkflowCanvasCard';
@@ -22,8 +22,14 @@ import { findTask, linkRefusal, taskLabel } from './workflow-graph';
  * While a link is being drawn, the whole card is the drop target (React
  * Flow's Easy Connect pattern), and the card under the pointer says what a
  * release would do: "Release to make #417 wait for #419" with an accent ring,
- * or the refusal main would give. The target is mounted only while a link is
- * in progress, so it never takes a card drag.
+ * or the refusal main would give.
+ *
+ * The card-sized target is mounted with the card and measured once, and takes
+ * the pointer only while the canvas root carries `data-linking` (index.css), so
+ * it never takes a card drag. Starting or ending a link therefore re-renders
+ * no card: at 100 cards, mounting the target on every card at the start and
+ * re-measuring each made a 48 to 62ms frame at both ends of the gesture
+ * (`scripts/drag-perf-rig.mjs`, W100 link drag).
  */
 export interface WorkflowNodeData extends Record<string, unknown> {
   viewTask: WorkflowViewTask;
@@ -39,7 +45,7 @@ export type WorkflowFlowNode = Node<WorkflowNodeData, 'workflowTask'>;
 
 const PORT_CLASS = '!w-2.5 !h-2.5 !rounded-full !border-2 !border-edge-input !bg-surface-raised';
 const HIDDEN_PORT_CLASS = '!w-2.5 !h-2.5 !opacity-0 !pointer-events-none !border-0';
-const CARD_TARGET_CLASS = '!absolute !inset-0 !w-full !h-full !min-w-0 !min-h-0 !rounded-md !border-0 !bg-transparent !opacity-0 !transform-none';
+const CARD_TARGET_CLASS = 'workflow-card-target !absolute !inset-0 !w-full !h-full !min-w-0 !min-h-0 !rounded-md !border-0 !bg-transparent !opacity-0 !transform-none';
 
 /** What releasing the link being drawn over this card would do. */
 function LinkDropHint({ nodeId }: { nodeId: string }) {
@@ -75,14 +81,6 @@ function sameCard(previous: NodeProps<WorkflowFlowNode>, next: NodeProps<Workflo
 export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data, selected }: NodeProps<WorkflowFlowNode>) {
   const showTarget = data.editable && data.canWait;
   const showSource = data.editable && data.canBlock;
-  const linking = useConnection((connection) => connection.inProgress);
-  // React Flow names the card under the pointer from each handle's measured
-  // bounds, so the card-sized target is measured when it mounts, and the node
-  // measured again once it goes. React Flow batches the calls into one frame.
-  const updateNodeInternals = useUpdateNodeInternals();
-  useEffect(() => {
-    updateNodeInternals(id);
-  }, [linking, id, updateNodeInternals]);
   return (
     <div className="relative" style={{ width: 256 }}>
       <Handle
@@ -105,10 +103,10 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
         className={showSource ? PORT_CLASS : HIDDEN_PORT_CLASS}
         style={{ top: PORT_OFFSET_Y }}
       />
-      {linking && data.editable && (
+      {data.editable && (
         <Handle id="card" type="target" position={Position.Left} isConnectable isConnectableStart={false} className={CARD_TARGET_CLASS} />
       )}
-      {linking && <LinkDropHint nodeId={id} />}
+      <LinkDropHint nodeId={id} />
     </div>
   );
 }, sameCard);

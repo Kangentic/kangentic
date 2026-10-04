@@ -213,7 +213,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 
 ### Workflows (15 channels)
 
-The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The rules are `src/main/workflows/workflow-service.ts`, the same ones the MCP tools reach.
+The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -998,7 +998,8 @@ A workflow is a set of linked tasks that run through their boards on their own (
 its home project's database with its links (`workflows`, `task_links`); its tasks live on their own
 boards. A task's route (the columns it visits) is one pure shared module,
 `src/shared/workflow-route.ts`, and so is who may move a workflow task,
-`src/shared/workflow-lock.ts`, which main and the board both ask.
+`src/shared/workflow-lock.ts`, which main and the board both ask. Every refusal sentence is in
+`src/shared/workflow-refusals.ts`, so main's error and the view's disabled tooltip read the same.
 
 ```
 src/main/workflows/
@@ -1008,6 +1009,8 @@ src/main/workflows/
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
+  workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
+  workflow-changed.ts        # the coalesced workflow:changed push
   workflow-complete.ts       # the workflow:completed push
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
   workflow-runtime.ts        # the IPC context the operations act through
@@ -1031,6 +1034,51 @@ src/main/workflows/
   comes from the MCP request's caller segment (`CommandContext.callerTaskId`).
 - **MCP:** twelve `kangentic_*_workflow` tools in their own category (`workflow-tools.ts`,
   `workflow-commands.ts`), off the phone's board-tool path.
+
+### Workflows in the renderer
+
+The view is the third `BoardView` (`'board' | 'backlog' | 'workflows'`), loaded on first open
+(`LazyWorkflowsView`), so `@xyflow/react` stays out of the eager bundle; `scripts/build.js` fails a
+build where it is reachable by a static import.
+
+```
+src/renderer/components/workflows/
+  WorkflowsView.tsx        # header, canvas, inspector, dialogs, the canvas card menu
+  WorkflowHeader.tsx       # picker, Rename, Start / Running / Resume, Delete, progress (a width ladder)
+  WorkflowCanvas.tsx       # React Flow: nodes, lane-routed edges, tools, search hiding
+  WorkflowTaskNode.tsx     # one card: ports, the full-card link target, the drop hint
+  WorkflowCanvasCard.tsx   # the board's card body under the workflow strip, fixed height
+  WorkflowInspector.tsx    # run order, route rail, links, Add blocker, footer (canvas and task detail)
+  WorkflowCardMenu.tsx     # the board's TaskContextMenu with Open on board
+  TaskWorkflowPanel.tsx    # task detail's workflow panel: the inspector for the task's own workflow
+  WorkflowPicker.tsx       # the header's picker, and the workflow state chip
+  WorkflowDialogs.tsx      # Start, Delete, Remove and Rename confirms
+  WorkflowStrip.tsx        # the strip on a card (canvas and board) and its step track
+  WorkflowEdge.tsx         # a link, routed through the lanes between columns
+  workflow-canvas-context.ts # the workflow a node reads for its link hint
+  workflow-graph.ts        # pure: waiting, link and route guards, run order
+  workflow-layout.ts       # pure: the layered auto layout
+src/renderer/components/board/
+  WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
+  WorkflowLinksOverlay.tsx # Show workflow links: lines measured on scroll and resize, rings, dimming
+  workflow-menu-items.tsx  # Open workflow and Show workflow links, in the card menu's leading slot
+  DeleteTaskDialog.tsx     # the Delete task confirm, shared by the board card and the canvas menu
+src/renderer/utils/
+  board-workflow.ts        # a card's workflow facts from the summaries, and the lock asked on the board
+  workflow-refusal.ts      # a refused move: main's sentence, Open workflow, the links overlay
+```
+
+- **One store** (`workflow-store.ts`): the project's summaries (each carries `boardTasks`, every
+  card's waiting-for and human-gate exit), other projects' summaries for cards on this board, the
+  selected workflow's detail, task panels' watched details, and the links overlay. Edits address a
+  workflow by home project and id (`setRouteIn`, `setLinkIn`, `removeTaskIn`), so task detail acts
+  on the task's own workflow whatever the view shows. A reload keeps unchanged objects
+  (`shareUnchanged`, `shareSummaries`), so a move re-renders only the cards it changed.
+- **The lock on the board** is main's own predicate (`src/shared/workflow-lock.ts`), asked by the
+  drop and by `moveTask` before the card moves, so a refused card never slides and snaps back.
+  Main still refuses on its own for every other path.
+- **An ordinary card pays nothing:** only a task with `workflow_id` mounts `WorkflowTaskCardBody`,
+  which holds the workflow subscriptions.
 
 ## Board Adapters
 

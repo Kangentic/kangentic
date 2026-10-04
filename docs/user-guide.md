@@ -152,12 +152,17 @@ Clicking a completed task opens a session summary showing: duration, model, cost
 ### Task Card Context Menu
 
 Right-click any task card on the board to open a context menu with:
+- **Open workflow** and **Show workflow links** - first, on a task in a workflow (see [Workflows](#workflows))
 - **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
 - **Edit** - opens the task detail dialog in edit mode
 - **Move to** - submenu listing all other columns as move targets
+- **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
 - **Backlog** - send the task back to the backlog (cleans up session and worktree)
 - **Archive** - move the task to Done and archive it
 - **Delete** - permanently delete the task, session, and worktree
+
+On a task in a running workflow, Move to, Backlog and Archive stay in the menu, disabled, with the
+reason as their tooltip.
 
 ### Return to To Do
 
@@ -512,9 +517,36 @@ A workflow is a set of linked tasks that runs through the board on its own. Each
 route (the columns it visits, every column between To Do and Done unless it skips some) and starts
 when every task it waits for has reached Done, as agent slots allow.
 
-**Planning one.** Ask an agent: "plan the usage budgets work as a workflow". It saves the plan
-with `kangentic_save_workflow` (nothing reaches the board yet), and you start it when you are
-ready ("start it"). The tasks then appear in To Do, and those with nothing to wait for start.
+**The Workflows view.** Workflows is the third segment of the Board / Backlog toggle
+(Mod+Shift+L). Its header picks the workflow and holds Rename, the lifecycle button (Start,
+Running, which pauses it, or Resume), Delete, the progress, and New workflow. The canvas in the
+middle draws each task as its card with the links between them, and the inspector on the right
+shows the run order, or the selected task's route, what it waits for, and what waits for it, with
+Open task (Open on its board, for a task on another project's board) at the bottom. The board's
+search and filter apply to the canvas too. The Workflows segment's badge counts the project's
+unfinished workflows.
+
+**On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
+(Ctrl or Cmd with the wheel zooms). The tools at the bottom left are Fit view, Add task, and Auto
+layout, which puts moved cards back in the automatic layout. Right-click a started task's card for
+the board's own menu, with Open on board at the top.
+
+**Planning one.** Click New workflow, or right-click a To Do card on the board and pick New
+workflow (its title and description become the brief). Add tasks with Add task on the canvas, or
+ask an agent: "plan the usage budgets work as a workflow", which saves the plan with
+`kangentic_save_workflow`. Nothing reaches the board until you press Start. Until then each card
+is dashed, and double-clicking one opens it in the task form. Start creates the tasks in To Do
+(the ones with nothing to wait for start at once) and moves the To Do task the workflow was made
+from, if any, to Done. A task can go on another project's board; the inspector then names each
+task's board. Delete removes a workflow that has not started, with its planned tasks; once
+started, its unfinished tasks stay where they are as ordinary tasks.
+
+**Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
+the pointer says what a release would do, or why it cannot. In the inspector, the route switches
+turn a column on or off for that task, the X on a link row removes the link, and Add blocker makes
+the task wait for another. A control that would break a rule stays in place, disabled, and its
+tooltip says why (a task that has started cannot get a new blocker, a step it has reached cannot
+change). Remove takes a task out of the workflow.
 
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task
@@ -522,10 +554,20 @@ to the next column on its route, and the last one to Done; not done leaves it wh
 that finishes a plan moves on when you approve the plan. Without an Automation agent, or in a
 column with no agent, you drag the card on yourself.
 
-**Locked while it runs.** A running workflow's cards cannot be dragged (except out of a column you
-move by hand), and no workflow task can be moved back to To Do. Ask an agent to pause it ("pause
-the workflow") to move cards by hand, and to resume it after. When every task is in Done, a
-Workflow complete notification says so (Settings > Notifications).
+**On the board.** A workflow task's card carries a strip with its workflow's name, a step track
+(one segment per column it visits) and a lock while the workflow runs, and a card in To Do says
+what it waits for ("Blocked by #413..."). Its right-click menu leads with Open workflow and Show
+workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
+a click on empty board space clears them. Task detail has a Workflow panel (the list-tree button
+in its header, or in the form a To Do task opens in) with the same route, links and guards as the
+inspector.
+
+**Locked while it runs.** A running workflow's cards cannot be moved by hand, except out of a
+column you move by hand onto the next column of its route, and no workflow task can be moved back
+to To Do. A refused move leaves the card where it is, says why with an Open workflow link, and
+shows the card's links. The menu keeps Move to, Backlog and Archive, disabled with the same
+reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
+When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
 
 ## Settings
 

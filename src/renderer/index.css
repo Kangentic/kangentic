@@ -487,6 +487,17 @@
   will-change: transform;
 }
 
+/* A card's full-size link target (WorkflowTaskNode) is mounted with the card
+   and takes the pointer only while a link is drawn, so it never takes a card
+   drag and starting a link re-renders no card. React Flow finds the card under
+   the pointer by hit-testing, which is why the switch is pointer-events. */
+.workflow-canvas .react-flow__handle.workflow-card-target {
+  pointer-events: none !important;
+}
+.workflow-canvas[data-linking] .react-flow__handle.workflow-card-target {
+  pointer-events: all !important;
+}
+
 /* Swirling drop zone border */
 @keyframes spin-border {
   from { transform: rotate(0deg); }

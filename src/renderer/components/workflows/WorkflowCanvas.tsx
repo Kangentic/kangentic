@@ -7,6 +7,7 @@ import {
   Panel,
   ReactFlow,
   applyNodeChanges,
+  useConnection,
   useNodesInitialized,
   useReactFlow,
   type Connection,
@@ -126,6 +127,7 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
+  const linking = useConnection((connection) => connection.inProgress);
 
   const layout = useMemo(() => layoutWorkflow(
     detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density), canvasX: task.canvasX, canvasY: task.canvasY })),
@@ -230,7 +232,15 @@ export function WorkflowCanvas({
   return (
     // data-no-dismiss: the pane's grab cursor is an action, so a click on empty
     // canvas must not close a task window (light-dismiss-denylist.md).
-    <div className="relative h-full w-full workflow-canvas" data-no-dismiss onKeyDown={handleKeyDown} data-testid="workflow-canvas">
+    <div
+      className="relative h-full w-full workflow-canvas"
+      data-no-dismiss
+      // While a link is drawn the cards' full-size targets take the pointer
+      // (index.css). One attribute here, so no card re-renders at either end.
+      data-linking={linking ? '' : undefined}
+      onKeyDown={handleKeyDown}
+      data-testid="workflow-canvas"
+    >
       {WORKFLOW_EDGE_MARKERS}
       <WorkflowDetailContext.Provider value={detail}>
       <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>

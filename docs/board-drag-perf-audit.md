@@ -220,6 +220,26 @@ cards still misses a single refresh on 3 to 8% of frames, never a frame over 16m
 that spread. About 1ms of each frame's paint is the activity marks' stroke animation, which runs
 on the main thread on the board too.
 
+### Workflow cards on the board, and the link drag (2026-10-04, #732 M4)
+
+Two measurements after the board gained workflow cards and the canvas gained its link hint, at
+100 cards, 3 runs each, on the production build:
+
+- **Link drag.** Every node subscribed to "is a link being drawn", so a link's start and end
+  re-rendered all 100 cards, and each mounted (then unmounted) its full-card drop target and asked
+  React Flow to re-measure it: a 48 to 62ms frame at both ends. The target now mounts with the card
+  and a `data-linking` attribute on the canvas root turns its pointer events on. Worst frame 48.7ms
+  to 14.1ms (median), no frame over 33ms.
+- **Board drag of a workflow card.** The W scenarios now drag a To Do workflow card on the board
+  (the lock refuses the drop), then delete the workflow, which leaves the same cards as ordinary
+  tasks, and drag again. dnd-kit re-renders every card when a drag starts, and the first build's
+  workflow body re-rendered with it: the drag-start frame was 83 to 97ms against the plain board's
+  41.7ms, and overlay latency 161ms against 82ms. The strip and the To Do footer are now memoized
+  on the task row and skip that pass: 55.6ms and 117ms. What is left is the taller cards' forced
+  layout (about 12ms of `getBoundingClientRect` in dnd-kit's measuring) and the activity marks'
+  `getAnimations` in their layout effect, which runs on every render of every mark. The plain
+  board's own 41.7ms at 100+ cards is the board's existing activation cost, not the workflow's.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in
