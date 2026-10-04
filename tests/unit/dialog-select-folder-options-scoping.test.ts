@@ -192,6 +192,19 @@ describe('DIALOG_SELECT_FOLDER IPC handler', () => {
     expect(getPathMock).toHaveBeenCalledWith('home');
   });
 
+  it('keeps an options caller on its own defaultPath, else home, after a folder was picked: the remembered location is for no-options callers only', async () => {
+    showOpenDialogMock.mockResolvedValueOnce({ canceled: false, filePaths: [path.join('/mock', 'projects', 'kanban')] });
+    await invokeSelectFolder();
+
+    await invokeSelectFolder({ title: 'Pick a folder' });
+    await invokeSelectFolder({ title: 'Pick a folder', defaultPath: '/mock/some/remembered/path' });
+
+    const withoutDefaultPath = showOpenDialogMock.mock.calls[1][1] as Record<string, unknown>;
+    expect(withoutDefaultPath.defaultPath).toBe('/mock/home');
+    const withDefaultPath = showOpenDialogMock.mock.calls[2][1] as Record<string, unknown>;
+    expect(withDefaultPath.defaultPath).toBe('/mock/some/remembered/path');
+  });
+
   it('prefers the caller-supplied defaultPath over the home fallback when both options and defaultPath are given', async () => {
     await invokeSelectFolder({ defaultPath: '/mock/some/remembered/path' });
 
