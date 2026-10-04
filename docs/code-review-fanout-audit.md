@@ -1290,11 +1290,14 @@ survivor's label merged by pid could rename a stopped root whose pid it took. A 
 lookup in the Windows reader compared every process against session 0, and with that fix reverted
 the reader opened a session-0 process with `PROCESS_VM_READ`. A label's file check could stat an
 unreachable share. The backlog demote scoped its reap to whatever project was open when its lock
-came free. The real-process unit test's cleanup signalled pids it had already seen die. The pass
-skipped 22 Lows, most as owner decisions or documented trade-offs: the failed-stop row copy
+came free. The real-process unit test's cleanup signalled pids it had already seen die. The
+finders raised six Mediums: the pass applied two (that cleanup, and koffi missing from the docs'
+native module lists), refuted two, and skipped two. It skipped 22 findings in all, most as owner
+decisions or documented trade-offs. The two skipped Mediums were the failed-stop row copy
 (`rowDetailOf` returns the generic failure line before any keep reason, so a tmux row invites a
-retry without its warning), the macOS record parser's title and argv tolerances, and a Linux role
-read whose refusal leaves a process unprotected. Two test-builders worked with `src/` closed and
+retry without its warning) and the macOS record parser decoding a whole `KERN_PROCARGS2` record
+to strings. Among the Lows were that parser's title and argv tolerances and a Linux role read
+whose refusal leaves a process unprotected. Two test-builders worked with `src/` closed and
 showed red-green on scratch copies or test-side stand-ins; the driver then reverted each of the five
 fixes in place, saw its test go red, and restored it.
 
