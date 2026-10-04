@@ -64,6 +64,21 @@ export function SettingsPanel() {
     }
   }
 
+  // Give the panel a target whenever a project is open. `setSettingsOpen(true)`
+  // (the Performance toast, the Changes kebab, the Knowledge Graph, the queued
+  // placeholder) opens with no path. Project tabs still render through the
+  // `currentProject` fallback above, but no overrides load and every overrides
+  // edit is dropped as the no-project no-op. No initial tab, so each caller keeps the
+  // tab it set. The guard reads live store state because an effect that ran
+  // during a close would reopen the panel, and StrictMode's double mount would
+  // seed twice. Seeded here, not in setSettingsOpen, because that needs
+  // config-store to import project-store, which closes an import cycle.
+  useEffect(() => {
+    const state = useConfigStore.getState();
+    if (!state.settingsOpen || state.projectSettingsPath || !currentProject) return;
+    openProjectSettings(currentProject.path, currentProject.name);
+  }, [projectSettingsPath, currentProject, openProjectSettings]);
+
   // Remember the active tab (including clamps to a valid tab) so the next open
   // resumes here. Reads back via the initializer above.
   useEffect(() => {

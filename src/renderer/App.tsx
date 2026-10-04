@@ -842,6 +842,11 @@ export function App() {
         }
       }));
     }
+    if (boardConfig?.onWarnings) {
+      cleanups.push(boardConfig.onWarnings((warnedProjectId, warnings) => {
+        useBoardStore.getState().receiveOpenConfigWarnings(warnedProjectId, warnings);
+      }));
+    }
     if (boardConfig?.onShortcutsChanged) {
       cleanups.push(boardConfig.onShortcutsChanged(() => {
         useBoardStore.getState().loadShortcuts();

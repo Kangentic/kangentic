@@ -254,6 +254,8 @@ export const IPC = {
   BOARD_CONFIG_EXPORT: 'boardConfig:export',
   BOARD_CONFIG_APPLY: 'boardConfig:apply',
   BOARD_CONFIG_CHANGED: 'boardConfig:changed',
+  BOARD_CONFIG_WARNINGS: 'boardConfig:warnings',
+  BOARD_CONFIG_GET_LAST_WARNINGS: 'boardConfig:getLastWarnings',
   BOARD_CONFIG_GET_BOARD_PROFILES: 'boardConfig:getBoardProfiles',
   BOARD_CONFIG_SET_BOARD_PROFILES: 'boardConfig:setBoardProfiles',
   BOARD_CONFIG_BOARD_PROFILES_CHANGED: 'boardConfig:boardProfilesChanged',

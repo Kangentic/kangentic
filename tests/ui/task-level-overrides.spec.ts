@@ -189,14 +189,12 @@ test.describe('NewTaskDialog Advanced section', () => {
   });
 
   test('the agent edit button opens Settings scoped to THIS project, so a picked default actually persists', async () => {
-    // Distinct failure mode from the visibility test above: opening the panel to
-    // a tab WITHOUT a project path (setting only `settingsOpen` +
-    // `projectSettingsInitialTab`) leaves `projectSettingsPath` null, and
-    // `updateProjectOverride` returns early when that path is null - so a pencil
-    // that opened the Agent tab that way would show the SAME-LOOKING tab (the
-    // "Project Defaults" header above renders unconditionally from
-    // project-store's currentProject, not from projectSettingsPath) while
-    // silently dropping every write made from it. Permission Mode
+    // Distinct failure mode from the visibility test above: `updateProjectOverride`
+    // returns early when `projectSettingsPath` is null, so a pencil that opened
+    // the Agent tab without a project path would show the SAME-LOOKING tab while
+    // silently dropping every write made from it. SettingsPanel now seeds that
+    // path from currentProject when the panel opens without one, so this guards
+    // the pencil's own path and that seed together. Permission Mode
     // (agent.permissionMode, scope: 'project' in settings-registry.ts) is the
     // concrete probe: prove the pick lands in THIS project's stored overrides,
     // not just that the combobox's own on-screen value changed.

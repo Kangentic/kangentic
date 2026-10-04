@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { pruneProfileReferencesForColumn } from '../../src/shared/board-profile-references';
 import { pruneDeletedColumnFromProfiles } from '../../src/main/config/board-config/prune-profile-references';
 import type { BoardProfile } from '../../src/shared/types';
+import { BoardConfigUnreadableError } from '../../src/main/config/board-config/config-helpers';
 
 function makeProfile(overrides: Partial<BoardProfile> = {}): BoardProfile {
   return {
@@ -195,5 +196,40 @@ describe('pruneDeletedColumnFromProfiles', () => {
     expect(setBoardProfiles).toHaveBeenCalledOnce();
     expect(Object.keys(setBoardProfiles.mock.calls[0][0][0].columns)).toEqual([]);
     expect(result.removedEntries).toBe(1);
+  });
+
+  // A kangentic.json that cannot be read refuses the write. The column is gone
+  // from the database by then, so the refusal must not fail the delete.
+  it('reports nothing pruned, instead of throwing, when the file refuses the write', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const profiles = [makeProfile({ columns: { 'lane-doomed': { modelOverride: 'opus' } } })];
+
+    const result = pruneDeletedColumnFromProfiles(
+      {
+        getBoardProfiles: () => profiles,
+        setBoardProfiles: () => {
+          throw new BoardConfigUnreadableError('kangentic.json', 'The file is not a JSON object.');
+        },
+      },
+      { columnId: 'lane-doomed', columnName: 'Brand Review' },
+    );
+
+    expect(result).toEqual({ removedEntries: 0, clearedPlanExitTargets: 0 });
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('still throws any other write failure', () => {
+    const profiles = [makeProfile({ columns: { 'lane-doomed': { modelOverride: 'opus' } } })];
+
+    expect(() => pruneDeletedColumnFromProfiles(
+      {
+        getBoardProfiles: () => profiles,
+        setBoardProfiles: () => {
+          throw new Error('disk full');
+        },
+      },
+      { columnId: 'lane-doomed', columnName: 'Brand Review' },
+    )).toThrow('disk full');
   });
 });

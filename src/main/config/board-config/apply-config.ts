@@ -218,10 +218,15 @@ export function applyBoardConfigToDb(
         if (!lane) continue;
         // A legacy file speaks only for the columns that carry a message. Every
         // other column keeps what it has, because the file has said nothing
-        // about it rather than said it is empty.
-        if (!automationAware && columnConfig.autoCommand === undefined) continue;
+        // about it rather than said it is empty. A column that does carry an
+        // `automations` value here is a malformed one (a well-formed value would
+        // have made the file aware), planned only so it is warned about.
+        if (!automationAware && columnConfig.autoCommand === undefined && columnConfig.automations === undefined) continue;
         const plan = planColumnAutomations(columnConfig);
         warnings.push(...plan.warnings);
+        // A malformed container is reported, not applied. Replacing would
+        // delete the column's rows over a typo.
+        if (plan.keepExisting) continue;
         automationRepo.replaceForColumn(lane.id, plan.rows);
       }
     }

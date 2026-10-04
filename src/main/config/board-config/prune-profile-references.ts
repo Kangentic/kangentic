@@ -8,6 +8,7 @@
  */
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import type { BoardProfile } from '../../../shared/types';
+import { BoardConfigUnreadableError } from './config-helpers';
 
 /**
  * Read the board's profiles, prune a deleted column out of them, and write them
@@ -37,6 +38,15 @@ export function pruneDeletedColumnFromProfiles(
     return { removedEntries: 0, clearedPlanExitTargets: 0 };
   }
 
-  accessors.setBoardProfiles(pruned);
+  try {
+    accessors.setBoardProfiles(pruned);
+  } catch (error) {
+    // The column is already gone from the database, so a refused write must
+    // not fail the delete. The profiles keep a reference to a column that no
+    // longer exists, which resolves to nothing, until the file is fixed.
+    if (!(error instanceof BoardConfigUnreadableError)) throw error;
+    console.warn('[BOARD_CONFIG] Deleted column left in Board Profiles:', error.message);
+    return { removedEntries: 0, clearedPlanExitTargets: 0 };
+  }
   return { removedEntries, clearedPlanExitTargets };
 }

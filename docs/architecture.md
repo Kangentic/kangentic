@@ -328,13 +328,15 @@ from a host's complete mounted set, never accumulated from claim/release - see
 |---------|---------|---------|
 | `keybindings:probeGlobal` | invoke | Probe whether each canonical combo can be claimed as a system-wide global shortcut (via Electron `globalShortcut`); returns `Record<combo, 'available' \| 'taken' \| 'unsupported'>`. Used by the Hotkeys settings tab to warn when a combo is already owned by the OS or another app. |
 
-### Board Config (11 channels)
+### Board Config (13 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `boardConfig:exists` | invoke | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open, AFTER the open-time apply below) |
 | `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB). The same apply also runs unprompted on project open when the file exists, before the export - see [Board Config Sync](configuration.md#board-config-sync-kangenticjson) |
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+| `boardConfig:warnings` | on | Event: the project-open reconcile's warnings for the board's warning banner, sent on every open (an empty list clears it) |
+| `boardConfig:getLastWarnings` | invoke | The warnings of a project's last apply. The renderer fetches them each time a project becomes current, for the push it drops when it lands first (a launch restore, an open by folder path) |
 | `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)) |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
@@ -835,13 +837,13 @@ State: `config` (AppConfig), `globalConfig`, `appVersion`, `agentList`, `gitInfo
 - **App version** -- `loadAppVersion()` fetches the Electron app version via IPC.
 - **Agent inventory** - `loadAgentList()` probes every registered agent adapter and returns per-agent found/path/version/displayName (`AgentDetectionInfo[]`); consumers look up their own agent's entry rather than reading a single Claude-only detection result.
 - **Git detection** -- `detectGit()` checks for git installation, version, and minimum version requirement.
-- **Project overrides** -- `loadProjectOverrides()`, `updateProjectOverride()`, `removeProjectOverride()` manage per-project config overrides by filesystem path.
+- **Project overrides** -- `loadProjectOverrides()` and `updateProjectOverride()` manage per-project config overrides by filesystem path. A write goes to the project the Settings panel is editing (`projectSettingsPath`) unless the caller passes an explicit target path, which a handler that awaits before it writes captures at the gesture so a project-switcher move cannot redirect it.
 
 ### ProjectStore (`project-store.ts`)
 
 State: `projects`, `currentProject`, `loading`
 
-Standard CRUD. `openProject()` triggers main process initialization (DB open, worktree pruning). Session recovery and reconciliation run in the background (fire-and-forget) so the board renders immediately; sessions appear reactively as PTYs come online via IPC status events.
+Standard CRUD. `setDefaultAgent()`, `setDefaultModel()`, and `setDefaultEffort()` write a project's defaults and apply main's returned row to both `projects` and `currentProject`, because `openProject()` copies its row from the list. `openProject()` triggers main process initialization (DB open, worktree pruning). Session recovery and reconciliation run in the background (fire-and-forget) so the board renders immediately; sessions appear reactively as PTYs come online via IPC status events.
 
 ### BacklogStore (`backlog-store.ts`)
 

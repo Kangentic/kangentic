@@ -223,6 +223,7 @@ interface MockContext {
     applyConfigOnOpen: ReturnType<typeof vi.fn>;
     exportFromDb: ReturnType<typeof vi.fn>;
     getDefaultBaseBranch: ReturnType<typeof vi.fn>;
+    sendOpenWarnings: ReturnType<typeof vi.fn>;
   };
   mainWindow: {
     isDestroyed: ReturnType<typeof vi.fn>;
@@ -258,6 +259,7 @@ function makeContext(
       applyConfigOnOpen: vi.fn(() => []),
       exportFromDb: vi.fn(),
       getDefaultBaseBranch: vi.fn(() => null),
+      sendOpenWarnings: vi.fn(),
     },
     mainWindow: {
       isDestroyed: vi.fn(() => false),

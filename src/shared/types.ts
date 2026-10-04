@@ -6505,6 +6505,10 @@ export interface ElectronAPI {
     export: () => Promise<void>;
     apply: (projectId: string) => Promise<string[]>;
     onChanged: (callback: (projectId: string) => void) => () => void;
+    /** The project-open reconcile's warnings, pushed on every open (an empty list clears the banner). */
+    onWarnings: (callback: (projectId: string, warnings: string[]) => void) => () => void;
+    /** The warnings of the project's last apply, for a renderer that missed the `onWarnings` push. */
+    getLastWarnings: (projectId: string) => Promise<string[]>;
     onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
     /** The board's named Board Profiles (see `BoardProfile`). Empty when the board has none. */
     getBoardProfiles: () => Promise<BoardProfile[]>;

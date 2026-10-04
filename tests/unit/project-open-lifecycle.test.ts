@@ -261,6 +261,7 @@ interface MockContext {
     applyConfigOnOpen: ReturnType<typeof vi.fn>;
     exportFromDb: ReturnType<typeof vi.fn>;
     getBoardProfiles: ReturnType<typeof vi.fn>;
+    sendOpenWarnings: ReturnType<typeof vi.fn>;
   };
   currentProjectId: string | null;
   currentProjectPath: string | null;
@@ -291,6 +292,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       applyConfigOnOpen: vi.fn(() => []),
       exportFromDb: vi.fn(),
       getBoardProfiles: vi.fn(() => []),
+      sendOpenWarnings: vi.fn(),
     },
     currentProjectId: null,
     currentProjectPath: null,
@@ -936,6 +938,62 @@ describe("openProjectByPath's deferred board-config block", () => {
 
     expect(context.boardConfigManager.applyConfigOnOpen).not.toHaveBeenCalled();
     expect(context.boardConfigManager.exportFromDb).not.toHaveBeenCalled();
+  });
+
+  // The reconcile's warnings used to reach only the log, so a broken
+  // kangentic.json left the board on stale data with nothing on screen.
+  it('pushes the reconcile warnings to the renderer, tagged with the project', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    context.recoveredProjects.add(project.id);
+    context.boardConfigManager.exists.mockReturnValue(true);
+    context.boardConfigManager.applyConfigOnOpen.mockReturnValue(['kangentic.json could not be read']);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushSetImmediate();
+
+    expect(context.boardConfigManager.sendOpenWarnings).toHaveBeenCalledWith(project.id, ['kangentic.json could not be read']);
+  });
+
+  it('pushes an empty list when there is no kangentic.json, so the last banner clears', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    context.recoveredProjects.add(project.id);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushSetImmediate();
+
+    expect(context.boardConfigManager.sendOpenWarnings).toHaveBeenCalledWith(project.id, []);
+  });
+
+  it('turns a reconcile that throws into a warning rather than only a log line', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    context.recoveredProjects.add(project.id);
+    context.boardConfigManager.exists.mockReturnValue(true);
+    context.boardConfigManager.applyConfigOnOpen.mockImplementation(() => {
+      throw new TypeError('(group ?? []) is not iterable');
+    });
+    state.existingPaths.add(project.path);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await flushSetImmediate();
+    const loggedErrors = consoleError.mock.calls.map((call) => call.map(String).join(' '));
+    consoleError.mockRestore();
+
+    const [, warnings] = context.boardConfigManager.sendOpenWarnings.mock.calls[0] as [string, string[]];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('kangentic.json could not be applied');
+    // The error goes to the log, not the banner: a message can carry an
+    // absolute path, and the banner is on screen in demos and screen shares.
+    expect(warnings[0]).not.toContain('is not iterable');
+    expect(loggedErrors.some((message) => message.includes('is not iterable'))).toBe(true);
   });
 });
 

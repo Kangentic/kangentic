@@ -652,7 +652,9 @@ path when you want a column retired without first emptying it.
 
 **But the file path does not clean up Board Profiles.** Deleting a column through the UI or
 `kangentic_delete_column` also prunes that column out of every profile: the uuid-keyed entry in
-`profiles[].columns`, and any `planExitTarget` naming it. Removing the column by hand-editing the
+`profiles[].columns`, and any `planExitTarget` naming it. (If `kangentic.json` cannot be read, the
+delete still succeeds and the prune is skipped and logged, so the entries stay until the file is
+fixed.) Removing the column by hand-editing the
 file (or letting an emptied ghost be reaped) does not - those entries are left pointing at a
 column that no longer exists. They are inert rather than harmful - strategy resolution looks an
 entry up by the *live* column's uuid, so a key no column has is simply never read - but they
@@ -666,18 +668,12 @@ its `profiles[].columns` entries in the same edit.
 - A hand-written config whose columns carry **no `id` fields is additive only** - it can add and
   update columns but never removes one. Removal requires at least one config column with an `id`.
   Write-back then serializes the real UUIDs for future reconciliation.
-- If `kangentic.json` is **unparseable or invalid**, the apply is skipped entirely - but the export
-  still runs and **overwrites the file from the database**. How much you lose depends on which
-  kind of broken it is:
-  - **Unparseable** (bad JSON) loses the keys the database has no column for: `shortcuts`,
-    `profiles`, and `defaultBaseBranch`. The export carries those across from the previous file
-    contents, so a file it cannot read is a file it cannot carry anything across from.
-  - **Parseable but invalid** (missing `version`, zero columns, two columns sharing a name) keeps
-    all three. The board still loads from the database and the columns in the file are ignored,
-    but the export re-reads the file to preserve those keys, and reading them succeeded.
-
-  Either way the column layout in the file is discarded, so validate a hand edit before opening the
-  project.
+- If `kangentic.json` is **unparseable or invalid**, the apply is skipped and the file is **left as
+  it is**. The board loads from the database, a warning says why, and every write to the file is
+  skipped or refused until it is fixed (see the unreadable-file rules above). Fixing the file and
+  saving it applies it over whatever the database picked up meanwhile. Two exceptions write over
+  a file that holds no board: an empty file, and the `"columns": []` stub a settings save creates
+  on a project that had no `kangentic.json`.
 
 ### File Watching and Reconciliation
 
@@ -768,10 +764,8 @@ on the row beside `name`, `type` and `enabled` rather than under a `with` object
 keys are reserved: `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a
 field colliding with one, which is what keeps the flat shape safe as the reserved set grows.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it. `on` is
-not written either, because the array a row sits in already says it; a hand-written `"on":
-"enter"` or `"on": "exit"` is accepted on read, and so is `"on": "both"`, which is split into two
-automations with the second's name suffixed to stay unique.
+`enabled` is omitted when true, so a switched-off row is the only one that carries it. There is
+no `on` key, because the array a row sits in already says which trigger it runs on.
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -779,9 +773,43 @@ rules the one-time migration used, so an older file still opens. None of them is
 more. The first save after upgrading therefore rewrites `kangentic.json` and drops them, which
 is a real diff in a tracked file: see the release notes.
 
-A `type` outside the registry, an empty name, or a duplicate name within a column is a
-validation error. A RETIRED type (`kill_session`, `create_worktree`, `cleanup_worktree`) is
-warned and skipped instead, matching what the migration did to the same row in the database.
+A bad automation never fails the whole file. Nothing validates automations before apply; the
+reader in `apply-automations.ts` reports each problem as a warning and applies the rest of the
+board:
+
+- A row that is not an object, has no name, or has a `type` outside the registry is skipped.
+- A RETIRED type (`kill_session`, `create_worktree`, `cleanup_worktree`) is skipped, matching
+  what the migration did to the same row in the database.
+- A second row with a name already used in the same column is renamed (`Notify 2`).
+- An `automations` value that is not an object, or an `onEnter` / `onExit` that is not a list
+  (`{}`, or a single row written without brackets), keeps that column's current automations
+  untouched. Treating it as empty would delete the column's rows, and on project open the export
+  that follows would write the deletion into the file. A malformed value also does not count as
+  the file knowing the `automations` key, so it cannot clear the columns the file is silent about.
+
+On project open these warnings appear in the board's warning banner (`boardConfig:warnings`). When a
+`kangentic.json` change is applied while the app is running, each one is shown as a toast, and an
+apply that fails outright shows one error toast instead of an unhandled rejection.
+
+A file that exists but is not valid JSON, such as one holding git merge conflict markers, is never
+overwritten. The board loads from the local database with a warning, and nothing writes to the
+file until it is fixed. The open-time export and the write-back after a board edit are skipped and
+logged. A profile, shortcut, or base branch save is refused with an error the user sees (a toast,
+or an MCP command's error), so the change is never reported as saved. Board edits made meanwhile
+stay in the local database, and the fixed file applies over them when it changes on disk. An
+unreadable `kangentic.local.json` is reported the same way and the team file applies without it.
+
+Three cases are not a broken file. An empty file reads as missing and the next write re-creates
+it. A leading UTF-8 byte order mark, which Windows editors save, is ignored. A read that a Windows
+lock refuses (`EBUSY`, `EPERM`) is retried by the write-back a few times before it gives up. The
+export also skips a valid file the validator rejects, except a stub with no columns, which a
+settings save writes on a project that had no `kangentic.json`.
+
+The file's own lists are stricter. A `columns`, `actions`, or `transitions` value that is not a
+list, an entry in one that is not an object, a column with no name, or a transition whose
+`actions` is not a list rejects the whole file, and the board loads from the local database. In
+`kangentic.local.json`, any of those values that is not a list is ignored instead, and so is any
+entry that is not an object. A `shortcuts` or `profiles` value that is not a list reads as none.
 
 The `defaultBaseBranch` field sets the team-shared default base branch for worktree creation. When present, it takes precedence over the per-user `git.defaultBaseBranch` in `AppConfig`. Individual users can override it via `kangentic.local.json`.
 
@@ -816,6 +844,8 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |
 | `boardConfig:changed` | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+| `boardConfig:warnings` | Event: the project-open reconcile's warnings, shown in the board's warning banner |
+| `boardConfig:getLastWarnings` | The warnings of a project's last apply, fetched when a project becomes current |
 | `boardConfig:getBoardProfiles` | Get the board's [Board Profiles](#board-profiles) |
 | `boardConfig:setBoardProfiles` | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | Event: an agent (MCP) rewrote this project's Board Profiles |

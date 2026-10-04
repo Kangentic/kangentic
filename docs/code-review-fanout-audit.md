@@ -821,6 +821,9 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 736, whole branch, second pass | 153f +10439 -1718 | 866KB, 15295 lines | 9 (0) | 144 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two), integration on the delta | about 70 of 13 pack-carrying, most of them greps | 41 raised, 39 distinct, plus 1 found in verification / 27 applied, 4 refuted, 9 skipped; 5 coverage holes filled |
 | task 736, whole branch, third pass | 156f +11700 -1724 | 944KB, 16632 lines | 8 (0) | 148 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 40 of 13 pack-carrying, most of them rule files and callers | 35 raised, 31 distinct / 12 applied, 7 refuted, 10 skipped; 8 coverage holes filled |
 | task 736, whole branch, fourth pass | 159f +12196 -1727 | 977KB, 17163 lines | 7 (0) | 152 | 0 | 15, sharded by area: 8 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 14 pack-carrying, most of them rule files, greps and callers | 34 raised, 30 distinct / 18 applied, 3 refuted, 9 skipped; 6 coverage holes filled |
+| task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
+| task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
+| task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped, plus 3 found in verification (2 applied, 1 skipped); 4 tests added, 1 hole skipped as unreachable |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1251,3 +1254,22 @@ could go wrong (the stop setting OR'd, and the first request's kept). Three cand
 refuted, among them a task-row read outside the reap's `try` that the same function already makes,
 unguarded, a few lines earlier. As in the third pass, `src/` was closed to the two test-builders and the driver
 reverted each fix in place to see its test go red.
+The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
+mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and
+repository behind the default writes, `config-store.ts`, `App.tsx`, the walkthrough hook, and four
+sibling specs. The other 5 were gaps in pack-carried files. Two were in `SettingsPanel.tsx`, packed
+as one window over lines 47-101, where the correctness and maintainability finders both needed the
+selectors above it and the project switcher below it. Two were in the mock, whose `setDefault*`,
+`rename` and `relocate` methods sit 60 or more lines from its nearest hunk, so no plausible
+`HUNK_CONTEXT_LINES` would have carried them. One was a grep of `project-store.ts` for every writer
+of `projects`. The one Medium, a stale initial tab applied by the new relocate re-key, came from the
+maintainability finder, and the driver found it on its own while verifying.
+
+The task 741 second pass reviewed the same change plus the first pass's two commits. Of its 15 reads
+beyond the pack, 9 were outside the changed set: the IPC auditor's five greps across the channel
+layers, the relocation hook, `App.tsx`, one rule file, and one repo-wide grep. The other 6 were gaps
+or searches in pack-carried files, and `SettingsPanel.tsx` again drew two of them, since its one
+window over lines 47-101 leaves out the selectors above it and the switcher below it. The integration
+finder read three file bodies although its prompt carried only the signature delta. The one kept
+correctness finding, an explicit-target write that merged over `{}` while the panel's refetch was in
+flight, needed main's `saveProjectOverrides` to confirm, because main replaces the whole file.

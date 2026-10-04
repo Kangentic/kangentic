@@ -100,4 +100,25 @@ test.describe('Config Warning Banner', () => {
 
     await browser.close();
   });
+
+  // The open-time warnings push is dropped when it lands before the renderer
+  // has made the project current, which is the order a launch restore and an
+  // open by folder path take. The renderer fetches the stored warnings each
+  // time a project becomes current; this drives that fetch through the real
+  // project-switch effect, with nothing injected into the store.
+  test('shows the stored open-time warnings when a project becomes current', async () => {
+    const { browser, page } = await launchPage();
+    await page.evaluate(() => {
+      (window as unknown as { __mockLastConfigWarnings: string[] }).__mockLastConfigWarnings = [
+        'kangentic.json could not be read, so board edits are not saved to it until it is fixed.',
+      ];
+    });
+
+    await createProject(page, 'open-warning-test');
+    await waitForBoard(page);
+
+    await expect(page.locator('text=kangentic.json could not be read')).toBeVisible();
+
+    await browser.close();
+  });
 });

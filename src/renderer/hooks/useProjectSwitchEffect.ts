@@ -154,6 +154,13 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // cold switch. Cheap; safe to run on warm switches too.
       cancelSync();
 
+      // The kangentic.json warning banner belongs to one project. Clear the
+      // outgoing project's at once, then fetch this one's last apply: the
+      // open-time push is dropped when it lands before the project is current,
+      // which is the order a launch restore and an open by folder path take.
+      useBoardStore.getState().setConfigWarnings([]);
+      void useBoardStore.getState().fetchOpenConfigWarnings(currentProject.id);
+
       // Arm the bottom terminal panel to render collapsed from the first frame if this project
       // will restore detail windows. `dialogSessionIds` is cleared synchronously just below and
       // only repopulated asynchronously by the (cold-path: doubly-deferred) workspace restore, so
@@ -434,6 +441,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       useBoardStore.setState({
         tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
         lanePins: EMPTY_LANE_PINS,
+        configWarnings: [],
       });
       useSessionStore.setState({
         activeSessionId: null,
