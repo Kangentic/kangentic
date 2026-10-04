@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Info, Loader2, PanelLeftClose, PanelLeftOpen, Play } from 'lucide-react';
 import type { Session } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
@@ -89,24 +89,45 @@ export function useWorkflowAgentWorking(workflowId: string | null): boolean {
 export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId: string; floating?: boolean }) {
   const storedWidth = useConfigStore((state) => state.config.workflows?.agentPaneWidth);
   const updateConfig = useConfigStore((state) => state.updateConfig);
-  // The width while its edge is dragged; null otherwise, which reads the setting.
+  // The width a finished drag set, held until the setting it saved comes back;
+  // null otherwise, which reads the setting.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const width = workflowAgentPaneWidth(dragWidth ?? storedWidth);
-  const startResize = useCallback((event: ReactMouseEvent) => {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const startResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const outer = outerRef.current;
+    const paneElement = paneRef.current;
+    if (!outer || !paneElement) return;
+    const handle = event.currentTarget;
     const startX = event.clientX;
     const startWidth = workflowAgentPaneWidth(storedWidth);
+    // Docked, the drag stops where the canvas would drop below its minimum, so
+    // widening the pane never pushes the inspector out or turns it floating.
+    const rowWidth = outer.parentElement?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
+    const widest = floating ? MAX_PANE_WIDTH : rowWidth - INSPECTOR_WIDTH - WORKFLOW_CANVAS_MIN_WIDTH;
     let latest = startWidth;
     startPanelDrag(event, {
       cursor: 'col-resize',
+      // Written to the elements, not to state, until release. A move sets the
+      // width ahead of that frame's layout; as React state it would wait as a
+      // pending render, which React Flow's ResizeObserver flushes in the middle
+      // of the browser's observer delivery, and the pane resizing there is a
+      // "ResizeObserver loop" error on every few frames of a drag.
       onMove: (moveEvent) => {
-        latest = workflowAgentPaneWidth(startWidth + moveEvent.clientX - startX);
-        setDragWidth(latest);
+        const next = workflowAgentPaneWidth(startWidth + moveEvent.clientX - startX);
+        latest = Math.max(MIN_PANE_WIDTH, Math.min(widest, next));
+        paneElement.style.width = `${latest}px`;
+        if (!floating) outer.style.width = `${latest}px`;
+        handle.setAttribute('aria-valuenow', String(latest));
       },
       onRelease: () => {
+        if (latest === startWidth) return;
+        setDragWidth(latest);
         void updateConfig({ workflows: { agentPaneWidth: latest } }).finally(() => setDragWidth(null));
       },
     });
-  }, [storedWidth, updateConfig]);
+  }, [floating, storedWidth, updateConfig]);
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);
@@ -171,6 +192,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
 
   const pane = (
     <div
+      ref={paneRef}
       className="relative flex h-full min-h-0 flex-shrink-0 flex-col border-r border-edge bg-surface"
       style={{ width }}
       data-testid="workflow-agent-pane"
@@ -266,7 +288,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // strip's while floating), and the pane inside lies over the canvas when it
   // floats.
   return (
-    <div className="relative flex-shrink-0" style={{ width: floating ? COLLAPSED_WIDTH : width }}>
+    <div ref={outerRef} className="relative flex-shrink-0" style={{ width: floating ? COLLAPSED_WIDTH : width }}>
       <div className={floating ? 'absolute inset-y-0 left-0 z-20 shadow-xl' : 'h-full'}>{pane}</div>
     </div>
   );

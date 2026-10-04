@@ -175,37 +175,67 @@ test('Workflows folds the project sidebar, and leaving restores it at the width 
   }
 });
 
+/**
+ * Drags the pane's edge by `distance` pixels inside the page, one mousemove per
+ * animation frame over 20 frames, which is how Chromium delivers a real drag at
+ * the display's rate. A move per CDP round trip is slower than a hand and hid
+ * the error this catches. Returns the window error events raised meanwhile,
+ * which is how the browser reports a ResizeObserver loop.
+ */
+async function dragPaneEdge(page: Page, distance: number): Promise<string[]> {
+  return page.evaluate(async (dragDistance) => {
+    const errors: string[] = [];
+    const onError = (event: ErrorEvent) => errors.push(event.message);
+    window.addEventListener('error', onError);
+    const handle = document.querySelector('[data-testid="workflow-agent-pane-resize"]') as HTMLElement;
+    const box = handle.getBoundingClientRect();
+    const startX = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const frames = 20;
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: startX, clientY: y }));
+    for (let frame = 1; frame <= frames; frame++) {
+      await nextFrame();
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: startX + (dragDistance * frame) / frames, clientY: y }));
+    }
+    await nextFrame();
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: startX + dragDistance, clientY: y }));
+    await nextFrame();
+    await nextFrame();
+    window.removeEventListener('error', onError);
+    return errors;
+  }, distance);
+}
+
 test('dragging the pane\'s edge widens it, and the width is kept', async () => {
   const { browser, page } = await launch();
   try {
     const pane = byTestId(page, 'workflow-agent-pane');
     await expect(pane).toHaveAttribute('data-floating', 'false');
     const before = await pane.evaluate((element) => element.getBoundingClientRect().width);
-    // Window error events, which is how the browser reports a ResizeObserver
-    // loop: resizing the canvas under React Flow must not raise one.
-    await page.evaluate(() => {
-      const errors: string[] = [];
-      (window as unknown as { __paneDragErrors: string[] }).__paneDragErrors = errors;
-      window.addEventListener('error', (event) => errors.push(event.message));
-    });
-    const handle = byTestId(page, 'workflow-agent-pane-resize');
-    const box = await handle.boundingBox();
-    if (!box) throw new Error('resize handle has no box');
-    const centerY = box.y + box.height / 2;
-    await page.mouse.move(box.x + box.width / 2, centerY);
-    await page.mouse.down();
-    // Paced one move per frame, as a hand moves; a burst of synthetic moves in
-    // one frame is not a gesture a person can make.
-    for (let step = 1; step <= 6; step++) {
-      await page.mouse.move(box.x + box.width / 2 + step * 20, centerY);
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    }
-    await page.mouse.up();
-    expect(await page.evaluate(() => (window as unknown as { __paneDragErrors: string[] }).__paneDragErrors)).toEqual([]);
+    expect(await dragPaneEdge(page, 120)).toEqual([]);
     await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).workflows?.agentPaneWidth ?? null))
       .toBeGreaterThan(before + 100);
     const after = await pane.evaluate((element) => element.getBoundingClientRect().width);
     expect(after).toBeGreaterThan(before + 100);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a docked drag stops where the canvas keeps its minimum, so the pane stays docked', async () => {
+  const { browser, page } = await launch();
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-floating', 'false');
+    expect(await dragPaneEdge(page, 700)).toEqual([]);
+    await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).workflows?.agentPaneWidth ?? null))
+      .not.toBeNull();
+    await expect(pane).toHaveAttribute('data-floating', 'false');
+    // 400 is the canvas minimum beside a docked pane (WORKFLOW_CANVAS_MIN_WIDTH).
+    const canvasWidth = await page.locator('.workflow-canvas').evaluate((element) => element.getBoundingClientRect().width);
+    expect(canvasWidth).toBeGreaterThanOrEqual(399);
+    await expect(byTestId(page, 'workflow-inspector')).toBeInViewport({ ratio: 1 });
   } finally {
     await browser.close();
   }
