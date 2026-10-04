@@ -9,8 +9,8 @@
  * work to the last column that looks alive (Merge, which auto-spawns
  * /merge-pull-request - task #642).
  *
- * `handler-helpers` is mocked before importing task-tools.ts because it pulls in
- * `../commands` -> better-sqlite3, which will not load under vitest's Node ABI.
+ * `handler-helpers` is mocked before importing task-tools.ts, so the rendering
+ * is exercised without the command layer and the database behind it.
  * Same fake-McpServer capture pattern as mcp-task-placement-schema.test.ts.
  */
 

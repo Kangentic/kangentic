@@ -19,9 +19,8 @@ import type { GroupedTurnUsageRow } from '../retrieval/conversation/conversation
 
 /**
  * Pure bucketing / aggregation math for the usage dashboard. NO database or
- * Electron imports (type-only imports are fine): better-sqlite3 cannot load
- * under vitest, so everything interesting lives here where the unit tests can
- * exercise it with plain arrays.
+ * Electron imports (type-only imports are fine), so everything interesting
+ * lives here where the unit tests can exercise it with plain arrays.
  *
  * Two-stage bucketing: SQL groups both ledgers into fixed fine-grained UTC
  * buckets (bounded row counts; the fine UTC groups nest cleanly into local
