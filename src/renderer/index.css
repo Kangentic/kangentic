@@ -747,11 +747,13 @@
     visibility var(--group-collapse-duration);
 }
 
-/* Its chevron turns over with the body, on the same clock. */
+/* Its chevron turns over with the body, on the same clock. Tailwind 4's
+   `rotate-180` sets the `rotate` property, not `transform`, so `rotate` is
+   the one to transition. */
 .card-group-chevron {
   transition:
     color var(--group-collapse-duration) var(--overlay-enter-ease),
-    transform var(--group-collapse-duration) var(--overlay-enter-ease);
+    rotate var(--group-collapse-duration) var(--overlay-enter-ease);
 }
 
 .no-motion .card-group-body,

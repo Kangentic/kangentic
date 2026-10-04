@@ -68,9 +68,9 @@ stated here and held by the components.
   edge, and every switch, trailing button and dropdown arrow ends on one right edge, the header's
   switch included. The numbers live in one constants block at the top of `settings-card.tsx`;
   change a constant and the sums follow, and do not reach for a padding class. Tiles used to sit
-  40px in, with each label on the card title's line; that indent was removed on every tab
-  (user's call, #732), since the card and its tiles already group a feature, and dialogs built
-  from the same cards (the Edit automation dialog) use the flush shape too. A row's own leading
+  40px in, with each label on the card title's line; that indent was removed on every tab,
+  since the card and its tiles already group a feature, and dialogs built from the same cards
+  (the Edit automation dialog) use the flush shape too. A row's own leading
   glyph (a drag handle, a warning icon) sits inline before its label. A nested tile still starts
   further in (`nested`), because that indent shows a dependency.
 - **A `CardToggleRow` tile is one click target.** A click anywhere on it flips the switch, and the
