@@ -60,8 +60,8 @@ vi.mock('../../src/devtools/mcp/register', () => ({ registerDevtoolsMcpTools: vi
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { buildAnswerMcpServer, buildConfiguredMcpServer, parseMcpRequestPath } from '../../src/main/agent/mcp-http-server';
-import { appendAnswerCaller, isAnswerCaller } from '../../src/main/agent/mcp-http/caller-url';
+import { buildAnswerMcpServer, buildConfiguredMcpServer, buildWorkflowAgentMcpServer, parseMcpRequestPath } from '../../src/main/agent/mcp-http-server';
+import { appendAnswerCaller, appendWorkflowAgentCaller, isAnswerCaller, workflowIdOfCaller } from '../../src/main/agent/mcp-http/caller-url';
 import { buildServerInstructions } from '../../src/main/agent/mcp-http/server-instructions';
 import { PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
@@ -194,6 +194,57 @@ describe('buildAnswerMcpServer - a Knowledge Graph answer run sees one tool', ()
     // A task session's own caller id, and no caller at all, keep the full server.
     expect(isAnswerCaller('0f3c2a1e-session-id')).toBe(false);
     expect(isAnswerCaller(undefined)).toBe(false);
+  });
+});
+
+describe('buildWorkflowAgentMcpServer - a workflow agent reads, and plans only its own workflow', () => {
+  async function listWorkflowAgentTools() {
+    const server = buildWorkflowAgentMcpServer(makeResolver(), fakeTaskCounter, 'wf-1');
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'guard', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    await client.close();
+    await server.close();
+    return tools;
+  }
+
+  it('lists the read-only tools and the planning tools, and nothing that changes board work', async () => {
+    const tools = await listWorkflowAgentTools();
+    const names = tools.map((tool) => tool.name);
+    for (const kept of ['kangentic_list_tasks', 'kangentic_find_task', 'kangentic_list_columns', 'kangentic_get_workflow', 'kangentic_save_workflow', 'kangentic_link_workflow_tasks', 'kangentic_set_task_route']) {
+      expect(names).toContain(kept);
+    }
+    for (const dropped of ['kangentic_create_task', 'kangentic_move_task', 'kangentic_delete_task', 'kangentic_update_column', 'kangentic_start_workflow', 'kangentic_delete_workflow', 'kangentic_pause_workflow']) {
+      expect(names).not.toContain(dropped);
+    }
+    expect(names.some((name) => name.startsWith('kangentic_browser_'))).toBe(false);
+    // Every tool it has is read-only, or one of the planning tools.
+    for (const tool of tools) {
+      if (tool.annotations?.readOnlyHint === true) continue;
+      expect(['kangentic_save_workflow', 'kangentic_add_workflow_task', 'kangentic_link_workflow_tasks', 'kangentic_unlink_workflow_tasks', 'kangentic_set_task_route', 'kangentic_remove_from_workflow']).toContain(tool.name);
+    }
+  });
+
+  it('takes `workflow` and `project` off a planning tool, so it needs neither', async () => {
+    const tools = await listWorkflowAgentTools();
+    const save = tools.find((tool) => tool.name === 'kangentic_save_workflow');
+    const properties = (save?.inputSchema.properties ?? {}) as Record<string, unknown>;
+    expect(properties).not.toHaveProperty('project');
+    expect(save?.inputSchema.required ?? []).not.toContain('workflow');
+    const link = tools.find((tool) => tool.name === 'kangentic_link_workflow_tasks');
+    expect(link?.inputSchema.required ?? []).not.toContain('workflow');
+  });
+
+  it('is what a workflow agent URL routes to', () => {
+    const url = appendWorkflowAgentCaller('http://127.0.0.1:1/mcp/p1', 'wf-1');
+    const parsed = parseMcpRequestPath(new URL(url ?? '').pathname);
+    expect(parsed).toEqual({ projectId: 'p1', callerSessionId: 'workflow-wf-1' });
+    expect(workflowIdOfCaller(parsed?.callerSessionId)).toBe('wf-1');
+    expect(workflowIdOfCaller('0f3c2a1e-session-id')).toBeNull();
+    expect(workflowIdOfCaller('workflow-')).toBeNull();
+    expect(workflowIdOfCaller(undefined)).toBeNull();
   });
 });
 

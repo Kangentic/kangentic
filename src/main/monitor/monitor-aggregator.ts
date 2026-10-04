@@ -164,6 +164,10 @@ export async function buildMonitorSnapshot(context: IpcContext): Promise<Monitor
     // the whole snapshot.
     try {
 
+    // A workflow's own agent lives only in the Workflows view (the design's
+    // call): it is no task and no Command Terminal, so it has no row here.
+    if (managed.workflowId) continue;
+
     // Command Terminals ARE included, and the monitor is the only place they can
     // appear: they have no task and therefore no board card, and the Command
     // Terminal layer only ever shows the currently-open project. They carry a

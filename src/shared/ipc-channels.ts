@@ -409,6 +409,10 @@ export const IPC = {
   WORKFLOW_SET_LINK: 'workflow:setLink',
   WORKFLOW_SET_ROUTE: 'workflow:setRoute',
   WORKFLOW_SET_POSITIONS: 'workflow:setPositions',
+  // The workflow's own agent, in the view's left pane (src/main/workflows/workflow-agent.ts).
+  WORKFLOW_AGENT_OPEN: 'workflow:agentOpen',
+  WORKFLOW_AGENT_RESUME: 'workflow:agentResume',
+  WORKFLOW_AGENT_PAUSE: 'workflow:agentPause',
   // A workflow or its tasks changed (any source: the view, an agent, the
   // engine), so an open Workflows view reloads it (`WorkflowChangedEvent`).
   WORKFLOW_CHANGED: 'workflow:changed',

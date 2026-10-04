@@ -27,6 +27,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { endWorkflowAgent } from './workflow-agent';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -803,6 +804,10 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
     }
   }
   new WorkflowRepository(getProjectDb(homeProjectId)).delete(workflowId);
+  // Its agent's conversation goes with it, and so does its session.
+  endWorkflowAgent(context, workflowId).catch((error: unknown) => {
+    console.error(`[WORKFLOW] Could not end the agent of ${workflowId.slice(0, 8)}:`, error);
+  });
   notifyWorkflowChanged(homeProjectId, workflowId);
   return { workflow, released };
 }

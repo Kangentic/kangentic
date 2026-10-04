@@ -156,6 +156,11 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // Verbatim, newlines kept: it is prose for the next agent, and the delivery
   // path (bracketed paste) carries line breaks intact.
   agentReply: ({ agentReply }) => agentReply ?? '',
+  // Offered only in a workflow agent's first message, which has no task and is
+  // resolved by `buildWorkflowAgentFirstMessage`
+  // (src/main/workflows/workflow-agent-prompt.ts). A task template never sees them.
+  columns: () => '',
+  brief_xml: () => '',
 };
 
 /** Resolve every task template variable for the given context. */

@@ -4677,6 +4677,44 @@
       var hydrated = false;
       var listeners = [];
 
+      function fireMockWorkflowAgentStatus(session) {
+        if (window.__mockFireStatus) window.__mockFireStatus(session.id, JSON.parse(JSON.stringify(session)));
+      }
+
+      function openMockWorkflowAgent(projectId, workflowId, resume) {
+        if (window.__mockWorkflowAgentUnavailable) {
+          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable) };
+        }
+        var existing = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        if (existing && resume && existing.status === 'suspended') {
+          existing.status = 'running';
+          fireMockWorkflowAgentStatus(existing);
+        }
+        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null };
+        var session = {
+          id: crypto.randomUUID(),
+          taskId: workflowId,
+          projectId: projectId,
+          pid: null,
+          status: 'running',
+          shell: '/bin/bash',
+          cwd: '/mock/project',
+          startedAt: new Date().toISOString(),
+          exitCode: null,
+          resuming: false,
+          transient: true,
+          workflowId: workflowId,
+          commandTerminalSlot: null,
+          commandTerminalBranch: null,
+          commandTerminalLabel: null,
+          isolatedSwimlaneId: null,
+          agentSessionId: null,
+        };
+        sessions.push(session);
+        fireMockWorkflowAgentStatus(session);
+        return { session: JSON.parse(JSON.stringify(session)), unavailable: null };
+      }
+
       function hydrate() {
         if (hydrated) return;
         hydrated = true;
@@ -4686,7 +4724,7 @@
             projectId: seed.projectId || null,
             workflow: Object.assign({
               brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
-              created_at: now(), started_at: null, finished_at: null,
+              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null,
             }, JSON.parse(JSON.stringify(row))),
           });
         });
@@ -4914,6 +4952,7 @@
             brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
             source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
             color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null,
+            agent_name: null, agent_session_id: null,
           };
           entries.unshift({ projectId: projectId, workflow: workflow });
           emit(projectId, workflow.id, false);
@@ -5098,6 +5137,21 @@
             createdTasks(workflowId).forEach(function (task) { place(task, task.id); });
           }
           emit(homeOf(entry), workflowId, false);
+        },
+        // The workflow's own agent: a transient session carrying `workflowId`,
+        // the row shape main's workflow-agent.ts produces. A test makes it
+        // unavailable with window.__mockWorkflowAgentUnavailable = '<reason>'.
+        agentOpen: async function (projectId, workflowId) {
+          return openMockWorkflowAgent(projectId, workflowId, false);
+        },
+        agentResume: async function (projectId, workflowId) {
+          return openMockWorkflowAgent(projectId, workflowId, true);
+        },
+        agentPause: async function (projectId, workflowId) {
+          var session = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+          if (!session || session.status === 'suspended') return;
+          session.status = 'suspended';
+          fireMockWorkflowAgentStatus(session);
         },
         onChanged: function (callback) {
           listeners.push(callback);

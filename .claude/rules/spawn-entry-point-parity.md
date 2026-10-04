@@ -110,6 +110,8 @@ contract was kept in sync across three files by prose comments alone.
 ## Scope
 
 Task-agent spawn paths in the main process (`src/main/ipc/**`, `src/main/transition-engine/**`).
-Transient Command Terminal sessions (`transient-sessions.ts`) and the raw `SESSION_SPAWN`
-passthrough are not task-agent spawns; they are allowlisted with reasons in the test. The
-renderer never spawns directly.
+Transient Command Terminal sessions (`transient-sessions.ts`), a workflow's own agent
+(`workflows/workflow-agent.ts`, transient, read-only, the project's default agent), and the raw
+`SESSION_SPAWN` passthrough are not task-agent spawns; they are allowlisted with reasons in the
+test. The workflow agent still builds its command, so it runs `ensureTrust` and `resolveShimLaunch`
+first like every other builder. The renderer never spawns directly.

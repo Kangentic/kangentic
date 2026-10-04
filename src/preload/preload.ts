@@ -676,6 +676,9 @@ const api: ElectronAPI = {
       ipcRenderer.invoke(IPC.WORKFLOW_SET_ROUTE, projectId, workflowId, key, swimlaneIds),
     setPositions: (projectId, workflowId, positions) =>
       ipcRenderer.invoke(IPC.WORKFLOW_SET_POSITIONS, projectId, workflowId, positions),
+    agentOpen: (projectId, workflowId, cols, rows) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_OPEN, projectId, workflowId, cols, rows),
+    agentResume: (projectId, workflowId, cols, rows) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_RESUME, projectId, workflowId, cols, rows),
+    agentPause: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_AGENT_PAUSE, projectId, workflowId),
     onChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, changed: WorkflowChangedEvent) => callback(changed);
       ipcRenderer.on(IPC.WORKFLOW_CHANGED, handler);

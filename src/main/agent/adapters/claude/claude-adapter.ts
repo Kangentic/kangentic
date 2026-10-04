@@ -263,6 +263,10 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
+  // `--tools Read,Grep,Glob` plus `--strict-mcp-config` (command-builder.ts).
+  // `--tools` is the CLI's own restriction of the built-in set, honoured in an
+  // interactive session; unlike plan mode it does not reroute the model.
+  readonly supportsReadOnlyLaunch = true;
   // Claude streams account-wide rate-limit windows in its status line, so the
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.

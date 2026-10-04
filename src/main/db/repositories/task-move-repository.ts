@@ -39,6 +39,28 @@ export class TaskMoveRepository {
     return row?.at ?? null;
   }
 
+  /**
+   * For the `limit` tasks that most recently entered `doneSwimlaneId`, how many
+   * of them entered each column on the way: what a workflow's agent is told about
+   * how work moves through this board (`{{columns}}`).
+   */
+  recentFinishedColumnVisits(doneSwimlaneId: string, limit: number): { finished: number; visits: Map<string, number> } {
+    const finishedRow = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM (
+        SELECT task_id FROM task_moves WHERE to_swimlane_id = ? GROUP BY task_id ORDER BY MAX(at) DESC LIMIT ?
+      )
+    `).get(doneSwimlaneId, limit) as { count: number };
+    const visitRows = this.db.prepare(`
+      WITH finished AS (
+        SELECT task_id FROM task_moves WHERE to_swimlane_id = ? GROUP BY task_id ORDER BY MAX(at) DESC LIMIT ?
+      )
+      SELECT moves.to_swimlane_id AS swimlane_id, COUNT(DISTINCT moves.task_id) AS tasks
+      FROM task_moves moves JOIN finished ON finished.task_id = moves.task_id
+      GROUP BY moves.to_swimlane_id
+    `).all(doneSwimlaneId, limit) as Array<{ swimlane_id: string; tasks: number }>;
+    return { finished: finishedRow.count, visits: new Map(visitRows.map((row) => [row.swimlane_id, row.tasks])) };
+  }
+
   /** Every recorded move of one task, oldest first. */
   listForTask(taskId: string): TaskMoveRecord[] {
     const rows = this.db

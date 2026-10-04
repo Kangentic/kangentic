@@ -95,6 +95,9 @@ export class DesktopNotifier {
 
     const session = this.options.sessionManager.getSession(sessionId);
     if (!session) return;
+    // A workflow's own agent lives only in the Workflows view, where its pane
+    // shows it waiting; it raises no notification of its own.
+    if (session.workflowId) return;
     if (!this.shouldNotify(`idle:${sessionId}`, session.projectId)) return;
 
     const projectName = this.options.resolveProjectName(session.projectId) ?? 'A project';

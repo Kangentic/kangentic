@@ -25,6 +25,8 @@ interface WorkflowRow {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  agent_name: string | null;
+  agent_session_id: string | null;
 }
 
 /** How many colors the categorical palette has (`--kng-chart-1..6`). */
@@ -148,6 +150,15 @@ export class WorkflowRepository {
     this.db.prepare('UPDATE workflows SET revision = revision + 1 WHERE id = ?').run(id);
   }
 
+  /**
+   * The agent conversation the workflow's agent resumes by. Changes no plan, so
+   * the revision stays; null forgets it, so the next open starts a new one.
+   */
+  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string } | null): void {
+    this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ? WHERE id = ?')
+      .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, id);
+  }
+
   /** Its links cascade with it (`task_links.workflow_id`). */
   delete(id: string): void {
     this.db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
@@ -198,6 +209,8 @@ function mapRow(row: WorkflowRow): Workflow {
     created_at: row.created_at,
     started_at: row.started_at,
     finished_at: row.finished_at,
+    agent_name: row.agent_name ?? null,
+    agent_session_id: row.agent_session_id ?? null,
   };
 }
 

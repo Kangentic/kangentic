@@ -21,11 +21,12 @@
  */
 
 import type { Session } from '../../../shared/types';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { buildTransientSessionEntry, type TransientSessionEntry, transientKey } from './transient-session-slice';
 
-/** A running Command Terminal PTY for some project. */
+/** A running Command Terminal PTY for some project. A workflow's agent is transient too, and never one. */
 function isLiveTransient(session: Session): boolean {
-  return !!session.transient && session.status === 'running';
+  return isCommandTerminalSession(session) && session.status === 'running';
 }
 
 /**

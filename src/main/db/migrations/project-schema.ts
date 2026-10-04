@@ -1868,6 +1868,18 @@ function runWorkflowsMigration(db: Database.Database): void {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state)');
 
+  // The workflow agent's conversation: which agent holds it and the id it
+  // resumes by. On the workflow, not in `sessions`, whose `task_id` is a foreign
+  // key to tasks; the agent is no task.
+  const workflowColumnNames = new Set(
+    (db.pragma('table_info(workflows)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  for (const columnName of ['agent_name', 'agent_session_id']) {
+    if (!workflowColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} TEXT DEFAULT NULL`);
+    }
+  }
+
   const taskColumnNames = new Set(
     (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),
   );

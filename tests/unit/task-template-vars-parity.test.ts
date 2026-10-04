@@ -105,10 +105,20 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
       expect(automation, `${name} must be offered in an automation`).toContain(name);
     }
 
-    // Everything else is available in both, and an automation sees the whole
-    // catalog.
-    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length);
-    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - moveOnly.length);
+    // Everything else with a task is available in both, and an automation sees
+    // the whole catalog but a workflow agent's own two.
+    const workflowAgentOnly = ['columns', 'brief_xml'];
+    expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - workflowAgentOnly.length);
+    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - moveOnly.length - workflowAgentOnly.length);
+  });
+
+  it('a workflow agent\'s first message is offered the project\'s facts and its own two, never a task\'s', () => {
+    const workflow = templateVarsFor('workflow').map((entry) => entry.name).sort();
+    expect(workflow).toEqual(['baseBranch', 'brief_xml', 'columns', 'projectName', 'projectPath']);
+    for (const name of ['columns', 'brief_xml']) {
+      expect(templateVarsFor('automation').map((entry) => entry.name)).not.toContain(name);
+      expect(templateVarsFor('spawn').map((entry) => entry.name)).not.toContain(name);
+    }
   });
 
   it('every chip is documented in docs/transition-engine.md', () => {

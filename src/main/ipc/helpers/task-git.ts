@@ -92,6 +92,11 @@ function isSameDirectory(first: string, second: string): boolean {
  * `excludeTaskId` is for the checkout guard, which must not be blocked by the
  * task's own session; occupancy checks that protect a mutation of the task's
  * OWN tree pass no exclusion so any live occupant blocks.
+ *
+ * A workflow's own agent is never an occupant. It runs read-only in the project
+ * root for as long as its workflow is open, so counting it would block every
+ * branch switch there for that whole time, and a checkout under it loses no
+ * work of its own.
  */
 export function findLiveSessionInDirectory(
   context: IpcContext,
@@ -100,6 +105,7 @@ export function findLiveSessionInDirectory(
 ): { taskId: string; transient?: boolean } | undefined {
   return context.sessionManager.listSessions().find((session) =>
     (options?.excludeTaskId === undefined || session.taskId !== options.excludeTaskId)
+    && !session.workflowId
     && (session.status === 'running' || session.status === 'queued')
     && Boolean(session.cwd)
     && isSameDirectory(session.cwd, directory));

@@ -746,7 +746,7 @@ paths, and the legacy-action migration alike, so a hand-written file that predat
 opens. Neither alias is written back. See
 [Configuration](configuration.md#column-automations).
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{workflow_xml}}` (a workflow task's `<workflow>` block, empty for any other task), `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{workflow_xml}}` (a workflow task's `<workflow>` block, empty for any other task), `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. A workflow agent's first message (Settings > Workflows) has no task: it offers `{{projectName}}`, `{{projectPath}}` and `{{baseBranch}}`, plus its own `{{columns}}` (what each column runs, and how recent tasks went through it) and `{{brief_xml}}` (what the workflow was made from). One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 
@@ -1013,9 +1013,21 @@ src/main/workflows/
   workflow-changed.ts        # the coalesced workflow:changed push
   workflow-complete.ts       # the workflow:completed push
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
+  workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume
+  workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts
   workflow-runtime.ts        # the IPC context the operations act through
   workflow-wake.ts           # wake the engine from a write the board bus does not announce
 ```
+
+- **The workflow agent is a transient session carrying `workflowId`** (`src/shared/session-owner.ts`).
+  Transient keeps it out of everything a task session drives: `sessions.task_id` is a foreign key to
+  tasks, so its conversation is recorded on the workflow instead (`agent_name`, `agent_session_id`).
+  `isCommandTerminalSession` keeps it out of what a Command Terminal has: the title-bar count, slot
+  re-pairing, window reconciliation, the Monitor. It runs in the home project's checkout, read-only:
+  Claude with `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome`, and an
+  MCP URL whose caller segment is `workflow-<id>`, for which the server registers only the
+  read-only tools and the planning tools, bound to that workflow (`workflow-agent-scope.ts`). It is
+  not resumed at boot; the view's pane opens it.
 
 - **The engine never polls.** The board bus (every move announces there), a freed agent slot
   (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into

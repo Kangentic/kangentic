@@ -1132,9 +1132,14 @@ export interface Session {
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
+   * Set on a workflow's own agent: a transient session that is no Command
+   * Terminal. Its `taskId` is the workflow's id. See src/shared/session-owner.ts.
+   */
+  workflowId?: string | null;
+  /**
    * For a transient session, the durable Command Terminal SLOT id (`slot-1`, ...)
    * main allocated at spawn (honoring the slot a desktop window asked for). Null
-   * for task agents.
+   * for task agents and for a workflow's own agent.
    *
    * On this DTO for CORRECTNESS, which is what separates it from `agentName`
    * (deliberately kept off, as a diagnostic - see `listManagedSummaries` in
@@ -3748,6 +3753,19 @@ export interface AppConfig {
   };
 
   /**
+   * Workflows. GLOBAL, in Settings > Workflows.
+   *
+   * `agentPrompt` is the whole first message a new workflow's agent gets,
+   * envelope included (`{{brief_xml}}` is to it what `{{task_xml}}` is to a
+   * column prompt). Unset, or blank, sends `DEFAULT_WORKFLOW_AGENT_PROMPT`
+   * (`src/shared/workflow-agent-prompt.ts`). An edit applies to workflows whose
+   * agent starts after it; a running conversation keeps what it was sent.
+   */
+  workflows?: {
+    agentPrompt?: string | null;
+  };
+
+  /**
    * Voice-to-text dictation. GLOBAL/shared scope (hardware/user level, not
    * per-project): lives below the settings separator in the Dictation tab.
    * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
@@ -4919,6 +4937,10 @@ export interface Workflow {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** The agent holding the workflow agent's conversation; null until it first starts. */
+  agent_name: string | null;
+  /** The id that conversation resumes by (`--resume`); null until it first starts. */
+  agent_session_id: string | null;
 }
 
 /**
@@ -4979,6 +5001,14 @@ export interface WorkflowDetail {
   links: WorkflowViewLink[];
   /** Each project a task is on, by id; more than one is a workflow across boards. */
   projectNames: Record<string, string>;
+}
+
+/** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */
+export interface WorkflowAgentStatus {
+  /** Its session, running, queued or paused; null when it has none. */
+  session: Session | null;
+  /** Why the workflow agent cannot run, written for the user; null when it can. */
+  unavailable: string | null;
 }
 
 /** One row of the Workflows picker, with the counts the header shows. */
@@ -5811,6 +5841,8 @@ export interface SpawnSessionInput {
   resuming?: boolean;
   /** True for ephemeral command terminal sessions. */
   transient?: boolean;
+  /** Set for a workflow's own agent (transient, never a Command Terminal). See src/shared/session-owner.ts. */
+  workflowId?: string | null;
   /** For a transient session, its durable Command Terminal slot (`slot-1`, ...),
    *  as `startCommandTerminal` allocated it. Recorded so every surface names the
    *  terminal the same way. See src/shared/command-terminal-name.ts. */
@@ -7015,6 +7047,16 @@ export interface ElectronAPI {
     setRoute: (projectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<void>;
     /** Where hands placed cards; null puts every card back in the automatic layout. */
     setPositions: (projectId: string, workflowId: string, positions: WorkflowCanvasPosition[] | null) => Promise<void>;
+    /**
+     * The workflow's own agent as the view's pane opens: its session as it is, or
+     * started (resuming its conversation, or with the first message) when it has
+     * none. A paused agent stays paused. `cols`/`rows` are the pane's grid.
+     */
+    agentOpen: (projectId: string, workflowId: string, cols?: number, rows?: number) => Promise<WorkflowAgentStatus>;
+    /** The pane's Resume: a paused or exited agent comes back on its conversation. */
+    agentResume: (projectId: string, workflowId: string, cols?: number, rows?: number) => Promise<WorkflowAgentStatus>;
+    /** The pane's Pause: the agent stops and frees its slot, keeping its conversation. */
+    agentPause: (projectId: string, workflowId: string) => Promise<void>;
     onChanged: (callback: (event: WorkflowChangedEvent) => void) => () => void;
   };
 

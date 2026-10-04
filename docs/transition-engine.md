@@ -173,8 +173,12 @@ variable" picker and its inline `{{` completion, and this table - see
 entry's `description`, that field is user-facing copy and should stay to one
 line.
 
-24 keywords, of which 19 resolve everywhere and 5 only in an automation (the
-move keywords and `{{agentReply}}`, marked below).
+26 keywords. 19 resolve wherever there is a task, 5 only in an automation (the
+move keywords and `{{agentReply}}`), and 2 only in a workflow agent's first
+message (`{{columns}}` and `{{brief_xml}}`), each marked below. That first
+message (Settings > Workflows) is the third context: it is written before any
+task exists, so it offers only `{{projectName}}`, `{{projectPath}}`,
+`{{baseBranch}}` (the project's default) and its own two.
 
 **Two substitution rules, split by SOURCE rather than by destination.**
 
@@ -224,8 +228,10 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{toColumn}}` | The column the task moved into. Automations only |
 | `{{trigger}}` | When this automation runs: `enter`, `turn_end` or `exit`. Automations only |
 | `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. Automations only |
+| `{{columns}}` | One line per column between To Do and Done, in board order: what it runs (an agent, plan mode, its own session, a slash command), its enabled automations, and how many of the last 10 finished tasks went through it (from `task_moves`; left out until a task has finished). Names escaped. Workflow agent only |
+| `{{brief_xml}}` | What the workflow was made from: a `<brief>` block with the source task's `<source_task>#N</source_task>`, `<title>` and `<description>`, laid out and escaped like `{{task_xml}}`. Empty, and dropped, for a workflow made from nothing. Workflow agent only |
 
-The last five are marked **automations only** because each entry declares
+The five marked **automations only** and the two marked **workflow agent only** are limited because each entry declares
 its `contexts` (`src/shared/task-template-vars.ts`). A `spawn_agent` prompt
 template is not a move, so those five would resolve permanently empty there,
 and the picker does not offer them in that context. A flat list that offered

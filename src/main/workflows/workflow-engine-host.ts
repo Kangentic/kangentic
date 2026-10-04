@@ -18,6 +18,7 @@ import {
   type CoreWorkflow,
 } from './engine/workflow-engine-core';
 import { announceWorkflowComplete } from './workflow-complete';
+import { endWorkflowAgent } from './workflow-agent';
 import { notifyWorkflowChanged, setWorkflowChangedWindow } from './workflow-changed';
 import { setWorkflowWake } from './workflow-wake';
 import { setWorkflowRuntimeContext } from './workflow-runtime';
@@ -177,6 +178,11 @@ export class WorkflowEngineHost {
     if (intent.kind === 'complete') {
       try {
         new WorkflowRepository(getProjectDb(intent.homeProjectId)).setState(intent.workflowId, 'done');
+        // A finished workflow leaves the view, and its agent's session ends with
+        // it. Its conversation stays recorded on the workflow.
+        endWorkflowAgent(this.context, intent.workflowId).catch((error: unknown) => {
+          console.error(`[WORKFLOW] Could not end the agent of ${intent.workflowId.slice(0, 8)}:`, error);
+        });
         announceWorkflowComplete(this.context, intent.homeProjectId, intent.workflowId, taskCounts.get(intent.workflowId) ?? 0);
         notifyWorkflowChanged(intent.homeProjectId, intent.workflowId);
       } catch (error) {

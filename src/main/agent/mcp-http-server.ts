@@ -51,7 +51,8 @@ import { registerWorkflowTools } from './mcp-http/workflow-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
-import { isAnswerCaller } from './mcp-http/caller-url';
+import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
+import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import {
@@ -418,6 +419,40 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
   return mcpServer;
 }
 
+/**
+ * The McpServer a workflow's own agent sees: every read-only tool, and the tools
+ * that shape its plan, bound to its own workflow (`workflow-agent-scope.ts`).
+ *
+ * Selected by the caller segment (`workflowIdOfCaller`). The agent is launched
+ * read-only, and this is the half of that the CLI cannot override: a tool that
+ * starts, deletes, moves or creates board work is not registered for it. No
+ * browser or steering tools, since it has no task and drives no other session.
+ *
+ * Exported so the tool list is unit-testable without booting the HTTP server.
+ */
+export function buildWorkflowAgentMcpServer(
+  resolver: RequestResolver,
+  taskCounter: TaskCounter,
+  workflowId: string,
+  toolArgumentNotices?: ToolArgumentNotices,
+): McpServer {
+  const instructions = `${buildServerInstructions(resolver, false)}\n\n`
+    + 'You are planning one workflow. The workflow tools here act on it, so leave out `workflow`. '
+    + 'You can read the code and the board, and change only this workflow\'s plan.';
+  const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
+  const scoped = scopeServerToWorkflowAgent(mcpServer, workflowId);
+  registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);
+  registerProfileTools(scoped, resolver);
+  registerAutomationTools(scoped, resolver);
+  registerWorkflowTools(scoped, resolver);
+  registerSessionTools(scoped, resolver);
+  registerProjectTools(scoped, resolver);
+  registerSearchTools(scoped, resolver);
+  registerUsageTools(scoped, resolver);
+  registerDiagnosticsTools(scoped, resolver);
+  return mcpServer;
+}
+
 /** Validates the URL path and token, then dispatches to a per-request McpServer. */
 async function handleHttpRequest(
   req: IncomingMessage,
@@ -483,17 +518,21 @@ async function handleHttpRequest(
   const toolArgumentNotices = createToolArgumentNotices();
 
   // A Knowledge Graph answer run gets one tool and nothing else (see
-  // `buildAnswerMcpServer`); every other caller gets the full server.
+  // `buildAnswerMcpServer`), a workflow's agent the read-only and planning
+  // tools (`buildWorkflowAgentMcpServer`); every other caller gets the full server.
+  const callerWorkflowId = workflowIdOfCaller(callerSessionId);
   const mcpServer = isAnswerCaller(callerSessionId)
     ? buildAnswerMcpServer(resolver, callerSessionId)
-    : buildConfiguredMcpServer(
-      resolver,
-      taskCounter,
-      getBrowserAutomationConfig,
-      resolveSteering(callerSessionId),
-      resolveBrowser(projectId, callerSessionId),
-      toolArgumentNotices,
-    );
+    : callerWorkflowId !== null
+      ? buildWorkflowAgentMcpServer(resolver, taskCounter, callerWorkflowId, toolArgumentNotices)
+      : buildConfiguredMcpServer(
+        resolver,
+        taskCounter,
+        getBrowserAutomationConfig,
+        resolveSteering(callerSessionId),
+        resolveBrowser(projectId, callerSessionId),
+        toolArgumentNotices,
+      );
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

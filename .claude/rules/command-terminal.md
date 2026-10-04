@@ -112,9 +112,14 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
 - **Count and tone come from the UNSCOPED session list, through one shared selector.** Both the
   toggle and the sidebar indicator read `selectCommandTerminalSummary`
   (`transient-session-slice.ts`), which derives count and tone from `sessions`
-  (`transient && projectId && status === 'running'`), NOT from the `transientSessions` map: that
-  map is renderer-owned window pairing whose hard-reload recovery only re-pairs the current
-  project, so a map-based count reads zero for every background project after a reload.
+  (`isCommandTerminalSession && projectId && status === 'running'`), NOT from the
+  `transientSessions` map: that map is renderer-owned window pairing whose hard-reload recovery
+  only re-pairs the current project, so a map-based count reads zero for every background project
+  after a reload.
+- **Transient is not the same as Command Terminal.** A workflow's own agent is transient too (no
+  task, no `sessions` row) and carries `workflowId`. Anything about the Command Terminal (the
+  count, the slot re-pairing, window reconciliation, the Monitor's terminal rows) asks
+  `isCommandTerminalSession` (`src/shared/session-owner.ts`), never `transient` alone.
 - **Arm the pending-open flag only once a project switch is CONFIRMED.** The sidebar indicator
   switches project and reopens the layer via the same `setPendingOpenCommandTerminal` flag the
   notification-click path uses. Awaiting `openProject` is not enough: it also RESOLVES without

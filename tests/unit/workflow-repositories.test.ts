@@ -24,6 +24,7 @@ const { TaskRepository } = await import('../../src/main/db/repositories/task-rep
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { WorkflowRepository, StaleWorkflowRevisionError, UNTITLED_WORKFLOW } = await import('../../src/main/db/repositories/workflow-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
+const { TaskMoveRepository } = await import('../../src/main/db/repositories/task-move-repository');
 
 import { adaptDatabase } from './helpers/node-sqlite-database';
 
@@ -195,6 +196,43 @@ describeWithSqlite('workflow tables', () => {
     expect(workflows.getById(workflow.id)!.finished_at).not.toBeNull();
     expect(workflows.listOpen()).toEqual([]);
     expect(workflows.hasRunning()).toBe(false);
+  });
+
+  it('records the workflow agent\'s conversation without changing the plan\'s revision', () => {
+    const { workflows } = freshDatabase();
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    expect([workflow.agent_name, workflow.agent_session_id]).toEqual([null, null]);
+    workflows.setAgentConversation(workflow.id, { agentName: 'claude', agentSessionId: 'conv-1' });
+    const recorded = workflows.getById(workflow.id)!;
+    expect([recorded.agent_name, recorded.agent_session_id]).toEqual(['claude', 'conv-1']);
+    // A save the agent built on its last read must still go through.
+    expect(recorded.revision).toBe(workflow.revision);
+    workflows.setAgentConversation(workflow.id, null);
+    expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
+  });
+
+  it('counts which columns the most recently finished tasks went through', () => {
+    const { database, tasks, todo } = freshDatabase();
+    const lanes = new SwimlaneRepository(database).list();
+    const done = lanes.find((lane) => lane.role === 'done')!;
+    const middle = lanes.filter((lane) => lane.role !== 'todo' && lane.role !== 'done');
+    const [first, second] = middle;
+    const insertMove = database.prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, NULL, ?)');
+    const finish = (title: string, route: string[], at: number) => {
+      const task = tasks.create({ title, description: '', swimlane_id: todo.id });
+      [...route, done.id].forEach((laneId, index) => {
+        insertMove.run(`${title}-${index}`, task.id, null, laneId, 'renderer', new Date(at + index).toISOString());
+      });
+    };
+    finish('Old', [first.id], Date.parse('2026-01-01T00:00:00.000Z'));
+    finish('Both', [first.id, second.id], Date.parse('2026-02-01T00:00:00.000Z'));
+    finish('Second only', [second.id], Date.parse('2026-03-01T00:00:00.000Z'));
+    const moves = new TaskMoveRepository(database);
+    const lastTwo = moves.recentFinishedColumnVisits(done.id, 2);
+    expect(lastTwo.finished).toBe(2);
+    expect(lastTwo.visits.get(first.id)).toBe(1);
+    expect(lastTwo.visits.get(second.id)).toBe(2);
+    expect(moves.recentFinishedColumnVisits(done.id, 10).visits.get(first.id)).toBe(2);
   });
 
   it('gives each unfinished workflow its own color until the palette runs out', () => {

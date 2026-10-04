@@ -54,6 +54,11 @@ describe('selectCommandTerminalSummary', () => {
     expect(selectCommandTerminalSummary(sessions, {}, PROJECT_A)).toEqual({ count: 0, tone: 'rest' });
   });
 
+  it('ignores a workflow\'s own agent, which is transient but no Command Terminal', () => {
+    const sessions = [makeSession({ id: 'sess-workflow-agent', workflowId: 'wf-1' })];
+    expect(selectCommandTerminalSummary(sessions, { 'sess-workflow-agent': 'thinking' }, PROJECT_A)).toEqual({ count: 0, tone: 'rest' });
+  });
+
   it('ignores terminals belonging to another project', () => {
     const sessions = [makeSession({ id: 'sess-other', projectId: PROJECT_B })];
     expect(selectCommandTerminalSummary(sessions, {}, PROJECT_A)).toEqual({ count: 0, tone: 'rest' });

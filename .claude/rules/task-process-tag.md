@@ -27,8 +27,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   (`session-spawn-flow.ts`) adds it through `addTaskProcessTag` with the session's task id and lists
   it in `WSLENV` on a WSL shell. A Command Terminal runs an agent, so it is tagged too, with its own
   made-up task id, which no other session shares; that replaces any tag main's environment carries
-  (Kangentic run from a task's terminal). Do not set `KANGENTIC_TASK_ID` anywhere else, and do not
-  let a spawn path that bypasses `performSpawn` start agent work untagged.
+  (Kangentic run from a task's terminal). A workflow's own agent (`src/main/workflows/workflow-agent.ts`)
+  is tagged with its workflow's id, its session's `taskId`, which no task shares, so no task's reap
+  matches it. Do not set `KANGENTIC_TASK_ID` anywhere else, and do not let a spawn path that bypasses
+  `performSpawn` start agent work untagged.
 - **An agent CLI that can strip inherited variables from its tool shells re-injects the tag.**
   The two task spawn chokepoints pass `taskProcessTag` (the task id) on `CommandOptions`, and
   `startCommandTerminal` passes the terminal's own task id. The adapter turns it into its CLI's own

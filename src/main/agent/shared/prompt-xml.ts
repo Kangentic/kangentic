@@ -67,6 +67,42 @@ export function buildTaskXml(input: TaskXmlInput): string {
   return lines.join('\n');
 }
 
+/** What a workflow was made from (`{{brief_xml}}`): the source task's own words and its number. */
+export interface BriefXmlInput {
+  /** The source task's #N; null for a brief with no task behind it. */
+  sourceTaskNumber: number | null;
+  title: string;
+  description: string;
+}
+
+/**
+ * The brief a workflow's agent plans from, laid out as `buildTaskXml` lays out
+ * a task, since an issue's text can hold `</brief>` or `</workflow_request>`:
+ *
+ *   <brief>
+ *     <source_task>#409</source_task>
+ *     <title>...</title>
+ *     <description>...</description>
+ *   </brief>
+ */
+export function buildBriefXml(input: BriefXmlInput): string {
+  const lines: string[] = ['<brief>'];
+  if (input.sourceTaskNumber !== null) lines.push(`  <source_task>#${input.sourceTaskNumber}</source_task>`);
+  lines.push(`  <title>${escapeXml(input.title)}</title>`);
+  const body = input.description.replace(/\s+$/, '');
+  if (body.trim()) {
+    if (body.includes('\n')) {
+      lines.push('  <description>');
+      lines.push(escapeXml(body));
+      lines.push('  </description>');
+    } else {
+      lines.push(`  <description>${escapeXml(body)}</description>`);
+    }
+  }
+  lines.push('</brief>');
+  return lines.join('\n');
+}
+
 /** What a workflow task's agent is told about its workflow (`{{workflow_xml}}`). */
 export interface WorkflowXmlInput {
   title: string;

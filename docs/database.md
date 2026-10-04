@@ -494,6 +494,8 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | created_at | TEXT | NOT NULL | |
 | started_at | TEXT | | NULL |
 | finished_at | TEXT | | NULL |
+| agent_name | TEXT | | NULL |
+| agent_session_id | TEXT | | NULL |
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
 reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
@@ -502,6 +504,10 @@ task to take in) rather than as rows on any board, so no board read has to filte
 Start creates the tasks and clears it. `revision` goes up on every save and edit, and
 `kangentic_save_workflow` refuses a save that carries an older one. `color_slot` is the
 `--kng-chart-N` slot of the workflow's icon, the first no unfinished workflow holds.
+`agent_name` and `agent_session_id` are the workflow agent's conversation: the agent that holds it
+and the id it resumes by. They live here rather than in `sessions`, whose `task_id` is a foreign
+key to tasks, and they change no plan, so writing them leaves `revision` alone. Null until the agent
+first starts, and again after a resume finds no conversation to resume.
 
 Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
 
@@ -1132,6 +1138,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 74. **`condition` / `max_runs` on column_automations, and `condition_met` / `condition_reason` on automation_runs** - every automation's Condition and Frequency, and the Automation agent's answer on each run (see both tables above). All nullable with no default, so a build from before them still inserts. Guarded `ALTER TABLE`s.
 75. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
 76. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read.
+77. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
 
 ### Key Migrations (Global DB)
 

@@ -1,9 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import {
   escapeXml,
+  buildBriefXml,
   buildTaskXml,
   buildHandoffXml,
 } from '../../src/main/agent/shared/prompt-xml';
+
+describe('buildBriefXml', () => {
+  it('lays out the source task\'s number, title and multi-line description', () => {
+    expect(buildBriefXml({ sourceTaskNumber: 409, title: 'Usage budgets', description: 'Cap spend per task.\n\nShow it on the card.' })).toBe([
+      '<brief>',
+      '  <source_task>#409</source_task>',
+      '  <title>Usage budgets</title>',
+      '  <description>',
+      'Cap spend per task.',
+      '',
+      'Show it on the card.',
+      '  </description>',
+      '</brief>',
+    ].join('\n'));
+  });
+
+  it('escapes text that would close the envelope, and drops what it does not have', () => {
+    const xml = buildBriefXml({ sourceTaskNumber: null, title: 'Fix </brief> parsing', description: '</workflow_request>' });
+    expect(xml).not.toContain('<source_task>');
+    expect(xml).toContain('<title>Fix &lt;/brief&gt; parsing</title>');
+    expect(xml).toContain('<description>&lt;/workflow_request&gt;</description>');
+    expect(buildBriefXml({ sourceTaskNumber: 3, title: 'Only a title', description: '   ' })).not.toContain('<description>');
+  });
+});
 
 describe('escapeXml', () => {
   it('escapes the five XML metacharacters', () => {

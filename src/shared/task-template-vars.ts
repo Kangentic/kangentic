@@ -65,6 +65,8 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'toColumn',
   'trigger',
   'agentReply',
+  'columns',
+  'brief_xml',
 ] as const;
 
 export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
@@ -79,14 +81,23 @@ export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
  *     knows its column, both ends of the move, and the trigger.
  *   - `'spawn'` - a `spawn_agent` prompt template, which knows the task and the
  *     project and nothing about a move.
+ *   - `'workflow'` - a workflow agent's first message (Settings > Workflows),
+ *     written before any of its tasks exist: it knows the project, the board's
+ *     columns and the workflow's brief, and no task.
  */
-export type TaskTemplateContextName = 'automation' | 'spawn';
+export type TaskTemplateContextName = 'automation' | 'spawn' | 'workflow';
 
-/** Available everywhere, which is most of the catalog. */
+/** Available wherever there is a task, which is most of the catalog. */
 const EVERYWHERE: readonly TaskTemplateContextName[] = ['automation', 'spawn'];
+
+/** The project's own facts, which a workflow agent's first message knows too. */
+const PROJECT_LEVEL: readonly TaskTemplateContextName[] = ['automation', 'spawn', 'workflow'];
 
 /** The move knows these; a spawn prompt does not. */
 const MOVE_ONLY: readonly TaskTemplateContextName[] = ['automation'];
+
+/** Only a workflow agent's first message has a brief and a plan to make. */
+const WORKFLOW_AGENT_ONLY: readonly TaskTemplateContextName[] = ['workflow'];
 
 export interface TaskTemplateVarInfo {
   name: TaskTemplateVarName;
@@ -143,13 +154,13 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'projectPath',
     chip: '{{projectPath}}',
     description: 'Main project checkout path. Always the base repo, even when the task has a worktree.',
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'projectName',
     chip: '{{projectName}}',
     description: 'The project\'s name as it reads in the sidebar.',
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'worktreePath',
@@ -169,7 +180,7 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     name: 'baseBranch',
     chip: '{{baseBranch}}',
     description: "Effective base branch: the task's override, else the project's configured default.",
-    contexts: EVERYWHERE,
+    contexts: PROJECT_LEVEL,
   },
   {
     name: 'prUrl',
@@ -261,6 +272,21 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     description: "The agent's reply at the end of its last turn in this column.",
     contexts: MOVE_ONLY,
     availability: 'Empty on task enter, and for an agent whose transcript Kangentic cannot read.',
+  },
+  // A workflow agent's first message. Written before any task exists, so these
+  // describe the board and the brief, and are offered nowhere else.
+  {
+    name: 'columns',
+    chip: '{{columns}}',
+    description: 'One line per column between To Do and Done: what it runs, and how recent tasks went through it.',
+    contexts: WORKFLOW_AGENT_ONLY,
+  },
+  {
+    name: 'brief_xml',
+    chip: '{{brief_xml}}',
+    description: 'What the workflow was made from, in a <brief> block with the source task\'s number.',
+    contexts: WORKFLOW_AGENT_ONLY,
+    availability: 'Empty for a workflow made from nothing.',
   },
 ];
 

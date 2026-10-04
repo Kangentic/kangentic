@@ -36,6 +36,11 @@ export interface ManagedSession {
   resuming: boolean;
   transient: boolean;
   /**
+   * Set on a workflow's own agent, a transient session that is no Command
+   * Terminal (src/shared/session-owner.ts). Its `taskId` is the workflow's id.
+   */
+  workflowId?: string | null;
+  /**
    * For a transient (Command Terminal) session, its durable SLOT id (`slot-1`,
    * `slot-2`, ...) within its project. Undefined for task agents.
    *
@@ -209,6 +214,8 @@ export interface ManagedSessionSummary {
   agentName: string | null;
   isolatedSwimlaneId: string | null;
   transient: boolean;
+  /** Set for a workflow's own agent, which the monitor leaves out. */
+  workflowId: string | null;
   /** Command Terminal window slot (`slot-N`), so the monitor names a terminal the
    *  same way its window does. Null for task agents and for a transient spawned
    *  without one. */
@@ -240,6 +247,7 @@ export function toSession(session: ManagedSession): Session {
     exitCode: session.exitCode,
     resuming: session.resuming,
     transient: session.transient || undefined,
+    workflowId: session.workflowId ?? null,
     // The renderer pairs a Command Terminal window to its PTY by (project, slot)
     // in renderer-only memory, which a full page reload destroys. These two are
     // main's authoritative copy of that pairing, so `syncSessions` can re-pair a
@@ -505,6 +513,7 @@ export class SessionRegistry {
       agentName: session.agentName ?? null,
       isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
       transient: session.transient,
+      workflowId: session.workflowId ?? null,
       commandTerminalSlot: session.commandTerminalSlot ?? null,
       commandTerminalBranch: session.commandTerminalBranch ?? null,
       commandTerminalLabel: session.commandTerminalLabel ?? null,

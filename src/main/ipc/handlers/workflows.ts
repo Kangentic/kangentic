@@ -20,6 +20,12 @@ import {
   setViewRoute,
   updatePlannedTask,
 } from '../../workflows/workflow-view-service';
+import {
+  openWorkflowAgent,
+  pauseWorkflowAgent,
+  registerWorkflowAgentLifecycle,
+  resumeWorkflowAgent,
+} from '../../workflows/workflow-agent';
 
 /**
  * The Workflows view's IPC. Every channel names the workflow's HOME project,
@@ -83,4 +89,22 @@ export function registerWorkflowHandlers(context: IpcContext): void {
       setViewPositions(context, projectId, workflowId, Array.isArray(positions) ? positions : null);
     },
   );
+
+  // The workflow's own agent. Not a project-scoped mutation in the
+  // project-scoped-ipc sense: every call names the workflow's home project.
+  registerWorkflowAgentLifecycle(context);
+  ipcMain.handle(IPC.WORKFLOW_AGENT_OPEN, (_, projectId: string, workflowId: string, cols?: number, rows?: number) =>
+    openWorkflowAgent(context, projectId, workflowId, { cols: gridSize(cols), rows: gridSize(rows) }));
+
+  ipcMain.handle(IPC.WORKFLOW_AGENT_RESUME, (_, projectId: string, workflowId: string, cols?: number, rows?: number) =>
+    resumeWorkflowAgent(context, projectId, workflowId, { cols: gridSize(cols), rows: gridSize(rows) }));
+
+  ipcMain.handle(IPC.WORKFLOW_AGENT_PAUSE, async (_, _projectId: string, workflowId: string) => {
+    await pauseWorkflowAgent(context, workflowId);
+  });
+}
+
+/** A grid size the renderer measured, or none when it sent nothing usable. */
+function gridSize(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }

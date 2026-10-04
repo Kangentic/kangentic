@@ -84,6 +84,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`, `developer.stallProfiler`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers automation Conditions, in the Workflows tab; see [Workflows (Automation agent)](#workflows-automation-agent))
+- `workflows.agentPrompt` (the workflow agent's first message, in the Workflows tab)
 - `dictation.*` (all voice dictation settings)
 - `knowledgeGraph.*` (conversation search + recall, in the Knowledge Graph tab, id `knowledgeGraph`)
 - `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
@@ -557,6 +558,7 @@ Condition (and judges when a workflow step is done).
 | `automation.agent` | `string \| null` | `null` | The agent that answers Conditions, an adapter name (`claude`, `codex`). Its own choice, separate from the Knowledge Graph's and from the project's default agent, with no fallback to either: while it is unset, a row with a Condition is skipped ("Set up an Automation agent") and nothing is spent. Resolved through `automationAgentChoice` and checked with `automationAgentReady` (`src/shared/answer-agent.ts`), which the Edit automation dialog and the engine both read. A check runs through the same headless, read-only answer path as Ask (`answerFromContext`, in the shared answer home), at most two at once, with the CLI's detection cached for five minutes. |
 | `automation.model` | `string \| null` | `null` | The model the check runs at, as that CLI's own id. Required when the agent's answer run takes a model. Cleared whenever `automation.agent` changes. A small, fast model is usually enough: a check reads one reply and answers yes or no. |
 | `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. |
+| `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
 
 ### Mobile Bridge
 

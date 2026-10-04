@@ -3,6 +3,7 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
+import { isCommandTerminalSession } from '../../shared/session-owner';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -1463,6 +1464,7 @@ export class SessionManager extends EventEmitter {
         exitCode: null,
         resuming: input.resuming ?? false,
         transient: input.transient ?? false,
+        workflowId: input.workflowId ?? null,
         commandTerminalSlot: input.commandTerminalSlot ?? null,
         commandTerminalBranch: input.commandTerminalBranch ?? null,
         isolatedSwimlaneId: input.isolatedSwimlaneId,
