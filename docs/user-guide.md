@@ -1163,7 +1163,9 @@ project's default branch, each tied to the task whose conversation wrote it), **
 (how many Done tasks have one, a track only while a pass is writing them) and **Source code** (the
 default branch's files). A source with nothing in it yet says **Not yet indexed**. Session changes
 are kept as text for the task summaries and never searched, so they have no line. On All projects
-the panel reads the same figures as the Settings card.
+the panel reads the same figures as the Settings card. With the Knowledge Graph switched off it
+reads as off here too, even while the map it already drew is still shown: counts without a share,
+and **Needs the Knowledge Graph** on the lines that wait for it.
 
 Below the sources is what only the map has. **Links** counts the similarity links, computed in full
 embedding dimensionality, so they are exact; a dot's position is an approximate reduction.
@@ -1190,9 +1192,10 @@ and only happens once; after that it updates in about a second as new conversati
 While it builds, one card in the middle of the screen shows how far it has got (reading the
 conversations, then placing them, then naming the regions), the same source lines the Index panel
 lists, and an **Open Settings** button. The Index card joins the left panel once the map is drawn.
-It needs the Knowledge Graph switched on (Settings > Knowledge Graph). Without embeddings there is
-no meaningful notion of "near", so with it off the graph shows an Off card with an **Open Settings**
-button rather than drawing a map that would imply a meaning it does not have.
+It needs the Knowledge Graph's embeddings (Settings > Knowledge Graph). Without them there is no
+meaningful notion of "near", so until the Knowledge Graph has embedded anything the graph shows an
+Off card with an **Open Settings** button rather than drawing a map that would imply a meaning it
+does not have. Switching the Knowledge Graph off later keeps the map it already drew.
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
 its header.

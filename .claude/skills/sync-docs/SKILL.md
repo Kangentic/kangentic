@@ -111,6 +111,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | `BoardColumnConfig` | Interface fields | configuration.md |
 | `KnowledgeGraphStatus` | Interface fields | architecture.md (`knowledgeGraph:status` row) |
 | `KnowledgeGraphSummaryCounts` / `KnowledgeGraphSummaryStatus` | Interface fields | architecture.md (`knowledgeGraph:status` and `knowledgeGraph:graphSnapshot` rows), user-guide.md (the Task summaries line's states) |
+| `KnowledgeGraphIndexCounts` / `KnowledgeGraphIndexSummary` | Interface fields | architecture.md (`knowledgeGraph:graphSnapshot` row's `index`), configuration.md (what the Index card and the map's Index panel sum) |
 
 ### IPC Anchors (src/shared/ipc-channels.ts)
 

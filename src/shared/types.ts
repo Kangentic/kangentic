@@ -7405,14 +7405,18 @@ export interface KnowledgeGraphStatus {
    *  directory redacted), so the Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
   /** Task summaries summed over every indexed project, for their line in the
-   *  Index card. Absent while semantic search is off or no project is indexed. */
+   *  Index card. Absent while semantic search is off or there is no index to
+   *  read (indexing off, no project registered, or no answer from the retrieval
+   *  worker); with none indexed yet it is present with zero counts. */
   summaries?: KnowledgeGraphSummaryStatus;
   /** Source code summed over every indexed project, for its line in the Index
    *  card; the open project's branch size while none holds code. Absent while
    *  there is nothing to say yet. */
   code?: KnowledgeGraphCodeStatus;
   /** The always-indexed sources summed over every indexed project, for their
-   *  lines in the Index card. Absent with indexing off or no project indexed. */
+   *  lines in the Index card. Absent with indexing off, no project registered,
+   *  or no answer from the retrieval worker; with none indexed yet it is
+   *  present with zero counts. */
   sources?: KnowledgeGraphSourcesStatus;
 }
 
