@@ -71,12 +71,14 @@ const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = ['bindings', 'file-uri-to-path'];
 
 /**
  * The pty host's esbuild externals (src/main/pty/host/pty-host-entry.ts): every
- * node-pty instance, and better-sqlite3 for the raw transcripts it writes.
+ * node-pty instance, better-sqlite3 for the raw transcripts it writes, and
+ * koffi for the Windows and macOS process readers (src/main/pty/process-tag/).
  * better-sqlite3's closure is the retrieval worker's, already probed; this
- * resolves node-pty, and `verifyPtyHostLoads` spawns a real process with it
- * under the packaged Electron binary.
+ * resolves node-pty and loads koffi's per-platform binary, and
+ * `verifyPtyHostLoads` spawns a real process with node-pty under the packaged
+ * Electron binary.
  */
-const PTY_HOST_EXTERNALS = ['node-pty'];
+const PTY_HOST_EXTERNALS = ['node-pty', 'koffi'];
 const PTY_HOST_PROBE_DEPENDENCIES = [];
 
 /**
@@ -216,6 +218,11 @@ function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = 
  * spawn-helper lookup rewrites `app.asar` to `app.asar.unpacked` in its own
  * path, see `ptyHostEntryPath`), so the probe loads it through the asar too,
  * and a spawn proves the helper was found.
+ *
+ * On Windows and macOS, where the host's process readers use koffi, it also
+ * loads koffi from the same place and makes one real native call, the
+ * process's own id, checked against `process.pid`. Linux never loads koffi,
+ * and the line it prints says so.
  */
 function buildPtyHostLoadScript(unpackedRoot) {
   return [
@@ -233,6 +240,20 @@ function buildPtyHostLoadScript(unpackedRoot) {
     '};',
     'Module.globalPaths = [];',
     "const pty = require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'node-pty'));",
+    "let koffiLine = 'koffi not used on ' + process.platform + ', skipped';",
+    "if (process.platform === 'win32' || process.platform === 'darwin') {",
+    '  try {',
+    "    const koffi = require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'koffi'));",
+    "    const ownPid = process.platform === 'win32'",
+    "      ? koffi.load('kernel32.dll').func('uint32 __stdcall GetCurrentProcessId()')()",
+    "      : koffi.load('/usr/lib/libSystem.B.dylib').func('int getpid()')();",
+    "    if (ownPid !== process.pid) throw new Error('its native call returned ' + ownPid + ', not this process id ' + process.pid);",
+    "    koffiLine = 'koffi loaded and its native call returned this process id';",
+    '  } catch (error) {',
+    "    process.stderr.write('koffi did not load or call: ' + (error && error.stack ? error.stack : String(error)));",
+    '    process.exit(1);',
+    '  }',
+    '}',
     "const isWindows = process.platform === 'win32';",
     "const marker = 'pty-host-probe';",
     "const term = pty.spawn(isWindows ? 'cmd.exe' : '/bin/sh', isWindows ? ['/c', 'echo ' + marker] : ['-c', 'echo ' + marker], { name: 'xterm-256color', cols: 80, rows: 24, cwd: root, env: process.env });",
@@ -242,7 +263,7 @@ function buildPtyHostLoadScript(unpackedRoot) {
     'term.onExit(({ exitCode }) => {',
     '  clearTimeout(timer);',
     "  if (!output.includes(marker)) { process.stderr.write('node-pty read no output back: ' + JSON.stringify(output)); process.exit(1); }",
-    "  process.stdout.write('node-pty spawned a process and read its output (exit ' + exitCode + ')\\n');",
+    "  process.stdout.write('node-pty spawned a process and read its output (exit ' + exitCode + '); ' + koffiLine + '\\n');",
     '  process.exit(0);',
     '});',
   ].join('\n');
@@ -266,7 +287,8 @@ function verifyPtyHostLoads({ unpackedRoot, electronBinaryPath, spawn = execFile
     const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
     throw new Error(
       `[afterPack] the pty host cannot run a terminal from ${unpackedRoot} under ${electronBinaryPath}. ` +
-        'The packaged app would spawn no terminals. Check node-pty in `asarUnpack` in electron-builder.yml.\n' +
+        'The packaged app would spawn no terminals, or on Windows and macOS find no process a task left running. ' +
+        'Check node-pty, koffi and @koromix/koffi-* in `asarUnpack` in electron-builder.yml.\n' +
         (stderr || String(error)),
     );
   }

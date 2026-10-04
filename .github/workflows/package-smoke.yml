@@ -4,7 +4,9 @@ name: Package smoke
 # does locally (electron-builder --dir: no installer, nothing published), then
 # runs scripts/package-smoke.mjs against the result. The script launches the
 # packaged app isolated, runs a terminal (the pty host), reads the Knowledge
-# Graph snapshot (the retrieval worker), quits the way a user does, and fails
+# Graph snapshot (the retrieval worker), deletes a task whose terminal left a
+# detached process and requires the task reap to stop it (koffi in the
+# packaged pty host on Windows and macOS), quits the way a user does, and fails
 # on any log line saying a forked process crashed or fell back.
 #
 # Every other tier starts the app from the repo, so before this workflow a
@@ -41,6 +43,7 @@ on:
       - 'scripts/rebuild-native.js'
       - 'scripts/package-smoke.mjs'
       - 'src/main/pty/host/**'
+      - 'src/main/pty/process-tag/**'
       - 'src/main/pty/spawn/**'
       - 'src/main/pty/shutdown/**'
       - 'src/main/shutdown.ts'

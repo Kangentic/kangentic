@@ -20,8 +20,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   autoSpawnForTask: vi.fn(() => Promise.resolve()),
   // The MCP delete path reaps what the session left running before it removes
   // the worktree. Inert here: the ordering is pinned in the reap wiring tests.
-  captureSessionLeftovers: vi.fn(() => null),
-  reapSessionLeftovers: vi.fn(() => Promise.resolve()),
+  reapTaskLeftovers: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
@@ -96,7 +95,7 @@ import {
   propagateStrategyToLiveSessions,
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
-import { reapSessionLeftovers } from '../../src/main/ipc/helpers';
+import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
 import { WorktreeManager } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
@@ -841,7 +840,7 @@ describe('buildCommandContextForProject - onTasksReordered', () => {
 // The exit promise is captured BETWEEN the kill and the remove: `remove()`
 // itself does not wait (the deferred PTY lives outside the registry row, so
 // deleting the row cannot cut its grace short), but the filesystem-touching
-// work that follows - reapSessionLeftovers and the worktree removal inside
+// work that follows - reapTaskLeftovers and the worktree removal inside
 // worktreeManager.withLock - must wait for the real process exit, not for
 // the kill() call. The wait happens BEFORE the per-project git lock is
 // entered, so a young session's grace never head-of-line-blocks every other
@@ -881,8 +880,8 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       };
     } as unknown as typeof WorktreeManager);
 
-    vi.mocked(reapSessionLeftovers).mockImplementationOnce(async () => {
-      timeline.push('reapSessionLeftovers');
+    vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapTaskLeftovers');
     });
 
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
@@ -923,7 +922,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     await Promise.resolve();
     await Promise.resolve();
     expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
-    expect(reapSessionLeftovers).not.toHaveBeenCalled();
+    expect(reapTaskLeftovers).not.toHaveBeenCalled();
     expect(withLockMock).not.toHaveBeenCalled();
 
     exitDeferred.resolve();
@@ -935,7 +934,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       'kill:session-1',
       'awaitExit:session-1',
       'remove:session-1',
-      'reapSessionLeftovers',
+      'reapTaskLeftovers',
       'withLock:enter',
       'removeWorktree',
       'withLock:exit',
@@ -973,8 +972,8 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       };
     } as unknown as typeof WorktreeManager);
 
-    vi.mocked(reapSessionLeftovers).mockImplementationOnce(async () => {
-      timeline.push('reapSessionLeftovers');
+    vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapTaskLeftovers');
     });
 
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
@@ -1017,7 +1016,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     // several awaited steps, which a short drain would not carry it through.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(timeline).toEqual(['removeByTaskId:task-1']);
-    expect(reapSessionLeftovers).not.toHaveBeenCalled();
+    expect(reapTaskLeftovers).not.toHaveBeenCalled();
     expect(withLockMock).not.toHaveBeenCalled();
     expect(removeWorktreeMock).not.toHaveBeenCalled();
 
@@ -1028,10 +1027,42 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
 
     expect(timeline).toEqual([
       'removeByTaskId:task-1',
-      'reapSessionLeftovers',
+      'reapTaskLeftovers',
       'withLock:enter',
       'removeWorktree',
       'withLock:exit',
     ]);
+  });
+
+  it('reaps a deleted task that has no worktree: a project-folder task leaves processes behind too', async () => {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    context.onTaskDeleted({
+      id: 'task-3',
+      title: 'Task Three',
+      session_id: 'session-3',
+      worktree_path: null,
+      branch_name: null,
+    } as never);
+
+    await vi.waitFor(() => {
+      // The title travels with it, for the leftover-process toast.
+      expect(reapTaskLeftovers).toHaveBeenCalledWith(ipcContext, PROJECT_PATH, [{ id: 'task-3', worktree_path: null, title: 'Task Three' }]);
+    });
+    expect(WorktreeManager).not.toHaveBeenCalled();
   });
 });

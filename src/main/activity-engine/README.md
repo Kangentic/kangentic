@@ -11,9 +11,9 @@ This directory implements Kangentic's activity-detection engine. The full archit
 | `engine/predicate.ts` | The predicate below, plus `idleHintEndsTurn` and the reason ladder. |
 | `engine/watchdog.ts` | The five watchdog holds and their resets. |
 | `engine/shapes.ts` | `SessionEngineState`, `ActivityStatsSnapshot`, and the tunable defaults. |
-| `background-shell/watcher.ts` | Process-tree-based natural-exit detector. Polls every 2s when sessions have active bg shells. Two tiers: PID-aware + count-based heuristic. Also PUBLISHES each session's descendant pid set (`getCapturedDescendants`), which it already walks per cycle, so session teardown can reap leftovers without enumerating processes itself; skip cycles prune that set by liveness. |
-| `background-shell/process-tree.ts` | Cross-platform descendant enumeration (POSIX `ps`, Windows `Get-CimInstance Win32_Process`). Also defines `CapturedSessionTree`, the published snapshot shape. |
-| `session-telemetry.ts` | Per-session telemetry orchestrator. Wires engine + watcher + PTY tracker + accumulator + PR detector. Owns the per-session event cache, idle-timeout sweep, and agent-session-id capture. Routes parsed events from every telemetry source. Exposes `getCapturedSessionTree` so `SessionManager` can reach the watcher's snapshot. |
+| `background-shell/watcher.ts` | Process-tree-based natural-exit detector. Polls every 2s when sessions have active bg shells. Two tiers: PID-aware + count-based heuristic. It does not decide what a finished task left running; that is the `KANGENTIC_TASK_ID` tag reap in `src/main/pty/process-tag/`. |
+| `background-shell/process-tree.ts` | Descendant walks over a process table, and the local probes (POSIX `ps`, Windows `Get-CimInstance Win32_Process`). In the app the pty host answers the table (`src/main/pty/host/host-process-table.ts`). |
+| `session-telemetry.ts` | Per-session telemetry orchestrator. Wires engine + watcher + PTY tracker + accumulator + PR detector. Owns the per-session event cache, idle-timeout sweep, and agent-session-id capture. Routes parsed events from every telemetry source. |
 | `usage-accumulator.ts` | Token / cost / per-tool stats. Pure transformations of parsed events. |
 | `pr-command-detector.ts` | Detects `gh pr ...` Bash invocations so the orchestrator can scan scrollback for the printed PR URL on the matching ToolEnd. |
 | `pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents (Aider, Codex, etc.). |
@@ -50,11 +50,11 @@ Empirical data: Tier B catches 95%+ of cases in production sessions.
 
 ## Cross-platform
 
-The process-tree probe spawns a single OS query per cycle:
-- Windows: `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | ..."`
-- POSIX: `ps -A -o pid=,ppid=,comm=`
+The watcher reads one process table per cycle, answered by the pty host (`HostProcessTreeProbe` in `src/main/pty/host/host-process-tree-probe.ts`, over the listing in `host-process-table.ts`):
+- Windows: a Toolhelp snapshot through koffi, about 8 ms for 410 processes. It replaced a persistent PowerShell child running `Get-CimInstance Win32_Process` (140 ms warm), which the host still starts, for good, the first time the Toolhelp listing fails.
+- POSIX: `ps -A -o pid=,ppid=,comm=`, with a 1.5s timeout.
 
-Both have a 1.5s internal timeout. Probe failure degrades to the 5-min escape hatch.
+An empty table skips the cycle. Repeated failure degrades to the 5-min escape hatch.
 
 ## Kill switch
 
@@ -72,7 +72,7 @@ Both have a 1.5s internal timeout. Probe failure degrades to the 5-min escape ha
 | `tests/unit/no-activity-hold-sentinel-parity.test.ts` | The no-activity-hold flag's three hand-duplicated copies must not drift |
 | `tests/unit/event-activity-derivation.test.ts` | Integration tests through real fs.watch + JSONL pipeline |
 | `tests/unit/process-tree.test.ts` | Real-OS smoke tests (`isAlive`, `listDescendants`); `isShellLike` allowlist coverage |
-| `tests/unit/bg-shell-watcher.test.ts` | Watcher with mock probe: Tier A/B, multi-session, lazy polling, dispose, root-died handling, and the published descendant snapshot (`getCapturedDescendants`): full subtree not just shell-like, no clobber on a failed probe, liveness prune across quiet cycles, staleness ceiling, drop on re-register |
+| `tests/unit/bg-shell-watcher.test.ts` | Watcher with mock probe: Tier A/B, multi-session, lazy polling, dispose, root-died handling, and the agent-absence sweep |
 | `tests/e2e/background-shell-idle.spec.ts` | Full Electron + mock Claude CLI + real bg processes |
 
 ## When to read the full doc

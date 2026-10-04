@@ -365,8 +365,8 @@ describe('findWorktreePathProcesses', () => {
   it('spares a supervised pinner (orphan gate), leaving it to the holder scan', () => {
     // The gate is kill-safety: this path can reach a process Kangentic never
     // spawned - a terminal left `cd`'d into the worktree, an editor. It is safe
-    // to be this careful only because the session-end reap already ends what a
-    // session started; see session-tree-reap.ts. The supervised case is not
+    // to be this careful only because the task reap already ends what a task's
+    // agents started; see process-tag/tagged-reap.ts. The supervised case is not
     // dropped, it is NAMED - see the findWorktreePathHolders suite below.
     const rows: ProcessRow[] = [
       { pid: 999, ppid: 1, commandLine: 'bash run-functions.sh (live parent)' },

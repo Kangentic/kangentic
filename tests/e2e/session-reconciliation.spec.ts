@@ -9,6 +9,8 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   closeApp,
+  closeAppAndWaitForExit,
+  waitForRunningSession,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -60,14 +62,6 @@ async function moveTask(page: Page, taskId: string, targetSwimlaneId: string): P
   }, { taskId, swimlaneId: targetSwimlaneId });
 }
 
-/** Wait for at least one running session */
-async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions = await (window as any).electronAPI.sessions.list();
-    return sessions.some((s: any) => s.status === 'running');
-  }, null, { timeout: timeoutMs });
-}
-
 test.describe('Session Reconciliation', () => {
   test.beforeAll(() => {
     tmpDir = createTempProject(TEST_NAME);
@@ -95,14 +89,14 @@ test.describe('Session Reconciliation', () => {
     // Move task to Planning via IPC to spawn a session
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
       return { planning: planning?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
 
     const taskId = await page.evaluate(async (t) => {
       const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((tk: any) => tk.title === t);
+      const task = tasks.find((candidateTask) => candidateTask.title === t);
       return task?.id;
     }, taskName);
     expect(taskId).toBeTruthy();
@@ -125,10 +119,9 @@ test.describe('Session Reconciliation', () => {
     await expect(sessionTab).toBeVisible({ timeout: 5000 });
 
     // === Phase 2: Close the app ===
-    await closeApp(app);
-
-    // Brief pause to ensure cleanup completes
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Wait for the old process to be gone, not a guessed pause: the relaunch
+    // below reuses this data dir.
+    await closeAppAndWaitForExit(app);
 
     // === Phase 3: Relaunch the app and open the same project ===
     result = await launchApp({ dataDir });

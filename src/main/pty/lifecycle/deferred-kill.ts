@@ -76,8 +76,17 @@ export function isYoungSession(session: YoungSessionFields, now = Date.now()): b
   return now - startedAtMs < YOUNG_SINCE_SPAWN_MS;
 }
 
+/**
+ * How long a parked PTY stays listed as awaiting its exit after the force-kill
+ * fired, should its exit never be reported (a ConPTY that loses the callback).
+ * Matches `awaitExit`'s safety timeout.
+ */
+export const AWAITING_EXIT_LISTING_MS = 10_000;
+
 export interface DeferredKillInput {
   sessionId: string;
+  /** The task the session ran for, so a task reap can wait for this PTY to exit. */
+  taskId?: string | null;
   ptyRef: PtyHandle;
   /** The child pid, read by the caller before the row's `pty` was nulled. */
   pid: number | undefined;
@@ -115,6 +124,13 @@ export interface DeferredKillFlushReport {
  */
 export class DeferredKillRegistry {
   private readonly entries = new Map<PtyHandle, DeferredKillEntry>();
+  /**
+   * Every parked session whose PTY has not reported its exit, by session id,
+   * with its task. Outlives the entry above: the force-kill's timer removes the
+   * entry when it fires, but the process can take a while longer to go, and
+   * until it does the pty host still holds it.
+   */
+  private readonly awaitingExit = new Map<string, { taskId: string | null; expiry: ReturnType<typeof setTimeout> | null }>();
   private readonly killPty: (ptyRef: PtyHandle) => boolean;
   private readonly graceMs: number;
 
@@ -129,9 +145,17 @@ export class DeferredKillRegistry {
    */
   schedule(input: DeferredKillInput): void {
     if (this.entries.has(input.ptyRef)) return;
+    const previous = this.awaitingExit.get(input.sessionId);
+    if (previous?.expiry) clearTimeout(previous.expiry);
+    this.awaitingExit.set(input.sessionId, { taskId: input.taskId ?? null, expiry: null });
     const timer = setTimeout(() => {
       this.entries.delete(input.ptyRef);
       this.killPty(input.ptyRef);
+      const awaiting = this.awaitingExit.get(input.sessionId);
+      if (awaiting && !awaiting.expiry) {
+        awaiting.expiry = setTimeout(() => this.awaitingExit.delete(input.sessionId), AWAITING_EXIT_LISTING_MS);
+        awaiting.expiry.unref?.();
+      }
     }, this.graceMs);
     this.entries.set(input.ptyRef, {
       sessionId: input.sessionId,
@@ -154,7 +178,25 @@ export class DeferredKillRegistry {
       this.entries.delete(ptyRef);
       cancelled = true;
     }
+    // Called on the session's exit: whether or not a timer was still armed,
+    // the process is gone.
+    const awaiting = this.awaitingExit.get(sessionId);
+    if (awaiting?.expiry) clearTimeout(awaiting.expiry);
+    this.awaitingExit.delete(sessionId);
     return cancelled;
+  }
+
+  /**
+   * The parked sessions of these tasks whose PTY has not exited yet, armed or
+   * already force-killed. A task reap waits for them: until a PTY exits, the
+   * pty host protects it and everything under it.
+   */
+  sessionsAwaitingExit(taskIds: ReadonlySet<string>): string[] {
+    const sessionIds: string[] = [];
+    for (const [sessionId, awaiting] of this.awaitingExit) {
+      if (awaiting.taskId !== null && taskIds.has(awaiting.taskId)) sessionIds.push(sessionId);
+    }
+    return sessionIds;
   }
 
   get size(): number {

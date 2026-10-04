@@ -10,6 +10,8 @@ import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
+import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
+import { describeLeftoverReport } from './lib/leftover-processes';
 import { useUpdaterStore } from './stores/updater-store';
 import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
@@ -935,6 +937,31 @@ export function App() {
           variant: 'error',
           duration: 12000,
         });
+      }));
+    }
+
+    // What a task left running when it reached Done or To Do, or was deleted
+    // (src/main/pty/process-tag/). The toast gives counts; Review opens the
+    // list with the names. Not project-filtered: a delete or the startup sweep
+    // in a background project still leaves processes on this machine.
+    if (window.electronAPI?.leftoverProcesses?.onReport) {
+      cleanups.push(window.electronAPI.leftoverProcesses.onReport((report) => {
+        const toast = describeLeftoverReport(report);
+        if (!toast) return;
+        const toastId = useToastStore.getState().addToast({
+          message: toast.message,
+          variant: toast.variant,
+          ...(toast.sticky ? { duration: 0 } : {}),
+          action: {
+            label: 'Review',
+            onClick: () => useLeftoverProcessesStore.getState().openReport(report.id),
+          },
+        });
+        // A toast whose report the store no longer keeps has a Review link
+        // that opens nothing, so it closes with its report.
+        for (const evictedToastId of useLeftoverProcessesStore.getState().addReport(report, toastId)) {
+          useToastStore.getState().dismissToast(evictedToastId);
+        }
       }));
     }
 

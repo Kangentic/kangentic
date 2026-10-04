@@ -34,9 +34,6 @@ describe('writeExitSequence', () => {
   });
 });
 
-// Note: suspendAllSessions is covered end-to-end via
-// tests/unit/session-suspend.test.ts and session-manager.test.ts integration paths.
-
 describe('killAllSessions', () => {
   function makeDisposable() {
     return { dispose: vi.fn() };

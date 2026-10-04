@@ -52,7 +52,7 @@ vi.mock('../../src/renderer/stores/config-store', () => ({
 }));
 
 // Import under test AFTER mocks are set up.
-import { useToastStore } from '../../src/renderer/stores/toast-store';
+import { useToastStore, withinToastLimit } from '../../src/renderer/stores/toast-store';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -131,13 +131,51 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('addToast enforces maxCount from config (capped at 5)', () => {
-    for (let i = 0; i < 7; i++) {
-      useToastStore.getState().addToast({ message: `Toast ${i}` });
+    for (let index = 0; index < 7; index++) {
+      useToastStore.getState().addToast({ message: `Toast ${index}` });
     }
     // maxCount: 5 from the config mock
     expect(useToastStore.getState().toasts).toHaveLength(5);
-    // Oldest toasts are dropped (slice(-maxCount) keeps the tail)
+    // Oldest toasts are dropped, so the tail is kept
     expect(useToastStore.getState().toasts[0].message).toBe('Toast 2');
+  });
+
+  it('never pushes out a toast that waits for the user while routine toasts can go instead', () => {
+    useToastStore.getState().addToast({ message: 'Waiting', duration: 0 });
+    for (let index = 0; index < 7; index++) {
+      useToastStore.getState().addToast({ message: `Toast ${index}` });
+    }
+    const messages = useToastStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toHaveLength(5);
+    expect(messages[0]).toBe('Waiting');
+    expect(messages.slice(1)).toEqual(['Toast 3', 'Toast 4', 'Toast 5', 'Toast 6']);
+  });
+
+  it('drops the oldest waiting toast only when waiting toasts alone overflow, and always shows the newest', () => {
+    for (let index = 0; index < 6; index++) {
+      useToastStore.getState().addToast({ message: `Waiting ${index}`, duration: 0 });
+    }
+    useToastStore.getState().addToast({ message: 'Newest' });
+    const messages = useToastStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toEqual(['Waiting 2', 'Waiting 3', 'Waiting 4', 'Waiting 5', 'Newest']);
+  });
+
+  it('withinToastLimit keeps exactly the newest toast when maxCount is 0, waiting toasts included', () => {
+    const closesOnItsOwn: Toast = { id: 'routine', message: 'Routine', variant: 'info', duration: 4000 };
+    const waitingForUser: Toast = { id: 'waiting', message: 'Waiting', variant: 'info', duration: 0 };
+    const newest: Toast = { id: 'newest', message: 'Newest', variant: 'info', duration: 4000 };
+    // The newest toast is never a drop candidate (only the toasts before it are),
+    // so even a limit of 0 leaves exactly one toast showing.
+    expect(withinToastLimit([closesOnItsOwn, waitingForUser, newest], 0)).toEqual([newest]);
+    expect(withinToastLimit([waitingForUser, closesOnItsOwn], 0)).toEqual([closesOnItsOwn]);
+  });
+
+  it('withinToastLimit hands back the same stack when maxCount is 0 and only one toast is showing', () => {
+    // The clamp to 1 is what makes a single toast "within the limit" at
+    // maxCount 0, so it returns the input untouched instead of a filtered copy.
+    const onlyToast: Toast = { id: 'only', message: 'Only', variant: 'info', duration: 4000 };
+    const stack = [onlyToast];
+    expect(withinToastLimit(stack, 0)).toBe(stack);
   });
 
   // ---------------------------------------------------------------------------

@@ -59,17 +59,25 @@ function writeTestConfig(dataDir: string, maxConcurrent: number): void {
 
 /**
  * Wait for a specific number of running sessions via IPC.
+ *
+ * expect.poll, not page.waitForFunction: an async predicate handed to
+ * waitForFunction resolves on its first evaluation whatever the promise
+ * resolves to, so that version never waited.
  */
 async function waitForRunningCount(page: Page, count: number, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(
-    async (expected) => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      const running = sessions.filter((s: any) => s.status === 'running');
-      return running.length === expected;
-    },
-    count,
-    { timeout: timeoutMs },
-  );
+  await expect
+    .poll(
+      async () => page.evaluate(async () => {
+        const sessions = await window.electronAPI.sessions.list();
+        return sessions.filter((session) => session.status === 'running').length;
+      }),
+      {
+        timeout: timeoutMs,
+        intervals: [100, 250, 500],
+        message: `Expected ${count} running sessions`,
+      },
+    )
+    .toBe(count);
 }
 
 /**
@@ -92,9 +100,9 @@ async function waitForSessionExited(page: Page, sessionId: string, timeoutMs = 1
     .poll(
       async () => {
         const sessions = await page.evaluate(async () => {
-          return (window as any).electronAPI.sessions.list();
+          return window.electronAPI.sessions.list();
         });
-        const session = sessions.find((s: any) => s.id === sessionId);
+        const session = sessions.find((candidate) => candidate.id === sessionId);
         return !session || session.status !== 'running';
       },
       { timeout: timeoutMs, intervals: [100, 250, 500] },
@@ -126,7 +134,7 @@ async function getSessionCounts(page: Page): Promise<{ running: number; queued: 
 async function getPlanningSwimlaneId(page: Page): Promise<string> {
   const id = await page.evaluate(async () => {
     const swimlanes = await window.electronAPI.swimlanes.list();
-    const planning = swimlanes.find((s: any) => s.name === 'Planning');
+    const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
     return planning?.id;
   });
   expect(id).toBeTruthy();
@@ -139,7 +147,7 @@ async function getPlanningSwimlaneId(page: Page): Promise<string> {
 async function moveTaskToSwimlane(page: Page, taskTitle: string, swimlaneId: string): Promise<string> {
   const taskId = await page.evaluate(async (title) => {
     const tasks = await window.electronAPI.tasks.list();
-    const task = tasks.find((t: any) => t.title === title);
+    const task = tasks.find((candidateTask) => candidateTask.title === title);
     return task?.id;
   }, taskTitle);
   expect(taskId).toBeTruthy();
@@ -208,11 +216,13 @@ test.describe('Claude Agent -- Config Changes During Active Sessions', () => {
     // config.set accepts Partial<AppConfig> and deep-merges, so we only
     // need to provide the nested claude.maxConcurrentSessions key.
     await page.evaluate(async () => {
+      // A partial patch, not a full AppConfig: the cast names the parameter
+      // type instead of widening to any.
       await window.electronAPI.config.set({
         claude: {
           maxConcurrentSessions: 1,
         },
-      } as any);
+      } as unknown as Parameters<typeof window.electronAPI.config.set>[0]);
     });
 
     // Give the main process a moment to apply the new limit
@@ -227,14 +237,12 @@ test.describe('Claude Agent -- Config Changes During Active Sessions', () => {
     await moveTaskToSwimlane(page, taskC, planningSwimlaneId);
 
     // Wait for the 3rd session to appear (queued or running)
-    await page.waitForFunction(
-      async () => {
-        const sessions = await (window as any).electronAPI.sessions.list();
-        return sessions.length >= 3;
-      },
-      null,
-      { timeout: 10000 },
-    );
+    await expect
+      .poll(
+        async () => page.evaluate(async () => (await window.electronAPI.sessions.list()).length),
+        { timeout: 10_000, intervals: [100, 250, 500] },
+      )
+      .toBeGreaterThanOrEqual(3);
 
     const countsAfterThird = await getSessionCounts(page);
     // 3rd task should be queued OR already promoted (queue promotion can be near-instant)

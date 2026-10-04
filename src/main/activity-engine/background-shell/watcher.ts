@@ -5,7 +5,6 @@ import {
   indexByParent,
   isShellLike,
   walkDescendantsFromIndex,
-  type CapturedSessionTree,
   type ProcessIndexByParent,
   type ProcessTreeProbe,
 } from './process-tree';
@@ -303,31 +302,9 @@ interface SessionWatchState {
    * being a candidate.
    */
   agentAbsentObservations: number;
-  /**
-   * Every descendant PID seen on the last HEALTHY enumerating cycle, published
-   * for session teardown to reap (see `CapturedSessionTree`). Written only past
-   * the probe-health guard, so a timed-out probe's empty snapshot never clobbers
-   * a good one, and never on a skip cycle, which does not enumerate at all.
-   *
-   * Empty with `descendantsCapturedAt === 0` until the first healthy cycle.
-   */
-  lastDescendantPids: number[];
-  /** `Date.now()` of the cycle that wrote `lastDescendantPids`. 0 = never. */
-  descendantsCapturedAt: number;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
-
-/**
- * How stale a published descendant snapshot may be and still be acted on.
- *
- * Generous next to the 2s base cadence (stretching to 6s under the adaptive
- * backoff) because the processes this exists to catch have been alive for
- * minutes. The ceiling is not about freshness for its own sake: PID reuse is
- * the hazard, so a snapshot from a watcher that stopped polling long ago must
- * be refused rather than used to kill a recycled pid.
- */
-export const CAPTURED_TREE_MAX_AGE_MS = 30_000;
 
 /**
  * How many poll cycles a `noteBackgroundShellStarted` PID-capture attempt
@@ -353,9 +330,9 @@ const PID_CAPTURE_RETRY_CYCLES = 3;
 export const NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES = 30;
 
 /**
- * Adaptive poll backoff. The full host-process enumeration (`listAllProcesses`,
- * a ~200ms PowerShell CIM query on Windows) fires every cycle where any session
- * "needs tree" - which, with several agents running tools, is nearly
+ * Adaptive poll backoff. The full host-process enumeration (`listAllProcesses`)
+ * fires every cycle where any session "needs tree" - which, with several
+ * agents running tools, is nearly
  * continuous. Under that sustained load the sweep burns CPU exactly when the
  * machine is already saturated. So after a run of consecutive tree cycles the
  * poll interval stretches (2s -> 4s -> 6s), and any background-shell lifecycle
@@ -366,6 +343,10 @@ export const NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES = 30;
  * (which itself runs at base cadence once a deficit is seen), so worst-case
  * ~8s vs ~4s today - well within the 5-min watchdog backstop. Multipliers are
  * applied to `pollIntervalMs` so a test's small base interval scales too.
+ *
+ * The backoff was sized against a ~200ms PowerShell CIM query per cycle. The
+ * pty host now answers on Windows with Toolhelp (about 8 ms,
+ * `host-process-table.ts`), and the stages were left as they were.
  */
 export const POLL_BACKOFF_STAGE_ONE_TREE_CYCLES = 5;
 export const POLL_BACKOFF_STAGE_TWO_TREE_CYCLES = 15;
@@ -377,9 +358,10 @@ const POLL_BACKOFF_STAGE_TWO_MULTIPLIER = 3;
  * interval and the backoff above.
  *
  * A phantom session is not urgent, and the signal it needs (the full host
- * process enumeration) is the expensive one - a ~200ms PowerShell CIM query on
- * Windows. Tying it to the 2s poll would defeat the laziness that exists to
- * protect CPU when several agents are running. At 60s it costs roughly one
+ * process enumeration) is the expensive one: a ~200ms PowerShell CIM query on
+ * Windows when this was written, about 8 ms of Toolhelp in the pty host now,
+ * and a host round trip either way. Tying it to the 2s poll would defeat the
+ * laziness that exists to protect CPU when several agents are running. At 60s it costs roughly one
  * snapshot per minute regardless of session count, and the sweep is FREE on any
  * cycle that already enumerated for bg-shell work, so a busy machine detects a
  * phantom in seconds while a fully idle one takes 60-120s.
@@ -446,11 +428,6 @@ export class BgShellWatcher {
       // session that had banked an observation against its OLD tree would then
       // need just one more to retire a freshly spawned agent.
       existing.agentAbsentObservations = 0;
-      // The published subtree belongs to the OLD pty. A resume swaps in a fresh
-      // root pid, so carrying it would let a teardown kill pids that are now
-      // either dead or (Windows recycles aggressively) somebody else's.
-      existing.lastDescendantPids = [];
-      existing.descendantsCapturedAt = 0;
       // A resume is a transition too: watch the new tree at base cadence.
       this.resetPollBackoff();
       return;
@@ -467,8 +444,6 @@ export class BgShellWatcher {
       consecutiveDeficitCycles: 0,
       shellOutputFiles: new Map(),
       agentAbsentObservations: 0,
-      lastDescendantPids: [],
-      descendantsCapturedAt: 0,
     });
     this.maybeStartPolling();
   }
@@ -523,31 +498,6 @@ export class BgShellWatcher {
     state.pendingCaptures.set(shellId, PID_CAPTURE_RETRY_CYCLES);
   }
 
-  /**
-   * The session's descendant PIDs as of the last healthy enumerating cycle, for
-   * a teardown that is about to kill the PTY and wants to take the rest of the
-   * tree with it. Free: it reads what `cycleSession` already computed.
-   *
-   * Returns null when there is nothing trustworthy to act on - the session was
-   * never registered, no healthy cycle has published yet, or the snapshot is
-   * older than `CAPTURED_TREE_MAX_AGE_MS`. Null means "do not reap from a
-   * snapshot", never "go and enumerate instead": a fallback scan here would put
-   * a ~670ms PowerShell spawn back on the drag-to-Done path, which is the whole
-   * cost this mechanism exists to avoid. The removal-time reaper in
-   * `zombie-reaper.ts` is the backstop for that case.
-   */
-  getCapturedDescendants(sessionId: string): CapturedSessionTree | null {
-    const state = this.states.get(sessionId);
-    if (!state) return null;
-    if (state.descendantsCapturedAt === 0) return null;
-    if (Date.now() - state.descendantsCapturedAt > CAPTURED_TREE_MAX_AGE_MS) return null;
-    return {
-      rootPid: state.rootPid,
-      pids: [...state.lastDescendantPids],
-      capturedAt: state.descendantsCapturedAt,
-    };
-  }
-
   /** Force one cycle of polling. Used by tests. */
   async pollNow(): Promise<void> {
     await this.cycle();
@@ -559,9 +509,9 @@ export class BgShellWatcher {
     this.disposed = true;
     this.stopPolling();
     this.states.clear();
-    // Release the probe's long-lived resources (Windows persistent
-    // PowerShell child). Synchronous so it slots into the
-    // before-quit shutdown contract.
+    // Release the probe's long-lived resources (a local Windows probe's
+    // persistent PowerShell child; the pty host's probe holds none).
+    // Synchronous so it slots into the before-quit shutdown contract.
     this.probe.dispose();
   }
 
@@ -650,7 +600,7 @@ export class BgShellWatcher {
       // PID capture, no running foreground tool - see `sessionNeedsTree`), skip
       // the expensive OS enumeration entirely and do only the cheap per-PID
       // root-death probe. `isAlive` is a native process.kill(pid, 0);
-      // `listAllProcesses` spawns a PowerShell CIM query (~200ms) on Windows.
+      // `listAllProcesses` is a pty host round trip that lists every process.
       // Any path to a new bg shell first raises pendingToolCount or
       // activeShellCount (engine state updates synchronously on the event), so
       // the next cycle re-enters the full path before the watcher must act -
@@ -780,31 +730,6 @@ export class BgShellWatcher {
     const state = this.states.get(sessionId);
     if (!state) return;
     state.candidateForegroundShellPid = null;
-    // Keep the published descendant set honest WITHOUT enumerating: a signal-0
-    // per pid is a syscall, not a spawn, so it is affordable on every cycle.
-    //
-    // Two jobs, both load-bearing for the session-end reap:
-    //
-    // 1. It stops the snapshot ageing out while a session merely goes quiet.
-    //    `sessionNeedsTree` stops enumerating once there is no bg-shell work, so
-    //    a task that ran a dev server an hour ago and is dragged to Done now
-    //    would otherwise present a snapshot past CAPTURED_TREE_MAX_AGE_MS and
-    //    reap nothing, with the leaked process still sitting right there.
-    // 2. It narrows the PID-reuse window, and only narrows it. A pid is dropped
-    //    on the first cycle that OBSERVES it dead, so the guarantee is "no pid
-    //    is carried across a cycle it was already dead for", not "no pid is
-    //    ever stale". A descendant that exits and has its pid reassigned inside
-    //    one cycle gap (2s base, up to 6s under the adaptive backoff) is still
-    //    alive when the next prune probes it, stays in the set, and a later
-    //    reap would kill whatever now holds that pid. Closing that needs a
-    //    per-pid identity check (start time or a handle) the snapshot does not
-    //    carry, so it is a known residual risk, not a solved problem.
-    if (state.descendantsCapturedAt !== 0) {
-      state.lastDescendantPids = state.lastDescendantPids.filter(
-        (pid) => this.probe.isAlive(pid),
-      );
-      state.descendantsCapturedAt = Date.now();
-    }
     if (!this.probe.isAlive(state.rootPid)) {
       this.callbacks.onRootProcessDied(sessionId);
       this.unregisterSession(sessionId);
@@ -876,17 +801,6 @@ export class BgShellWatcher {
       return;
     }
 
-    // Publish the subtree we just walked so session teardown can reap what this
-    // session leaves running without paying for its own enumeration (~670ms of
-    // PowerShell startup on Windows) on the drag-to-Done path. Deliberately
-    // BELOW the probe-health guard: a timed-out probe returns [] for every
-    // session, and storing that would silently erase a good snapshot and turn
-    // the reap into a no-op. `descendants` is the full subtree at any depth,
-    // not the shell-like filter above it - a leaked dev server is usually a
-    // GRANDCHILD of a bg shell, which is exactly what that filter drops.
-    state.lastDescendantPids = descendants.map((descendant) => descendant.pid);
-    state.descendantsCapturedAt = Date.now();
-
     // AGENT-ABSENCE SWEEP. `rootPid` is the session's SHELL (getRootPid is
     // pty.pid) and Kangentic writes the agent CLI command to that shell's
     // stdin, so the agent is a DESCENDANT. When it exits on its own - a user
@@ -911,8 +825,8 @@ export class BgShellWatcher {
           state.agentAbsentObservations = 0;
           this.callbacks.onAgentProcessAbsent(sessionId);
           // Same shape as the root-death path above: hand off, unregister, and
-          // return. The later unregister that arrives via the retirement's own
-          // kill -> onExit -> clearSessionTracking is an idempotent no-op.
+          // return. The retirement's own kill never unregisters (onExit does
+          // not clear telemetry tracking), so this is the one that does.
           this.unregisterSession(sessionId);
           return;
         }

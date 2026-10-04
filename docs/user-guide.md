@@ -145,6 +145,8 @@ Each column chooses WHEN its message arrives via **Message timing**: `immediate`
 
 Drag to Done. The worktree directory is removed to reclaim disk, the session is suspended (not destroyed), the task is archived, and the conversation ID is preserved. The branch is deleted too when **git.autoCleanup** is on (the default) and kept when it is off. A clean move happens silently; a confirmation dialog appears only when the move would destroy real work - uncommitted files, or commits that exist only on the local branch about to be deleted - and it spells out exactly what is at risk (worktree deleted, branch kept or deleted, session history kept). If you later unarchive the task and drag it to an active column, Kangentic recreates the worktree and the agent resumes with full conversation context.
 
+Anything the task's agent left running in its folder, such as a dev server it started in the background, is stopped before the worktree is removed. When that happens a toast gives the counts, and its **Review** link lists each process with a **Stop** button for any that kept running: a window the agent opened, a tmux server, or a tool another task also uses. The same happens when a task returns to To Do or is deleted. Turn it off with [Stop Leftover Processes](#behavior-settings); the toast then lists what kept running and stops nothing.
+
 Clicking a completed task opens a session summary showing: duration, model, cost, token usage, tool call count, files changed, and lines added/removed. A collapsible "By tool" section breaks the count down per tool name (calls, total duration, average duration, plus a Failed column when any tool was interrupted). Cost / input / output columns appear only for adapters that emit per-tool telemetry. The Done column also supports searching completed tasks by title and sorting by date, cost, tokens, or duration.
 
 ### Task Card Context Menu
@@ -159,7 +161,7 @@ Right-click any task card on the board to open a context menu with:
 
 ### Return to To Do
 
-Drag to To Do to reset the task to "not started": the session is killed and its history wiped, and the worktree is removed (the branch too, when **git.autoCleanup** is on). When the reset would destroy pending changes, a confirmation dialog warns that the worktree and session history will be lost before anything happens. If you drag back to an active column, a fresh session starts in a fresh worktree.
+Drag to To Do to reset the task to "not started": the session is killed and its history wiped, what its agent left running is stopped (see [Complete a Task](#complete-a-task)), and the worktree is removed (the branch too, when **git.autoCleanup** is on). When the reset would destroy pending changes, a confirmation dialog warns that the worktree and session history will be lost before anything happens. If you drag back to an active column, a fresh session starts in a fresh worktree.
 
 ## Terminal Panel
 
@@ -636,6 +638,7 @@ These are global-only settings that apply to the entire app.
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
 | Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
+| Stop Leftover Processes | Stop what a task's agent left running in its folder when the task is done, moved back to To Do, or deleted. Off, nothing is stopped and the toast still lists what kept running. |
 | Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
 

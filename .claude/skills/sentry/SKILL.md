@@ -35,13 +35,13 @@ purpose, so another repo's generic `SENTRY_AUTH_TOKEN` is never picked up by mis
 Read the token into a shell variable and pass it as a header in the SAME command; never echo
 it, never write it to a file, never include it in a reply.
 
-A persisted token doubles as a build switch: `scripts/build.js` and `vite.config.mts` activate
-release sourcemap upload whenever `KANGENTIC_SENTRY_TOKEN` (or `SENTRY_AUTH_TOKEN`) is present
-at build time. A Windows User-level value survives into every later `npm run build`, so store
-the token that way only if local production builds attempting an upload is acceptable;
-otherwise set it per-session. A local build that uploads writes real artifact bundles to the
-`desktop` project under `Kangentic@<version>`, which is harmless (Sentry matches by debug id, so
-bundles from a build nobody shipped simply go unused) but is not nothing.
+A persisted token is safe to keep at Windows User level: it is not a build switch on its own.
+`scripts/build.js` and `vite.config.mts` upload symbols only when a token is present AND the
+build is authorized, which means CI (GitHub Actions sets `CI=true`) or an explicit
+`KANGENTIC_SENTRY_UPLOAD=1` (`isSentryUploadAuthorized`). A local `npm run build` with the
+token set prints `Sentry symbol upload: skipped (a token is set, but this is a local build ...)`
+and uploads nothing. Before that gate, every local build uploaded artifact bundles for an
+unreleased tree under `Kangentic@<version>`.
 
 Release builds run only on the CI matrix, so what actually decides whether a RELEASE gets symbols
 is the `KANGENTIC_SENTRY_TOKEN` repository secret, not any local value. The `preflight-symbols`

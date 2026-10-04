@@ -35,8 +35,10 @@ process.env.NODE_ENV = 'production';
 const keepDevtools = process.env.KANGENTIC_BUILD_DEV === '1';
 
 // Sentry sourcemap upload for the main + preload bundles, release-only: it
-// activates only when an upload token is present (a CI/release secret; the
-// renderer half lives in vite.config.mts behind the same gate).
+// activates only when an upload token is present (a CI/release secret) AND the
+// build is authorized to upload (isSentryUploadAuthorized below: CI, or an
+// explicit KANGENTIC_SENTRY_UPLOAD=1). The renderer half lives in
+// vite.config.mts behind the same gate.
 // KANGENTIC_SENTRY_TOKEN is the scoped name; SENTRY_AUTH_TOKEN stays accepted
 // as the conventional CI fallback. Maps are generated as separate files
 // (esbuild 'external' = no sourceMappingURL comment), uploaded with debug
@@ -62,8 +64,29 @@ function resolveSentryAuthToken(env) {
   return undefined;
 }
 
+/**
+ * Whether this build may upload at all, separately from having a token.
+ *
+ * A token alone is not intent. The dogfooding machine carries
+ * KANGENTIC_SENTRY_TOKEN as a USER environment variable (the /sentry skill reads
+ * Sentry with it), so every local `npm run build` before an E2E run, a /test pass
+ * or a packaged smoke uploaded sourcemaps and node-pty debug files for an
+ * unreleased working tree, filed under the current release's name. Releases build
+ * in CI (release.yml), where GitHub Actions sets CI=true, so the upload is
+ * authorized there; a local build uploads only with an explicit
+ * KANGENTIC_SENTRY_UPLOAD=1. The skip is announced either way (see
+ * announceSentryUploadMode), so it can never be silent.
+ *
+ * Exported for test. Mirrored in vite.config.mts for the renderer half.
+ */
+function isSentryUploadAuthorized(env) {
+  const ci = typeof env.CI === 'string' ? env.CI.trim().toLowerCase() : '';
+  if (ci !== '' && ci !== 'false' && ci !== '0') return true;
+  return typeof env.KANGENTIC_SENTRY_UPLOAD === 'string' && env.KANGENTIC_SENTRY_UPLOAD.trim() === '1';
+}
+
 const sentryAuthToken = resolveSentryAuthToken(process.env);
-const uploadSourcemaps = Boolean(sentryAuthToken);
+const uploadSourcemaps = Boolean(sentryAuthToken) && isSentryUploadAuthorized(process.env);
 // One Sentry project receives both the sourcemaps and the native debug files.
 const SENTRY_ORG = 'kangentic';
 const SENTRY_PROJECT = 'desktop';
@@ -127,9 +150,14 @@ function assertUploadCanActuallyRun() {
  * trace of it in the release logs, so silence is the bug being fixed here.
  */
 function announceSentryUploadMode() {
-  console.log(uploadSourcemaps
-    ? `[build] Sentry symbol upload: enabled (release ${resolveSentryReleaseName()})`
-    : '[build] Sentry symbol upload: skipped (no KANGENTIC_SENTRY_TOKEN or SENTRY_AUTH_TOKEN)');
+  if (uploadSourcemaps) {
+    console.log(`[build] Sentry symbol upload: enabled (release ${resolveSentryReleaseName()})`);
+  } else if (sentryAuthToken) {
+    console.log('[build] Sentry symbol upload: skipped (a token is set, but this is a local build; '
+      + 'uploads run in CI, or set KANGENTIC_SENTRY_UPLOAD=1)');
+  } else {
+    console.log('[build] Sentry symbol upload: skipped (no KANGENTIC_SENTRY_TOKEN or SENTRY_AUTH_TOKEN)');
+  }
 }
 
 // The uploadSourcemaps guard gates the require below (the function itself runs
@@ -350,7 +378,7 @@ const esbuildCommon = {
   platform: 'node',
   target: 'node24',
   format: 'cjs',
-  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers', 'font-list'],
+  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers', 'font-list', 'koffi'],
   conditions: ['require'],
   define: {
     'MAIN_WINDOW_VITE_DEV_SERVER_URL': JSON.stringify(''),
@@ -499,6 +527,7 @@ module.exports = {
   assertVendorChunksLazy,
   uploadNativeDebugFiles,
   resolveSentryAuthToken,
+  isSentryUploadAuthorized,
   announceSentryUploadMode,
   assertUploadCanActuallyRun,
   resolveSentryEsbuildPlugins,

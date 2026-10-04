@@ -32,12 +32,13 @@ import {
   mockAgentPath,
   moveTaskIpc,
   waitForRunningSession,
+  waitForTaskSession,
   waitForScrollback,
   getTaskIdByTitle,
   getSwimlaneIds,
   closeApp,
+  closeAppAndWaitForExit,
 } from './helpers';
-import type { Session } from '../../src/shared/types';
 import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -115,8 +116,9 @@ test.describe('Claude Agent -- OS-killed session recovery on startup', () => {
     });
     expect(projectId).toBeTruthy();
 
-    await closeApp(app);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // The DB surgery below opens the project database directly, so the old
+    // process must be gone first. Wait for that, not a guessed pause.
+    await closeAppAndWaitForExit(app);
 
     // === Phase 2: simulate the hard kill via DB surgery (app closed) ===
     // The clean close marked the record 'suspended'; force the exact OS-killed
@@ -158,14 +160,7 @@ test.describe('Claude Agent -- OS-killed session recovery on startup', () => {
     expect(scrollback2).toContain(expectedMarker);
 
     // And the task is wired to a live running session again.
-    await page.waitForFunction(
-      async (expectedTaskId) => {
-        const sessions: Session[] = await window.electronAPI.sessions.list();
-        return sessions.some((session) => session.taskId === expectedTaskId && session.status === 'running');
-      },
-      taskId,
-      { timeout: 20_000 },
-    );
+    await waitForTaskSession(page, taskId, 20_000);
 
     await closeApp(app);
   });

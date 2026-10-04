@@ -16,11 +16,11 @@ export type { SpawnFailureStep } from './task-git';
 export { createTransitionEngine, spawnAgent, autoSpawnForTask, resolveSpawnOverrides } from './agent-spawn';
 export type { AgentSpawnOptions } from './agent-spawn';
 export {
-  captureSessionLeftovers,
   cleanupTaskSession,
   cleanupTaskResources,
   deleteTaskWorktree,
-  reapSessionLeftovers,
+  reapTaskLeftovers,
+  leftoverSweepOptions,
 } from './task-cleanup';
 export { reportAutomationFailures } from './automation-failures';
 export { openAttachmentFile } from './attachment-open';

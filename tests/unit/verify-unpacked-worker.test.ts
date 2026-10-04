@@ -379,6 +379,8 @@ describe('pty host gate', () => {
     const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
     expect(() => verifyPtyHostLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
       .toThrow(/pty host cannot run a terminal[\s\S]*conpty\.node/);
+    expect(() => verifyPtyHostLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/node-pty, koffi and @koromix\/koffi-\* in `asarUnpack`/);
     expect(spawn).toHaveBeenCalledWith(
       binary,
       ['-e', expect.stringContaining('pty.spawn(')],
@@ -395,20 +397,27 @@ describe('pty host gate', () => {
     // so on macOS the host forks from the asar and the probe must load there.
     expect(script).toMatch(/process\.platform === 'darwin'.*'app\.asar\.unpacked'.*existsSync\(asarRoot\)/);
     expect(script).toContain("require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'node-pty'))");
+    // koffi loads from the same place, on the two platforms whose readers use it.
+    expect(script).toContain("require(path.join(loadThroughAsar ? asarRoot : root, 'node_modules', 'koffi'))");
+    expect(script).toContain("if (process.platform === 'win32' || process.platform === 'darwin') {");
+    expect(script).toContain('ownPid !== process.pid');
   });
 
-  it('the load probe spawns a process and reads its output for real, under this checkout\'s Electron', () => {
+  it('the load probe spawns a process, reads its output, and on Windows and macOS calls into koffi, for real under this checkout\'s Electron', () => {
     const installRoot = path.dirname(fs.realpathSync(path.join(REPO_ROOT, 'node_modules')));
     const electronBinary = require('electron') as unknown as string;
     const log = vi.fn();
     verifyPtyHostLoads({ unpackedRoot: installRoot, electronBinaryPath: electronBinary, log });
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[afterPack\] pty host: node-pty spawned a process and read its output/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(process.platform === 'linux'
+      ? /; koffi not used on linux, skipped$/
+      : /; koffi loaded and its native call returned this process id$/));
   }, 60_000);
 
-  it('the host imports node-pty from outside the bundle, and all of node-pty and the host bundle are unpacked', () => {
+  it('the host imports node-pty and koffi from outside the bundle, and both, plus the host bundle, are unpacked', () => {
     const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
     const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
-    expect(PTY_HOST_EXTERNALS).toEqual(['node-pty']);
+    expect(PTY_HOST_EXTERNALS).toEqual(['node-pty', 'koffi']);
     for (const name of PTY_HOST_EXTERNALS) expect(externals).toContain(name);
 
     const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
@@ -417,5 +426,9 @@ describe('pty host gate', () => {
     // The whole package, not only prebuilds/: the host resolves node-pty's JS
     // from the unpacked tree, and its ConPTY conout worker loads from there.
     expect(asarUnpack).toContain('"node_modules/node-pty/**"');
+    // koffi finds its binary in the per-platform @koromix/koffi-* package by a
+    // path relative to its own, so both trees unpack.
+    expect(asarUnpack).toContain('"node_modules/koffi/**"');
+    expect(asarUnpack).toContain('"node_modules/@koromix/koffi-*/**"');
   });
 });

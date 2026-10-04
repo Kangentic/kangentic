@@ -227,6 +227,14 @@ export function trackUpdateOutcome(currentVersion: string): void {
   persistUsageFlags();
 }
 
+/** Settles once every flag write queued so far has landed (or failed). Tests
+ *  await it before deleting the flags file's directory: a write still in
+ *  flight recreates a file mid-delete and the removal fails with ENOTEMPTY
+ *  (seen on CI's Linux unit shard). */
+export function waitForUsageFlagWritesForTests(): Promise<void> {
+  return pendingFlagsWrite;
+}
+
 /** Reset module state between unit tests (vitest shares module instances). */
 export function resetUsageAnalyticsForTests(): void {
   usageFlags = null;

@@ -12,7 +12,7 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<Bot size={16} />}
         label="Sessions"
         description="How many agents run at once and what happens when idle."
-        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'agent.idleTimeoutMinutes']}
+        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'agent.idleTimeoutMinutes', 'stopLeftoverProcesses']}
       >
         <CardRow {...settingProps('agent.maxConcurrentSessions')}>
           <input
@@ -53,6 +53,11 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
             className={INPUT_CLASS}
           />
         </CardRow>
+        <CardToggleRow
+          {...settingProps('stopLeftoverProcesses')}
+          checked={globalConfig.stopLeftoverProcesses !== false}
+          onChange={(value) => updateGlobal({ stopLeftoverProcesses: value })}
+        />
       </SettingsCard>
 
       <SettingsCard

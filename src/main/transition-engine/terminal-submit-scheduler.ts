@@ -289,7 +289,7 @@ export class TerminalSubmitScheduler {
     }
   }
 
-  /** Cancel all pending injections. Called on `killAll`/`suspendAll`. */
+  /** Cancel all pending injections. Called on `killAll`. */
   cancelAll(): void {
     const pending = [...this.deferred.values()];
     this.deferred.clear();

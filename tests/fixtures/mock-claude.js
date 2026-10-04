@@ -297,6 +297,48 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
   }
 }
 
+// Fast-detach harness for the task-process reap guard
+// (tests/e2e/task-process-reap.spec.ts).
+//
+// When MOCK_CLAUDE_FAST_DETACH_RESULT_FILE names a path, the first FRESH session
+// start (--session-id, not --resume) hands a launcher (detached-survivor-launcher.js)
+// the job of starting a long-lived process and exiting at once, so the survivor has
+// no live parent. This mock never tracks or kills it: it models what an agent leaves
+// behind when it backgrounds a dev server, and the reap is what must end it.
+//
+// Gated three ways, because three things re-run this mock and none may start a
+// second survivor whose pid the spec never learns: a resume (--resume), a headless
+// run (--print), and a fresh start after the launcher already reported (the result
+// file exists).
+if (process.env.MOCK_CLAUDE_FAST_DETACH_RESULT_FILE && sessionId && !resumed && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const { spawn } = require('node:child_process');
+  const resultFile = process.env.MOCK_CLAUDE_FAST_DETACH_RESULT_FILE;
+
+  if (!fs.existsSync(resultFile)) {
+    // Long enough to outlast any spec run, short enough that a failed run cannot
+    // leak a node process for more than five minutes.
+    const survivorLifetimeMs = 300000;
+    try {
+      const launcher = spawn(
+        process.execPath,
+        [
+          pathMod.join(__dirname, 'detached-survivor-launcher.js'),
+          resultFile,
+          String(process.pid),
+          String(survivorLifetimeMs),
+        ],
+        { detached: true, stdio: 'ignore', windowsHide: true },
+      );
+      launcher.unref();
+      console.log('MOCK_CLAUDE_FAST_DETACH_LAUNCHED');
+    } catch (error) {
+      console.error('MOCK_CLAUDE_FAST_DETACH_ERROR:' + error.message);
+    }
+  }
+}
+
 // Fullscreen-TUI interactive select-prompt harness for the terminal
 // input/focus-disconnect regression (fullscreen select-prompt freeze fix).
 //

@@ -5,7 +5,6 @@ import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, typ
 import { BgShellWatcher } from './background-shell/watcher';
 import {
   createProcessTreeProbe,
-  type CapturedSessionTree,
   type ProcessTreeProbe,
 } from './background-shell/process-tree';
 import { looksLikeShellId } from './background-shell/looks-like-shell-id';
@@ -402,15 +401,6 @@ export class SessionTelemetry {
   notifySessionEnded(sessionId: string): void {
     if (!this.bgShellWatcher) return;
     this.bgShellWatcher.unregisterSession(sessionId);
-  }
-
-  /**
-   * The session's descendant PIDs as of the watcher's last healthy cycle, so a
-   * teardown can reap what the session leaves running. Null when the watcher is
-   * disabled or has nothing fresh; see `BgShellWatcher.getCapturedDescendants`.
-   */
-  getCapturedSessionTree(sessionId: string): CapturedSessionTree | null {
-    return this.bgShellWatcher?.getCapturedDescendants(sessionId) ?? null;
   }
 
   // ==== Idle-timeout sweep ====

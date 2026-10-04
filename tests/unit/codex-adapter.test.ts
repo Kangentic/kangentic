@@ -88,6 +88,46 @@ describe('Codex Adapter', () => {
     });
   });
 
+  describe('buildCommand - task process tag', () => {
+    // A user's `shell_environment_policy` can strip inherited variables from the
+    // shells Codex starts, which would hide KANGENTIC_TASK_ID from the reap.
+    const TASK_TAG = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
+    const TAG_OVERRIDE = `shell_environment_policy.set.KANGENTIC_TASK_ID=${TASK_TAG}`;
+
+    it('re-injects the task tag into tool shells through shell_environment_policy.set', () => {
+      const command = adapter.buildCommand(makeOptions({ taskProcessTag: TASK_TAG, shell: 'bash' }));
+      expect(command).toContain(`-c '${TAG_OVERRIDE}'`);
+    });
+
+    // The override carries an `=`, which is outside quoteArg's bare-token set, so
+    // it is always quoted, and in the form the target shell parses. The expected
+    // strings are derived from quoteArg's rules in src/shared/paths.ts and
+    // escapeForDoubleQuotedShell in src/shared/shell-quote.ts: PowerShell and cmd
+    // both use a flat double-quoted token, and neither escaper changes this
+    // payload (no backslash, double quote, backtick or `$` in it), so the two
+    // come out identical. The test does not call quoteArg to build its answer.
+    it.each(['powershell', 'cmd'])('quotes the override as one double-quoted token for %s', (shell) => {
+      const command = adapter.buildCommand(makeOptions({ taskProcessTag: TASK_TAG, shell }));
+      expect(command).toContain(`-c "${TAG_OVERRIDE}"`);
+      expect(command).not.toContain(`'${TAG_OVERRIDE}'`);
+    });
+
+    it('re-injects it on a resume too, before the positional prompt grammar', () => {
+      const command = adapter.buildCommand(makeOptions({
+        taskProcessTag: TASK_TAG,
+        resume: true,
+        sessionId: 'sess-abc-123',
+        shell: 'bash',
+      }));
+      expect(command).toContain(TAG_OVERRIDE);
+    });
+
+    it('emits nothing without a tag (a Command Terminal) or with a value that is not a task id', () => {
+      expect(adapter.buildCommand(makeOptions())).not.toContain('shell_environment_policy');
+      expect(adapter.buildCommand(makeOptions({ taskProcessTag: 'x; rm -rf /' }))).not.toContain('shell_environment_policy');
+    });
+  });
+
   describe('buildCommand - resume session', () => {
     it('builds resume subcommand with session ID', () => {
       const command = adapter.buildCommand(makeOptions({

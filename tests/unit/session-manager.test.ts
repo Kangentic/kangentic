@@ -1,7 +1,7 @@
 /**
  * Comprehensive SessionManager unit tests covering scrollback, spawn failure,
  * shell arguments, environment filtering, data buffering, write/resize guards,
- * remove, suspendAll, killAll, query methods, and synthetic session_end.
+ * remove, killAll, query methods, and synthetic session_end.
  *
  * Follows the same mock/setup patterns as session-suspend.test.ts and
  * event-activity-derivation.test.ts.
@@ -791,95 +791,6 @@ describe('Remove', () => {
 
   it('remove on non-existent session does not throw', () => {
     expect(() => manager.remove('nonexistent-id')).not.toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 4. SuspendAll
-// ---------------------------------------------------------------------------
-
-describe('SuspendAll', () => {
-  let manager: SessionManager;
-
-  beforeEach(() => {
-    manager = new SessionManager();
-  });
-
-  async function spawnSession(taskId: string) {
-    const mock = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
-    const session = await manager.spawn({
-      taskId,
-      command: '',
-      cwd: tmpDir,
-    });
-    return { session, ...mock };
-  }
-
-  it('sends exit sequence to all running sessions', async () => {
-    const { mockPty: pty1 } = await spawnSession('task-sa-1');
-    const { mockPty: pty2 } = await spawnSession('task-sa-2');
-
-    await manager.suspendAll(0);
-
-    // Default exit sequence is ['\x03'] (Ctrl+C only) when no exitSequence is provided
-    expect(pty1.write).toHaveBeenCalledWith('\x03');
-    expect(pty2.write).toHaveBeenCalledWith('\x03');
-  });
-
-  it('returns task IDs of all sessions', async () => {
-    await spawnSession('task-sa-a');
-    await spawnSession('task-sa-b');
-
-    const taskIds = await manager.suspendAll(0);
-
-    expect(taskIds).toContain('task-sa-a');
-    expect(taskIds).toContain('task-sa-b');
-  });
-
-  it('marks running sessions as exited', async () => {
-    const { session } = await spawnSession('task-sa-exit');
-
-    await manager.suspendAll(0);
-
-    const result = manager.getSession(session.id);
-    expect(result?.status).toBe('exited');
-  });
-
-  it('includes queued sessions in returned task IDs', async () => {
-    manager.setMaxConcurrent(1);
-
-    await spawnSession('task-sa-running');
-
-    // Second session should be queued
-    const mock2 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
-    const queued = await manager.spawn({
-      taskId: 'task-sa-queued',
-      command: '',
-      cwd: tmpDir,
-    });
-    expect(queued.status).toBe('queued');
-
-    const taskIds = await manager.suspendAll(0);
-
-    expect(taskIds).toContain('task-sa-running');
-    expect(taskIds).toContain('task-sa-queued');
-  });
-
-  it('clears session queue', async () => {
-    manager.setMaxConcurrent(1);
-    await spawnSession('task-sa-q1');
-
-    const mock2 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
-    await manager.spawn({ taskId: 'task-sa-q2', command: '', cwd: tmpDir });
-
-    expect(manager.queuedCount).toBe(1);
-
-    await manager.suspendAll(0);
-
-    expect(manager.queuedCount).toBe(0);
   });
 });
 

@@ -559,9 +559,10 @@ export function findZombies(
  * Feeding it `scanAllProcesses` makes the liveness set complete, so the gate now
  * does exactly what it claims.
  *
- * That is safe to rely on ONLY because the session-end reap
- * (`src/main/pty/session-tree-reap.ts`) already kills what a session spawned,
- * without a gate, from its own process tree. This path is the backstop for
+ * That is safe to rely on ONLY because the task reap
+ * (`src/main/pty/process-tag/tagged-reap.ts`) already kills what a task's
+ * agents started, without a gate, by the `KANGENTIC_TASK_ID` tag they carry.
+ * This path is the backstop for
  * processes we did NOT spawn, so it can afford to be careful. If that reap is
  * ever removed, revisit this gate rather than assuming it still covers the case.
  *
@@ -586,7 +587,7 @@ function worktreeNeedleFor(worktreePath: string): string {
  * what the motivating incident had, and no scan can see it on Windows:
  * `Win32_Process` exposes CommandLine, ExecutablePath and ParentProcessId and
  * nothing resembling a working directory. That gap is exactly why the
- * session-end reap in `src/main/pty/session-tree-reap.ts` is the primary
+ * task reap in `src/main/pty/process-tag/tagged-reap.ts` is the primary
  * mechanism and the removal-failure scan is only the backstop.
  *
  * Shared by `findWorktreePathProcesses` (which kills) and

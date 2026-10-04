@@ -23,6 +23,7 @@ import {
   trackUpdateOutcome,
   bucketTaskCount,
   resetUsageAnalyticsForTests,
+  waitForUsageFlagWritesForTests,
 } from '../../src/main/analytics/usage';
 
 let tempDir: string;
@@ -36,7 +37,10 @@ beforeEach(() => {
   flagsPath = path.join(tempDir, 'analytics-usage.json');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // A test's last flag write is fire-and-forget; let it land before the
+  // directory goes, or it recreates a file mid-delete (ENOTEMPTY on CI).
+  await waitForUsageFlagWritesForTests();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 

@@ -46,7 +46,8 @@ This subsystem aims to be near-100% accurate: notification fires within seconds 
                                                           ▼
                                                 ┌────────────────────┐
                                                 │ ProcessTreeProbe   │
-                                                │ Win: Get-CimInstance│
+                                                │ (pty host)         │
+                                                │ Win: Toolhelp      │
                                                 │ POSIX: ps -A       │
                                                 └────────────────────┘
 ```
@@ -499,7 +500,7 @@ Conclusion: agents almost never explicitly end their bg shells. The only reliabl
 The watcher polls every 2 seconds. For each session with `activeShellCount > 0`:
 
 1. Check if the Claude CLI's root PID is alive. If dead, fire `onRootProcessDied` (engine forceIdle).
-2. Enumerate the Claude CLI's descendant processes via `ps` (POSIX) or `Get-CimInstance Win32_Process` (Windows).
+2. Enumerate the Claude CLI's descendant processes from the process table the pty host lists: `ps` (POSIX) or a Toolhelp snapshot (Windows).
 3. **Tier A (PID-aware):** when a named bg shell's OS PID is known (captured by tree-diff or the foreground-tool memo, see below), the watcher (a) fires `onShellPidExited(shellId)` → engine removes by id when the PID leaves the descendant tree, and (b) confirms liveness via `onShellsObservedAlive` → `markBackgroundShellsAlive` whenever every tracked named shell's PID is still present and there are no anonymous shells - even when the Tier B count is out of sync. This churn-proof liveness is what holds a backgrounded `npx playwright test` active while it spawns and kills its own app-under-test shells (tasks #210/#212).
 4. **Tier B (count heuristic):** filter descendants to "shell-like" basenames (bash, sh, cmd, pwsh). If the topmost shell-like count dropped below `preExistingHelpers + tracked` for 2 consecutive cycles AND no foreground tool is pending, fire `onNaturalExit(delta)` capped at the engine's ANONYMOUS count. Named shells are deliberately excluded from the count-based (anonymous) drain (the engine's ambiguity guard refuses an anonymous decrement against a named shell anyway); they are governed by Tier A PID-exit, the transcript drain (a tracked shell's own terminal `<task-notification>` observed directly in the durable session transcript, see below), the output-quiescence reclaim (a PID-less named shell whose output froze while it shows a persistent deficit, see below), and the 5-min named cap as the final backstop.
 
@@ -544,7 +545,9 @@ One caveat since exempt shells were added: `getActiveShellCount` sums them (it h
 
 ### Cross-platform
 
-- **Windows:** `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Csv -NoTypeInformation"`. Walks the parent map in JS. Times out at 1.5s.
+The table comes from the pty host (`HostProcessTreeProbe` in `src/main/pty/host/host-process-tree-probe.ts`, over the listing in `host-process-table.ts`), so no enumeration runs on main.
+
+- **Windows:** a Toolhelp snapshot through koffi (`listWin32Processes`, the listing the task reap's reader makes). Measured on 410 processes: about 8 ms, with the snapshot call on the thread pool so the host's event loop is held at most 0.66 ms at a time. It replaced a persistent PowerShell child running `Get-CimInstance Win32_Process` (140 ms median warm, 584 ms cold), which returned the same pids, parents and names. That PowerShell probe is still started, for good, the first time the Toolhelp listing fails. Walks the parent map in JS.
 - **POSIX:** `ps -A -o pid=,ppid=,comm=`. Walks the parent map in JS. Times out at 1.5s.
 - **Liveness probe:** `process.kill(pid, 0)`; treats EPERM as alive (matches existing pattern).
 

@@ -188,6 +188,10 @@ beforeEach(() => {
   // scenarios that need a token stub it explicitly.
   vi.stubEnv('KANGENTIC_SENTRY_TOKEN', '');
   vi.stubEnv('SENTRY_AUTH_TOKEN', '');
+  // Model the CI release build, where GitHub Actions sets CI=true: a token
+  // alone does not authorize an upload on a local machine (isSentryUploadAuthorized).
+  vi.stubEnv('CI', 'true');
+  vi.stubEnv('KANGENTIC_SENTRY_UPLOAD', '');
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
@@ -528,6 +532,38 @@ describe('announceSentryUploadMode', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringMatching(/^\[build\] Sentry symbol upload: enabled \(release Kangentic@\d+\.\d+\.\d+\)$/),
     );
+  });
+
+  it('skips, and says why, when a token is set on a local build', async () => {
+    // The dogfooding machine's user-level token used to upload every local
+    // build (an E2E prep, a /test pass, a packaged smoke) of an unreleased tree.
+    vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
+    vi.stubEnv('CI', '');
+    const buildModule = await import('../../scripts/build.js');
+
+    buildModule.announceSentryUploadMode();
+
+    expect(console.log).toHaveBeenCalledWith(
+      '[build] Sentry symbol upload: skipped (a token is set, but this is a local build; '
+      + 'uploads run in CI, or set KANGENTIC_SENTRY_UPLOAD=1)',
+    );
+    expect(buildModule.resolveSentryEsbuildPlugins()).toEqual([]);
+  });
+});
+
+describe('isSentryUploadAuthorized', () => {
+  it('authorizes CI, and a local build only with KANGENTIC_SENTRY_UPLOAD=1', async () => {
+    const buildModule = await import('../../scripts/build.js');
+    const authorized = buildModule.isSentryUploadAuthorized as (env: Record<string, string | undefined>) => boolean;
+
+    expect(authorized({ CI: 'true' })).toBe(true);
+    expect(authorized({ CI: '1' })).toBe(true);
+    expect(authorized({})).toBe(false);
+    expect(authorized({ CI: '' })).toBe(false);
+    expect(authorized({ CI: 'false' })).toBe(false);
+    expect(authorized({ CI: '0' })).toBe(false);
+    expect(authorized({ KANGENTIC_SENTRY_UPLOAD: '1' })).toBe(true);
+    expect(authorized({ KANGENTIC_SENTRY_UPLOAD: 'true' })).toBe(false);
   });
 });
 

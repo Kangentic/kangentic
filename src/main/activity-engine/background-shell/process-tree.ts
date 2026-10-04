@@ -22,45 +22,23 @@ type PowerShellChild = ChildProcessByStdio<Writable, Readable, null>;
  *     ParentProcessId filter, walked recursively in JS.
  *   - POSIX: `ps -A -o pid=,ppid=,comm=` + a JS-side parent-map walk.
  *
- * Spawn-shell-out is the only reliable cross-platform path. Node has
- * no built-in API for descendant enumeration. Each query runs with
- * a short timeout; on timeout or non-zero exit, returns an empty
- * descendant set (degrades gracefully to "process tree unknown",
- * which the watcher treats as "no orphan signal" and falls back to
- * the escape hatch).
+ * Node has no built-in API for descendant enumeration, so these probes
+ * shell out. Each query runs with a short timeout; on timeout or non-zero
+ * exit, returns an empty descendant set (degrades gracefully to "process
+ * tree unknown", which the watcher treats as "no orphan signal" and falls
+ * back to the escape hatch).
+ *
+ * In the app the watcher's probe is `HostProcessTreeProbe`, and the pty host
+ * answers it (`src/main/pty/host/host-process-table.ts`): on Windows with
+ * Toolhelp through koffi, about 8 ms against the PowerShell query's 140 ms,
+ * keeping `WindowsProbe` only as the fallback once the Toolhelp listing fails; on
+ * POSIX with `PosixProbe`.
  */
 export interface ProcessInfo {
   pid: number;
   ppid: number;
   /** Lowercase basename of the executable (e.g. "bash", "node"). */
   comm: string;
-}
-
-/**
- * A session's descendant PIDs as of one enumerating watcher cycle.
- *
- * Exists so a session teardown can kill what the session left running WITHOUT
- * enumerating processes itself. Measured on a 505-process Windows host, a cold
- * `powershell -NoProfile` spawn costs ~670ms even for a pid/ppid/name-only
- * projection - the cost is process startup, not the query - and a teardown runs
- * on the drag-to-Done path, which the board's jitter budget cannot absorb. The
- * watcher already walks this exact subtree every enumerating cycle and discards
- * all but a count, so publishing it here is one array assignment and the
- * teardown reads it for free.
- *
- * `capturedAt` is what makes it safe to act on: PIDs are recycled aggressively
- * on Windows, so a consumer must reject a stale snapshot rather than kill a pid
- * that has since been reassigned. The watcher's skip cycles also prune dead pids
- * out of the set as they exit, so a recycled pid is never inherited by an entry
- * that was left standing while dead.
- */
-export interface CapturedSessionTree {
-  /** The session's PTY pid, i.e. the shell the agent CLI runs under. */
-  rootPid: number;
-  /** Every descendant pid observed, at any depth. */
-  pids: number[];
-  /** `Date.now()` of the cycle that observed them. */
-  capturedAt: number;
 }
 
 export interface ProcessTreeProbe {
@@ -129,6 +107,9 @@ export function createProcessTreeProbe(): ProcessTreeProbe {
  *
  * `listDescendants(rootPid)` (used by resume reconciliation) remains
  * a thin wrapper around `listAllProcesses()` + `walkDescendants`.
+ *
+ * The pty host starts this probe only when its Toolhelp listing cannot load
+ * (`host-process-table.ts`).
  */
 class WindowsProbe implements ProcessTreeProbe {
   private child: PowerShellChild | null = null;

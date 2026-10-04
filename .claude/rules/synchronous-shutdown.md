@@ -30,7 +30,7 @@ synchronous.
 4. Set a hard failsafe timer (`taskkill /T /F` on Windows, `SIGKILL` of the process group
    elsewhere) as a backstop.
 
-This forfeits the 2-second graceful CLI exit window (`suspendAll`) for a MATURE session. Sessions
+This forfeits a graceful CLI exit window for a MATURE session. Sessions
 stay resumable because DB records are marked `suspended` before PTYs are killed, and
 `--resume <id>` works from the saved session id. A YOUNG session (inside Claude Code's fullscreen
 boot-canary window, see [[pty-teardown-grace]]) is the one exception, and it costs the quit no

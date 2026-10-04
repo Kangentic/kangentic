@@ -140,19 +140,19 @@ sessions bypass all of this (not task agents).
 Session teardown varies by target column:
 
 - **To Do** (role=`todo`), via `TASK_MOVE` - full cleanup via `cleanupTaskResources()`: kills the PTY (via `SessionManager.remove()`), deletes session files from disk, deletes all session DB records for the task, and then removes the worktree and (when `git.autoCleanup` is on) force-deletes the branch. Destructive, which is why the drop is gated behind a pending-changes confirmation. Moving back to an active column spawns a fresh session.
-- **To Do** (role=`todo`), via `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` (restore from Done) - the SESSION-only half, `cleanupTaskSession()`. The worktree and branch are left alone. Without this the task keeps the session Done deliberately suspended, and since `listSessions()` has no status filter the restored card renders "Paused" for the rest of the app session. It is not the full `cleanupTaskResources()` on purpose: `deleteTaskWorktree` nulls `worktree_path` only when the Done-time removal SUCCEEDED, so a task whose worktree was pinned at Done time (routine on Windows) still carries both fields, and the full helper would re-attempt the removal and force-delete the branch holding its committed work with no confirmation on this route.
+- **To Do** (role=`todo`), via `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` (restore from Done) - the SESSION-only half, `cleanupTaskSession()`, which also reaps what the task's agents left running (`reapTaskLeftovers`). The worktree and branch are left alone. Without this the task keeps the session Done deliberately suspended, and since `listSessions()` has no status filter the restored card renders "Paused" for the rest of the app session. It is not the full `cleanupTaskResources()` on purpose: `deleteTaskWorktree` nulls `worktree_path` only when the Done-time removal SUCCEEDED, so a task whose worktree was pinned at Done time (routine on Windows) still carries both fields, and the full helper would re-attempt the removal and force-delete the branch holding its committed work with no confirmation on this route.
 - **Done** (role=`done`) - suspends session (preserves for resume via `SessionManager.suspend()`), archives task, and deletes the worktree to reclaim disk while preserving `branch_name` and the session records. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived into an auto-spawn column. That unarchive is the ONLY route back: resuming in place is refused for a Done or archived task (see [Where resume is refused](#where-resume-is-refused)), since it would recreate the worktree this move deleted.
 - **Any column with `auto_spawn=false`** - suspends session (same as Done, but without archiving). A restore into such a column keeps the suspended session and its Resume affordance; only a `role=todo` target resets it.
 
 ### Reaping what the session left running
 
-On the TERMINAL transitions above (move to To Do or Backlog, move to Done, and task delete), the teardown also kills processes the session left running inside the worktree. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
+On the TERMINAL transitions above (move to To Do or Backlog, move to Done, unarchive into To Do, task delete, and project delete), the teardown also kills every process the task's agents left running. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
 
-The mechanism is `captureSessionLeftovers()` before the kill or suspend, then `reapSessionLeftovers()` after it and before any worktree delete (both in `src/main/ipc/helpers/task-cleanup.ts`). The capture must come first: the bg-shell watcher stops publishing once the session ends, and on POSIX the children are reparented to init at once, so there is no tree to walk afterwards.
+Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main/pty/process-tag/`), and every process the agent starts inherits it however it detached. The teardown calls `reapTaskLeftovers()` (`src/main/ipc/helpers/task-cleanup.ts`) AFTER every session of the task has exited and before any worktree delete; the pty host then kills every process carrying the task's tag AND working inside the task's project or worktree, except what is shared (something under it is not the task's), a visible app, a tmux server, Kangentic's own process tree, and any PTY it still holds. The order matters because the reap force-kills, and a young agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`).
 
-The capture reads a snapshot the watcher already computed for its own counting, so it costs nothing on the drag-to-Done path. Nothing here enumerates processes; a cold `powershell` spawn measures ~670ms even for a pid-only projection. See [worktree-strategy.md](worktree-strategy.md) for the removal-time backstop and why Windows needs the parent-chain route at all.
+The tag is the same across every session the task ran, so a dev server started by an agent that a Code Review entry suspended long before is still reaped at Done, and it lives in the processes themselves, so a task parked across an app restart is reaped at its later terminal transition too. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash. To keep one process past Done, start it with the tag cleared (`KANGENTIC_TASK_ID= npm run dev`). See [worktree-strategy.md](worktree-strategy.md) for what the reap kills and spares (measured on Linux, macOS and Windows), the per-platform readers, what the tag cannot see, and the removal-time backstop.
 
-`auto_spawn=false` columns and a user-pressed Stop are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing.
+`auto_spawn=false` columns (including a Code Review entry), a user-pressed Pause or Stop, an idle-timeout suspend, and quitting the app are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing until the task's own terminal transition.
 
 ### What is preserved on suspend (Done / auto_spawn=false)
 
@@ -164,6 +164,7 @@ The capture reads a snapshot the watcher already computed for its own counting, 
 ### What is destroyed on To Do cleanup
 
 - PTY process (force-killed, after the exit-sequence grace when the session is young; see below)
+- What the task's agents left running in its folders, once that PTY has exited (`reapTaskLeftovers`; see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree))
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
 - In-memory caches (usage, activity, events) for the session
@@ -229,7 +230,7 @@ gone.
 
 A caller that touches the cwd or process tree after a kill therefore waits for the PROCESS: `kill`,
 capture `awaitExit` (the row must still exist), then `remove`, then await before any `rmSync`,
-`removeWorktree`, or `reapSessionLeftovers`. `cleanupTaskSession`, `executeCleanupWorktree`, project
+`removeWorktree`, or `reapTaskLeftovers`. `cleanupTaskSession`, `executeCleanupWorktree`, project
 delete, project relocate, the MCP task delete, and `SESSION_KILL_TRANSIENT` all do. The rule and its
 scan: `.claude/rules/pty-teardown-grace.md`.
 
@@ -393,7 +394,8 @@ absence can be concluded) would close the whole class of structurally invisible 
 
 **Cadence.** The sweep runs on its own 60s clock (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), decoupled from
 the watcher's 2s/4s/6s poll backoff, and evaluates for free on any cycle that already enumerated for
-bg-shell work. `listAllProcesses` is a ~200ms PowerShell CIM query on Windows and the watcher
+bg-shell work. `listAllProcesses` is a pty host round trip that lists every process (a Toolhelp
+snapshot on Windows, about 8 ms, which replaced a ~200ms PowerShell CIM query), and the watcher
 deliberately skips it on idle cycles, so a per-session-per-cycle check would defeat that
 optimization exactly when the machine is saturated. A sweep-only cycle neither increments nor resets
 the bg-shell backoff counter. The counter counts consecutive OBSERVATIONS, not poll cycles: a
@@ -628,6 +630,10 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
   main by pid, since with no terminal open the quit does not wait for the host.
+- **Task leftover reap.** The host also scans for and stops what a task's agents left running
+  (`reapTaggedProcesses`) and stops one reported process when the user asks (`stopReportedProcess`).
+  It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
+  [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree).
 
 See `.claude/rules/pty-host-out-of-process.md`.
 
@@ -666,7 +672,7 @@ Lifecycle on task move (`task-move.ts`, the session switch branch inside Priorit
 
 ## Shutdown
 
-On app close, the `before-quit` handler (`createBeforeQuitHandler` in `src/main/pty/shutdown/before-quit-handler.ts`, wired in `src/main/index.ts`) calls `syncShutdownCleanup()` (`src/main/shutdown.ts`), which is fully synchronous. The `suspendAll()` method exists in `SessionManager` but is **never called during shutdown**: it is async and would break the synchronous requirement.
+On app close, the `before-quit` handler (`createBeforeQuitHandler` in `src/main/pty/shutdown/before-quit-handler.ts`, wired in `src/main/index.ts`) calls `syncShutdownCleanup()` (`src/main/shutdown.ts`), which is fully synchronous. There is no async "suspend everything" step: one would break the synchronous requirement, so the quit marks records `suspended` and kills the PTYs instead.
 
 The actual shutdown sequence (`syncShutdownCleanup()` in `src/main/shutdown.ts`):
 

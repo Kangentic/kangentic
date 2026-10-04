@@ -41,7 +41,7 @@ import {
 // the task's running PTY.
 //
 // Why under the session dir: it's already part of Kangentic's lifecycle.
-// `cleanupTaskSession` (move-to-Backlog, move-to-Done, task-delete) removes
+// `cleanupTaskSession` (move to To Do, backlog demote, task delete) removes
 // the session directory recursively, and `pruneOrphanedDirectories` sweeps
 // any stragglers on next project open. Captures inherit that for free, no
 // new cleanup hook needed.

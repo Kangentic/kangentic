@@ -7,7 +7,7 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Eighteen event types are tracked, all on critical-path actions only:
+Nineteen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -28,6 +28,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), phase (`first` / `latched`) |
 | `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
+| `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder, or the startup sweep stopped or failed to stop something. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
 There is no close event. Every quit path exits before a network send can complete, so
@@ -428,7 +429,11 @@ in one Sentry org, one triage surface.
   `reason` tag), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, and `crashCount`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
-  `crashCount` - see the GPU health bullet below), and a guarded synchronous write that could not
+  `crashCount` - see the GPU health bullet below), a task leftover reap or a leftover-list Stop that
+  failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
+  `empty_scan`, `reap_error`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
+  fixed, and only a `reader_load` event carries text, the path-stripped load error in a
+  `task_reap` context, since any other failure's text can come from a process scan), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
   outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
   three `mobile_bridge_*` stores, `asana_credential`, plus an `errno` tag when the error carries
@@ -689,8 +694,10 @@ in one Sentry org, one triage surface.
   one.
 - **Sourcemaps** upload at release time only: `@sentry/vite-plugin` (renderer) and
   `@sentry/esbuild-plugin` (main/preload) activate when an upload token is present
-  (`KANGENTIC_SENTRY_TOKEN`, or the conventional `SENTRY_AUTH_TOKEN` as a CI fallback), generate
-  hidden maps, upload them with debug IDs, and delete them from the output. Nothing ships in the
+  (`KANGENTIC_SENTRY_TOKEN`, or the conventional `SENTRY_AUTH_TOKEN` as a CI fallback) AND the
+  build is authorized to upload: in CI (`CI=true`), or locally only with an explicit
+  `KANGENTIC_SENTRY_UPLOAD=1`, so a developer's persisted token never uploads a local build. They
+  generate hidden maps, upload them with debug IDs, and delete them from the output. Nothing ships in the
   artifact; resolution is entirely server-side. The DSN in source is a public routing
   identifier by design, not a secret. `KANGENTIC_SENTRY_TOKEN` is also what the `/sentry`
   skill's raw-API fallback reads. Normal retrieval uses the `sentry` CLI's stored login instead. Both plugins pass an

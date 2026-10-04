@@ -319,6 +319,45 @@ describe('performSpawn - KANGENTIC_EVENTS_PATH env injection', () => {
   });
 });
 
+describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
+  // Every process a task's agent starts inherits this tag, which is how a
+  // terminal transition finds what the task left running (process-tag/).
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function spawnEnvAt(callIndex: number): Record<string, string> {
+    return (ptySpawnMock.mock.calls[callIndex]?.[2] as { env: Record<string, string> }).env;
+  }
+
+  it('tags a task session with its task id, the same value on every spawn of the task', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-first-0000-000000000000', taskId: 'task-tagged' }), context);
+    await performSpawn(makeInput({ id: 'session-second-000-000000000000', taskId: 'task-tagged', resuming: true }), context);
+
+    expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('task-tagged');
+    expect(spawnEnvAt(1).KANGENTIC_TASK_ID).toBe('task-tagged');
+  });
+
+  it('never tags a Command Terminal: it is the user\'s own shell, not task work', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ taskId: 'transient-slot-1', transient: true }), context);
+
+    expect('KANGENTIC_TASK_ID' in spawnEnvAt(0)).toBe(false);
+  });
+
+  it('shares the tag into the distro through WSLENV on a WSL shell', async () => {
+    const context = makeContext();
+    vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+    await performSpawn(makeInput({ taskId: 'task-wsl' }), context);
+
+    expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('task-wsl');
+    expect(spawnEnvAt(0).WSLENV?.split(':')).toContain('KANGENTIC_TASK_ID/u');
+  });
+});
+
 describe('performSpawn - resume path does not adopt bg shells', () => {
   // Regression guard: reconcileBgShellsOnResume was deleted (bug fix for the
   // "activity engine stays thinking on idle sessions" phantom-adoption bug).

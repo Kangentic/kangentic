@@ -327,15 +327,18 @@ test.describe('Task Delete', () => {
     }, { taskId: taskBId, laneId: planningId });
 
     // Wait for the session entry to be created (queued or running)
-    await page.waitForFunction(
-      async (title) => {
-        const tasks = await (window as { electronAPI: typeof window.electronAPI }).electronAPI.tasks.list();
-        const task = tasks.find((t: { title: string }) => t.title === title);
-        return task?.session_id != null;
-      },
-      titleB,
-      { timeout: 10000 },
-    );
+    // expect.poll, not page.waitForFunction: an async predicate there resolves
+    // on its first evaluation, so it never waited.
+    await expect
+      .poll(
+        async () => page.evaluate(async (title) => {
+          const tasks = await window.electronAPI.tasks.list();
+          const task = tasks.find((candidateTask: { title: string }) => candidateTask.title === title);
+          return task?.session_id != null;
+        }, titleB),
+        { timeout: 10_000, intervals: [100, 250, 500] },
+      )
+      .toBe(true);
 
     // Verify task B has a session_id
     const taskBSessionId = await page.evaluate(async (title) => {

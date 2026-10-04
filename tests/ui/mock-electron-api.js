@@ -320,6 +320,7 @@
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
+    stopLeftoverProcesses: true,
     // Mirrors DEFAULT_CONFIG.windowLightDismiss in src/shared/types.ts. This is an
     // independent literal, so a change there does not turn this red on its own - keep
     // them in step or every UI test silently runs under the wrong policy.
@@ -2919,6 +2920,38 @@
           var index = listeners.indexOf(callback);
           if (index !== -1) listeners.splice(index, 1);
         };
+      },
+    },
+
+    leftoverProcesses: {
+      onReport: function (callback) {
+        // Tests push a report via window.__mockFireLeftoverReport(report).
+        if (!window.__mockLeftoverReportListeners) window.__mockLeftoverReportListeners = [];
+        window.__mockLeftoverReportListeners.push(callback);
+        if (!window.__mockFireLeftoverReport) {
+          window.__mockFireLeftoverReport = function (report) {
+            var listeners = (window.__mockLeftoverReportListeners || []).slice();
+            listeners.forEach(function (listener) { listener(report); });
+          };
+        }
+        return function () {
+          var listeners = window.__mockLeftoverReportListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
+      // Answers 'stopped' unless a test sets window.__mockLeftoverStopOutcomes =
+      // { '<process id>': 'failed' | 'ended' }. Every call is recorded in
+      // window.__mockLeftoverStopCalls. A test may hold every answer open by setting
+      // window.__mockLeftoverStopGate to a promise, so the row's Stopping state can
+      // be observed before it settles; unset (the default, and always in the web
+      // demo) the answer comes at once and nothing here awaits.
+      stop: async function (processId) {
+        if (!window.__mockLeftoverStopCalls) window.__mockLeftoverStopCalls = [];
+        window.__mockLeftoverStopCalls.push(processId);
+        if (window.__mockLeftoverStopGate) await window.__mockLeftoverStopGate;
+        var outcomes = window.__mockLeftoverStopOutcomes || {};
+        return outcomes[processId] || 'stopped';
       },
     },
 

@@ -364,6 +364,20 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     });
   });
 
+  it('executeAction (spawn_agent): hands the builder the task id as taskProcessTag', async () => {
+    const task = makeTask();
+    let capturedTag: string | undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string; taskProcessTag?: string }) => {
+      capturedTag = options.taskProcessTag;
+      return `claude ${options.prompt ?? ''}`;
+    });
+
+    const { runSpawn } = makeEngine({});
+    await runSpawn(task);
+
+    expect(capturedTag).toBe(task.id);
+  });
+
   it('executeAction (spawn_agent): task_xml contains raw multi-line description', async () => {
     const rawDescription = 'Step 1: check OAuth.\n\nStep 2: refresh token.';
     const task = makeTask({ description: rawDescription });

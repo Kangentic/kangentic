@@ -143,6 +143,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-focus idle sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
   { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-resume agents on restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
+  { id: 'stopLeftoverProcesses', tabId: 'behavior', label: 'Stop leftover processes', description: "Stop what a task's agent left running in its folder when the task is done, moved back to To Do, or deleted.", scope: 'global', section: 'Sessions', keywords: ['kill', 'background', 'dev server', 'port', 'orphan', 'reap', 'process', 'done', 'cleanup'] },
 
   // ── Performance ──
   // Graphics acceleration is a plain boolean and never a tri-state: an

@@ -41,8 +41,14 @@ session is what `kill()` now gives a young one.
 - **A caller that touches the session's cwd or process tree after a kill waits for the process,
   not for the call.** `kill(id)`, then capture `awaitExit(id)`, THEN `remove(id)` (the row must
   still exist when the promise is made), then await it before any `rmSync`, `removeWorktree`, or
-  `reapSessionLeftovers`. Kill every session first and `Promise.all` the waits, so N young
-  sessions cost one grace. Never await the exit inside the per-project worktree queue.
+  `reapTaskLeftovers`. That reap force-kills the task's tagged processes in its directories, so it also waits
+  for `removeByTaskId` to settle; the pty host protecting any PTY it still holds is the second
+  line, not the first. The reap also waits on its own for a PTY of its tasks still parked on the
+  deferred kill (`DeferredKillRegistry.sessionsAwaitingExit`, bounded by the grace plus 1500 ms):
+  a Done move right after a young session was stopped finds no PTY for `suspend()` to wait on,
+  and the host would protect the still-running agent and its children. Kill every session first
+  and `Promise.all` the waits, so N young sessions cost one grace. Never await the exit inside the
+  per-project worktree queue.
 - **The quit path defers only where the drain follows.** `killAll({ allowGrace: true })` is
   passed only from `before-quit` (unless a Windows session-end disarmed the drain) and the
   powerMonitor shutdown; a signal handler or session-end calls it bare and gets the instant kill

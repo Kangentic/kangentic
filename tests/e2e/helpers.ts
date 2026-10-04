@@ -490,6 +490,84 @@ async function killAppProcess(app: ElectronApplication): Promise<void> {
   }
 }
 
+/**
+ * Whether a pid names a live process. Signal 0 is the standard probe on POSIX and
+ * Node supports it on Windows (libuv checks STILL_ACTIVE). EPERM means the process
+ * exists but belongs to someone else, which is still alive.
+ *
+ * On Linux a process that has exited but whose parent has not reaped it still
+ * answers signal 0. A process re-parented to an init that never reaps (a
+ * container's PID 1 can be such a process) would read as alive forever, so a
+ * zombie counts as dead.
+ */
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+  if (process.platform === 'linux') {
+    const stat = readLinuxProcessStat(pid);
+    // Gone between the signal and the read, or exited and awaiting its reaper.
+    if (!stat || stat.state === 'Z' || stat.state === 'X') return false;
+  }
+  return true;
+}
+
+/**
+ * State, parent pid and start time from /proc/<pid>/stat (fields 3, 4 and 22),
+ * or null when unreadable. The start time, in clock ticks since boot, tells a
+ * process apart from a later one that reused its pid.
+ */
+export function readLinuxProcessStat(pid: number): { state: string; parentPid: number; startTicks: string } | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    // The command name is parenthesised and may itself contain spaces or parens,
+    // so split after the LAST closing paren. Field 3 is then index 0.
+    const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return { state: afterCommand[0], parentPid: parseInt(afterCommand[1], 10), startTicks: afterCommand[19] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * closeApp, then wait until the Electron main process is actually gone.
+ *
+ * For a spec that closes an app and then relaunches against the SAME data dir,
+ * or opens that dir's project database directly. It replaces the fixed 1 to 2 s
+ * sleep those specs used to leave after closeApp, which stood in for exactly
+ * this: the old process, and with it every handle it held on config.json and
+ * the SQLite files, being gone before the next phase starts. A sleep guessed
+ * that duration; the pid says it.
+ *
+ * The pid is read BEFORE the close, because `app.process()` throws once
+ * Playwright has torn its handle down.
+ */
+export async function closeAppAndWaitForExit(
+  app: ElectronApplication | undefined,
+  timeoutMs = 10_000,
+): Promise<void> {
+  if (!app) return;
+  let pid: number | undefined;
+  try {
+    pid = app.process()?.pid;
+  } catch {
+    pid = undefined;
+  }
+  await closeApp(app);
+  if (!pid) return;
+  const closedPid = pid;
+  await expect
+    .poll(() => isProcessAlive(closedPid), {
+      timeout: timeoutMs,
+      intervals: [100, 250, 500],
+      message: `Electron main process ${closedPid} was still alive after closeApp`,
+    })
+    .toBe(false);
+}
+
 // Wait for the board to load (swimlanes visible)
 export async function waitForBoard(page: Page): Promise<void> {
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });

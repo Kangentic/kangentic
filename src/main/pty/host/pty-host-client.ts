@@ -30,6 +30,7 @@ import {
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
 } from './protocol';
+import type { StopProcessOutcome, StopProcessRequest, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 
 /** A listener registration that can be undone. */
 export interface PtyDisposable {
@@ -505,6 +506,16 @@ export class PtyHostClient {
     return this.transport.request('listProcesses', {});
   }
 
+  /** Kill what the given tasks left running (see `process-tag/tagged-reap.ts`). */
+  reapTaggedProcesses(request: TaggedReapRequest, timeoutMs: number): Promise<TaggedReapResult> {
+    return this.transport.request('reapTaggedProcesses', request, { timeoutMs });
+  }
+
+  /** Stop one process a reap reported (see `process-tag/tagged-reap.ts`). */
+  stopReportedProcess(request: StopProcessRequest, timeoutMs: number): Promise<StopProcessOutcome> {
+    return this.transport.request('stopReportedProcess', request, { timeoutMs });
+  }
+
   getDiagnostics(): Promise<PtyHostDiagnostics> {
     return this.transport.request('getDiagnostics', {});
   }
@@ -616,6 +627,6 @@ export class InProcessPtyHostTransport implements PtyHostTransport {
 
   shutdown(): void {
     this.core.finalizeTranscripts();
-    this.core.disposeProcessTreeProbe();
+    this.core.disposeProcessTable();
   }
 }

@@ -511,6 +511,7 @@ export class TransitionEngine {
       effort: spawnOverrides?.effort ?? undefined,
       executionTarget,
       launchOptions,
+      taskProcessTag: task.id,
     };
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;

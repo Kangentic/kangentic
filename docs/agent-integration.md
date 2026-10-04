@@ -115,7 +115,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 
 `src/main/agent/agent-adapter.ts`
 
-Four recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
+Five recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -123,6 +123,7 @@ Four recently-added optional fields drive per-spawn overrides. Adapters consume 
 | `effort?` | `string` | Adapter-specific effort/reasoning level (e.g. Claude `--effort xhigh`). Empty/undefined leaves the agent default in place. Sourced from `swimlane.effort_override` at spawn time by `prepare-spawn.ts`. |
 | `executionTarget?` | `ResolvedExecutionTarget` | Present only when this project's execution mode for the agent is `remote` (see [Remote Execution](#remote-execution) below and [configuration.md - Remote Execution](configuration.md#remote-execution)). Adapters that declare `remoteExecution` read this instead of spawning the CLI locally; `undefined` unambiguously means local. Resolved by `resolveExecutionTarget()` and populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`). |
 | `launchOptions?` | `Record<string, boolean>` | Fully-defaulted boolean launch-option values for this agent, keyed by `AgentLaunchOptionInfo.id` (e.g. Codex's `disableApps` -> `--disable apps`). `undefined` for adapters that declare no launch options. Resolved by `resolveLaunchOptions()` and populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`). |
+| `taskProcessTag?` | `string` | The task's `KANGENTIC_TASK_ID` value, the tag a terminal transition reaps by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). The PTY env already carries it; an adapter whose CLI can strip inherited variables from its tool shells re-injects it (Codex: `-c shell_environment_policy.set.KANGENTIC_TASK_ID=<id>`). Populated at both task spawn chokepoints, never by a Command Terminal. |
 
 For mid-session overrides (changing model/effort on a live session without respawn), see `getInjectionSequence` and `getSubmissionVerifier` in the Optional Properties table above. The adapter declares the slash-command writes; `TerminalSubmitScheduler.scheduleKeystrokes` delivers them via `TerminalSubmit.submitKeystrokes` with verification via `getSubmissionVerifier('command-injection')`.
 
@@ -503,6 +504,7 @@ Detection follows the same pattern as Claude: check `config.agent.cliPaths.codex
 codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
   -c mcp_servers.kangentic.url=<url> \
   -c mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN \
+  [-c shell_environment_policy.set.KANGENTIC_TASK_ID=<taskId>] \
   "prompt text"
 ```
 
@@ -510,8 +512,11 @@ codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
 
 ```
 codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
-  -c <the same two MCP overrides>
+  -c <the same two MCP overrides> \
+  [-c <the same task tag override>]
 ```
+
+The task tag override is added for a task session only, never a Command Terminal. Codex passes its environment to tool shells through `shell_environment_policy`, which a user can narrow (`inherit = "core"`), and that strips `KANGENTIC_TASK_ID`, the tag a terminal transition finds a task's leftover processes by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). A `set` entry always wins over the inherit and filter steps, and it adds to the user's own `set` table rather than replacing it (measured on codex-cli 0.154.0).
 
 Resume is a subcommand in Codex (not a flag like Claude). Both forms emit the same flags: `codex resume` accepts `-c`, `-s/--sandbox`, `-a/--ask-for-approval`, `-m/--model`, `-C/--cd`, and `--disable`. The resume branch used to return early after `-C`, so a resumed session silently lost its permission mode, model override, and MCP wiring.
 

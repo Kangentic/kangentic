@@ -12,6 +12,7 @@ import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
 import { readLocalBranchSha } from '../git/worktree-head';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
+import type { LeftoverProcessEntry } from '../pty/process-tag/tagged-reap';
 
 
 /**
@@ -53,10 +54,13 @@ export async function cleanupStaleResources(
   sessionManager: SessionManager,
   automationRunRepo: AutomationRunRepository,
   onRunsInterrupted: (count: number) => void = () => {},
+  // Off unless a caller passes the user's setting: a default that kills would
+  // ignore it. The production path calls cleanupStaleResourcesAsync instead.
+  leftovers: LeftoverSweepOptions = { stoppingEnabled: () => false, onReport: () => {} },
 ): Promise<void> {
   await pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
   await cleanupStaleResourcesAsync(
-    projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted,
+    projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted, leftovers,
   );
 }
 
@@ -81,12 +85,101 @@ export async function cleanupStaleResourcesAsync(
    * letting one silently drop the report.
    */
   onRunsInterrupted: (count: number) => void,
+  /** The setting and the toast for the startup sweep. Required, like the two above. */
+  leftovers: LeftoverSweepOptions,
 ): Promise<void> {
+  // First: a leftover process holding a worktree as its cwd is what makes the
+  // removals in the next two passes fail on Windows.
+  await sweepTerminalTaskLeftovers(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers);
   await cleanBacklogTaskResources(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
   await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo);
   await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
   const interrupted = sweepAutomationRuns(automationRunRepo);
   if (interrupted > 0) onRunsInterrupted(interrupted);
+}
+
+/**
+ * Projects whose terminal tasks were swept this app launch. The sweep runs from
+ * `cleanupStaleResourcesAsync`, which also runs on every plain project switch,
+ * and a scan reads every same-user process's environment: once per launch is
+ * what the sweep is for.
+ */
+const sweptProjectPaths = new Set<string>();
+
+/**
+ * Kill anything still running for a task that already reached a terminal state
+ * (archived after Done, or sitting in To Do). The transition itself reaps
+ * (`reapTaskLeftovers`), so this catches only what that reap missed: the app
+ * crashed or quit between the move and the reap, or the reap failed outright.
+ * A task parked mid-board at quit is not terminal, so its processes keep
+ * running until its own terminal transition, which finds them by their tag
+ * after the restart.
+ *
+ * Only ids this project's database shows as terminal are ever passed. A tag
+ * whose task is unknown here belongs to another Kangentic instance (a
+ * `/preview` build, a second install) and is never swept.
+ *
+ * It takes no task lock, unlike a transition's reap. A task dragged out of To
+ * Do or unarchived while the sweep runs gets a new session, and the host reap
+ * cannot reach it: the pty host protects every PTY it holds and everything
+ * under it. The in-distro WSL reap leaves out any task with a live or starting
+ * session, checked again just before its script runs, so only a session that
+ * starts during the script's own run (about a second) can lose its WSL agent.
+ * Holding the lock of every archived and To Do task instead would block every
+ * drag of them for as long as the reap took, which a slow host and a wedged
+ * `wsl.exe` can stretch to 35 s, plus up to 3 s for a PTY still parked on its
+ * exit grace.
+ */
+export async function sweepTerminalTaskLeftovers(
+  projectPath: string,
+  taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
+  sessionManager: Pick<SessionManager, 'reapTaskProcesses'>,
+  leftovers: LeftoverSweepOptions,
+): Promise<void> {
+  if (sweptProjectPaths.has(projectPath)) return;
+  // With stopping off the sweep would kill nothing and report nothing (below),
+  // so it skips the scan, which reads every same-user process's environment.
+  // Not latched: a later open this launch sweeps if the user turns it on.
+  if (!leftovers.stoppingEnabled()) return;
+  sweptProjectPaths.add(projectPath);
+  try {
+    const terminalTasks = new Map<string, { worktreePath: string | null; title: string }>();
+    for (const task of taskRepo.listArchived()) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
+    for (const lane of swimlaneRepo.list()) {
+      if (lane.role !== 'todo') continue;
+      for (const task of taskRepo.list(lane.id)) terminalTasks.set(task.id, { worktreePath: task.worktree_path, title: task.title });
+    }
+    if (terminalTasks.size === 0) return;
+    const entries = await sessionManager.reapTaskProcesses(
+      projectPath,
+      [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
+      { stop: true },
+    );
+    // Only what this sweep did. A process it left running (a window, a tmux
+    // server) was reported when its task ended and is still there at every
+    // launch; naming it again would put the same toast up on every start.
+    const acted = entries.filter((entry) => entry.outcome !== 'kept');
+    if (acted.length > 0) {
+      leftovers.onReport(acted, new Map([...terminalTasks].map(([id, task]) => [id, task.title])), true);
+    }
+  } catch (error) {
+    // Let a later open this launch try again.
+    sweptProjectPaths.delete(projectPath);
+    console.warn('[TASK-REAP] Startup sweep failed (non-fatal):', error);
+  }
+}
+
+/** How the startup sweep reads the setting and hands its result to the toast. */
+export interface LeftoverSweepOptions {
+  /** The user's "Stop leftover processes" setting, read when the sweep runs. */
+  stoppingEnabled: () => boolean;
+  onReport: (entries: LeftoverProcessEntry[], taskTitles: ReadonlyMap<string, string>, stoppingEnabled: boolean) => void;
+}
+
+/** Forget which projects were swept. Tests only. */
+export function _resetTerminalTaskSweepForTests(): void {
+  sweptProjectPaths.clear();
 }
 
 /**

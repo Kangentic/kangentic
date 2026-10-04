@@ -1,0 +1,115 @@
+name: Task reap against real processes
+
+# Runs the task leftover reap against REAL processes on every platform it
+# reads differently (src/main/pty/process-tag/): Linux /proc, libproc and the
+# macOS kernel record through koffi (checked against ps and lsof), and the
+# Windows PEB and Toolhelp listing through koffi. CI's unit tier runs
+# the same test on Linux without a display, so this job is where the visible-app
+# case (Notepad, xterm under xvfb, Chrome) and the macOS and Windows readers run
+# at all; the team develops on Windows, and without it the macOS reader would
+# first run on a user's machine.
+#
+# What it stands in for rather than observes: XNU leaves the environment out of
+# KERN_PROCARGS2 when the target is CS_RESTRICT AND System Integrity Protection
+# is on. Measured on every GitHub macOS image (14.8, 15.7, 26.6 Apple silicon
+# and Intel, 27.0): Apple's /bin and /usr/bin tools are CS_RESTRICT, Node and
+# Python are not, and SIP is OFF on every image, so a run here never sees the
+# redaction. The test starts the tool under `env -i` instead, which reads
+# exactly like a withheld environment (argv only). The macOS steps print
+# `csrutil status` so every run says which case it ran.
+#
+# Path-filtered, and deliberately NOT a required check, like
+# macos-spawn-helper.yml: ci.yml runs at its 21-job concurrency ceiling (see the
+# note at the top of that file), and this only has something to say when the
+# reap's own code or tests change, or its dependencies do: a koffi bump changes
+# every native call the Windows and macOS readers make, so package.json and the
+# lockfile are in the filter too, as are the four source files outside
+# process-tag/ the tests import (the Windows Toolhelp listing among them, and
+# the process-tree probe that listing uses on POSIX), and vitest.config.ts,
+# whose aliases and defines every one of these tests runs under.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/main/pty/process-tag/**'
+      - 'src/main/pty/host/host-process-table.ts'
+      - 'src/main/activity-engine/background-shell/process-tree.ts'
+      - 'src/main/git/zombie-reaper.ts'
+      - 'src/main/shared/process-liveness.ts'
+      - 'tests/unit/session-reap-real-processes.test.ts'
+      - 'tests/unit/task-process-readers.test.ts'
+      - 'tests/unit/task-reap-plan.test.ts'
+      - 'tests/unit/task-tagged-reap.test.ts'
+      - 'tests/unit/process-label.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/task-reap-real-processes.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/main/pty/process-tag/**'
+      - 'src/main/pty/host/host-process-table.ts'
+      - 'src/main/activity-engine/background-shell/process-tree.ts'
+      - 'src/main/git/zombie-reaper.ts'
+      - 'src/main/shared/process-liveness.ts'
+      - 'tests/unit/session-reap-real-processes.test.ts'
+      - 'tests/unit/task-process-readers.test.ts'
+      - 'tests/unit/task-reap-plan.test.ts'
+      - 'tests/unit/task-tagged-reap.test.ts'
+      - 'tests/unit/process-label.test.ts'
+      - 'vitest.config.ts'
+      - '.github/workflows/task-reap-real-processes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: task-reap-real-processes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-processes:
+    name: task reap against real processes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple silicon and Intel macOS sign Apple's tools with different flags,
+        # so both are worth a run.
+        os: [ubuntu-latest, macos-latest, macos-26-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      # Says which branch of XNU's environment redaction this run can reach.
+      - name: Report System Integrity Protection status
+        if: runner.os == 'macOS'
+        run: csrutil status
+      - name: Install tmux (macOS)
+        if: runner.os == 'macOS'
+        run: command -v tmux || HOMEBREW_NO_AUTO_UPDATE=1 brew install tmux
+      - name: Start a display and install xterm (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q tmux xterm xvfb
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # --ignore-scripts: the tests need no native rebuild, and the platform
+      # binaries vitest and koffi load arrive as optional dependencies.
+      - name: Install dependencies (npm ci)
+        run: npm ci --ignore-scripts
+      - name: Reap real tagged processes
+        # A tmux, GUI-app or reader case that would skip here fails instead.
+        env:
+          KANGENTIC_REAP_REQUIRE_ALL_CASES: '1'
+        run: npx vitest run tests/unit/session-reap-real-processes.test.ts tests/unit/task-process-readers.test.ts tests/unit/task-reap-plan.test.ts tests/unit/task-tagged-reap.test.ts tests/unit/process-label.test.ts

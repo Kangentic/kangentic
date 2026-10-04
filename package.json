@@ -143,6 +143,7 @@
     "bindings": "^1.5.0",
     "file-uri-to-path": "^1.0.0",
     "font-list": "^2.1.0",
+    "koffi": "3.3.2",
     "node-pty": "^1.1.0",
     "sherpa-onnx-node": "^1.13.8",
     "sqlite-vec": "^0.1.9"
@@ -157,6 +158,7 @@
     "protobufjs": true,
     "sharp": true,
     "fsevents": true,
-    "@sentry/cli": true
+    "@sentry/cli": true,
+    "koffi": true
   }
 }

@@ -21,6 +21,8 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   closeApp,
+  waitForTaskSession,
+  waitForTaskSessionNotRunning,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -67,9 +69,11 @@ async function waitForTaskScrollback(page: Page, taskId: string, marker: string,
   while (Date.now() - start < timeoutMs) {
     const scrollback = await page.evaluate(async (tid) => {
       const sessions = await window.electronAPI.sessions.list();
-      const s = sessions.find((s: any) => s.taskId === tid && s.status === 'running');
-      if (!s) return '';
-      return window.electronAPI.sessions.getScrollback(s.id);
+      const runningSession = sessions.find(
+        (session) => session.taskId === tid && session.status === 'running',
+      );
+      if (!runningSession) return '';
+      return window.electronAPI.sessions.getScrollback(runningSession.id);
     }, taskId);
 
     if (scrollback.includes(marker)) {
@@ -108,7 +112,7 @@ async function getSwimlaneIds(page: Page): Promise<Record<string, string>> {
 async function getTaskId(page: Page, title: string): Promise<string> {
   const taskId = await page.evaluate(async (t) => {
     const tasks = await window.electronAPI.tasks.list();
-    const task = tasks.find((tk: any) => tk.title === t);
+    const task = tasks.find((candidateTask) => candidateTask.title === t);
     return task?.id;
   }, title);
   if (!taskId) throw new Error(`Task "${title}" not found`);
@@ -124,22 +128,6 @@ async function moveTask(page: Page, taskId: string, targetSwimlaneId: string): P
       targetPosition: 0,
     });
   }, { taskId, swimlaneId: targetSwimlaneId });
-}
-
-/** Wait for at least one running session */
-async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions = await (window as any).electronAPI.sessions.list();
-    return sessions.some((s: any) => s.status === 'running');
-  }, null, { timeout: timeoutMs });
-}
-
-/** Wait for zero running sessions */
-async function waitForNoRunningSessions(page: Page, timeoutMs = 15000): Promise<void> {
-  await page.waitForFunction(async () => {
-    const sessions = await (window as any).electronAPI.sessions.list();
-    return !sessions.some((s: any) => s.status === 'running');
-  }, null, { timeout: timeoutMs });
 }
 
 // =========================================================================
@@ -180,8 +168,10 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     // Move directly from To Do → Code Review (skipping agent columns)
     await moveTask(page, taskId, lanes['Code Review']);
 
-    // Wait for a session to start
-    await waitForRunningSession(page);
+    // Wait for THIS task's session to start. The Electron app is shared by every
+    // test in this file, so a global "any session running" wait is already
+    // satisfied by an earlier test's still-live session.
+    await waitForTaskSession(page, taskId);
 
     // Wait for mock Claude to output its marker
     const scrollback = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
@@ -209,7 +199,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
 
     // Move to Executing → spawns session (default permission mode)
     await moveTask(page, taskId, lanes['Executing']);
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
     await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
 
     // Record the session ID assigned to this task
@@ -270,7 +260,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
 
     // Move to Planning → spawns session
     await moveTask(page, taskId, lanes['Planning']);
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     const scrollback1 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
     const originalSessionId = extractSessionId(scrollback1, 'SESSION');
@@ -300,7 +290,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     }, { taskId, swimlaneId: lanes['Code Review'] });
 
     // Wait for session to resume
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     // Wait for the RESUMED marker
     const scrollback2 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_RESUMED:');
@@ -331,7 +321,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
       await window.electronAPI.tasks.unarchive({ id: taskId, targetSwimlaneId: swimlaneId });
     }, { taskId, swimlaneId: lanes['Code Review'] });
 
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     const scrollback = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
     expect(scrollback).toContain('MOCK_CLAUDE_SESSION:');
@@ -347,21 +337,45 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
 
     // Move to Planning → spawns session
     await moveTask(page, taskId, lanes['Planning']);
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     const scrollback1 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
     const originalSessionId = extractSessionId(scrollback1, 'SESSION');
     expect(originalSessionId).toBeTruthy();
 
-    // Send /exit to make mock Claude exit naturally
-    await page.evaluate(async (tid) => {
+    const runningSessionId = await page.evaluate(async (tid) => {
       const sessions = await window.electronAPI.sessions.list();
-      const s = sessions.find((s: any) => s.taskId === tid && s.status === 'running');
-      if (s) await window.electronAPI.sessions.write(s.id, '/exit\r');
+      const runningSession = sessions.find(
+        (session: { taskId: string; status: string }) => session.taskId === tid && session.status === 'running',
+      );
+      return runningSession?.id ?? null;
     }, taskId);
+    expect(runningSessionId).toBeTruthy();
 
-    // Wait for the session to exit
-    await waitForNoRunningSessions(page);
+    // The session has to end on its own terms, with an 'exited' record, not a
+    // suspend. Typing /exit does not do it: it ends the AGENT, but the agent runs
+    // inside an interactive shell that survives it, so the PTY stays up and the
+    // row stays 'running' until the agent-absence sweep retires it, 60 to 120 s
+    // later on an idle machine (AGENT_ABSENCE_SWEEP_INTERVAL_MS in
+    // background-shell/watcher.ts).
+    //
+    // So end the PTY the way the sweep itself does, with a kill through the
+    // session manager, then wait on THIS task's rows only: earlier tests in this
+    // file leave sessions alive in the shared app, so a global "no running
+    // sessions" wait would never be true.
+    await page.evaluate((sessionId) => window.electronAPI.sessions.kill(sessionId), runningSessionId!);
+    await waitForTaskSessionNotRunning(page, taskId);
+    const taskStatusesAfterKill = await page.evaluate(async (tid) => {
+      const sessions = await window.electronAPI.sessions.list();
+      return sessions
+        .filter((session: { taskId: string }) => session.taskId === tid)
+        .map((session: { status: string }) => session.status);
+    }, taskId);
+    // The row is either kept as 'exited' or already evicted; never 'suspended'
+    // or 'running' at this point. An evicted row leaves no status at all, which
+    // is allowed here: the resume after Unarchive below is what proves the
+    // record survived.
+    expect(taskStatusesAfterKill.filter((status: string) => status !== 'exited')).toEqual([]);
 
     // Move to Done → should mark 'exited' record as 'suspended' + archive.
     await moveTask(page, taskId, lanes['role:done']);
@@ -377,7 +391,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
       await window.electronAPI.tasks.unarchive({ id: taskId, targetSwimlaneId: swimlaneId });
     }, { taskId, swimlaneId: lanes['Code Review'] });
 
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
 
     const scrollback2 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_RESUMED:');
     const resumedSessionId = extractSessionId(scrollback2, 'RESUMED');
@@ -395,12 +409,13 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
 
     // Move to Planning → spawns session
     await moveTask(page, taskId, lanes['Planning']);
-    await waitForRunningSession(page);
+    await waitForTaskSession(page, taskId);
     await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:', 30000);
 
-    // Move to To Do → kills session, marks 'exited'
+    // Move to To Do → kills session, marks 'exited'. Wait on THIS task's
+    // session only (see the note in the "Exited session preserved" test).
     await moveTask(page, taskId, lanes['role:todo']);
-    await waitForNoRunningSessions(page);
+    await waitForTaskSessionNotRunning(page, taskId);
 
     // Move to Done → archives. Since session is 'exited' (not 'suspended'),
     // Done should NOT spawn or resume -- just archive silently.

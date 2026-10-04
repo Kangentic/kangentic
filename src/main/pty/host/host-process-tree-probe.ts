@@ -1,7 +1,7 @@
 /**
  * The background-shell watcher's process-tree probe, answered by the pty
- * host. The host keeps the persistent PowerShell child (Windows) or runs `ps`
- * (POSIX), so neither its spawn nor its parse lands on main: the first spawn
+ * host (`host-process-table.ts`: Toolhelp on Windows, `ps` on POSIX), so no
+ * enumeration or parse lands on main: the PowerShell probe's first spawn
  * alone measured 28 to 230 ms on main, and `ps` ran every watcher cycle.
  * Liveness stays a local signal-0 check, which costs nothing.
  */
@@ -32,7 +32,7 @@ export class HostProcessTreeProbe implements ProcessTreeProbe {
     return walkDescendants(all, rootPid);
   }
 
-  /** The host owns the probe's child and ends it at its own shutdown. */
+  /** The host owns its process table and ends any child of it at its own shutdown. */
   dispose(): void {
     // Nothing held here.
   }

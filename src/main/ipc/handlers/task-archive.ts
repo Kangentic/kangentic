@@ -44,8 +44,8 @@ import type { IpcContext } from '../ipc-context';
  * Deliberately the SESSION-only half of TASK_MOVE's cleanup, not the full
  * `cleanupTaskResources`. The full helper force-deletes the branch
  * (`git branch -D`) whenever it removes a worktree and `git.autoCleanup` is on,
- * which defaults to true. That is safe on the move-to-Backlog route, where the
- * user is warned first, but not here: `deleteTaskWorktree` nulls `worktree_path`
+ * which defaults to true. That is safe on a move into To Do, where the user is
+ * warned first, but not here: `deleteTaskWorktree` nulls `worktree_path`
  * only when the Done-time removal SUCCEEDED and always preserves `branch_name`,
  * so an archived task whose worktree was pinned at Done time (routine on
  * Windows - AV, an open editor, `node_modules` handles) still carries both

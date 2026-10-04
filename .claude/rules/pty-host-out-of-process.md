@@ -67,8 +67,17 @@ at the Windows timer floor.
   on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
   would boot a second app. A session's or a probe's PTY whose program is one of them is refused
   the same way.
-  The background-shell watcher's process table also comes from the host (`listProcesses`), which
-  keeps the probe's PowerShell child.
+  The background-shell watcher's process table also comes from the host (`listProcesses`,
+  `host-process-table.ts`): a Toolhelp snapshot through koffi on Windows (about 8 ms, against
+  140 ms for the PowerShell CIM query it replaced, which the host still starts, for good, the
+  first time the Toolhelp listing fails), `ps` on POSIX. So does the task leftover reap (`reapTaggedProcesses`,
+  `src/main/pty/process-tag/`): the host scans for the `KANGENTIC_TASK_ID` tag and kills, and on
+  Windows and macOS it loads koffi (an esbuild external, unpacked, and loaded by the afterPack
+  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record) and, on
+  macOS, the process list and working directories from libproc. The scan yields to the event loop
+  as it goes, and a native call long enough to hold it (the Toolhelp snapshot) runs on the thread
+  pool through koffi's async call. See
+  [[task-process-tag]].
 - **Agent CLI runs start in the host too.** `spawnCli` (`src/main/agent/shared/cli-print.ts`)
   starts every headless run (Ask, task summaries, auto-name, the warm answer session) through
   `spawnOffMainCli` (`off-main-cli.ts`): a `cliSpawn` command, so the handle (`RemoteCliProcess`)
@@ -111,11 +120,13 @@ at the Windows timer floor.
   packaging (all of `node_modules/node-pty/**` and `.vite/build/pty-host.js` unpacked) and runs the
   afterPack probe's real spawn under this checkout's Electron.
 - **Packaging gate:** `build/afterPack.js` resolves node-pty from the unpacked tree and spawns a
-  real process with it under the packaged Electron binary, failing the build when it cannot.
+  real process with it under the packaged Electron binary, and on Windows and macOS loads koffi
+  from the same place and makes one native call, failing the build when either cannot.
 - **Packaged smoke:** `.github/workflows/package-smoke.yml` packages on Windows, macOS and Linux
   when a pull request touches the host, its clients or the packaging, and runs
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the
-  retrieval worker, a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
+  retrieval worker, a task reap that must stop a detached process a task's terminal left (koffi
+  loading in the packaged host), a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
   on macOS, which skips the exit drain), and a fail on any log line saying a forked process
   crashed or the host fell back to main. Not a required check.
   `tests/unit/package-smoke.test.ts` pins the script's pure parts and that every log line it

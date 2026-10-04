@@ -344,6 +344,19 @@ function makeCaptureAdapter(
   return { adapter: adapter as AgentAdapter, capturedCommandOptions };
 }
 
+describe('prepareAgentSpawn - task process tag', () => {
+  it('hands the builder the task id as taskProcessTag, so an adapter can keep the tag in its tool shells', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+    const task = makeTask();
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ task }));
+
+    expect(result.ok).toBe(true);
+    expect(capturedCommandOptions[0].taskProcessTag).toBe(task.id);
+  });
+});
+
 describe('prepareAgentSpawn - model/effort override passthrough', () => {
   it('passes task model_override to buildCommand when the task has an override and the lane does not', async () => {
     const { adapter, capturedCommandOptions } = makeCaptureAdapter();

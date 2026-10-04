@@ -19,6 +19,7 @@
  */
 
 import type { ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { StopProcessOutcome, StopProcessRequest, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -217,8 +218,17 @@ export interface PtyHostRequestMap {
   /** Run a one-shot child process here, so its CreateProcess (synchronous on
    *  the calling thread on Windows) does not block main. */
   exec: { params: HostExecRequest; result: HostExecResult };
-  /** The whole process table, from the host's persistent probe. */
+  /** The whole process table, from `host-process-table.ts`: a Toolhelp
+   *  snapshot on Windows, `ps` on POSIX. */
   listProcesses: { params: Record<string, never>; result: HostProcessInfo[] };
+  /** Kill what these tasks left running: processes carrying a task's
+   *  `KANGENTIC_TASK_ID` tag and working inside its directories, minus what is
+   *  shared or protected (`process-tag/reap-plan.ts`). Concurrent requests
+   *  share one scan. */
+  reapTaggedProcesses: { params: TaggedReapRequest; result: TaggedReapResult };
+  /** Stop one process a reap reported, and everything under it, after the
+   *  user asked for it by name; its identity is re-checked first. */
+  stopReportedProcess: { params: StopProcessRequest; result: StopProcessOutcome };
   /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
    *  by its ptyId like any other; its output arrives as `rawData`. */
   spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };
