@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Sliders, Bot, MessageSquare, Plus,
+  Layers, Sliders, Bot, MessageSquare,
   RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
@@ -54,8 +54,6 @@ import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
-import { OverlayPopover } from '../OverlayPopover';
-import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { unionKnownModels, useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -78,7 +76,7 @@ import {
 } from '../../../shared/types';
 import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
-import { templateVarsFor } from '../../../shared/task-template-vars';
+import { TemplateVariablePicker } from '../TemplateVariablePicker';
 
 /**
  * Every field this picker serves belongs to a column automation, which runs on
@@ -89,7 +87,6 @@ import { templateVarsFor } from '../../../shared/task-template-vars';
  * Module scope because the list never changes, and because the picker is
  * rendered inside a dialog that re-renders on every keystroke.
  */
-const AUTOMATION_TEMPLATE_VARS = templateVarsFor('automation');
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 
@@ -511,105 +508,9 @@ function DisabledSectionNotice({ reason }: { reason: string }) {
   return <p className={`${SETTING_DESCRIPTION_CLASS} pt-3 pb-1 max-w-2xl`}>{reason}</p>;
 }
 
-/**
- * The agent-message field's template-variable inserter.
- *
- * This replaced a row of ten always-on `{{chip}}` buttons. Ten monospace tokens
- * are a wall of syntax the user has to read past to reach the field they
- * actually came for, and their names alone do not say what they resolve to -
- * `{{task_xml}}` and `{{description}}` are not self-explanatory. One pill opens
- * a list that can afford to carry each variable's meaning.
- *
- * Portal + `strategy: 'fixed'` is not optional: the board manager's detail form
- * is a scroll container, so an in-flow menu is clipped to it (see
- * `.claude/rules/popover-escapes-clipping.md`). The outside-click handler checks
- * BOTH refs for the same reason - once portaled, a click inside the menu is
- * "outside" the trigger's subtree.
- */
-function TemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const { style } = usePopoverPosition(
-    buttonRef as React.RefObject<HTMLElement>,
-    menuRef as React.RefObject<HTMLElement>,
-    open,
-    { mode: 'dropdown', strategy: 'fixed' },
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        setOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKey, true);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKey, true);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        data-testid="template-variable-trigger"
-        className="inline-flex cursor-pointer items-center gap-1 rounded border border-edge/40 bg-surface-control/40 px-2 py-1 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg focus:outline-none focus-visible:border-accent"
-      >
-        <Plus size={13} />
-        Template variable
-      </button>
-
-      <OverlayPopover
-        open={open}
-        popoverRef={menuRef}
-        style={style}
-        portal
-        className="fixed z-[2147483646] w-80 overflow-hidden rounded-lg border border-edge bg-surface shadow-xl"
-        data-testid="template-variable-menu"
-      >
-        <div className="max-h-72 overflow-y-auto py-1">
-          {AUTOMATION_TEMPLATE_VARS.map((templateVar) => (
-            <button
-              key={templateVar.name}
-              type="button"
-              onClick={() => {
-                onInsert(templateVar.chip);
-                setOpen(false);
-              }}
-              className="flex w-full cursor-pointer flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-surface-hover focus:outline-none focus-visible:bg-surface-hover"
-            >
-              <span className="font-mono text-xs text-fg">{templateVar.chip}</span>
-              {/* Clamped: a couple of these descriptions are written for the docs
-                  tables and run long. The full text stays available on hover. */}
-              <span className="line-clamp-1 text-[11px] text-fg-faint" title={templateVar.description}>
-                {templateVar.description}
-              </span>
-              {/* Shown only where empty is the NORMAL state, not merely a
-                  possible one, so it stays a warning rather than noise. */}
-              {templateVar.availability && (
-                <span className="text-[11px] text-fg-muted">{templateVar.availability}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </OverlayPopover>
-    </>
-  );
+/** The automation fields' Template variable menu: the shared picker, on the automation context. */
+function AutomationTemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
+  return <TemplateVariablePicker context="automation" onInsert={onInsert} />;
 }
 
 /**
@@ -2528,7 +2429,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           }}
           isNew={editing.isNew}
           takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
-          templatePicker={TemplateVariablePicker}
+          templatePicker={AutomationTemplateVariablePicker}
           onDone={(next) => {
             mutateRows(editing.columnId, (rows) => replaceRow(rows, next));
             setEditing(null);

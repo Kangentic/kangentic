@@ -77,6 +77,8 @@ stated here and held by the components.
   (the Edit automation dialog) use the flush shape too. A row's own leading
   glyph (a drag handle, a warning icon) sits inline before its label. A nested tile still starts
   further in (`nested`), because that indent shows a dependency.
+- **A card with no switch may put one button in the header's right slot** (`headerAction`), where
+  a switch would sit, ending on the switches' edge: the Workflow agent prompt's Expand. Never both.
 - **A `CardToggleRow` tile is one click target.** A click anywhere on it flips the switch, and the
   hover tint fills the tile. A click on a control of its own (the switch, an `InfoTip`, a link) is
   left to that control. A header with a switch behaves the same way, and its click target is

@@ -1,12 +1,18 @@
-import { useCallback, useMemo } from 'react';
-import { CircleCheck } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { CircleCheck, ListTree } from 'lucide-react';
 import { useScopedUpdate } from '../shared';
-import { SettingsCard } from '../settings-card';
+import { CardTile, SettingsCard } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
 import { automationAgentChoice } from '../../../../shared/answer-agent';
+import { DEFAULT_WORKFLOW_AGENT_PROMPT, workflowAgentPromptTemplate } from '../../../../shared/workflow-agent-prompt';
 import type { AppConfig } from '../../../../shared/types';
 import { AnswerAgentRows, type AnswerAgentPatch } from './answer-agent-rows';
+import {
+  WorkflowAgentPromptDialog,
+  WorkflowAgentPromptExpandButton,
+  WorkflowAgentPromptSetting,
+} from './WorkflowAgentPromptField';
 
 /**
  * Settings > Workflows (tab id `workflows`). GLOBAL/shared scope, first in the
@@ -33,6 +39,15 @@ export function WorkflowsTab({ globalConfig }: { globalConfig: AppConfig }) {
     [updateGlobal],
   );
 
+  // The prompt as the agent would get it. Stored only when it differs from the
+  // default, so a later change to the default reaches everyone who never edited it.
+  const storedPrompt = workflowAgentPromptTemplate(globalConfig.workflows?.agentPrompt);
+  const savePrompt = useCallback((next: string) => {
+    const agentPrompt = next.trim() && next !== DEFAULT_WORKFLOW_AGENT_PROMPT ? next : null;
+    updateGlobal({ workflows: { agentPrompt } });
+  }, [updateGlobal]);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+
   return (
     <div className="flex flex-col gap-4">
       <SettingsCard
@@ -50,6 +65,23 @@ export function WorkflowsTab({ globalConfig }: { globalConfig: AppConfig }) {
           testIdPrefix="automation-agent"
         />
       </SettingsCard>
+      <SettingsCard
+        icon={<ListTree size={16} />}
+        {...settingProps('workflows.agentPrompt')}
+        testId="settings-card-workflow-agent-prompt"
+        headerAction={<WorkflowAgentPromptExpandButton onClick={() => setPromptExpanded(true)} />}
+      >
+        <CardTile>
+          <WorkflowAgentPromptSetting key={storedPrompt} stored={storedPrompt} onSave={savePrompt} />
+        </CardTile>
+      </SettingsCard>
+      {promptExpanded && (
+        <WorkflowAgentPromptDialog
+          initial={storedPrompt}
+          onSave={savePrompt}
+          onClose={() => setPromptExpanded(false)}
+        />
+      )}
     </div>
   );
 }
