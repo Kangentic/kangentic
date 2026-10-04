@@ -1,4 +1,4 @@
-import { BrowserWindow, type WebContents } from 'electron';
+import { BrowserWindow, screen, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { browserPaneRegistry } from './browser-pane-registry';
 import { browserPartitionForTask } from '../../shared/browser-partition';
@@ -338,7 +338,13 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
     width: DEFAULT_LANE_WIDTH,
     height: DEFAULT_LANE_HEIGHT,
     webPreferences: {
-      offscreen: true,
+      // Renders at the primary display's scale factor, as the visible pane
+      // does, so a page keeps its devicePixelRatio (its srcset picks and
+      // resolution media queries) when its surface moves between the two.
+      // Electron 42 changed the offscreen default to a fixed 1.0. Measured at
+      // a forced 2x display: Electron 41 rendered a lane at 2 (2560x1392
+      // screenshots), 44 at 1 (1280x696) until this was set.
+      offscreen: { deviceScaleFactor: screen.getPrimaryDisplay().scaleFactor },
       partition,
       // A lane renders the user's own dev server, never Kangentic UI, so it gets
       // no preload and no node integration - the same posture the <webview>

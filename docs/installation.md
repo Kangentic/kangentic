@@ -4,6 +4,7 @@
 
 - **Claude Code CLI** -- installed and on your PATH. [Get Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 - **Git 2.26+** -- required for worktree support. Run `git --version` to check.
+- **macOS 13 (Ventura) or later** on a Mac. Electron 44 does not start on macOS 12.
 
 ## Quick Install (Recommended)
 
@@ -97,11 +98,11 @@ npm run dev
 ```
 
 Requires:
-- Node.js 22.12+ (the test runner declares `^22.12.0 || ^24.0.0 || >=26.0.0`)
-- C++ build tools for native modules (better-sqlite3, node-pty)
-  - **Windows:** `npm install -g windows-build-tools` or install Visual Studio Build Tools
-  - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-  - **Linux:** `build-essential` package (`sudo apt install build-essential`)
+- Node.js 22.14+ or 24+ (better-sqlite3 13 needs Node-API 10, and older Node 22 releases crash on the first database open instead of reporting it)
+- C++ build tools, on Linux and macOS only
+  - **Windows:** none. Every native module ships a prebuilt Windows binary
+  - **macOS:** Xcode Command Line Tools (`xcode-select --install`), which a macOS package build needs for node-pty's `spawn-helper`
+  - **Linux:** `build-essential` and `python3` (`sudo apt install build-essential python3`), because node-pty ships no Linux binary and compiles on install
 
 ## Troubleshooting
 
@@ -135,8 +136,7 @@ xattr -cr /Applications/Kangentic.app
 
 If `npm install` fails on native modules:
 
-- Ensure you have C++ build tools installed (see [From Source](#from-source) above).
-- On Windows, ensure Python 3.x is available (required by node-gyp).
+- On Linux, ensure `build-essential` and `python3` are installed (see [From Source](#from-source) above). node-pty is the one module that compiles there.
 - Try clearing the npm cache: `npm cache clean --force` then `npm install` again.
 
 ## Uninstall

@@ -30,9 +30,9 @@ import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import { BoardEventBus } from '../../src/main/mobile-bridge/board-event-bus';
 
-// db/database.ts would otherwise drag in a native module built for Electron's
-// Node ABI (better-sqlite3), which the finalize-debounce path never exercises,
-// so it is stubbed rather than pulled in for real.
+// db/database.ts would otherwise drag in the better-sqlite3 driver, which the
+// finalize-debounce path never exercises, so it is stubbed rather than pulled
+// in for real.
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 // Indexing runs in the retrieval worker; its handlers run here, in process,
 // against the indexer mocks below.

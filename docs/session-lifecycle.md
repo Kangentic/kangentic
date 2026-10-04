@@ -1162,8 +1162,8 @@ phone needs and reads the rest by request.
   or park write that lands first cancels it. Gated by the `Respawn grid` block in
   `tests/unit/session-manager.test.ts`, the inherited and restored precedence cases in
   `tests/unit/session-spawn-flow.test.ts`, `tests/unit/session-pty-grid-persistence.test.ts`, and
-  `tests/unit/session-pty-grid-migration.test.ts` (real SQLite; it skips wherever better-sqlite3
-  is built for Electron, CI included, so the E2E tier's app boots are what run the migration).
+  `tests/unit/session-pty-grid-migration.test.ts` (real SQLite through better-sqlite3, which loads
+  under the unit tier's plain Node since its Node-API rewrite in 13).
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint
@@ -1451,7 +1451,7 @@ The bracketing is load-bearing for images: Claude Code scans a paste packet for 
 ## Terminal Copy Strategy
 
 Terminal copy operations write to the OS clipboard through the main process
-(`clipboard:writeText`), which is synchronous and focus- and permission-independent.
+(`clipboard:writeText`), which is focus- and permission-independent.
 `navigator.clipboard.writeText()` is deliberately not used: it rejects with `NotAllowedError`
 when the document lacks focus, which is exactly the state during a native context-menu click and
 when a TUI app emits its copy sequence. The copy paths are:

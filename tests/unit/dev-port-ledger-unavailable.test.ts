@@ -2,19 +2,19 @@
  * The reservation ledger must degrade, never throw, when the global database
  * cannot be opened.
  *
- * This is not a hypothetical. `better-sqlite3` is an Electron ABI build, so
- * under plain Node - which is how the unit tier runs on CI - `getGlobalDb()`
- * throws `NODE_MODULE_VERSION` on its first call. The ledger lives in the
- * global database while its callers are per-project TASK paths: serializing a
- * task, resolving `{{port}}`, deleting a task. When those throws propagated,
- * fourteen tests across five files that have nothing to do with dev ports went
- * red on CI, while every one of them passed locally where the native module
- * happened to load.
+ * This is not a hypothetical. Before better-sqlite3 13, the driver was an
+ * Electron ABI build, so under plain Node - which is how the unit tier runs on
+ * CI - `getGlobalDb()` threw `NODE_MODULE_VERSION` on its first call. The
+ * ledger lives in the global database while its callers are per-project TASK
+ * paths: serializing a task, resolving `{{port}}`, deleting a task. When those
+ * throws propagated, fourteen tests across five files that have nothing to do
+ * with dev ports went red on CI, while every one of them passed locally where
+ * the native module happened to load.
  *
  * That local-vs-CI asymmetry is exactly why this file forces the failure
- * explicitly instead of trusting the ambient environment: a test that only
- * fails where better-sqlite3 is unloadable is a test that proves nothing on the
- * machine where the code is written.
+ * explicitly instead of trusting the ambient environment. It matters more now
+ * that the driver loads everywhere: nothing ambient fails any more, so this
+ * file is the only thing exercising the degrade path at all.
  *
  * The property being pinned is a design one, not a workaround. A lease row is
  * advisory (the bind probe is the authority), so "the ledger is unreachable"

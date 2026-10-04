@@ -1,46 +1,44 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { retrievalHandlers, type WorkerContext } from '../../src/main/retrieval/worker/methods';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
-import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 /**
  * The retrieval worker's handlers, run directly on the real project schema
- * over node:sqlite (better-sqlite3 cannot load under vitest's Node). The worker
- * entry only dispatches to these, so this is what the worker answers.
+ * over real better-sqlite3, the driver the worker uses. The worker entry only
+ * dispatches to these, so this is what the worker answers.
  */
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
 
-function openProject(): NodeDatabase {
-  if (!sqlite) throw new Error('node:sqlite unavailable');
-  const database = new sqlite.DatabaseSync(':memory:');
-  runProjectMigrations(adaptDatabase(database));
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function openProject(): DatabaseType.Database {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
   return database;
 }
 
-function contextFor(databases: Map<string, NodeDatabase>): WorkerContext {
+function contextFor(databases: Map<string, DatabaseType.Database>): WorkerContext {
   return {
     getDb: (projectId) => {
       const database = databases.get(projectId);
       if (!database) throw new Error(`unable to open database file for ${projectId}`);
-      return adaptDatabase(database);
+      return database;
     },
     emit: () => undefined,
   };
 }
 
-describeWithSqlite('retrieval worker methods', () => {
+describe('retrieval worker methods', () => {
   it('projects.summaries answers each project in order, and null for one whose database will not open', async () => {
     const indexed = openProject();
-    const store = new RetrievalStore(adaptDatabase(indexed));
+    const store = new RetrievalStore(indexed);
     store.upsertDocument(
       { corpus: 'conversation', docId: 'session-1', sessionId: 'session-1', taskId: null, agentSessionId: null, metaJson: null },
       [{
@@ -104,7 +102,7 @@ describeWithSqlite('retrieval worker methods', () => {
     const context = contextFor(new Map([['project-1', project]]));
     // Two turns in the ledger, the earliest at `now - 60 s`.
     const record = await import('../../src/main/retrieval/conversation/conversation-usage-store');
-    new record.ConversationUsageStore(adaptDatabase(project)).recordTurns(
+    new record.ConversationUsageStore(project).recordTurns(
       { agentSessionId: null, sessionId: 'session-1', taskId: null },
       [
         { turnUuid: 'turn-1', ts: now - 60_000, model: 'model-a', usage: { inputTokens: 10, outputTokens: 5, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 } },

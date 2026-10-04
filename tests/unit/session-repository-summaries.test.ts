@@ -14,41 +14,11 @@
  *   - sessions with NULL total_cost_usd are excluded entirely.
  *
  * Uses a real in-memory better-sqlite3 DB bootstrapped via runProjectMigrations
- * so the schema matches production exactly. Skips cleanly when better-sqlite3
- * cannot load under the test runner's Node ABI (NODE_MODULE_VERSION mismatch
- * under plain system Node); mirrors the probe pattern in
- * usage-history-migration.test.ts.
+ * so the schema matches production exactly.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors usage-history-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 
@@ -69,12 +39,13 @@ interface SessionFixture {
   linesRemoved?: number | null;
   filesChanged?: number | null;
   toolBreakdown?: string | null;
-  compactionCount?: number | null;
+  /** NOT NULL DEFAULT 0 in the schema, so unlike the metrics above it has no NULL case. */
+  compactionCount?: number;
   modelDisplayName?: string | null;
 }
 
-describe.runIf(CAN_RUN)('SessionRepository.listAllSummaries (real DB)', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('SessionRepository.listAllSummaries (real DB)', () => {
+  let db: Database.Database;
   let repository: SessionRepository;
 
   function insertTask(taskId: string, createdAt: string): void {
@@ -111,13 +82,12 @@ describe.runIf(CAN_RUN)('SessionRepository.listAllSummaries (real DB)', () => {
       fixture.linesRemoved ?? null,
       fixture.filesChanged ?? null,
       fixture.toolBreakdown ?? null,
-      fixture.compactionCount ?? null,
+      fixture.compactionCount ?? 0,
       fixture.modelDisplayName ?? null,
     );
   }
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new SessionRepository(db);
@@ -201,7 +171,6 @@ describe.runIf(CAN_RUN)('SessionRepository.listAllSummaries (real DB)', () => {
       linesAdded: null,
       linesRemoved: null,
       filesChanged: null,
-      compactionCount: null,
     });
 
     insertSession({
@@ -304,15 +273,5 @@ describe.runIf(CAN_RUN)('SessionRepository.listAllSummaries (real DB)', () => {
     });
 
     expect(repository.listAllSummaries()).toEqual({});
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('SessionRepository.listAllSummaries tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

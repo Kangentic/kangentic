@@ -13,11 +13,10 @@
  *    planted at the mocked homedir location, confirming the getAgentVersion
  *    argument is threaded all the way through.
  *
- * Skips cleanly when better-sqlite3 cannot load (NODE_MODULE_VERSION
- * mismatch under raw Node), mirroring the live-DB test's pattern.
+ * Builds its synthetic DBs with the real better-sqlite3 driver.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,32 +26,12 @@ import {
   OpenCodeSessionHistoryParser,
 } from '../../src/main/agent/adapters/opencode/session-history-parser';
 
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = ((nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule) as typeof DatabaseType;
-    // Force the native binding to load now (NODE_MODULE_VERSION
-    // mismatch only surfaces on instantiation, not on require). An
-    // in-memory `:memory:` DB needs no filesystem cleanup.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
 function makeTempDbPath(label: string): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `opencode-canary-${label}-`));
   return path.join(directory, 'opencode.db');
 }
 
 function createDbWithSchema(createTableStatement: string | null): { path: string; cleanup: () => void } {
-  if (!Database) throw new Error('better-sqlite3 not available');
   const dbPath = makeTempDbPath('test');
   const database = new Database(dbPath);
   if (createTableStatement) database.exec(createTableStatement);
@@ -69,7 +48,7 @@ function createDbWithSchema(createTableStatement: string | null): { path: string
   };
 }
 
-describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
+describe('verifyOpenCodeSchemaOnce', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   const cleanups: Array<() => void> = [];
 
@@ -87,7 +66,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('does not warn when all required columns are present', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(
       `CREATE TABLE session (
         id TEXT PRIMARY KEY,
@@ -108,7 +86,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('warns once when a required column is missing, naming the column and version', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(
       `CREATE TABLE session (
         id TEXT PRIMARY KEY,
@@ -130,7 +107,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('warns once when the session table is missing entirely', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(null);
     cleanups.push(fixture.cleanup);
     const database = new Database(fixture.path, { readonly: true, fileMustExist: true });
@@ -146,7 +122,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('does not re-warn on subsequent calls within the same process lifetime', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(
       `CREATE TABLE session (id TEXT PRIMARY KEY)`,
     );
@@ -163,7 +138,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('omits the version suffix when getAgentVersion is not provided', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(
       `CREATE TABLE session (id TEXT PRIMARY KEY)`,
     );
@@ -180,7 +154,6 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
   });
 
   it('omits the version suffix when getAgentVersion returns null', () => {
-    if (!Database) return;
     const fixture = createDbWithSchema(
       `CREATE TABLE session (id TEXT PRIMARY KEY)`,
     );
@@ -211,7 +184,7 @@ describe.runIf(CAN_RUN)('verifyOpenCodeSchemaOnce', () => {
  * readMatchingSessionId(…) call would cause the warning to omit the
  * version suffix and break these assertions.
  */
-describe.runIf(CAN_RUN)('captureSessionIdFromFilesystem - schema canary indirect path', () => {
+describe('captureSessionIdFromFilesystem - schema canary indirect path', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let homedirSpy: ReturnType<typeof vi.spyOn>;
   let fakeTmpDir: string;
@@ -245,8 +218,6 @@ describe.runIf(CAN_RUN)('captureSessionIdFromFilesystem - schema canary indirect
   });
 
   it('threads getAgentVersion through to verifyOpenCodeSchemaOnce when a column is missing', async () => {
-    if (!Database) return;
-
     // Plant a broken DB - missing the required time_created column.
     const opencodeDir = path.join(fakeTmpDir, '.local', 'share', 'opencode');
     fs.mkdirSync(opencodeDir, { recursive: true });
@@ -280,8 +251,6 @@ describe.runIf(CAN_RUN)('captureSessionIdFromFilesystem - schema canary indirect
   });
 
   it('threads getAgentVersion through to verifyOpenCodeSchemaOnce when the table is missing', async () => {
-    if (!Database) return;
-
     // Plant an empty DB (no tables at all).
     const opencodeDir = path.join(fakeTmpDir, '.local', 'share', 'opencode');
     fs.mkdirSync(opencodeDir, { recursive: true });
@@ -305,8 +274,6 @@ describe.runIf(CAN_RUN)('captureSessionIdFromFilesystem - schema canary indirect
   });
 
   it('fires no warning when the schema is correct and no row matches', async () => {
-    if (!Database) return;
-
     // Plant a well-formed DB with the correct schema but no rows.
     const opencodeDir = path.join(fakeTmpDir, '.local', 'share', 'opencode');
     fs.mkdirSync(opencodeDir, { recursive: true });
@@ -338,11 +305,5 @@ describe.runIf(CAN_RUN)('captureSessionIdFromFilesystem - schema canary indirect
       return typeof first === 'string' && first.includes('[opencode]');
     });
     expect(opencodeWarnings).toEqual([]);
-  });
-});
-
-describe.runIf(!CAN_RUN)('verifyOpenCodeSchemaOnce (skipped)', () => {
-  it('skipped because better-sqlite3 cannot load under this Node runtime', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

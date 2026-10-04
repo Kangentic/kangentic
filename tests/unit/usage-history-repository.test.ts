@@ -1,7 +1,7 @@
 /**
- * Tests for `UsageHistoryRepository`. better-sqlite3 cannot load under
- * vitest's system Node, so the DB is mocked with a `prepare`/`run`/`get`
- * surface that records the SQL it was given and the params bound to it.
+ * Tests for `UsageHistoryRepository`. The DB is mocked with a
+ * `prepare`/`run`/`get` surface that records the SQL it was given and the
+ * params bound to it.
  *
  * The history is the source of truth for the usage dashboard's period totals.
  * Its tests pin three contracts that must not silently regress:

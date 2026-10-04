@@ -3,10 +3,11 @@
  * high-water mark used as the reconcile `since`, prune of vanished items, and the
  * invariant that `alreadyImported` is never persisted.
  *
- * better-sqlite3 cannot load under vitest (it is compiled for Electron's Node
- * ABI), so this runs against a small in-memory fake DB that interprets exactly
- * the queries the repository issues, mirroring the SQL-mock approach in
+ * This runs against a small in-memory fake DB that interprets exactly the
+ * queries the repository issues, mirroring the SQL-mock approach in
  * tests/unit/backlog-import-promote-dedup.test.ts but keeping real row behavior.
+ * `tests/unit/helpers/test-database.ts` opens a real better-sqlite3 database if
+ * one is wanted.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

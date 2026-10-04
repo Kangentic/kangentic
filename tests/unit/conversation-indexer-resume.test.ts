@@ -7,7 +7,7 @@
  * usage ledger and spawn links as a walk from byte 0. These tests hold it to
  * that with the real pieces: a Claude-format JSONL on disk, the real window
  * parser (`parseClaudeTranscriptWindow`) and chunker, and the real store and
- * ledger on node:sqlite. Windows are small, so a transcript of a few dozen
+ * ledger on real better-sqlite3. Windows are small, so a transcript of a few dozen
  * lines crosses several seams, and assistant messages span several lines so
  * the usage carry has to survive the seam a resume starts at.
  */
@@ -16,27 +16,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
 import { parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
-import { adaptDatabase } from './helpers/node-sqlite-database';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 const WINDOW_BYTES = 2000;
 const AGENT_SESSION_ID = 'agent-1';
 const temporaryDirectories: string[] = [];
+const openDatabases: DatabaseType.Database[] = [];
 
 afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
+
+function openDatabase(): DatabaseType.Database {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  return database;
+}
 
 function temporaryFile(name: string): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-resume-'));
@@ -89,7 +89,7 @@ function writeTranscript(filePath: string, lines: string[], trailing = ''): void
 }
 
 interface Project {
-  database: InstanceType<SqliteModule['DatabaseSync']>;
+  database: DatabaseType.Database;
   indexer: ConversationIndexer;
   /** The start byte of every window the adapter was asked for. */
   windowStarts: number[];
@@ -98,9 +98,8 @@ interface Project {
 }
 
 function project(transcriptPath: string): Project {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
+  const database = openDatabase();
+  runProjectMigrations(database);
   database.exec('PRAGMA foreign_keys = OFF');
   addSession(database, 'session-1', '2026-09-30T12:00:00.000Z');
   const windowStarts: number[] = [];
@@ -117,7 +116,7 @@ function project(transcriptPath: string): Project {
       return { ...window, sourcePath: currentPath };
     },
   };
-  const indexer = new ConversationIndexer({ getDb: () => db, getAdapter: () => adapter, windowBytes: WINDOW_BYTES });
+  const indexer = new ConversationIndexer({ getDb: () => database, getAdapter: () => adapter, windowBytes: WINDOW_BYTES });
   return { database, indexer, windowStarts, setTranscript: (filePath) => { currentPath = filePath; } };
 }
 
@@ -158,18 +157,17 @@ function storedResumeOffset(database: Project['database']): number | null {
   return row.point ? (JSON.parse(row.point) as { offset: number }).offset : null;
 }
 
-describeWithSqlite('memory_index_state.resume_point migration', () => {
+describe('memory_index_state.resume_point migration', () => {
   it('is added in place to a table made before it, keeping its rows', () => {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
+    const database = openDatabase();
+    runProjectMigrations(database);
     database.exec('ALTER TABLE memory_index_state DROP COLUMN resume_point');
     database.prepare(
       "INSERT INTO memory_index_state (corpus, doc_id, status, indexed_at) VALUES ('conversation', 'agent-1', 'ok', '2026-09-30T00:00:00.000Z')",
     ).run();
 
-    runProjectMigrations(db);
-    runProjectMigrations(db);
+    runProjectMigrations(database);
+    runProjectMigrations(database);
 
     const columns = (database.prepare('PRAGMA table_info(memory_index_state)').all() as Array<{ name: string }>).map((column) => column.name);
     expect(columns.filter((name) => name === 'resume_point')).toHaveLength(1);
@@ -178,7 +176,7 @@ describeWithSqlite('memory_index_state.resume_point migration', () => {
   });
 });
 
-describeWithSqlite('ConversationIndexer resumed walk', () => {
+describe('ConversationIndexer resumed walk', () => {
   it('walks from byte 0 the first time and leaves a resume point at its last window', async () => {
     const transcriptPath = temporaryFile('agent-1.jsonl');
     writeTranscript(transcriptPath, transcriptLines(20));
@@ -284,7 +282,7 @@ describeWithSqlite('ConversationIndexer resumed walk', () => {
     let calls = 0;
     const database = live.database;
     const stalling = new ConversationIndexer({
-      getDb: () => adaptDatabase(database),
+      getDb: () => database,
       windowBytes: WINDOW_BYTES,
       getAdapter: () => ({
         displayName: 'Claude',

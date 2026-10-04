@@ -15,8 +15,8 @@
  *
  * Testing the resolver instead of the three handlers is deliberate: the guard
  * lives here now, so one local test covers every placement site. The handler
- * suites that exercise it end to end use a real better-sqlite3 DB and skip on a
- * dev machine (Electron ABI), so they are CI-only.
+ * suites that exercise it end to end (mcp-move-task-to-done.test.ts,
+ * column-commands-create-delete.test.ts) use a real better-sqlite3 DB.
  *
  * Mocking SwimlaneRepository mirrors inventory-commands-list-columns.test.ts.
  */

@@ -112,8 +112,8 @@ Get started at [kangentic.com/getting-started](https://www.kangentic.com/getting
 
 ## Development
 
-Building from source requires Node.js 22+ (the npx floor above is for end users running the
-launcher).
+Building from source requires Node.js 22.14+ or 24+ (the npx floor above is for end users running
+the launcher).
 
 ```bash
 git clone https://github.com/Kangentic/kangentic.git

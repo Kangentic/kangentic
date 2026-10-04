@@ -9,34 +9,11 @@
  * the column persist at all) leaves every existing test green while the verdict
  * silently never lands on disk. This file runs the REAL migration against a
  * REAL in-memory better-sqlite3 database and round-trips through the REAL
- * repository, mirroring `activity-interval-migration.test.ts`'s probe pattern.
- * It skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (expected on a developer's Windows machine, built for Electron's ABI) and
- * RUNS on CI (built for plain Node).
+ * repository.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 
@@ -47,11 +24,10 @@ interface TableColumnInfo {
   dflt_value: string | null;
 }
 
-describe.runIf(CAN_RUN)('runProjectMigrations - tasks.pr_merge_readiness', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - tasks.pr_merge_readiness', () => {
+  let db: Database.Database;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
   });
@@ -99,11 +75,5 @@ describe.runIf(CAN_RUN)('runProjectMigrations - tasks.pr_merge_readiness', () =>
 
     repository.update({ id: created.id, pr_merge_readiness: null });
     expect(repository.getById(created.id)?.pr_merge_readiness).toBeNull();
-  });
-});
-
-describe.runIf(!CAN_RUN)('tasks.pr_merge_readiness migration tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

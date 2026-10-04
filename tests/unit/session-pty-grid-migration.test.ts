@@ -7,35 +7,11 @@
  * that never executes SQL, so a column missing from the migration would leave
  * it green while every write failed. This file runs the REAL migration against
  * a REAL in-memory better-sqlite3 database and reads the row back through the
- * REAL repository. It skips cleanly when better-sqlite3 cannot load under the
- * test runner's Node ABI, which is the case both locally and on CI: postinstall
- * builds it for Electron's ABI. Until that changes, the migration runs against
- * real SQLite only in the E2E tier, which boots the app and migrates its
- * project database on open (session-resume.spec.ts relaunches on one).
+ * REAL repository.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
@@ -50,11 +26,10 @@ interface TableColumnInfo {
 
 const GRID_COLUMNS = ['last_pty_cols', 'last_pty_rows'];
 
-describe.runIf(CAN_RUN)('runProjectMigrations - sessions.last_pty_cols / last_pty_rows', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - sessions.last_pty_cols / last_pty_rows', () => {
+  let db: Database.Database;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
   });
@@ -112,11 +87,5 @@ describe.runIf(CAN_RUN)('runProjectMigrations - sessions.last_pty_cols / last_pt
     repository.updatePtyGrid(sessionId, { cols: 210, rows: 48 });
 
     expect(recordedPtyGrid(repository.findByAnyId(sessionId))).toEqual({ cols: 210, rows: 48 });
-  });
-});
-
-describe.runIf(!CAN_RUN)('sessions grid migration tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

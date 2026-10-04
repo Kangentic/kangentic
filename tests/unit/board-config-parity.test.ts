@@ -18,8 +18,9 @@
  *      back into the swimlane create/update inputs. Catches "added to the type
  *      but forgot build or apply."
  *
- * better-sqlite3 cannot load under vitest, so the DB + repositories are mocked
- * (same pattern as task-move-isolation-switch.test.ts).
+ * The DB + repositories are mocked so this stays a pure unit test of the
+ * build/apply round-trip with no database involved (same pattern as
+ * task-move-isolation-switch.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

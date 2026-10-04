@@ -3,9 +3,8 @@
  * migration applied to every `spawn_agent` action's parsed config when a
  * project DB opens. Step 4 (the {{task_xml}} envelope rewrite) was added
  * in this PR; the surrounding steps were extracted from project-schema.ts
- * at the same time so this function could be exercised without a real
- * better-sqlite3 handle (rebuilt for Electron, so DB-level tests skip
- * under plain Node vitest).
+ * at the same time so this function could be exercised without a database
+ * handle at all.
  */
 
 import { describe, it, expect } from 'vitest';

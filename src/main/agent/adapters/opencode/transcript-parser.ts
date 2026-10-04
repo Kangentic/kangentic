@@ -95,8 +95,7 @@ function readTranscript(database: DatabaseType.Database, sessionId: string): Tra
 
 /**
  * Pure row-to-entry mapping, separated from the SQLite I/O so it can be unit
- * tested without the native better-sqlite3 module (which cannot load under a
- * stand-alone Node runtime). `messageRows` and `partRows` must already be
+ * tested without a database. `messageRows` and `partRows` must already be
  * ordered by `time_created` ascending.
  */
 export function mapOpenCodeRows(

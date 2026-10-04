@@ -21,18 +21,9 @@ import {
 } from '../../src/main/retrieval/write-budget';
 import { QUIET_MS } from '../../src/main/retrieval/index-builds';
 import { setWriteHoldObserver, writeTransaction } from '../../src/main/db/transaction';
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const itWithSqlite = sqlite ? it : it.skip;
-
-/** A connection whose `data_version` is whatever `version()` says. */
+/** A stand-in connection whose `data_version` is whatever `version()` says. */
 function fakeDb(version: () => number): DatabaseType.Database {
   return { prepare: () => ({ get: () => ({ data_version: version() }) }) } as unknown as DatabaseType.Database;
 }
@@ -190,22 +181,26 @@ describe('the worker write budget, taking turns', () => {
 });
 
 describe('the transaction hold observer', () => {
-  itWithSqlite('hears each outermost write transaction once, after it commits, and never a savepoint', () => {
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
-    db.exec('CREATE TABLE rows (id INTEGER PRIMARY KEY)');
-    const heard: Array<{ held: number; inTransaction: boolean }> = [];
-    setWriteHoldObserver((connection, heldMs) => heard.push({ held: heldMs, inTransaction: connection.inTransaction }));
-    const insert = writeTransaction(db, () => { db.prepare('INSERT INTO rows DEFAULT VALUES').run(); });
-    const outer = writeTransaction(db, () => {
+  it('hears each outermost write transaction once, after it commits, and never a savepoint', () => {
+    const db = openTestDatabase();
+    try {
+      db.exec('CREATE TABLE rows (id INTEGER PRIMARY KEY)');
+      const heard: Array<{ held: number; inTransaction: boolean }> = [];
+      setWriteHoldObserver((connection, heldMs) => heard.push({ held: heldMs, inTransaction: connection.inTransaction }));
+      const insert = writeTransaction(db, () => { db.prepare('INSERT INTO rows DEFAULT VALUES').run(); });
+      const outer = writeTransaction(db, () => {
+        insert();
+        insert();
+      });
+      outer();
       insert();
-      insert();
-    });
-    outer();
-    insert();
-    expect(heard).toHaveLength(2);
-    for (const entry of heard) {
-      expect(entry.held).toBeGreaterThanOrEqual(0);
-      expect(entry.inTransaction).toBe(false);
+      expect(heard).toHaveLength(2);
+      for (const entry of heard) {
+        expect(entry.held).toBeGreaterThanOrEqual(0);
+        expect(entry.inTransaction).toBe(false);
+      }
+    } finally {
+      db.close();
     }
   });
 });

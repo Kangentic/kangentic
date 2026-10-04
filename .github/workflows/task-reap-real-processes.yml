@@ -104,8 +104,9 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
-      # --ignore-scripts: the tests need no native rebuild, and the platform
-      # binaries vitest and koffi load arrive as optional dependencies.
+      # --ignore-scripts: the tests need no Electron binary (the root postinstall's
+      # only job), and the platform binaries vitest and koffi load arrive as
+      # optional dependencies.
       - name: Install dependencies (npm ci)
         run: npm ci --ignore-scripts
       - name: Reap real tagged processes

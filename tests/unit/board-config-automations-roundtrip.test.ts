@@ -9,20 +9,11 @@
  * would go quiet. Converting on READ is what makes a teammate's older file, or
  * simply a file that has not been rewritten yet, still behave.
  *
- * node:sqlite rather than better-sqlite3, whose native binding is built for
- * Electron's ABI so a suite gated on it skips everywhere, CI included.
+ * Real better-sqlite3, the driver production uses.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import type { BoardColumnAutomations, BoardColumnConfig } from '../../src/shared/types';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
 
 /** The one database every module under test shares, swapped per test. */
 const harness = vi.hoisted(() => ({ db: null as unknown }));
@@ -37,11 +28,19 @@ const { AutomationRepository } = await import('../../src/main/db/repositories/au
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
-describeWithSqlite('kangentic.json automations round-trip', () => {
+describe('kangentic.json automations round-trip', () => {
+  const openDatabases: DatabaseType.Database[] = [];
+
+  afterEach(() => {
+    harness.db = null;
+    for (const database of openDatabases.splice(0)) database.close();
+  });
+
   function freshDatabase() {
-    const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const database = openTestDatabase();
+    openDatabases.push(database);
     database.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(database);
     harness.db = database;
@@ -374,9 +373,7 @@ describeWithSqlite('kangentic.json automations round-trip', () => {
 });
 
 // `planColumnAutomations` is a pure function of one `BoardColumnConfig`, with
-// no database underneath it. Pinned directly (not gated behind node:sqlite) so
-// the dedup behavior is covered even on a machine where the better-sqlite3
-// native binding is not built.
+// no database underneath it, so the dedup behavior is pinned directly.
 describe('planColumnAutomations name dedup', () => {
   function columnWithDuplicateName(): BoardColumnConfig {
     return {
@@ -423,8 +420,7 @@ describe('planColumnAutomations name dedup', () => {
   });
 });
 
-// Ungated for the same reason as the block above: the DESKTOP-1H throw lives in
-// the planner, so its red run must not depend on node:sqlite being present.
+// Also with no database underneath it: the DESKTOP-1H throw lives in the planner.
 describe('planColumnAutomations with a malformed container', () => {
   function planFor(automations: unknown) {
     return planColumnAutomations({ name: 'Executing', automations: automations as BoardColumnAutomations });

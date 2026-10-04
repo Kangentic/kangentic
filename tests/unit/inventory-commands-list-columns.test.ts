@@ -14,9 +14,8 @@
  * makes this file non-vacuous - without it, deleting the archived filter
  * outright still passes.
  *
- * Mocking the repositories mirrors inventory-commands-list-tasks.test.ts: no
- * better-sqlite3 binary is needed (it is built for Electron's Node ABI and will
- * not load under vitest).
+ * Mocking the repositories mirrors inventory-commands-list-tasks.test.ts: the
+ * handler runs with no database involved.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

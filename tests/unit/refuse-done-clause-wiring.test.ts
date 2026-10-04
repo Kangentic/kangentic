@@ -14,7 +14,7 @@
  *
  * Strategy: mock only the repositories (SwimlaneRepository, TaskRepository,
  * AttachmentRepository, SessionRepository, BacklogRepository,
- * BacklogAttachmentRepository) so no better-sqlite3 binary is needed - but
+ * BacklogAttachmentRepository) so no database is opened - but
  * deliberately do NOT mock column-resolver. The real resolveColumn runs
  * against a mocked SwimlaneRepository.list() that includes a genuine Done
  * lane, so the assertions are on the handler's actual returned refusal text,
@@ -23,11 +23,10 @@
  * A third handler, handleCreateTask, carries its own refuseDone clause
  * (task-commands.ts) and is the primary one: it is the tool whose schema
  * description names the done-role column, and the handler in the bug this
- * whole change is about. Its only other coverage is
- * mcp-move-task-to-done.test.ts, which is describe.runIf(CAN_RUN) against a
- * real better-sqlite3 DB and skips on this machine (the ABI does not load
- * under vitest), so without a test here a dropped `{ refuseDone: ... }` at
- * that call site stays green in every locally-runnable suite.
+ * whole change is about. mcp-move-task-to-done.test.ts covers it end to end
+ * against a real better-sqlite3 DB; this file pins the handler's own clause
+ * without a database, so a dropped `{ refuseDone: ... }` at that call site
+ * fails here first, with the clause named.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

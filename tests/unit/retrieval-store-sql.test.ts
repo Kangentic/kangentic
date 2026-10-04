@@ -1,46 +1,53 @@
 import { passThroughTransaction } from './helpers/transaction-double';
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { CHUNKS_PER_TRANSACTION, DELETES_PER_TRANSACTION, RetrievalStore, type DocSumWrite } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
-// The real vec0 case near the end needs the sqlite-vec extension as well, and
-// skips without either. `node-sqlite-ci-canary.test.ts` asserts both on CI, so
-// a skip here cannot hide there.
-let vecPath: string | null = null;
-try {
-  vecPath = (await import('sqlite-vec')).getLoadablePath();
-} catch {
-  vecPath = null;
-}
-const describeWithVec = sqlite && vecPath ? describe : describe.skip;
-
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
 
 /**
- * better-sqlite3 cannot load under vitest's system Node, so the store's SQL is
- * exercised via a hand-rolled `prepare()` that records the SQL text and bound
- * params and returns scripted rows. These lock the JS contract: upsertDocument's
- * (seq, contentHash) diff, the 1-based lexical ranks, and the read-path SQL
- * shape / bound bounds. (The real SQL executes at the E2E tier against a live
- * DB.) Mirrors tests/unit/transcript-repository.test.ts.
+ * Most of this file drives the store through a hand-rolled `prepare()` that
+ * records the SQL text and bound params and returns scripted rows. These lock
+ * the JS contract: upsertDocument's (seq, contentHash) diff, the 1-based lexical
+ * ranks, and the read-path SQL shape / bound bounds, which is to say the SQL text
+ * and the parameters the store sends. They do not run that SQL.
  *
- * The exceptions run the REAL project migrations and the REAL store against
- * node:sqlite (as code-corpus.test.ts does), where what a statement must get
- * right is which rows it touches, which a recording double cannot see.
+ * The "(real database)" blocks and the real vec0 block run the REAL project
+ * migrations and the REAL store on real better-sqlite3, the driver production
+ * uses, where what a statement must get right is which rows it touches, which a
+ * recording double cannot see.
  */
+
+const openDatabases: Database.Database[] = [];
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+  for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
+
+/** A real database, closed after the test: in memory unless `filename` is given.
+ *  `vec` loads sqlite-vec. */
+function openTracked(options: { vec?: boolean; filename?: string } = {}): Database.Database {
+  const database = openTestDatabase(options.filename ?? ':memory:', { vec: options.vec });
+  openDatabases.push(database);
+  return database;
+}
+
+/** A database file path in a directory removed after the test, for a test that
+ *  needs a second connection to the same database. */
+function temporaryDatabaseFile(): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-retrieval-store-'));
+  temporaryDirectories.push(directory);
+  return path.join(directory, 'project.db');
+}
 
 interface RecordedCall {
   sql: string;
@@ -737,7 +744,7 @@ describe('RetrievalStore.corpusTotals', () => {
   });
 });
 
-describeWithSqlite('a deleted session leaves the index by the sweep, not by trigger (real database)', () => {
+describe('a deleted session leaves the index by the sweep, not by trigger (real database)', () => {
   function stateFor(docId: string, sessionId: string) {
     return {
       corpus: 'conversation',
@@ -754,10 +761,9 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
   }
 
   it('keeps a deleted session\'s chunks until the sweep, which finds and deletes them', async () => {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
-    const store = new RetrievalStore(db);
+    const database = openTracked();
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
     const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
     database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
     for (const id of ['task-1', 'task-2']) {
@@ -784,7 +790,7 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
       { corpus: 'conversation', docId: 'agent-gone' },
       { corpus: 'change', docId: 'session-gone' },
     ]));
-    const indexer = new ConversationIndexer({ getDb: () => db });
+    const indexer = new ConversationIndexer({ getDb: () => database });
     await expect(indexer.purgeDeletedSessions('project-1', () => true)).resolves.toBe(2);
     expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE session_id = 'session-gone'`)).toBe(0);
     expect(count(`SELECT COUNT(*) AS count FROM memory_index_state WHERE session_id = 'session-gone'`)).toBe(0);
@@ -793,10 +799,9 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
   });
 
   it('finds a deleted session\'s chunks with no index state only when asked to read the chunks, and spares a document a live session owns', async () => {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
-    const store = new RetrievalStore(db);
+    const database = openTracked();
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
     const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
     database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
     database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
@@ -810,7 +815,7 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
     store.setIndexState(stateFor('agent-live', 'session-live'));
     database.exec(`UPDATE memory_chunks SET session_id = 'session-old' WHERE doc_id = 'agent-live'`);
 
-    const indexer = new ConversationIndexer({ getDb: () => db });
+    const indexer = new ConversationIndexer({ getDb: () => database });
     await expect(indexer.purgeDeletedSessions('project-1', () => true)).resolves.toBe(0);
     await expect(indexer.purgeDeletedSessions('project-1', () => true, { fromChunks: true })).resolves.toBe(1);
     expect(count(`SELECT COUNT(*) AS count FROM memory_chunks WHERE doc_id = 'agent-stateless'`)).toBe(0);
@@ -818,14 +823,13 @@ describeWithSqlite('a deleted session leaves the index by the sweep, not by trig
   });
 });
 
-describeWithSqlite('a vec table this connection cannot open (real database)', () => {
+describe('a vec table this connection cannot open (real database)', () => {
   // The vec table exists (created by a connection that loaded sqlite-vec), and
   // the connection under test never loaded it. A plain table stands in for it:
   // without sqlite-vec a real vec0 table cannot be opened anyway.
-  function projectWithVecTable() {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
+  function projectWithVecTable(filename?: string) {
+    const database = openTracked({ filename });
+    runProjectMigrations(database);
     database.exec('CREATE TABLE memory_vec_conversation (rowid INTEGER PRIMARY KEY, embedding BLOB)');
     const count = (sql: string): number => (database.prepare(sql).get() as { count: number }).count;
     // Every chunk of `docId` embedded, with a vector at its id.
@@ -835,12 +839,12 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     };
     const vectorIds = (): number[] => (database.prepare('SELECT rowid AS id FROM memory_vec_conversation ORDER BY rowid').all() as Array<{ id: number }>)
       .map((row) => Number(row.id));
-    return { database, db, count, embed, vectorIds };
+    return { database, count, embed, vectorIds };
   }
 
   it('deletes chunks without their vectors, so a re-index, a delete and a purge all go through lexical-only', async () => {
-    const { db, count, embed } = projectWithVecTable();
-    const store = new RetrievalStore(db);
+    const { database, count, embed } = projectWithVecTable();
+    const store = new RetrievalStore(database);
     store.upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
     embed(ref.docId);
 
@@ -859,8 +863,9 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
   });
 
   it('leaves the reconcile, once sqlite-vec loads, to remove a vector whose chunk is gone or whose id a new chunk took', async () => {
-    const { database, db, embed, vectorIds } = projectWithVecTable();
-    const store = new RetrievalStore(db);
+    const file = temporaryDatabaseFile();
+    const { database, embed, vectorIds } = projectWithVecTable(file);
+    const store = new RetrievalStore(database);
     store.upsertDocument({ ...ref, docId: 'doc-kept' }, [chunk(0, 'hashA')]);
     store.upsertDocument({ ...ref, docId: 'doc-gone' }, [chunk(0, 'hashB'), chunk(1, 'hashC')]);
     embed('doc-kept');
@@ -873,29 +878,30 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
     const { insertedIds } = store.upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashD')]);
     expect(insertedIds).toEqual([2]);
 
-    // The next worker loads sqlite-vec on its own connection.
-    const vecConnection = adaptDatabase(database);
-    markVecCapable(vecConnection);
-    await new RetrievalStore(vecConnection).reconcileVecOrphans(async () => undefined);
+    // The next worker loads sqlite-vec on its own connection to the same file:
+    // only that connection is vec-capable (a plain table stands in for the vec
+    // table either way). The first one, unmarked, could never have reconciled.
+    const nextWorker = openTracked({ filename: file });
+    markVecCapable(nextWorker);
+    await new RetrievalStore(nextWorker).reconcileVecOrphans(async () => undefined);
 
     // Id 3 has no chunk; id 2's vector was doc-gone's, not doc-new's.
     expect(vectorIds()).toEqual([1]);
   });
 
   it('reconciles a transaction at a time with a turn between, and keeps a vector the writeback gave a reused id meanwhile', async () => {
-    const { database, db, vectorIds } = projectWithVecTable();
+    const { database, vectorIds } = projectWithVecTable();
     // A full transaction of orphans with no chunk, then a stale vector at an
     // id a new chunk took, which is not embedded yet.
     const insertVector = database.prepare(`INSERT INTO memory_vec_conversation (rowid, embedding) VALUES (?, x'00')`);
     for (let id = 1; id <= 64; id += 1) insertVector.run(id);
-    new RetrievalStore(db).upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashA')]);
+    new RetrievalStore(database).upsertDocument({ ...ref, docId: 'doc-new' }, [chunk(0, 'hashA')]);
     database.exec(`UPDATE memory_chunks SET id = 100 WHERE doc_id = 'doc-new'`);
     insertVector.run(100);
 
-    const vecConnection = adaptDatabase(database);
-    markVecCapable(vecConnection);
+    markVecCapable(database);
     let turns = 0;
-    await new RetrievalStore(vecConnection).reconcileVecOrphans(async () => {
+    await new RetrievalStore(database).reconcileVecOrphans(async () => {
       turns += 1;
       // The embedding writeback lands during the first turn: chunk 100's
       // vector is its own now.
@@ -907,7 +913,7 @@ describeWithSqlite('a vec table this connection cannot open (real database)', ()
   });
 });
 
-describeWithVec('reconcileVecOrphans against a real vec0 table', () => {
+describe('reconcileVecOrphans against a real vec0 table', () => {
   // The cases above stand a plain table in for the vec table, so they cannot see
   // what only vec0 does: its rowids are read back and must be bound as BigInt, and
   // a DELETE on it goes through the extension rather than a b-tree. This one runs
@@ -916,12 +922,10 @@ describeWithVec('reconcileVecOrphans against a real vec0 table', () => {
   const vectorFor = (seed: number): Float32Array => new Float32Array([seed, seed + 0.5, -seed, 1]);
 
   it('removes a vector with no chunk, one whose chunk is gone and one at an id a new chunk took, and keeps the one the embedded chunk owns', async () => {
-    const database = new sqlite!.DatabaseSync(':memory:', { allowExtension: true });
-    database.loadExtension(vecPath!);
-    const db = adaptDatabase(database);
-    markVecCapable(db);
-    runProjectMigrations(db);
-    const store = new RetrievalStore(db);
+    const database = openTracked({ vec: true });
+    markVecCapable(database);
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
     store.ensureVecTable(DIMENSIONS);
     const vectorIds = (): number[] => (database.prepare('SELECT rowid AS id FROM memory_vec_conversation ORDER BY rowid').all() as Array<{ id: number | bigint }>)
       .map((row) => Number(row.id));
@@ -946,7 +950,7 @@ describeWithVec('reconcileVecOrphans against a real vec0 table', () => {
       .run(BigInt(orphanId), Buffer.from(vectorFor(9).buffer));
     expect(vectorIds()).toEqual([keptIds[0], goneIds[0], goneIds[1], orphanId]);
 
-    await new RetrievalStore(db).reconcileVecOrphans(async () => undefined);
+    await new RetrievalStore(database).reconcileVecOrphans(async () => undefined);
 
     // Exactly the embedded chunk's own vector survives: the orphan, the deleted
     // chunk's vector and the reused id's stale vector are all gone. Red-green by
@@ -954,18 +958,17 @@ describeWithVec('reconcileVecOrphans against a real vec0 table', () => {
     // would stay, and without the `NOT IN` over the chunk ids the other two would.
     expect(vectorIds()).toEqual([keptIds[0]]);
     // And the survivor is still its own vector, readable through the extension.
-    expect(new RetrievalStore(db).searchSemantic(vectorFor(1), 1, ['conversation'])[0]?.chunkId).toBe(keptIds[0]);
+    expect(new RetrievalStore(database).searchSemantic(vectorFor(1), 1, ['conversation'])[0]?.chunkId).toBe(keptIds[0]);
     // The new chunk is untouched: still waiting for its own embedding.
     expect(database.prepare('SELECT embedded_model AS model FROM memory_chunks WHERE id = ?').get(reusedIds[0])).toEqual({ model: null });
   });
 });
 
-describeWithSqlite('RetrievalStore.purgeCorpora (real database)', () => {
+describe('RetrievalStore.purgeCorpora (real database)', () => {
   function project() {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
-    const store = new RetrievalStore(db);
+    const database = openTracked();
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
     const count = (table: string): number => (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
     return { store, count };
   }
@@ -1037,16 +1040,15 @@ function sumsWrite(fields: Partial<DocSumWrite> & { docId: string; chunkCount: n
   };
 }
 
-describeWithSqlite('RetrievalStore document sums (real database)', () => {
+describe('RetrievalStore document sums (real database)', () => {
   const INDEXED_AT = '2026-09-30T00:00:00.000Z';
 
   /** A project with doc-1 of five chunks, all embedded, and its sums stored
    *  with a prefix through seq 2. */
   function project() {
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const db = adaptDatabase(database);
-    runProjectMigrations(db);
-    const store = new RetrievalStore(db);
+    const database = openTracked();
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
     store.upsertDocument(ref, [0, 1, 2, 3, 4].map((seq) => chunk(seq, `hash-${seq}`)));
     store.setIndexState({
       corpus: 'conversation', docId: ref.docId, sessionId: 'session-1', sourcePath: null, sourceMtimeMs: null,

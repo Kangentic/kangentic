@@ -3,12 +3,12 @@
  * CLIPBOARD_WRITE_TEXT and CLIPBOARD_READ_IMAGE.
  *
  * CLIPBOARD_WRITE_TEXT writes text to the native clipboard via Electron's
- * synchronous, focus-independent `clipboard.writeText`, guarded against
- * non-string and empty-string input:
+ * focus-independent `clipboard.writeText` (a promise since Electron 44), guarded
+ * against non-string and empty-string input:
  *
- *   ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, (_event, text: string): void => {
+ *   ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, async (_event, text: string): Promise<void> => {
  *     if (typeof text !== 'string' || text.length === 0) return;
- *     clipboard.writeText(text);
+ *     await clipboard.writeText(text);
  *   });
  *
  * This guard matters because both the OSC 52 terminal handler and the
@@ -18,17 +18,25 @@
  * an empty write to the OS clipboard, and must not throw on a caller sending
  * an unexpected non-string.
  *
- * CLIPBOARD_READ_IMAGE reads the clipboard's NativeImage, caps it via the real
- * (unmocked) `capClipboardImage` before writing it to a temp file, and prunes
- * the temp directory via the real (unmocked) `pruneClipboardTempDir` first.
- * Those two helpers are unit-tested in isolation in clipboard-image.test.ts;
- * the tests here cover the WIRING - that the handler actually calls them,
- * rather than writing `image.toPNG()` straight to disk.
+ * CLIPBOARD_READ_IMAGE reads the clipboard's image through Electron 44's async
+ * `clipboard.read()` (the first `image/*` Blob that `nativeImage` decodes), caps
+ * it via the real (unmocked) `capClipboardImage` before writing it to a temp
+ * file, and prunes the temp directory via the real (unmocked)
+ * `pruneClipboardTempDir` first. Those two helpers are unit-tested in isolation
+ * in clipboard-image.test.ts; the tests here cover the WIRING - that the handler
+ * actually calls them, rather than writing `image.toPNG()` straight to disk.
+ *
+ * The last two describe blocks call `readClipboardImage` and `writeClipboardImage`
+ * directly, with plain fakes for the clipboard, the decoder, and the
+ * ClipboardItem constructor. The handler tests reach `readClipboardImage` with one
+ * item and one decodable type, so they never exercise its skip-to-next paths, and
+ * `writeClipboardImage` (the Copy Image context menu) has no handler at all: it is
+ * called from the menu click in src/main/index.ts.
  *
  * Strategy mirrors keybindings-probe-handler.test.ts: mock electron's ipcMain
  * to capture registered handlers, then invoke the handler directly with
  * controlled inputs and assert against a mocked `clipboard.writeText` /
- * `clipboard.readImage`. `os.tmpdir()` is spied so CLIPBOARD_READ_IMAGE writes
+ * `clipboard.read`. `os.tmpdir()` is spied so CLIPBOARD_READ_IMAGE writes
  * under a throwaway test directory instead of the real
  * `<tmpdir>/kangentic-clipboard` the dogfooding app's own pastes live in.
  *
@@ -48,8 +56,8 @@ import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../src/shared/image
 const { capturedHandlers, mockClipboard, mockNativeImage } = vi.hoisted(() => {
   const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
   const mockClipboard = {
-    writeText: vi.fn(),
-    readImage: vi.fn(),
+    writeText: vi.fn(async (): Promise<void> => {}),
+    read: vi.fn(),
   };
   const mockNativeImage = {
     createFromBuffer: vi.fn(),
@@ -108,6 +116,7 @@ vi.mock('../../src/main/ipc/handlers/projects', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
+import { readClipboardImage, writeClipboardImage } from '../../src/main/ipc/helpers/clipboard-image';
 
 // ---------------------------------------------------------------------------
 // Test context factory (minimal - the clipboard handler needs no project state).
@@ -152,16 +161,31 @@ function makeContext() {
   };
 }
 
-function invokeClipboardWriteTextHandler(text: unknown): void {
+async function invokeClipboardWriteTextHandler(text: unknown): Promise<void> {
   const handler = capturedHandlers.get(IPC.CLIPBOARD_WRITE_TEXT);
   if (!handler) throw new Error(`Handler not registered for ${IPC.CLIPBOARD_WRITE_TEXT}`);
-  handler(undefined, text);
+  await handler(undefined, text);
 }
 
-function invokeClipboardReadImageHandler(): string | null {
+async function invokeClipboardReadImageHandler(): Promise<string | null> {
   const handler = capturedHandlers.get(IPC.CLIPBOARD_READ_IMAGE);
   if (!handler) throw new Error(`Handler not registered for ${IPC.CLIPBOARD_READ_IMAGE}`);
-  return handler(undefined) as string | null;
+  return (await handler(undefined)) as string | null;
+}
+
+/** A `clipboard.read()` item, shaped like Electron 44's ClipboardItem: its MIME
+ *  types, and a Blob per type. */
+function makeClipboardItem(payloads: Record<string, string>): { types: string[]; getType: (type: string) => Promise<Blob> } {
+  return {
+    types: Object.keys(payloads),
+    getType: async (type: string) => new Blob([payloads[type]], { type }),
+  };
+}
+
+/** The clipboard holding one image, whose PNG bytes decode to `image`. */
+function clipboardHoldsImage(image: unknown): void {
+  mockClipboard.read.mockResolvedValue([makeClipboardItem({ 'text/plain': 'caption', 'image/png': 'png-bytes' })]);
+  mockNativeImage.createFromBuffer.mockReturnValue(image);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,32 +236,38 @@ describe('CLIPBOARD_WRITE_TEXT IPC handler', () => {
     registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
   });
 
-  it('writes a valid non-empty string to the native clipboard', () => {
-    invokeClipboardWriteTextHandler('copied-text');
+  it('writes a valid non-empty string to the native clipboard', async () => {
+    await invokeClipboardWriteTextHandler('copied-text');
 
     expect(mockClipboard.writeText).toHaveBeenCalledWith('copied-text');
   });
 
-  it('is a no-op for an empty string', () => {
-    invokeClipboardWriteTextHandler('');
+  it('passes a failed write on to the renderer, which has its own catch', async () => {
+    mockClipboard.writeText.mockRejectedValueOnce(new Error('clipboard busy'));
+
+    await expect(invokeClipboardWriteTextHandler('copied-text')).rejects.toThrow('clipboard busy');
+  });
+
+  it('is a no-op for an empty string', async () => {
+    await invokeClipboardWriteTextHandler('');
 
     expect(mockClipboard.writeText).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for null', () => {
-    invokeClipboardWriteTextHandler(null);
+  it('is a no-op for null', async () => {
+    await invokeClipboardWriteTextHandler(null);
 
     expect(mockClipboard.writeText).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for undefined', () => {
-    invokeClipboardWriteTextHandler(undefined);
+  it('is a no-op for undefined', async () => {
+    await invokeClipboardWriteTextHandler(undefined);
 
     expect(mockClipboard.writeText).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for a non-string number', () => {
-    invokeClipboardWriteTextHandler(42);
+  it('is a no-op for a non-string number', async () => {
+    await invokeClipboardWriteTextHandler(42);
 
     expect(mockClipboard.writeText).not.toHaveBeenCalled();
   });
@@ -258,7 +288,8 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     clipboardTempDir = path.join(testTmpRoot, 'kangentic-clipboard');
 
     capturedHandlers.clear();
-    mockClipboard.readImage.mockReset();
+    mockClipboard.read.mockReset();
+    mockNativeImage.createFromBuffer.mockReset();
     registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
   });
 
@@ -267,11 +298,21 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     fs.rmSync(testTmpRoot, { recursive: true, force: true });
   });
 
-  it('caps an oversized clipboard image and writes the RESIZED bytes, not the original', () => {
-    const { image, resizedToPng } = makeFakeNativeImage(4000, 2000);
-    mockClipboard.readImage.mockReturnValue(image);
+  it('decodes the image/png payload, not the other types the item carries', async () => {
+    const { image } = makeFakeNativeImage(800, 600);
+    clipboardHoldsImage(image);
 
-    const filePath = invokeClipboardReadImageHandler();
+    expect(await invokeClipboardReadImageHandler()).toBeTruthy();
+    const decoded = mockNativeImage.createFromBuffer.mock.calls[0]?.[0] as Buffer;
+    expect(mockNativeImage.createFromBuffer).toHaveBeenCalledOnce();
+    expect(decoded.toString()).toBe('png-bytes');
+  });
+
+  it('caps an oversized clipboard image and writes the RESIZED bytes, not the original', async () => {
+    const { image, resizedToPng } = makeFakeNativeImage(4000, 2000);
+    clipboardHoldsImage(image);
+
+    const filePath = await invokeClipboardReadImageHandler();
 
     expect(filePath).toBeTruthy();
     // Proves the write went through the throwaway test root, not the real
@@ -294,7 +335,7 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     expect(writtenBytes).toEqual(resizedToPng.mock.results[0]?.value);
   });
 
-  it('prunes stale pasted-image files from the temp dir before writing the new paste', () => {
+  it('prunes stale pasted-image files from the temp dir before writing the new paste', async () => {
     fs.mkdirSync(clipboardTempDir, { recursive: true });
     const staleFilePath = path.join(clipboardTempDir, 'pasted-image-old.png');
     fs.writeFileSync(staleFilePath, 'stale-png-bytes');
@@ -304,9 +345,9 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     fs.utimesSync(staleFilePath, fortyEightHoursAgoSeconds, fortyEightHoursAgoSeconds);
 
     const { image } = makeFakeNativeImage(800, 600); // already fits, no resize needed
-    mockClipboard.readImage.mockReturnValue(image);
+    clipboardHoldsImage(image);
 
-    const filePath = invokeClipboardReadImageHandler();
+    const filePath = await invokeClipboardReadImageHandler();
 
     // Reverting the handler to skip pruneClipboardTempDir(tempDir) leaves this
     // stale file in place - it is the discriminating assertion for that
@@ -317,15 +358,37 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     expect(fs.existsSync(filePath as string)).toBe(true);
   });
 
-  it('returns null when the clipboard holds no image', () => {
-    mockClipboard.readImage.mockReturnValue({ isEmpty: () => true });
+  it('returns null when the clipboard is empty', async () => {
+    mockClipboard.read.mockResolvedValue([]);
 
-    const filePath = invokeClipboardReadImageHandler();
-
-    expect(filePath).toBeNull();
+    expect(await invokeClipboardReadImageHandler()).toBeNull();
   });
 
-  it('degrades to null instead of throwing when writing the capped image fails', () => {
+  it('returns null without decoding anything when no item carries an image type', async () => {
+    mockClipboard.read.mockResolvedValue([makeClipboardItem({ 'text/plain': 'just text', 'text/html': '<b>just text</b>' })]);
+
+    expect(await invokeClipboardReadImageHandler()).toBeNull();
+    expect(mockNativeImage.createFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the image payload does not decode', async () => {
+    clipboardHoldsImage({ isEmpty: () => true });
+
+    expect(await invokeClipboardReadImageHandler()).toBeNull();
+  });
+
+  it('degrades to null instead of rejecting when the clipboard cannot be read', async () => {
+    // readImage() could not fail. read() can, for one when another app holds the
+    // clipboard open, and a rejection would surface as an unhandled one in the
+    // renderer's paste path.
+    mockClipboard.read.mockRejectedValue(new Error('OpenClipboard failed'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(invokeClipboardReadImageHandler()).resolves.toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[clipboard] Failed to read the clipboard image:', expect.any(Error));
+  });
+
+  it('degrades to null instead of throwing when writing the capped image fails', async () => {
     // Pre-diff this handler had no try/catch at all: any fs failure (disk full,
     // a Windows AV scanner holding the just-created temp file, a foreign-owned
     // /tmp on shared Linux) became a rejected invoke in the renderer. The
@@ -333,19 +396,14 @@ describe('CLIPBOARD_READ_IMAGE IPC handler', () => {
     // empty clipboard returns, logging a trace instead. That degrade branch has
     // no other covering assertion - this pins it directly.
     const { image } = makeFakeNativeImage(800, 600); // already fits, no resize needed
-    mockClipboard.readImage.mockReturnValue(image);
+    clipboardHoldsImage(image);
 
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
       throw new Error('ENOSPC: no space left on device, write');
     });
 
-    let filePath: string | null = null;
-    expect(() => {
-      filePath = invokeClipboardReadImageHandler();
-    }).not.toThrow();
-
-    expect(filePath).toBeNull();
+    await expect(invokeClipboardReadImageHandler()).resolves.toBeNull();
     // The other half of the documented contract: degrade quietly to the
     // renderer, but still leave a trace for whoever is debugging a paste that
     // silently did nothing.
@@ -417,5 +475,205 @@ describe('CLIPBOARD_SAVE_IMAGE IPC handler', () => {
     expect(invokeClipboardSaveImageHandler(new Uint8Array(0))).toBeNull();
     expect(invokeClipboardSaveImageHandler(undefined)).toBeNull();
     expect(mockNativeImage.createFromBuffer).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readClipboardImage and writeClipboardImage, called directly. The fakes are
+// plain objects; the electron types are derived from the functions' own
+// signatures so this file needs no import from 'electron' for them.
+// ---------------------------------------------------------------------------
+
+type ClipboardSource = Parameters<typeof readClipboardImage>[0];
+type DecodedImage = ReturnType<Parameters<typeof readClipboardImage>[1]>;
+
+/** A stand-in for a decoded NativeImage. The label only makes a failed identity
+ *  assertion readable. */
+function makeDecodedImage(label: string, isEmpty: boolean): DecodedImage {
+  return { label, isEmpty: () => isEmpty } as unknown as DecodedImage;
+}
+
+function makeBlob(text: string, type: string): Blob {
+  return new Blob([text], { type });
+}
+
+/** A `clipboard.read()` item whose `getType` resolves whatever is scripted for a
+ *  type, so a test can hand back something that is not a Blob. */
+function makeScriptedItem(payloadsByType: Record<string, unknown>) {
+  return {
+    types: Object.keys(payloadsByType),
+    getType: vi.fn(async (type: string): Promise<unknown> => payloadsByType[type]),
+  };
+}
+
+function makeClipboardSource(items: ReturnType<typeof makeScriptedItem>[]): ClipboardSource {
+  return { read: vi.fn(async () => items) } as unknown as ClipboardSource;
+}
+
+/** Decodes by the payload's text. Bytes with no mapping decode to an EMPTY image,
+ *  never undefined: an undefined result would make `image.isEmpty()` throw, the
+ *  catch in readClipboardImage would return null, and a test could go red or
+ *  green for that reason instead of the one it names. */
+function makeDecoder(imagesByPayloadText: Record<string, DecodedImage>) {
+  const undecodableImage = makeDecodedImage('unmapped bytes', true);
+  return vi.fn((bytes: Buffer): DecodedImage => imagesByPayloadText[bytes.toString()] ?? undecodableImage);
+}
+
+function decodedPayloadTexts(decode: ReturnType<typeof makeDecoder>): string[] {
+  return decode.mock.calls.map(([bytes]) => bytes.toString());
+}
+
+describe('readClipboardImage skip-to-next behavior', () => {
+  // The skip cases below are built from the two PREFERRED types (png, then jpeg),
+  // so the decodable-first ordering cannot make them pass on its own: each one
+  // needs the loop to move on past a type or an item that yielded nothing.
+
+  it('skips an image/png that decodes to an empty image and returns the image/jpeg', async () => {
+    const jpegImage = makeDecodedImage('jpeg', false);
+    const decode = makeDecoder({ 'png-bytes': makeDecodedImage('empty png', true), 'jpeg-bytes': jpegImage });
+    const item = makeScriptedItem({
+      'image/png': makeBlob('png-bytes', 'image/png'),
+      'image/jpeg': makeBlob('jpeg-bytes', 'image/jpeg'),
+    });
+
+    const image = await readClipboardImage(makeClipboardSource([item]), decode);
+
+    expect(image).toBe(jpegImage);
+    expect(decodedPayloadTexts(decode)).toEqual(['png-bytes', 'jpeg-bytes']);
+  });
+
+  it('skips an image/png payload that is not a Blob and returns the image/jpeg', async () => {
+    const jpegImage = makeDecodedImage('jpeg', false);
+    const decode = makeDecoder({ 'jpeg-bytes': jpegImage });
+    const item = makeScriptedItem({
+      'image/png': 'a string, not a Blob',
+      'image/jpeg': makeBlob('jpeg-bytes', 'image/jpeg'),
+    });
+
+    const image = await readClipboardImage(makeClipboardSource([item]), decode);
+
+    expect(image).toBe(jpegImage);
+    // Only the jpeg reached the decoder: the string payload was skipped, not decoded.
+    expect(decodedPayloadTexts(decode)).toEqual(['jpeg-bytes']);
+  });
+
+  it('moves on to the next clipboard item when the first one yields no image', async () => {
+    const secondItemImage = makeDecodedImage('second item png', false);
+    const decode = makeDecoder({
+      'first-jpeg-bytes': makeDecodedImage('empty jpeg', true),
+      'second-png-bytes': secondItemImage,
+    });
+    // The first item offers both preferred types and neither produces an image:
+    // the png is not a Blob and the jpeg decodes to an empty image.
+    const firstItem = makeScriptedItem({
+      'image/png': 'a string, not a Blob',
+      'image/jpeg': makeBlob('first-jpeg-bytes', 'image/jpeg'),
+    });
+    const secondItem = makeScriptedItem({ 'image/png': makeBlob('second-png-bytes', 'image/png') });
+
+    const image = await readClipboardImage(makeClipboardSource([firstItem, secondItem]), decode);
+
+    expect(image).toBe(secondItemImage);
+    expect(decodedPayloadTexts(decode)).toEqual(['first-jpeg-bytes', 'second-png-bytes']);
+  });
+
+  it('fetches the decodable image/png before an image type listed ahead of it, and never fetches the other', async () => {
+    const pngImage = makeDecodedImage('png', false);
+    // The tiff WOULD decode to a non-empty image if it were asked for, so a loop
+    // that went in listed order would return it and fail on the identity check
+    // as well as on the getType calls.
+    const decode = makeDecoder({
+      'tiff-bytes': makeDecodedImage('tiff', false),
+      'png-bytes': pngImage,
+    });
+    const item = makeScriptedItem({
+      'image/tiff': makeBlob('tiff-bytes', 'image/tiff'),
+      'image/png': makeBlob('png-bytes', 'image/png'),
+    });
+    expect(item.types).toEqual(['image/tiff', 'image/png']);
+
+    const image = await readClipboardImage(makeClipboardSource([item]), decode);
+
+    expect(image).toBe(pngImage);
+    expect(item.getType.mock.calls.map(([type]) => type)).toEqual(['image/png']);
+  });
+});
+
+describe('writeClipboardImage', () => {
+  type CopiedImage = Parameters<typeof writeClipboardImage>[0];
+  type WriteTarget = Parameters<typeof writeClipboardImage>[1];
+  type ClipboardItemFake = ReturnType<Parameters<typeof writeClipboardImage>[2]>;
+
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 8, 9]);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Both flavours carry a working `toPNG`. The empty-image early return sits
+   *  OUTSIDE writeClipboardImage's try, so a fake whose `toPNG` threw would let a
+   *  dropped early return fail inside the try, be swallowed by the catch, and
+   *  leave the empty-image test green against the mutation. */
+  function makeImage(isEmpty: boolean) {
+    return { isEmpty: vi.fn(() => isEmpty), toPNG: vi.fn(() => pngBytes) };
+  }
+
+  /** Fresh fakes per test, so no call history carries across cases. */
+  function makeClipboardTarget() {
+    const clipboardItem = { label: 'the item createClipboardItem returned' } as unknown as ClipboardItemFake;
+    const write = vi.fn<(items: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const createClipboardItem = vi.fn<(payloads: Record<string, Blob>) => ClipboardItemFake>(() => clipboardItem);
+    return { clipboardItem, write, createClipboardItem, clipboardTarget: { write } as unknown as WriteTarget };
+  }
+
+  it('writes nothing for an empty image, so a failed decode cannot blank the clipboard', async () => {
+    const image = makeImage(true);
+    const { write, createClipboardItem, clipboardTarget } = makeClipboardTarget();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await writeClipboardImage(image as unknown as CopiedImage, clipboardTarget, createClipboardItem);
+
+    expect(write).not.toHaveBeenCalled();
+    expect(createClipboardItem).not.toHaveBeenCalled();
+    expect(image.toPNG).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('puts the image on the clipboard as one image/png ClipboardItem holding the toPNG bytes', async () => {
+    const image = makeImage(false);
+    const { clipboardItem, write, createClipboardItem, clipboardTarget } = makeClipboardTarget();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await writeClipboardImage(image as unknown as CopiedImage, clipboardTarget, createClipboardItem);
+
+    expect(createClipboardItem).toHaveBeenCalledOnce();
+    const payloads = createClipboardItem.mock.calls[0][0];
+    expect(Object.keys(payloads)).toEqual(['image/png']);
+    const pngPayload = payloads['image/png'];
+    expect(pngPayload).toBeInstanceOf(Blob);
+    expect(pngPayload.type).toBe('image/png');
+    expect([...new Uint8Array(await pngPayload.arrayBuffer())]).toEqual([...pngBytes]);
+
+    expect(write).toHaveBeenCalledOnce();
+    const writtenItems = write.mock.calls[0][0];
+    expect(writtenItems).toHaveLength(1);
+    expect(writtenItems[0]).toBe(clipboardItem);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolves instead of rejecting when the clipboard write fails, and logs the failure', async () => {
+    const image = makeImage(false);
+    const { write, createClipboardItem, clipboardTarget } = makeClipboardTarget();
+    const writeError = new Error('clipboard busy');
+    write.mockRejectedValue(writeError);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      writeClipboardImage(image as unknown as CopiedImage, clipboardTarget, createClipboardItem),
+    ).resolves.toBeUndefined();
+
+    expect(write).toHaveBeenCalledOnce();
+    expect(consoleErrorSpy).toHaveBeenCalledOnce();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[clipboard] Copy Image failed:', writeError);
   });
 });

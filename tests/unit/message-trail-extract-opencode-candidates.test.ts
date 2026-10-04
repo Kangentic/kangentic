@@ -7,72 +7,32 @@
  * cannot verify at runtime. Two pieces of logic run on those rows before a row
  * becomes a candidate: directory normalization (trailing separator) and a
  * seconds-vs-milliseconds heuristic on `time_created`. This replays a small
- * SQLite fixture built with node:sqlite to drive that real logic, because
- * better-sqlite3 in this repo is rebuilt against Electron's Node ABI and cannot
- * load under plain-node vitest (see scripts/lib/better-sqlite3-node-shim.mjs).
+ * SQLite fixture, written and then read back through the real better-sqlite3
+ * (the driver production uses, loaded by the real loadBetterSqlite3 and opened
+ * readonly with fileMustExist, as in production), to drive that real logic.
  *
- * loadBetterSqlite3 and openCodeDbPath are mocked at the module boundary
- * (standard vitest module mocking, not an implementation change) so the real
- * openCodeCandidates function reads the fixture database through a tiny
- * node:sqlite adapter that satisfies the subset of the better-sqlite3 API it
- * calls: the constructor, prepare().all(), and close(). parseOpenCodeTranscriptAtPath
- * is mocked to return no entries, which keeps the fixture database down to just
- * the `session` table (no message/part schema needed) and gives a deterministic
- * assertion surface: when no transcript carries the recording's prompt,
- * chooseCandidate's thrown error reports the raw candidate count that
- * openCodeCandidates produced from the SQL row filter, before any prompt
- * matching happens.
+ * Only openCodeDbPath is replaced, at the module boundary (standard vitest
+ * module mocking, not an implementation change), so the real openCodeCandidates
+ * function reads the fixture database instead of the user's OpenCode database.
+ * parseOpenCodeTranscriptAtPath is mocked to return no entries, which keeps the
+ * fixture database down to just the `session` table (no message/part schema
+ * needed) and gives a deterministic assertion surface: when no transcript carries
+ * the recording's prompt, chooseCandidate's thrown error reports the raw candidate
+ * count that openCodeCandidates produced from the SQL row filter, before any
+ * prompt matching happens.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { extractMessageTrail, TranscriptMatchError, type RecordingFacts } from '../captures/helpers/message-trail-extract';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-candidates-'));
 const fixtureDatabasePath = path.join(temporaryDirectory, 'opencode.db');
 
-interface PreparedStatement {
-  all(...parameters: unknown[]): unknown[];
-}
-
-/**
- * The subset of the better-sqlite3 API openCodeCandidates calls
- * (constructor, prepare().all(), close()), backed by node:sqlite.
- */
-class NodeSqliteAdapter {
-  private readonly database: InstanceType<SqliteModule['DatabaseSync']>;
-
-  constructor(filePath: string, options: { readonly?: boolean; fileMustExist?: boolean }) {
-    if (options.fileMustExist && !fs.existsSync(filePath)) {
-      throw new Error(`fixture database missing: ${filePath}`);
-    }
-    if (!sqlite) throw new Error('node:sqlite unavailable');
-    this.database = new sqlite.DatabaseSync(filePath, { readOnly: options.readonly === true });
-  }
-
-  prepare(sql: string): PreparedStatement {
-    const statement = this.database.prepare(sql);
-    return { all: (...parameters: unknown[]) => statement.all(...parameters) };
-  }
-
-  close(): void {
-    this.database.close();
-  }
-}
-
-vi.mock('../../src/main/agent/adapters/opencode/session-history-parser', () => ({
-  loadBetterSqlite3: () => NodeSqliteAdapter,
+vi.mock('../../src/main/agent/adapters/opencode/session-history-parser', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/agent/adapters/opencode/session-history-parser')>()),
   openCodeDbPath: () => fixtureDatabasePath,
 }));
 
@@ -80,15 +40,14 @@ vi.mock('../../src/main/agent/adapters/opencode/transcript-parser', () => ({
   parseOpenCodeTranscriptAtPath: () => [],
 }));
 
-describeWithSqlite('extractMessageTrail - OpenCode candidate selection', () => {
+describe('extractMessageTrail - OpenCode candidate selection', () => {
   const cwd = '/home/dev/project';
   const capturedAt = '2026-01-01T00:20:00.000Z';
   const durationMs = 10 * 60 * 1000; // 10 minutes
   const startMs = Date.parse(capturedAt) - durationMs;
 
   beforeAll(() => {
-    if (!sqlite) return;
-    const writable = new sqlite.DatabaseSync(fixtureDatabasePath);
+    const writable = openTestDatabase(fixtureDatabasePath);
     writable.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, time_created INTEGER)');
     const insert = writable.prepare('INSERT INTO session (id, directory, time_created) VALUES (?, ?, ?)');
     // Same run as the recording: directory differs only by a trailing separator, and
@@ -139,15 +98,5 @@ describeWithSqlite('extractMessageTrail - OpenCode candidate selection', () => {
     // filter in openCodeCandidates produced before prompt matching ever runs.
     expect(thrown).toBeInstanceOf(TranscriptMatchError);
     expect((thrown as Error).message).toContain('(2 candidate(s) read)');
-  });
-});
-
-describe.runIf(!sqlite)('extractMessageTrail - OpenCode candidate selection (skipped)', () => {
-  it('skipped because node:sqlite is unavailable in this runtime', () => {
-    // Node 22.5+ ships node:sqlite; this repo runs Node 24 everywhere the
-    // unit tier runs, so this branch is not expected to fire. It exists so a
-    // silent skip reads as an explicit, asserted skip rather than a quiet
-    // pass with zero tests, mirroring opencode-session-history-parser.live.test.ts.
-    expect(sqlite).toBeNull();
   });
 });

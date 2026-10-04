@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Lazy-load better-sqlite3 to avoid evaluating the native module at
-// import time. The module is rebuilt against Electron's Node ABI in
-// production; loading it under a stand-alone Node runtime (tsx, raw
-// vitest) crashes with NODE_MODULE_VERSION mismatch. Lazy require
-// confines the failure to the call sites that actually need the DB,
-// so unit tests that don't exercise the SQLite path stay loadable.
+// import time. It used to be rebuilt against Electron's Node ABI, so
+// loading it under a stand-alone Node runtime (tsx, raw vitest) crashed
+// with NODE_MODULE_VERSION mismatch; better-sqlite3 13 is Node-API and
+// loads there. The lazy require still confines any load failure (a
+// platform with no prebuild) to the call sites that need the DB, and
+// keeps the native load off the import path of modules that never read.
 //
 // We use `require(<non-literal>)` so esbuild leaves the call as a
 // runtime resolution rather than statically inlining the module

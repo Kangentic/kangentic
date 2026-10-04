@@ -129,7 +129,7 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 
 | Module | Build Strategy | Packaging |
 |--------|---------------|-----------|
-| better-sqlite3 | Rebuilt against Electron headers via `scripts/rebuild-native.js` | Included via `files` in `electron-builder.yml`, C++ source excluded; unpacked via `asarUnpack` together with `bindings` and `file-uri-to-path`, because the `kangentic-retrieval` utility process opens the project databases from the unpacked tree |
+| better-sqlite3 | Node-API (13+): every platform's addon ships in the package as `prebuilds/<platform>-<arch>.node`; no rebuild needed | Included via `files` in `electron-builder.yml`, C++ and SQLite source excluded; unpacked via `asarUnpack`, because the `kangentic-retrieval` utility process opens the project databases from the unpacked tree. `build/afterPack.js` deletes every prebuild but the target's (glibc on Linux) before the load probes run |
 | node-pty | Prebuilt NAPI binaries, no rebuild needed, except the macOS `spawn-helper`, which is compiled from `build/spawn-helper/spawn-helper.c` at package time (see macOS Code Signing below) | Included via `files`; the whole package unpacked from asar via `asarUnpack`, since the `kangentic-pty-host` utility process loads it from the unpacked tree |
 | sherpa-onnx-node | Prebuilt platform-specific binaries (no rebuild needed) | Included via `files` (`sherpa-onnx-node/**` plus the `sherpa-onnx-*/**` platform packages), unpacked from asar via `asarUnpack: node_modules/sherpa-onnx-*/**` (the voice dictation engine, which runs in its own `kangentic-dictation` utilityProcess - see `.claude/rules/dictation-out-of-process.md` / DESKTOP-X) |
 | font-list | Shells out to `fc-list` (Linux) / a PowerShell script (Windows) / a bundled binary (macOS); no rebuild needed | Included via `files` (`font-list/**`), unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process` (Terminal Font Family picker) |
@@ -142,7 +142,7 @@ The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in
 | sharp, `@img/*`, detect-libc, semver | sharp's prebuilt libvips binding (`@img/sharp-<platform>`) plus its pure-JavaScript runtime deps; transformers.js requires sharp at module scope even though the worker never touches an image | Included via `files` and unpacked, for the same reason |
 | simple-git | Pure JavaScript, bundled by esbuild | Not shipped as node_modules; its code is inside `.vite/build/index.js`. A devDependency, like every other bundled package (see `.claude/rules/dependency-block-parity.md`) |
 
-The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `package.json`, `better-sqlite3`, `node-pty`, `sherpa-onnx-node`, the `sherpa-onnx-*` platform packages, `font-list`, `koffi`, the `@koromix/koffi-*` platform packages, `bindings`, `file-uri-to-path`, `sqlite-vec`, the `sqlite-vec-*` platform packages, `@huggingface/transformers`, `onnxruntime-node`, `onnxruntime-web`, `onnxruntime-common`, `sharp`, the `@img/*` packages, `detect-libc`, and `semver`. The whitelist governs the app's own files; electron-builder copies every production dependency from `package.json` into the asar on its own, so for a runtime dependency the question is never whether it is in the asar but whether it is unpacked. That also makes the `dependencies` block itself a packaging decision: on 0.41.0 it resolved to 302 packages, most of them already bundled into `.vite/build/**`, where 121 were needed (measured then; a new external such as `koffi` adds its own). `.claude/rules/dependency-block-parity.md` is what keeps it there.
+The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `package.json`, `better-sqlite3`, `node-pty`, `sherpa-onnx-node`, the `sherpa-onnx-*` platform packages, `font-list`, `koffi`, the `@koromix/koffi-*` platform packages, `sqlite-vec`, the `sqlite-vec-*` platform packages, `@huggingface/transformers`, `onnxruntime-node`, `onnxruntime-web`, `onnxruntime-common`, `sharp`, the `@img/*` packages, `detect-libc`, and `semver`. The whitelist governs the app's own files; electron-builder copies every production dependency from `package.json` into the asar on its own, so for a runtime dependency the question is never whether it is in the asar but whether it is unpacked. That also makes the `dependencies` block itself a packaging decision: on 0.41.0 it resolved to 302 packages, most of them already bundled into `.vite/build/**`, where 121 were needed (measured then; a new external such as `koffi` adds its own). `.claude/rules/dependency-block-parity.md` is what keeps it there.
 
 The embed worker's closure is the one that bites: the worker is forked from `app.asar.unpacked`, and Node resolution from a real directory never looks inside the asar, so a package the worker reaches only transitively (transformers.js requires `onnxruntime-common` and `sharp` at module scope) must be unpacked too, or the worker exits 1 at module load on every fork. 0.38.0 and 0.39.0 shipped that way (Sentry DESKTOP-6, DESKTOP-H). `build/afterPack.js` now runs `build/verify-unpacked-worker.js` after packing, once per worker with an unpacked native closure to verify (embed, dictation, the retrieval worker and the pty host; line-count's only import, `simple-git`, is bundled by esbuild and has no unpacked closure to check). For the retrieval worker it also loads better-sqlite3 and sqlite-vec under the packaged Electron binary, and for the pty host it spawns a real process with node-pty and, on Windows and macOS, loads koffi and makes one native call through it, both before the fuses turn `ELECTRON_RUN_AS_NODE` off: it loads each worker's external(s) from the unpacked tree in a child `node` whose module resolution is fenced to that tree (an unfenced probe would find the repo's own `node_modules` above `out/` and pass), and fails the package with the child's stderr when anything is missing. The dictation worker (DESKTOP-X) reuses the same gate for `sherpa-onnx-node`. `npm run package` runs it too, so the gate holds locally, not only on the release matrix.
 
@@ -163,7 +163,7 @@ mixing rule and also scans every `utilityProcess.fork` call site for the shared 
 
 ### Bridge Script Unpacking
 
-Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asarUnpack` names them individually, alongside `embed-worker.js`, `line-count-worker.js`, `dictation-worker.js`, and `plugins/**` (unpacked for the retrieval, embedding, and dictation subsystems rather than for the hook bridges). Only those six entries under `.vite/build/` are extracted to `app.asar.unpacked/`; the rest of the directory stays inside the archive. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
+Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asarUnpack` names them individually, alongside `embed-worker.js`, `line-count-worker.js`, `dictation-worker.js`, `retrieval-worker.js`, `pty-host.js`, and `plugins/**` (the utility processes are forked from the unpacked tree, so these are unpacked for them rather than for the hook bridges). Only those eight entries under `.vite/build/` are extracted to `app.asar.unpacked/`; the rest of the directory stays inside the archive. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
 
 ## Config Directory Locations
 
@@ -234,7 +234,7 @@ NixOS and CachyOS. DESKTOP-15 is a recovered GPU death on the Ubuntu box three d
 DESKTOP-18 is the identical `LOG(FATAL)` on Windows 10, via `OnProcessCrashed` with
 `EXCEPTION_BREAKPOINT`, on an Intel UHD 630. The shipped code has never had a platform gate. The
 launch-failure route is Linux's in practice, because of how Linux launches the GPU process (see
-"Why a Linux launch failure leaves no trace" below).
+"Why a Linux launch failure left no trace before Electron 44" below).
 
 DESKTOP-18 is worth reading for its timing rather than its stack. All seven of that install's
 runs died between 8.3 and 12.0 seconds after their own `app_start_time`, so Chromium walked its
@@ -266,7 +266,7 @@ identical `LOG(FATAL)`, only faster. A launch failure is not something a renderi
 route around. The same holds for DESKTOP-18's crash shape on Windows, because reaching the fatal at
 all means the rungs below hardware had already been current and had already failed.
 
-### Why a Linux launch failure leaves no trace
+### Why a Linux launch failure left no trace before Electron 44
 
 On Linux the GPU process is not launched directly. `GpuSandboxedProcessLauncherDelegate::GetZygote`
 forks it from the unsandboxed zygote, so a GPU "launch failure" means
@@ -277,10 +277,12 @@ at once:
   `TERMINATION_STATUS_NORMAL_TERMINATION` when the zygote cannot answer, and
   `BrowserChildProcessHostImpl::OnChildDisconnected` drops that status with no crash count and no
   observer call, so no `child-process-gone` fires.
-- Every relaunch through the dead zygote fails to launch, and Electron forwards no launch failure
-  to JS. `electron_api_app.cc` overrides `BrowserChildProcessCrashed` and
-  `BrowserChildProcessKilled` but not `BrowserChildProcessLaunchFailed`. Chromium also runs the
-  delegate that reaches the fatal before it notifies any observer.
+- Every relaunch through the dead zygote fails to launch. Through Electron 41 none of those reached
+  JS: `electron_api_app.cc` overrode `BrowserChildProcessCrashed` and `BrowserChildProcessKilled`
+  but not `BrowserChildProcessLaunchFailed`. Electron 44 overrides it and emits
+  `child-process-gone` with reason `launch-failed` for every relaunch Chromium survives. The one
+  that ends in the fatal still does not reach JS, because Chromium runs the delegate that reaches
+  the fatal before it notifies any observer.
 
 Reproduced in Electron 41.10.7 on Ubuntu 24.04 under WSLg, with `--ignore-gpu-blocklist` so that
 compositing starts on the GPU: SIGKILL the `--type=zygote --no-zygote-sandbox` process, then the GPU
@@ -291,6 +293,13 @@ process. The browser logged `Failed to send GetTerminationStatus message to zygo
 3 min and 4 min into their runs. Why the zygote or its fork failed on those hosts is still unknown.
 A dead zygote and a fork refused at the process limit produce the same stack, so each recorded
 fallback on Linux now carries the answer (below).
+
+The same steps on Electron 44.5.1, same machine (2026-10-04): six launch failures and the fatal
+again, but the first five reached JS as `child-process-gone` with `launch-failed` (exit code 1002),
+and `gpu-health.json` held all five as fault deaths when the process died. So on 44 the next launch
+can see that the GPU ended the run, and the software-rendering recovery engages from the deaths
+alone; `tests/unit/gpu-health.test.ts` pins that measured record. The fallback record below is
+still what covers a machine that dies with no relaunch to fail.
 
 What does reach JS is the fallback itself. Falling back to `DISPLAY_COMPOSITOR` calls
 `OnGpuBlocked`, which notifies `gpu-info-update`, and `gpu_compositing` reads `disabled_software`
@@ -316,6 +325,10 @@ Measured on Electron 41, booting a real window with both switches applied:
 | `--disable-gpu --in-process-gpu` | Windows | `Browser`, `Tab`, `Utility` | `disabled_software` | `unavailable_software` |
 | Control, `--ignore-gpu-blocklist` | Linux (WSLg) | `Browser`, `GPU`, `Utility`, `Tab` | `enabled` | `enabled` |
 | `--disable-gpu --in-process-gpu` | Linux (WSLg) | `Browser`, `Utility`, `Tab` | `disabled_software` | `disabled_off` |
+
+Re-measured on Electron 44.5.1 (2026-10-04) with the same rig: all four rows read the same on both
+platforms, and the recovery window painted on each (about 9,870 red pixels of the rotating box in a
+page capture, against 9,864 for the Windows control).
 
 No GPU process is spawned at all, which is the property the whole recovery path rests on. On Linux
 the window still painted: a page capture found all 10,000 pixels of a 100 px animated box. The

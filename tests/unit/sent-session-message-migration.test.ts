@@ -15,45 +15,10 @@
  * kangentic_send_session_message delivers its message verbatim with no in-band
  * marker, a row in this table is the ONLY record that a transcript turn was
  * sent through the tool rather than typed by the human.
- *
- * Skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (NODE_MODULE_VERSION mismatch under plain system Node); mirrors the probe
- * pattern in activity-interval-migration.test.ts. Expected to skip on a
- * developer's local Windows machine (built for Electron's ABI) and RUN on CI
- * (built for plain Node).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors activity-interval-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Variable module name avoids the static-require lint rule, which targets
-    // string-literal bare requires in bundled main/preload code; this is a test
-    // helper for a native probe, not a bundled require.
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    // Force the native binding to load now - the NODE_MODULE_VERSION mismatch
-    // only surfaces on instantiation, not on require.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SentSessionMessageRepository } from '../../src/main/db/repositories/sent-session-message-repository';
 
@@ -74,11 +39,11 @@ const EXPECTED_COLUMNS: Array<{ name: string; notnull: number }> = [
   { name: 'created_at', notnull: 1 },
 ];
 
-describe.skipIf(!CAN_RUN)('session_messages_sent migration + repository round-trip', () => {
-  let database: DatabaseType.Database;
+describe('session_messages_sent migration + repository round-trip', () => {
+  let database: Database.Database;
 
   beforeEach(() => {
-    database = new Database!(':memory:');
+    database = new Database(':memory:');
     // Matches production ordering exactly (src/main/db/database.ts sets this
     // pragma immediately before calling runProjectMigrations). Without it,
     // `session_id ... REFERENCES sessions(id) ON DELETE CASCADE` is parsed but
@@ -121,8 +86,7 @@ describe.skipIf(!CAN_RUN)('session_messages_sent migration + repository round-tr
     const now = new Date().toISOString();
     // updated_at is NOT NULL with no DEFAULT on the tasks table - omitting it
     // fails the insert outright. This is independent of the foreign_keys
-    // pragma above (a plain NOT NULL violation, confirmed via a node:sqlite
-    // replay of this exact statement against the real migration).
+    // pragma above (a plain NOT NULL violation).
     database
       .prepare('INSERT INTO tasks (id, title, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(taskId, `Task ${taskId}`, seededSwimlane.id, 0, now, now);

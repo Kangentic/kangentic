@@ -6,9 +6,10 @@
  * `sessionIndex` param) can select an older session. The query must order
  * started_at DESC and must NOT carry a LIMIT (unlike getLatestForTask).
  *
- * Uses a tracker mock (no real better-sqlite3) for the same reason
- * session-repository-find-by-any-id.test.ts does: better-sqlite3 is compiled
- * for Electron's Node ABI and cannot load under vitest's system Node.
+ * Uses a tracker mock (no real better-sqlite3) that records the SQL and bound
+ * params, as session-repository-find-by-any-id.test.ts does, so the tests pin
+ * the statements issued. `tests/unit/helpers/test-database.ts` opens a real
+ * database if one is wanted.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';

@@ -10,26 +10,18 @@
  * two real connections to one WAL file, and pin that no code begins a
  * transaction any other way.
  *
- * node:sqlite rather than better-sqlite3, which is compiled for Electron's
- * Node ABI and cannot load here.
+ * Real better-sqlite3 connections, so the transaction and savepoint behavior
+ * under test is the driver's own.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type DatabaseType from 'better-sqlite3';
 import { setAfterCommitHook, writeTransaction } from '../../src/main/db/transaction';
 import { relaySlowSyncSpans } from '../../src/main/diagnostics/event-loop-lag';
-import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 const SRC = path.resolve(__dirname, '..', '..', 'src');
 const HELPER = path.join(SRC, 'main', 'db', 'transaction.ts');
@@ -59,9 +51,9 @@ describe('transactions begin through writeTransaction', () => {
   });
 });
 
-describeWithSqlite('two connections to one WAL database', () => {
+describe('two connections to one WAL database', () => {
   const directories: string[] = [];
-  const open: NodeDatabase[] = [];
+  const open: DatabaseType.Database[] = [];
 
   afterEach(() => {
     for (const database of open.splice(0)) database.close();
@@ -74,17 +66,16 @@ describeWithSqlite('two connections to one WAL database', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-transaction-'));
     directories.push(directory);
     const file = path.join(directory, 'project.db');
-    const holder = new sqlite!.DatabaseSync(file);
+    const holder = openTestDatabase(file);
     open.push(holder);
     holder.exec('PRAGMA journal_mode = WAL');
     holder.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
     holder.exec("INSERT INTO items (name) VALUES ('first')");
-    const waiting = new sqlite!.DatabaseSync(file);
+    const waiting = openTestDatabase(file, { databaseOptions: { timeout: busyTimeoutMs } });
     open.push(waiting);
-    waiting.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
     // The other process mid-write: it holds the lock until it commits.
     holder.exec("BEGIN IMMEDIATE; INSERT INTO items (name) VALUES ('held')");
-    return { holder, db: adaptDatabase(waiting) };
+    return { holder, db: waiting };
   }
 
   /** How long `run` took before it threw, and what it threw. */
@@ -133,9 +124,9 @@ describeWithSqlite('two connections to one WAL database', () => {
  * the write lock already released, and never for a savepoint or a rollback.
  * Both paths are covered: span timing on (dev builds) and off.
  */
-describeWithSqlite('the after-commit hook', () => {
+describe('the after-commit hook', () => {
   const directories: string[] = [];
-  const open: NodeDatabase[] = [];
+  const open: DatabaseType.Database[] = [];
 
   afterEach(() => {
     setAfterCommitHook(null);
@@ -147,11 +138,11 @@ describeWithSqlite('the after-commit hook', () => {
   function database() {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-after-commit-'));
     directories.push(directory);
-    const handle = new sqlite!.DatabaseSync(path.join(directory, 'project.db'));
+    const handle = openTestDatabase(path.join(directory, 'project.db'));
     open.push(handle);
     handle.exec('PRAGMA journal_mode = WAL');
     handle.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
-    return adaptDatabase(handle);
+    return handle;
   }
 
   for (const timed of [false, true]) {

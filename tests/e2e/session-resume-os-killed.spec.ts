@@ -9,7 +9,7 @@
  * fresh empty session.
  *
  * Deterministic simulation of the hard kill: after a real session spawns, close
- * the app, then directly edit the project DB (node:sqlite, app closed) into the
+ * the app, then directly edit the project DB (better-sqlite3, app closed) into the
  * exact post-kill state (status='exited', exit_code=1073807364) - overriding
  * what the clean shutdown wrote. Relaunch and assert recovery resumes via
  * `--resume <original-agent-session-id>` (MOCK_CLAUDE_RESUMED marker), not a
@@ -41,7 +41,7 @@ import {
 } from './helpers';
 import path from 'node:path';
 import fs from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 
 const TEST_NAME = 'session-resume-os-killed';
 const runId = Date.now();
@@ -124,7 +124,7 @@ test.describe('Claude Agent -- OS-killed session recovery on startup', () => {
     // The clean close marked the record 'suspended'; force the exact OS-killed
     // state the old recovery could not see: exited + abnormal code.
     const dbPath = path.join(dataDir, 'projects', `${projectId}.db`);
-    const db = new DatabaseSync(dbPath);
+    const db = new Database(dbPath);
     db.prepare(
       `UPDATE sessions SET status = 'exited', exit_code = ?, suspended_at = NULL, suspended_by = NULL WHERE task_id = ?`,
     ).run(HARD_KILL_EXIT_CODE, taskId);

@@ -25,13 +25,13 @@ The CLA is modeled after the [Apache Individual Contributor License Agreement](h
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 22+ (building from source; CI runs on Node 22)
+- [Node.js](https://nodejs.org/) 22.14+ or 24+ (building from source; CI runs on the latest Node 22)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
 - Git 2.26+
 
-Native modules (`better-sqlite3`) are compiled on install, so you also need a C/C++ toolchain:
-Visual Studio Build Tools on Windows, Xcode Command Line Tools on macOS, or `build-essential` and
-`python3` on Linux. See [docs/developer-guide.md](docs/developer-guide.md) for the full setup.
+Every native module ships prebuilt binaries for Windows and macOS. On Linux, node-pty compiles on
+install, so you need `build-essential` and `python3`; a macOS package build needs the Xcode Command
+Line Tools. See [docs/developer-guide.md](docs/developer-guide.md) for the full setup.
 
 ### Setup
 

@@ -183,6 +183,6 @@ describe('package.json dependency block parity', () => {
     expect(isShippedAsNodeModules('recharts')).toBe(false);
     expect(isShippedAsNodeModules('@sentry/electron')).toBe(false);
     expect(isShippedAsNodeModules('better-sqlite3')).toBe(true);
-    expect(isShippedAsNodeModules('bindings')).toBe(true);
+    expect(isShippedAsNodeModules('koffi')).toBe(true);
   });
 });

@@ -36,7 +36,7 @@ const EXCEPTION_PORT_PROBE_SOURCE = path.join(__dirname, 'spawn-helper', 'except
 
 /** `mac.minimumSystemVersion` in electron-builder.yml. tests/unit/install-spawn-helper.test.ts
  *  pins the two together. */
-const MINIMUM_MACOS_VERSION = '10.15';
+const MINIMUM_MACOS_VERSION = '13.0';
 
 /** Both slices, so the helper runs on either Mac arch, and the gate runs the
  *  exact shipped bytes on whichever host builds it. */

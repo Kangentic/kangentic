@@ -10,9 +10,8 @@
  * only test that actually distinguishes "ordinal" from "raw" is one against a
  * gapped column.
  *
- * Mocking the repositories mirrors mcp-task-placement-handlers.test.ts: no
- * better-sqlite3 binary is needed (it is built for Electron's Node ABI and
- * will not load under vitest).
+ * Mocking the repositories mirrors mcp-task-placement-handlers.test.ts: the
+ * handler runs with no database involved.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

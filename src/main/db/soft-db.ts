@@ -24,13 +24,12 @@ import { isShuttingDown } from '../shutdown-state';
  *
  * ## Why the dialog is opt-in and not baked in
  *
- * Not every soft failure means the app is broken. The dev-port ledger degrades
- * on every unit-tier CI run by design (`better-sqlite3` is an Electron ABI
- * build, so `getGlobalDb()` throws NODE_MODULE_VERSION under plain Node - see
+ * Not every soft failure means the app is broken. The dev-port ledger is
+ * advisory, and its degrading is an expected outcome rather than a fault (see
  * tests/unit/dev-port-ledger-unavailable.test.ts). Wiring the user-facing
- * notification into this combinator would mean a dev-only feature's expected
- * ledger miss pops "Kangentic can't read its database" at a production user,
- * and would burn the once-per-process notification on it, so the later
+ * notification into this combinator would mean a dev-only feature's ledger
+ * miss pops "Kangentic can't read its database" at a production user, and
+ * would burn the once-per-process notification on it, so the later
  * `project:list` failure surfaces nothing at all. That is precisely the "app
  * looks broken with no explanation" case this module exists to close.
  *

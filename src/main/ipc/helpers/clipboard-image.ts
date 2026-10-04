@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { NativeImage } from 'electron';
+import type { ClipboardItem, NativeImage, clipboard as ElectronClipboard } from 'electron';
 import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../../shared/image-fidelity';
 
 /**
- * Pasted-image handling for the terminal: the Ctrl+V clipboard capture and the
- * renderer-decoded copy of a dropped image the agent cannot take as-is. Both
- * land in the same temp directory under the same cap and prune.
+ * Pasted-image handling for the terminal: the Ctrl+V clipboard read and capture,
+ * and the renderer-decoded copy of a dropped image the agent cannot take as-is.
+ * Both land in the same temp directory under the same cap and prune.
  *
  * Kept out of `handlers/system.ts` so the sizing and pruning rules can be tested
  * directly rather than through `ipcMain`.
@@ -32,6 +32,89 @@ const CLIPBOARD_TEMP_PREFIX = 'pasted-image-';
  *  call rather than at module load so a test can redirect `os.tmpdir()`. */
 export function pastedImageTempDir(): string {
   return path.join(os.tmpdir(), 'kangentic-clipboard');
+}
+
+function isBlob(payload: unknown): payload is Blob {
+  return typeof payload === 'object' && payload !== null && typeof (payload as Blob).arrayBuffer === 'function';
+}
+
+/** The image types `nativeImage` decodes, in the order a read tries them. */
+const DECODABLE_IMAGE_TYPES = ['image/png', 'image/jpeg'];
+
+/**
+ * An item's `image/*` types with the decodable ones first, so a clipboard that
+ * also offers an undecodable form costs one payload fetch, not two.
+ */
+function imageTypesInReadOrder(types: readonly string[]): string[] {
+  const imageTypes = types.filter((type) => type.startsWith('image/'));
+  const decodable = DECODABLE_IMAGE_TYPES.filter((type) => imageTypes.includes(type));
+  const others = imageTypes.filter((type) => !DECODABLE_IMAGE_TYPES.includes(type));
+  return [...decodable, ...others];
+}
+
+/**
+ * Read the image the clipboard holds, or null when it holds none.
+ *
+ * Electron 44 removed the synchronous `clipboard.readImage()`. Its replacement,
+ * `clipboard.read()`, resolves to items that each list their MIME types and
+ * hand back a Blob per type, the shape of the W3C async clipboard. The first
+ * `image/*` payload that decodes wins. `nativeImage` decodes only PNG and JPEG,
+ * so those are tried first, and a type that does not decode is skipped so the
+ * next one gets its chance.
+ *
+ * Never rejects. `readImage()` could not fail, and a clipboard another app is
+ * holding open must not turn a Ctrl+V into an unhandled rejection in the
+ * renderer, which treats null the way it treats an empty clipboard.
+ *
+ * The clipboard and the decoder are passed in so this stays testable without
+ * Electron, like the rest of this file.
+ */
+export async function readClipboardImage(
+  clipboardSource: Pick<typeof ElectronClipboard, 'read'>,
+  decodeImage: (bytes: Buffer) => NativeImage,
+): Promise<NativeImage | null> {
+  try {
+    for (const item of await clipboardSource.read()) {
+      for (const type of imageTypesInReadOrder(item.types)) {
+        const payload: unknown = await item.getType(type);
+        if (!isBlob(payload)) continue;
+        const image = decodeImage(Buffer.from(await payload.arrayBuffer()));
+        if (!image.isEmpty()) return image;
+      }
+    }
+  } catch (error) {
+    console.error('[clipboard] Failed to read the clipboard image:', error);
+  }
+  return null;
+}
+
+/**
+ * Put `image` on the clipboard as a PNG, for the Copy Image context menu.
+ *
+ * Electron 44 removed `clipboard.writeImage()`, so the image goes on as a PNG
+ * Blob inside a ClipboardItem. An empty image (a data URL that did not decode)
+ * writes nothing, rather than replacing what the clipboard held with a blank
+ * image.
+ *
+ * Never rejects. A menu click has no caller to hand a failure to, so a failed
+ * write is logged instead.
+ *
+ * The clipboard and the ClipboardItem constructor are passed in so this stays
+ * testable without Electron, like `readClipboardImage`.
+ */
+export async function writeClipboardImage(
+  image: NativeImage,
+  clipboardTarget: Pick<typeof ElectronClipboard, 'write'>,
+  createClipboardItem: (payloads: Record<string, Blob>) => ClipboardItem,
+): Promise<void> {
+  if (image.isEmpty()) return;
+  try {
+    // Copied into a Uint8Array because a Buffer's ArrayBufferLike backing is not a BlobPart.
+    const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' });
+    await clipboardTarget.write([createClipboardItem({ 'image/png': png })]);
+  } catch (error) {
+    console.error('[clipboard] Copy Image failed:', error);
+  }
 }
 
 /**

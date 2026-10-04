@@ -148,9 +148,10 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
     });
   });
 
-  // A GPU process that fails to LAUNCH never reaches `child-process-gone`
-  // (Electron does not forward Chromium's launch-failed notification), and
-  // on Linux neither does one whose zygote died with it. What Chromium does
+  // The GPU launch failure that ends in Chromium's fatal never reaches
+  // `child-process-gone` (Electron 44 forwards the launch failures Chromium
+  // survives, but the delegate that reaches the fatal runs first), and on
+  // Linux neither does a GPU death whose zygote died with it. What Chromium does
   // announce is the fallback to its last rung, as a `gpu-info-update`, before
   // the fatal that follows it (DESKTOP-W). gpu-health.ts writes only when
   // compositing leaves the GPU, so the update that fires on every normal GPU

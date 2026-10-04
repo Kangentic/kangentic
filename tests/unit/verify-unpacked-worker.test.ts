@@ -341,9 +341,9 @@ describe('retrieval worker gate', () => {
 
   it('the load probe opens a database and loads sqlite-vec for real, under this checkout\'s Electron', () => {
     // The repo root has the same layout as the unpacked tree (node_modules
-    // with better-sqlite3 built for Electron and the sqlite-vec platform
-    // package), so the real script runs against it. Plain Node cannot load
-    // an Electron-ABI addon, which is why the gate runs the packaged binary.
+    // with better-sqlite3's prebuilt addon and the sqlite-vec platform
+    // package), so the real script runs against it. The gate runs the
+    // packaged binary so the addon is proven against the Electron that ships.
     // A worktree's node_modules can be a junction to the main checkout's, and
     // the fence compares real paths, so the root is where it really lives.
     const installRoot = path.dirname(fs.realpathSync(path.join(REPO_ROOT, 'node_modules')));
@@ -353,11 +353,14 @@ describe('retrieval worker gate', () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[afterPack\] retrieval worker: better-sqlite3 opened, sqlite-vec v\d/));
   }, 60_000);
 
-  it('the worker imports only better-sqlite3 from outside the bundle, and it and its addon loaders are unpacked', () => {
+  it('the worker imports only better-sqlite3 from outside the bundle, and it is unpacked with no addon loader beside it', () => {
     const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
     const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
     expect(RETRIEVAL_WORKER_EXTERNALS).toEqual(['better-sqlite3']);
     for (const name of RETRIEVAL_WORKER_EXTERNALS) expect(externals).toContain(name);
+    // better-sqlite3 13 loads its own prebuilds; `bindings` and `file-uri-to-path`
+    // left the tree with 12, so nothing else has to resolve beside it.
+    expect(RETRIEVAL_WORKER_PROBE_DEPENDENCIES).toEqual([]);
 
     const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
     const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';

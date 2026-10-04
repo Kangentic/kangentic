@@ -24,48 +24,10 @@
  * before this PR - no agent/effort columns) to simulate an existing
  * installation about to receive the new migration. The migration-under-test
  * is the runProjectMigrations() call made AFTER that revert.
- *
- * Skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (NODE_MODULE_VERSION mismatch under plain system Node); mirrors the
- * probe pattern in swimlane-repository.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors swimlane-repository.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    // Force the native binding to load now - the NODE_MODULE_VERSION mismatch
-    // only surfaces on instantiation, not on require.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
-// ---------------------------------------------------------------------------
-// Imports (always resolved - 'import type' for better-sqlite3 touches no
-// native binding at module load time).
-// ---------------------------------------------------------------------------
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 
 interface ColumnInfo {
@@ -85,7 +47,7 @@ interface UsageHistoryAgentEffortRow {
  * call this immediately after bootstrap, before inserting any fixture rows,
  * so there is nothing to preserve across the swap.
  */
-function revertUsageHistoryToPreMigrationShape(db: InstanceType<typeof DatabaseType>): void {
+function revertUsageHistoryToPreMigrationShape(db: Database.Database): void {
   db.exec(`
     ALTER TABLE usage_history RENAME TO usage_history_modern_temp;
     CREATE TABLE usage_history (
@@ -114,11 +76,10 @@ function revertUsageHistoryToPreMigrationShape(db: InstanceType<typeof DatabaseT
 // Migration tests against a real in-memory SQLite DB.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('runProjectMigrations - usage_history agent/effort migration', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - usage_history agent/effort migration', () => {
+  let db: Database.Database;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     // Bootstrap a fully modern schema (tasks, sessions, swimlanes, and a
     // usage_history table that starts with agent/effort via the fresh-DB
@@ -251,11 +212,10 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history agent/effort migra
  * before subagent capture existed. So the migration must be a plain additive
  * ALTER that leaves existing rows alone.
  */
-describe.runIf(CAN_RUN)('runProjectMigrations - conversation_turn_usage subagent columns', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - conversation_turn_usage subagent columns', () => {
+  let db: Database.Database;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
   });
@@ -328,8 +288,8 @@ describe.runIf(CAN_RUN)('runProjectMigrations - conversation_turn_usage subagent
  * columns), the same pattern the describe block above uses for its own
  * migration.
  */
-describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation lineage deltas', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - usage_history conversation lineage deltas', () => {
+  let db: Database.Database;
 
   /**
    * Reverts the usage_history table (created fully-modern by a prior
@@ -337,7 +297,7 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
    * CREATE TABLE at project-schema.ts:81-100, which already carries agent and
    * effort but not conversation_id / cumulative_cost_usd / cumulative_duration_ms.
    */
-  function revertUsageHistoryToPreLineageShape(database: InstanceType<typeof DatabaseType>): void {
+  function revertUsageHistoryToPreLineageShape(database: Database.Database): void {
     database.exec(`
       ALTER TABLE usage_history RENAME TO usage_history_modern_temp;
       CREATE TABLE usage_history (
@@ -408,7 +368,6 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
   }
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     // Bootstrap a fully modern schema (tasks, sessions, swimlanes) via one real
     // migration pass, then revert ONLY usage_history to its pre-lineage shape.
@@ -589,15 +548,5 @@ describe.runIf(CAN_RUN)('runProjectMigrations - usage_history conversation linea
     const rowsAfterSecondRun = selectRows();
 
     expect(rowsAfterSecondRun).toEqual(rowsAfterFirstRun);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('usage_history agent/effort migration tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

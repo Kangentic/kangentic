@@ -23,9 +23,8 @@ interface SqliteErrorLike extends Error {
  * True for a `better-sqlite3` error carrying a `SQLITE_*` code.
  *
  * Deliberately duck-typed rather than an `instanceof` check: `SqliteError` is
- * not exported from `better-sqlite3`'s type surface, and the native binding is
- * mocked wholesale in the unit tier (see tests/unit/dev-port-ledger-unavailable.test.ts
- * for why the real one cannot load under plain Node).
+ * not exported from `better-sqlite3`'s type surface, and many unit suites mock
+ * the driver wholesale, so their errors are plain objects carrying a `code`.
  */
 export function isSqliteError(error: unknown): error is SqliteErrorLike {
   if (!(error instanceof Error)) return false;
@@ -38,9 +37,9 @@ export function isSqliteError(error: unknown): error is SqliteErrorLike {
  * dialog, e.g. `disk I/O error (SQLITE_IOERR)`.
  *
  * A non-SQLite failure still reaches here. Opening the database can fail with a
- * plain `Error` (a `NODE_MODULE_VERSION` ABI mismatch is the documented one), and
- * the user needs a line either way, so this falls back to the message rather than
- * returning nothing.
+ * plain `Error` (a native addon that will not load, or the directory refusing a
+ * mkdir), and the user needs a line either way, so this falls back to the message
+ * rather than returning nothing.
  */
 export function describeSqliteFailure(error: unknown): string {
   if (isSqliteError(error)) return `${error.message} (${error.code})`;

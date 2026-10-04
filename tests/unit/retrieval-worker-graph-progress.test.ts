@@ -14,8 +14,8 @@
  * built it with, so the test drives the worker's own callbacks. The worker entry
  * is driven the way `retrieval-worker-closed-project.test.ts` drives it: a
  * stand-in for `process.parentPort`, the module imported so it registers its
- * message listener, and real request messages. `db/database` is mocked because
- * better-sqlite3 cannot load under vitest's Node.
+ * message listener, and real request messages. `db/database` is mocked so no
+ * project database is opened.
  *
  * Tier: Unit.
  */

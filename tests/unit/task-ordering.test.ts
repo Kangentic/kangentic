@@ -2,10 +2,10 @@
  * The ordering arithmetic behind the MCP task-placement surface
  * (`kangentic_move_task`'s `position`, `kangentic_reorder_tasks`).
  *
- * These assertions carry more weight than usual: the DB-backed MCP suites all
- * gate on `better-sqlite3`, which is compiled for Electron's Node ABI and so
- * skips under vitest everywhere, CI included. Keeping the math pure is what
- * lets it actually be covered, so this file is the real guard on slot handling.
+ * These assertions carry more weight than usual: the DB-backed MCP suites reach
+ * this arithmetic only through a real database and the handlers around it.
+ * Keeping the math pure lets every branch be covered directly, with no database,
+ * so this file is the precise guard on slot handling.
  */
 import { describe, it, expect } from 'vitest';
 import {

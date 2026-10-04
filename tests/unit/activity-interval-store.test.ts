@@ -4,12 +4,11 @@ import { ActivityIntervalStore, type OpenIntervalInput } from '../../src/main/ac
 
 /**
  * `session_activity_intervals` modeled by a hand-rolled fake `Database`,
- * mirroring `conversation-usage-store.test.ts` (better-sqlite3's native
- * module in this worktree is rebuilt for Electron's ABI and cannot load
- * under the plain-Node test runner - see
- * session-repository-summaries.test.ts's probe comment). The fake
- * INSERT/UPDATE/SELECT dispatch on SQL substrings, matching the store's
- * real statements exactly.
+ * mirroring `conversation-usage-store.test.ts`, so the store's statements run
+ * against an in-memory table rather than a real database
+ * (`tests/unit/helpers/test-database.ts` opens a real better-sqlite3 database
+ * if one is wanted). The fake INSERT/UPDATE/SELECT dispatch on SQL substrings,
+ * matching the store's real statements exactly.
  */
 
 interface FakeRow {

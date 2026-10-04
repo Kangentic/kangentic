@@ -16,52 +16,10 @@
  *
  * This file closes that gap: it runs the REAL migration against a REAL
  * in-memory better-sqlite3 database and round-trips through the REAL store.
- *
- * Uses a real in-memory better-sqlite3 DB (':memory:') - mirrors
- * tests/unit/usage-history-migration.test.ts's probe pattern exactly.
- * Skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (NODE_MODULE_VERSION mismatch under plain system Node); mirrors the
- * probe pattern in swimlane-repository.test.ts. This is expected to skip on
- * a developer's local Windows machine (built for Electron's ABI) and RUN on
- * CI (built for plain Node).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors usage-history-migration.test.ts / swimlane-repository.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    // Force the native binding to load now - the NODE_MODULE_VERSION mismatch
-    // only surfaces on instantiation, not on require.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
-// ---------------------------------------------------------------------------
-// Imports (always resolved - 'import type' for better-sqlite3 touches no
-// native binding at module load time).
-// ---------------------------------------------------------------------------
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ActivityIntervalStore, type OpenIntervalInput } from '../../src/main/activity-engine/activity-interval-store';
 
@@ -98,7 +56,7 @@ const EXPECTED_INDEXES = [
   'idx_activity_intervals_open',
 ].sort();
 
-function indexNamesForTable(db: InstanceType<typeof DatabaseType>, tableName: string): string[] {
+function indexNamesForTable(db: Database.Database, tableName: string): string[] {
   const rows = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?")
     .all(tableName) as IndexNameRow[];
@@ -122,11 +80,10 @@ function idleInput(overrides: Partial<OpenIntervalInput> = {}): OpenIntervalInpu
 // Migration + real-store tests against a real in-memory SQLite DB.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('runProjectMigrations - session_activity_intervals', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('runProjectMigrations - session_activity_intervals', () => {
+  let db: Database.Database;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
   });
@@ -222,15 +179,5 @@ describe.runIf(CAN_RUN)('runProjectMigrations - session_activity_intervals', () 
 
     const sessionOneIntervals = store.getForSession('session-1');
     expect(sessionOneIntervals.map((interval) => interval.startedMs)).toEqual([3_000, 5_000]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('session_activity_intervals migration tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

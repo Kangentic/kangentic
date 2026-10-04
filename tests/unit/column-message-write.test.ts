@@ -18,9 +18,9 @@ const COLUMN_ID = 'lane-review';
 /**
  * An in-memory stand-in for the repository, holding one column's rows.
  *
- * A fake rather than the real repository on the node:sqlite harness because
- * what is under test is the READ-MODIFY-WRITE decision (which row is targeted,
- * what is preserved, what is dropped), not the SQL. `replaceForColumn`'s own
+ * A fake rather than the real repository over a database because what is
+ * under test is the READ-MODIFY-WRITE decision (which row is targeted, what is
+ * preserved, what is dropped), not the SQL. `replaceForColumn`'s own
  * position assignment and id preservation are pinned in
  * `automation-repository.test.ts`.
  */

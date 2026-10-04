@@ -3,15 +3,14 @@
  * Ask can explain the code.
  *
  * The record half and the status line are pure. The sweep runs the REAL
- * project migrations and the REAL RetrievalStore against node:sqlite, so the
- * diff-upsert, the index-state bookkeeping and the full-text triggers are the
- * shipped ones; only git is scripted. node:sqlite rather than better-sqlite3 on
- * purpose: better-sqlite3 is compiled for Electron's Node ABI, so every suite
- * gated on it skips.
+ * project migrations and the REAL RetrievalStore against real better-sqlite3,
+ * the driver production uses, so the diff-upsert, the index-state bookkeeping
+ * and the full-text triggers are the shipped ones; only git is scripted.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import crypto from 'node:crypto';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { codeChunks, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
@@ -27,6 +26,8 @@ import {
 } from '../../src/main/retrieval/code/code-status';
 import type { BranchHead, TreeEntry } from '../../src/main/retrieval/branch-git';
 
+import { openTestDatabase } from './helpers/test-database';
+
 /**
  * The branch the code index last read, as its sweep stores it. Named by its
  * stored key, which these reads also pin: a renamed key would make every
@@ -35,16 +36,6 @@ import type { BranchHead, TreeEntry } from '../../src/main/retrieval/branch-git'
 function indexedHeadRef(store: RetrievalStore): string | null {
   return readIndexedHead(store, 'code_index_head')?.ref ?? null;
 }
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
 
 describe('code records', () => {
   it('keeps source and docs, and skips tests, fixtures, data, lock files, binaries and build output', () => {
@@ -143,14 +134,18 @@ describe('batchesBySize', () => {
   });
 });
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+const openDatabases: DatabaseType.Database[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 /** A project and a scripted branch: its files by path, each blob id derived from its content. */
 function project() {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
-  const store = new RetrievalStore(db);
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  const store = new RetrievalStore(database);
   const files = new Map<string, string>();
   // A hash of the content, as git's blob id is.
   const blobOf = (content: string): string => crypto.createHash('sha1').update(content).digest('hex');
@@ -160,7 +155,7 @@ function project() {
     blobReads: [] as string[][],
   };
   const deps: CodeIndexerDeps = {
-    getDb: () => db,
+    getDb: () => database,
     readHead: async () => git.head,
     listTree: async (): Promise<TreeEntry[]> => {
       git.listCalls += 1;
@@ -179,10 +174,10 @@ function project() {
     .map((row) => row.docId);
   const fullTextHits = (word: string): number => (database.prepare('SELECT COUNT(*) AS count FROM memory_chunks_fts WHERE memory_chunks_fts MATCH ?').get(word) as { count: number }).count;
   const sweep = (allowFullRead = true) => sweepCodeRecords('project', '/mock/repo', 'main', { allowFullRead }, deps);
-  return { database, db, store, files, git, deps, paths, fullTextHits, sweep };
+  return { database, store, files, git, deps, paths, fullTextHits, sweep };
 }
 
-describeWithSqlite('sweepCodeRecords', () => {
+describe('sweepCodeRecords', () => {
   it('reads every indexable file on the branch into one document per path', async () => {
     const fixture = project();
     fixture.files.set('src/pacer.ts', 'export function computeEmbedSleepMs() {\n  return 0;\n}\n');
@@ -214,8 +209,8 @@ describeWithSqlite('sweepCodeRecords', () => {
     fixture.git.head = { ref: 'origin/main', sha: 'sha-2' };
     const result = await fixture.sweep();
 
-    // An unguarded delete trigger throws SQLITE_CORRUPT_VTAB here (measured on
-    // node:sqlite 3.51), so the removal would not have happened. SQLite's own
+    // An unguarded delete trigger throws SQLITE_CORRUPT_VTAB here, so the
+    // removal would not have happened. SQLite's own
     // integrity checks cannot tell: the plain one misses a stray delete, and the
     // one that compares against the content table reports every held-back code
     // row as corruption, by design.
@@ -271,7 +266,7 @@ describeWithSqlite('sweepCodeRecords', () => {
     fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
     await fixture.sweep();
     // Switched off: the corpus is cleared, and the stored head stays behind.
-    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(true);
+    expect(await purgeCodeRecords('project', () => fixture.database)).toBe(true);
     expect(fixture.paths()).toEqual([]);
     fixture.git.listCalls = 0;
 
@@ -355,10 +350,10 @@ describeWithSqlite('sweepCodeRecords', () => {
     fixture.files.set('src/pacer.ts', 'export const one = 1;\n');
     await fixture.sweep();
 
-    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(true);
+    expect(await purgeCodeRecords('project', () => fixture.database)).toBe(true);
     expect(fixture.paths()).toEqual([]);
     expect(fixture.store.corpusProgress('code', 'model@1').documents).toBe(0);
-    expect(await purgeCodeRecords('project', () => fixture.db)).toBe(false);
+    expect(await purgeCodeRecords('project', () => fixture.database)).toBe(false);
   });
 
   describe('a file that fails to index or to remove', () => {
@@ -485,7 +480,7 @@ describeWithSqlite('sweepCodeRecords', () => {
   });
 });
 
-describeWithSqlite('sweepCodeRecords, a file the branch lists that cannot be read or chunked', () => {
+describe('sweepCodeRecords, a file the branch lists that cannot be read or chunked', () => {
   const storedHeadSha = (fixture: ReturnType<typeof project>): string | undefined =>
     (JSON.parse(fixture.store.getMeta('code_index_head') ?? '{}') as { sha?: string }).sha;
 

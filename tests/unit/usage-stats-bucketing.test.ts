@@ -1,7 +1,7 @@
 /**
  * The pure bucketing/aggregation math behind the usage dashboard
  * (src/main/usage-stats/bucketing.ts). Everything here runs against plain
- * arrays (better-sqlite3 cannot load under vitest). Expectations for
+ * arrays (no database is involved). Expectations for
  * local-boundary bucketing are computed via the SAME `Date` component APIs
  * the implementation uses, so the suite passes in any timezone (including
  * DST ones) without pinning an offset - what it locks is the RELATIONSHIP

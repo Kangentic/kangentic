@@ -8,8 +8,9 @@
  * base branch on every task finalization, profiles on every spawn), so a throw
  * here broke far more than the apply.
  *
- * better-sqlite3 cannot load under vitest, so the DB modules the import graph
- * pulls in are mocked (same pattern as board-config-cache.test.ts).
+ * The DB modules the import graph pulls in are mocked, so this stays a pure
+ * unit test of the manager with no database involved (same pattern as
+ * board-config-cache.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

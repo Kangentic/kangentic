@@ -67,9 +67,11 @@ decision visible:
   `COLUMN_ENUM_FIELDS` and drives each field through `handleUpdateColumn` on the mock harness,
   asserting an invalid value and a non-string value are both refused. Looping the map rather than
   listing fields is the point: an enum field added to it and wired into the schema but left
-  un-narrowed in the handler fails there. It has to live in the mock-harness file because the
-  real-SQLite column specs are gated on better-sqlite3, which `postinstall` builds for Electron's
-  ABI, so those files skip on CI as well as locally.
+  un-narrowed in the handler fails there. It lives in the mock-harness file because the
+  real-SQLite column specs were gated on better-sqlite3 and skipped everywhere while it was built
+  for Electron's ABI. Since better-sqlite3 13 they run on CI too
+  (`tests/unit/column-commands-create-delete.test.ts`), and
+  `tests/unit/better-sqlite3-loads-in-vitest.test.ts` fails if they would go back to skipping.
 
   The field list is scanned at runtime rather than declared as `Record<keyof Swimlane, ...>` on
   purpose. `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so `tests/` is

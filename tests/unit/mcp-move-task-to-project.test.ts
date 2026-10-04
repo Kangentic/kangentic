@@ -5,9 +5,7 @@
  *
  * Uses two real in-memory better-sqlite3 DBs (':memory:') run through the
  * actual project migrations, so INSERT/UPDATE column alignment and the
- * to-do-role guard are exercised against real SQL, not mocks. Mirrors the
- * ABI-probe pattern from swimlane-repository.test.ts so the suite skips
- * cleanly if better-sqlite3 cannot load under the test runner's Node ABI.
+ * to-do-role guard are exercised against real SQL, not mocks.
  *
  * Covers:
  *   - happy path: source task removed, target gets a new To Do task with
@@ -28,31 +26,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors swimlane-repository.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
@@ -61,7 +35,7 @@ import { handleMoveTaskToProject } from '../../src/main/agent/commands/task-comm
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { Task } from '../../src/shared/types';
 
-function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string): CommandContext & {
+function makeContext(db: Database.Database, projectPath: string): CommandContext & {
   onTaskCreated: ReturnType<typeof vi.fn>;
   onTaskDeleted: ReturnType<typeof vi.fn>;
 } {
@@ -80,9 +54,9 @@ function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string)
   };
 }
 
-describe.runIf(CAN_RUN)('handleMoveTaskToProject', () => {
-  let sourceDb: InstanceType<typeof DatabaseType>;
-  let targetDb: InstanceType<typeof DatabaseType>;
+describe('handleMoveTaskToProject', () => {
+  let sourceDb: Database.Database;
+  let targetDb: Database.Database;
   let sourcePath: string;
   let targetPath: string;
   let source: ReturnType<typeof makeContext>;
@@ -91,7 +65,6 @@ describe.runIf(CAN_RUN)('handleMoveTaskToProject', () => {
   let targetTodo: { id: string; name: string };
 
   beforeEach(() => {
-    if (!Database) return;
     sourceDb = new Database(':memory:');
     targetDb = new Database(':memory:');
     runProjectMigrations(sourceDb);
@@ -104,7 +77,7 @@ describe.runIf(CAN_RUN)('handleMoveTaskToProject', () => {
     // column with role 'todo') when the swimlanes table is empty - use those
     // rather than creating a second 'todo'-role lane, which would make
     // resolveColumn's role lookup ambiguous.
-    const findTodo = (db: InstanceType<typeof DatabaseType>) => {
+    const findTodo = (db: Database.Database) => {
       const todo = new SwimlaneRepository(db).list().find((lane) => lane.role === 'todo');
       if (!todo) throw new Error('Seeded To Do swimlane not found');
       return todo;

@@ -8,40 +8,11 @@
  * 15-minute UTC bucket math, and the earliest-session orderings the JS
  * regrouping relies on for first-encounter behavior.
  *
- * Uses a real in-memory better-sqlite3 DB bootstrapped via
- * runProjectMigrations. Skips cleanly when better-sqlite3 cannot load under
- * the test runner's Node ABI; mirrors usage-history-migration.test.ts.
+ * Uses a real in-memory better-sqlite3 DB bootstrapped via runProjectMigrations.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors usage-history-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { UsageHistoryRepository } from '../../src/main/db/repositories/usage-history-repository';
 import { ActivityIntervalStore } from '../../src/main/activity-engine/activity-interval-store';
@@ -68,8 +39,8 @@ interface UsageFixture {
 const SINCE = '2026-01-02T00:00:00.000Z';
 const UNTIL = '2026-01-04T00:00:00.000Z';
 
-describe.runIf(CAN_RUN)('UsageHistoryRepository aggregate reads (real DB)', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('UsageHistoryRepository aggregate reads (real DB)', () => {
+  let db: Database.Database;
   let repository: UsageHistoryRepository;
 
   function insertUsage(fixture: UsageFixture): void {
@@ -132,7 +103,6 @@ describe.runIf(CAN_RUN)('UsageHistoryRepository aggregate reads (real DB)', () =
   }
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new UsageHistoryRepository(db);
@@ -532,15 +502,5 @@ describe.runIf(CAN_RUN)('UsageHistoryRepository aggregate reads (real DB)', () =
       seedWindowFixture();
       expect(repository.countSessionsRepresented(null, null, ['sess-1', 'sess-6'])).toBe(2);
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('UsageHistoryRepository aggregate tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

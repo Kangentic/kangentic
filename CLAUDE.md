@@ -4,7 +4,7 @@ Cross-platform desktop Kanban for Claude Code agents.
 
 ## Tech Stack
 
-- **Runtime:** Electron 41 + Node 24
+- **Runtime:** Electron 44 + Node 24
 - **Frontend:** React 19, Zustand, Tailwind CSS 4, Lucide React icons
 - **Backend:** better-sqlite3, node-pty, simple-git
 - **Build:** Vite (renderer), esbuild (main/preload), electron-builder (packaging)

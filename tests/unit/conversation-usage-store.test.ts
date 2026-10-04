@@ -1,5 +1,4 @@
-import { passThroughTransaction } from './helpers/transaction-double';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
   ConversationUsageStore,
@@ -8,210 +7,40 @@ import {
   type TurnUsageOwner,
 } from '../../src/main/retrieval/conversation/conversation-usage-store';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { adaptDatabase } from './helpers/node-sqlite-database';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
-import type { SessionRecord, TranscriptEntry, TranscriptTurnUsage } from '../../src/shared/types';
+import type { TranscriptEntry, TranscriptTurnUsage } from '../../src/shared/types';
+import { openTestDatabase } from './helpers/test-database';
 
 /**
- * The durable per-turn usage ledger. better-sqlite3 cannot load under vitest, so
- * `conversation_turn_usage` is modeled by a hand-rolled fake `Database` whose
- * INSERT ... ON CONFLICT is a Map upsert keyed by turn_uuid (last write wins,
- * exactly as the real ON CONFLICT DO UPDATE) and whose SELECTs filter that Map.
- * This covers the upsert/dedup/re-point decisions and the read shapes without a
- * real DB; the "survives JSONL pruning" durability comes structurally from the
- * data living in the DB at all (written at index time, not read live from the
- * transcript), which the indexer-integration test exercises.
+ * The durable per-turn usage ledger, on a real in-memory better-sqlite3 database
+ * with the project migrations applied, so the upsert/dedup/re-point decisions and
+ * every read shape run the shipped SQL. The "survives JSONL pruning" durability
+ * comes structurally from the data living in the DB at all (written at index
+ * time, not read live from the transcript), which the indexer-integration test
+ * exercises.
  */
 
-interface FakeUsageRow {
-  turn_uuid: string;
-  agent_session_id: string | null;
-  session_id: string | null;
-  task_id: string | null;
-  model: string | null;
-  ts: number | null;
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens: number;
-  cache_read_input_tokens: number;
-  recorded_at: string;
-  subagent_id: string | null;
-  agent_type: string | null;
-  spawn_depth: number | null;
-  parent_tool_use_id: string | null;
-}
+const openDatabases: Database.Database[] = [];
 
-function tsKey(row: FakeUsageRow): number {
-  return row.ts === null ? Number.NEGATIVE_INFINITY : row.ts;
-}
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
-function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow>; prepare: ReturnType<typeof vi.fn> } {
-  const table = new Map<string, FakeUsageRow>();
-  const prepare = vi.fn((sql: string) => ({
-    run: (...args: unknown[]) => {
-      if (sql.includes('INSERT INTO conversation_turn_usage')) {
-        const [
-          turnUuid,
-          agentSessionId,
-          sessionId,
-          taskId,
-          model,
-          ts,
-          inputTokens,
-          outputTokens,
-          cacheCreation,
-          cacheRead,
-          recordedAt,
-          subagentId,
-          agentType,
-          spawnDepth,
-          parentToolUseId,
-        ] = args;
-        // ON CONFLICT(turn_uuid) DO UPDATE == Map.set (last write wins).
-        table.set(String(turnUuid), {
-          turn_uuid: String(turnUuid),
-          agent_session_id: (agentSessionId as string | null) ?? null,
-          session_id: (sessionId as string | null) ?? null,
-          task_id: (taskId as string | null) ?? null,
-          model: (model as string | null) ?? null,
-          ts: (ts as number | null) ?? null,
-          input_tokens: Number(inputTokens),
-          output_tokens: Number(outputTokens),
-          cache_creation_input_tokens: Number(cacheCreation),
-          cache_read_input_tokens: Number(cacheRead),
-          recorded_at: String(recordedAt),
-          subagent_id: (subagentId as string | null) ?? null,
-          agent_type: (agentType as string | null) ?? null,
-          spawn_depth: (spawnDepth as number | null) ?? null,
-          parent_tool_use_id: (parentToolUseId as string | null) ?? null,
-        });
-        return { changes: 1, lastInsertRowid: 0 };
-      }
-      throw new Error(`unexpected run SQL: ${sql}`);
-    },
-    get: (..._args: unknown[]) => {
-      if (sql.includes('MIN(ts) AS earliestMs')) {
-        const tsValues = [...table.values()]
-          .map((row) => row.ts)
-          .filter((ts): ts is number => ts !== null);
-        return { earliestMs: tsValues.length > 0 ? Math.min(...tsValues) : null };
-      }
-      throw new Error(`unexpected get SQL: ${sql}`);
-    },
-    all: (...args: unknown[]) => {
-      const rows = [...table.values()];
-      // The subagent breakdown - checked FIRST because its WHERE clause also
-      // mentions task_id, and it is the only reader that wants subagent rows.
-      if (sql.includes('GROUP BY agent_type')) {
-        const params = [...args];
-        const taskId = sql.includes('task_id = ?') ? String(params.shift()) : null;
-        const sinceMs = sql.includes('ts >= ?') ? Number(params.shift()) : null;
-        const untilMs = sql.includes('ts < ?') ? Number(params.shift()) : null;
-        const matching = rows.filter((row) =>
-          row.subagent_id !== null
-          && (taskId === null || row.task_id === taskId)
-          && (sinceMs === null || (row.ts !== null && row.ts >= sinceMs))
-          && (untilMs === null || (row.ts !== null && row.ts < untilMs)));
-        const byType = new Map<string | null, { agentType: string | null; inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number; turnCount: number; subagents: Set<string> }>();
-        for (const row of matching) {
-          const key = row.agent_type;
-          const bucket = byType.get(key) ?? {
-            agentType: row.agent_type, inputTokens: 0, outputTokens: 0,
-            cacheCreationTokens: 0, cacheReadTokens: 0, turnCount: 0, subagents: new Set<string>(),
-          };
-          bucket.inputTokens += row.input_tokens;
-          bucket.outputTokens += row.output_tokens;
-          bucket.cacheCreationTokens += row.cache_creation_input_tokens;
-          bucket.cacheReadTokens += row.cache_read_input_tokens;
-          bucket.turnCount += 1;
-          bucket.subagents.add(String(row.subagent_id));
-          byType.set(key, bucket);
-        }
-        return [...byType.values()]
-          .map(({ subagents, ...totals }) => ({ ...totals, subagentCount: subagents.size }))
-          .sort((a, b) => b.cacheReadTokens - a.cacheReadTokens || b.outputTokens - a.outputTokens);
-      }
-      // Every reader below means the MAIN THREAD, which the real SQL spells
-      // `subagent_id IS NULL`. Mirrored here rather than assumed, so a reader
-      // that lost the clause fails this tier instead of only the real-DB one.
-      const mainThread = rows.filter((row) => !sql.includes('subagent_id IS NULL') || row.subagent_id === null);
-      if (sql.includes('WHERE task_id = ?')) {
-        return mainThread.filter((row) => row.task_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
-      }
-      if (sql.includes('WHERE session_id = ?')) {
-        return mainThread.filter((row) => row.session_id === args[0]).sort((a, b) => tsKey(a) - tsKey(b));
-      }
-      if (sql.includes('WHERE turn_uuid IN')) {
-        const wanted = new Set(args.map((value) => String(value)));
-        return mainThread.filter((row) => wanted.has(row.turn_uuid));
-      }
-      if (sql.includes('GROUP BY bucketStartMs')) {
-        // The grouped burn-rate read, bucket-only output. Mirrors the real
-        // SQL's bind order: turn window (session_tokens CTE), cost window,
-        // groupMs twice (bucket expression), turn window again (outer scan).
-        // This mock has no usage_history table, so allocatedCostUsd is
-        // always 0 here; the allocation join is pinned against a REAL
-        // database in conversation-usage-cost-allocation.test.ts.
-        const hasSince = sql.includes('ts >= ?');
-        const hasUntil = sql.includes('ts < ?');
-        const windowLength = (hasSince ? 1 : 0) + (hasUntil ? 1 : 0);
-        const costLength = (sql.includes('session_started_at >= ?') ? 1 : 0)
-          + (sql.includes('session_started_at < ?') ? 1 : 0);
-        const groupMs = Number(args[windowLength + costLength]);
-        expect(args[windowLength + costLength + 1]).toBe(args[windowLength + costLength]);
-        const sinceMs = hasSince ? Number(args[0]) : null;
-        const untilMs = hasUntil ? Number(args[hasSince ? 1 : 0]) : null;
-        const grouped = new Map<number, {
-          bucketStartMs: number;
-          inputTokens: number;
-          outputTokens: number;
-          cacheCreationTokens: number;
-          cacheReadTokens: number;
-          turnCount: number;
-          allocatedCostUsd: number;
-        }>();
-        for (const row of mainThread) {
-          if (row.ts === null) continue;
-          if (sinceMs !== null && row.ts < sinceMs) continue;
-          if (untilMs !== null && row.ts >= untilMs) continue;
-          const bucketStartMs = Math.floor(row.ts / groupMs) * groupMs;
-          let entry = grouped.get(bucketStartMs);
-          if (!entry) {
-            entry = {
-              bucketStartMs,
-              inputTokens: 0,
-              outputTokens: 0,
-              cacheCreationTokens: 0,
-              cacheReadTokens: 0,
-              turnCount: 0,
-              allocatedCostUsd: 0,
-            };
-            grouped.set(bucketStartMs, entry);
-          }
-          entry.inputTokens += row.input_tokens;
-          entry.outputTokens += row.output_tokens;
-          entry.cacheCreationTokens += row.cache_creation_input_tokens;
-          entry.cacheReadTokens += row.cache_read_input_tokens;
-          entry.turnCount += 1;
-        }
-        return [...grouped.values()].sort((a, b) => a.bucketStartMs - b.bucketStartMs);
-      }
-      throw new Error(`unexpected all SQL: ${sql}`);
-    },
-  }));
-  const db = {
-    prepare,
-    transaction: passThroughTransaction,
-  } as unknown as Database.Database;
-  return { db, table, prepare };
+/**
+ * A migrated in-memory project database. `prepared` records the SQL prepared
+ * after the migrations ran, so a test can pin that a call prepares none.
+ */
+function makeUsageDb(): { db: Database.Database; prepared: string[]; rowCount: () => number } {
+  const prepared: string[] = [];
+  const db = openTestDatabase(':memory:', { prepared });
+  openDatabases.push(db);
+  runProjectMigrations(db);
+  prepared.length = 0;
+  return {
+    db,
+    prepared,
+    rowCount: () => (db.prepare('SELECT COUNT(*) AS count FROM conversation_turn_usage').get() as { count: number }).count,
+  };
 }
 
 function usage(overrides: Partial<TranscriptTurnUsage> = {}): TranscriptTurnUsage {
@@ -263,23 +92,15 @@ describe('extractTurnUsageRecords', () => {
   });
 });
 
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
-describeWithSqlite('ConversationUsageStore.recordTurns against SQLite', () => {
-  function realStore(): { store: ConversationUsageStore; recordedAt: (turnUuid: string) => string } {
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
-    runProjectMigrations(db);
-    const read = db.prepare('SELECT recorded_at AS recordedAt FROM conversation_turn_usage WHERE turn_uuid = ?');
-    return {
-      store: new ConversationUsageStore(db),
-      recordedAt: (turnUuid) => (read.get(turnUuid) as { recordedAt: string }).recordedAt,
-    };
-  }
-
+describe('ConversationUsageStore.recordTurns', () => {
   it('leaves an unchanged turn unwritten, and rewrites one whose usage changed', () => {
     // Every agent turn records the whole transcript's turns again; before, each
     // replay rewrote every row of the conversation.
-    const { store, recordedAt } = realStore();
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    const recordedAt = (turnUuid: string): string => (db
+      .prepare('SELECT recorded_at AS recordedAt FROM conversation_turn_usage WHERE turn_uuid = ?')
+      .get(turnUuid) as { recordedAt: string }).recordedAt;
     const turns = [
       { turnUuid: 'a1', ts: 2, model: 'model-x', usage: usage() },
       { turnUuid: 'a2', ts: 4, model: 'model-x', usage: usage() },
@@ -293,7 +114,8 @@ describeWithSqlite('ConversationUsageStore.recordTurns against SQLite', () => {
   });
 
   it('records a batch larger than one transaction in full', () => {
-    const { store } = realStore();
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
     const turns = Array.from({ length: TURNS_PER_TRANSACTION * 2 + 5 }, (_, index) => ({
       turnUuid: `turn-${index}`, ts: index, model: 'model-x', usage: usage(),
     }));
@@ -302,9 +124,7 @@ describeWithSqlite('ConversationUsageStore.recordTurns against SQLite', () => {
 
     expect(store.getForTask('task-1')).toHaveLength(turns.length);
   });
-});
 
-describe('ConversationUsageStore.recordTurns', () => {
   it('persists one row per turn, read back by task and by session', () => {
     const { db } = makeUsageDb();
     const store = new ConversationUsageStore(db);
@@ -346,7 +166,7 @@ describe('ConversationUsageStore.recordTurns', () => {
   });
 
   it('dedups a replayed turn (same uuid) to one row and re-points it to the latest owner', () => {
-    const { db, table } = makeUsageDb();
+    const { db, rowCount } = makeUsageDb();
     const store = new ConversationUsageStore(db);
 
     // Parent session records the turn.
@@ -363,7 +183,7 @@ describe('ConversationUsageStore.recordTurns', () => {
     );
 
     // One physical row, not two: task totals never double-count a shared turn.
-    expect(table.size).toBe(1);
+    expect(rowCount()).toBe(1);
     const byTask = store.getForTask('task-1');
     expect(byTask).toHaveLength(1);
     // Attribution re-points to the latest writer.
@@ -373,9 +193,9 @@ describe('ConversationUsageStore.recordTurns', () => {
   });
 
   it('is a no-op on an empty batch and prepares no SQL', () => {
-    const { db, prepare } = makeUsageDb();
+    const { db, prepared } = makeUsageDb();
     new ConversationUsageStore(db).recordTurns(owner, [], now);
-    expect(prepare).not.toHaveBeenCalled();
+    expect(prepared).toEqual([]);
   });
 
   it('getForTurns returns only the requested uuids', () => {
@@ -476,8 +296,10 @@ describe('ConversationUsageStore subagent-vs-main-thread split', () => {
 
     expect(breakdown).toEqual([
       // Heaviest cache read first: that is the number fan-out tuning turns on.
-      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3500, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 2, subagentCount: 2 },
-      { agentType: 'test-builder', inputTokens: 700, outputTokens: 200, cacheCreationTokens: 50, cacheReadTokens: 60_000, turnCount: 1, subagentCount: 1 },
+      // Nested means spawn depth 2 or deeper: both review-finders sit at depth 1,
+      // the test-builder at depth 2.
+      { agentType: 'review-finder', inputTokens: 9000, outputTokens: 3500, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 2, subagentCount: 2, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+      { agentType: 'test-builder', inputTokens: 700, outputTokens: 200, cacheCreationTokens: 50, cacheReadTokens: 60_000, turnCount: 1, subagentCount: 1, nestedTurnCount: 1, nestedSubagentCount: 1, maxSpawnDepth: 2 },
     ]);
   });
 
@@ -495,60 +317,27 @@ describe('ConversationUsageStore subagent-vs-main-thread split', () => {
 
 // --- Indexer integration: indexSession populates the ledger from parsed usage --
 
-interface FakeIndexerDbState {
-  sessionRecord: SessionRecord;
-  usageInserts: unknown[][];
-}
-
-function makeIndexerFakeDb(state: FakeIndexerDbState): Database.Database {
-  return {
-    prepare(sql: string) {
-      return {
-        get: (..._args: unknown[]) => {
-          if (sql.includes('FROM sessions WHERE id = ?')) return state.sessionRecord;
-          if (sql.includes('FROM memory_index_state WHERE corpus')) return undefined;
-          throw new Error(`unexpected get SQL: ${sql}`);
-        },
-        all: (..._args: unknown[]) => {
-          // upsertDocument's existing-chunk probe: no prior chunks.
-          if (sql.includes('FROM memory_chunks') && sql.includes('content_hash')) return [];
-          throw new Error(`unexpected all SQL: ${sql}`);
-        },
-        run: (...args: unknown[]) => {
-          if (sql.includes('INSERT INTO conversation_turn_usage')) {
-            state.usageInserts.push(args);
-            return { changes: 1, lastInsertRowid: 0 };
-          }
-          if (sql.includes('INSERT INTO memory_index_state')) return { changes: 1, lastInsertRowid: 0 };
-          if (sql.includes('INSERT INTO memory_chunks')) return { changes: 1, lastInsertRowid: 1 };
-          if (sql.includes('DELETE FROM memory_chunks WHERE id IN')) return { changes: 0 };
-          throw new Error(`unexpected run SQL: ${sql}`);
-        },
-      };
-    },
-    transaction: passThroughTransaction,
-  } as unknown as Database.Database;
-}
-
-function makeRecord(): SessionRecord {
-  return {
-    id: 'session-1',
-    task_id: 'task-1',
-    session_type: 'claude_agent',
-    agent_session_id: 'agent-abc',
-    cwd: '/work/project',
-  } as unknown as SessionRecord;
+interface LedgerRow {
+  turn_uuid: string;
+  agent_session_id: string | null;
+  session_id: string | null;
+  task_id: string | null;
+  model: string | null;
+  output_tokens: number;
 }
 
 describe('ConversationIndexer.indexSession populates the usage ledger', () => {
-  it('records per-turn usage for assistant turns that reported it', async () => {
-    const state: FakeIndexerDbState = { sessionRecord: makeRecord(), usageInserts: [] };
-    const entries: TranscriptEntry[] = [
-      { kind: 'user', uuid: 'u1', ts: 10, text: 'hi' },
-      { kind: 'assistant', uuid: 'a1', ts: 20, model: 'claude-opus-4-8', usage: usage({ outputTokens: 42 }), blocks: [{ type: 'text', text: 'hello' }] },
-    ];
+  /** An indexer over a migrated database holding the one session it indexes. */
+  function indexerFor(entries: TranscriptEntry[]) {
+    const { db } = makeUsageDb();
+    // The ledger is not foreign-keyed to the board, so the session is the only row it needs.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.prepare(
+      `INSERT INTO sessions (id, task_id, session_type, agent_session_id, command, cwd, status, started_at)
+       VALUES ('session-1', 'task-1', 'claude_agent', 'agent-abc', 'claude', '/work/project', 'running', ?)`,
+    ).run(now);
     const indexer = new ConversationIndexer({
-      getDb: () => makeIndexerFakeDb(state),
+      getDb: () => db,
       getAdapter: () => ({ displayName: 'Claude', parseTranscript: vi.fn(async () => ({ entries, sourcePath: null })) }),
       stat: () => null,
       now: () => now,
@@ -558,39 +347,39 @@ describe('ConversationIndexer.indexSession populates the usage ledger', () => {
       ],
       chunkerVersion: 1,
     });
+    const ledger = (): LedgerRow[] => db
+      .prepare('SELECT turn_uuid, agent_session_id, session_id, task_id, model, output_tokens FROM conversation_turn_usage ORDER BY turn_uuid')
+      .all() as LedgerRow[];
+    return { indexer, ledger };
+  }
+
+  it('records per-turn usage for assistant turns that reported it', async () => {
+    const { indexer, ledger } = indexerFor([
+      { kind: 'user', uuid: 'u1', ts: 10, text: 'hi' },
+      { kind: 'assistant', uuid: 'a1', ts: 20, model: 'claude-opus-4-8', usage: usage({ outputTokens: 42 }), blocks: [{ type: 'text', text: 'hello' }] },
+    ]);
 
     expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
-    // One usage insert for a1; INSERT args: (turn_uuid, agent_session_id,
-    // session_id, task_id, model, ts, input, output, cacheCreate, cacheRead, recorded_at).
-    expect(state.usageInserts).toHaveLength(1);
-    const insert = state.usageInserts[0];
-    expect(insert[0]).toBe('a1'); // turn_uuid
-    expect(insert[1]).toBe('agent-abc'); // agent_session_id
-    expect(insert[2]).toBe('session-1'); // session_id
-    expect(insert[3]).toBe('task-1'); // task_id
-    expect(insert[4]).toBe('claude-opus-4-8'); // model
-    expect(insert[7]).toBe(42); // output_tokens
+
+    expect(ledger()).toEqual([{
+      turn_uuid: 'a1',
+      agent_session_id: 'agent-abc',
+      session_id: 'session-1',
+      task_id: 'task-1',
+      model: 'claude-opus-4-8',
+      output_tokens: 42,
+    }]);
   });
 
   it('writes no usage rows when no turn reported usage', async () => {
-    const state: FakeIndexerDbState = { sessionRecord: makeRecord(), usageInserts: [] };
-    const entries: TranscriptEntry[] = [
+    const { indexer, ledger } = indexerFor([
       { kind: 'user', uuid: 'u1', ts: 10, text: 'hi' },
       { kind: 'assistant', uuid: 'a1', ts: 20, blocks: [{ type: 'text', text: 'hello' }] },
-    ];
-    const indexer = new ConversationIndexer({
-      getDb: () => makeIndexerFakeDb(state),
-      getAdapter: () => ({ displayName: 'Claude', parseTranscript: vi.fn(async () => ({ entries, sourcePath: null })) }),
-      stat: () => null,
-      now: () => now,
-      chunker: () => [
-        { seq: 0, text: 'x', contentHash: 'h', tokenEstimate: 1, role: 'assistant', tsStart: 20, tsEnd: 20, turnUuidStart: 'a1', turnUuidEnd: 'a1' },
-      ],
-      chunkerVersion: 1,
-    });
+    ]);
 
     expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
-    expect(state.usageInserts).toHaveLength(0);
+
+    expect(ledger()).toEqual([]);
   });
 });
 

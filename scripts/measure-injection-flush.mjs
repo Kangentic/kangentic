@@ -133,10 +133,10 @@ const home = os.homedir();
 /**
  * Observe OpenCode by querying its SQLite store read-only.
  *
- * Uses the built-in `node:sqlite` rather than `better-sqlite3`: the native
- * module is built against Electron's ABI and cannot load in a stand-alone Node
- * runtime (the same reason `opencode/transcript-parser.ts` splits its pure
- * row-mapping out for unit tests).
+ * Uses the built-in `node:sqlite` rather than `better-sqlite3`, written when
+ * the native module was built against Electron's ABI and could not load in a
+ * stand-alone Node runtime. better-sqlite3 13 can; node:sqlite still needs no
+ * native module at all.
  *
  * OpenCode owns this database and holds it in WAL, so the handle is read-only
  * and journal mode is never touched.

@@ -1,13 +1,11 @@
 /**
  * Unit test for the OpenCode SQLite transcript parser.
  *
- * The SQLite I/O (`parseOpenCodeTranscriptAtPath`) depends on better-sqlite3,
- * whose native binding cannot load under a stand-alone Node runtime
- * (NODE_MODULE_VERSION mismatch - the repo's other DB tests mock it for the
- * same reason). So the row-to-entry mapping is extracted into the pure
+ * The SQLite I/O (`parseOpenCodeTranscriptAtPath`) reads rows through
+ * better-sqlite3. The row-to-entry mapping is extracted into the pure
  * `mapOpenCodeRows`, which this test exercises directly with the verified
- * `message` / `part` row shapes. The `tool` part shape is schema-derived (no
- * real tool parts were available locally).
+ * `message` / `part` row shapes, so no database is needed. The `tool` part
+ * shape is schema-derived (no real tool parts were available locally).
  */
 import { describe, it, expect } from 'vitest';
 import os from 'node:os';

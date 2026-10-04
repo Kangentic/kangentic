@@ -13,10 +13,11 @@ directories:
 files:
   - ".vite/build/**"
   - "package.json"
+  # better-sqlite3 13 ships its native addon as Node-API prebuilds under
+  # prebuilds/<platform>-<arch>.node and loads them itself (lib/binding.js);
+  # build/afterPack.js strips every prebuild but the target's.
   - "node_modules/better-sqlite3/**"
   - "node_modules/node-pty/**"
-  - "node_modules/bindings/**"
-  - "node_modules/file-uri-to-path/**"
   - "node_modules/sherpa-onnx-node/**"
   - "node_modules/sherpa-onnx-*/**"
   # Terminal Font Family picker: font-list shells out to fc-list (Linux) / a
@@ -96,12 +97,10 @@ asarUnpack:
   - "node_modules/detect-libc/**"
   - "node_modules/semver/**"
   # The retrieval worker opens the project databases itself, so better-sqlite3
-  # and the two packages it loads its native addon through must resolve from
-  # the unpacked tree it runs in. It takes the sqlite-vec binary's path from
-  # main, so the sqlite-vec root package can stay inside the asar.
+  # and its prebuilt addon must resolve from the unpacked tree it runs in. It
+  # takes the sqlite-vec binary's path from main, so the sqlite-vec root
+  # package can stay inside the asar.
   - "node_modules/better-sqlite3/**"
-  - "node_modules/bindings/**"
-  - "node_modules/file-uri-to-path/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/line-count-worker.js"
   - ".vite/build/dictation-worker.js"
@@ -117,7 +116,8 @@ extraResources:
   - from: node_modules/@kangentic/branding/resources/desktop/icon.ico
     to: icon.ico
 
-# We rebuild better-sqlite3 manually; node-pty uses NAPI prebuilts
+# Every native module ships Node-API prebuilds (better-sqlite3, node-pty, koffi,
+# sherpa-onnx-node, onnxruntime-node, sharp), so nothing is compiled at pack time.
 npmRebuild: false
 afterPack: build/afterPack.js
 afterSign: build/afterSign.js
@@ -158,7 +158,8 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   strictVerify: false
-  minimumSystemVersion: "10.15"
+  # Electron 44 dropped macOS 12, so 13.0 is the oldest system it starts on.
+  minimumSystemVersion: "13.0"
   entitlements: build/entitlements.plist
   entitlementsInherit: build/entitlements.plist
   extendInfo:

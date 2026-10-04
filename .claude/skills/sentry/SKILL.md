@@ -237,7 +237,8 @@ handled forwards), release, environment, and the anonymous install id under `use
 ## Native minidumps (`platform: native`, mechanism `minidump`)
 
 A native crash's frames arrive as raw addresses with `function: null` for any module Sentry has
-no debug file for (node-pty's `conpty.node` / `pty.node`, `better_sqlite3.node`). They can still
+no debug file for (node-pty's `conpty.node` / `pty.node`, and better-sqlite3's per-platform
+prebuild, such as `win32-x64.node`, which was `better_sqlite3.node` before 13). They can still
 be resolved offline on a Windows machine, because node-pty ships the matching PDB in its npm
 tarball (`node_modules/node-pty/prebuilds/win32-x64/conpty.pdb`):
 

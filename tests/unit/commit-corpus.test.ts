@@ -3,13 +3,13 @@
  * whose conversation first wrote its subject.
  *
  * The record half is pure. The sweep runs the REAL project migrations and the
- * REAL RetrievalStore against node:sqlite, so the full-text link lookup, the
- * diff-upsert and the index-state bookkeeping are the shipped ones; only git is
- * scripted. node:sqlite rather than better-sqlite3 on purpose: better-sqlite3
- * is compiled for Electron's Node ABI, so every suite gated on it skips.
+ * REAL RetrievalStore against real better-sqlite3, the driver production uses,
+ * so the full-text link lookup, the diff-upsert and the index-state bookkeeping
+ * are the shipped ones; only git is scripted.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import {
@@ -25,15 +25,7 @@ import { sweepCommitRecords, RELINK_WINDOW_MS, type CommitIndexerDeps } from '..
 import { SLICE_ROWS } from '../../src/main/retrieval/timed-slices';
 import type { BranchHead } from '../../src/main/retrieval/branch-git';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
+import { openTestDatabase } from './helpers/test-database';
 
 describe('commit records', () => {
   it('reads the records git log prints in the shipped format', () => {
@@ -76,10 +68,14 @@ describe('commit records', () => {
   });
 });
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
-
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_800_000_000_000;
+
+const openDatabases: DatabaseType.Database[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 function sha(seed: number): string {
   return seed.toString(16).padStart(40, '0');
@@ -87,10 +83,10 @@ function sha(seed: number): string {
 
 /** A project with conversations that mention commit subjects, and a scripted git. */
 function project() {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
-  const store = new RetrievalStore(db);
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  const store = new RetrievalStore(database);
   let conversationCount = 0;
   // A conversation belongs to a task on the board, as every real one does: a
   // commit linked to a task that is gone is unlinked by the sweep.
@@ -131,7 +127,7 @@ function project() {
     logCalls: [] as Array<{ head: string; sinceSha: string | null }>,
   };
   const deps: CommitIndexerDeps = {
-    getDb: () => db,
+    getDb: () => database,
     readHead: async () => git.head,
     readLog: async (_path, head, sinceSha) => {
       git.logCalls.push({ head, sinceSha });
@@ -151,14 +147,14 @@ function project() {
   };
   const indexedShas = (): string[] => (database.prepare("SELECT doc_id AS docId FROM memory_chunks WHERE corpus = 'commit' ORDER BY id").all() as Array<{ docId: string }>).map((row) => row.docId);
   const sweep = (allowFullRead = true) => sweepCommitRecords('project', '/mock/repo', 'main', { allowFullRead }, deps);
-  return { database, db, store, mention, mentionTextOnly, recordIndexed, git, deps, taskOf, indexedShas, sweep };
+  return { database, store, mention, mentionTextOnly, recordIndexed, git, deps, taskOf, indexedShas, sweep };
 }
 
 function commit(seed: number, subject: string, committedMs: number): CommitEntry {
   return { sha: sha(seed), committedMs, subject, body: '' };
 }
 
-describeWithSqlite('sweepCommitRecords', () => {
+describe('sweepCommitRecords', () => {
   it('ties each commit to the task that wrote its subject first, not one that quoted it later', async () => {
     const fixture = project();
     const landed = NOW - 2 * DAY;
@@ -468,29 +464,37 @@ describeWithSqlite('sweepCommitRecords', () => {
     // `unlinkCommitsOfDeletedTasks` and `relinked` is the three commits the
     // rolled-back slice counted, with the relink marker reset for commits that
     // are all still linked.
+    //
+    // The COMMIT is failed for real. better-sqlite3 runs it as a native prepared
+    // statement, so nothing in JS can intercept it. A foreign key declared
+    // DEFERRABLE INITIALLY DEFERRED is only checked at COMMIT: the trigger below
+    // leaves a child row with no parent when a commit is unlinked, so every
+    // write in the slice succeeds and the COMMIT is what throws.
     it('reports no commit unlinked when the slice that wrote them fails to commit, and the next run unlinks them', async () => {
       const { fixture, shas, entryCountOf, sweepWith } = await orphanedCommits(3);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-      const realExec = fixture.database.exec.bind(fixture.database);
-      let commitsLeftToFail = 1;
-      const exec = vi.spyOn(fixture.database, 'exec').mockImplementation((sql: string) => {
-        if (sql === 'COMMIT' && commitsLeftToFail > 0) {
-          commitsLeftToFail -= 1;
-          throw new Error('disk I/O error');
-        }
-        return realExec(sql);
-      });
+      fixture.database.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE commit_fault_parent (id INTEGER PRIMARY KEY);
+        CREATE TABLE commit_fault_child (parent_id INTEGER REFERENCES commit_fault_parent (id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER commit_fault AFTER UPDATE ON memory_index_state
+        WHEN new.corpus = 'commit' AND new.entry_count = 0
+        BEGIN
+          INSERT INTO commit_fault_child (parent_id) VALUES (1);
+        END;
+      `);
       try {
         const failed = await sweepWith();
 
-        expect(commitsLeftToFail).toBe(0);
-        expect(warn.mock.calls.some((call) => String(call[0]).includes('records:commit-unlink'))).toBe(true);
+        // The slice's own COMMIT failed, not something earlier in the write.
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('records:commit-unlink') && String(call[1]).includes('FOREIGN KEY constraint failed'))).toBe(true);
         expect(failed.relinked).toBe(0);
         // Rolled back: still on the deleted task, state rows still linked.
         expect(shas.map((commitSha) => fixture.taskOf(commitSha))).toEqual(shas.map(() => 'task-doomed'));
         expect(shas.map((commitSha) => entryCountOf(commitSha))).toEqual(shas.map(() => 1));
       } finally {
-        exec.mockRestore();
+        // The fault clears, as a transient failure does.
+        fixture.database.exec('DROP TRIGGER commit_fault');
         warn.mockRestore();
       }
 

@@ -9,9 +9,7 @@
  *
  * Uses a real in-memory better-sqlite3 DB run through the actual project
  * migrations (which seed the default swimlane set, including the archived
- * Done lane), mirroring the ABI-probe pattern from
- * mcp-move-task-to-project.test.ts so the suite skips cleanly if
- * better-sqlite3 cannot load under the test runner's Node ABI.
+ * Done lane).
  *
  * Covers:
  *   - resolveColumn resolves "Done" by name only when includeArchivedDone is set
@@ -25,31 +23,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors mcp-move-task-to-project.test.ts / swimlane-repository.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
@@ -57,7 +31,7 @@ import { resolveColumn } from '../../src/main/agent/commands/column-resolver';
 import { handleMoveTask, handleCreateTask } from '../../src/main/agent/commands/task-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
-function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string): CommandContext & {
+function makeContext(db: Database.Database, projectPath: string): CommandContext & {
   onTaskCreated: ReturnType<typeof vi.fn>;
   onTaskMove: ReturnType<typeof vi.fn>;
   onTasksReordered: ReturnType<typeof vi.fn>;
@@ -77,14 +51,13 @@ function makeContext(db: InstanceType<typeof DatabaseType>, projectPath: string)
   };
 }
 
-describe.runIf(CAN_RUN)('resolving and moving a task to the Done column', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('resolving and moving a task to the Done column', () => {
+  let db: Database.Database;
   let context: ReturnType<typeof makeContext>;
   let todoLane: { id: string; name: string };
   let doneLane: { id: string; name: string; is_archived: boolean };
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
 

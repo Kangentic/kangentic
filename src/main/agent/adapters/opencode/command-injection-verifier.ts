@@ -91,8 +91,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Pure row-to-text mapping, split from the SQLite I/O so it can be unit tested
- * without the native better-sqlite3 binding (which cannot load under a
- * stand-alone Node runtime). Mirrors `mapOpenCodeRows` in transcript-parser.ts.
+ * without a database. Mirrors `mapOpenCodeRows` in transcript-parser.ts.
  */
 export function findOpenCodeSubmittedText(
   messageRows: MessageRow[],

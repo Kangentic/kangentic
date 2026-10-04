@@ -7,49 +7,20 @@
  * (swimlanes.plan_exit_target_id) inside a transaction. A mock that pattern-matches
  * SQL would assert that we issued the statements, not that they had any effect,
  * which is exactly the class of bug this tool exists to avoid.
- *
- * Skips when better-sqlite3 cannot load under the runner's Node ABI. Read that
- * as "skips everywhere", not "skips locally": `postinstall` runs
- * scripts/rebuild-native.js, which rebuilds better-sqlite3 against ELECTRON's
- * headers, so CI's own `npm ci` produces a binding vitest cannot load either
- * and this whole file is inert on CI too. vitest.config.ts says the same and
- * names the way out - `node:sqlite`, already flagged on there for the Node 22
- * runner. Until this file moves to it, treat these cases as documentation and
- * pin anything load-bearing somewhere that executes; the mock-harness cases in
- * column-commands-description.test.ts cover the session-track pairing and the
- * enum narrowing for that reason. Mirrors swimlane-repository.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
+import { resolveColumnMessage } from '../../src/main/transition-engine/column-strategy';
 import { handleCreateColumn, handleDeleteColumn, handleUpdateColumn } from '../../src/main/agent/commands/column-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { BoardProfile } from '../../src/shared/types';
 
-describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('handleCreateColumn / handleDeleteColumn', () => {
+  let db: Database.Database;
   let repository: SwimlaneRepository;
   let profiles: BoardProfile[];
   let context: CommandContext;
@@ -72,8 +43,19 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
     };
   }
 
+  /**
+   * The message a column delivers and its timing, read the way the engine reads
+   * them. `autoCommand` is not a lane field any more: it is the column's first
+   * `send_message` enter automation, and the lane's own `auto_command` /
+   * `auto_command_mode` are retired columns no delivery path reads.
+   */
+  function deliveredMessage(columnName: string): { message: string; mode: string } | null {
+    const lane = repository.list().find((candidate) => candidate.name === columnName);
+    if (!lane) return null;
+    return resolveColumnMessage(new AutomationRepository(db).listForColumn(lane.id));
+  }
+
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new SwimlaneRepository(db);
@@ -217,7 +199,7 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
     expect(created?.description).toBe('Checks brand voice');
     expect(created?.color).toBe('#71717a');
     expect(created?.auto_spawn).toBe(false);
-    expect(created?.auto_command).toBe('/review --brand');
+    expect(deliveredMessage('Brand Review')?.message).toBe('/review --brand');
     expect(created?.model_override).toBe('opus');
     expect(created?.permission_mode).toBe('plan');
   });
@@ -348,10 +330,10 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
   // -------------------------------------------------------------------------
   // auto-command timing
   //
-  // The third field that drifted the same way as the two above. `mapRow`
-  // collapses anything that is not 'deferred' to 'immediate', so an invalid
-  // value here does not persist visibly - it silently acts as the default,
-  // which is why the handler refuses it outright rather than coercing.
+  // The third field that drifted the same way as the two above. An invalid
+  // value is refused outright rather than coerced, because coercing would make
+  // a typo silently act as the default. The timing that counts is the one on
+  // the column's message automation, which is what the engine delivers by.
   // -------------------------------------------------------------------------
 
   it('persists a deferred auto-command timing on create', () => {
@@ -360,15 +342,13 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
       context,
     );
 
-    const created = repository.list().find((lane) => lane.name === 'Brand Review');
-    expect(created?.auto_command_mode).toBe('deferred');
+    expect(deliveredMessage('Brand Review')).toMatchObject({ message: '/review --brand', mode: 'deferred' });
   });
 
   it('defaults auto-command timing to immediate', () => {
     handleCreateColumn({ name: 'Brand Review', autoCommand: '/review --brand' }, context);
 
-    const created = repository.list().find((lane) => lane.name === 'Brand Review');
-    expect(created?.auto_command_mode).toBe('immediate');
+    expect(deliveredMessage('Brand Review')?.mode).toBe('immediate');
   });
 
   it('updates auto-command timing and reports it', () => {
@@ -380,6 +360,8 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
 
     expect(response.success).toBe(true);
     expect(response.message).toContain('autoCommandMode');
+    expect(deliveredMessage('Brand Review')?.mode).toBe('deferred');
+    // The lane field is still written because the Column Manager round-trips it.
     expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('deferred');
   });
 
@@ -393,6 +375,7 @@ describe.runIf(CAN_RUN)('handleCreateColumn / handleDeleteColumn', () => {
     expect(response.success).toBe(false);
     expect(response.error).toContain('Invalid autoCommandMode');
     expect(response.error).toContain('immediate, deferred');
+    expect(deliveredMessage('Brand Review')?.mode).toBe('immediate');
     expect(repository.list().find((lane) => lane.name === 'Brand Review')?.auto_command_mode).toBe('immediate');
   });
 

@@ -8,9 +8,9 @@
  * semantics are load-bearing: a switch that changes only effort must not clobber
  * the recorded model.
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
- * vitest's system Node, so these use a capturing mock DB (the same approach as
- * session-repository-metrics.test.ts).
+ * These use a capturing mock DB (the same approach as
+ * session-repository-metrics.test.ts), so the tests pin the statements issued
+ * rather than a database's contents.
  */
 
 import { describe, it, expect, vi } from 'vitest';

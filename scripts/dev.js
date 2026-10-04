@@ -168,9 +168,14 @@ function requestGracefulElectronQuit() {
   });
 }
 
-// Detect Electron executable path per-platform
+// Detect Electron executable path per-platform. Electron 42+ downloads its
+// binary on first use instead of in a postinstall, and requiring the package is
+// what does that: it returns the binary's path, fetching it first when an
+// install skipped scripts (`npm ci --ignore-scripts`) or the root postinstall
+// failed. POSIX launches through the package's cli.js, which downloads the same
+// way.
 const electronExe = process.platform === 'win32'
-  ? path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe')
+  ? require(path.join(projectDir, 'node_modules', 'electron'))
   : path.join(projectDir, 'node_modules', '.bin', 'electron');
 
 const esbuildCommon = {

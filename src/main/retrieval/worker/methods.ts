@@ -2,12 +2,12 @@
  * What the retrieval worker answers: each method's params and result types,
  * and its handler. The worker entry (`retrieval-worker.ts`) only dispatches to
  * these, so they import cleanly with no `process.parentPort` and the unit tests
- * run them directly on a node:sqlite database.
+ * run them directly on a real better-sqlite3 database.
  *
  * A handler is a thin wrapper over the retrieval code that already existed on
  * main. It reaches a project's database through `context.getDb`, which is
  * `getProjectDb` in the worker (a second connection, no migrations) and an
- * adapted node:sqlite database in tests.
+ * in-memory database from `tests/unit/helpers/test-database.ts` in tests.
  */
 
 import type Database from 'better-sqlite3';

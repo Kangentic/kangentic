@@ -14,10 +14,9 @@
  *     with the ordinal slot already translated into a RAW `tasks.position`.
  *
  * Strategy mirrors mcp-update-task-description-edits.test.ts: mock the
- * repositories so no better-sqlite3 binary is needed (it is built for Electron's
- * Node ABI and will not load under vitest), and assert on captured calls. The
- * slot arithmetic itself is covered separately and exhaustively in
- * task-ordering.test.ts.
+ * repositories so the handlers run with no database involved, and assert on
+ * captured calls. The slot arithmetic itself is covered separately and
+ * exhaustively in task-ordering.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
