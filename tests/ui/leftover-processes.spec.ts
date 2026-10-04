@@ -93,9 +93,13 @@ test.describe('Leftover processes', () => {
 
       const chrome = row(page, 'chrome');
       const runningRows = page.locator('[data-testid="leftover-processes-running"] [data-testid="leftover-process-row"]');
+      await expect(chrome).toContainText('Has an open window.');
       await chrome.getByRole('button', { name: 'Stop chrome' }).click();
       await expect(chrome).toHaveAttribute('data-state', 'stopped', { timeout: 5000 });
       await expect(chrome.locator('[data-testid="leftover-process-stop"]')).toHaveText('Stopped');
+      // Stopped, it reads like any stopped row: the window it was kept for is gone.
+      await expect(chrome).toContainText('Ran in the worktree.');
+      await expect(chrome).not.toContainText('Has an open window.');
       // The row stayed in its section, in its place: state, not pixels.
       await expect(runningRows.nth(0)).toContainText('chrome');
       await expect(runningRows.nth(1)).toContainText('tmux');

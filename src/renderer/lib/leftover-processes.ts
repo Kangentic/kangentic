@@ -78,11 +78,14 @@ export function rowStateOf(entry: LeftoverProcess, stopState: LeftoverStopState 
 export function rowDetailOf(entry: LeftoverProcess, state: LeftoverRowState): { text: string; failure: boolean } {
   if (state === 'ended') return { text: 'No longer running.', failure: false };
   if (state === 'failed') return { text: "Couldn't stop it. Try again, or close it yourself.", failure: true };
+  const folder = entry.place === 'worktree' ? 'the worktree' : 'the project folder';
+  // Once stopped, a kept row reads like any stopped one: why it was kept, and
+  // the warning about stopping it, no longer apply.
+  if (state === 'stopped') return { text: `Ran in ${folder}.`, failure: false };
   if (entry.reason === 'window') return { text: 'Has an open window.', failure: false };
   if (entry.reason === 'multiplexer') return { text: 'A tmux server. Stopping it ends all your tmux sessions.', failure: false };
   if (entry.reason === 'shared') return { text: 'Also runs work you started. Stopping it stops that too.', failure: false };
-  const folder = entry.place === 'worktree' ? 'the worktree' : 'the project folder';
-  return { text: state === 'stopped' ? `Ran in ${folder}.` : `Runs in ${folder}.`, failure: false };
+  return { text: `Runs in ${folder}.`, failure: false };
 }
 
 /** The list's two sections. A row stays in the section it opened in, whatever its Stop does. */

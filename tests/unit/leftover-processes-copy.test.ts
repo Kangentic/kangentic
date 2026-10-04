@@ -118,7 +118,13 @@ describe('the list', () => {
     expect(rowDetailOf(leftoverProcess(), 'stopped').text).toBe('Ran in the worktree.');
     expect(rowDetailOf(leftoverProcess({ place: 'project' }), 'stopped').text).toBe('Ran in the project folder.');
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept' }), 'running').text).toBe('Runs in the worktree.');
-    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'window' }), 'stopped').text).toBe('Has an open window.');
+    // A kept row the user stopped drops its reason and its warning, and reads
+    // like any stopped row.
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'window' }), 'stopped').text).toBe('Ran in the worktree.');
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'multiplexer', place: 'project' }), 'stopped').text).toBe('Ran in the project folder.');
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'shared' }), 'stopped').text).toBe('Ran in the worktree.');
+    // While the stop is in flight the process still runs, so the reason stays.
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'window' }), 'stopping').text).toBe('Has an open window.');
     // The tense follows the row's state, not the report's outcome: a kept row
     // with no reason that the user then stopped reads as past tense.
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept' }), 'stopped').text).toBe('Ran in the worktree.');
