@@ -112,7 +112,7 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   lines.push('- End your turn only when this column\'s work is done (say what you did in your final message), or when you need the user (ask your question in it). A turn that ends on a progress note stops the workflow until someone notices.');
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
   lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
-  lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
+  if (input.blocks.length > 0) lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
   lines.push('- Start anything meant to keep running (a dev server, a watcher) with --kangentic-no-activity-hold in its command, or the task looks busy forever. A trailing shell comment is enough.');
   lines.push('  </how_this_runs>');
   lines.push('</workflow>');

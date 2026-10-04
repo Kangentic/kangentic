@@ -58,6 +58,14 @@ describe('{{workflow_xml}}', () => {
     expect(xml).toContain('--kangentic-no-activity-hold');
   });
 
+  it('mentions waiting tasks only when something waits on this one', () => {
+    const waitingLine = 'The tasks waiting on this one build on what you change.';
+    expect(buildWorkflowXml(WORKFLOW)).toContain(waitingLine);
+    const last = buildWorkflowXml({ ...WORKFLOW, blocks: [] });
+    expect(last).not.toContain(waitingLine);
+    expect(last).not.toContain('<waiting_on_this>');
+  });
+
   it('resolves empty outside a workflow, leaving the default prompt as it was', () => {
     const vars = resolveTaskTemplateVars(context(null));
     expect(vars.workflow_xml).toBe('');
