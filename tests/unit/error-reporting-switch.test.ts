@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const mocks = vi.hoisted(() => {
@@ -776,5 +777,32 @@ describe('tagTruncatedStack', () => {
     const returned = beforeSendEvent(eventWithFrameCount(3), {});
     expect(returned).not.toBeNull();
     expect(returned?.tags?.stack_truncated).toBeUndefined();
+  });
+});
+
+/**
+ * An OS username is often a real name, and an exception message is free text that the SDK's path
+ * normalization never rewrites. DESKTOP-19's Monaco rethrow put about 48 home paths in the exception
+ * value. `beforeSendEvent` is the one hook every main and renderer event passes, so the rewrite
+ * lives there. The path is built from this machine's real home directory at run time, which is
+ * exactly what the rewrite matches, so the case holds on every platform without a hardcoded path.
+ */
+describe('beforeSendEvent: home directory in an event', () => {
+  it('rewrites this machine\'s home directory in the exception value and still returns the event', () => {
+    const homePath = path.join(os.homedir(), 'AppData', 'x.js');
+    const event: ErrorEvent = {
+      exception: { values: [{ type: 'Error', value: `Illegal value in ${homePath}` }] },
+      tags: { source: 'diff_viewer' },
+    };
+    const returned = beforeSendEvent(event, {});
+    expect(returned).not.toBeNull();
+    expect(returned?.exception?.values?.[0].value).not.toContain(os.homedir());
+    expect(returned?.exception?.values?.[0].value).toContain('~');
+    expect(returned?.tags?.source).toBe('diff_viewer');
+  });
+
+  it('rewrites after the native crash split, so a foreign-crash rewrite is scrubbed too', () => {
+    const event: ErrorEvent = { message: `crashed under ${os.homedir()}` };
+    expect(beforeSendEvent(event, {})?.message).toBe('crashed under ~');
   });
 });

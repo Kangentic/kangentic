@@ -11,6 +11,7 @@ import {
   type NativeCrashContext,
 } from './native-crash-event';
 import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
+import { redactEventHomeDirectory } from './redact-event-paths';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -249,8 +250,9 @@ export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
 }
 
 /**
- * The actual `beforeSend`. Tags a frame-capped stack, then runs the native
- * crash split. Neither ever drops an event.
+ * The actual `beforeSend`. Tags a frame-capped stack, runs the native crash
+ * split, then rewrites this machine's home directory to `~` in whatever event
+ * is left (`redactEventHomeDirectory`). None of them ever drops an event.
  *
  * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
  * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
@@ -262,7 +264,7 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
   } catch {
     // Tagging is diagnostic only; never let it cost us the event.
   }
-  return filterNativeCrashEvent(event, hint);
+  return redactEventHomeDirectory(filterNativeCrashEvent(event, hint));
 }
 
 /**
@@ -270,12 +272,17 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
  * during init).
  *
- * SCRUBBING is deliberately Sentry's job, not ours: the SDK's default
+ * SCRUBBING is mostly Sentry's job, not ours: the SDK's default
  * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
  * the app root (so the user's home directory never reaches Sentry through an
  * app stack frame), sendDefaultPii stays false, and Sentry's server-side data
- * scrubbing is on by default. Any further scrubbing rule belongs in the Sentry
- * UI (Advanced Data Scrubbing), not in a custom beforeSend here.
+ * scrubbing is on by default. Further rules belong in the Sentry UI (Advanced
+ * Data Scrubbing), with one exception here: `beforeSendEvent` rewrites this
+ * machine's home directory to `~` in every event string
+ * (src/main/analytics/redact-event-paths.ts). An exception message is free
+ * text, normalizePathsIntegration never touches it, and an OS username is often
+ * a real name. The native crash fields (module paths, crashpad annotations) are
+ * built on Sentry's servers from the dump, so they stay a Sentry-side rule.
  *
  * BREADCRUMBS are an exception to that stance, filtered on the machine by
  * `beforeBreadcrumb` (src/shared/sentry-breadcrumbs.ts). normalizePathsIntegration never touches
