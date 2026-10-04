@@ -820,6 +820,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 | task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
 | task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped, plus 3 found in verification (2 applied, 1 skipped); 4 tests added, 1 hole skipped as unreachable |
+| task 746, pre-PR | 25f +1243 -88, 2 new files | 117KB, 2079 lines | 6 (1) | 19 | 0 | 10 | 11 of 9 pack-carrying | 18 raised, 15 distinct / 5 applied, 8 skipped; 2 coverage holes filled, 3 skipped |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
@@ -1191,3 +1192,16 @@ window over lines 47-101 leaves out the selectors above it and the switcher belo
 finder read three file bodies although its prompt carried only the signature delta. The one kept
 correctness finding, an explicit-target write that merged over `{}` while the panel's refetch was in
 flight, needed main's `saveProjectOverrides` to confirm, because main replaces the whole file.
+
+The task 746 pre-PR pass shows the cap biting at half row six's size. Its pack is 117KB and 2079
+lines, and its first 2000 lines still came back over the Read tool's 25,000-token cap, so every
+pack-carrying finder that tried the prompt's two calls fell back to 650-line chunks. Three of them
+(the IPC auditor, the performance finder, migration-safety) then read only the ranges their
+checklist needed, so their clean results cover those ranges only. Of the 11 reads beyond the pack,
+3 were outside the changed set: `auto-spawn.ts` for the insert that follows a spawn, the
+guarded-sync-writes rule for its scope, and a grep of `docs/architecture.md`. The other 8 were gaps
+in hunk-tier files: `session-manager.ts` three times, `transition-engine.ts` twice, and
+`sessions.ts`, `session-spawn-flow.ts` and `resume-suspended.ts` once each. The `session-manager.ts`
+reads went to the `resize()` stash branch, which ends about 20 lines above a one-line comment hunk,
+so a partial-tier window would have carried most of it. Both Medium findings came from that
+branch.
