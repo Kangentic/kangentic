@@ -55,6 +55,24 @@ export function CardStatusBar({
   );
 }
 
+/**
+ * A workflow task's footer while it waits in To Do: "Blocked by #413...",
+ * "Queued..." or "Paused", on its board card and its canvas card alike.
+ *
+ * The glyph is the spinner's, held still. A task waiting on another is not
+ * loading anything, and at workflow scale it is the costly part: 90 spinning
+ * footers on a 100-card canvas made a pan miss 143 of about 500 refreshes,
+ * against 7 with the spinners still (`scripts/drag-perf-rig.mjs`, W100).
+ */
+export function WorkflowWaitingBar({ label, paused }: { label: string; paused: boolean }) {
+  return (
+    <CardStatusBar testId="workflow-status-bar" title={label}>
+      {paused ? <CirclePause size={12} className="shrink-0" /> : <Loader2 size={12} className="shrink-0" />}
+      <span className="truncate">{label}</span>
+    </CardStatusBar>
+  );
+}
+
 export interface TaskCardViewModel {
   sessionId: string | undefined;
   isHighlighted: boolean;

@@ -445,7 +445,11 @@ function TaskPanel({
   const openLabel = variant === 'taskDetail' ? 'Open workflow' : onAnotherBoard ? `Open on ${detail.projectNames[task.projectId] ?? 'its board'}` : 'Open task';
   // A finished workflow has left the picker, so there is nothing to open; the
   // panel stays as the task's history, its controls disabled by their guards.
-  const openRefusal = variant === 'taskDetail' && detail.workflow.state === 'done' ? `${detail.workflow.title} is complete.` : null;
+  const openRefusal = variant !== 'taskDetail'
+    ? null
+    : detail.workflow.state === 'done'
+      ? `${detail.workflow.title} is complete.`
+      : onOpenWorkflow ? null : 'Open the main window to see the workflow.';
 
   const toggleStep = (step: WorkflowRouteStep) => {
     const next = toggledRoute(task.steps, step.swimlaneId);

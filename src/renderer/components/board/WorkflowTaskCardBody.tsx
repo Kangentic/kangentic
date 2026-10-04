@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { CirclePause, ListTree, Loader2 } from 'lucide-react';
+import { ListTree } from 'lucide-react';
 import type { AppConfig, Task } from '../../../shared/types';
 import { routeSteps } from '../../../shared/workflow-route';
 import { useBoardStore } from '../../stores/board-store';
@@ -9,7 +9,7 @@ import { useWorkflowStore } from '../../stores/workflow-store';
 import { boardWaiting, boardWorkflowSource, isLockedOnBoard, toBoardWorkflow, type BoardWorkflow } from '../../utils/board-workflow';
 import { workflowColor } from '../workflows/workflow-graph';
 import { WorkflowCardStrip } from '../workflows/WorkflowStrip';
-import { CardStatusBar, TaskCardBody, type TaskCardViewModel } from './task-card-view';
+import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
@@ -68,15 +68,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
 /** What a To Do card waits for ("Blocked by #413...", "Queued...", "Paused"). */
 const BoardWorkflowFooter = React.memo(function BoardWorkflowFooter({ task }: { task: Task }) {
   const waiting = boardWaiting(useBoardWorkflow(task));
-  if (!waiting) return null;
-  return (
-    <CardStatusBar testId="workflow-status-bar" title={waiting.label}>
-      {waiting.paused
-        ? <CirclePause size={12} className="shrink-0" />
-        : <Loader2 size={12} className="animate-spin shrink-0" />}
-      <span className="truncate">{waiting.label}</span>
-    </CardStatusBar>
-  );
+  return waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : null;
 });
 
 interface WorkflowTaskCardBodyProps {

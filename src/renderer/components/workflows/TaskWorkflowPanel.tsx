@@ -6,6 +6,9 @@ import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
+import { useMonitorStore } from '../../stores/monitor-store';
+import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
+import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { WorkflowInspector } from './WorkflowInspector';
 import { RemoveTaskDialog } from './WorkflowDialogs';
 import { findTask } from './workflow-graph';
@@ -38,6 +41,7 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
     ? state.swimlanes.find((lane) => lane.role === 'done')?.color
     : undefined)) ?? 'var(--color-active)';
   const [removing, setRemoving] = useState(false);
+  const inPopOut = !!window.electronAPI.popOut?.descriptor;
 
   useEffect(() => {
     if (!workflowId || !homeProjectId) return undefined;
@@ -79,7 +83,13 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
             onSetRoute={(key, columns) => { void useWorkflowStore.getState().setRouteIn(homeProjectId, workflowId, key, columns); }}
             onSetLink={(blockerKey, blockedKey, linked) => { void useWorkflowStore.getState().setLinkIn(homeProjectId, workflowId, blockerKey, blockedKey, linked); }}
             onRefuse={(message) => useToastStore.getState().addToast({ message, variant: 'warning' })}
-            onOpenWorkflow={() => {
+            // A popped-out window (the Agent Monitor's) has no Workflows view of its own.
+            onOpenWorkflow={inPopOut ? undefined : () => {
+              // Task detail is also hosted over the Agent Monitor, the Knowledge Graph
+              // and Stats; the view switches underneath them, so they make way first.
+              if (useMonitorStore.getState().monitorOpen) useMonitorStore.getState().close();
+              if (useKnowledgeGraphStore.getState().graphOpen) useKnowledgeGraphStore.getState().close();
+              if (useUsageDashboardStore.getState().statsOpen) useUsageDashboardStore.getState().close();
               useBoardStore.getState().setActiveView('workflows');
               useWorkflowStore.getState().openWorkflow(homeProjectId, workflowId, task.id);
             }}

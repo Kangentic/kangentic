@@ -239,6 +239,16 @@ Two measurements after the board gained workflow cards and the canvas gained its
   layout (about 12ms of `getBoundingClientRect` in dnd-kit's measuring) and the activity marks'
   `getAnimations` in their layout effect, which runs on every render of every mark. The plain
   board's own 41.7ms at 100+ cards is the board's existing activation cost, not the workflow's.
+- **The pan, and the waiting footers' spinners.** The pan figures above were measured before the
+  canvas cards had footers. Once every To Do card said "Blocked by #413..." with the design's
+  spinning `Loader2`, a pan at 100 cards missed 82 to 143 of about 500 refreshes, with frames to
+  28ms. An A/B over stylesheets (`--experiments`) found the cause in one row: with the canvas's
+  spinners stopped the pan missed 7, and with every other candidate (the inspector, the header,
+  the canvas tools, the dot grid, the activity marks, the idle pulse) it stayed above 100. Pausing
+  them only while a gesture runs did not help. A task waiting on another is not loading, so the
+  waiting footer's glyph is now held still (`WorkflowWaitingBar`). On the real code: pan 1 missed
+  refresh, card drag 0, idle 1, link drag 3, and the board drag of a workflow card now measures
+  the same as the plain board (108ms against 109ms overlay latency).
 
 ## Reproducing
 

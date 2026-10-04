@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
-import { CirclePause, Loader2 } from 'lucide-react';
 import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
 import { RegistryIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
-import { CardStatusBar, TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
+import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
 import { WorkflowCardStrip } from './WorkflowStrip';
 
 /**
@@ -152,14 +151,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
     );
   }
 
-  const idleFooter = waiting ? (
-    <CardStatusBar testId="workflow-status-bar" title={waiting.label}>
-      {waiting.paused
-        ? <CirclePause size={12} className="shrink-0" />
-        : <Loader2 size={12} className="animate-spin shrink-0" />}
-      <span className="truncate">{waiting.label}</span>
-    </CardStatusBar>
-  ) : undefined;
+  const idleFooter = waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : undefined;
 
   return (
     <div
