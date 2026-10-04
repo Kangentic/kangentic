@@ -211,7 +211,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application. Same answer-or-timeout contract and file-manager fallback as `attachment:open` |
 
-### Workflows (15 channels)
+### Workflows (18 channels)
 
 The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
 
@@ -231,6 +231,9 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
 | `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
 | `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; changes no plan revision |
+| `workflow:agentOpen` | invoke | The pane shows the workflow agent: an existing session as it is (a paused one stays paused), else a start that resumes its conversation by id or sends the first message (`src/main/workflows/workflow-agent.ts`) |
+| `workflow:agentResume` | invoke | The pane's Resume: start the paused agent again on its own conversation |
+| `workflow:agentPause` | invoke | The pane's Pause: suspend the agent, keeping its conversation (its spend is captured first) |
 | `workflow:changed` | on | A workflow or its tasks changed, whoever changed it; an open view reloads it |
 
 ### Swimlanes (6 channels)
@@ -1011,9 +1014,12 @@ src/main/workflows/
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
   workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
   workflow-changed.ts        # the coalesced workflow:changed push
-  workflow-complete.ts       # the workflow:completed push
+  workflow-complete.ts       # the workflow:completed push, and the phone's workflow-complete push
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
-  workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume
+  workflow-tasks.ts          # every created task of a workflow, across projects (a plain read)
+  workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
+                             #   read access to other projects, its spend captured for Stats
+  workflow-agent-record.ts   # a SessionRecord built from the workflow row, so transcript readers reach its conversation
   workflow-agent-prompt.ts   # its first message: {{columns}}, {{brief_xml}} and the project's facts
   workflow-runtime.ts        # the IPC context the operations act through
   workflow-wake.ts           # wake the engine from a write the board bus does not announce

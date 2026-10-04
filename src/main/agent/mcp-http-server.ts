@@ -55,9 +55,9 @@ import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
 import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
+import { resolveCallerTaskId } from './mcp-http/caller-task';
 import {
   registerBrowserTools,
-  resolveCallerTaskId,
   type AutomationConfigReader,
   type BrowserToolDependencies,
 } from './mcp-http/browser-tools';

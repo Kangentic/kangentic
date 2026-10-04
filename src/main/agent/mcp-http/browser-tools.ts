@@ -175,23 +175,12 @@ async function boundedEvaluate(
   }
 }
 
-/**
- * The caller's own task, from its session. Resolved ONCE per request by the
- * server builder, not per tool call: the McpServer is rebuilt for every HTTP
- * request, so the value can never go stale, and the task tools share it. A
- * missing lookup or an unknown session leaves it undefined, which degrades the
- * implicit default to "the single pane in my project" rather than refusing.
- */
-export function resolveCallerTaskId(dependencies: BrowserToolDependencies): string | undefined {
-  const { callerSessionId, sessions } = dependencies;
-  return callerSessionId && sessions ? sessions.getSessionTaskId(callerSessionId) : undefined;
-}
-
 export function registerBrowserTools(
   server: McpServer,
   getAutomationConfig: AutomationConfigReader,
   dependencies: BrowserToolDependencies,
-  // From `resolveCallerTaskId`, passed in so one request looks it up once.
+  // From `resolveCallerTaskId` (caller-task.ts), passed in so one request
+  // looks it up once.
   callerTaskId: string | undefined,
 ): void {
   const { projectId, callerSessionId } = dependencies;
