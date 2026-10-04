@@ -593,6 +593,31 @@ export interface Task {
    * `'agent_override'` clears it, and setting it forces `'column_settings'`.
    */
   run_mode: TaskRunMode;
+  /**
+   * The workflow this task belongs to (`Workflow.id`), or null for an ordinary
+   * task. The workflow, and its links, live in its HOME project's database,
+   * `workflow_project_id`, which is this task's own project unless the
+   * workflow put the task on another board. Written only by the workflow
+   * repository paths (`setWorkflowMembership`), never by the generic `update()`.
+   */
+  workflow_id: string | null;
+  workflow_project_id: string | null;
+  /**
+   * The first column on this task's route. Null means the first column after
+   * To Do, so a column added there later is on the route by default.
+   */
+  route_start_swimlane_id: string | null;
+  /** The last column on the route; null means the column before Done. */
+  route_last_swimlane_id: string | null;
+  /** Columns inside the route this task skips. Empty for none. */
+  skipped_swimlane_ids: string[];
+  /**
+   * Where a hand placed this task's card on the Workflows canvas, or null for
+   * the automatic layout. Written without bumping `updated_at`, as
+   * `detail_view_state` is, so a card drag never re-indexes the task.
+   */
+  canvas_x: number | null;
+  canvas_y: number | null;
   attachment_count: number;
   /**
    * Outcome of this task's most recent auto_command injection - the durable
@@ -4656,6 +4681,19 @@ export interface TaskCreateInput {
   }>;
   /** Preserve an original creation timestamp (UTC ISO 8601) instead of stamping "now". Used when relocating a task to a different project's board. */
   createdAt?: string;
+  /** Workflow membership and route, for a task a workflow's Start creates (see `Task.workflow_id`). */
+  workflow?: TaskWorkflowMembership;
+}
+
+/** The workflow columns of a task, written together. */
+export interface TaskWorkflowMembership {
+  workflow_id: string;
+  workflow_project_id: string;
+  route_start_swimlane_id: string | null;
+  route_last_swimlane_id: string | null;
+  skipped_swimlane_ids: string[];
+  canvas_x: number | null;
+  canvas_y: number | null;
 }
 
 export interface TaskUpdateInput {
@@ -4812,6 +4850,84 @@ export interface TaskMoveProvenance {
   origin: TaskMoveRecordOrigin;
   /** A short why, when the mover knows one ("Back for revisions", "Step done"). */
   reason?: string | null;
+}
+
+/**
+ * A workflow's lifecycle. A `draft` holds its planned tasks in `draft` and has
+ * created nothing on any board; Start creates them and makes it `running`.
+ * `paused` holds every task's session suspended; `done` is every task in Done.
+ */
+export type WorkflowState = 'draft' | 'running' | 'paused' | 'done';
+
+/** One planned task in a workflow that has not started. `key` is local to the draft. */
+export interface WorkflowDraftTask {
+  key: string;
+  title: string;
+  description: string;
+  /** The project the task is created in; null is the workflow's home project. */
+  project_id: string | null;
+  /**
+   * A task already on the board that the workflow takes in at Start, instead
+   * of creating one. It must still be in To Do then.
+   */
+  existing_task_id: string | null;
+  route_start_swimlane_id: string | null;
+  route_last_swimlane_id: string | null;
+  skipped_swimlane_ids: string[];
+  labels: string[];
+  priority: number;
+  canvas_x: number | null;
+  canvas_y: number | null;
+}
+
+/** "blocked waits for blocker", by draft keys. */
+export interface WorkflowDraftLink {
+  blocker: string;
+  blocked: string;
+}
+
+export interface WorkflowDraft {
+  tasks: WorkflowDraftTask[];
+  links: WorkflowDraftLink[];
+}
+
+/**
+ * A set of linked tasks with its own agent. Lives in its home project's
+ * database. Its tasks can sit on other projects' boards; each carries this
+ * workflow's id and home project id.
+ */
+export interface Workflow {
+  id: string;
+  title: string;
+  /** The text it was made from (a source task's title and description), never rewritten. */
+  brief: string | null;
+  /** The To Do task it was made from, which moves to Done at Start. */
+  source_task_id: string | null;
+  state: WorkflowState;
+  /** The planned tasks until Start; null once started. */
+  draft: WorkflowDraft | null;
+  /** Which `--kng-chart-N` slot (1 to 6) colors its icon. */
+  color_slot: number;
+  /** Bumped on every save and edit, so a save over a changed workflow is refused. */
+  revision: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/**
+ * "blocked waits for blocker to reach Done". Stored in the workflow's home
+ * project database; either end can be a task in another project, so there is
+ * no foreign key to tasks and a delete removes its links in code.
+ */
+export interface TaskLink {
+  id: string;
+  workflow_id: string;
+  blocker_project_id: string;
+  blocker_task_id: string;
+  blocked_project_id: string;
+  blocked_task_id: string;
+  created_at: string;
 }
 
 /** One `task_moves` row: a task entering a column. */

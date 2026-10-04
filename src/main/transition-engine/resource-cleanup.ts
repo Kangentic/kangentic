@@ -279,6 +279,10 @@ export async function pruneOrphanedWorktreeTasks(
   let pruned = 0;
   for (const task of missing) {
     if (activeTaskIds.has(task.id)) continue;
+    // Never a workflow task. Deleting it would remove its links, and a task
+    // that waited for it would start without its work. Its card shows the task
+    // as not running instead, for the user to resume or remove.
+    if (task.workflow_id) continue;
     // Last-look re-probe (sync, only for the handful of missing tasks): a
     // spawn that interleaved after the probes may have re-created the worktree
     // before its session reached the registry; skip rather than delete a task

@@ -47,6 +47,7 @@ import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { deliverExitMessage } from '../helpers/exit-message-delivery';
 import { supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
@@ -272,8 +273,36 @@ export async function handleTaskMove(
   //
   // `fromTurnEndGroup` marks a Move to column row's own move, which must not
   // stop the turn-end group that made it (`supersedeTurnEndWork`).
-  options?: { continuationPrompt?: string; onCommitted?: () => void; moveReason?: string; fromTurnEndGroup?: boolean },
+  //
+  // `moverIsTaskAgent` says an `'agent'` move comes from the task's own agent
+  // session, which a running workflow lets through (`workflowMoveRefusal`).
+  options?: {
+    continuationPrompt?: string;
+    onCommitted?: () => void;
+    moveReason?: string;
+    fromTurnEndGroup?: boolean;
+    moverIsTaskAgent?: boolean;
+  },
 ): Promise<void> {
+  // A workflow task's lock, asked BEFORE anything below aborts work in flight:
+  // a refused drag must not cancel the workflow's own move of the same task.
+  // Asked again inside the lock, against the reconciled row.
+  const workflowCheck = (task: Task, checkProjectId: string): void => {
+    const refusal = checkWorkflowMove(context, {
+      projectId: checkProjectId,
+      task,
+      toSwimlaneId: input.targetSwimlaneId,
+      origin,
+      moverIsTaskAgent: options?.moverIsTaskAgent === true,
+    });
+    if (refusal) throw new Error(refusal);
+  };
+  const precheckProjectId = projectId ?? context.currentProjectId;
+  if (precheckProjectId) {
+    const precheckTask = readTaskForWorkflowPrecheck(precheckProjectId, input.taskId);
+    if (precheckTask) workflowCheck(precheckTask, precheckProjectId);
+  }
+
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
   taskMoveControllers.get(input.taskId)?.abort();
@@ -404,6 +433,9 @@ export async function handleTaskMove(
       // auto_command. The user is restoring the task to inspect it; the next
       // move injects per column config. See spawnAgent's `suppressAutoCommand`.
       const suppressAutoCommand = fromLane?.role === 'done';
+
+      // The workflow lock, against the row as it is now (see the pre-check).
+      workflowCheck(task, resolvedProjectId);
 
       // Move the task in the database, recording who moved it (the visit
       // boundary turn-end automations count from).

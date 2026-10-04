@@ -1,0 +1,208 @@
+/**
+ * The workflow tables on a real, migrated SQLite database: the migration is
+ * idempotent, a task's workflow columns round-trip without touching
+ * `updated_at`, a deleted task's links go with it, and a draft save refuses a
+ * stale revision.
+ *
+ * node:sqlite rather than better-sqlite3, whose native binding is built for
+ * Electron's ABI so a suite gated on it skips everywhere, CI included.
+ */
+import { describe, it, expect } from 'vitest';
+import type { TaskWorkflowMembership } from '../../src/shared/types';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+
+const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
+const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
+const { WorkflowRepository, StaleWorkflowRevisionError, UNTITLED_WORKFLOW } = await import('../../src/main/db/repositories/workflow-repository');
+const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
+
+import { adaptDatabase } from './helpers/node-sqlite-database';
+
+describeWithSqlite('workflow tables', () => {
+  function freshDatabase() {
+    const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    database.exec('PRAGMA foreign_keys = ON');
+    runProjectMigrations(database);
+    const lanes = new SwimlaneRepository(database).list();
+    const todo = lanes.find((lane) => lane.role === 'todo')!;
+    return {
+      database,
+      todo,
+      tasks: new TaskRepository(database),
+      workflows: new WorkflowRepository(database),
+      links: new TaskLinkRepository(database),
+    };
+  }
+
+  function membership(workflowId: string, extra: Partial<TaskWorkflowMembership> = {}): TaskWorkflowMembership {
+    return {
+      workflow_id: workflowId,
+      workflow_project_id: 'home',
+      route_start_swimlane_id: null,
+      route_last_swimlane_id: null,
+      skipped_swimlane_ids: [],
+      canvas_x: null,
+      canvas_y: null,
+      ...extra,
+    };
+  }
+
+  it('migrates twice without error', () => {
+    const { database } = freshDatabase();
+    expect(() => runProjectMigrations(database)).not.toThrow();
+  });
+
+  it('reads an ordinary task as having no workflow', () => {
+    const { tasks, todo } = freshDatabase();
+    const task = tasks.create({ title: 'Plain', description: '', swimlane_id: todo.id });
+    const read = tasks.getById(task.id)!;
+    expect(read.workflow_id).toBeNull();
+    expect(read.skipped_swimlane_ids).toEqual([]);
+    expect(read.canvas_x).toBeNull();
+  });
+
+  it('creates a task with its membership and route, and reads them back', () => {
+    const { tasks, todo, workflows } = freshDatabase();
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    const task = tasks.create({
+      title: 'Budgets API',
+      description: '',
+      swimlane_id: todo.id,
+      workflow: membership(workflow.id, { skipped_swimlane_ids: ['lane-planning'], canvas_x: 120, canvas_y: 40 }),
+    });
+    const read = tasks.getById(task.id)!;
+    expect(read.workflow_id).toBe(workflow.id);
+    expect(read.workflow_project_id).toBe('home');
+    expect(read.skipped_swimlane_ids).toEqual(['lane-planning']);
+    expect([read.canvas_x, read.canvas_y]).toEqual([120, 40]);
+    expect(tasks.listByWorkflow(workflow.id).map((entry) => entry.id)).toEqual([task.id]);
+  });
+
+  it('moves a card on the canvas without touching updated_at', () => {
+    const { tasks, todo, workflows } = freshDatabase();
+    const workflow = workflows.create({});
+    const task = tasks.create({ title: 'A', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const before = tasks.getById(task.id)!.updated_at;
+    tasks.setCanvasPosition(task.id, 300, 200);
+    tasks.setRoute(task.id, { route_start_swimlane_id: 'x', route_last_swimlane_id: null, skipped_swimlane_ids: ['y'] });
+    const after = tasks.getById(task.id)!;
+    expect(after.updated_at).toBe(before);
+    expect([after.canvas_x, after.canvas_y]).toEqual([300, 200]);
+    expect(after.route_start_swimlane_id).toBe('x');
+    expect(after.skipped_swimlane_ids).toEqual(['y']);
+  });
+
+  it('keeps a generic update from clearing the workflow columns', () => {
+    const { tasks, todo, workflows } = freshDatabase();
+    const workflow = workflows.create({});
+    const task = tasks.create({ title: 'A', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    tasks.update({ id: task.id, title: 'Renamed' });
+    expect(tasks.getById(task.id)!.workflow_id).toBe(workflow.id);
+  });
+
+  it('takes a task out of its workflow', () => {
+    const { tasks, todo, workflows } = freshDatabase();
+    const workflow = workflows.create({});
+    const task = tasks.create({ title: 'A', description: '', swimlane_id: todo.id, workflow: membership(workflow.id, { canvas_x: 5 }) });
+    tasks.setWorkflowMembership(task.id, null);
+    const read = tasks.getById(task.id)!;
+    expect(read.workflow_id).toBeNull();
+    expect(read.canvas_x).toBeNull();
+  });
+
+  it('removes a deleted task\'s links, either end, so its dependents stop waiting', () => {
+    const { tasks, todo, workflows, links } = freshDatabase();
+    const workflow = workflows.create({});
+    const blocker = tasks.create({ title: 'Blocker', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const blocked = tasks.create({ title: 'Blocked', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const other = tasks.create({ title: 'Other', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const end = (taskId: string) => ({ project: 'home', taskId });
+    const add = (from: string, to: string) => links.insert({
+      workflow_id: workflow.id,
+      blocker_project_id: end(from).project,
+      blocker_task_id: from,
+      blocked_project_id: end(to).project,
+      blocked_task_id: to,
+    });
+    add(blocker.id, blocked.id);
+    add(other.id, blocked.id);
+    tasks.delete(blocker.id);
+    expect(links.listBlockersOf(blocked.id).map((entry) => entry.blocker_task_id)).toEqual([other.id]);
+  });
+
+  it('links a pair once, and cascades links with their workflow', () => {
+    const { tasks, todo, workflows, links } = freshDatabase();
+    const workflow = workflows.create({});
+    const first = tasks.create({ title: 'A', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const second = tasks.create({ title: 'B', description: '', swimlane_id: todo.id, workflow: membership(workflow.id) });
+    const input = {
+      workflow_id: workflow.id,
+      blocker_project_id: 'home',
+      blocker_task_id: first.id,
+      blocked_project_id: 'home',
+      blocked_task_id: second.id,
+    };
+    const created = links.insert(input);
+    expect(links.insert(input).id).toBe(created.id);
+    expect(links.listForWorkflow(workflow.id)).toHaveLength(1);
+    workflows.delete(workflow.id);
+    expect(links.listForWorkflow(workflow.id)).toHaveLength(0);
+  });
+
+  it('names a new workflow, holds its draft, and refuses a save over a stale revision', () => {
+    const { workflows } = freshDatabase();
+    const workflow = workflows.create({ brief: 'Add usage budgets' });
+    expect(workflow.title).toBe(UNTITLED_WORKFLOW);
+    expect(workflow.state).toBe('draft');
+    expect(workflow.draft).toEqual({ tasks: [], links: [] });
+
+    const draft = {
+      tasks: [{
+        key: 'api', title: 'Budgets API', description: '', project_id: null, existing_task_id: null,
+        route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+        labels: [], priority: 0, canvas_x: null, canvas_y: null,
+      }],
+      links: [],
+    };
+    const saved = workflows.saveDraft(workflow.id, draft, { title: 'Usage budgets', expectedRevision: workflow.revision });
+    expect(saved.title).toBe('Usage budgets');
+    expect(saved.revision).toBe(workflow.revision + 1);
+    expect(saved.draft?.tasks.map((task) => task.key)).toEqual(['api']);
+
+    expect(() => workflows.saveDraft(workflow.id, draft, { expectedRevision: workflow.revision }))
+      .toThrow(StaleWorkflowRevisionError);
+  });
+
+  it('spends the draft at Start and lists only unfinished workflows as open', () => {
+    const { workflows } = freshDatabase();
+    const workflow = workflows.create({});
+    workflows.markStarted(workflow.id);
+    const started = workflows.getById(workflow.id)!;
+    expect(started.state).toBe('running');
+    expect(started.draft).toBeNull();
+    expect(started.started_at).not.toBeNull();
+    expect(workflows.hasRunning()).toBe(true);
+    workflows.setState(workflow.id, 'done');
+    expect(workflows.getById(workflow.id)!.finished_at).not.toBeNull();
+    expect(workflows.listOpen()).toEqual([]);
+    expect(workflows.hasRunning()).toBe(false);
+  });
+
+  it('gives each unfinished workflow its own color until the palette runs out', () => {
+    const { workflows } = freshDatabase();
+    const slots = Array.from({ length: 6 }, () => workflows.create({}).color_slot);
+    expect(new Set(slots).size).toBe(6);
+    const seventh = workflows.create({});
+    expect(seventh.color_slot).toBeGreaterThanOrEqual(1);
+    expect(seventh.color_slot).toBeLessThanOrEqual(6);
+  });
+});

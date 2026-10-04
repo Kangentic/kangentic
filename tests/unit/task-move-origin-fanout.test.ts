@@ -266,7 +266,7 @@ function pushedChannels(context: ReturnType<typeof makeContext>): string[] {
 }
 
 describe('the origin literal at each handleTaskMove call site', () => {
-  const ORIGINS: TaskMoveOrigin[] = ['renderer', 'agent', 'mobile', 'auto-move'];
+  const ORIGINS: TaskMoveOrigin[] = ['renderer', 'agent', 'mobile', 'auto-move', 'automation', 'workflow'];
 
   /** Top-level arguments of the call whose '(' is at openParen. */
   function argumentsOf(source: string, openParen: number): string[] {
@@ -344,6 +344,9 @@ describe('the origin literal at each handleTaskMove call site', () => {
     expect(byFile['src/main/ipc/handlers/sessions.ts']).toBe("'auto-move'");
     // The renderer already moved the card optimistically, so this one is silent.
     expect(byFile['src/main/ipc/handlers/task-move.ts']).toBe("'renderer'");
+    // A Move to column automation is Kangentic acting, not an agent: it must not
+    // toast "Task updated by agent".
+    expect(byFile['src/main/automations/turn-end/turn-end-runner.ts']).toBe("'automation'");
   });
 
   it('routes its pushes through sendToRenderer, never a raw webContents.send', () => {
@@ -441,6 +444,15 @@ describe('what each origin announces', () => {
       TASK_TITLE,
       'proj-test',
     );
+  });
+
+  it('sends the quiet automation channel, and never the agent one, for an automation or workflow move', async () => {
+    for (const origin of ['automation', 'workflow'] as TaskMoveOrigin[]) {
+      vi.clearAllMocks();
+      const context = await move(origin);
+      expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_AUTOMATION]);
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_MOVED_BY_AUTOMATION, 'proj-test');
+    }
   });
 
   it('resolves the PR link for every origin, not just the two that used to', async () => {

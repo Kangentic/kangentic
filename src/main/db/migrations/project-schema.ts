@@ -1833,4 +1833,73 @@ export function runProjectMigrations(db: Database.Database): void {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_task ON task_moves(task_id, at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_to_column ON task_moves(to_swimlane_id, at DESC)');
+
+  runWorkflowsMigration(db);
+}
+
+/**
+ * Workflows: a set of linked tasks with its own agent.
+ *
+ * The workflow and its links live in its HOME project's database; its tasks
+ * live on their own boards and carry the workflow's id and home project id.
+ * Every task column is nullable with no default, so every existing task reads
+ * as an ordinary one and a build from before these columns still inserts.
+ *
+ * `task_links` has no foreign key to tasks: either end can be a task in another
+ * project's database, so a task delete removes its links in code
+ * (`TaskRepository.delete`). It does cascade from its workflow, which is always
+ * in this database.
+ */
+function runWorkflowsMigration(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      brief TEXT,
+      source_task_id TEXT,
+      state TEXT NOT NULL DEFAULT 'draft',
+      draft_json TEXT,
+      color_slot INTEGER NOT NULL DEFAULT 1,
+      revision INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state)');
+
+  const taskColumnNames = new Set(
+    (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  const workflowTaskColumns: Array<[string, string]> = [
+    ['workflow_id', 'TEXT'],
+    ['workflow_project_id', 'TEXT'],
+    ['route_start_swimlane_id', 'TEXT'],
+    ['route_last_swimlane_id', 'TEXT'],
+    ['skipped_swimlane_ids', 'TEXT'],
+    ['canvas_x', 'REAL'],
+    ['canvas_y', 'REAL'],
+  ];
+  for (const [columnName, columnType] of workflowTaskColumns) {
+    if (!taskColumnNames.has(columnName)) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${columnName} ${columnType} DEFAULT NULL`);
+    }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_workflow ON tasks(workflow_id)');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_links (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      blocker_project_id TEXT NOT NULL,
+      blocker_task_id TEXT NOT NULL,
+      blocked_project_id TEXT NOT NULL,
+      blocked_task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_workflow ON task_links(workflow_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocker ON task_links(blocker_task_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocked ON task_links(blocked_task_id)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_task_links_pair ON task_links(blocker_task_id, blocked_task_id)');
 }

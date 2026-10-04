@@ -318,6 +318,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return withTaskLock(input.taskId, async () => {
       const task = tasks.getById(input.taskId);
       if (!task) throw new Error(`Task ${input.taskId} not found`);
+      // A demote deletes the task, which would drop it from its workflow and
+      // unblock what waits for it, from a menu that says only "Backlog".
+      if (task.workflow_id) {
+        throw new Error(`#${task.display_id} is in a workflow. Remove it from the workflow first.`);
+      }
 
       // Cancel any pending auto_command injection before cleanup
       context.terminalSubmitScheduler.cancel(input.taskId);

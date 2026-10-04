@@ -1,0 +1,235 @@
+import { v4 as uuidv4 } from 'uuid';
+import type Database from 'better-sqlite3';
+import type { Workflow, WorkflowDraft, WorkflowDraftLink, WorkflowDraftTask, WorkflowState } from '../../../shared/types';
+
+/**
+ * The `workflows` table: a set of linked tasks with its own agent, stored in
+ * its home project's database.
+ *
+ * A workflow that has not started holds its planned tasks in `draft_json`
+ * rather than as rows on the board, so every board read stays free of planned
+ * work; Start validates the draft and creates the tasks (`workflow-start.ts`).
+ *
+ * `revision` goes up on every write that changes what the workflow is, which is
+ * what lets `kangentic_save_workflow` refuse a save built on a stale read.
+ */
+interface WorkflowRow {
+  id: string;
+  title: string;
+  brief: string | null;
+  source_task_id: string | null;
+  state: string;
+  draft_json: string | null;
+  color_slot: number;
+  revision: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** How many colors the categorical palette has (`--kng-chart-1..6`). */
+export const WORKFLOW_COLOR_SLOTS = 6;
+
+export const UNTITLED_WORKFLOW = 'Untitled workflow';
+
+const WORKFLOW_STATES: ReadonlySet<string> = new Set<WorkflowState>(['draft', 'running', 'paused', 'done']);
+
+/** A save carrying a revision the workflow has moved past. */
+export class StaleWorkflowRevisionError extends Error {
+  constructor(public readonly currentRevision: number) {
+    super(`The workflow changed since it was read (now revision ${currentRevision}).`);
+    this.name = 'StaleWorkflowRevisionError';
+  }
+}
+
+export class WorkflowRepository {
+  constructor(private db: Database.Database) {}
+
+  getById(id: string): Workflow | undefined {
+    const row = this.db.prepare('SELECT * FROM workflows WHERE id = ?').get(id) as WorkflowRow | undefined;
+    return row ? mapRow(row) : undefined;
+  }
+
+  /** Every workflow, newest first. */
+  listAll(): Workflow[] {
+    const rows = this.db.prepare('SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC').all() as WorkflowRow[];
+    return rows.map(mapRow);
+  }
+
+  /** The workflows the picker lists: every one not finished, newest first. */
+  listOpen(): Workflow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM workflows WHERE state != 'done' ORDER BY created_at DESC, rowid DESC")
+      .all() as WorkflowRow[];
+    return rows.map(mapRow);
+  }
+
+  /** The engine's fast path: one indexed probe, so a board with no running workflow pays nothing more. */
+  hasRunning(): boolean {
+    return this.db.prepare("SELECT 1 FROM workflows WHERE state = 'running' LIMIT 1").get() !== undefined;
+  }
+
+  listRunning(): Workflow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM workflows WHERE state = 'running' ORDER BY started_at ASC, rowid ASC")
+      .all() as WorkflowRow[];
+    return rows.map(mapRow);
+  }
+
+  create(input: { title?: string | null; brief?: string | null; sourceTaskId?: string | null }): Workflow {
+    const now = new Date().toISOString();
+    const id = uuidv4();
+    const title = input.title?.trim() || UNTITLED_WORKFLOW;
+    const colorSlot = this.nextColorSlot();
+    const emptyDraft: WorkflowDraft = { tasks: [], links: [] };
+    this.db.prepare(`
+      INSERT INTO workflows (id, title, brief, source_task_id, state, draft_json, color_slot, revision, created_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, 1, ?)
+    `).run(id, title, input.brief ?? null, input.sourceTaskId ?? null, JSON.stringify(emptyDraft), colorSlot, now);
+    return this.getById(id)!;
+  }
+
+  /**
+   * Replace a not-started workflow's planned tasks and links (and its title,
+   * when given). `expectedRevision`, when given, must be the current one, or
+   * the save is refused: the user's edits since the caller read it win.
+   */
+  saveDraft(id: string, draft: WorkflowDraft, options: { title?: string | null; expectedRevision?: number | null } = {}): Workflow {
+    const existing = this.getById(id);
+    if (!existing) throw new Error(`Workflow ${id} not found`);
+    if (existing.state !== 'draft') throw new Error('Only a workflow that has not started has a plan to replace.');
+    if (options.expectedRevision != null && options.expectedRevision !== existing.revision) {
+      throw new StaleWorkflowRevisionError(existing.revision);
+    }
+    const title = options.title?.trim() || existing.title;
+    this.db.prepare('UPDATE workflows SET title = ?, draft_json = ?, revision = revision + 1 WHERE id = ?')
+      .run(title, JSON.stringify(draft), id);
+    return this.getById(id)!;
+  }
+
+  rename(id: string, title: string): Workflow {
+    const trimmed = title.trim();
+    if (!trimmed) throw new Error('A workflow needs a name.');
+    this.db.prepare('UPDATE workflows SET title = ?, revision = revision + 1 WHERE id = ?').run(trimmed, id);
+    const workflow = this.getById(id);
+    if (!workflow) throw new Error(`Workflow ${id} not found`);
+    return workflow;
+  }
+
+  /** Started: the draft is spent (its tasks now exist), and the start is stamped. */
+  markStarted(id: string): void {
+    this.db.prepare(
+      "UPDATE workflows SET state = 'running', draft_json = NULL, started_at = ?, revision = revision + 1 WHERE id = ?",
+    ).run(new Date().toISOString(), id);
+  }
+
+  setState(id: string, state: Exclude<WorkflowState, 'draft'>): void {
+    const finishedAt = state === 'done' ? new Date().toISOString() : null;
+    this.db.prepare('UPDATE workflows SET state = ?, finished_at = ?, revision = revision + 1 WHERE id = ?')
+      .run(state, finishedAt, id);
+  }
+
+  /** Any change to a started workflow's tasks, links or routes. */
+  bumpRevision(id: string): void {
+    this.db.prepare('UPDATE workflows SET revision = revision + 1 WHERE id = ?').run(id);
+  }
+
+  /** Its links cascade with it (`task_links.workflow_id`). */
+  delete(id: string): void {
+    this.db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
+  }
+
+  /**
+   * The first palette slot no unfinished workflow holds; with all six taken,
+   * the one whose latest holder is oldest. Stable per workflow once chosen.
+   */
+  private nextColorSlot(): number {
+    const rows = this.db
+      .prepare('SELECT color_slot, state, created_at FROM workflows')
+      .all() as Array<{ color_slot: number; state: string; created_at: string }>;
+    const held = new Set(rows.filter((row) => row.state !== 'done').map((row) => row.color_slot));
+    for (let slot = 1; slot <= WORKFLOW_COLOR_SLOTS; slot++) {
+      if (!held.has(slot)) return slot;
+    }
+    const latestUse = new Map<number, string>();
+    for (const row of rows) {
+      const previous = latestUse.get(row.color_slot);
+      if (!previous || row.created_at > previous) latestUse.set(row.color_slot, row.created_at);
+    }
+    let chosen = 1;
+    let oldest: string | null = null;
+    for (let slot = 1; slot <= WORKFLOW_COLOR_SLOTS; slot++) {
+      const used = latestUse.get(slot) ?? '';
+      if (oldest === null || used < oldest) {
+        oldest = used;
+        chosen = slot;
+      }
+    }
+    return chosen;
+  }
+}
+
+function mapRow(row: WorkflowRow): Workflow {
+  return {
+    id: row.id,
+    title: row.title,
+    brief: row.brief,
+    source_task_id: row.source_task_id,
+    // An unknown state read by this build (a newer one wrote it) is left alone
+    // by the engine rather than run: it reads as paused.
+    state: WORKFLOW_STATES.has(row.state) ? (row.state as WorkflowState) : 'paused',
+    draft: parseDraft(row.draft_json),
+    color_slot: row.color_slot,
+    revision: row.revision,
+    created_at: row.created_at,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+  };
+}
+
+/** Read a stored draft defensively: a malformed entry is dropped, never thrown. */
+export function parseDraft(raw: string | null): WorkflowDraft | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { tasks: [], links: [] };
+  }
+  if (typeof parsed !== 'object' || parsed === null) return { tasks: [], links: [] };
+  const record = parsed as { tasks?: unknown; links?: unknown };
+  const tasks = Array.isArray(record.tasks) ? record.tasks.flatMap(readDraftTask) : [];
+  const links = Array.isArray(record.links) ? record.links.flatMap(readDraftLink) : [];
+  return { tasks, links };
+}
+
+function readDraftTask(value: unknown): WorkflowDraftTask[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const entry = value as Record<string, unknown>;
+  if (typeof entry.key !== 'string' || typeof entry.title !== 'string') return [];
+  const stringOrNull = (field: unknown): string | null => (typeof field === 'string' && field ? field : null);
+  const numberOrNull = (field: unknown): number | null => (typeof field === 'number' && Number.isFinite(field) ? field : null);
+  return [{
+    key: entry.key,
+    title: entry.title,
+    description: typeof entry.description === 'string' ? entry.description : '',
+    project_id: stringOrNull(entry.project_id),
+    existing_task_id: stringOrNull(entry.existing_task_id),
+    route_start_swimlane_id: stringOrNull(entry.route_start_swimlane_id),
+    route_last_swimlane_id: stringOrNull(entry.route_last_swimlane_id),
+    skipped_swimlane_ids: Array.isArray(entry.skipped_swimlane_ids)
+      ? entry.skipped_swimlane_ids.filter((id): id is string => typeof id === 'string')
+      : [],
+    labels: Array.isArray(entry.labels) ? entry.labels.filter((label): label is string => typeof label === 'string') : [],
+    priority: typeof entry.priority === 'number' ? entry.priority : 0,
+    canvas_x: numberOrNull(entry.canvas_x),
+    canvas_y: numberOrNull(entry.canvas_y),
+  }];
+}
+
+function readDraftLink(value: unknown): WorkflowDraftLink[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const entry = value as Record<string, unknown>;
+  if (typeof entry.blocker !== 'string' || typeof entry.blocked !== 'string') return [];
+  return [{ blocker: entry.blocker, blocked: entry.blocked }];
+}

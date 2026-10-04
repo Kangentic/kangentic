@@ -1046,6 +1046,14 @@ export function handleMoveTaskToProject(
   if (!task) {
     return { success: false, error: `Task "${taskId}" not found` };
   }
+  // A relocation makes a NEW task (new id, new number), which would orphan the
+  // task's workflow links. A workflow already puts a task on any board it needs.
+  if (task.workflow_id) {
+    return {
+      success: false,
+      error: `Task #${task.display_id} is in a workflow and cannot be moved to another project. Remove it from the workflow first (kangentic_remove_from_workflow).`,
+    };
+  }
 
   const sourceSwimlane = new SwimlaneRepository(sourceDb).getById(task.swimlane_id);
   if (!sourceSwimlane || sourceSwimlane.role !== 'todo') {
