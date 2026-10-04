@@ -86,6 +86,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/headless": "6.0.0",
     "@xterm/xterm": "^6.0.0",
+    "@xyflow/react": "^12.12.0",
     "camera-controls": "^3.1.2",
     "electron": "44.5.1",
     "electron-builder": "^26.8.1",
