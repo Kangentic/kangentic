@@ -1084,6 +1084,74 @@ describe('performSpawn - cols/rows precedence', () => {
     expect(spawnOptions.rows).toBe(DEFAULT_PTY_ROWS);
   });
 
+  describe('the grid inherited from the row a respawn replaces', () => {
+    const INHERITED = { cols: 190, rows: 50 };
+
+    function contextWithPredecessor(): SpawnFlowContext {
+      const context = makeContext();
+      context.registry.set('predecessor-id', {
+        id: 'predecessor-id',
+        taskId: 'task-001',
+        projectId: 'project-001',
+        pty: null,
+        status: 'suspended',
+      } as never);
+      context.inheritedGrid = vi.fn(() => INHERITED);
+      return context;
+    }
+
+    function spawnGrid(): [number, number] {
+      const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { cols: number; rows: number };
+      return [spawnOptions.cols, spawnOptions.rows];
+    }
+
+    it('case (f): beats the default when nothing else names a grid, and is asked about the predecessor', async () => {
+      const context = contextWithPredecessor();
+
+      await performSpawn(makeInput(), context);
+
+      expect(spawnGrid()).toEqual([190, 50]);
+      expect(context.inheritedGrid).toHaveBeenCalledWith(expect.objectContaining({ id: 'predecessor-id' }));
+    });
+
+    it('case (g): a caller-supplied grid and a stashed resize both win over it', async () => {
+      const callerContext = contextWithPredecessor();
+      await performSpawn(makeInput({ cols: 100, rows: 40 }), callerContext);
+      expect(spawnGrid()).toEqual([100, 40]);
+
+      ptySpawnMock.mockClear();
+      const stashContext = contextWithPredecessor();
+      (stashContext.takePendingResize as ReturnType<typeof vi.fn>).mockReturnValue({ cols: 200, rows: 60 });
+      await performSpawn(makeInput(), stashContext);
+      expect(spawnGrid()).toEqual([200, 60]);
+    });
+
+    it('case (h): a queue promotion never inherits from its own placeholder', async () => {
+      const context = makeContext();
+      context.registry.set('input-session-id-0000-000000000000', {
+        id: 'input-session-id-0000-000000000000',
+        taskId: 'task-001',
+        projectId: 'project-001',
+        pty: null,
+        status: 'queued',
+      } as never);
+      context.inheritedGrid = vi.fn(() => INHERITED);
+
+      await performSpawn(makeInput(), context);
+
+      expect(context.inheritedGrid).not.toHaveBeenCalled();
+      expect(spawnGrid()).toEqual([DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS]);
+    });
+
+    it('case (i): the new row records its spawn grid for its own successor', async () => {
+      const context = contextWithPredecessor();
+
+      await performSpawn(makeInput(), context);
+
+      expect(context.registry.get('input-session-id-0000-000000000000')?.lastPtyGrid).toEqual(INHERITED);
+    });
+  });
+
   it('case (d): takePendingResize is consumed exactly once, unconditionally, keyed on the resolved session id', async () => {
     // Pins the "called unconditionally" invariant documented at line 176-177:
     // the pending entry must be consumed even when input.cols/rows also

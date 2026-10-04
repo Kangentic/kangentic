@@ -886,7 +886,7 @@ phone needs and reads the rest by request.
   resume), and `handleRendererChange` answers it: an unheld terminal re-measures, while a held one
   rescales its remembered natural cell by how far its conformed cell moved across the swap and
   re-conforms the held grid for the new metrics.
-- **A session nobody is showing goes back to the spawn grid (the resting grid).** A PTY has ONE
+- **A session nobody is showing goes to the resting grid.** A PTY has ONE
   grid and every surface fits it to its own box, so a session last shown in the bottom panel was
   left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent
   then kept working in a 14-row window, and a paired phone (which mirrors the desktop grid 1:1 and
@@ -908,18 +908,40 @@ phone needs and reads the rest by request.
   effect); it never touches a grid a phone is holding (the armed size guard consulted through
   `MobileTerminalProbe.isSizeHeld` - the guard registry, never a last-writer origin, which a
   desktop resize overwrites while the hold stays armed); and it no-ops when the PTY is already at
-  the spawn grid. The park resizes with origin `'park'`, which deliberately does NOT update
+  the resting grid. The park resizes with origin `'park'`, which deliberately does NOT update
   `lastDesktopDimensions`: that map is the restore target for a phone's `release-size`, and a
-  park recording itself there made release "restore" the phone straight back to 120x30. After a
-  release the guard teardown asks for the park decision to re-run
+  park recording itself there made release "restore" the phone to the park instead of the
+  desktop's grid. After a release the guard teardown asks for the park decision to re-run
   (`reconsiderRestingGridAfterMobileRelease`), so an unheld session returns to the resting grid
   and the phone's next visit finds park dims again. The mounted set is the load-bearing hold: a
   PARKED terminal (Backlog view, occluded window) is unfocused but still mounted, and xterm
   re-sends dimensions only when its OWN size changes, so a PTY reshaped underneath one would
   disagree with it permanently - and the reveal deliberately skips its resize. Cost when it does
   fire: the next open of that session pays the marker settle (~20-40ms) because the grid changed
-  while it was away, which is what any surface switch already pays. Gated by the `Resting grid
-  restore` block in `tests/unit/session-manager.test.ts`,
+  while it was away, which is what any surface switch already pays.
+
+  The park also reaches a session nothing has laid out. A PTY spawns at the 120x30 default
+  (`DEFAULT_PTY_COLS/ROWS`), and only a focus or mount change used to re-run the park decision,
+  so a phone could open an Executing task and mirror 120x30. Three paths close that:
+  1. `doSpawn` re-runs the decision when a PTY comes up (`reconsiderRestingGrid`), so a PTY born
+     unheld while a phone streams its id parks after the usual delay.
+  2. A full queue hands back a `queued` placeholder with no PTY, and the task row (so the phone)
+     learns that id. The promotion keeps the id, so the phone's subscription survives into the
+     real spawn. The park stashes the resting grid for such a placeholder in `pendingResizes`, so
+     the promotion spawns there with no reflow mid-boot, and the seed served at subscribe already
+     reports 210x48. A suspended row is left alone: its resume spawns under a NEW id, and that
+     spawn drops the grids kept for the row it replaces (`forgetSessionGrid`).
+  3. The subscribe-time park also overrides a focus claim with no xterm mounted anywhere (a
+     minimized pop-out monitor, a detail window whose Changes view unmounted its terminal). Such
+     a claim holds no grid, so nothing can disagree with the reshape, and the surface fits the PTY
+     to itself when its terminal does mount. The background park still treats a focus claim as a
+     hold.
+
+  A respawn of a session the phone was watching starts at its predecessor's grid, normally the
+  resting grid (see Repaint-settled scrollback sampling below), so the phone's re-subscribe on the
+  new id finds nothing to park and the agent is not reshaped mid-boot.
+
+  Gated by the `Resting grid restore` block in `tests/unit/session-manager.test.ts`,
   `tests/unit/terminal-mount-registry.test.ts`, and the park assertions in
   `tests/unit/mobile-bridge/{interactive-terminal,read-stream}.test.ts`.
 - **A phone-streamed session is never rendered by the bottom panel, and never drops below the
@@ -1098,7 +1120,19 @@ phone needs and reads the rest by request.
   state that the other's early-settle scan offset points at, so the loser could never settle early
   and rode the full ceiling out - a deterministic ~415ms added to that open. A resize that arrives
   before the PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and
-  applied at spawn, so the PTY starts at the fitted size and no corrective resize is needed.
+  applied at spawn, so the PTY starts at the fitted size and no corrective resize is needed. A
+  respawn needs a second source, because every board respawn (a column move, a model switch, a
+  resume) mints a NEW session id, so a stash under the old id never reaches it. The successor
+  therefore starts at the grid of the row it replaces (`SessionManager.successorGridFor`, read
+  through `SpawnFlowContext.inheritedGrid`). That is a resize stashed while the old row was
+  suspended, else `ManagedSession.lastPtyGrid` (its spawn grid, then every applied resize except a
+  phone's, which the size guard owns and an exit disarms without restoring). Before
+  this, a respawn spawned at 120x30 and whatever showed the old session reshaped it mid-boot: the
+  surface's mount fit, or a streaming phone's resting-grid park. Each one was a resize plus two
+  boot-time geometry re-asserts. Only a running or suspended predecessor hands its grid on; a
+  killed or crashed one does not. A sub-floor grid (the bottom panel's strip) carries over only
+  while a surface still holds the old session, so a successor nothing shows never starts in that
+  letterbox. A caller-supplied grid (`input.cols/rows`) and a same-id stash both win over it.
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint

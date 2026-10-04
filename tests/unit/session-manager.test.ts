@@ -473,68 +473,118 @@ describe('Scrollback clearing on resize', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2b. Pre-spawn resize queue (stale-width race on auto-resume)
+// 2b. Respawn grid (a successor starts at the grid of the row it replaces)
 // ---------------------------------------------------------------------------
 
-describe('Pre-spawn resize queue', () => {
+describe('Respawn grid', () => {
+  // Every board respawn (a column move, a model switch, a resume) mints a NEW
+  // session id: the transition engine passes randomUUID() as the spawn id. So
+  // these spawns name no id. A same-id spawn is a queue promotion, covered in
+  // 'Caller-owned session IDs' and 'Resting grid restore'.
   let manager: SessionManager;
 
   beforeEach(() => {
     manager = new SessionManager();
   });
 
-  it('spawns a resumed session at dimensions from a resize that arrived while suspended', async () => {
-    const mock1 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as unknown as pty.IPty);
-    const session = await manager.spawn({ taskId: 'task-pending-resize', command: '', cwd: tmpDir });
-
-    // Suspend: the PTY is torn down (pty=null) but the record persists for resume.
-    await manager.suspend(session.id);
-
-    // A renderer resize arrives while suspended, before the resume spawn. It is
-    // stashed rather than dropped (the secondary stale-width hole: xterm never
-    // re-sends unchanged dims, so a dropped resize would strand the PTY at the
-    // default width forever).
-    expect(manager.resize(session.id, 190, 40)).toEqual({ colsChanged: false });
-
-    // Resume: performSpawn consumes the stash and spawns the PTY at 190x40
-    // instead of the 120x30 default, so the mount-time resize is a no-op and no
-    // corrective repaint window opens.
-    const mock2 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
-    await manager.spawn({ id: session.id, taskId: 'task-pending-resize', command: '', cwd: tmpDir, resuming: true });
-
-    expect(pty.spawn).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ cols: 190, rows: 40 }),
-    );
-
-    manager.kill(session.id);
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  it('drops a queued resize when the session is killed before respawn', async () => {
-    const mock1 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as unknown as pty.IPty);
-    const session = await manager.spawn({ taskId: 'task-killed-resize', command: '', cwd: tmpDir });
+  async function spawnFor(taskId: string, extra: { resuming?: boolean } = {}) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId, command: '', cwd: tmpDir, ...extra });
+    return { session, ...mock };
+  }
 
+  /** The grid the last PTY was spawned at (the mock reports 120x30 regardless). */
+  function lastSpawnGrid(): [number, number] {
+    const calls = vi.mocked(pty.spawn).mock.calls;
+    const options = calls[calls.length - 1][2] as { cols: number; rows: number };
+    return [options.cols, options.rows];
+  }
+
+  /**
+   * Spawning at 120x30 made whatever showed the old session reshape the new
+   * one mid-boot (a resize plus two geometry re-asserts). Starting at the old
+   * grid turns the mount fit into a no-op.
+   */
+  it('starts a respawn at the grid its predecessor last had', async () => {
+    const { session } = await spawnFor('task-respawn-grid');
+    manager.resize(session.id, 190, 50);
+    await manager.suspend(session.id);
+
+    const { session: successor, mockPty: successorPty } = await spawnFor('task-respawn-grid', { resuming: true });
+
+    expect(successor.id).not.toBe(session.id);
+    expect(lastSpawnGrid()).toEqual([190, 50]);
+    // The surface that showed the old session fits the new one to the same box.
+    manager.resize(successor.id, 190, 50);
+    expect(successorPty.resize).not.toHaveBeenCalled();
+  });
+
+  it('prefers a resize that arrived while the predecessor was suspended', async () => {
+    const { session } = await spawnFor('task-respawn-stash');
+    manager.resize(session.id, 150, 40);
+    await manager.suspend(session.id);
+    // Stashed, not dropped: xterm never re-sends unchanged dims, and this is
+    // newer than the grid the PTY last had.
+    expect(manager.resize(session.id, 190, 40)).toEqual({ colsChanged: false });
+
+    await spawnFor('task-respawn-stash', { resuming: true });
+
+    expect(lastSpawnGrid()).toEqual([190, 40]);
+  });
+
+  /**
+   * A sub-floor grid is the bottom panel's strip. Carried to a successor
+   * nothing shows, it would start the agent in a 14-row letterbox; carried
+   * while the panel still holds the old session, it saves the reshape.
+   */
+  it('carries a strip-shaped grid only while a surface still holds the predecessor', async () => {
+    const { session: unheld } = await spawnFor('task-respawn-strip-unheld');
+    manager.resize(unheld.id, 306, 14);
+    await manager.suspend(unheld.id);
+    await spawnFor('task-respawn-strip-unheld', { resuming: true });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+
+    const { session: held } = await spawnFor('task-respawn-strip-held');
+    manager.setMountedSessions([held.id]);
+    manager.resize(held.id, 306, 14);
+    await manager.suspend(held.id);
+    await spawnFor('task-respawn-strip-held', { resuming: true });
+    expect(lastSpawnGrid()).toEqual([306, 14]);
+  });
+
+  /**
+   * A phone-held grid is given back by the size guard on release, but an exit
+   * disarms the guard without restoring. Inherited, it would stick to the
+   * successor with nothing left to undo it.
+   */
+  it('does not hand a phone-held grid to the successor', async () => {
+    const { session } = await spawnFor('task-respawn-phone-hold');
+    manager.resize(session.id, 190, 50);
+    manager.resize(session.id, 80, 40, 'mobile');
+    await manager.suspend(session.id);
+
+    await spawnFor('task-respawn-phone-hold', { resuming: true });
+
+    expect(lastSpawnGrid()).toEqual([190, 50]);
+  });
+
+  it('a killed predecessor hands nothing on', async () => {
+    const { session } = await spawnFor('task-killed-resize');
+    manager.resize(session.id, 170, 45);
     await manager.suspend(session.id);
     manager.resize(session.id, 190, 40); // stashed while suspended
-    manager.kill(session.id); // deliberate teardown clears the stash
+    manager.kill(session.id); // deliberate teardown: an end, not a respawn
 
-    // A fresh spawn for the same task must NOT inherit the killed session's
-    // stashed dims: it spawns at the default.
-    const mock2 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
-    const fresh = await manager.spawn({ taskId: 'task-killed-resize', command: '', cwd: tmpDir });
+    // Neither the stash nor the grid the killed PTY last had carries over.
+    await spawnFor('task-killed-resize');
 
-    expect(pty.spawn).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ cols: 120, rows: 30 }),
-    );
-
-    manager.kill(fresh.id);
+    expect(lastSpawnGrid()).toEqual([120, 30]);
   });
 });
 
@@ -2856,7 +2906,7 @@ describe('Per-renderer focus scoping', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Resting grid: a session nobody is showing goes back to the spawn grid
+// Resting grid: a session nobody is showing goes to the resting grid
 // ---------------------------------------------------------------------------
 
 describe('Resting grid restore', () => {
@@ -3102,7 +3152,9 @@ describe('Resting grid restore', () => {
    */
   it('parks immediately for a subscribing phone, overriding only a sub-floor hold', async () => {
     const { session, mockPty } = await spawnSession('task-rest-subscribe');
+    // A surface that sized the PTY has an xterm mounted: that is the hold.
     manager.setFocusedSessions([session.id]);
+    manager.setMountedSessions([session.id]);
 
     // Held at a usable grid: respected, never touched.
     manager.resize(session.id, 190, 50);
@@ -3118,8 +3170,163 @@ describe('Resting grid restore', () => {
     // Unheld: parks as before.
     grabPanelGridUnwatched(session.id);
     manager.setFocusedSessions([]);
+    manager.setMountedSessions([]);
     manager.parkRestingGridForMobileSubscriber(session.id);
     expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  /**
+   * A focus claim with no xterm behind it holds no grid. A minimized pop-out
+   * monitor focuses its windows' sessions without building their terminals,
+   * and a detail window restored with Changes expanded keeps its claim while
+   * its TerminalTab is unmounted. Neither ever sized the PTY, so it sits at
+   * the 120x30 spawn default, which is above the floor and so out of reach of
+   * the sub-floor override. Nothing mounted means nothing can disagree with a
+   * reshape, and a surface that mounts later fits the PTY to itself anyway.
+   */
+  it('parks past a focus claim with no mounted terminal for a subscribing phone', async () => {
+    const { session, mockPty } = await spawnSession('task-rest-focus-only');
+    manager.setFocusedSessions([session.id]);
+
+    manager.parkRestingGridForMobileSubscriber(session.id);
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  it('still treats a focus claim as a hold for the background park', async () => {
+    const { session, mockPty } = await spawnSession('task-rest-focus-only-debounced');
+    manager.setFocusedSessions([session.id]);
+
+    await settle();
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([120, 30]);
+  });
+
+  /**
+   * A full queue hands back a `queued` placeholder with no PTY, and the task
+   * row (so the phone) learns that id. The promotion keeps the id, so the
+   * phone's subscription survives into the real spawn - which used to land at
+   * the 120x30 default with nothing left to park it. Parking the placeholder
+   * stashes the resting grid, so the PTY is BORN there: no reflow mid-boot.
+   */
+  it('parks a queued placeholder so its promotion spawns at the resting grid', async () => {
+    manager.setMaxConcurrent(1);
+    const { session: slotHolder } = await spawnSession('task-rest-queue-slot');
+    manager.setFocusedSessions([slotHolder.id]);
+    const queued = await manager.spawn({ taskId: 'task-rest-queued', command: '', cwd: tmpDir });
+    expect(queued.status).toBe('queued');
+
+    manager.parkRestingGridForMobileSubscriber(queued.id);
+    // The seed the phone is served right now already reports the resting grid.
+    expect(manager.getDimensions(queued.id)).toEqual({ cols: REST_COLS, rows: REST_ROWS });
+
+    const gridEvents: Array<[number, number, string]> = [];
+    manager.on('pty-resize', (resizedSessionId: string, cols: number, rows: number, origin: string) => {
+      if (resizedSessionId === queued.id) gridEvents.push([cols, rows, origin]);
+    });
+    const promoted = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(promoted.mockPty as unknown as pty.IPty);
+    manager.kill(slotHolder.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(manager.getSession(queued.id)?.status).toBe('running');
+    // The mock reports 120x30 whatever it was spawned at, so read the spawn.
+    expect(pty.spawn).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ cols: REST_COLS, rows: REST_ROWS }),
+    );
+    expect(promoted.mockPty.resize).not.toHaveBeenCalled();
+    // The phone subscribed before the PTY existed, so the spawn's own grid
+    // announcement is how it hears the real grid (read-stream forwards it as
+    // terminal-resize). Exactly one: the post-spawn park found nothing to do.
+    expect(gridEvents).toEqual([[REST_COLS, REST_ROWS, 'spawn']]);
+  });
+
+  /**
+   * The phone re-subscribes with terminal:true on every cold-launch fan-out,
+   * reconnect and foreground. A redundant resize would make the TUI redraw,
+   * which shows on the phone as a flash, so a session already at the resting
+   * grid must not even enter resize(): no PTY resize (no SIGWINCH), no
+   * buffer resize, no grid event.
+   */
+  it('a repeat subscribe at the resting grid touches nothing', async () => {
+    const { session, mockPty } = await spawnSession('task-rest-repeat-subscribe');
+    manager.parkRestingGridForMobileSubscriber(session.id);
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+
+    const gridEvents: Array<[number, number]> = [];
+    manager.on('pty-resize', (_sessionId: string, cols: number, rows: number) => gridEvents.push([cols, rows]));
+    mockPty.resize.mockClear();
+    vi.mocked(traceTerminal).mockClear();
+
+    manager.parkRestingGridForMobileSubscriber(session.id);
+    // A focus claim with nothing mounted is overridden, and still a no-op.
+    manager.setFocusedSessions([session.id]);
+    manager.parkRestingGridForMobileSubscriber(session.id);
+    manager.setFocusedSessions([]);
+    await settle();
+    manager.parkRestingGridForMobileSubscriber(session.id);
+
+    expect(mockPty.resize).not.toHaveBeenCalled();
+    expect(gridEvents).toEqual([]);
+    const resizeTraces = vi.mocked(traceTerminal).mock.calls
+      .filter(([tracedSessionId, event]) => tracedSessionId === session.id && String(event).startsWith('resize'));
+    expect(resizeTraces).toEqual([]);
+  });
+
+  it('leaves a suspended row alone: its resume spawns under a new id', async () => {
+    const { session } = await spawnSession('task-rest-suspended');
+    await manager.suspend(session.id);
+
+    manager.parkRestingGridForMobileSubscriber(session.id);
+
+    expect(manager.getDimensions(session.id)).toEqual({ cols: 120, rows: 30 });
+  });
+
+  /**
+   * Nothing re-ran the park decision when a PTY came up, so a session a phone
+   * streams from before its PTY exists depended on some later focus or mount
+   * change to ever be parked.
+   */
+  it('parks a PTY that comes up unheld while a phone streams it', async () => {
+    const { mockPty } = await spawnSession('task-rest-born-unheld');
+
+    await settle();
+
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  /**
+   * A resume mints a new id and drops the replaced row, so a grid stashed or
+   * recorded under the old id is never read again. It used to stay in the
+   * maps for the life of the app.
+   */
+  it('drops the grids kept for a row a new-id respawn replaces', async () => {
+    const { session } = await spawnSession('task-rest-sibling');
+    mobileStreamWatchers = new Set();
+    await manager.suspend(session.id);
+    manager.resize(session.id, 190, 40);
+    expect(manager.getLastDesktopDimensions(session.id)).toEqual({ cols: 190, rows: 40 });
+
+    const successorMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(successorMock.mockPty as unknown as pty.IPty);
+    const successor = await manager.spawn({ taskId: 'task-rest-sibling', command: '', cwd: tmpDir, resuming: true });
+    expect(successor.id).not.toBe(session.id);
+
+    expect(manager.getLastDesktopDimensions(session.id)).toBeNull();
+    // Nothing is left for a later spawn under the old id to inherit. The
+    // successor is killed first so it hands no grid on either (see
+    // 'Respawn grid'), which leaves the old id's stash as the only source.
+    manager.kill(successor.id);
+    const laterMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(laterMock.mockPty as unknown as pty.IPty);
+    await manager.spawn({ id: session.id, taskId: 'task-rest-sibling', command: '', cwd: tmpDir });
+    expect(pty.spawn).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ cols: 120, rows: 30 }),
+    );
   });
 
   it('a size-guard hold blocks even the subscribe-time rescue', async () => {
