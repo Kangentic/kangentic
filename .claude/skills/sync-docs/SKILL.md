@@ -13,9 +13,9 @@ Each doc file and the source files that are its authority:
 
 | Doc | Primary Source Files |
 |-----|---------------------|
-| `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts` |
+| `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts`, `src/main/retrieval/retrieval-service.ts` and `src/main/retrieval/graph-facade.ts` (the `knowledgeGraph:*` rows) |
 | `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
-| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split) |
+| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split), `src/main/retrieval/summary/**` and `src/main/retrieval/retrieval-service.ts` (the Knowledge Graph section: when summary passes run, their backoff, Rebuild) |
 | `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
 | `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/main/automations/**` (the adapter registry, the runner, per-field escaping), `src/shared/automation-manifest.ts`, `src/shared/types.ts` (AutomationType, AutomationTrigger, AutomationRunStatus, AutomationConfig) |
@@ -36,7 +36,7 @@ Each doc file and the source files that are its authority:
 | `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md` |
 | `release-checklist.md` | `.claude/skills/release/SKILL.md`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js` |
 | `overview.md` | `README.md`, high-level features |
-| `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts` |
+| `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts`, `src/shared/index-summary.ts` (what the Index card and the map's Index panel count, and the line each source reads) |
 | `developer-guide.md` | `scripts/`, `tests/`, `electron-builder.yml`, `package.json` |
 | `docs/README.md` | All other docs (index) |
 
@@ -109,6 +109,8 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | `AppConfig` / `DEFAULT_CONFIG` | Flattened dot-paths + defaults | configuration.md |
 | `BoardConfig` | Interface fields | configuration.md |
 | `BoardColumnConfig` | Interface fields | configuration.md |
+| `KnowledgeGraphStatus` | Interface fields | architecture.md (`knowledgeGraph:status` row) |
+| `KnowledgeGraphSummaryCounts` / `KnowledgeGraphSummaryStatus` | Interface fields | architecture.md (`knowledgeGraph:status` and `knowledgeGraph:graphSnapshot` rows), user-guide.md (the Task summaries line's states) |
 
 ### IPC Anchors (src/shared/ipc-channels.ts)
 
@@ -281,6 +283,12 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 - `src/renderer/components/settings/settings-registry.ts`
   WHY: settings registry entries and their defaults are enumerated in configuration.md.
 
+- `src/main/retrieval/retrieval-service.ts`
+  WHY: when task summary passes are asked for (project open, board change, the once-a-launch ask of every project, a settings change that resolves a writer, Rebuild), what the Settings Index card counts (every indexed project), and Rebuild's reach are described in configuration.md's Knowledge Graph section, user-guide.md's Index card paragraphs, and architecture.md's `knowledgeGraph:status` and `knowledgeGraph:rebuildIndex` rows. None of those are enumerable, so this is a prose check: the open-project wording survived a change to all projects once before.
+
+- `src/shared/index-summary.ts`
+  WHY: one fold and one set of line rules for both Index surfaces (`sumIndexCounts` and the panel's `sumIndex`, `summaryStatusOf`, `sourceStatusOf`, and `isIndexedProject`, the set "All projects" means). user-guide.md and configuration.md say what each surface counts and that the two read the same; a change here changes both.
+
 - `electron-builder.yml`
   WHY: native deps allowlist, asarUnpack, signing, and packaging targets are described in cross-platform.md and developer-guide.md.
 
@@ -309,6 +317,9 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 
 - `src/main/ipc/handlers/**`
   WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. The glob avoids list-rot as handlers are added.
+
+- `src/main/retrieval/summary/**`
+  WHY: the summary scheduler and pass (one pass at a time, three calls of ten, the gap, the app-wide backoff after a failed agent call, the per-project one after a failed read, the one-task-per-call retry of a reply with no usable label, the reply-gap log line) are described in configuration.md's `knowledgeGraph.taskSummaries` row and user-guide.md's Task summaries paragraph, with their numbers. Small directory; safe to glob.
 
 - `src/main/analytics/**`
   WHY: analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets). An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide.md and configuration.md's Privacy paragraphs describe the same collection.

@@ -81,11 +81,11 @@ export function createBranchSizes(deps: BranchSizeDeps = defaultDeps) {
 export interface CodeStatusInput {
   /** Whether code is indexed (`codeIndexOn`). */
   on: boolean;
-  /** What the index holds: files, passages, and passages with their vector. */
+  /** What the index holds: files, passages, and passages with their vector,
+   *  summed over every indexed project. */
   progress: { documents: number; chunks: number; embedded: number };
-  /** The branch the index last read, or null. */
-  indexedBranch: string | null;
-  /** The branch's size (see `createBranchSizes`); read only while nothing is indexed. */
+  /** The open project's branch size (see `createBranchSizes`); read only while
+   *  nothing is indexed. */
   branchSize: BranchSize | null | undefined;
   /** This machine's background chunks a minute, or null before one is measured. */
   chunksPerMinute: number | null;
@@ -97,21 +97,20 @@ export function codeStatus(input: CodeStatusInput): KnowledgeGraphCodeStatus | u
     input.chunksPerMinute && input.chunksPerMinute > 0 && passages > 0 ? passages / input.chunksPerMinute : null
   );
   const { progress } = input;
-  const nothingCommitted: KnowledgeGraphCodeStatus = { state: 'nothing-committed', branch: null, files: 0, passages: 0, embedded: 0, minutesLeft: null };
+  const nothingCommitted: KnowledgeGraphCodeStatus = { state: 'nothing-committed', files: 0, passages: 0, embedded: 0, minutesLeft: null };
   if (!input.on || progress.documents === 0) {
     if (input.branchSize === null) return nothingCommitted;
     if (input.branchSize === undefined) {
       return input.on
-        ? { state: 'reading', branch: input.indexedBranch, files: 0, passages: 0, embedded: 0, minutesLeft: null }
+        ? { state: 'reading', files: 0, passages: 0, embedded: 0, minutesLeft: null }
         : undefined;
     }
-    const { branch, files, passages } = input.branchSize;
-    return { state: input.on ? 'reading' : 'estimate', branch, files, passages, embedded: 0, minutesLeft: minutesFor(passages) };
+    const { files, passages } = input.branchSize;
+    return { state: input.on ? 'reading' : 'estimate', files, passages, embedded: 0, minutesLeft: minutesFor(passages) };
   }
   const waiting = Math.max(0, progress.chunks - progress.embedded);
   return {
     state: waiting > 0 ? 'indexing' : 'ready',
-    branch: input.indexedBranch,
     files: progress.documents,
     passages: progress.chunks,
     embedded: Math.min(progress.embedded, progress.chunks),

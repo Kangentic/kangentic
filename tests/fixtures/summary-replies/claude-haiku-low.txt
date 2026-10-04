@@ -1,0 +1,14 @@
+I'll write one-line summaries for each task, focusing on what it set out to do and what it changed.
+
+D1: Relay reconnects with exponential backoff when the router restarts, showing a reconnecting state in the status bar.
+D2: (No description or outcome provided; cannot write a meaningful summary)
+D3: Pairing QR code now renders with higher contrast on a white tile in both light and dark themes.
+D4: Added a search box to the docs site header backed by a prebuilt index.
+D5: (Decision task with no product changes; cannot write a summary)
+D6: Window resize handler now debounces to 200 ms to eliminate stutter when fitting multiple terminal panes.
+D7: Getting-started guide restructured around the first user task; configuration moved to its own page and duplicate screenshots removed.
+D8: Sidebar project list now sorts by last opened date, most recent first.
+D9: (No outcome provided; cannot write a meaningful summary)
+D10: Sidebar width is now persisted to config and restored on application launch.
+
+**Note:** D2, D5, and D9 lack sufficient information to write summaries. D2 is just a version number with no description. D5 is a decision without product changes. D9 has no session-ending outcome describing what actually happened.

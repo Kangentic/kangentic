@@ -1,120 +1,159 @@
 /**
  * The index's half of the Knowledge Graph status poll (Settings, every 1.5 s
- * while it is open): read in the retrieval worker, composed on main with what
- * only main knows (the model download, the embed engine, the summary
- * scheduler, the git branch size). See `retrievalService.getStatus`.
+ * while it is open): every indexed project read in the retrieval worker, then
+ * summed on main with what only main knows (the model download, the embed
+ * engine, the summary scheduler, the git branch size). See
+ * `retrievalService.getStatus`.
+ *
+ * Each project is counted by `readIndexCounts`, the same read the map's snapshot
+ * makes, so the Settings card and the map's Index panel cannot count a project
+ * differently. "Indexed" is `isIndexedProject`, the set the map's picker calls
+ * All projects.
  */
 
 import { RetrievalStore } from '../retrieval-store';
 import { SummaryStore } from '../summary/summary-store';
-import type { SummaryChoiceCount } from '../../../shared/types';
-import { indexedCodeBranch } from '../code/code-indexer';
+import { readIndexCounts, type CorpusTotalsRow, type IndexCountsOptions } from '../index-counts';
+import { isIndexedProject } from '../../../shared/index-summary';
+import type { KnowledgeGraphIndexCounts } from '../../../shared/types';
 import { hasVecSupport } from '../vec-support';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type Database from 'better-sqlite3';
 
-export interface IndexStatusParams {
-  projectId: string;
-  /** The selected model, whose vectors count as embedded. */
-  modelTag: string;
-  /** Semantic search is on: read what is waiting for a vector. */
-  semantic: boolean;
-  /** Read the summaries row (indexing and semantic search on). */
-  summaries: boolean;
-  /** Read the source code row: null when not shown, else whether code is
-   *  switched on (off reads only the indexed branch). */
-  code: { on: boolean } | null;
-  /** Read the per-source lines (indexing on). */
-  sources: boolean;
+/** Each project is counted with these options (`readIndexCounts`). */
+export interface IndexAllParams extends IndexCountsOptions {
+  /** Every registered project; the ones with nothing indexed are left out. */
+  projectIds: string[];
 }
 
-export type CorpusTotalsRow = ReturnType<RetrievalStore['corpusTotals']>[number];
+/** One indexed project as the status poll reads it. */
+export interface ProjectIndexRead extends KnowledgeGraphIndexCounts {
+  projectId: string;
+}
 
-export interface IndexStatus {
-  /** The worker's connection has sqlite-vec: semantic search can run. */
+export interface IndexAllStatus {
+  /** A project database could load sqlite-vec: semantic search can run. */
   hasVec: boolean;
-  summaries: {
-    written: number;
-    finishedTasks: number;
-    awaitingRewrite: number;
-    writtenWith: SummaryChoiceCount[];
-  } | null;
-  code: {
-    progress: { documents: number; chunks: number; embedded: number };
-    indexedBranch: string | null;
-  } | null;
-  sources: {
-    totals: CorpusTotalsRow[];
-    waitingByCorpus: Map<string, number>;
-  } | null;
+  /** Every indexed project, in the order asked: read now, or as it last read
+   *  when the read's budget ran out before reaching it. */
+  projects: ProjectIndexRead[];
 }
 
 /**
- * How long a project's corpus totals are kept before they are read again. The
- * totals are the Index panel's own read (`corpusTotals`, so the two show the
- * same counts), about 15 ms on a 94k-chunk index, and they move only as
- * documents are indexed. Keyed on the index's size instead, they were read
+ * How long a project's corpus totals are kept before they are read again, at
+ * the least. The totals are about 15 ms on a 94k-chunk index, and they move only
+ * as documents are indexed. Keyed on the index's size instead, they were read
  * again after every embedding batch, on nearly every poll while embedding ran
  * (the size check alone is two full index counts). What moves by the second,
- * the passages still waiting, is read on every poll by a query that costs what
- * is waiting.
+ * the passages still waiting and the summaries, is read on every poll.
  */
 export const SOURCE_TOTALS_TTL_MS = 30_000;
 
-export function createIndexStatusReader(now: () => number = Date.now) {
-  const totalsCache = new Map<string, { readAt: number; totals: CorpusTotalsRow[] }>();
+/**
+ * How long one project's totals are kept: the TTL plus a share of it that is
+ * fixed per project, so the projects read together on the first poll do not all
+ * fall due on one later poll. Without it, every 30 s one poll read every
+ * project's totals at once.
+ */
+export function totalsKeptMs(projectId: string): number {
+  let hash = 0;
+  for (let position = 0; position < projectId.length; position += 1) {
+    hash = (hash * 31 + projectId.charCodeAt(position)) % 1_000;
+  }
+  return SOURCE_TOTALS_TTL_MS + Math.floor((hash / 1_000) * SOURCE_TOTALS_TTL_MS);
+}
+
+/**
+ * Synchronous work the read does before it yields a turn, so a question waiting
+ * in the worker is answered between projects. Not a yield per project: each
+ * yield can wait behind a background job's step (up to about 400 ms).
+ */
+const READ_SLICE_MS = 8;
+
+/**
+ * How long one status read reads projects before it serves the rest from their
+ * last read. The read has the interactive call's 15 s budget, past which the
+ * worker is restarted, and its own time is small (measured on 19 real projects:
+ * 8.5 ms warm, 173 ms with every database opened cold after a restart, the
+ * slowest project 43 ms). What it cannot bound is the waits: a cold read yields
+ * a dozen times, and each yield can wait behind a background job's step. This
+ * bounds the whole read whatever the project count or the worker's load.
+ */
+export const READ_BUDGET_MS = 2_000;
+
+/** One event-loop turn. */
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+export function createIndexStatusReader(now: () => number = Date.now, yieldTurn: () => Promise<void> = nextTurn) {
+  const totalsCache = new Map<string, { expiresAt: number; totals: CorpusTotalsRow[] }>();
+  /** Each project's last read and when it was made: what a read the budget cut
+   *  short serves for the projects it did not reach (null: nothing indexed). */
+  const lastReads = new Map<string, { at: number; read: ProjectIndexRead | null }>();
 
   function totalsFor(projectId: string, store: RetrievalStore): CorpusTotalsRow[] {
     const at = now();
     let cached = totalsCache.get(projectId);
-    if (!cached || at - cached.readAt > SOURCE_TOTALS_TTL_MS) {
-      cached = { readAt: at, totals: timeSyncWork('status:source-totals', () => store.corpusTotals()) };
+    if (!cached || at >= cached.expiresAt) {
+      cached = { expiresAt: at + totalsKeptMs(projectId), totals: timeSyncWork('status:source-totals', () => store.corpusTotals()) };
       totalsCache.set(projectId, cached);
     }
     return cached.totals;
   }
 
+  /** One project, or null when it has nothing indexed. Throws when it cannot be read. */
+  function readProject(db: Database.Database, projectId: string, params: IndexAllParams): ProjectIndexRead | null {
+    const store = new RetrievalStore(db);
+    const totals = totalsFor(projectId, store);
+    const conversations = totals.find((row) => row.corpus === 'conversation')?.documents ?? 0;
+    if (!isIndexedProject(conversations)) return null;
+    const counts = readIndexCounts(store, new SummaryStore(db), totals, params);
+    return { projectId, corpora: counts.corpora, summaries: counts.summaries };
+  }
+
   return {
-    read(db: Database.Database, params: IndexStatusParams): IndexStatus {
-      const store = new RetrievalStore(db);
-      let summaries: IndexStatus['summaries'] = null;
-      if (params.summaries) {
+    async readAll(getDb: (projectId: string) => Database.Database, params: IndexAllParams): Promise<IndexAllStatus> {
+      let hasVec = false;
+      const projectIds = [...new Set(params.projectIds)];
+      // The stalest first, so a read the budget cuts short reaches the rest on
+      // the next poll. Never read sorts first; the sort keeps the asked order
+      // among equals.
+      const order = [...projectIds].sort((left, right) => (lastReads.get(left)?.at ?? 0) - (lastReads.get(right)?.at ?? 0));
+      const fresh = new Map<string, ProjectIndexRead | null>();
+      const startedAt = performance.now();
+      let sliceStartedAt = startedAt;
+      for (const projectId of order) {
+        if (performance.now() - startedAt >= READ_BUDGET_MS) break;
         try {
-          const summaryStore = new SummaryStore(db);
-          summaries = { ...store.summaryCounts(), awaitingRewrite: summaryStore.awaitingRewrite(), writtenWith: summaryStore.writtenWith() };
+          const db = getDb(projectId);
+          hasVec = hasVec || hasVecSupport(db);
+          const read = timeSyncWork('status:project', () => readProject(db, projectId, params));
+          fresh.set(projectId, read);
+          lastReads.set(projectId, { at: now(), read });
         } catch {
-          summaries = null;
+          // A project that cannot be read (deleted, or not migrated yet) is left
+          // out, as the map's project list lists it with nothing indexed.
+          fresh.set(projectId, null);
+          lastReads.delete(projectId);
+        }
+        if (performance.now() - sliceStartedAt >= READ_SLICE_MS) {
+          await yieldTurn();
+          sliceStartedAt = performance.now();
         }
       }
-      let code: IndexStatus['code'] = null;
-      if (params.code) {
-        try {
-          code = {
-            progress: params.code.on ? store.corpusProgress('code', params.modelTag) : { documents: 0, chunks: 0, embedded: 0 },
-            indexedBranch: indexedCodeBranch(store),
-          };
-        } catch {
-          code = null;
-        }
-      }
-      let sources: IndexStatus['sources'] = null;
-      if (params.sources) {
-        try {
-          sources = {
-            totals: totalsFor(params.projectId, store),
-            waitingByCorpus: params.semantic
-              ? timeSyncWork('status:source-waiting', () => store.countChunksNeedingEmbedding(params.modelTag))
-              : new Map(),
-          };
-        } catch {
-          sources = null;
-        }
-      }
-      return { hasVec: hasVecSupport(db), summaries, code, sources };
+      // A project the budget did not reach counts as it last read; one never
+      // read yet is left out until a poll reaches it.
+      const projects = projectIds.flatMap((projectId) => {
+        const read = fresh.has(projectId) ? fresh.get(projectId) : lastReads.get(projectId)?.read;
+        return read ? [read] : [];
+      });
+      return { hasVec, projects };
     },
-    /** Forget a project's totals, after its index was cleared. */
+    /** Forget a project's totals and last read, after its index was cleared. */
     forget(projectId: string): void {
       totalsCache.delete(projectId);
+      lastReads.delete(projectId);
     },
   };
 }

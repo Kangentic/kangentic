@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import type { KnowledgeGraphProjectSummary } from '../../../shared/types';
+import { isIndexedProject } from '../../../shared/index-summary';
 import { OverlayPopover } from '../OverlayPopover';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
@@ -74,8 +75,9 @@ export function KnowledgeGraphProjectsPicker({
   const { style } = usePopoverPosition(triggerRef, menuRef, open, { mode: 'dropdown', strategy: 'fixed' });
 
   const ordered = useMemo(() => orderProjects(projects, openProjectId), [projects, openProjectId]);
-  const indexed = useMemo(() => ordered.filter((project) => project.conversations > 0), [ordered]);
-  const notIndexed = useMemo(() => ordered.filter((project) => project.conversations === 0), [ordered]);
+  // The same set the Settings Index card sums, so All projects reads the same there.
+  const indexed = useMemo(() => ordered.filter((project) => isIndexedProject(project.conversations)), [ordered]);
+  const notIndexed = useMemo(() => ordered.filter((project) => !isIndexedProject(project.conversations)), [ordered]);
   const matches = (project: KnowledgeGraphProjectSummary): boolean =>
     project.name.toLowerCase().includes(query.trim().toLowerCase());
   const selected = new Set(selectedIds);

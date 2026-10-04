@@ -101,13 +101,21 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   useEffect(() => {
     if (!indexingEnabled) return;
     let active = true;
+    // One read at a time: main reads every indexed project, which can outlast
+    // the interval on a busy worker, and a second read would only add to its load.
+    let polling = false;
     const poll = () => {
+      if (polling) return;
+      polling = true;
       window.electronAPI.knowledgeGraph
         .getStatus()
         .then((next) => {
           if (active) setStatus(next);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          polling = false;
+        });
     };
     poll();
     const interval = setInterval(poll, 1500);
@@ -276,8 +284,9 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
           <>
             {/* Every source the index searches, one line each. Session
                 changes are not listed: nothing searches them, they only feed
-                the task summaries. The figures are the open project's, since
-                indexing runs for the open project. */}
+                the task summaries. The figures are every indexed project's,
+                summed the way the Knowledge Graph's All projects panel sums
+                them, so the two read the same. */}
             <CardSourceList lines={sourceLines} testId="index-sources" />
             <CardTile className="flex items-center justify-between gap-3" testId="knowledge-graph-rebuild-row">
               <div className="min-w-0">

@@ -336,6 +336,11 @@ describe('the graph snapshot and refresh handlers', () => {
     projectId: 'project-1',
     projection: null,
     coverage: {},
+    index: {
+      corpora: [],
+      summaries: { written: 0, finishedTasks: 0, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
+      storageBytes: 0,
+    },
     building: false,
     stale: false,
     semanticAvailable: true,
@@ -368,8 +373,9 @@ describe('the graph snapshot and refresh handlers', () => {
     const named = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, 'project-1');
     const defaulted = await handlerFor(IPC.KNOWLEDGE_GRAPH_SNAPSHOT)(undefined, null);
 
-    expect(named).toBe(snapshot);
-    expect(defaulted).toBe(snapshot);
+    // Main adds what its summary scheduler is doing, so the wire is a copy.
+    expect(named).toEqual(snapshot);
+    expect(defaulted).toEqual(snapshot);
     expect(graphDouble.snapshotFor).toHaveBeenCalledTimes(2);
     expect(graphDouble.snapshotFor).toHaveBeenCalledWith('project-1', expect.any(String));
   });

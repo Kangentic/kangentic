@@ -40,6 +40,12 @@ export interface SummarySchedulerDeps<Context> {
    */
   onWritten: (context: Context, projectId: string, caughtUp: boolean) => void;
   /**
+   * A project's `status` or `skipped` count changed. The map's Index panel
+   * reads both from its snapshot, which it re-reads only when told to, and a
+   * pass that ends having written nothing has no `onWritten` to tell it.
+   */
+  onStatusChanged?: (projectId: string) => void;
+  /**
    * Before a pass reads its tasks: bring what a summary is written from up to
    * date. A summary's hash covers the files its task changed, so a pass that
    * ran ahead of the change sweep would write summaries without them and then
@@ -53,6 +59,8 @@ export interface SummarySchedulerDeps<Context> {
 }
 
 export interface SummarySchedulerStatus {
+  /** `writing` while its pass runs, is queued, or waits out the gap before the
+   *  next one; `retrying` while a failed call waits out its backoff. */
   state: 'idle' | 'writing' | 'retrying';
   /** When a failed call is tried again, epoch ms. Set only while `retrying`. */
   retryAtMs: number | null;
@@ -63,14 +71,19 @@ export interface SummaryScheduler<Context> {
   request: (context: Context, projectId: string) => void;
   /** How many tasks the agent passed over in this project, this run of the app. */
   skipped: (projectId: string) => number;
-  /** What the scheduler is doing for a project, for the Index card's Task summaries line. */
+  /** What the scheduler is doing for a project, for the map's Index panel and the Settings card. */
   status: (projectId: string) => SummarySchedulerStatus;
   /**
-   * Summaries this project's current run writes a minute, on wall time from its
-   * first pass (the gaps between passes included), or null before a pass of
-   * the run has written any. A run ends when it catches up or a call fails.
+   * Summaries the app's current run writes a minute, on wall time from its first
+   * pass (the gaps between passes, and other projects' passes, included), or
+   * null before a pass of the run has written any. One run spans every project,
+   * since one pass runs at a time for the whole app. It ends when a pass's call
+   * fails with no batch answered (every project then waits), or when a pass
+   * leaves no project queued or waiting out the gap before its next pass. One
+   * project's failed read, failed save, or failed call beside one that answered
+   * does not end it: the other projects go on writing.
    */
-  writtenPerMinute: (projectId: string) => number | null;
+  writtenPerMinute: () => number | null;
   /**
    * Forget that a project is caught up, so its next request runs a pass even
    * though nothing on the board moved. For a change the fingerprint cannot
@@ -79,8 +92,9 @@ export interface SummaryScheduler<Context> {
    */
   invalidate: (projectId: string) => void;
   /**
-   * End a project's failure backoff, so its next request runs at once. For a
-   * settings change, which may be what fixes the failed call.
+   * End a project's failure backoff, and the app-wide one after a failed call,
+   * so the next request runs at once. For a settings change, which may be what
+   * fixes the failed call.
    */
   endBackoff: (projectId: string) => void;
   dispose: () => void;
@@ -102,20 +116,36 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
   let running = false;
   let runningProjectId: string | null = null;
   const pending = new Map<string, Context>();
+  /** Each project's next-pass timer: the gap, or the wait after a failure. */
   const timers = new Map<string, { cancel: () => void }>();
-  /** When each project's failed call is tried again, while one is waiting. */
+  /**
+   * When each project's failed pass is tried again, while one is waiting: a
+   * failed read or save, or one call failing beside another that answered. Kept
+   * per project: one database that cannot be read, or one batch the agent
+   * fails on, must not hold up every other project's summaries.
+   */
   const retryAtByProject = new Map<string, number>();
+  /**
+   * A pass whose agent call failed with no batch answered holds up every
+   * project, not only its own: the agent is the same for all of them, so asking every project would
+   * turn one broken agent into a failing call per project every backoff. Other
+   * projects' requests wait in `pending`, and the failed project's retry starts
+   * the queue again.
+   */
+  let callBackoff: { projectId: string; context: Context; retryAt: number } | null = null;
   /** Tasks the agent was asked about and did not answer for, this run of the app. */
   const skipByProject = new Map<string, Set<string>>();
   /**
    * The fingerprint each project's last pass caught up at: nothing remaining,
    * no failed call. Kept in memory only, so the first request after a launch
-   * always runs a pass.
+   * always runs a pass, which is also what asks again about skipped tasks.
    */
   const caughtUpAt = new Map<string, string>();
-  /** Each project's run of passes toward catching up: when its first pass
-   *  started, and how many summaries it has written. */
-  const runs = new Map<string, { startedAt: number; written: number }>();
+  /** The app's run of passes toward catching up: when its first pass started,
+   *  and how many summaries it has written. */
+  let rateRun: { startedAt: number; written: number } | null = null;
+  /** What `onStatusChanged` last reported for each project. */
+  const reported = new Map<string, string>();
 
   const fingerprintOf = async (context: Context, projectId: string): Promise<string | null> => {
     if (!deps.readFingerprint) return null;
@@ -126,17 +156,68 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
     }
   };
 
-  /** Waiting out a failed call: only its own retry timer runs the next pass. */
+  /** Waiting out its own failed pass: only its own retry timer runs the next pass. */
   const backingOff = (projectId: string): boolean => {
     const retryAt = retryAtByProject.get(projectId);
     return retryAt !== undefined && retryAt > now();
   };
 
+  /** Waiting out a pass whose call failed with no batch answered: no project's pass starts. */
+  const callBackingOff = (): boolean => callBackoff !== null && callBackoff.retryAt > now();
+
+  /** Waiting for its next pass after the gap (not after a failure). */
+  const hasGapTimer = (projectId: string): boolean => (
+    timers.has(projectId) && !retryAtByProject.has(projectId) && callBackoff?.projectId !== projectId
+  );
+
+  const status = (projectId: string): SummarySchedulerStatus => {
+    if (running && runningProjectId === projectId) return { state: 'writing', retryAtMs: null };
+    const retryAt = retryAtByProject.get(projectId);
+    if (retryAt !== undefined) return { state: 'retrying', retryAtMs: retryAt };
+    if (callBackoff && (callBackoff.projectId === projectId || pending.has(projectId))) {
+      return { state: 'retrying', retryAtMs: callBackoff.retryAt };
+    }
+    // Queued, or between two passes of a backfill: what is left will be written,
+    // so the line keeps its track rather than flickering to "N of M".
+    if (pending.has(projectId) || hasGapTimer(projectId)) return { state: 'writing', retryAtMs: null };
+    return { state: 'idle', retryAtMs: null };
+  };
+
+  /** Tell `onStatusChanged` about every project whose status or skipped count moved. */
+  const reportChanges = (): void => {
+    if (!deps.onStatusChanged || disposed) return;
+    const projectIds = new Set<string>([
+      ...reported.keys(), ...pending.keys(), ...timers.keys(), ...retryAtByProject.keys(), ...skipByProject.keys(),
+    ]);
+    if (runningProjectId) projectIds.add(runningProjectId);
+    if (callBackoff) projectIds.add(callBackoff.projectId);
+    for (const projectId of projectIds) {
+      const current = status(projectId);
+      const key = `${current.state}|${current.retryAtMs ?? ''}|${skipByProject.get(projectId)?.size ?? 0}`;
+      if (reported.get(projectId) === key) continue;
+      if (current.state === 'idle' && !skipByProject.has(projectId) && !reported.has(projectId)) continue;
+      reported.set(projectId, key);
+      deps.onStatusChanged(projectId);
+    }
+  };
+
   const endBackoff = (projectId: string): void => {
-    if (!retryAtByProject.has(projectId)) return;
-    timers.get(projectId)?.cancel();
-    timers.delete(projectId);
-    retryAtByProject.delete(projectId);
+    if (retryAtByProject.has(projectId)) {
+      timers.get(projectId)?.cancel();
+      timers.delete(projectId);
+      retryAtByProject.delete(projectId);
+    }
+    if (callBackoff) {
+      const ended = callBackoff;
+      timers.get(ended.projectId)?.cancel();
+      timers.delete(ended.projectId);
+      callBackoff = null;
+      // Queued with the rest, and the queue started, so nothing reads as
+      // writing while no pass will run.
+      if (!pending.has(ended.projectId)) pending.set(ended.projectId, ended.context);
+      if (!running) runNextPending();
+    }
+    reportChanges();
   };
 
   const scheduleAgain = (context: Context, projectId: string, delayMs: number, afterFailure: boolean): void => {
@@ -147,7 +228,38 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
       timers.delete(projectId);
       retryAtByProject.delete(projectId);
       request(context, projectId);
+      reportChanges();
     }, delayMs));
+  };
+
+  /** A call failed with no batch answered: every project waits, and this one's retry restarts the queue. */
+  const startCallBackoff = (context: Context, projectId: string): void => {
+    timers.get(projectId)?.cancel();
+    retryAtByProject.delete(projectId);
+    callBackoff = { projectId, context, retryAt: now() + FAILURE_BACKOFF_MS };
+    timers.set(projectId, setTimer(() => {
+      timers.delete(projectId);
+      if (callBackoff?.projectId === projectId) callBackoff = null;
+      // Run now rather than again from the queue once this pass ends.
+      pending.delete(projectId);
+      request(context, projectId);
+      // Switched off during the wait, `request` starts nothing: start the
+      // queue here, or the projects waiting in it read as writing with no pass.
+      if (!running) runNextPending();
+      reportChanges();
+    }, FAILURE_BACKOFF_MS));
+  };
+
+  /** Start the first queued pass that may run, if any. */
+  const runNextPending = (): void => {
+    for (const [nextProjectId, nextContext] of pending) {
+      if (callBackingOff()) return;
+      pending.delete(nextProjectId);
+      // Switched off while it waited: `request` would not start it now either.
+      if (backingOff(nextProjectId) || !deps.isEnabled(nextContext)) continue;
+      void run(nextContext, nextProjectId);
+      return;
+    }
   };
 
   const run = async (context: Context, projectId: string): Promise<void> => {
@@ -182,12 +294,14 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
         if (result.written > 0) deps.onWritten(context, projectId, !result.failed && result.remaining === 0);
         if (!result.failed && result.remaining === 0 && passFingerprint !== null) caughtUpAt.set(projectId, passFingerprint);
         else caughtUpAt.delete(projectId);
-        if (result.failed || result.remaining === 0) {
-          runs.delete(projectId);
+        // Only a failure that holds every project back ends the run. One project
+        // backing off alone leaves the rest writing at the measured rate, and the
+        // check below ends the run once only backoffs are left.
+        if (result.callFailed) {
+          rateRun = null;
         } else if (result.written > 0) {
-          const current = runs.get(projectId) ?? { startedAt: passStartedAt, written: 0 };
-          current.written += result.written;
-          runs.set(projectId, current);
+          rateRun = rateRun ?? { startedAt: passStartedAt, written: 0 };
+          rateRun.written += result.written;
         }
       }
     } catch (error) {
@@ -200,40 +314,37 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
     if (disposed) return;
     // The backoff first, so a request this project queued while its pass ran
     // waits it out instead of running the failed call again at once.
-    if (result && result.remaining > 0) scheduleAgain(context, projectId, result.failed ? FAILURE_BACKOFF_MS : PASS_GAP_MS, result.failed);
+    if (result?.callFailed) startCallBackoff(context, projectId);
+    else if (result && result.remaining > 0) scheduleAgain(context, projectId, result.failed ? FAILURE_BACKOFF_MS : PASS_GAP_MS, result.failed);
     else if (result?.failed) scheduleAgain(context, projectId, FAILURE_BACKOFF_MS, true);
-    for (const [nextProjectId, nextContext] of pending) {
-      pending.delete(nextProjectId);
-      if (backingOff(nextProjectId)) continue;
-      void run(nextContext, nextProjectId);
-      break;
-    }
+    runNextPending();
+    // The run ends once nothing is left to write anywhere: no pass running or
+    // queued, and none waiting out the gap before its next one.
+    if (!running && pending.size === 0 && ![...timers.keys()].some(hasGapTimer)) rateRun = null;
+    reportChanges();
   };
 
   const request = (context: Context, projectId: string): void => {
     if (disposed || !deps.isEnabled(context)) return;
-    // A board change after a failed call must not spawn the agent again: the
+    // A board change after a failed read must not run the pass again: the
     // retry timer requests this project once the backoff ends.
     if (backingOff(projectId)) return;
-    if (running) {
+    if (running || callBackingOff()) {
       pending.set(projectId, context);
+      reportChanges();
       return;
     }
     void run(context, projectId);
+    reportChanges();
   };
 
   return {
     request,
     skipped: (projectId) => skipByProject.get(projectId)?.size ?? 0,
-    status: (projectId) => {
-      if (running && runningProjectId === projectId) return { state: 'writing', retryAtMs: null };
-      const retryAtMs = retryAtByProject.get(projectId);
-      return retryAtMs === undefined ? { state: 'idle', retryAtMs: null } : { state: 'retrying', retryAtMs };
-    },
-    writtenPerMinute: (projectId) => {
-      const current = runs.get(projectId);
-      if (!current || current.written === 0) return null;
-      return (current.written / Math.max(1, now() - current.startedAt)) * 60_000;
+    status,
+    writtenPerMinute: () => {
+      if (!rateRun || rateRun.written === 0) return null;
+      return (rateRun.written / Math.max(1, now() - rateRun.startedAt)) * 60_000;
     },
     invalidate: (projectId) => {
       caughtUpAt.delete(projectId);
@@ -246,8 +357,9 @@ export function createSummaryScheduler<Context>(deps: SummarySchedulerDeps<Conte
       for (const timer of timers.values()) timer.cancel();
       timers.clear();
       retryAtByProject.clear();
+      callBackoff = null;
       pending.clear();
-      runs.clear();
+      rateRun = null;
     },
     get busy() {
       return running;

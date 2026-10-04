@@ -242,8 +242,3 @@ export async function purgeCodeRecords(
     return false;
   }
 }
-
-/** The branch the code index last read (`origin/main`), or null before one. */
-export function indexedCodeBranch(store: RetrievalStore): string | null {
-  return readIndexedHead(store, HEAD_META_KEY)?.ref ?? null;
-}

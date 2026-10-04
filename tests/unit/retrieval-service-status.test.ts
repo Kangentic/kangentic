@@ -18,7 +18,7 @@ vi.mock('../../src/main/retrieval/vec-support', () => ({ hasVecSupport: vi.fn(()
 
 // The index's half of the status comes from the retrieval worker.
 const workerStatus = vi.hoisted(() => ({
-  answer: { hasVec: true, vecError: null as string | null, summaries: null, code: null, sources: null } as Record<string, unknown> | null,
+  answer: { hasVec: true, vecError: null as string | null, projects: [] } as Record<string, unknown> | null,
   unavailableReason: null as string | null,
 }));
 vi.mock('../../src/main/retrieval/retrieval-client', () => ({
@@ -61,9 +61,11 @@ vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
 const CRASH_REASON = "exited with code 1: Error: Cannot find module 'onnxruntime-common'";
 
 function makeContext(knowledgeGraph: { indexingEnabled?: boolean; enabled?: boolean }): IpcContext {
+  const project = { id: 'proj-1', name: 'One', path: '/mock/one' };
   return {
     configManager: { load: () => ({ knowledgeGraph }) },
     currentProjectId: 'proj-1',
+    projectRepo: { list: () => [project], getById: (id: string) => (id === project.id ? project : undefined) },
   } as unknown as IpcContext;
 }
 
@@ -72,7 +74,7 @@ describe('retrievalService.getStatus', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    workerStatus.answer = { hasVec: true, vecError: null, summaries: null, code: null, sources: null };
+    workerStatus.answer = { hasVec: true, vecError: null, projects: [] };
     workerStatus.unavailableReason = null;
     embeddingModelMock.present = true;
     embedEngineMock.workerCrashed = false;
@@ -129,7 +131,7 @@ describe('retrievalService.getStatus', () => {
   });
 
   it('reads keywords only, with the load error, when the worker\'s connection has no sqlite-vec', async () => {
-    workerStatus.answer = { hasVec: false, vecError: 'vec0.dll: the specified module could not be found', summaries: null, code: null, sources: null };
+    workerStatus.answer = { hasVec: false, vecError: 'vec0.dll: the specified module could not be found', projects: [] };
 
     const status = await retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: true }));
 

@@ -15,7 +15,8 @@ import crypto from 'node:crypto';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { codeChunks, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
-import { batchesBySize, indexedCodeBranch, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
+import { batchesBySize, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
+import { readIndexedHead } from '../../src/main/retrieval/branch-git';
 import {
   BRANCH_SIZE_TTL_MS,
   CODE_BYTES_PER_PASSAGE,
@@ -25,6 +26,15 @@ import {
   type CodeStatusInput,
 } from '../../src/main/retrieval/code/code-status';
 import type { BranchHead, TreeEntry } from '../../src/main/retrieval/branch-git';
+
+/**
+ * The branch the code index last read, as its sweep stores it. Named by its
+ * stored key, which these reads also pin: a renamed key would make every
+ * install read its whole branch again.
+ */
+function indexedHeadRef(store: RetrievalStore): string | null {
+  return readIndexedHead(store, 'code_index_head')?.ref ?? null;
+}
 
 type SqliteModule = typeof import('node:sqlite');
 let sqlite: SqliteModule | null = null;
@@ -184,7 +194,7 @@ describeWithSqlite('sweepCodeRecords', () => {
 
     expect(result).toEqual({ indexed: 2, removed: 0, deferred: false });
     expect(fixture.paths()).toEqual(['docs/pacing.md', 'src/pacer.ts']);
-    expect(indexedCodeBranch(fixture.store)).toBe('origin/main');
+    expect(indexedHeadRef(fixture.store)).toBe('origin/main');
     expect(fixture.store.corpusProgress('code', 'model@1')).toEqual({ documents: 2, chunks: 2, embedded: 0 });
   });
 
@@ -409,7 +419,7 @@ describeWithSqlite('sweepCodeRecords', () => {
         expect(fixture.paths()).toEqual(['src/kept.ts']);
         // The head is not stored, so the failed file is not left behind the next read.
         expect(storedHeadSha(fixture)).toBeUndefined();
-        expect(indexedCodeBranch(fixture.store)).toBeNull();
+        expect(indexedHeadRef(fixture.store)).toBeNull();
 
         // The failure has cleared; the branch has not moved.
         fixture.git.listCalls = 0;
@@ -422,7 +432,7 @@ describeWithSqlite('sweepCodeRecords', () => {
         expect(retried).toEqual({ indexed: 1, removed: 0, deferred: false });
         expect(fixture.paths()).toEqual(['src/flaky.ts', 'src/kept.ts']);
         expect(storedHeadSha(fixture)).toBe('sha-1');
-        expect(indexedCodeBranch(fixture.store)).toBe('origin/main');
+        expect(indexedHeadRef(fixture.store)).toBe('origin/main');
 
         // Everything is current now, so the head check is free again.
         fixture.git.listCalls = 0;
@@ -517,7 +527,7 @@ describeWithSqlite('sweepCodeRecords, a file the branch lists that cannot be rea
       // Skipped, not failed: nothing was logged as a failure.
       expect(warn.mock.calls.some((call) => String(call[0]).includes('failed'))).toBe(false);
       expect(storedHeadSha(fixture)).toBe('sha-1');
-      expect(indexedCodeBranch(fixture.store)).toBe('origin/main');
+      expect(indexedHeadRef(fixture.store)).toBe('origin/main');
 
       // The branch has not moved, so the next sweep stops at the head check.
       fixture.git.listCalls = 0;
@@ -563,7 +573,7 @@ describeWithSqlite('sweepCodeRecords, a file the branch lists that cannot be rea
       expect(failed).toEqual({ indexed: 1, removed: 0, deferred: false });
       expect(fixture.paths()).toEqual(['src/kept.ts']);
       expect(storedHeadSha(fixture)).toBeUndefined();
-      expect(indexedCodeBranch(fixture.store)).toBeNull();
+      expect(indexedHeadRef(fixture.store)).toBeNull();
 
       // The fault has cleared; the branch has not moved.
       fixture.deps.readBlobs = readFromGit;
@@ -588,13 +598,12 @@ describe('the Source code status line', () => {
   const base: CodeStatusInput = {
     on: false,
     progress: { documents: 0, chunks: 0, embedded: 0 },
-    indexedBranch: null,
     branchSize: size,
     chunksPerMinute: 435,
   };
 
   it('off, estimates the branch and how long it takes at the measured rate', () => {
-    expect(codeStatus(base)).toEqual({ state: 'estimate', ...size, embedded: 0, minutesLeft: 12_186 / 435 });
+    expect(codeStatus(base)).toEqual({ state: 'estimate', files: size.files, passages: size.passages, embedded: 0, minutesLeft: 12_186 / 435 });
     // No rate measured this launch: no time, rather than a guess.
     expect(codeStatus({ ...base, chunksPerMinute: null })?.minutesLeft).toBeNull();
     // Nothing to say before the branch has been read.
@@ -607,14 +616,14 @@ describe('the Source code status line', () => {
     expect(codeStatus({ ...base, on: true, branchSize: undefined })?.state).toBe('reading');
     expect(codeStatus({ ...base, on: true })?.state).toBe('reading');
     const indexing = codeStatus({
-      ...base, on: true, indexedBranch: 'origin/main', branchSize: undefined,
+      ...base, on: true, branchSize: undefined,
       progress: { documents: 1_488, chunks: 12_186, embedded: 4_210 },
     });
     expect(indexing).toEqual({
-      state: 'indexing', branch: 'origin/main', files: 1_488, passages: 12_186, embedded: 4_210, minutesLeft: (12_186 - 4_210) / 435,
+      state: 'indexing', files: 1_488, passages: 12_186, embedded: 4_210, minutesLeft: (12_186 - 4_210) / 435,
     });
     expect(codeStatus({
-      ...base, on: true, indexedBranch: 'origin/main', branchSize: undefined,
+      ...base, on: true, branchSize: undefined,
       progress: { documents: 1_488, chunks: 12_186, embedded: 12_186 },
     })).toMatchObject({ state: 'ready', minutesLeft: null });
   });

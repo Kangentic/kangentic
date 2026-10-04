@@ -1,10 +1,10 @@
 /**
  * Main's side of the Knowledge Graph's map. The map service itself
  * (`graph/graph-service.ts`) runs in the retrieval worker: the passes, the
- * region names and the snapshot reads. Main keeps the push to the renderer and
- * the two settings the worker's timers cannot read for themselves (whether
- * region names read task summaries, and how many tasks the summary scheduler
- * passed over), and sends them with each call.
+ * region names and the snapshot reads. Main keeps the push to the renderer,
+ * the setting the worker's timers cannot read for themselves (whether region
+ * names read task summaries), and what only main's summary scheduler knows
+ * (what it is doing for each project), which it adds to each snapshot.
  *
  * Nothing here runs a pass, and nothing waits for one: a refresh returns at
  * once, a first build's steps arrive as the worker's `graph-progress` event,
@@ -12,11 +12,13 @@
  */
 
 import { retrievalClient } from './retrieval-client';
-import type { KnowledgeGraphBuildProgress, KnowledgeGraphSnapshotWire } from '../../shared/types';
+import { NO_SUMMARY_ACTIVITY, waitingCorporaOf, type SummaryActivity } from '../../shared/index-summary';
+import type { KnowledgeGraphBuildProgress, KnowledgeGraphIndexCorpus, KnowledgeGraphSnapshotWire } from '../../shared/types';
 
 let onChanged: ((projectId: string) => void) | undefined;
 let onBuildProgress: ((projectId: string, progress: KnowledgeGraphBuildProgress) => void) | undefined;
-let summariesSkipped: (projectId: string) => number = () => 0;
+let summaryActivity: (projectId: string) => SummaryActivity = () => NO_SUMMARY_ACTIVITY;
+let onEmbeddingsWaiting: ((projectId: string, waitingCorpora: KnowledgeGraphIndexCorpus[]) => void) | undefined;
 let summaryNamesOn: () => boolean = () => false;
 let registeredProjectIds: () => string[] = () => [];
 let subscribed = false;
@@ -61,9 +63,20 @@ export const graphService = {
     onChanged?.(projectId);
   },
 
-  /** Where the Index row reads how many tasks summaries passed over. */
-  setSummariesSkipped(provider: (projectId: string) => number): void {
-    summariesSkipped = provider;
+  /** Where the Index reads what the summary scheduler is doing for a project. */
+  setSummaryActivity(provider: (projectId: string) => SummaryActivity): void {
+    summaryActivity = provider;
+  },
+
+  /**
+   * Told which of a project's corpora a snapshot finds with passages waiting
+   * for the selected model's vectors, so the embed engine drains them and the
+   * Index's track moves. Without it, a project nobody opens after a model
+   * change would draw a track that never does. The listener decides which
+   * corpora are worth draining (source code only while it is switched on).
+   */
+  setOnEmbeddingsWaiting(listener: (projectId: string, waitingCorpora: KnowledgeGraphIndexCorpus[]) => void): void {
+    onEmbeddingsWaiting = listener;
   },
 
   /** Whether region names read summaries (task summaries switched on). */
@@ -101,13 +114,16 @@ export const graphService = {
    * The snapshot as the renderer receives it. Rejects while the worker cannot
    * answer, and the renderer keeps the map it already shows.
    */
-  getSnapshotWire(projectId: string, modelTag: string, knownProjectionKey: string | null): Promise<KnowledgeGraphSnapshotWire> {
-    return retrievalClient.call('graph.snapshot', {
+  async getSnapshotWire(projectId: string, modelTag: string, knownProjectionKey: string | null): Promise<KnowledgeGraphSnapshotWire> {
+    const wire = await retrievalClient.call('graph.snapshot', {
       projectId,
       modelTag,
       summaryNamesOn: summaryNamesOn(),
-      summariesSkipped: summariesSkipped(projectId),
       knownProjectionKey,
     });
+    const waitingCorpora = waitingCorporaOf(wire.index.corpora);
+    if (wire.semanticAvailable && waitingCorpora.length > 0) onEmbeddingsWaiting?.(projectId, waitingCorpora);
+    // Read now rather than sent to the worker and back: the worker only counts.
+    return { ...wire, index: { ...wire.index, summaries: { ...wire.index.summaries, ...summaryActivity(projectId) } } };
   },
 };

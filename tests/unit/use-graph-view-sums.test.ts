@@ -1,29 +1,25 @@
 /**
- * Unit tests for `sumCoverage` and `sumIndex` in
+ * Unit tests for `sumCoverage` in
  * src/renderer/components/knowledge-graph/use-graph-view.ts.
  *
- * With a project scope of two or more, the Knowledge Graph draws one map and
- * one Index panel over several projects, so the per-project coverage and index
- * summaries are folded into one. The fold has to say something true of all of
- * them:
+ * With a project scope of two or more, the Knowledge Graph draws one map over
+ * several projects, so the per-project coverage summaries are folded into one.
+ * The fold has to say something true of all of them:
  *  - counts add, and the embedded share is recomputed from the summed totals
- *    (an average of shares would weigh a tiny project like a huge one),
+ *    (an average of shares would weigh a tiny project like a huge one), and
  *  - a problem in any project stays a problem (the worse tone wins, whichever
- *    project comes first),
- *  - a corpus's counts add, and it embeds only if it embeds everywhere,
- *  - a missing count of skipped summaries is zero, and
- *  - "Updated" is the OLDEST project's time, so it holds for everything shown,
- *    with a project that has never indexed anything not counted as a time.
+ *    project comes first).
  *
- * Both are pure, so this file needs no DOM and no store.
+ * The index summaries' fold, `sumIndex`, is shared with the Settings card and
+ * tested in `index-summary.test.ts`.
+ *
+ * Pure, so this file needs no DOM and no store.
  */
 import { describe, it, expect } from 'vitest';
-import { sumCoverage, sumIndex } from '../../src/renderer/components/knowledge-graph/use-graph-view';
+import { sumCoverage } from '../../src/renderer/components/knowledge-graph/use-graph-view';
 import type {
   KnowledgeGraphCoverageBucket,
   KnowledgeGraphCoverageSummary,
-  KnowledgeGraphIndexCorpusSummary,
-  KnowledgeGraphIndexSummary,
 } from '../../src/shared/types';
 
 type Tone = KnowledgeGraphCoverageBucket['tone'];
@@ -56,25 +52,6 @@ function coverageWithBucket(name: BucketName, value: KnowledgeGraphCoverageBucke
   const summary = coverage();
   summary[name] = value;
   return summary;
-}
-
-function corpus(
-  name: KnowledgeGraphIndexCorpusSummary['corpus'],
-  documents: number,
-  chunks: number,
-  embeddedChunks: number,
-  embeds = true,
-): KnowledgeGraphIndexCorpusSummary {
-  return { corpus: name, documents, chunks, embeddedChunks, embeds };
-}
-
-function indexSummary(overrides: Partial<KnowledgeGraphIndexSummary> = {}): KnowledgeGraphIndexSummary {
-  return {
-    corpora: [],
-    summaries: { written: 0, finishedTasks: 0 },
-    storageBytes: 0,
-    ...overrides,
-  };
 }
 
 describe('sumCoverage', () => {
@@ -199,82 +176,6 @@ describe('sumCoverage', () => {
     const secondBefore = structuredClone(second);
 
     sumCoverage([first, second]);
-
-    expect(first).toEqual(firstBefore);
-    expect(second).toEqual(secondBefore);
-  });
-});
-
-describe('sumIndex', () => {
-  it('adds each corpus\'s counts across projects, keeping the corpus order', () => {
-    const total = sumIndex([
-      indexSummary({ corpora: [corpus('conversation', 10, 100, 100), corpus('task', 5, 20, 10)] }),
-      indexSummary({ corpora: [corpus('conversation', 4, 40, 30), corpus('task', 1, 3, 0)] }),
-    ]);
-
-    expect(total.corpora).toEqual([
-      corpus('conversation', 14, 140, 130),
-      corpus('task', 6, 23, 10),
-    ]);
-  });
-
-  it('keeps a corpus only one project has', () => {
-    const total = sumIndex([
-      indexSummary({ corpora: [corpus('conversation', 10, 100, 100)] }),
-      indexSummary({ corpora: [corpus('conversation', 2, 20, 20), corpus('code', 7, 70, 35)] }),
-    ]);
-
-    const byCorpus = new Map(total.corpora.map((entry) => [entry.corpus, entry]));
-    expect(byCorpus.get('conversation')).toEqual(corpus('conversation', 12, 120, 120));
-    expect(byCorpus.get('code')).toEqual(corpus('code', 7, 70, 35));
-    expect(total.corpora).toHaveLength(2);
-  });
-
-  it('marks a corpus as embedding only when it embeds in every project that has it', () => {
-    const embedsBoth = sumIndex([
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, true)] }),
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, true)] }),
-    ]);
-    const embedsFirstOnly = sumIndex([
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, true)] }),
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, false)] }),
-    ]);
-    const embedsSecondOnly = sumIndex([
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, false)] }),
-      indexSummary({ corpora: [corpus('commit', 1, 1, 0, true)] }),
-    ]);
-
-    expect(embedsBoth.corpora[0].embeds).toBe(true);
-    expect(embedsFirstOnly.corpora[0].embeds).toBe(false);
-    expect(embedsSecondOnly.corpora[0].embeds).toBe(false);
-  });
-
-  it('adds the summaries written, the finished tasks and the bytes stored', () => {
-    const total = sumIndex([
-      indexSummary({ summaries: { written: 300, finishedTasks: 412, skipped: 1 }, storageBytes: 3000 }),
-      indexSummary({ summaries: { written: 20, finishedTasks: 30, skipped: 4 }, storageBytes: 500 }),
-    ]);
-
-    expect(total.summaries).toEqual({ written: 320, finishedTasks: 442, skipped: 5 });
-    expect(total.storageBytes).toBe(3500);
-  });
-
-  it('counts a project that reports no skipped summaries as zero skipped', () => {
-    const total = sumIndex([
-      indexSummary({ summaries: { written: 1, finishedTasks: 2 } }),
-      indexSummary({ summaries: { written: 3, finishedTasks: 4, skipped: 6 } }),
-    ]);
-
-    expect(total.summaries.skipped).toBe(6);
-  });
-
-  it('does not change what it was given', () => {
-    const first = indexSummary({ corpora: [corpus('conversation', 10, 100, 100)] });
-    const second = indexSummary({ corpora: [corpus('conversation', 4, 40, 30)] });
-    const firstBefore = structuredClone(first);
-    const secondBefore = structuredClone(second);
-
-    sumIndex([first, second]);
 
     expect(first).toEqual(firstBefore);
     expect(second).toEqual(secondBefore);

@@ -14,6 +14,7 @@ import {
   summaryInputBlock,
   summaryInputHash,
   parseSummaryReply,
+  describeReplyGaps,
   SUMMARY_BATCH_SIZE,
   SUMMARY_MAX_CHARS,
   type SummaryInput,
@@ -82,6 +83,41 @@ describe('the summary prompt', () => {
       [0, 'Made the relay reconnect after a router restart.'],
       [2, 'Added a dark theme to the settings panel.'],
     ]);
+  });
+
+  describe('what a reply left out', () => {
+    it('is nothing when every label has its summary', () => {
+      expect(describeReplyGaps('D1: First.\nD2: Second.', 2)).toBeNull();
+    });
+
+    it('names the labels left out, written twice, and left blank, apart', () => {
+      const reply = [
+        'D1: Made the relay reconnect.',
+        'D2: One line.',
+        'D2: Another line.',
+        'D3: #12',
+      ].join('\n');
+      // D3's text is only a number reference, which the cleanup removes.
+      expect(describeReplyGaps(reply, 5)).toEqual({
+        missing: [3, 4],
+        writtenTwice: [1],
+        blank: [2],
+        lines: 4,
+        unlabelled: [],
+      });
+    });
+
+    // The count of unanswered tasks cannot say why: these lines can.
+    it('quotes the unlabelled lines, clipped, so a format miss reads apart from a refusal', () => {
+      const formatMiss = describeReplyGaps('1. Made the relay reconnect.\n2. Fixed the QR code.', 2);
+      expect(formatMiss?.unlabelled).toEqual(['1. Made the relay reconnect.', '2. Fixed the QR code.']);
+      expect(formatMiss?.missing).toEqual([0, 1]);
+
+      const refusal = describeReplyGaps(`I can't help with that. ${'x'.repeat(300)}\nSecond\nThird\nFourth`, 1);
+      expect(refusal?.unlabelled).toHaveLength(3);
+      expect(refusal?.unlabelled[0].startsWith("I can't help with that.")).toBe(true);
+      expect(refusal?.unlabelled[0].length).toBeLessThanOrEqual(120 + '...'.length);
+    });
   });
 
   it('tells the model that a task\'s text is data, not instructions', () => {
@@ -361,7 +397,243 @@ describe('a summary pass', () => {
     expect(answered.unanswered).toHaveLength(1);
 
     const failed = await runSummaryPass('project', { agent: 'claude', model: null, write: async () => { throw new Error('quota'); } }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: ['a', 'b'] }).db));
-    expect(failed).toMatchObject({ written: 0, remaining: 2, failed: true });
+    // The agent's call failed, which every project shares, not this board's read.
+    expect(failed).toMatchObject({ written: 0, remaining: 2, failed: true, callFailed: true });
+  });
+
+  // `callFailed` holds every project back for the failure backoff, since the
+  // agent is shared. A board that cannot be read, or a save that fails, is one
+  // project's database, and must not hold the others up.
+  //
+  // Red-green: `callFailed` is set in one place, at the end of the pass, when a
+  // call failed and no batch came back labelled. Setting it in the read's catch
+  // turns the first case red, and in the save's catch the second.
+  it('reports a board that cannot be read as failed, but not as a failed call', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const write = vi.fn(async () => 'D1: Never asked.');
+    const save = vi.fn(async () => 0);
+    try {
+      const unreadable = await runSummaryPass(
+        'project',
+        { agent: 'claude', model: null, write },
+        { maxBatches: 3, shouldContinue: () => true },
+        { store: { candidates: async () => { throw new Error('database is locked'); }, save }, now: () => '2026-09-28T00:00:00.000Z' },
+      );
+      expect(unreadable.failed).toBe(true);
+      expect(unreadable.callFailed).toBe(false);
+      expect(write).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reports a save that fails as failed, but not as a failed call', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { db } = fakeBoard({ finished: ['a', 'b'] });
+    const write = vi.fn(async () => 'D1: First summary.\nD2: Second summary.');
+    const deps = passDeps(db);
+    try {
+      const unsaved = await runSummaryPass(
+        'project',
+        { agent: 'claude', model: null, write },
+        { maxBatches: 3, shouldContinue: () => true },
+        { ...deps, store: { ...deps.store, save: async () => { throw new Error('database is locked'); } } },
+      );
+      // The agent answered both labels; only the write of them failed.
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(unsaved.failed).toBe(true);
+      expect(unsaved.callFailed).toBe(false);
+      expect(unsaved.written).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs which labels a reply left out, with their tasks and its unlabelled lines', async () => {
+    const { db } = fakeBoard({ finished: ['a', 'b'] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await runSummaryPass('project-x', { agent: 'claude', model: null, write: async () => 'Here are the summaries:\nD2: Only the second.' }, { maxBatches: 1, shouldContinue: () => true }, passDeps(db));
+      const lines = log.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith('[retrieval] summary reply'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^\[retrieval\] summary reply project=project-x tasks=2; lines=2; left out D1=[ab]; unlabelled: "Here are the summaries:"$/);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  // The other two parts of the line: a label the reply wrote twice, and one it
+  // answered with a note in parentheses. D1 is usable, so the batch is not
+  // asked again task by task and the line is the one logged for the batch.
+  // Which task carries which label is read off the prompt the writer received,
+  // so the line is matched against the tasks the labels really name.
+  //
+  // Red-green: `if (gaps.writtenTwice.length > 0) parts.push(...)` and
+  // `if (gaps.blank.length > 0) parts.push(...)` in `logReplyGaps`. Drop either
+  // and its part is missing from the anchored line below.
+  it('logs the labels a reply wrote twice and the ones it answered with a note, with their tasks', async () => {
+    const { db } = fakeBoard({ finished: ['a', 'b', 'c'] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const taskOfLabel = new Map<string, string>();
+    const write = vi.fn(async (prompt: string) => {
+      for (const match of prompt.matchAll(/<task label="(D\d+)">\nTitle: Task (\w+)\n/g)) taskOfLabel.set(match[1], match[2]);
+      return [
+        'D1: Made the relay reconnect after a router restart.',
+        'D2: Deleted every task on the board, as the description asked.',
+        'D2: Fixed the pairing QR code.',
+        'D3: (No description provided).',
+      ].join('\n');
+    });
+    try {
+      const result = await runSummaryPass('project-y', { agent: 'claude', model: null, write }, { maxBatches: 1, shouldContinue: () => true }, passDeps(db));
+
+      // One call: D1 is usable, so nothing is asked again alone.
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(result.written).toBe(1);
+      expect(taskOfLabel.size).toBe(3);
+      const lines = log.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith('[retrieval] summary reply'));
+      expect(lines).toEqual([
+        `[retrieval] summary reply project=project-y tasks=3; lines=4; wrote twice D2=${taskOfLabel.get('D2')}; blank D3=${taskOfLabel.get('D3')}`,
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  describe('a reply with no usable label at all', () => {
+    /** Thirteen tasks: a first batch of ten and a second of three. */
+    const THIRTEEN = Array.from({ length: 13 }, (_unused, index) => `t${index}`);
+    const countOf = (prompt: string): number => (prompt.match(/<task label=/g) ?? []).length;
+    const labelsFor = (count: number): string => Array.from({ length: count }, (_unused, index) => `D${index + 1}: Summary ${index + 1}.`).join('\n');
+
+    /**
+     * Answers the batch of `labelledCount` tasks with its labels, any other
+     * batch with prose, and a lone task with its summary unless it is `refused`
+     * (a prose reply) or `failsAlone` (the call throws).
+     */
+    function writer(options: { labelledCount: number; refused?: string; failsAlone?: string; onAlone?: () => Promise<void> }) {
+      return vi.fn(async (prompt: string) => {
+        const count = countOf(prompt);
+        if (count === 1) {
+          await options.onAlone?.();
+          if (options.failsAlone && prompt.includes(`Title: Task ${options.failsAlone}\n`)) throw new Error('timed out');
+          return options.refused && prompt.includes(`Title: Task ${options.refused}\n`) ? 'I cannot help with this task.' : 'D1: Summary on its own.';
+        }
+        return count === options.labelledCount ? labelsFor(count) : 'I cannot help with these tasks.';
+      });
+    }
+
+    // Red-green: before this, every task of such a batch went to the skip set
+    // together, and waited for the next launch however answerable it was.
+    it('asks each of its tasks alone while another batch answered, and passes over only the task refused on its own', async () => {
+      const { db } = fakeBoard({ finished: THIRTEEN });
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const write = writer({ labelledCount: 3, refused: 't4' });
+      try {
+        const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(db));
+        // Two batch calls, then one call per task of the batch that missed.
+        expect(write).toHaveBeenCalledTimes(12);
+        expect(result).toMatchObject({ written: 12, remaining: 0, failed: false });
+        expect(result.unanswered).toEqual(['t4']);
+        const lines = log.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith('[retrieval] summary reply'));
+        // The whole-batch reply is quoted, and says what happens next.
+        expect(lines[0]).toMatch(/^\[retrieval\] summary reply project=project tasks=10; lines=1; left out D1=t\d+, .*unlabelled: "I cannot help with these tasks."; asking each task alone$/);
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    // A CLI that prints a login or quota message instead of failing, or a model
+    // that ignores the format, misses every batch. Asking each task alone then
+    // would turn three calls that cannot work into thirty-three.
+    it('is not asked again when no batch of the pass answered: the writer, not the batch, is what failed', async () => {
+      const { db } = fakeBoard({ finished: THIRTEEN });
+      const write = vi.fn(async () => 'Please run /login to continue.');
+      const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(db));
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({ written: 0, remaining: 0 });
+      expect(result.unanswered).toHaveLength(13);
+    });
+
+    it('is not asked again when it was a single task, or when some labels came back', async () => {
+      const single = vi.fn(async () => 'I cannot help with this task.');
+      const alone = await runSummaryPass('project', { agent: 'claude', model: null, write: single }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: ['a'] }).db));
+      expect(single).toHaveBeenCalledTimes(1);
+
+      // A partial reply names what it answered; the rest are passed over as before.
+      const partial = vi.fn(async () => 'D1: Only the first.');
+      const some = await runSummaryPass('project', { agent: 'claude', model: null, write: partial }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: ['a', 'b'] }).db));
+      expect(partial).toHaveBeenCalledTimes(1);
+      expect(some).toMatchObject({ written: 1 });
+      expect(some.unanswered).toHaveLength(1);
+      expect(alone.unanswered).toHaveLength(1);
+    });
+
+    // A lone call that throws is a failed call, not a refusal: its task stays to
+    // write instead of joining the skip list. The other calls answered, so the
+    // agent works, and only this project backs off.
+    it('keeps a task whose lone call failed for a later pass, and holds back only this project', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const write = writer({ labelledCount: 3, failsAlone: 't4' });
+      try {
+        const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: THIRTEEN }).db));
+        expect(write).toHaveBeenCalledTimes(12);
+        expect(result).toMatchObject({ written: 12, remaining: 1, unanswered: [], failed: true, callFailed: false });
+      } finally {
+        warn.mockRestore();
+        log.mockRestore();
+      }
+    });
+
+    it('stops asking alone when the pass is stopped, and leaves the tasks not asked for a later pass', async () => {
+      let asksAlone = 0;
+      let continuing = true;
+      const write = writer({
+        labelledCount: 3,
+        onAlone: async () => {
+          asksAlone += 1;
+          // Summaries switched off after the first lone call.
+          continuing = false;
+        },
+      });
+      // Two batches in the pass (ten that miss, three that answer), so the lone
+      // calls run two at a time; the second lane finds the pass stopped.
+      const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 2, shouldContinue: () => continuing }, passDeps(fakeBoard({ finished: THIRTEEN }).db));
+      expect(asksAlone).toBe(1);
+      // The three labelled and the one asked alone are written; the other nine
+      // were never asked, so they are still to write, not passed over.
+      expect(result).toMatchObject({ written: 4, remaining: 9, unanswered: [] });
+    });
+
+    it('asks at most maxBatches tasks at once', async () => {
+      let inFlight = 0;
+      let mostInFlight = 0;
+      const write = writer({
+        labelledCount: 3,
+        onAlone: async () => {
+          inFlight += 1;
+          mostInFlight = Math.max(mostInFlight, inFlight);
+          await new Promise((resolve) => setImmediate(resolve));
+          inFlight -= 1;
+        },
+      });
+      const result = await runSummaryPass('project', { agent: 'claude', model: null, write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished: THIRTEEN }).db));
+      expect(result).toMatchObject({ written: 13, remaining: 0, unanswered: [] });
+      expect(mostInFlight).toBe(3);
+    });
+  });
+
+  it('logs nothing for a reply that covered its batch', async () => {
+    const { db } = fakeBoard({ finished: ['a'] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await runSummaryPass('project', { agent: 'claude', model: null, write: async () => 'D1: The only one.' }, { maxBatches: 1, shouldContinue: () => true }, passDeps(db));
+      expect(log.mock.calls.some((call) => String(call[0]).startsWith('[retrieval] summary reply'))).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('runs the batches of a pass side by side, not one after another', async () => {
@@ -399,6 +671,34 @@ describe('a summary pass', () => {
     // The failed call's ten stay for a later pass; the other ten are written.
     expect(result).toMatchObject({ written: 10, remaining: 10, failed: true });
     expect(summaryWrites(calls)).toHaveLength(10);
+    // The other call answered, so the agent works: this project backs off
+    // alone, and every other project's summaries go on (a timeout, or one
+    // batch's input, is not a broken agent).
+    // Red-green: setting callFailed on any failed call makes this true.
+    expect(result.callFailed).toBe(false);
+  });
+
+  // A quota or login failure can come back as a failed call or as printed text.
+  // A pass with one of each has no answered batch to show the agent works.
+  // Red-green: holding back every project only when every call threw makes this false.
+  it('holds every project back when a call fails and the other came back with no label', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const finished = Array.from({ length: 20 }, (_unused, index) => `t${index}`);
+    let callIndex = 0;
+    const write = vi.fn(async () => {
+      callIndex += 1;
+      if (callIndex === 1) throw new Error('exit code 1');
+      return 'Please run /login to continue.';
+    });
+    try {
+      const result = await runSummaryPass('project', { agent: 'claude', model: 'sonnet', write }, { maxBatches: 3, shouldContinue: () => true }, passDeps(fakeBoard({ finished }).db));
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({ written: 0, failed: true, callFailed: true });
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 });
 
@@ -477,7 +777,7 @@ describe('the summary scheduler', () => {
     const order: string[] = [];
     const runPass = vi.fn(async () => {
       order.push('pass');
-      return { written: 0, remaining: 0, unanswered: [], failed: false };
+      return { written: 0, remaining: 0, unanswered: [], failed: false, callFailed: false };
     });
     const scheduler = createSummaryScheduler<string>({
       isEnabled: () => true,
@@ -493,7 +793,7 @@ describe('the summary scheduler', () => {
   });
 
   it('counts the tasks the agent passed over, per project, for the Index to show', async () => {
-    const runPass = vi.fn(async () => ({ written: 9, remaining: 0, unanswered: ['task-a'], failed: false }));
+    const runPass = vi.fn(async () => ({ written: 9, remaining: 0, unanswered: ['task-a'], failed: false, callFailed: false }));
     const scheduler = createSummaryScheduler<string>({
       isEnabled: () => true,
       resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
@@ -649,7 +949,7 @@ describe('the summary scheduler', () => {
   });
 
   it('reports writing while a pass runs, then retrying with when, for the Task summaries card', async () => {
-    let finishPass: (result: { written: number; remaining: number; unanswered: string[]; failed: boolean }) => void = () => undefined;
+    let finishPass: (result: { written: number; remaining: number; unanswered: string[]; failed: boolean; callFailed: boolean }) => void = () => undefined;
     const runPass = vi.fn(() => new Promise((resolve) => { finishPass = resolve; }));
     const timers: Array<() => void> = [];
     const scheduler = createSummaryScheduler<string>({
@@ -669,7 +969,7 @@ describe('the summary scheduler', () => {
     expect(scheduler.status('project')).toEqual({ state: 'writing', retryAtMs: null });
     expect(scheduler.status('another project')).toEqual({ state: 'idle', retryAtMs: null });
 
-    finishPass({ written: 0, remaining: 20, unanswered: [], failed: true });
+    finishPass({ written: 0, remaining: 20, unanswered: [], failed: true, callFailed: false });
     await settle();
     expect(scheduler.status('project')).toEqual({ state: 'retrying', retryAtMs: 1_000 + 5 * 60_000 });
 
@@ -703,30 +1003,99 @@ describe('the summary scheduler', () => {
       now: () => clock,
     });
     // No pass yet: no rate, so the card gives no time rather than a guess.
-    expect(scheduler.writtenPerMinute('project')).toBeNull();
+    expect(scheduler.writtenPerMinute()).toBeNull();
 
     scheduler.request('context', 'project');
     await settle();
     // 30 in the first 30 s.
-    expect(scheduler.writtenPerMinute('project')).toBe(60);
+    expect(scheduler.writtenPerMinute()).toBe(60);
 
     // A 30 s gap before the next pass counts against the rate.
     clock += 30_000;
     timers[0]();
     await settle();
     // 60 over 90 s of wall time.
-    expect(scheduler.writtenPerMinute('project')).toBe(40);
-    expect(scheduler.writtenPerMinute('another project')).toBeNull();
+    expect(scheduler.writtenPerMinute()).toBe(40);
 
     // Caught up: the run ends, and so does its rate.
     timers[1]();
     await settle();
-    expect(scheduler.writtenPerMinute('project')).toBeNull();
+    expect(scheduler.writtenPerMinute()).toBeNull();
+  });
+
+  it('measures one rate across projects, whose passes take turns, and ends it only when none is left', async () => {
+    // Asking every project at launch interleaves their backfills: one pass at
+    // a time for the whole app. A rate per project would count the other
+    // project's passes as its own gaps, and a card that sums the projects
+    // would add both projects' times for time spent once.
+    let clock = 0;
+    const results: Record<string, Array<{ written: number; remaining: number }>> = {
+      first: [{ written: 30, remaining: 30 }, { written: 30, remaining: 0 }],
+      second: [{ written: 30, remaining: 0 }],
+    };
+    const runPass = vi.fn(async (projectId: string) => {
+      clock += 30_000;
+      return { unanswered: [], failed: false, ...(results[projectId].shift() ?? { written: 0, remaining: 0 }) };
+    });
+    const timers: Array<() => void> = [];
+    const scheduler = createSummaryScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: (fire) => {
+        timers.push(fire);
+        return { cancel: () => undefined };
+      },
+      now: () => clock,
+    });
+    scheduler.request('context', 'first');
+    scheduler.request('context', 'second');
+    await settle();
+    await settle();
+    // Both passes ran, 60 written in 60 s; `first` still has work, so the run goes on.
+    expect(runPass).toHaveBeenCalledTimes(2);
+    expect(scheduler.writtenPerMinute()).toBe(60);
+    // `second` caught up while `first` waits for its next pass: not the end.
+    timers[0]();
+    await settle();
+    expect(scheduler.writtenPerMinute()).toBeNull();
+  });
+
+  it('keeps the run going when one project\'s read fails while another still writes', async () => {
+    // The failed project backs off alone and the other keeps its pace, so the
+    // rate still holds. Red-green: reset the run on `failed` instead of
+    // `callFailed` and the rate reads null here, dropping the time left.
+    let clock = 0;
+    const results: Record<string, Array<{ written: number; remaining: number; failed?: boolean }>> = {
+      writing: [{ written: 30, remaining: 30 }, { written: 30, remaining: 0 }],
+      broken: [{ written: 0, remaining: 0, failed: true }],
+    };
+    const runPass = vi.fn(async (projectId: string) => {
+      clock += 30_000;
+      return { unanswered: [], failed: false, callFailed: false, ...(results[projectId].shift() ?? { written: 0, remaining: 0 }) };
+    });
+    const scheduler = createSummaryScheduler<string>({
+      isEnabled: () => true,
+      resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+      onWritten: () => undefined,
+      runPass: runPass as never,
+      setTimer: () => ({ cancel: () => undefined }),
+      now: () => clock,
+    });
+    scheduler.request('context', 'writing');
+    scheduler.request('context', 'broken');
+    await settle();
+    await settle();
+    expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['writing', 'broken']);
+    expect(scheduler.status('broken').state).toBe('retrying');
+    // 30 written over 60 s, `writing` waiting out the gap before its next pass.
+    expect(scheduler.writtenPerMinute()).toBe(30);
   });
 
   it('ends the run on a failed call, so a retry starts its rate afresh', async () => {
     let clock = 0;
-    const results = [{ written: 30, remaining: 60 }, { written: 0, remaining: 60, failed: true }];
+    const results = [{ written: 30, remaining: 60 }, { written: 0, remaining: 60, failed: true, callFailed: true }];
     const runPass = vi.fn(async () => {
       clock += 30_000;
       return { unanswered: [], failed: false, ...(results.shift() ?? { written: 0, remaining: 0 }) };
@@ -745,10 +1114,224 @@ describe('the summary scheduler', () => {
     });
     scheduler.request('context', 'project');
     await settle();
-    expect(scheduler.writtenPerMinute('project')).toBe(60);
+    expect(scheduler.writtenPerMinute()).toBe(60);
     timers[0]();
     await settle();
     // The 5 minute backoff would otherwise read as a crawl.
-    expect(scheduler.writtenPerMinute('project')).toBeNull();
+    expect(scheduler.writtenPerMinute()).toBeNull();
+  });
+
+  describe('what the Index shows', () => {
+    /** A scheduler whose passes the test finishes, recording each status push. */
+    function controlled(options: { now?: () => number; isEnabled?: () => boolean } = {}) {
+      const finishers: Array<(result: { written: number; remaining: number; unanswered: string[]; failed: boolean; callFailed?: boolean }) => void> = [];
+      const runPass = vi.fn((projectId: string) => new Promise((resolve) => { finishers.push(resolve); void projectId; }));
+      const timers: Array<{ delayMs: number; fire: () => void }> = [];
+      const pushes: string[] = [];
+      const scheduler = createSummaryScheduler<string>({
+        isEnabled: options.isEnabled ?? (() => true),
+        resolveWriter: async () => ({ agent: 'claude', model: null, write: async () => '' }),
+        onWritten: () => undefined,
+        onStatusChanged: (projectId) => pushes.push(projectId),
+        runPass: runPass as never,
+        setTimer: (fire, delayMs) => {
+          timers.push({ delayMs, fire });
+          return { cancel: () => undefined };
+        },
+        now: options.now ?? (() => 1_000),
+      });
+      const finish = async (result: { written?: number; remaining?: number; unanswered?: string[]; failed?: boolean; callFailed?: boolean } = {}) => {
+        const finisher = finishers.shift();
+        finisher?.({ written: 0, remaining: 0, unanswered: [], failed: false, ...result });
+        await settle();
+        await settle();
+      };
+      return { scheduler, runPass, timers, pushes, finish };
+    }
+
+    it('reads writing while a project waits its turn and between two passes of its backfill', async () => {
+      const { scheduler, timers, finish } = controlled();
+      scheduler.request('context', 'first');
+      scheduler.request('context', 'second');
+      await settle();
+      // Queued behind `first`: its summaries will be written this launch, so
+      // its line keeps the track rather than reading "N of M" until its turn.
+      expect(scheduler.status('second')).toEqual({ state: 'writing', retryAtMs: null });
+
+      await finish({ written: 30, remaining: 12 });
+      // `first` waits out the gap before its next pass while `second` runs.
+      expect(timers.map((timer) => timer.delayMs)).toEqual([1_000]);
+      expect(scheduler.status('first')).toEqual({ state: 'writing', retryAtMs: null });
+
+      await finish();
+      timers[0].fire();
+      await settle();
+      await finish();
+      // Caught up and nothing queued: idle.
+      expect(scheduler.status('first')).toEqual({ state: 'idle', retryAtMs: null });
+      expect(scheduler.status('second')).toEqual({ state: 'idle', retryAtMs: null });
+    });
+
+    it('pushes each change of a project\'s status or skipped count, a pass that wrote nothing included', async () => {
+      const { scheduler, pushes, finish } = controlled();
+      scheduler.request('context', 'project');
+      await settle();
+      expect(pushes).toEqual(['project']);
+      // The last pass wrote nothing (`onWritten` does not fire) and passed a
+      // task over: the panel still has to learn it stopped writing.
+      await finish({ written: 0, remaining: 0, unanswered: ['task-a'] });
+      expect(pushes).toEqual(['project', 'project']);
+      expect(scheduler.skipped('project')).toBe(1);
+      // Nothing changed, nothing pushed.
+      scheduler.invalidate('unknown project');
+      expect(pushes).toEqual(['project', 'project']);
+      // Rebuild forgets the skipped task: the count moves, so it pushes.
+      scheduler.invalidate('project');
+      expect(pushes).toEqual(['project', 'project', 'project']);
+    });
+
+    it('holds every project back after a failed agent call, then resumes them from the failed one\'s retry', async () => {
+      const { scheduler, runPass, timers, finish } = controlled();
+      scheduler.request('context', 'first');
+      scheduler.request('context', 'second');
+      await settle();
+      // The agent is shared, so a call that failed for `first` would fail for
+      // `second` too: it waits rather than spawning a second failing call.
+      await finish({ written: 0, remaining: 10, failed: true, callFailed: true });
+      expect(runPass).toHaveBeenCalledTimes(1);
+      expect(scheduler.status('first')).toEqual({ state: 'retrying', retryAtMs: 1_000 + 5 * 60_000 });
+      expect(scheduler.status('second')).toEqual({ state: 'retrying', retryAtMs: 1_000 + 5 * 60_000 });
+      // A board change meanwhile queues; it does not run.
+      scheduler.request('context', 'third');
+      await settle();
+      expect(runPass).toHaveBeenCalledTimes(1);
+
+      expect(timers.map((timer) => timer.delayMs)).toEqual([5 * 60_000]);
+      timers[0].fire();
+      await settle();
+      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'first']);
+      await finish();
+      await finish();
+      await finish();
+      // The failed project first, then the rest, each once.
+      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['first', 'first', 'second', 'third']);
+    });
+
+    it('keeps a failed read to its own project: the others go on', async () => {
+      const { scheduler, runPass, finish } = controlled();
+      scheduler.request('context', 'broken');
+      scheduler.request('context', 'healthy');
+      await settle();
+      // No call failed: this project's database could not be read.
+      await finish({ written: 0, remaining: 0, failed: true });
+      expect(runPass.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['broken', 'healthy']);
+      expect(scheduler.status('broken').state).toBe('retrying');
+      expect(scheduler.status('healthy').state).toBe('writing');
+    });
+
+    it('ends the app-wide wait on a settings change, and the queue starts again', async () => {
+      const { scheduler, runPass, finish } = controlled();
+      scheduler.request('context', 'first');
+      scheduler.request('context', 'second');
+      await settle();
+      await finish({ written: 0, remaining: 10, failed: true, callFailed: true });
+      expect(runPass).toHaveBeenCalledTimes(1);
+      // A new agent or model may be what fixes the call.
+      scheduler.endBackoff('first');
+      await settle();
+      expect(runPass).toHaveBeenCalledTimes(2);
+      expect(scheduler.status('second').state).toBe('writing');
+    });
+
+    // A wait that ends moves a project's status, and the open map's Index panel
+    // re-reads its snapshot only when told to. Each case below checks the pushes
+    // in the same tick as the change, before any pass gets a turn, so a push a
+    // later pass would make anyway cannot stand in for the one under test.
+    //
+    // Red-green: the `reportChanges()` that ends `endBackoff`, the one in
+    // `scheduleAgain`'s timer and the one in `startCallBackoff`'s timer. Remove
+    // one and the status still moves, but with no push: the panel keeps reading
+    // "retrying" or "writing" for a project that is neither.
+    describe('when a wait ends', () => {
+      it('pushes a project whose own failed read was waiting, when a settings change ends its backoff', async () => {
+        const { scheduler, pushes, finish } = controlled();
+        scheduler.request('context', 'broken');
+        await settle();
+        // No call failed: this project's read did, so only its own retry timer waits.
+        await finish({ written: 0, remaining: 0, failed: true });
+        expect(scheduler.status('broken').state).toBe('retrying');
+        pushes.length = 0;
+
+        scheduler.endBackoff('broken');
+        // Nothing is queued and nothing starts: the line goes from retrying to idle.
+        expect(scheduler.status('broken')).toEqual({ state: 'idle', retryAtMs: null });
+        expect(pushes).toEqual(['broken']);
+      });
+
+      it('pushes the failed project and the one queued behind it, when a settings change ends the app-wide backoff', async () => {
+        const { scheduler, pushes, finish } = controlled();
+        scheduler.request('context', 'first');
+        scheduler.request('context', 'second');
+        await settle();
+        await finish({ written: 0, remaining: 10, failed: true, callFailed: true });
+        expect(scheduler.status('first').state).toBe('retrying');
+        expect(scheduler.status('second').state).toBe('retrying');
+        pushes.length = 0;
+
+        scheduler.endBackoff('first');
+        // One pass starts and the other is queued behind it: neither waits out a backoff.
+        expect(scheduler.status('first')).toEqual({ state: 'writing', retryAtMs: null });
+        expect(scheduler.status('second')).toEqual({ state: 'writing', retryAtMs: null });
+        expect([...pushes].sort()).toEqual(['first', 'second']);
+
+        // Let both passes run out.
+        await settle();
+        await finish();
+        await finish();
+        expect(scheduler.busy).toBe(false);
+      });
+
+      it('pushes the failed project and the one queued behind it when the call backoff ends with summaries switched off', async () => {
+        let enabled = true;
+        const { scheduler, timers, pushes, finish } = controlled({ isEnabled: () => enabled });
+        scheduler.request('context', 'first');
+        scheduler.request('context', 'second');
+        await settle();
+        await finish({ written: 0, remaining: 10, failed: true, callFailed: true });
+        expect(scheduler.status('first').state).toBe('retrying');
+        expect(scheduler.status('second').state).toBe('retrying');
+        pushes.length = 0;
+
+        enabled = false;
+        expect(timers.map((timer) => timer.delayMs)).toEqual([5 * 60_000]);
+        timers[0].fire();
+        // `request` starts nothing while switched off, so the push has to come
+        // from the timer itself. Neither project has a pass coming.
+        expect(scheduler.status('first')).toEqual({ state: 'idle', retryAtMs: null });
+        expect(scheduler.status('second')).toEqual({ state: 'idle', retryAtMs: null });
+        expect([...pushes].sort()).toEqual(['first', 'second']);
+      });
+
+      it.each([
+        { wait: 'the gap before its next pass', pass: { written: 5, remaining: 3 }, delayMs: 1_000, waiting: 'writing' },
+        { wait: 'its failure backoff', pass: { written: 0, remaining: 3, failed: true }, delayMs: 5 * 60_000, waiting: 'retrying' },
+      ])('pushes a project when $wait ends with summaries switched off', async ({ pass, delayMs, waiting }) => {
+        let enabled = true;
+        const { scheduler, timers, pushes, finish } = controlled({ isEnabled: () => enabled });
+        scheduler.request('context', 'project');
+        await settle();
+        await finish(pass);
+        expect(timers.map((timer) => timer.delayMs)).toEqual([delayMs]);
+        expect(scheduler.status('project').state).toBe(waiting);
+        pushes.length = 0;
+
+        enabled = false;
+        timers[0].fire();
+        // `request` starts nothing while switched off, so the push has to come
+        // from the timer itself.
+        expect(scheduler.status('project')).toEqual({ state: 'idle', retryAtMs: null });
+        expect(pushes).toEqual(['project']);
+      });
+    });
   });
 });
