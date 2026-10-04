@@ -207,6 +207,38 @@ async function dragPaneEdge(page: Page, distance: number): Promise<string[]> {
   }, distance);
 }
 
+test('the picker\'s row says what the workflow agent is doing', async () => {
+  const { browser, page } = await launch();
+  try {
+    await agentSessionId(page);
+    // Main pushes a change on each of the agent's activity edges; the mock is told to.
+    await page.evaluate(([projectId, workflowId]) => window.__mockFireWorkflowChanged({ projectId, workflowId }), [PROJECT_ID, WORKFLOW_ID]);
+    await byTestId(page, 'workflow-picker').click();
+    const row = page.locator(`[data-testid="workflow-picker-option"][data-workflow-id="${WORKFLOW_ID}"]`);
+    await expect(row.locator('[data-testid="workflow-picker-note"]')).toHaveText('Agent idle');
+
+    await page.keyboard.press('Escape');
+    await byTestId(page, 'workflow-agent-toggle').click();
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+    await page.evaluate(([projectId, workflowId]) => window.__mockFireWorkflowChanged({ projectId, workflowId }), [PROJECT_ID, WORKFLOW_ID]);
+    await byTestId(page, 'workflow-picker').click();
+    await expect(row.locator('[data-testid="workflow-picker-note"]')).toHaveText('Agent paused');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Workflows hides the bottom panel, and the board gets it back', async () => {
+  const { browser, page } = await launch();
+  try {
+    await expect(byTestId(page, 'terminal-panel-container')).toHaveCount(0);
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await expect(byTestId(page, 'terminal-panel-container')).toHaveCount(1);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('dragging the pane\'s edge widens it, and the width is kept', async () => {
   const { browser, page } = await launch();
   try {

@@ -3,6 +3,7 @@ import {
   __setLocaleForTests,
   formatDateTime,
   formatShortDateTime,
+  formatClockTime,
   formatDate,
   formatTime,
   formatRelativeTime,
@@ -40,6 +41,24 @@ describe('formatDateTime', () => {
     const date = new Date(SAMPLE_ISO);
     expect(formatDateTime(date)).toEqual(formatDateTime(SAMPLE_ISO));
     expect(formatDateTime(date.getTime())).toEqual(formatDateTime(SAMPLE_ISO));
+  });
+});
+
+describe('formatClockTime', () => {
+  // Built from local parts, so the day boundaries are the machine's own, as the helper's are.
+  const now = new Date(2026, 9, 4, 12, 0);
+
+  it('reads the time alone today, "yesterday" and the time the day before, and a date before that', () => {
+    __setLocaleForTests('en-GB');
+    expect(formatClockTime(new Date(2026, 9, 4, 10, 44), now)).toBe('10:44');
+    expect(formatClockTime(new Date(2026, 9, 3, 18, 20), now)).toBe('yesterday 18:20');
+    const older = new Date(2026, 9, 1, 9, 5);
+    expect(formatClockTime(older, now)).toBe(formatShortDateTime(older));
+  });
+
+  it('returns empty string for invalid input', () => {
+    expect(formatClockTime(null, now)).toBe('');
+    expect(formatClockTime('not a date', now)).toBe('');
   });
 });
 

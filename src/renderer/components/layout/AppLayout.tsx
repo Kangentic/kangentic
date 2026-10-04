@@ -524,8 +524,11 @@ export function AppLayout() {
                     {activeView === 'workflows' ? <LazyWorkflowsView /> : <KanbanBoard />}
                   </div>
 
-                  {/* Terminal panel -- completely hidden when disabled in Appearance settings */}
-                  {config.terminalPanelVisible !== false && (
+                  {/* Terminal panel -- completely hidden when disabled in Appearance settings,
+                      and in Workflows, where it is held collapsed (useTerminalResize's
+                      force) and its strip could only say so: the canvas and the agent
+                      take the room, and a task's terminal is a double-click away. */}
+                  {config.terminalPanelVisible !== false && activeView !== 'workflows' && (
                     <>
                       {/* Resize handle - hidden when collapsed.
                           `data-no-dismiss` for the same reason as the sidebar handle above:

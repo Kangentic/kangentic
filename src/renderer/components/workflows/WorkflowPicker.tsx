@@ -6,6 +6,9 @@ import { ActivityMark } from '../ActivityMark';
 import { Pill, TINTED_PILL_EDGE, TINTED_PILL_FILL } from '../Pill';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { workflowColor } from './workflow-graph';
+import { useSessionStore } from '../../stores/session-store';
+import { requiresUserInteraction } from '../../../shared/activity-state';
+import { formatClockTime } from '../../lib/datetime';
 
 /**
  * The workflow picker: which workflow the view shows, among the project's
@@ -47,6 +50,40 @@ export function WorkflowStateChip({ state }: { state: WorkflowState }) {
 
 function StateChip({ summary }: { summary: WorkflowSummary }) {
   return <WorkflowStateChip state={summary.workflow.state} />;
+}
+
+/**
+ * The line under a row's name (board 11): what the workflow's own agent is
+ * doing ("Agent idle, last message 10:44"), or, with no agent running, how many
+ * of a running workflow's tasks wait for the user ("2 idle"). Nothing otherwise.
+ */
+function useAgentNote(summary: WorkflowSummary): string | null {
+  const agent = summary.agent ?? null;
+  const running = summary.workflow.state === 'running';
+  // A count, so the selector's answer is a primitive and a row re-renders only when it changes.
+  const idleTasks = useSessionStore((state) => {
+    if (agent || !running) return 0;
+    let count = 0;
+    for (const session of state.sessions) {
+      if (session.status !== 'running' || !(session.taskId in summary.boardTasks)) continue;
+      if (requiresUserInteraction(state.sessionActivity[session.id])) count += 1;
+    }
+    return count;
+  });
+  if (agent?.state === 'active') return 'Agent active';
+  if (agent?.state === 'paused') return 'Agent paused';
+  if (agent?.state === 'idle') return agent.lastReplyAt ? `Agent idle, last message ${formatClockTime(agent.lastReplyAt)}` : 'Agent idle';
+  return idleTasks > 0 ? `${idleTasks} idle` : null;
+}
+
+function PickerRowName({ summary }: { summary: WorkflowSummary }) {
+  const note = useAgentNote(summary);
+  return (
+    <span className="flex-1 min-w-0">
+      <span className="block truncate text-[13px] font-medium text-fg" title={summary.workflow.title}>{summary.workflow.title}</span>
+      {note && <span className="block truncate text-[11px] text-fg-faint" data-testid="workflow-picker-note">{note}</span>}
+    </span>
+  );
 }
 
 interface WorkflowPickerProps {
@@ -147,12 +184,12 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
                   setOpen(false);
                   onSelect(summary.workflow.id);
                 }}
-                className={`flex w-full items-center gap-2.5 h-[44px] px-3 text-left transition-colors ${isSelected ? 'bg-surface-hover' : 'hover:bg-surface-hover/60'}`}
+                className={`flex w-full items-center gap-2.5 h-[52px] px-3 text-left transition-colors ${isSelected ? 'bg-surface-hover' : 'hover:bg-surface-hover/60'}`}
                 data-testid="workflow-picker-option"
                 data-workflow-id={summary.workflow.id}
               >
                 <ListTree size={15} className="shrink-0" style={{ color: workflowColor(summary.workflow.color_slot) }} />
-                <span className="flex-1 min-w-0 truncate text-[13px] font-medium text-fg" title={summary.workflow.title}>{summary.workflow.title}</span>
+                <PickerRowName summary={summary} />
                 <span className="shrink-0 text-xs text-fg-muted tabular-nums">
                   {started ? `${summary.doneCount} of ${summary.taskCount}` : tasksText(summary.taskCount)}
                 </span>

@@ -5035,6 +5035,16 @@ export interface WorkflowSummary {
    * says it waits for, and where a person may drag it. Empty before Start.
    */
   boardTasks: Record<string, WorkflowBoardTask>;
+  /** The workflow's own agent as its picker row names it; null when it has no session. */
+  agent: WorkflowAgentSummary | null;
+}
+
+/** A workflow's own agent, for the picker's note ("Agent idle, last message 10:44"). */
+export interface WorkflowAgentSummary {
+  /** `active` mid-turn, `idle` waiting for the user, `paused` suspended. */
+  state: 'active' | 'idle' | 'paused';
+  /** When its last turn ended in this run of the app (ISO); null when none was seen. */
+  lastReplyAt: string | null;
 }
 
 /** A started workflow's task as its board card shows it: the footer and the lock. */

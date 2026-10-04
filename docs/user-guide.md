@@ -524,7 +524,9 @@ middle draws each task as its card with the links between them, and the inspecto
 shows the run order, or the selected task's route, what it waits for, and what waits for it, with
 Open task (Open on its board, for a task on another project's board) at the bottom. The board's
 search and filter apply to the canvas too. The Workflows segment's badge counts the project's
-unfinished workflows.
+unfinished workflows. In the picker's list, a line under each name says what that workflow's agent
+is doing ("Agent idle, last message 10:44"), or, with no agent running, how many of its tasks wait
+for you. The bottom terminal panel is hidden in this view and comes back on the board.
 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). The tools at the bottom left are Fit view, Add task, and Auto

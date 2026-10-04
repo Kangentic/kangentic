@@ -74,6 +74,22 @@ export function formatTime(value: DateLike): string {
   return getDateTimeFormatter({ timeStyle: 'medium' }).format(date);
 }
 
+/**
+ * A recent moment by the clock: "10:44" today, "yesterday 18:20" the day
+ * before, and a short date and time before that. Day boundaries are the
+ * user's local ones.
+ */
+export function formatClockTime(value: DateLike, now: Date = new Date()): string {
+  const date = toDate(value);
+  if (!date) return '';
+  const time = getDateTimeFormatter({ timeStyle: 'short' }).format(date);
+  const startOfDay = (moment: Date) => new Date(moment.getFullYear(), moment.getMonth(), moment.getDate()).getTime();
+  const daysAgo = Math.round((startOfDay(now) - startOfDay(date)) / (24 * 60 * 60 * 1000));
+  if (daysAgo === 0) return time;
+  if (daysAgo === 1) return `${getRelativeFormatter().format(-1, 'day')} ${time}`;
+  return formatShortDateTime(date);
+}
+
 const RELATIVE_UNITS: Array<{ unit: Intl.RelativeTimeFormatUnit; unitMs: number }> = [
   { unit: 'year', unitMs: 365 * 24 * 60 * 60 * 1000 },
   { unit: 'month', unitMs: 30 * 24 * 60 * 60 * 1000 },

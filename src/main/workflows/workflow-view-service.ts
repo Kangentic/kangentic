@@ -25,6 +25,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { isHumanGate } from './workflow-lock-check';
+import { workflowAgentSummary } from './workflow-agent';
 import {
   MAX_WORKFLOW_TASKS,
   WorkflowRequestError,
@@ -140,7 +141,16 @@ export function listWorkflowSummaries(context: IpcContext, homeProjectId: string
 
 function summarize(context: IpcContext, homeProjectId: string, workflow: Workflow): WorkflowSummary {
   if (workflow.state === 'draft') {
-    return { workflow, taskCount: workflow.draft?.tasks.length ?? 0, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {} };
+    return {
+      workflow,
+      taskCount: workflow.draft?.tasks.length ?? 0,
+      doneCount: 0,
+      inProgressCount: 0,
+      queuedCount: 0,
+      blockedCount: 0,
+      boardTasks: {},
+      agent: workflowAgentSummary(context, workflow.id),
+    };
   }
   const created = workflowTasks(context, homeProjectId, workflow.id);
   const places = new Map<string, Exclude<WorkflowTaskPlace, 'planned'>>();
@@ -176,7 +186,16 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     }
     if (place !== 'done') boardTasks[task.id] = { waitingFor, humanGateTargetId };
   }
-  return { workflow, taskCount: places.size, doneCount, inProgressCount, queuedCount, blockedCount, boardTasks };
+  return {
+    workflow,
+    taskCount: places.size,
+    doneCount,
+    inProgressCount,
+    queuedCount,
+    blockedCount,
+    boardTasks,
+    agent: workflowAgentSummary(context, workflow.id),
+  };
 }
 
 /** While the workflow runs: where a person may drag a task out of the human gate it sits in. */

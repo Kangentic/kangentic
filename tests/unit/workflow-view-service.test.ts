@@ -71,8 +71,18 @@ describeWithSqlite('the Workflows view operations', () => {
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
       // No Automation agent chosen: every column is a human gate unless it starts no agent at all.
       configManager: { load: () => ({}) },
+      // The workflow agents: none unless a test adds one.
+      sessionManager: {
+        listSessions: () => agentSessions,
+        getActivityCache: () => agentActivity,
+      },
     } as unknown as IpcContext;
+    agentSessions.length = 0;
+    for (const key of Object.keys(agentActivity)) delete agentActivity[key];
   });
+
+  const agentSessions: Array<{ id: string; workflowId: string; status: string }> = [];
+  const agentActivity: Record<string, string> = {};
 
   afterEach(() => {
     setWorkflowChangedWindow(null);
@@ -82,6 +92,21 @@ describeWithSqlite('the Workflows view operations', () => {
   const homeDb = () => harness.dbs.get('home') as Database.Database;
   const lanesOf = (projectId: string) => new SwimlaneRepository(harness.dbs.get(projectId) as Database.Database).list();
   const laneId = (projectId: string, name: string) => lanesOf(projectId).find((lane) => lane.name === name)!.id;
+
+  it('names the workflow agent\'s state for the picker: none, active, idle or paused', () => {
+    const workflow = service.createWorkflow('home', {});
+    const agentOf = () => view.listWorkflowSummaries(context, 'home').find((summary) => summary.workflow.id === workflow.id)!.agent;
+    expect(agentOf()).toBeNull();
+    agentSessions.push({ id: 'agent-1', workflowId: workflow.id, status: 'running' });
+    agentActivity['agent-1'] = 'thinking';
+    expect(agentOf()).toEqual({ state: 'active', lastReplyAt: null });
+    agentActivity['agent-1'] = 'idle';
+    expect(agentOf()?.state).toBe('idle');
+    agentSessions[0].status = 'suspended';
+    expect(agentOf()?.state).toBe('paused');
+    agentSessions[0].status = 'exited';
+    expect(agentOf()).toBeNull();
+  });
 
   it('adds planned tasks by key, every route column ahead', () => {
     const workflow = service.createWorkflow('home', {});

@@ -4847,10 +4847,18 @@
         };
       }
 
+      // The workflow agent for the picker's note. The mock tracks no activity in
+      // main, so a running agent reads as idle; a suspended one as paused.
+      function agentSummary(workflowId) {
+        var agent = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        if (!agent) return null;
+        return { state: agent.status === 'suspended' ? 'paused' : 'idle', lastReplyAt: null };
+      }
+
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {} };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id) };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
@@ -4877,6 +4885,7 @@
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
           inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked, boardTasks: boardTasks,
+          agent: agentSummary(workflow.id),
         };
       }
 

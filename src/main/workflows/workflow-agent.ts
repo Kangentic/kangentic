@@ -3,7 +3,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
 import { DEFAULT_AGENT } from '../../shared/types';
-import type { ActivityState, Session, Workflow, WorkflowAgentStatus } from '../../shared/types';
+import type { ActivityState, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
@@ -15,6 +15,7 @@ import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
+import { notifyWorkflowChanged } from './workflow-changed';
 
 /**
  * A workflow's own agent: the agent that plans it, in the Workflows view's left
@@ -57,6 +58,23 @@ const pendingAccess = new Map<string, { homeProjectId: string; message: string }
 
 /** The grid each workflow's agent last started at, so a restart keeps the pane's size. */
 const lastGrid = new Map<string, WorkflowAgentGrid>();
+
+/** When each workflow's agent last finished a turn, in this run of the app. */
+const lastReplyAt = new Map<string, string>();
+
+/** Each workflow agent session's last activity, so a turn's end is told from a resume settling idle. */
+const agentActivity = new Map<string, ActivityState>();
+
+/** The agent as the picker's note names it: active, idle (and since when), or paused. */
+export function workflowAgentSummary(context: IpcContext, workflowId: string): WorkflowAgentSummary | null {
+  const session = findWorkflowAgentSession(context, workflowId);
+  if (!session) return null;
+  const replied = lastReplyAt.get(workflowId) ?? null;
+  if (session.status === 'suspended') return { state: 'paused', lastReplyAt: replied };
+  if (session.status !== 'running') return null;
+  const active = isActive(context.sessionManager.getActivityCache()[session.id]);
+  return { state: active ? 'active' : 'idle', lastReplyAt: replied };
+}
 
 /** Another project's checkout the workflow agent reads. */
 export interface ReadableProject {
@@ -238,6 +256,7 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   grantedDirectories.delete(workflowId);
   pendingAccess.delete(workflowId);
   lastGrid.delete(workflowId);
+  lastReplyAt.delete(workflowId);
   const exits: Promise<void>[] = [];
   for (const session of sessions) {
     resumedSessions.delete(session.id);
@@ -432,13 +451,21 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   // turn that asked for them has ended. A transient session gets no
   // 'turn-ended', so this reads the idle edge itself; an interrupt ends the
   // turn too, and is as good a moment.
+  // The same edge also dates its last reply and refreshes the picker's note.
   context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
-    if (activity !== 'idle') return; // activity-state-ok: a permission prompt is mid-turn, and only an idle agent may be restarted
-    const workflowId = context.sessionManager.listSessions().find((session) => session.id === sessionId)?.workflowId;
-    if (!workflowId || !pendingAccess.has(workflowId)) return;
-    setImmediate(() => void restartWithAccess(context, workflowId));
+    const session = context.sessionManager.listSessions().find((candidate) => candidate.id === sessionId);
+    const workflowId = session?.workflowId;
+    if (!session || !workflowId) return;
+    const idle = activity === 'idle'; // activity-state-ok: a permission prompt is mid-turn, and only an idle agent may be restarted
+    // A reply is a turn that ended; a resumed agent settling idle is not one.
+    const wasActive = isActive(agentActivity.get(sessionId));
+    agentActivity.set(sessionId, activity);
+    if (idle && wasActive) lastReplyAt.set(workflowId, new Date().toISOString());
+    notifyWorkflowChanged(session.projectId, workflowId);
+    if (idle && pendingAccess.has(workflowId)) setImmediate(() => void restartWithAccess(context, workflowId));
   });
   context.sessionManager.on('exit', (sessionId: string, exitCode: number, intentional?: boolean) => {
+    agentActivity.delete(sessionId);
     if (intentional) {
       resumedSessions.delete(sessionId);
       return;
