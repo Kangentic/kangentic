@@ -11,8 +11,9 @@
  *      schema can accept `position` perfectly while the handler drops it on the
  *      floor, which would silently degrade every placement call to an append.
  *
- * `handler-helpers` is mocked before importing task-tools.ts because it pulls in
- * `../commands` -> better-sqlite3, which will not load under vitest's Node ABI.
+ * `handler-helpers` is mocked before importing task-tools.ts, so the schema and
+ * the forwarding are exercised without the command layer and the database
+ * behind it.
  * `withProject` is stubbed to invoke its callback so the forwarding assertion
  * reaches `callHandler`. Same fake-McpServer capture pattern as
  * mcp-task-tools-run-mode-schema.test.ts.

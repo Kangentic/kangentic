@@ -1,12 +1,10 @@
 /**
  * `handleCreateColumn`'s session-track and enum handling, on mocked repositories.
  *
- * column-commands-create-delete.test.ts already covers this against a real
- * SQLite DB, but that file is gated on better-sqlite3 loading under the
- * runner's Node ABI and `postinstall` rebuilds better-sqlite3 for ELECTRON's
- * ABI, so it skips on CI as well as locally (vitest.config.ts says the same).
- * Create is the path the parity rule's own example describes - "set up a Code
- * Review column" is a create call - so it needs coverage that executes.
+ * column-commands-create-delete.test.ts covers create against a real SQLite
+ * DB. This file pins it at the repository boundary instead. Create is the path
+ * the parity rule's own example describes: "set up a Code Review column" is a
+ * create call.
  *
  * It is also a genuinely different code path from update: it passes the
  * DEFAULT_SESSION_TARGET literal as `previousTarget` rather than a stored
