@@ -213,10 +213,9 @@ in one Sentry org, one triage surface.
   user's home directory never reaches Sentry through an app stack frame; breadcrumbs are a separate
   path, below), `sendDefaultPii` stays `false`, and Sentry's server-side data scrubbing is on by
   default. Further scrubbing rules belong in the Sentry UI (Advanced Data Scrubbing), not in a
-  `beforeSend` here. There are four exceptions. Three are data minimization at the source rather
-  than scrubbing rules, the same shape as the component-stack reduction above, and the fourth is
-  an on-machine path rewrite. The utility worker's
-  stderr tail (below) is free text, not a stack frame, and Node's `Require stack:` lines print
+  `beforeSend` here. There are four exceptions, all done on the machine before anything is sent
+  rather than as Sentry rules, the same shape as the component-stack reduction above. The utility
+  worker's stderr tail (below) is free text, not a stack frame, and Node's `Require stack:` lines print
   absolute install paths under the user's profile, so `src/main/utility-process/stderr-tail.ts`
   replaces the home directory with `~` before the text goes anywhere. A foreign process's crash
   loses its dump, breadcrumbs and full module name in `beforeSend` (see "Native crashes in
@@ -365,7 +364,8 @@ in one Sentry org, one triage surface.
     one-time tail from dumps written before the upgrade and uploaded at its first launch
     (`native_crash.crash_time` separates it), then only the residue.
 - **Tagging shares that hook, and runs before the split.** `beforeSend` is `beforeSendEvent`,
-  which tags and then delegates to `filterNativeCrashEvent`. `tagTruncatedStack` sets
+  which tags, delegates to `filterNativeCrashEvent`, and then rewrites the home directory in what
+  is left (`redactEventHomeDirectory`). `tagTruncatedStack` sets
   `stack_truncated: 'true'` on any event whose parsed stack sits exactly on the SDK's 50-frame
   cap. The parser reads a V8 stack innermost-first and stops there, so a capped event has lost its
   OUTER frames - the app code that called into the library and the timer it ran under - and reads
@@ -747,8 +747,8 @@ in one Sentry org, one triage surface.
 ## What We Don't Collect
 
 - Task titles, descriptions, or any user-generated content
-- File paths, project names, or code (stack-frame paths are normalized to the app root before
-  they leave the machine)
+- File paths, project names, or code (stack-frame paths are normalized to the app root, and the
+  machine's home directory is rewritten to `~` in event text, before they leave the machine)
 - Console output in Sentry breadcrumbs, except lines under a short list of diagnostic tags, which
   are rebuilt without error text and with paths redacted. Click breadcrumbs lose their title and
   label text, and request breadcrumbs lose any URL that is not Kangentic's own (see "Breadcrumbs

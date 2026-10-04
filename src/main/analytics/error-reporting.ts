@@ -294,7 +294,8 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * an issue is a product judgement about our own code, not a data-privacy rule.
  * See the annotated entries below.
  *
- * NATIVE CRASH EVENTS are the one exception to the no-beforeSend stance above.
+ * NATIVE CRASH EVENTS are an exception to the no-beforeSend stance above, next to the
+ * home-directory rewrite.
  * `ignoreErrors` is the `eventFiltersIntegration`, which matches only an event's
  * message and its exception type and value. A minidump event has none of those,
  * so the matcher sees an empty candidate list and the filter is a no-op on it.
@@ -308,8 +309,10 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * becoming `~`: the dump is another program's memory, and no Sentry-side rule
  * can scrub a file it has already received.
  *
- * `beforeSend` does one other thing: beforeSendEvent also TAGS a frame-capped
- * stack (tagTruncatedStack, above). That is annotation on an event we keep.
+ * `beforeSend` also does two other things. beforeSendEvent TAGS a frame-capped
+ * stack (tagTruncatedStack, above), which is annotation on an event we keep. And
+ * it rewrites this machine's home directory in the event that is left, last, so
+ * a foreign-crash rewrite is covered too.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -336,9 +339,10 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
-      // Tags a frame-capped stack, then splits native crash events into ours
-      // and foreign ones; see the NATIVE CRASH EVENTS note above for why that
-      // one class cannot go in ignoreErrors below.
+      // Tags a frame-capped stack, splits native crash events into ours and
+      // foreign ones, then rewrites the home directory in what is left; see the
+      // NATIVE CRASH EVENTS note above for why that one class cannot go in
+      // ignoreErrors below.
       beforeSend: beforeSendEvent,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data
