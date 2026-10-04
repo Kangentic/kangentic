@@ -364,6 +364,37 @@ function assertVendorChunksLazy(rendererOutDir) {
     );
   }
 
+  // 6. Opening Workflows must not parse recharts. React Flow and recharts share
+  //    d3 modules; unclaimed, the recharts group absorbed them and React Flow
+  //    imported them from it (403 KB on every first open of Workflows). The
+  //    `chart-shared` group in vite.config.mts holds them, and it must stay out
+  //    of the entry's closure too.
+  const xyflowKey = Object.keys(manifest).find((key) => manifest[key].file === xyflowFile);
+  if (xyflowKey) {
+    const fromXyflow = new Set();
+    const pending = [xyflowKey];
+    while (pending.length > 0) {
+      const key = pending.pop();
+      if (fromXyflow.has(key) || !manifest[key]) continue;
+      fromXyflow.add(key);
+      for (const dependency of manifest[key].imports ?? []) pending.push(dependency);
+    }
+    if ([...fromXyflow].some((key) => manifest[key].file === rechartsFile)) {
+      throw new Error(
+        `[build] ${xyflowChunk} statically imports ${rechartsChunk}, so opening Workflows parses recharts. `
+        + 'A module both use was absorbed into the recharts group: claim it in the chart-shared group '
+        + '(pure ESM) or the react-vendor group (CJS) in vite.config.mts.',
+      );
+    }
+  }
+  const chartSharedChunk = assetFiles.find((name) => name.startsWith('chart-shared-') && name.endsWith('.js'));
+  if (chartSharedChunk && staticFiles.has(`assets/${chartSharedChunk}`)) {
+    throw new Error(
+      `[build] ${chartSharedChunk} is in the entry's STATIC import closure. A CJS module in the chart-shared `
+      + 'group carries React\'s interop with it; claim CJS modules into react-vendor instead.',
+    );
+  }
+
   // Monaco: marker-string scan. These literals appear in monaco's editor
   // sources and nowhere in first-party code; web workers are separate
   // entries loaded inside worker contexts, not part of the startup path.

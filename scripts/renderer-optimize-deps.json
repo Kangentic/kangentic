@@ -10,5 +10,7 @@
   "three", "camera-controls",
   "@xyflow/react",
   "turndown", "turndown-plugin-gfm",
+  "react-markdown", "remark-gfm", "remove-markdown",
+  "@tanstack/react-virtual", "qrcode",
   "pixelmatch"
 ]

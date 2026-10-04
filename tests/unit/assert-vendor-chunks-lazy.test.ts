@@ -260,4 +260,56 @@ describe('assertVendorChunksLazy', () => {
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/xyflow-ghi321\.js is in the entry's STATIC import closure/);
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyWorkflowsView/);
   });
+
+  it('(k) throws when the xyflow chunk statically imports the recharts chunk', () => {
+    // The shape that shipped: a module both use landed in the recharts group,
+    // so opening Workflows parsed all of recharts.
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
+    writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+      'xyflow-chunk-key': { file: 'assets/xyflow-ghi321.js', imports: ['recharts-chunk-key'] },
+      'recharts-chunk-key': { file: 'assets/recharts-xyz789.js', imports: [] },
+      'monaco-chunk-key': { file: 'assets/chunk-with-monaco.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/xyflow-ghi321\.js statically imports recharts-xyz789\.js/);
+  });
+
+  it('(l) throws when the chart-shared chunk is in the entry STATIC import closure', () => {
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
+    writeAsset('chart-shared-mno654.js');
+    writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: ['chart-shared-key'] },
+      'chart-shared-key': { file: 'assets/chart-shared-mno654.js', imports: [] },
+      'monaco-chunk-key': { file: 'assets/chunk-with-monaco.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/chart-shared-mno654\.js is in the entry's STATIC import closure/);
+  });
+
+  it('(m) does not throw when both lazy views share the chart-shared chunk', () => {
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
+    writeAsset('chart-shared-mno654.js');
+    writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+      'xyflow-chunk-key': { file: 'assets/xyflow-ghi321.js', imports: ['chart-shared-key'] },
+      'recharts-chunk-key': { file: 'assets/recharts-xyz789.js', imports: ['chart-shared-key'] },
+      'chart-shared-key': { file: 'assets/chart-shared-mno654.js', imports: [] },
+      'monaco-chunk-key': { file: 'assets/chunk-with-monaco.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).not.toThrow();
+  });
 });

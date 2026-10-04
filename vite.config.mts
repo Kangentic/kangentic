@@ -204,8 +204,19 @@ export default defineConfig(({ mode }) => ({
     rolldownOptions: {
       output: {
         manualChunks(id: string) {
-          if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor';
+          // `use-sync-external-store` rides with React: recharts and React Flow's
+          // own zustand both use its shim, and as a CJS module it carries React's
+          // interop into whichever group claims it. In any lazy group that made
+          // the entry import that group statically (measured: the whole group
+          // joined the entry's closure). Here it costs a few KB the entry loads
+          // with React anyway.
+          if (/node_modules[\\/](react|react-dom|scheduler|use-sync-external-store)[\\/]/.test(id)) return 'react-vendor';
           if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl')) return 'xterm';
+          // The d3 modules recharts and React Flow both use. Unclaimed, the
+          // recharts group absorbed them and React Flow imported them from it, so
+          // opening Workflows parsed the whole recharts chunk (403 KB). Pure ESM,
+          // so this group carries nothing else; only the two lazy views reach it.
+          if (/node_modules[\\/](d3-color|d3-interpolate)[\\/]/.test(id)) return 'chart-shared';
           if (id.includes('recharts')) return 'recharts';
           // three + camera-controls, grouped so assertVendorChunksLazy has a
           // stable name to check. Both are reachable ONLY through
