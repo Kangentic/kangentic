@@ -29,6 +29,29 @@ import { redactHomeDirectory } from '../utility-process/stderr-tail';
 /** Deepest nesting walked. Events are plain JSON a few levels deep; the cap is only a guard against a cycle. */
 const MAX_DEPTH = 24;
 
+/**
+ * Redact one slot of a container. A string is replaced only when it changed, and each slot has its
+ * own guard: a frozen object, a read-only property or a throwing getter aborts that slot and
+ * nothing else. Letting it abort the whole walk would leave every later field (a `message` after
+ * a frozen `extra`) unredacted, and a privacy filter must fail toward redacting more.
+ */
+function redactSlot(
+  container: Record<string, unknown> | unknown[],
+  key: string | number,
+  homeDirectory: string,
+  caseInsensitive: boolean,
+  depth: number,
+): void {
+  try {
+    const slots = container as Record<string | number, unknown>;
+    const original = slots[key];
+    const redacted = redactValue(original, homeDirectory, caseInsensitive, depth);
+    if (redacted !== original) slots[key] = redacted;
+  } catch {
+    // This one slot cannot be read or written; the rest of the event still gets redacted.
+  }
+}
+
 function redactValue(
   value: unknown,
   homeDirectory: string,
@@ -39,13 +62,13 @@ function redactValue(
   if (value === null || typeof value !== 'object' || depth >= MAX_DEPTH) return value;
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
-      value[index] = redactValue(value[index], homeDirectory, caseInsensitive, depth + 1);
+      redactSlot(value, index, homeDirectory, caseInsensitive, depth + 1);
     }
     return value;
   }
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    record[key] = redactValue(record[key], homeDirectory, caseInsensitive, depth + 1);
+    redactSlot(record, key, homeDirectory, caseInsensitive, depth + 1);
   }
   return record;
 }
