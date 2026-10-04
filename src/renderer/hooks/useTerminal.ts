@@ -634,7 +634,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const disposeWebglRef = useRef<(() => void) | null>(null);
   const unregisterDevtoolsTerminalRef = useRef<(() => void) | null>(null);
   /** Drops this session from the renderer's MOUNTED set (terminal-mount-registry),
-   *  which is what lets main park an unheld PTY back at the spawn grid. */
+   *  which is what lets main park an unheld PTY at the resting grid. */
   const releaseMountedTerminalRef = useRef<(() => void) | null>(null);
   /** Drops this terminal's element from the anchor registry, so the dictation
    *  chip can never position against a disposed node. */
@@ -1310,7 +1310,7 @@ export function useTerminal(options: UseTerminalOptions) {
     unregisterDevtoolsTerminalRef.current = registerDevtoolsTerminal(terminal, options.sessionId ?? null);
 
     // Tell main this session's grid is HELD for as long as this xterm lives -
-    // parked or not. Main parks an unheld PTY back at the spawn grid, and a
+    // parked or not. Main parks an unheld PTY at the resting grid, and a
     // mounted terminal is exactly what must stop it: a grid reshaped under a
     // terminal that never asked for it has no way back (see the mismatch note
     // above).
