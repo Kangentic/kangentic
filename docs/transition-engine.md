@@ -32,7 +32,7 @@ Priority 3 has four sub-cases, checked in order:
 
 The delta is computed against what the session is *actually running at*, not the leaving column, so a column whose value the session already has restarts nothing. The two fields resolve that differently: **model** uses the session record's `applied_model`, while **effort** prefers the level the agent itself reports (`task.effort_override ?? <agent-reported effort> ?? record.applied_effort`), because `applied_effort` records only what Kangentic last asked for and an `/effort` typed straight into the terminal never reaches it. A level the model silently downgraded counts as applied: when the target equals `applied_effort` and the reported level has not moved since the session's first report, nothing restarts. Model deliberately stays record-only - telemetry reports canonical ids while the configured values are flag strings, so comparing them would read a false change and restart the PTY on every move. Only a concrete target restarts: entering a "Default" column (null target) keeps the session, since `--resume <id>` preserves what it runs at. A per-task override wins on both sides, so a pinned field never restarts. See [Command Injection](command-injection.md) for the full precedence.
 
-**c) Same agent + column message only:** If the plan carries the column's message and no `restartReason`, the message is scheduled into the running session via `TerminalSubmitScheduler.scheduleKeystrokes`. No suspend/resume cycle occurs.
+**c) Same agent + column message only:** If the plan carries the column's message and no `restartReason`, the message is scheduled into the running session via `TerminalSubmitScheduler.scheduleKeystrokes`. No suspend/resume cycle occurs. A column message that `shouldPaste` (more than one line, not a slash command) stays out of the plan and is pasted into the session instead, after the turn ends; the row still counts as delivered, so the On enter group does not send it again.
 
 **d) Same agent, permission-only change or no change:** The session stays alive with no interruption. A permission-mode delta never restarts: in the canonical Planning -> Executing flow the user already approved the plan in the terminal and Claude left plan mode in-session, so the spawn-time permission mode recorded on the session is stale.
 
@@ -58,7 +58,7 @@ An automation's `trigger` is `enter`, `turn_end` or `exit`. `enter` and `exit` m
 - **Then:** wait out the turn's last paint (`waitForTurnCompletion`, 1.5 s of PTY silence); read `{{agentReply}}` if a pending row needs it (`transcript.finalReply` in the retrieval worker, 15 s cap, empty on failure); answer every pending Condition in one call on the Automation agent; re-check that the same session is still idle in the same column (a turn the user started meanwhile abandons the pass, writing nothing); run the rows.
 - **The run rule:** rows run top to bottom. A row runs at most once per visit (an executed run since the task's latest entry into the column), and only a row that executes counts: a Condition that answers no is recorded `skipped` with its reason, and the next turn end checks it again. A row past its Frequency, already run this visit, or that the column cannot run is left out without a record. A Move to column row that runs ends the group.
 - **Outside the task lock, one pass per task.** A row can take minutes, and a Move to column row's own move takes that lock (`withTaskLock` is not reentrant). A move made meanwhile supersedes the group (`supersedeTurnEndWork`, called by `handleTaskMove` before it takes the lock); the group's own move passes `fromTurnEndGroup` and does not. A second turn end during a pass runs once more after it, so two passes never both read "not run this visit".
-- **Delivery waits.** A Send message row on a turn end awaits its outcome, like exit's, and a message with more than one line (or over 1,000 characters) is pasted (`submitContent`), so a `{{agentReply}}` keeps its line breaks.
+- **Delivery waits.** A Send message row on a turn end awaits its outcome, like exit's. A message with more than one line (or over 1,000 characters) is pasted (`submitContent`) after the turn's last paint, so a `{{agentReply}}` keeps its line breaks. Every trigger shares this rule; see [`send_message`](#send_message----send-message-to-agent).
 
 ### Condition and Frequency
 
@@ -90,6 +90,12 @@ Delivers an interpolated message to the task's agent. This is what the retired `
 | `mode` | `'immediate'` \| `'deferred'` | Run immediately (interrupts the current turn) or wait for the current turn |
 
 Needs the agent. No timeout of its own beyond the scheduler's 120s, and no retry: `TerminalSubmitScheduler` already has a confirmation verifier and a one-shot escalation ladder. Delivery goes through `context.deliverToAgent`, which applies the three rungs when this run started the agent and the plain scheduled keystroke otherwise. See [Command Injection](command-injection.md).
+
+Keystrokes turn line breaks into spaces, so every path that hands a message to a live agent asks one question first (`shouldPaste`, `automations/turn-end/agent-message-delivery.ts`). A message with more than one line, or over 1,000 characters, is pasted with bracketed paste (`submitContent`) and keeps its line breaks. A one-line message, and any message that starts with `/`, stays keystrokes, the only way a slash command runs: `/code-review {{attachments}}` spans lines once the paths are filled in, and it is typed on one line so the command still runs. When a paste lands depends on the trigger:
+
+- **On task exit:** awaited inside the exit budget, and handed the run's signal. `immediate` pastes at once; `deferred` waits for the agent's turn to end first.
+- **On task enter, Run again, and the warm move's column message:** in the background, once the agent's turn has ended and the scheduler has no keystrokes left for the task, whatever the mode. A task's pastes run one at a time, in order, on every trigger, so two of them never write into the terminal at once. On a fresh spawn that is the end of the agent's first turn. A move to another column cancels a paste still waiting (`supersedeMessageDeliveries`), and its outcome is reported like a keystroke burst's (`cancelled` is silent, `failed` raises a notice). A message the spawn already took as its opening prompt is not pasted again.
+- **On agent turn end:** awaited, after the turn's last paint.
 
 ### `run_script` -- Run script
 
@@ -291,6 +297,7 @@ When a task moves to a column whose On enter group holds a `send_message` automa
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the message for deferred PTY injection
 - Interpolates the message with task variables
 - Waits for the CLI's first `'thinking'` activity event, then delivers via `TerminalSubmit.submitKeystrokes` as a handshake chain (drain + output-settle between keystrokes) rather than fixed sleeps
+- A message with more than one line is pasted instead, once the agent's first turn ends (see [`send_message`](#send_message----send-message-to-agent))
 
 If keystroke delivery cannot be confirmed in the agent's transcript, it escalates to a session restart that passes the command as the CLI's prompt argument - the same guarantee the resumed path has. Every injection ends in a recorded outcome on the task, and a failure raises a notice instead of a console warning. The full contract, including the delivery ladder, the prompt-state policy, and the measured before/after delivery rate, is in [Command Injection](command-injection.md).
 

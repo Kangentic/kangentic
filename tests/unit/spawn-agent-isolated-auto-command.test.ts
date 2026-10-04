@@ -59,6 +59,18 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 
 /**
+ * A message with line breaks is pasted once the fresh agent's first turn ends
+ * (see the paste describe block at the end). Each wait parks here until a test
+ * ends it; the keystroke cases above never wait.
+ */
+const turnWaits = vi.hoisted(() => [] as Array<{ sessionId: string; resolve: (result: 'completed') => void }>);
+
+vi.mock('../../src/main/transition-engine/turn-completion', () => ({
+  waitForTurnCompletion: vi.fn((_sessionManager: unknown, sessionId: string) =>
+    new Promise<'completed'>((resolve) => { turnWaits.push({ sessionId, resolve }); })),
+}));
+
+/**
  * The column's message moved out of `swimlanes.auto_command` and into the
  * column's first enabled `send_message` enter automation, so `spawnAgent` reads
  * it through `AutomationRepository` now. The matrix these tests vary is
@@ -265,11 +277,15 @@ function makeDeps(args: {
     resumeSuspendedSession: vi.fn(async () => { sessionStarted = true; }),
   };
   const scheduleKeystrokes = vi.fn();
+  const submitContent = vi.fn(async () => undefined);
   // mainWindow and projectRepo are only accessed when options.projectId is set
   // (handoff path). They are present here so the same `context` shape works for
   // both normal-path and handoff-path tests without requiring a cast.
   const context = {
-    terminalSubmitScheduler: { scheduleKeystrokes },
+    terminalSubmitScheduler: { scheduleKeystrokes, hasPending: vi.fn(() => false) },
+    // Read only by a pasted message: the session check and the paste itself.
+    sessionManager: { getSession: vi.fn((id: string) => ({ id, status: 'running' })) },
+    terminalSubmit: { submitContent },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => null) },
     configManager: {
@@ -289,6 +305,7 @@ function makeDeps(args: {
     sessionRepo,
     engine,
     scheduleKeystrokes,
+    submitContent,
     context,
     attachments: args.attachments,
     // The task spawnAgent is HANDED, not just the one `getById` returns. The
@@ -659,5 +676,86 @@ describe('spawnAgent auto_command suppression on recovery move out of Done (hand
       [{ text: '/merge-back', verify: 'submitted' }],
       expect.objectContaining({ freshlySpawned: true }),
     );
+  });
+});
+
+/**
+ * A column message with line breaks on the cold spawn path.
+ *
+ * Keystrokes flatten line breaks to spaces, so a multi-line message is pasted
+ * instead. A freshly spawned agent's TUI is not ready at once, so the paste
+ * waits for the agent's first turn to end, whatever the row's mode. The prompt
+ * slot is untouched: when the spawn takes the message as its opening prompt,
+ * nothing is typed or pasted after it.
+ */
+describe('spawnAgent: a multi-line column message is pasted after the first turn', () => {
+  const MULTI_LINE = 'Review the diff.\nList every finding.\nThen fix them.';
+
+  /** Let the background paste's awaits run. */
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    turnWaits.length = 0;
+  });
+
+  it('MAIN + fresh from To Do: pastes the message once the first turn ends, never as keystrokes', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: MULTI_LINE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+
+    // Red: scheduling the message as keystrokes, as before, lands here.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    await settle();
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, MULTI_LINE, expect.anything());
+  });
+
+  it('ISOLATED + fresh, no task prompt: the message still rides the spawn prompt slot, and is not pasted again', async () => {
+    const isolatedLane = makeSwimlane(ISOLATED_LANE_ID, { session_target: 'isolated', auto_command: MULTI_LINE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(isolatedLane, deps, true);
+    await settle();
+
+    expect(resumePromptArg(deps.engine)).toBe(MULTI_LINE);
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(turnWaits).toHaveLength(0);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('handoff branch: pastes the destination message once the new agent finishes its first turn', async () => {
+    vi.mocked(agentRegistry.get).mockReturnValue(null as never);
+    const codexLane = makeSwimlane('lane-codex', {
+      session_target: 'main',
+      auto_command: MULTI_LINE,
+      handoff_context: true,
+      agent_override: 'codex',
+    });
+    const priorRecord = makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' });
+    const deps = makeDeps({
+      manualPauseRecord: priorRecord,
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID },
+    });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(codexLane, deps, true, false, 'proj-handoff-test');
+
+    // Red: the handoff's own keystroke scheduling lands here.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    await settle();
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, MULTI_LINE, expect.anything());
   });
 });

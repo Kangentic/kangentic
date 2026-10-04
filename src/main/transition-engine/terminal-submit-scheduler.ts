@@ -289,6 +289,16 @@ export class TerminalSubmitScheduler {
     }
   }
 
+  /**
+   * Whether a burst for this task is waiting or in flight. A message pasted
+   * outside the scheduler (`pasteAgentMessageInBackground`) checks it after
+   * the agent's turn ends, so it lands after keystrokes scheduled ahead of it
+   * rather than in the middle of them.
+   */
+  hasPending(taskId: string): boolean {
+    return this.deferred.has(taskId) || this.active.has(taskId);
+  }
+
   /** Cancel all pending injections. Called on `killAll`. */
   cancelAll(): void {
     const pending = [...this.deferred.values()];

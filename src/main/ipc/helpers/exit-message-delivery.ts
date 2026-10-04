@@ -3,6 +3,9 @@ import type { IpcContext } from '../ipc-context';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import type { CommandVerifier } from '../../pty/terminal-submit';
 
+/** What the run log says when the exit group's budget stops a message. */
+export const EXIT_BUDGET_ABORT_REASON = 'The message was not delivered before the exit budget ran out.';
+
 /**
  * Deliver an exit automation's message and WAIT for the keystrokes to land.
  *
@@ -29,6 +32,11 @@ import type { CommandVerifier } from '../../pty/terminal-submit';
  * move's signal combined with this row's slice of the 60s exit budget). That
  * cap is why holding the short lock here is acceptable: the same budget that
  * bounds a hung exit script bounds a hung exit message.
+ *
+ * Keystrokes only. A message with line breaks is pasted instead, and that
+ * choice is made once, in `deliverAgentMessageAndWait`
+ * (`automations/turn-end/agent-message-delivery.ts`), which calls this for a
+ * message that stays keystrokes.
  */
 export function deliverExitMessage(
   context: IpcContext,
@@ -41,7 +49,7 @@ export function deliverExitMessage(
   // What the run log says when `signal` fires first. The exit group's budget is
   // the usual reason, so that is the default; the turn-end group, which has no
   // shared budget, says it its own way.
-  abortReason = 'The message was not delivered before the exit budget ran out.',
+  abortReason = EXIT_BUDGET_ABORT_REASON,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;

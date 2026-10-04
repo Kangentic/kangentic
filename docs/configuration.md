@@ -641,7 +641,7 @@ Five types ship. Each is an adapter under `src/main/automations/adapters/`, decl
 
 | Type | What it does | Fields |
 |------|--------------|--------|
-| `send_message` | Types a message at the column's agent (pasted whole when it has more than one line) | `message`, `mode` (`immediate` \| `deferred`) |
+| `send_message` | Types a message at the column's agent. On every trigger, a message with more than one line is pasted whole, unless it starts with `/` (a slash command is always typed, so it runs) | `message`, `mode` (`immediate` \| `deferred`) |
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (default 10, range 1 to 120, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |

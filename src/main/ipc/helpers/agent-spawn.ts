@@ -28,6 +28,7 @@ import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
+import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifySpawnBlocked } from './task-git';
 import { getProjectRepos } from './project-repos';
@@ -452,17 +453,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         const interpolated = taskOverride
           ? interpolateTaskTemplate(effectiveAutoCommand, vars)
           : interpolateTemplate(effectiveAutoCommand, vars);
-        context.terminalSubmitScheduler.scheduleKeystrokes(
-          currentTask.id,
-          currentTask.session_id,
-          [{ text: interpolated, verify: 'submitted' }],
-          {
-            freshlySpawned: true,
-            verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-            mode: columnMessage?.mode ?? 'immediate',
-            onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
-          },
-        );
+        // Keystrokes once the new agent is alive, or, for a message with line
+        // breaks, a paste once its first turn ends.
+        deliverAgentMessageInBackground(context, {
+          taskId: currentTask.id,
+          sessionId: currentTask.session_id,
+          message: interpolated,
+          mode: columnMessage?.mode ?? 'immediate',
+          verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+          freshlySpawned: true,
+          onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+        });
       }
     }
 
@@ -601,17 +602,17 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const currentTask = tasks.getById(task.id);
     if (!currentTask?.session_id) return;
 
-    context.terminalSubmitScheduler.scheduleKeystrokes(
-      currentTask.id,
-      currentTask.session_id,
-      [{ text: effective, verify: 'submitted' }],
-      {
-        freshlySpawned: true,
-        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-        mode,
-        onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
-      },
-    );
+    // Keystrokes once the CLI is alive, or, for a message with line breaks, a
+    // paste once the fresh agent's first turn ends, whatever the row's mode.
+    deliverAgentMessageInBackground(context, {
+      taskId: currentTask.id,
+      sessionId: currentTask.session_id,
+      message: effective,
+      mode,
+      verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+      freshlySpawned: true,
+      onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+    });
   };
 
   try {

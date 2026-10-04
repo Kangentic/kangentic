@@ -41,12 +41,18 @@ import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgress
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
+import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
-import { deliverExitMessage } from '../helpers/exit-message-delivery';
-import { supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import {
+  deliverAgentMessageAndWait,
+  deliverAgentMessageInBackground,
+  pasteAgentMessageInBackground,
+  shouldPaste,
+} from '../../automations/turn-end/agent-message-delivery';
 import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
@@ -530,6 +536,14 @@ export async function handleTaskMove(
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
 
+      // The task is leaving its column, so a message that column is still
+      // waiting to paste (a multi-line On task enter row, held for the agent's
+      // turn to end) is no longer the column's to send. Keystroke bursts are
+      // stopped by the scheduler's own cancel in the Priority branches below;
+      // a paste never enters the scheduler, so it is stopped here. Not on the
+      // reorder above: the task keeps its column, and with it its message.
+      supersedeMessageDeliveries(task.id);
+
       // === Exit automations ===
       //
       // The SOURCE column's exit rows, here in Phase 1, inside the short lock,
@@ -578,21 +592,23 @@ export async function handleTaskMove(
             // suspends or re-points the session, so a burst merely SCHEDULED
             // here is cancelled mid-flight by this same move. See
             // `deliverExitMessage` for what that looked like in a preview.
+            // A message with line breaks is pasted instead, awaited the same
+            // way and handed `runSignal`, so the exit budget bounds it too.
             deliverToAgent: async (message, mode, runSignal) => {
               const liveSession = task.session_id;
               // The runner already skips an agent-needing row when the task
               // has no session, so reaching here without one means the row
               // does not need the agent. Nothing to deliver into.
               if (!liveSession) return;
-              await deliverExitMessage(
-                context,
-                task.id,
-                liveSession,
+              await deliverAgentMessageAndWait(context, {
+                taskId: task.id,
+                sessionId: liveSession,
                 message,
                 mode,
-                resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
-                runSignal,
-              );
+                verifier: resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
+                signal: runSignal,
+                turnWait: 'when-deferred',
+              });
             },
             showNotification: (notification) => showDesktopNotification(context, notification),
             // The card names the row that is running. Without it a 60s exit
@@ -639,7 +655,9 @@ export async function handleTaskMove(
        * Message delivery inside it is fire and forget, unlike the exit hook's:
        * nothing after this point cancels the scheduler (Priority 3's own
        * `cancel` already ran, above the injection), and a message queues behind
-       * that burst rather than racing it.
+       * that burst rather than racing it. A message with line breaks is pasted
+       * instead, and waits for the agent's turn to end, which also keeps it from
+       * racing that burst.
        *
        * No `startAgent`: on the keep-alive branches the session is live by
        * construction, and on the suspending one the column cannot hold a row
@@ -677,16 +695,17 @@ export async function handleTaskMove(
               const currentTask = enterRepos.tasks.getById(task.id);
               const liveSession = currentTask?.session_id;
               if (!liveSession) return;
-              context.terminalSubmitScheduler.scheduleKeystrokes(
-                task.id,
-                liveSession,
-                [{ text: message, verify: 'submitted' }],
-                {
-                  mode,
-                  verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
-                  onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
-                },
-              );
+              // A one-line message is scheduled as keystrokes; one with line
+              // breaks is pasted once the agent's turn ends, and a move out of
+              // this column cancels it (`supersedeMessageDeliveries`).
+              deliverAgentMessageInBackground(context, {
+                taskId: task.id,
+                sessionId: liveSession,
+                message,
+                mode,
+                verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
+                onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
+              });
             },
             showNotification: (notification) => showDesktopNotification(context, notification),
             onProgress: createProgressCallback(context.mainWindow, task.id),
@@ -1111,13 +1130,20 @@ export async function handleTaskMove(
           // immediately on a warm move while the cold spawn honored the row's
           // own mode. A task-tier pin has no row and keeps the default.
           const injectionMode: AutoCommandMode = deliveredColumnMessage ? columnMessage.mode : 'immediate';
+          // A message with line breaks cannot ride the keystroke burst, which
+          // would flatten it to one line. It is pasted after the burst instead,
+          // so the plan carries no message of its own. Everything else keeps
+          // reading `interpolatedAuto`: the delivery mode, and the runner's skip
+          // list (the row is still delivered here, not by the group).
+          const trimmedAuto = interpolatedAuto.trim();
+          const pastedMessage = trimmedAuto && shouldPaste(trimmedAuto) ? trimmedAuto : null;
           const plan = prepareInjectionPlan({
             adapter,
             sessionRepo,
             task,
             toLane: toLane ?? null,
             project,
-            autoCommand: interpolatedAuto,
+            autoCommand: pastedMessage ? '' : interpolatedAuto,
             ...resolveReportedEffort(context.sessionManager, task.session_id),
           });
 
@@ -1158,40 +1184,60 @@ export async function handleTaskMove(
           }
 
           // 2. No settings delta, but a column message (or the task's own
-          // auto_command) -> inject it into the running PTY. The sequence carries
-          // that one command and nothing else.
-          if (plan) {
+          // auto_command) -> deliver it to the running PTY: a one-line message as
+          // the burst's one command, a multi-line one pasted after it. A pasted
+          // message takes this branch with or without a plan: with none it would
+          // fall to 3, which arms the group with nothing delivered and sends the
+          // row again.
+          if (plan || pastedMessage) {
             const injectedSessionId = task.session_id;
-            context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
-              verifier: plan.verifier,
-              mode: injectionMode,
-              // Rung 3 of the delivery ladder. Routed through the allowlisted
-              // in-place restart rather than a new spawn call, so this adds no
-              // spawn entry point (see spawn-entry-point-parity.md).
-              escalate: async (commands) => {
-                if (!resolvedProjectPath) return false;
-                // `restartSessionForSettingsChange` mutates per-task session
-                // state and documents that its caller must hold the task lock.
-                // Taking it here is safe and not reentrant: `scheduleKeystrokes`
-                // is fire-and-forget, so this callback runs well after the
-                // TASK_MOVE handler released the lock.
-                return withTaskLock(task.id, async () => {
-                  const restarted = await restartSessionForSettingsChange(
-                    context,
-                    resolvedProjectId,
-                    resolvedProjectPath,
-                    task.id,
-                    { phase: 'resending-command', resumePrompt: commands.join('\n') },
-                  );
-                  return restarted.ok;
-                });
-              },
-              onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
-            });
+            const reportOutcome = (report: InjectionReport): void =>
+              reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId);
+            if (plan && plan.sequence.length > 0) {
+              context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
+                verifier: plan.verifier,
+                mode: injectionMode,
+                // Rung 3 of the delivery ladder. Routed through the allowlisted
+                // in-place restart rather than a new spawn call, so this adds no
+                // spawn entry point (see spawn-entry-point-parity.md).
+                escalate: async (commands) => {
+                  if (!resolvedProjectPath) return false;
+                  // `restartSessionForSettingsChange` mutates per-task session
+                  // state and documents that its caller must hold the task lock.
+                  // Taking it here is safe and not reentrant: `scheduleKeystrokes`
+                  // is fire-and-forget, so this callback runs well after the
+                  // TASK_MOVE handler released the lock.
+                  return withTaskLock(task.id, async () => {
+                    const restarted = await restartSessionForSettingsChange(
+                      context,
+                      resolvedProjectId,
+                      resolvedProjectPath,
+                      task.id,
+                      { phase: 'resending-command', resumePrompt: commands.join('\n') },
+                    );
+                    return restarted.ok;
+                  });
+                },
+                onOutcome: reportOutcome,
+              });
+            }
+            // After the burst, never racing it: the paste waits for the turn to
+            // end and for the scheduler to finish this task's keystrokes. A move
+            // out of the column cancels it (`supersedeMessageDeliveries`).
+            if (pastedMessage) {
+              pasteAgentMessageInBackground(context, {
+                taskId: task.id,
+                sessionId: injectedSessionId,
+                message: pastedMessage,
+                onOutcome: reportOutcome,
+              });
+            }
+            const injectedTexts = (plan?.sequence ?? []).map((command) => command.text);
             console.log(
-              `[TASK_MOVE] Injecting ${plan.sequence.length} command(s) for task ${task.id.slice(0, 8)}`
-              + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
-              + `${plan.sequence.map((command) => command.text).join(' | ')}`,
+              `[TASK_MOVE] Injecting ${injectedTexts.length} command(s) for task ${task.id.slice(0, 8)}`
+              + ` into running session${plan?.verifier ? ' (with command verification)' : ''}: `
+              + `${injectedTexts.join(' | ')}`
+              + (pastedMessage ? `${injectedTexts.length > 0 ? ', then ' : ''}a ${pastedMessage.length}-character message to paste` : ''),
             );
             // Name the row the burst above actually carried, so it is not sent
             // a second time, and let the rest of the group run after the lock.

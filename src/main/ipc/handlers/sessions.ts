@@ -1,6 +1,7 @@
 import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { retrievalClient } from '../../retrieval/retrieval-client';
@@ -554,6 +555,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     void withTaskLock(taskId, async () => {
       try {
         context.terminalSubmitScheduler.cancel(taskId);
+        // A pasted message is not the scheduler's, so it is stopped on its
+        // own, as quietly as the keystrokes above.
+        supersedeMessageDeliveries(taskId);
         applySuspendDbWrites(context, projectId, taskId, 'system');
       } catch (error) {
         console.error('[idle-timeout] DB sync failed:', error);

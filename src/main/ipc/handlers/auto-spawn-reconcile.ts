@@ -4,6 +4,7 @@ import { getProjectRepos } from '../helpers';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
 import { IPC } from '../../../shared/ipc-channels';
 import type { StrategyChange } from './strategy-propagation';
 import type { IpcContext } from '../ipc-context';
@@ -179,8 +180,10 @@ export function reconcileAutoSpawnChange(
     for (const entry of plan.toSuspend) {
       try {
         // Cancel outside the lock: a queued injection for a session we are about
-        // to suspend has nothing left to type into.
+        // to suspend has nothing left to type into, and a waiting paste nothing
+        // left to paste into.
         context.terminalSubmitScheduler.cancel(entry.taskId);
+        supersedeMessageDeliveries(entry.taskId);
         const suspended = await withTaskLock(entry.taskId, async (): Promise<boolean> => {
           // Re-read inside the lock: a drag or an explicit pause may have landed
           // between planning and acquiring it. The plan is a synchronous
