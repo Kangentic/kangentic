@@ -439,21 +439,25 @@ test.describe('Column automations', () => {
 
   // 6 ─ To Do and Done take exit rows only ───────────────────────────────────
 
-  test('To Do renders the exit group only, with the reason where On enter would be', async () => {
+  test('To Do renders the exit group only, with the reason where On enter and On agent turn end would be', async () => {
     await openColumn('To Do');
 
-    await expect(dialog().locator('[data-testid="column-automation-group"]')).toHaveCount(2);
+    await expect(dialog().locator('[data-testid="column-automation-group"]')).toHaveCount(3);
     const enterGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="enter"]');
     await expect(enterGroup).toContainText('Nothing runs when a task enters To Do');
-    // No Add control in the blocked group: it would only build something inert.
+    // No Add control in a blocked group: it would only build something inert.
     await expect(enterGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
+    const turnEndGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
+    await expect(turnEndGroup).toContainText('nothing runs at a turn end');
+    await expect(turnEndGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
     await expect(dialog().locator('[data-testid="column-automation-add"][data-trigger="exit"]')).toBeVisible();
 
     await addThroughPicker('exit', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Reset notice');
-    // The dialog's When offers On exit only, and the blocked option is disabled
-    // rather than absent, so the reader can see the rule.
+    // The dialog's Trigger offers On exit only, and the blocked options are
+    // disabled rather than absent, so the reader can see the rule.
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-enter"]')).toBeDisabled();
+    await expect(editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]')).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toHaveAttribute('aria-checked', 'true');
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await saveManager();
@@ -666,21 +670,24 @@ test.describe('Column automations', () => {
 
   // 13 ─ When is a real radiogroup ───────────────────────────────────────────
 
-  test('When is a two-option radiogroup its arrow keys drive', async () => {
+  test('Trigger is a three-option radiogroup its arrow keys drive', async () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'notify');
 
     const trigger = editDialog().locator('[data-testid="edit-automation-trigger"]');
     await expect(trigger).toHaveAttribute('role', 'radiogroup');
     const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
+    const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
     const exit = editDialog().locator('[data-testid="edit-automation-trigger-exit"]');
     await expect(enter).toHaveAttribute('aria-checked', 'true');
 
     await enter.focus();
     await page.keyboard.press('ArrowRight');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('ArrowRight');
     await expect(exit).toHaveAttribute('aria-checked', 'true');
     await page.keyboard.press('ArrowLeft');
-    await expect(enter).toHaveAttribute('aria-checked', 'true');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
   });
 
   // 14 ─ All columns: one cell vocabulary ────────────────────────────────────
@@ -702,7 +709,7 @@ test.describe('Column automations', () => {
     const headerCells = await dialog().locator('thead tr').first().locator('th').count();
     const bodyCells = await overviewRow('Executing').locator('td').count();
     expect(headerCells).toBeGreaterThan(0);
-    expect(bodyCells).toBe(10);
+    expect(bodyCells).toBe(11);
 
     // A column nobody touched prints the value its select sits on, unemphasised.
     const testing = overviewRow('Testing');

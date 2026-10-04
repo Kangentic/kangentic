@@ -484,7 +484,7 @@ workflow's step. `from_swimlane_id` is NULL for a task born into the column.
 There is no foreign key to `swimlanes`: deleting a column must not delete a task's history.
 
 Indices: `idx_task_moves_task` on (task_id, at DESC) for a task's latest entry into a column, and
-`idx_task_moves_to_column` on (to_swimlane_id).
+`idx_task_moves_to_column` on (to_swimlane_id, at DESC).
 
 ### actions table (retired)
 

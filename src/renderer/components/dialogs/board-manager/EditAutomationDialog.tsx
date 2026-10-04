@@ -218,7 +218,12 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
       // that did not exist a moment ago. `isNew` already distinguishes the two
       // (it selects the generated name for overtyping); the title now says so.
       title={props.isNew ? 'Add automation' : 'Edit automation'}
-      className="w-[640px]"
+      // With every card on the dialog is about 990px tall, past the 600px
+      // window floor, so the body scrolls and the header and footer stay put.
+      // Its menus (Type, Template variable, Column) portal, so the scroll clips
+      // none of them.
+      className="w-[640px] max-h-[calc(100vh-2rem)]"
+      bodyClassName="flex-1 min-h-0 overflow-y-auto"
       // The standard footer slot, not a `<footer>` among the children. As a
       // child it sat INSIDE the body's own padding, so it carried the body
       // inset plus its own and sat lower than every other dialog's footer.

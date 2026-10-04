@@ -1,5 +1,10 @@
 import { type StateCreator } from 'zustand';
-import type { AutomationRunAgainResult, AutomationWriteInput, ColumnAutomation } from '../../../shared/types';
+import type {
+  AutomationRunAgainResult,
+  AutomationTrigger,
+  AutomationWriteInput,
+  ColumnAutomation,
+} from '../../../shared/types';
 import { runnableAutomationCounts, toDraft } from '../../components/dialogs/board-manager/automation-drafts';
 import { useProjectStore } from '../project-store';
 import type { BoardStore } from './types';
@@ -76,9 +81,13 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
 export function selectAutomationCounts(
   state: Pick<BoardStore, 'automations' | 'swimlanes'>,
   swimlaneId: string,
-): { enter: number; exit: number } {
+  reportsTurnEnd?: boolean,
+): Record<AutomationTrigger, number> {
   const column = state.swimlanes.find((lane) => lane.id === swimlaneId);
-  if (!column) return { enter: 0, exit: 0 };
+  if (!column) return { enter: 0, turn_end: 0, exit: 0 };
   const drafts = state.automations.filter((row) => row.swimlane_id === swimlaneId).map(toDraft);
-  return runnableAutomationCounts(drafts, column);
+  // `reportsTurnEnd` is the column agent's, resolved by the caller from the
+  // agent list. Undefined (the list has not loaded) counts turn-end rows, as
+  // `canColumnRun` allows rather than blocks when it cannot tell.
+  return runnableAutomationCounts(drafts, { ...column, reportsTurnEnd });
 }

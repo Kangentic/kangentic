@@ -182,7 +182,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     { label: '', span: 1 },
     { label: 'Agent', span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
     { label: 'Conversation', span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
-    { label: 'Automations', span: 2, icon: <Zap size={12} strokeWidth={1.75} /> },
+    { label: 'Automations', span: 3, icon: <Zap size={12} strokeWidth={1.75} /> },
   ];
 
   // The widths reach the table through DataTable's <colgroup>; a grouped
