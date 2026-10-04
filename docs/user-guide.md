@@ -544,7 +544,7 @@ Applies to every project (Settings > Terminal, not a per-project override):
 | Setting | Description |
 |---------|-------------|
 | Shell | Override the auto-detected shell |
-| Font Size | Terminal text size in pixels |
+| Font Size | Terminal text size in pixels, from 8 to 32 |
 | Font Family | Terminal font, picked from your detected system fonts via an autocomplete field |
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
 | Word Delete on Backspace | Backspace deletes the whole previous word instead of one character (off by default) |

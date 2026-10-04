@@ -343,6 +343,541 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  /** Records every numeric terminal.fontSize passed to config.set into window.__fontSizeWrites. */
+  async function recordFontSizeWrites() {
+    await page.evaluate(() => {
+      const configApi = window.electronAPI.config as unknown as { set: (partial: unknown) => Promise<unknown> };
+      const originalSet = configApi.set;
+      const fontSizeWrites: number[] = [];
+      const recorder = window as unknown as {
+        __fontSizeWrites: number[];
+        __restoreConfigSet: () => void;
+      };
+      recorder.__fontSizeWrites = fontSizeWrites;
+      recorder.__restoreConfigSet = () => { configApi.set = originalSet; };
+      configApi.set = (partial: unknown) => {
+        const fontSize = (partial as { terminal?: { fontSize?: unknown } } | null)?.terminal?.fontSize;
+        if (typeof fontSize === 'number') fontSizeWrites.push(fontSize);
+        return originalSet(partial);
+      };
+    });
+  }
+
+  async function readFontSizeWrites() {
+    return page.evaluate(() => (window as unknown as { __fontSizeWrites: number[] }).__fontSizeWrites);
+  }
+
+  async function readGlobalFontSize() {
+    const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+    return (globalConfig as { terminal: { fontSize: number } }).terminal.fontSize;
+  }
+
+  test('Terminal tab font size never commits a value below its range while one is typed', async () => {
+    // Typing "12" passes through "1". The field used to commit every keystroke,
+    // so every mounted terminal ran at 1px for a moment, which crashes xterm's
+    // WebGL renderer (DESKTOP-1J/1K) and refits every PTY. fill() would set "12"
+    // in one step and skip the "1", so this types it.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await recordFontSizeWrites();
+
+    try {
+      const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('12');
+      // The field shows what was typed, mid-entry included.
+      await expect(fontSizeInput).toHaveValue('12');
+      await fontSizeInput.blur();
+
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(12);
+      const writes = await readFontSizeWrites();
+      // Positive control: the typing did write, so the check below is not vacuous.
+      expect(writes).toContain(12);
+      expect(writes.filter((fontSize) => fontSize < 8)).toEqual([]);
+
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreConfigSet: () => void }).__restoreConfigSet());
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size never commits a value above its range while one is typed', async () => {
+    // Typing "100" passes through "10", which is in range, and then reaches
+    // "100", which is not. Typing "40" is out of range at both keystrokes.
+    // Goes RED if the `fontSize <= TERMINAL_FONT_SIZE_MAX` clause is removed
+    // from FontSizeField.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await recordFontSizeWrites();
+
+    try {
+      const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+      await expect(fontSizeInput).toHaveValue('14');
+
+      // "40" (and the "4" before it) is never in range, so nothing is written.
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('40');
+      await expect(fontSizeInput).toHaveValue('40');
+      await fontSizeInput.blur();
+      await expect(fontSizeInput).toHaveValue('14');
+      expect(await readFontSizeWrites()).toEqual([]);
+      expect(await readGlobalFontSize()).toBe(14);
+
+      // "100": "1" is below the range, "10" is in range and commits, "100"
+      // is above the range and does not.
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('100');
+      await expect(fontSizeInput).toHaveValue('100');
+      await fontSizeInput.blur();
+
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(10);
+      const writes = await readFontSizeWrites();
+      expect(writes).toEqual([10]);
+      expect(writes.filter((fontSize) => fontSize > 32)).toEqual([]);
+      expect(writes.filter((fontSize) => fontSize < 8)).toEqual([]);
+      // Blur puts back the committed value, not the rejected "100".
+      await expect(fontSizeInput).toHaveValue('10');
+
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreConfigSet: () => void }).__restoreConfigSet());
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size restores the committed value on blur after an out-of-range or empty entry', async () => {
+    // The draft shows what was typed while the field is focused, even when it
+    // was rejected. Blur drops the draft so the field shows the real setting
+    // again. Goes RED if `onBlur={() => setDraft(null)}` is removed from
+    // FontSizeField.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await recordFontSizeWrites();
+
+    try {
+      const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+      await expect(fontSizeInput).toHaveValue('14');
+
+      // Out of range: shown while typed, not written, replaced on blur.
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('5');
+      await expect(fontSizeInput).toHaveValue('5');
+      expect(await readFontSizeWrites()).toEqual([]);
+      await fontSizeInput.blur();
+      await expect(fontSizeInput).toHaveValue('14');
+      expect(await readGlobalFontSize()).toBe(14);
+
+      // Cleared to empty: shown empty while focused, not written, replaced on blur.
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.press('Backspace');
+      await expect(fontSizeInput).toHaveValue('');
+      expect(await readFontSizeWrites()).toEqual([]);
+      await fontSizeInput.blur();
+      await expect(fontSizeInput).toHaveValue('14');
+      expect(await readGlobalFontSize()).toBe(14);
+      expect(await readFontSizeWrites()).toEqual([]);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreConfigSet: () => void }).__restoreConfigSet());
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size marks a rejected value and drops its draft when the setting changes from outside', async () => {
+    // A rejected keystroke used to be silent, and a held draft hid a change made
+    // elsewhere (another window, an agent, a hand-edited config) until blur.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+
+      const readBorderColor = () => fontSizeInput.evaluate((element) => getComputedStyle(element).borderTopColor);
+      await fontSizeInput.click();
+      const focusedBorderColor = await readBorderColor();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('5');
+      await expect(fontSizeInput).toHaveValue('5');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+      // The warning border really paints, over the focus border it competes with.
+      await expect.poll(readBorderColor).not.toBe(focusedBorderColor);
+      // The range is said inline, not only in a hover tooltip, and the input
+      // points at it for a screen reader.
+      const rangeMessage = page.getByTestId('terminal-font-size-range');
+      await expect(rangeMessage).toHaveText('Use 8 to 32.');
+      const rangeMessageId = await rangeMessage.getAttribute('id');
+      await expect(fontSizeInput).toHaveAttribute('aria-describedby', rangeMessageId ?? '');
+
+      // Still focused, the setting moves from outside the field.
+      await page.evaluate(async () => {
+        const stores = (window as unknown as {
+          __zustandStores: { config: { getState: () => { updateConfig: (partial: { terminal: { fontSize: number } }) => Promise<unknown> } } };
+        }).__zustandStores;
+        await stores.config.getState().updateConfig({ terminal: { fontSize: 18 } });
+      });
+      await expect(fontSizeInput).toBeFocused();
+      await expect(fontSizeInput).toHaveValue('18');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+      await expect(rangeMessage).toHaveCount(0);
+
+      // A value typed after that is a fresh draft against 18, and it commits.
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('16');
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(16);
+      await expect(fontSizeInput).toHaveValue('16');
+    } finally {
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
+  /**
+   * Holds every terminal.fontSize config.set until the test releases it, so the test
+   * decides when each round trip lands. The store's `updateConfig` is not optimistic:
+   * it awaits config.set and then refreshes, so the field's `value` prop moves only
+   * after a release. A held call has not touched the mock config yet.
+   */
+  async function holdFontSizeWrites() {
+    await page.evaluate(() => {
+      const configApi = window.electronAPI.config as unknown as { set: (partial: unknown) => Promise<unknown> };
+      const originalSet = configApi.set;
+      const heldSets: Array<{ fontSize: number; released: boolean; release: () => Promise<void> }> = [];
+      const holder = window as unknown as {
+        __heldFontSizeSets: typeof heldSets;
+        __restoreConfigSet: () => void;
+      };
+      holder.__heldFontSizeSets = heldSets;
+      holder.__restoreConfigSet = () => { configApi.set = originalSet; };
+      configApi.set = (partial: unknown) => {
+        const fontSize = (partial as { terminal?: { fontSize?: unknown } } | null)?.terminal?.fontSize;
+        if (typeof fontSize !== 'number') return originalSet(partial);
+        return new Promise((resolve, reject) => {
+          const held = {
+            fontSize,
+            released: false,
+            release: () => {
+              held.released = true;
+              return originalSet(partial).then(resolve, reject);
+            },
+          };
+          heldSets.push(held);
+        });
+      };
+    });
+  }
+
+  async function readHeldFontSizes() {
+    return page.evaluate(() => (window as unknown as { __heldFontSizeSets: Array<{ fontSize: number }> })
+      .__heldFontSizeSets.map((held) => held.fontSize));
+  }
+
+  /** Lands one held set (it writes the mock config and resolves the store's await). */
+  async function releaseHeldFontSizeSet(index: number) {
+    await page.evaluate((heldIndex) => (window as unknown as {
+      __heldFontSizeSets: Array<{ release: () => Promise<void> }>;
+    }).__heldFontSizeSets[heldIndex].release(), index);
+  }
+
+  /** The font size the renderer's config store holds, which is what the field's value prop reads. */
+  async function readStoreFontSize() {
+    return page.evaluate(() => (window as unknown as {
+      __zustandStores: { config: { getState: () => { globalConfig: { terminal: { fontSize: number } } } } };
+    }).__zustandStores.config.getState().globalConfig.terminal.fontSize);
+  }
+
+  /** Waits two frames, so a store change has been rendered before the field is read. */
+  async function waitForRender() {
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+  }
+
+  /** Lands anything still held, then puts the real config.set back. */
+  async function releaseAndRestoreConfigSet() {
+    await page.evaluate(async () => {
+      const holder = window as unknown as {
+        __heldFontSizeSets: Array<{ released: boolean; release: () => Promise<void> }>;
+        __restoreConfigSet: () => void;
+      };
+      for (const held of holder.__heldFontSizeSets) {
+        if (!held.released) await held.release();
+      }
+      holder.__restoreConfigSet();
+    });
+  }
+
+  test('Terminal tab font size keeps its draft while the store steps through several in-flight commits', async () => {
+    // The store reaches each commit one round trip at a time. With 10 and 16 both
+    // in flight, the store landing on 10 must not drop the "16" the user typed,
+    // or the field flashes "10" under the cursor. Goes RED if FontSizeField tracks
+    // only the latest commit (a single-slot pending value) instead of the list.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await holdFontSizeWrites();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      // "1" is out of range and writes nothing, "10" commits and is held.
+      await fontSizeInput.pressSequentially('10');
+      await expect.poll(readHeldFontSizes).toEqual([10]);
+      // Backspace leaves "1": rejected, and the held 10 stays in flight.
+      await fontSizeInput.press('Backspace');
+      await expect(fontSizeInput).toHaveValue('1');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+      await fontSizeInput.pressSequentially('6');
+      await expect(fontSizeInput).toHaveValue('16');
+      await expect.poll(readHeldFontSizes).toEqual([10, 16]);
+      // Nothing has landed, so the store still holds the starting value.
+      expect(await readStoreFontSize()).toBe(14);
+
+      // The first commit lands and the store moves to 10, a value the draft did not type last.
+      await releaseHeldFontSizeSet(0);
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(10);
+      await waitForRender();
+      await expect(fontSizeInput).toHaveValue('16');
+      await expect(fontSizeInput).toBeFocused();
+
+      // The second lands and the store catches up to what is on screen.
+      await releaseHeldFontSizeSet(1);
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(16);
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(16);
+      await waitForRender();
+      await expect(fontSizeInput).toHaveValue('16');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+    } finally {
+      await releaseAndRestoreConfigSet();
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size keeps a commit in flight across a rejected keystroke', async () => {
+    // "10" commits and is still in flight when "100" is typed and rejected. When the
+    // held commit lands, the draft must survive it: the rejected "100" stays on
+    // screen and marked invalid while focused, and blur puts back the committed 10.
+    // Goes RED if a rejected keystroke clears the pending commits.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await holdFontSizeWrites();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('10');
+      await expect.poll(readHeldFontSizes).toEqual([10]);
+      await fontSizeInput.pressSequentially('0');
+      await expect(fontSizeInput).toHaveValue('100');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+      // The rejected "100" wrote nothing.
+      expect(await readHeldFontSizes()).toEqual([10]);
+
+      await releaseHeldFontSizeSet(0);
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(10);
+      await waitForRender();
+      await expect(fontSizeInput).toHaveValue('100');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+      await expect(fontSizeInput).toBeFocused();
+
+      await fontSizeInput.blur();
+      await expect(fontSizeInput).toHaveValue('10');
+      expect(await readGlobalFontSize()).toBe(10);
+    } finally {
+      await releaseAndRestoreConfigSet();
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size drops commits the store has already passed, so a later outside change to one is not hidden', async () => {
+    // 10 and 16 are both in flight and the store lands on each in turn. The next
+    // keystroke re-slices the pending list, which drops the settled 10. When the
+    // setting then moves to 10 from outside, 10 is no longer one of the draft's own
+    // values, so the field must show it. Goes RED if the settled values are kept
+    // (`const stillPending = inFlight`): 10 still matches, and the stale "160"
+    // stays on screen, marked invalid.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await holdFontSizeWrites();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('10');
+      await expect.poll(readHeldFontSizes).toEqual([10]);
+      await fontSizeInput.press('Backspace');
+      await fontSizeInput.pressSequentially('6');
+      await expect(fontSizeInput).toHaveValue('16');
+      await expect.poll(readHeldFontSizes).toEqual([10, 16]);
+
+      // Both land, in order, so the store ends on 16 with 10 behind it.
+      await releaseHeldFontSizeSet(0);
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(10);
+      await releaseHeldFontSizeSet(1);
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(16);
+      await waitForRender();
+      await expect(fontSizeInput).toHaveValue('16');
+
+      // A rejected keystroke re-slices the pending list against the store's 16.
+      await fontSizeInput.pressSequentially('0');
+      await expect(fontSizeInput).toHaveValue('160');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+
+      // The setting moves to 10 from outside. Nothing is held any more, so the
+      // real config.set goes back before the store is driven.
+      await releaseAndRestoreConfigSet();
+      await page.evaluate(async () => {
+        const stores = (window as unknown as {
+          __zustandStores: { config: { getState: () => { updateConfig: (partial: { terminal: { fontSize: number } }) => Promise<unknown> } } };
+        }).__zustandStores;
+        await stores.config.getState().updateConfig({ terminal: { fontSize: 10 } });
+      });
+      await expect.poll(readStoreFontSize, { timeout: 3000 }).toBe(10);
+      await expect(fontSizeInput).toHaveValue('10');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+      await expect(page.getByTestId('terminal-font-size-range')).toHaveCount(0);
+      await expect(fontSizeInput).toBeFocused();
+    } finally {
+      await releaseAndRestoreConfigSet();
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size rejects 7 and 33 and commits 8 and 32, the edges of its range', async () => {
+    // The range is 8 to 32 inclusive. Goes RED if the lower bound becomes `>`
+    // (8 stops committing) or the upper bound becomes `<` (32 stops committing).
+    // Typing "33" and "32" both pass through "3", which is below the range and
+    // writes nothing, so the writes list shows only the final value.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await recordFontSizeWrites();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    const rangeMessage = page.getByTestId('terminal-font-size-range');
+    const clearRecordedWrites = () => page.evaluate(() => {
+      (window as unknown as { __fontSizeWrites: number[] }).__fontSizeWrites.length = 0;
+    });
+    const typeReplacing = async (text: string) => {
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially(text);
+      await expect(fontSizeInput).toHaveValue(text);
+    };
+
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+
+      // One under and one over: shown and marked while focused, never written,
+      // and blur puts back the committed 14.
+      for (const rejected of ['7', '33']) {
+        await clearRecordedWrites();
+        await typeReplacing(rejected);
+        await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+        await expect(rangeMessage).toHaveText('Use 8 to 32.');
+        expect(await readFontSizeWrites()).toEqual([]);
+        await fontSizeInput.blur();
+        await expect(fontSizeInput).toHaveValue('14');
+        expect(await readGlobalFontSize()).toBe(14);
+        expect(await readFontSizeWrites()).toEqual([]);
+      }
+
+      // Both edges commit, and are not marked invalid.
+      for (const accepted of [8, 32]) {
+        await clearRecordedWrites();
+        await typeReplacing(String(accepted));
+        await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(accepted);
+        await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+        await expect(rangeMessage).toHaveCount(0);
+        expect(await readFontSizeWrites()).toEqual([accepted]);
+        await fontSizeInput.blur();
+        await expect(fontSizeInput).toHaveValue(String(accepted));
+      }
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreConfigSet: () => void }).__restoreConfigSet());
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
+  test('Terminal tab font size does not bring a rejected draft back when the setting returns to the value it was typed against', async () => {
+    // The draft is dropped, not merely hidden, once the store moves to a value it
+    // neither saw nor committed. Kept, "5" would reappear (marked invalid) the
+    // moment the setting came back to 14. Goes RED if the
+    // `if (draft !== null && liveDraft === null) setDraft(null)` line is removed.
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    const fontSizeInput = page.locator('[data-testid="setting-row-terminal.fontSize"] input');
+    const setFontSizeFromOutside = (fontSize: number) => page.evaluate(async (nextFontSize) => {
+      const stores = (window as unknown as {
+        __zustandStores: { config: { getState: () => { updateConfig: (partial: { terminal: { fontSize: number } }) => Promise<unknown> } } };
+      }).__zustandStores;
+      await stores.config.getState().updateConfig({ terminal: { fontSize: nextFontSize } });
+    }, fontSize);
+
+    try {
+      await expect(fontSizeInput).toHaveValue('14');
+      await fontSizeInput.click();
+      await fontSizeInput.press('ControlOrMeta+a');
+      await fontSizeInput.pressSequentially('5');
+      await expect(fontSizeInput).toHaveValue('5');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'true');
+
+      // Still focused, the setting moves away from the value the draft saw.
+      await setFontSizeFromOutside(18);
+      await expect(fontSizeInput).toHaveValue('18');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+
+      // And back to it. The old draft must not match 14 again.
+      await setFontSizeFromOutside(14);
+      await expect(fontSizeInput).toHaveValue('14');
+      await expect(fontSizeInput).toHaveAttribute('aria-invalid', 'false');
+      await expect(page.getByTestId('terminal-font-size-range')).toHaveCount(0);
+      await expect(fontSizeInput).toBeFocused();
+    } finally {
+      // Restore so later tests are unaffected.
+      await fontSizeInput.fill('14');
+      await fontSizeInput.blur();
+      await expect.poll(readGlobalFontSize, { timeout: 3000 }).toBe(14);
+      await closeSettings();
+    }
+  });
+
   test('Terminal tab Font Family offers detected system fonts and accepts a typed value', async () => {
     // FontResolver is mocked (mock-electron-api.js font.getAvailable) to a
     // fixed list so this stays deterministic across dev machines and CI.
