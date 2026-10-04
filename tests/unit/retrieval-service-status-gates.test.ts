@@ -339,6 +339,23 @@ describe('the retrieval service status paths', () => {
       expect(branchSizesMock.get).not.toHaveBeenCalled();
     });
 
+    // The card sits in a System tab, which works with no project open. A project
+    // that holds code has a figure to show without one: the index knows its size,
+    // so there is no branch to read.
+    //
+    // Red-green: the early return in codeStatusFor, widened to
+    // `if (!projectId || !projectPath) return undefined;` (dropping its
+    // `progress.documents === 0 &&` half). The line then says nothing here.
+    it('reads what a project holds with no project open, without reading a branch', async () => {
+      indexState.byProject.set('held-a', caughtUp());
+      indexState.byProject.set('held-b', { ...caughtUp(), code: { files: 40, chunks: 400 } });
+
+      const status = await retrievalService.getStatus(makeContext(null, [folderProject('held-a'), folderProject('held-b')]));
+
+      expect(status.code).toMatchObject({ state: 'ready', files: 40, passages: 400, embedded: 400 });
+      expect(branchSizesMock.get).not.toHaveBeenCalled();
+    });
+
     it('says nothing when the open project is not in the registry', async () => {
       indexState.byProject.set('ghost-known', caughtUp());
 

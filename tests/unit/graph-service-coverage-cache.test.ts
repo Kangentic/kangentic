@@ -17,6 +17,8 @@ const storeState = {
   /** Passages without the selected model's vector, by corpus. */
   waiting: new Map<string, number>([['task', 2]]),
   waitingModelTags: [] as string[],
+  /** The width and model the stored vectors were written with; null before any. */
+  signature: null as { dimensions: number; modelTag: string } | null,
 };
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => ({}) }));
@@ -44,8 +46,8 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     knownConversationDocIds(): string[] {
       return ['doc-1'];
     }
-    storedEmbeddingSignature(): null {
-      return null;
+    storedEmbeddingSignature(): { dimensions: number; modelTag: string } | null {
+      return storeState.signature;
     }
     maxChunkId(): number {
       return 4;
@@ -90,6 +92,7 @@ describe('graph service coverage cache', () => {
     storeState.corpusTotalsCalls = 0;
     storeState.waiting = new Map([['task', 2]]);
     storeState.waitingModelTags = [];
+    storeState.signature = null;
   });
 
   it('reads coverage once while the index is unchanged', () => {
@@ -195,5 +198,27 @@ describe('graph service coverage cache', () => {
     const second = service.getSnapshotWire('project-a', 'bge@2').index.corpora;
     expect(second.find((entry) => entry.corpus === 'task')).toMatchObject({ chunks: 3, embeddedChunks: 3 });
     expect(storeState.corpusTotalsCalls).toBe(1);
+  });
+
+  // The size counts every vector on disk, whichever model wrote it: after a model
+  // change the old model's vectors keep their space until the re-embed replaces
+  // them, while the shares above count only the selected model's. Nothing else
+  // here has a stored width, so no other case sees the vectors' share of the size.
+  //
+  // Red-green: the vectors summed from `counts.corpora` instead of `totals` in
+  // `indexSummaryFor`. The task corpus then reads no embedded passage (all 3 wait
+  // for the new model) and the size falls to its text alone, 300.
+  it('sizes every stored vector, whichever model wrote it, while the shares count only the selected model\'s', () => {
+    // The task corpus holds 3 passages, one of them embedded by the previous
+    // model, whose width the store reports.
+    storeState.signature = { dimensions: 100, modelTag: 'bge@1' };
+    storeState.waiting = new Map([['task', 3]]);
+    const service = createGraphService({ getDb: () => ({}) as never });
+
+    const { index } = service.getSnapshotWire('project-a', 'bge@2');
+
+    expect(index.corpora.find((entry) => entry.corpus === 'task')).toMatchObject({ chunks: 3, embeddedChunks: 0 });
+    // 300 bytes of text, and one vector of 100 floats at 4 bytes each.
+    expect(index.storageBytes).toBe(300 + 100 * 4);
   });
 });

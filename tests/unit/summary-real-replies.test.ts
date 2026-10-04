@@ -119,6 +119,20 @@ describe('a real Haiku reply', () => {
     expect(describeReplyGaps(reply, 2)?.blank).toEqual([0]);
   });
 
+  // A note is the one group its first character opens, closed at its end. A line
+  // whose first group never closes is not that, so it stays a summary. No
+  // capture holds one, so the reply is written by hand.
+  //
+  // Red-green: `return depth === 0` at the end of `isNoteInPlaceOfSummary`, as
+  // `return true`. The line starts and ends with a parenthesis, so it is then
+  // read as a note and blanked, and the first assertion finds no summary.
+  it('keeps a line whose opening parenthesis never closes, which is no note', () => {
+    const reply = 'D1: (Fixed the crash on resume (see the log)';
+
+    expect(parseSummaryReply(reply, 1).get(0)).toBe('(Fixed the crash on resume (see the log)');
+    expect(describeReplyGaps(reply, 1)).toBeNull();
+  });
+
   // Seven labels came back, so this is not a reply with no usable label: its
   // three notes are passed over, and nothing is asked again one task at a time.
   it('passes the three over in a pass without asking any task again on its own', async () => {

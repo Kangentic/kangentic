@@ -565,6 +565,31 @@ describe('task summaries in every project', () => {
       expect(status.sources?.conversations).toEqual({ count: 7, percent: null, minutesLeft: null });
     });
 
+    // The Task summaries line withholds its check from summaries another agent or
+    // model wrote, and draws "Summaries rewritten" while Rebuild's rewrites land.
+    // Both read `choice`, the writer a summary would be written with now, which
+    // only main resolves. The worker's counts carry none, so main adds it, on the
+    // Settings status and on what the map's snapshot reads (`summaryActivityFor`).
+    // The project is indexed: a sum over no project has no choice either way.
+    //
+    // Red-green: `choice: summaryChoice` in `summaryActivityFor`. Make it
+    // `choice: null` and both the card and the map's provider read null.
+    it('carries the resolved writer on the card and on what the map reads', async () => {
+      indexState.byProject.set('choice-open', { conversations: 5, conversationChunks: 50, waiting: 0, written: 10, finishedTasks: 10 });
+      const context = makeContext('choice-open', [folderProject('choice-open')]);
+
+      // Nothing is resolved yet: this poll starts the resolve and reads no writer.
+      expect((await retrievalService.getStatus(context)).summaries?.choice).toBeNull();
+      await untilSettled();
+      expect((await retrievalService.getStatus(context)).summaries?.choice).toEqual(CHOICE);
+
+      const { graphService } = await import('../../src/main/retrieval/graph-facade');
+      retrievalService.attach(context);
+      const provider = vi.mocked(graphService.setSummaryActivity).mock.calls.at(-1)?.[0];
+      if (!provider) throw new Error('attach gave the graph no summary activity provider');
+      expect(provider('choice-open').choice).toEqual(CHOICE);
+    });
+
     it('reads idle while nothing is writing any project, so a project behind reads "N of M" there', async () => {
       indexState.byProject.set('idle-open', { conversations: 5, conversationChunks: 50, waiting: 0, written: 10, finishedTasks: 10 });
       indexState.byProject.set('idle-behind', { conversations: 2, conversationChunks: 20, waiting: 0, written: 0, finishedTasks: 6 });

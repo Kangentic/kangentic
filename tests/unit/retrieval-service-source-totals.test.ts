@@ -214,6 +214,26 @@ describe('the worker\'s source totals cache', () => {
     expect(status.hasVec).toBe(true);
   });
 
+  // Vector support is a flag on each project's own connection. Semantic search
+  // can run when any of them has it, wherever in the read that project comes: one
+  // connection without it, read last, does not turn the whole read to keywords.
+  //
+  // Red-green: `hasVec = hasVec || hasVecSupport(db)` in `readAll`, as
+  // `hasVec = hasVecSupport(db)`. The last project read then decides, and the
+  // first case reads false.
+  it('reports vector support when any project\'s connection has it, whichever is read last', async () => {
+    setConversations('with-vec', 3);
+    setConversations('without-vec', 2);
+    vi.mocked(hasVecSupport).mockImplementation((db) => (db as unknown as { projectId: string }).projectId === 'with-vec');
+    try {
+      expect((await reader().readAll(dbFor, params(['with-vec', 'without-vec']))).hasVec).toBe(true);
+      expect((await reader().readAll(dbFor, params(['without-vec', 'with-vec']))).hasVec).toBe(true);
+      expect((await reader().readAll(dbFor, params(['without-vec']))).hasVec).toBe(false);
+    } finally {
+      vi.mocked(hasVecSupport).mockImplementation(() => true);
+    }
+  });
+
   it('leaves out a project that cannot be read, and reads the rest', async () => {
     const statusReader = reader();
     setConversations('healthy', 3);
