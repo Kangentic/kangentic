@@ -112,6 +112,15 @@ export class WorkflowRepository {
     return this.getById(id)!;
   }
 
+  /**
+   * Store where hands placed a not-started workflow's cards, and nothing else.
+   * The revision stays as it is: moving a card changes no plan, so a save the
+   * workflow agent built on its last read must still go through (#732 board 2c).
+   */
+  writeDraftLayout(id: string, draft: WorkflowDraft): void {
+    this.db.prepare("UPDATE workflows SET draft_json = ? WHERE id = ? AND state = 'draft'").run(JSON.stringify(draft), id);
+  }
+
   rename(id: string, title: string): Workflow {
     const trimmed = title.trim();
     if (!trimmed) throw new Error('A workflow needs a name.');

@@ -9,6 +9,7 @@ import { useConfigStore } from './stores/config-store';
 import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
+import { useWorkflowStore } from './stores/workflow-store';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
@@ -1148,6 +1149,12 @@ export function App() {
         }
       }));
     }
+    // A workflow or its tasks changed, whoever changed it: the Workflows view
+    // (and its segment's count) reloads that one workflow.
+    const workflows = window.electronAPI?.workflows;
+    if (workflows?.onChanged) {
+      cleanups.push(workflows.onChanged((changed) => useWorkflowStore.getState().handleChanged(changed)));
+    }
 
     return () => {
       cleanups.forEach((fn) => fn());
@@ -1246,6 +1253,8 @@ if (import.meta.hot) {
     useBoardStore.getState().loadBoardProfiles();
     useBoardStore.getState().loadAutomations();
     useBacklogStore.getState().loadBacklog();
+    useWorkflowStore.getState().loadWorkflows();
+    useWorkflowStore.getState().loadDetail();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
     // Usage dashboard Pattern B: refetch the composite payload from

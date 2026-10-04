@@ -42,6 +42,7 @@ import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-ove
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-runner';
 import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
+import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
@@ -331,6 +332,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerSessionHandlers(context);
   registerTurnEndAutomations(context);
   registerWorkflowEngine(context);
+  registerWorkflowHandlers(context);
   registerLeftoverProcessHandlers(context);
   registerTransientSessionHandlers(context);
   registerTranscriptionHandlers(context);

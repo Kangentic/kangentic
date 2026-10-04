@@ -424,6 +424,56 @@
     return Object.assign({}, task, { attachment_count: getAttachmentCount(task.id) });
   }
 
+  /** A new task row, as tasks.create and a workflow's Start and Add task write one. */
+  function buildTaskRow(input, position) {
+    return {
+      id: uuid(),
+      display_id: nextDisplayId++,
+      title: input.title,
+      description: input.description || '',
+      swimlane_id: input.swimlane_id,
+      position: position,
+      agent: null,
+      session_id: null,
+      worktree_path: null,
+      worktree_folder: null,
+      worktree_skip_reason: null,
+      branch_name: input.customBranchName || null,
+      pushed_branch: null,
+      pr_number: null,
+      pr_url: null,
+      pr_state: null,
+      pr_merge_readiness: null,
+      base_branch: input.baseBranch || null,
+      resolved_base_branch: null,
+      use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
+      labels: input.labels || [],
+      priority: input.priority || 0,
+      model_override: input.model_override || null,
+      effort_override: input.effort_override || null,
+      agent_override: input.agent_override || null,
+      permission_mode: input.permission_mode || null,
+      // Deliberately a plain passthrough, NOT a copy of the repository's
+      // profile-vs-pin exclusivity: a dialog that sent both would then show
+      // up as a failure here instead of being silently corrected.
+      profile_id: input.profile_id || null,
+      run_mode: input.run_mode || 'column_settings',
+      auto_command: input.auto_command || null,
+      attachment_count: 0,
+      archived_at: null,
+      detail_view_state: null,
+      workflow_id: null,
+      workflow_project_id: null,
+      route_start_swimlane_id: null,
+      route_last_swimlane_id: null,
+      skipped_swimlane_ids: [],
+      canvas_x: null,
+      canvas_y: null,
+      created_at: now(),
+      updated_at: now(),
+    };
+  }
+
   function withAttachmentCounts(taskList) {
     return taskList.map(withAttachmentCount);
   }
@@ -1150,46 +1200,8 @@
         var sameColumn = tasks.filter(function (t) {
           return t.swimlane_id === input.swimlane_id;
         });
-        var taskId = uuid();
-        var task = {
-          id: taskId,
-          display_id: nextDisplayId++,
-          title: input.title,
-          description: input.description || '',
-          swimlane_id: input.swimlane_id,
-          position: sameColumn.length,
-          agent: null,
-          session_id: null,
-          worktree_path: null,
-          worktree_folder: null,
-          worktree_skip_reason: null,
-          branch_name: input.customBranchName || null,
-          pushed_branch: null,
-          pr_number: null,
-          pr_url: null,
-          pr_state: null,
-          pr_merge_readiness: null,
-          base_branch: input.baseBranch || null,
-          resolved_base_branch: null,
-          use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
-          labels: input.labels || [],
-          priority: input.priority || 0,
-          model_override: input.model_override || null,
-          effort_override: input.effort_override || null,
-          agent_override: input.agent_override || null,
-          permission_mode: input.permission_mode || null,
-          // Deliberately a plain passthrough, NOT a copy of the repository's
-          // profile-vs-pin exclusivity: a dialog that sent both would then show
-          // up as a failure here instead of being silently corrected.
-          profile_id: input.profile_id || null,
-          run_mode: input.run_mode || 'column_settings',
-          auto_command: input.auto_command || null,
-          attachment_count: 0,
-          archived_at: null,
-          detail_view_state: null,
-          created_at: now(),
-          updated_at: now(),
-        };
+        var task = buildTaskRow(input, sameColumn.length);
+        var taskId = task.id;
         tasks.push(task);
         // Process pending attachments
         if (input.pendingAttachments) {
@@ -4651,6 +4663,429 @@
       },
       descriptor: null,
     },
+
+    // Workflows. In-memory, on the mock's one set of swimlanes. Seed from a spec
+    // (read lazily on the first call, like __mockAutomations):
+    //   window.__mockWorkflows = [ { workflow: <Workflow row>, projectId?: 'p1' } ]
+    //   window.__mockWorkflowLinks = [ { workflow_id, blocker_task_id, blocked_task_id } ]
+    // A started workflow's tasks are ordinary task fixtures carrying workflow_id.
+    // The engine does not run here: Start creates the tasks in To Do and stops.
+    // window.__mockFireWorkflowChanged({ projectId, workflowId }) pushes a change.
+    workflows: (function () {
+      var entries = [];
+      var links = [];
+      var hydrated = false;
+      var listeners = [];
+
+      function hydrate() {
+        if (hydrated) return;
+        hydrated = true;
+        (window.__mockWorkflows || []).forEach(function (seed) {
+          var row = seed.workflow || seed;
+          entries.push({
+            projectId: seed.projectId || null,
+            workflow: Object.assign({
+              brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
+              created_at: now(), started_at: null, finished_at: null,
+            }, JSON.parse(JSON.stringify(row))),
+          });
+        });
+        (window.__mockWorkflowLinks || []).forEach(function (link) { links.push(Object.assign({}, link)); });
+      }
+
+      function homeOf(entry) { return entry.projectId || currentProjectId; }
+
+      function requireEntry(projectId, workflowId) {
+        hydrate();
+        var entry = entries.find(function (candidate) { return candidate.workflow.id === workflowId; });
+        if (!entry) throw new Error('No workflow "' + workflowId + '" in this project.');
+        return entry;
+      }
+
+      function emit(projectId, workflowId, boardChanged) {
+        var event = { projectId: projectId, workflowId: workflowId };
+        setTimeout(function () { listeners.slice().forEach(function (fn) { fn(event); }); }, 0);
+        if (boardChanged && window.__mockFireTaskMovedByAutomation) window.__mockFireTaskMovedByAutomation(projectId);
+      }
+      window.__mockFireWorkflowChanged = function (event) {
+        listeners.slice().forEach(function (fn) { fn(event); });
+      };
+
+      // KEEP IN SYNC with src/shared/workflow-route.ts.
+      function candidates() {
+        return swimlanes.filter(function (lane) {
+          return !lane.is_archived && !lane.is_ghost && lane.role !== 'todo' && lane.role !== 'done';
+        }).sort(function (left, right) { return left.position - right.position; });
+      }
+      function routeColumns(route) {
+        var list = candidates();
+        if (list.length === 0) return [];
+        var start = route.route_start_swimlane_id ? list.findIndex(function (lane) { return lane.id === route.route_start_swimlane_id; }) : 0;
+        var last = route.route_last_swimlane_id ? list.findIndex(function (lane) { return lane.id === route.route_last_swimlane_id; }) : list.length - 1;
+        var from = start >= 0 ? start : 0;
+        var to = last >= 0 ? last : list.length - 1;
+        if (to < from) return [];
+        var skipped = route.skipped_swimlane_ids || [];
+        return list.slice(from, to + 1).filter(function (lane) { return skipped.indexOf(lane.id) === -1; });
+      }
+      function routeFromColumns(ids) {
+        var list = candidates();
+        var first = list.findIndex(function (lane) { return ids.indexOf(lane.id) !== -1; });
+        if (first < 0) return null;
+        var last = first;
+        list.forEach(function (lane, index) { if (ids.indexOf(lane.id) !== -1) last = index; });
+        return {
+          route_start_swimlane_id: first === 0 ? null : list[first].id,
+          route_last_swimlane_id: last === list.length - 1 ? null : list[last].id,
+          skipped_swimlane_ids: list.slice(first, last + 1).filter(function (lane) { return ids.indexOf(lane.id) === -1; }).map(function (lane) { return lane.id; }),
+        };
+      }
+      function laneOf(id) { return swimlanes.find(function (lane) { return lane.id === id; }); }
+      function todoLane() { return swimlanes.find(function (lane) { return lane.role === 'todo'; }); }
+      function doneLane() { return swimlanes.find(function (lane) { return lane.role === 'done'; }); }
+      function step(lane, state) {
+        return { swimlaneId: lane.id, name: lane.name, color: lane.color || null, icon: lane.icon || null, state: state, finishedAt: null };
+      }
+
+      function createdTasks(workflowId) {
+        return tasks.concat(archivedTasks).filter(function (task) { return task.workflow_id === workflowId; });
+      }
+      function placeOf(task) {
+        var lane = laneOf(task.swimlane_id);
+        if (task.archived_at || (lane && lane.role === 'done')) return 'done';
+        return lane && lane.role === 'todo' ? 'todo' : 'working';
+      }
+      function stepsOf(task, place) {
+        var onRoute = routeColumns(task).map(function (lane) { return lane.id; });
+        var current = laneOf(task.swimlane_id);
+        return candidates().map(function (lane) {
+          if (place === 'working' && current && lane.id === current.id) return step(lane, 'current');
+          if (onRoute.indexOf(lane.id) === -1) return step(lane, 'skipped');
+          if (place === 'done') return step(lane, 'done');
+          if (place === 'working' && current && lane.position < current.position) return step(lane, 'done');
+          return step(lane, 'ahead');
+        });
+      }
+
+      function detail(entry) {
+        var workflow = entry.workflow;
+        var home = homeOf(entry);
+        var names = {};
+        var project = projects.find(function (candidate) { return candidate.id === home; });
+        names[home] = project ? project.name : 'Project';
+        if (workflow.state === 'draft') {
+          var draft = workflow.draft || { tasks: [], links: [] };
+          return {
+            workflow: JSON.parse(JSON.stringify(workflow)),
+            homeProjectId: home,
+            projectNames: names,
+            tasks: draft.tasks.map(function (planned) {
+              return {
+                key: planned.key, projectId: home, task: null, planned: Object.assign({}, planned),
+                title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
+                steps: stepsOf(planned, 'planned'), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
+              };
+            }),
+            links: draft.links.map(function (link) { return { blockerKey: link.blocker, blockedKey: link.blocked }; }),
+          };
+        }
+        var created = createdTasks(workflow.id);
+        var keys = created.map(function (task) { return task.id; });
+        return {
+          workflow: JSON.parse(JSON.stringify(workflow)),
+          homeProjectId: home,
+          projectNames: names,
+          tasks: created.map(function (task) {
+            var place = placeOf(task);
+            return {
+              key: task.id, projectId: home, task: withAttachmentCount(task), planned: null,
+              title: task.title, displayId: task.display_id, place: place, swimlaneId: task.swimlane_id,
+              steps: stepsOf(task, place), canvasX: task.canvas_x == null ? null : task.canvas_x, canvasY: task.canvas_y == null ? null : task.canvas_y,
+            };
+          }),
+          links: links.filter(function (link) {
+            return link.workflow_id === workflow.id && keys.indexOf(link.blocker_task_id) !== -1 && keys.indexOf(link.blocked_task_id) !== -1;
+          }).map(function (link) { return { blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }; }),
+        };
+      }
+
+      function summary(entry) {
+        var workflow = entry.workflow;
+        if (workflow.state === 'draft') {
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0 };
+        }
+        var created = createdTasks(workflow.id);
+        var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
+        created.forEach(function (task) {
+          var place = placeOf(task);
+          if (place !== 'todo') { counts[place] += 1; return; }
+          var waiting = links.some(function (link) {
+            if (link.blocked_task_id !== task.id) return false;
+            var blocker = created.find(function (candidate) { return candidate.id === link.blocker_task_id; });
+            return !blocker || placeOf(blocker) !== 'done';
+          });
+          counts[waiting ? 'blocked' : 'queued'] += 1;
+        });
+        return {
+          workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
+          inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked,
+        };
+      }
+
+      function editDraft(entry, edit) {
+        if (entry.workflow.state !== 'draft') throw new Error('"' + entry.workflow.title + '" has started.');
+        var draft = JSON.parse(JSON.stringify(entry.workflow.draft || { tasks: [], links: [] }));
+        edit(draft);
+        entry.workflow.draft = draft;
+        entry.workflow.revision += 1;
+        emit(homeOf(entry), entry.workflow.id, false);
+      }
+      function wouldLoop(edges, blocker, blocked) {
+        var seen = {};
+        var stack = [blocker];
+        while (stack.length > 0) {
+          var current = stack.pop();
+          if (current === blocked) return true;
+          if (seen[current]) continue;
+          seen[current] = true;
+          edges.forEach(function (edge) { if (edge.blocked === current) stack.push(edge.blocker); });
+        }
+        return false;
+      }
+      function requireTask(entry, key) {
+        var task = createdTasks(entry.workflow.id).find(function (candidate) { return candidate.id === key; });
+        if (!task) throw new Error('That task is no longer in this workflow.');
+        return task;
+      }
+      function membership(task, entry, route) {
+        task.workflow_id = entry.workflow.id;
+        task.workflow_project_id = homeOf(entry);
+        task.route_start_swimlane_id = route.route_start_swimlane_id;
+        task.route_last_swimlane_id = route.route_last_swimlane_id;
+        task.skipped_swimlane_ids = route.skipped_swimlane_ids;
+      }
+      function release(task) {
+        task.workflow_id = null;
+        task.workflow_project_id = null;
+        task.route_start_swimlane_id = null;
+        task.route_last_swimlane_id = null;
+        task.skipped_swimlane_ids = [];
+      }
+
+      return {
+        list: async function (projectId) {
+          hydrate();
+          return entries
+            .filter(function (entry) { return homeOf(entry) === projectId && entry.workflow.state !== 'done'; })
+            .map(summary);
+        },
+        get: async function (projectId, workflowId) {
+          return detail(requireEntry(projectId, workflowId));
+        },
+        create: async function (projectId, sourceTaskId) {
+          hydrate();
+          var source = sourceTaskId ? tasks.find(function (task) { return task.id === sourceTaskId; }) : null;
+          var held = entries.filter(function (entry) { return entry.workflow.state !== 'done'; }).map(function (entry) { return entry.workflow.color_slot; });
+          var slot = 1;
+          while (held.indexOf(slot) !== -1 && slot < 6) slot += 1;
+          var workflow = {
+            id: uuid(), title: 'Untitled workflow',
+            brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
+            source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
+            color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null,
+          };
+          entries.unshift({ projectId: projectId, workflow: workflow });
+          emit(projectId, workflow.id, false);
+          return JSON.parse(JSON.stringify(workflow));
+        },
+        rename: async function (projectId, workflowId, title) {
+          var entry = requireEntry(projectId, workflowId);
+          if (!String(title || '').trim()) throw new Error('A workflow needs a name.');
+          entry.workflow.title = String(title).trim();
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, false);
+          return JSON.parse(JSON.stringify(entry.workflow));
+        },
+        delete: async function (projectId, workflowId) {
+          var entry = requireEntry(projectId, workflowId);
+          if (entry.workflow.state !== 'draft') {
+            createdTasks(workflowId).forEach(function (task) {
+              if (placeOf(task) !== 'done') release(task);
+            });
+          }
+          entries = entries.filter(function (candidate) { return candidate !== entry; });
+          links = links.filter(function (link) { return link.workflow_id !== workflowId; });
+          emit(homeOf(entry), workflowId, true);
+        },
+        start: async function (projectId, workflowId) {
+          var entry = requireEntry(projectId, workflowId);
+          var draft = entry.workflow.draft || { tasks: [], links: [] };
+          if (entry.workflow.state !== 'draft') throw new Error('"' + entry.workflow.title + '" has already started.');
+          if (draft.tasks.length === 0) throw new Error('"' + entry.workflow.title + '" has no tasks yet.');
+          var todo = todoLane();
+          var idByKey = {};
+          draft.tasks.forEach(function (planned) {
+            var row = buildTaskRow({ title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
+              tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+            membership(row, entry, planned);
+            row.canvas_x = planned.canvas_x;
+            row.canvas_y = planned.canvas_y;
+            tasks.push(row);
+            idByKey[planned.key] = row.id;
+          });
+          draft.links.forEach(function (link) {
+            links.push({ workflow_id: workflowId, blocker_task_id: idByKey[link.blocker], blocked_task_id: idByKey[link.blocked] });
+          });
+          var source = entry.workflow.source_task_id ? tasks.find(function (task) { return task.id === entry.workflow.source_task_id; }) : null;
+          if (source && laneOf(source.swimlane_id) && laneOf(source.swimlane_id).role === 'todo' && doneLane()) {
+            source.swimlane_id = doneLane().id;
+            source.archived_at = now();
+          }
+          entry.workflow.state = 'running';
+          entry.workflow.draft = null;
+          entry.workflow.started_at = now();
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+        },
+        pause: async function (projectId, workflowId) {
+          var entry = requireEntry(projectId, workflowId);
+          if (entry.workflow.state !== 'running') throw new Error('"' + entry.workflow.title + '" is not running.');
+          entry.workflow.state = 'paused';
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, false);
+        },
+        resume: async function (projectId, workflowId) {
+          var entry = requireEntry(projectId, workflowId);
+          if (entry.workflow.state !== 'paused') throw new Error('"' + entry.workflow.title + '" is not paused.');
+          entry.workflow.state = 'running';
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, false);
+        },
+        addTask: async function (projectId, workflowId, input) {
+          var entry = requireEntry(projectId, workflowId);
+          var title = String((input && input.title) || '').trim();
+          if (!title) throw new Error('The task needs a title.');
+          if (entry.workflow.state === 'draft') {
+            var key = '';
+            editDraft(entry, function (draft) {
+              var index = draft.tasks.length + 1;
+              var used = draft.tasks.map(function (task) { return task.key; });
+              while (used.indexOf('task-' + index) !== -1) index += 1;
+              key = 'task-' + index;
+              draft.tasks.push({
+                key: key, title: title, description: input.description || '', project_id: null, existing_task_id: null,
+                route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+                labels: input.labels || [], priority: input.priority || 0, canvas_x: null, canvas_y: null,
+              });
+            });
+            return key;
+          }
+          var todo = todoLane();
+          var row = buildTaskRow({ title: title, description: input.description, swimlane_id: todo.id, labels: input.labels, priority: input.priority },
+            tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+          membership(row, entry, { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [] });
+          tasks.push(row);
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+          return row.id;
+        },
+        updateTask: async function (projectId, workflowId, key, input) {
+          var entry = requireEntry(projectId, workflowId);
+          editDraft(entry, function (draft) {
+            var planned = draft.tasks.find(function (task) { return task.key === key; });
+            if (!planned) throw new Error('That task is no longer in the plan.');
+            if (input.title !== undefined) {
+              if (!String(input.title).trim()) throw new Error('The task needs a title.');
+              planned.title = String(input.title).trim();
+            }
+            if (input.description !== undefined) planned.description = input.description;
+            if (input.labels !== undefined) planned.labels = input.labels;
+            if (input.priority !== undefined) planned.priority = input.priority;
+          });
+        },
+        removeTask: async function (projectId, workflowId, key) {
+          var entry = requireEntry(projectId, workflowId);
+          if (entry.workflow.state === 'draft') {
+            editDraft(entry, function (draft) {
+              draft.tasks = draft.tasks.filter(function (task) { return task.key !== key; });
+              draft.links = draft.links.filter(function (link) { return link.blocker !== key && link.blocked !== key; });
+            });
+            return;
+          }
+          var task = requireTask(entry, key);
+          if (placeOf(task) === 'done') throw new Error('#' + task.display_id + ' is done and stays with its workflow.');
+          release(task);
+          links = links.filter(function (link) { return link.blocker_task_id !== key && link.blocked_task_id !== key; });
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+        },
+        setLink: async function (projectId, workflowId, blockerKey, blockedKey, linked) {
+          var entry = requireEntry(projectId, workflowId);
+          if (blockerKey === blockedKey) throw new Error('A task cannot wait for itself.');
+          if (entry.workflow.state === 'draft') {
+            editDraft(entry, function (draft) {
+              draft.links = draft.links.filter(function (link) { return !(link.blocker === blockerKey && link.blocked === blockedKey); });
+              if (!linked) return;
+              if (wouldLoop(draft.links, blockerKey, blockedKey)) throw new Error('That link closes a loop. A workflow\'s links cannot go in a circle.');
+              draft.links.push({ blocker: blockerKey, blocked: blockedKey });
+            });
+            return;
+          }
+          var blocker = requireTask(entry, blockerKey);
+          var blocked = requireTask(entry, blockedKey);
+          links = links.filter(function (link) { return !(link.blocker_task_id === blocker.id && link.blocked_task_id === blocked.id); });
+          if (linked) {
+            if (placeOf(blocked) !== 'todo') throw new Error('#' + blocked.display_id + ' has started. Only a task in To Do can wait for another.');
+            if (placeOf(blocker) === 'done') throw new Error('#' + blocker.display_id + ' is done, so waiting for it changes nothing.');
+            var edges = links.filter(function (link) { return link.workflow_id === workflowId; }).map(function (link) { return { blocker: link.blocker_task_id, blocked: link.blocked_task_id }; });
+            if (wouldLoop(edges, blocker.id, blocked.id)) throw new Error('#' + blocked.display_id + ' waiting for #' + blocker.display_id + ' closes a loop.');
+            links.push({ workflow_id: workflowId, blocker_task_id: blocker.id, blocked_task_id: blocked.id });
+          }
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+        },
+        setRoute: async function (projectId, workflowId, key, swimlaneIds) {
+          var entry = requireEntry(projectId, workflowId);
+          var route = routeFromColumns(swimlaneIds || []);
+          if (!route) throw new Error('A task visits at least one column.');
+          if (entry.workflow.state === 'draft') {
+            editDraft(entry, function (draft) {
+              var planned = draft.tasks.find(function (task) { return task.key === key; });
+              if (!planned) throw new Error('That task is no longer in the plan.');
+              Object.assign(planned, route);
+            });
+            return;
+          }
+          Object.assign(requireTask(entry, key), route);
+          entry.workflow.revision += 1;
+          emit(homeOf(entry), workflowId, true);
+        },
+        setPositions: async function (projectId, workflowId, positions) {
+          var entry = requireEntry(projectId, workflowId);
+          var byKey = {};
+          (positions || []).forEach(function (position) { byKey[position.key] = position; });
+          function place(target, key) {
+            if (positions === null) { target.canvas_x = null; target.canvas_y = null; return; }
+            if (!byKey[key]) return;
+            target.canvas_x = Math.round(byKey[key].x);
+            target.canvas_y = Math.round(byKey[key].y);
+          }
+          if (entry.workflow.state === 'draft') {
+            (entry.workflow.draft || { tasks: [] }).tasks.forEach(function (planned) { place(planned, planned.key); });
+          } else {
+            createdTasks(workflowId).forEach(function (task) { place(task, task.id); });
+          }
+          emit(homeOf(entry), workflowId, false);
+        },
+        onChanged: function (callback) {
+          listeners.push(callback);
+          return function () {
+            var index = listeners.indexOf(callback);
+            if (index !== -1) listeners.splice(index, 1);
+          };
+        },
+      };
+    })(),
 
     // Agent Monitor. Machine-global: no projectId, by design.
     // Seed rows from a spec with:

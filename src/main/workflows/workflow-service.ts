@@ -25,6 +25,7 @@ import { sendToRenderer } from '../ipc/send-to-renderer';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { wakeWorkflowEngine } from './workflow-wake';
+import { notifyWorkflowChanged } from './workflow-changed';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -46,8 +47,11 @@ export class WorkflowRequestError extends Error {
   }
 }
 
-/** The most tasks one workflow plans, a sanity bound, not a design limit. */
-const MAX_WORKFLOW_TASKS = 60;
+/**
+ * The most tasks one workflow plans, a sanity bound, not a design limit. 100
+ * is what the canvas is measured at (the drag-perf run at 30 and 100 cards).
+ */
+export const MAX_WORKFLOW_TASKS = 100;
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -79,14 +83,14 @@ function projectRepos(projectId: string): { db: Database.Database; tasks: TaskRe
   return { db, tasks: new TaskRepository(db), lanes: new SwimlaneRepository(db).list() };
 }
 
-function requireWorkflow(homeProjectId: string, workflowId: string): Workflow {
+export function requireWorkflow(homeProjectId: string, workflowId: string): Workflow {
   const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
   if (!workflow) throw new WorkflowRequestError(`No workflow "${workflowId}" in this project. List them with kangentic_list_workflows.`);
   return workflow;
 }
 
 /** Every created task of a workflow, across every project, with its project id. */
-function workflowTasks(context: IpcContext, homeProjectId: string, workflowId: string): Array<{ projectId: string; task: Task }> {
+export function workflowTasks(context: IpcContext, homeProjectId: string, workflowId: string): Array<{ projectId: string; task: Task }> {
   const found: Array<{ projectId: string; task: Task }> = [];
   for (const project of context.projectRepo.list()) {
     let tasks: Task[];
@@ -149,7 +153,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
   return { workflow, homeProjectId, tasks };
 }
 
-function safeLanes(projectId: string): Swimlane[] {
+export function safeLanes(projectId: string): Swimlane[] {
   try {
     return new SwimlaneRepository(getProjectDb(projectId)).list();
   } catch {
@@ -173,7 +177,9 @@ export function createWorkflow(
   homeProjectId: string,
   input: { title?: string | null; brief?: string | null; sourceTaskId?: string | null },
 ): Workflow {
-  return new WorkflowRepository(getProjectDb(homeProjectId)).create(input);
+  const created = new WorkflowRepository(getProjectDb(homeProjectId)).create(input);
+  notifyWorkflowChanged(homeProjectId, created.id);
+  return created;
 }
 
 /** One planned task as a caller writes it: columns and projects by NAME. */
@@ -204,7 +210,7 @@ export interface PlanInput {
   revision?: number | null;
 }
 
-function resolveProjectId(context: IpcContext, homeProjectId: string, selector: string | null | undefined): string {
+export function resolveProjectId(context: IpcContext, homeProjectId: string, selector: string | null | undefined): string {
   if (!selector || !selector.trim()) return homeProjectId;
   const wanted = selector.trim().toLowerCase();
   const project = context.projectRepo.list().find(
@@ -329,10 +335,12 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
   }
 
   const draft: WorkflowDraft = { tasks: planned, links };
-  return new WorkflowRepository(getProjectDb(homeProjectId)).saveDraft(workflowId, draft, {
+  const saved = new WorkflowRepository(getProjectDb(homeProjectId)).saveDraft(workflowId, draft, {
     title: input.title ?? null,
     expectedRevision: input.revision ?? null,
   });
+  notifyWorkflowChanged(homeProjectId, workflowId);
+  return saved;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +449,7 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
   }
 
   wakeWorkflowEngine();
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return {
     workflow: requireWorkflow(homeProjectId, workflowId),
     createdCount: draft.tasks.filter((task) => !task.existing_task_id).length,
@@ -488,6 +497,8 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'running') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, so there is nothing to pause.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'paused');
+  // The header flips to Resume at once; the sessions suspend after.
+  notifyWorkflowChanged(homeProjectId, workflowId);
   let paused = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
     if (!task.session_id) continue;
@@ -505,6 +516,7 @@ export async function resumeWorkflow(context: IpcContext, homeProjectId: string,
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'paused') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, not paused.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'running');
+  notifyWorkflowChanged(homeProjectId, workflowId);
   let resumed = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
     if (task.archived_at) continue;
@@ -596,6 +608,7 @@ export function linkTasks(
   });
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, blocked.projectId);
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return link;
 }
 
@@ -615,6 +628,7 @@ export function unlinkTasks(
     new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
     announceBoardChange(context, blocked.projectId);
     wakeWorkflowEngine();
+    notifyWorkflowChanged(homeProjectId, workflowId);
   }
   return removed;
 }
@@ -634,9 +648,6 @@ export function setTaskRoute(
   requireStarted(workflow, 'setting a route');
   const resolved = resolveWorkflowTask(context, homeProjectId, workflow, input.task, input.project);
   const label = `#${resolved.task.display_id}`;
-  const place = placeOf(resolved);
-  if (place === 'done') throw new WorkflowRequestError(`${label} is done and stays with its workflow.`);
-
   const lanes = resolved.lanes;
   const next = {
     route_start_swimlane_id: input.routeStart === undefined ? resolved.task.route_start_swimlane_id : routeColumnId(lanes, input.routeStart, 'routeStart', label),
@@ -645,6 +656,33 @@ export function setTaskRoute(
       ? resolved.task.skipped_swimlane_ids
       : [...new Set(input.skip.map((name) => routeColumnId(lanes, name, 'skip', label)!).filter(Boolean))],
   };
+  return applyTaskRoute(context, homeProjectId, workflowId, resolved, next);
+}
+
+/** A started task's route, by swimlane ids (the Workflows view). Same rules as `setTaskRoute`. */
+export function setTaskRouteByIds(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  input: { taskId: string; projectId: string; route: Pick<Task, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'> },
+): Task {
+  const workflow = requireWorkflow(homeProjectId, workflowId);
+  requireStarted(workflow, 'setting a route');
+  const resolved = resolveWorkflowTask(context, homeProjectId, workflow, input.taskId, input.projectId);
+  return applyTaskRoute(context, homeProjectId, workflowId, resolved, input.route);
+}
+
+function applyTaskRoute(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  resolved: ResolvedWorkflowTask,
+  next: Pick<Task, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'>,
+): Task {
+  const label = `#${resolved.task.display_id}`;
+  const place = placeOf(resolved);
+  if (place === 'done') throw new WorkflowRequestError(`${label} is done and stays with its workflow.`);
+  const lanes = resolved.lanes;
 
   if (place === 'working') {
     const current = lanes.find((lane) => lane.id === resolved.task.swimlane_id);
@@ -666,6 +704,7 @@ export function setTaskRoute(
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, resolved.projectId);
   wakeWorkflowEngine();
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return tasks.getById(resolved.task.id)!;
 }
 
@@ -717,6 +756,7 @@ export function addWorkflowTask(
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, projectId);
   wakeWorkflowEngine();
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return created;
 }
 
@@ -738,6 +778,7 @@ export function removeFromWorkflow(
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, resolved.projectId);
   wakeWorkflowEngine();
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return tasks.getById(resolved.task.id)!;
 }
 
@@ -760,12 +801,15 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
     }
   }
   new WorkflowRepository(getProjectDb(homeProjectId)).delete(workflowId);
+  notifyWorkflowChanged(homeProjectId, workflowId);
   return { workflow, released };
 }
 
 export function renameWorkflow(homeProjectId: string, workflowId: string, title: string): Workflow {
   requireWorkflow(homeProjectId, workflowId);
-  return new WorkflowRepository(getProjectDb(homeProjectId)).rename(workflowId, title);
+  const renamed = new WorkflowRepository(getProjectDb(homeProjectId)).rename(workflowId, title);
+  notifyWorkflowChanged(homeProjectId, workflowId);
+  return renamed;
 }
 
 /** Find a workflow by id or (case-insensitive) title in a home project. */

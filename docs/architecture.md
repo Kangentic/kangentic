@@ -211,6 +211,28 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application. Same answer-or-timeout contract and file-manager fallback as `attachment:open` |
 
+### Workflows (15 channels)
+
+The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The rules are `src/main/workflows/workflow-service.ts`, the same ones the MCP tools reach.
+
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
+| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions |
+| `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
+| `workflow:rename` | invoke | Rename a workflow |
+| `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
+| `workflow:start` | invoke | Create the planned tasks in To Do and their links |
+| `workflow:pause` | invoke | Pause every task's agent |
+| `workflow:resume` | invoke | Resume every task's agent |
+| `workflow:addTask` | invoke | Add task: a planned task before Start, a task in To Do after |
+| `workflow:updateTask` | invoke | Edit a planned task before Start |
+| `workflow:removeTask` | invoke | Remove a task from the workflow (a planned one is gone; a created one stays on its board) |
+| `workflow:setLink` | invoke | Link or unlink two tasks (one waits for the other to reach Done) |
+| `workflow:setRoute` | invoke | A task's route, as the column ids it visits |
+| `workflow:setPositions` | invoke | Where hands placed cards, or null for the automatic layout; changes no plan revision |
+| `workflow:changed` | on | A workflow or its tasks changed, whoever changed it; an open view reloads it |
+
 ### Swimlanes (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

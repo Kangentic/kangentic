@@ -391,6 +391,28 @@ export const IPC = {
   BACKLOG_ATTACHMENT_GET_DATA_URL: 'backlogAttachment:getDataUrl',
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
 
+  // Workflows (the Workflows view). Every call names the workflow's HOME
+  // project; a task is addressed by its view key (draft key, or task id once
+  // started). The MCP tools reach the same operations through
+  // src/main/workflows/workflow-service.ts.
+  WORKFLOW_LIST: 'workflow:list',
+  WORKFLOW_GET: 'workflow:get',
+  WORKFLOW_CREATE: 'workflow:create',
+  WORKFLOW_RENAME: 'workflow:rename',
+  WORKFLOW_DELETE: 'workflow:delete',
+  WORKFLOW_START: 'workflow:start',
+  WORKFLOW_PAUSE: 'workflow:pause',
+  WORKFLOW_RESUME: 'workflow:resume',
+  WORKFLOW_ADD_TASK: 'workflow:addTask',
+  WORKFLOW_UPDATE_TASK: 'workflow:updateTask',
+  WORKFLOW_REMOVE_TASK: 'workflow:removeTask',
+  WORKFLOW_SET_LINK: 'workflow:setLink',
+  WORKFLOW_SET_ROUTE: 'workflow:setRoute',
+  WORKFLOW_SET_POSITIONS: 'workflow:setPositions',
+  // A workflow or its tasks changed (any source: the view, an agent, the
+  // engine), so an open Workflows view reloads it (`WorkflowChangedEvent`).
+  WORKFLOW_CHANGED: 'workflow:changed',
+
   // Clipboard (and the pasted-image temp directory it shares with the drop path)
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
   CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',

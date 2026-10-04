@@ -4921,6 +4921,103 @@ export interface Workflow {
   finished_at: string | null;
 }
 
+/**
+ * One column between To Do and Done on a workflow task's board, as the
+ * Workflows view's route rail draws it. Every such column has a step, on the
+ * route or not, so the rail shows the whole board in order.
+ */
+export interface WorkflowRouteStep {
+  swimlaneId: string;
+  name: string;
+  color: string | null;
+  icon: string | null;
+  /**
+   * `done`: the task left it; `current`: the task is in it; `ahead`: on the
+   * route, not reached; `skipped`: off the route.
+   */
+  state: 'done' | 'current' | 'ahead' | 'skipped';
+  /** When the task last left this column, for a `done` step. */
+  finishedAt: string | null;
+}
+
+/** Where a workflow task is: `planned` exists only in a workflow that has not started. */
+export type WorkflowTaskPlace = 'planned' | 'todo' | 'working' | 'done';
+
+/**
+ * One task of a workflow as the Workflows view reads it. `key` is the node id:
+ * the draft key before Start, the task id after.
+ */
+export interface WorkflowViewTask {
+  key: string;
+  projectId: string;
+  /** The board task, once created. A home-project card reads its live row from the board store by id. */
+  task: Task | null;
+  /** The planned task, while the workflow has not started. */
+  planned: WorkflowDraftTask | null;
+  title: string;
+  displayId: number | null;
+  place: WorkflowTaskPlace;
+  /** The column it is in, once created. */
+  swimlaneId: string | null;
+  steps: WorkflowRouteStep[];
+  /** Where a hand placed its card on the canvas; null is the automatic layout. */
+  canvasX: number | null;
+  canvasY: number | null;
+}
+
+/** "blocked waits for blocker", by `WorkflowViewTask.key`. */
+export interface WorkflowViewLink {
+  blockerKey: string;
+  blockedKey: string;
+}
+
+/** What the Workflows view draws for one workflow. */
+export interface WorkflowDetail {
+  workflow: Workflow;
+  homeProjectId: string;
+  tasks: WorkflowViewTask[];
+  links: WorkflowViewLink[];
+  /** Each project a task is on, by id; more than one is a workflow across boards. */
+  projectNames: Record<string, string>;
+}
+
+/** One row of the Workflows picker, with the counts the header shows. */
+export interface WorkflowSummary {
+  workflow: Workflow;
+  taskCount: number;
+  doneCount: number;
+  /** Started and not done. */
+  inProgressCount: number;
+  /** In To Do with nothing left to wait for: starts when an agent slot is free. */
+  queuedCount: number;
+  /** In To Do, waiting for a task that is not done. */
+  blockedCount: number;
+}
+
+/** A task the Workflows view adds (Add task) or edits before Start (the Edit Task window). */
+export interface WorkflowTaskInput {
+  title: string;
+  description?: string;
+  labels?: string[];
+  priority?: number;
+  /** The board it goes on; omitted is the workflow's home project. Fixed once the task exists. */
+  projectId?: string | null;
+}
+
+/** A card's place on the canvas, by `WorkflowViewTask.key`. */
+export interface WorkflowCanvasPosition {
+  key: string;
+  x: number;
+  y: number;
+}
+
+/** Pushed when a workflow or its tasks change, so an open Workflows view reloads it. */
+export interface WorkflowChangedEvent {
+  /** The workflow's home project. */
+  projectId: string;
+  workflowId: string;
+}
+
 /** Pushed when every task in a workflow reaches Done. */
 export interface WorkflowCompletedEvent {
   workflowId: string;
@@ -6875,6 +6972,34 @@ export interface ElectronAPI {
       setPat: (input: AsanaSetPatInput) => Promise<AsanaSetPatResult>;
       clearCredential: () => Promise<void>;
     };
+  };
+
+  /**
+   * Workflows. `projectId` is always the workflow's HOME project, captured when
+   * the user acted; a task is addressed by its `WorkflowViewTask.key`. Every
+   * change is announced with `onChanged`, whoever made it.
+   */
+  workflows: {
+    list: (projectId: string) => Promise<WorkflowSummary[]>;
+    get: (projectId: string, workflowId: string) => Promise<WorkflowDetail>;
+    /** A new workflow, from a To Do task (its brief) or from nothing. */
+    create: (projectId: string, sourceTaskId: string | null) => Promise<Workflow>;
+    rename: (projectId: string, workflowId: string, title: string) => Promise<Workflow>;
+    delete: (projectId: string, workflowId: string) => Promise<void>;
+    start: (projectId: string, workflowId: string) => Promise<void>;
+    pause: (projectId: string, workflowId: string) => Promise<void>;
+    resume: (projectId: string, workflowId: string) => Promise<void>;
+    /** Add task: a planned task before Start, a task in To Do after. Returns its key. */
+    addTask: (projectId: string, workflowId: string, input: WorkflowTaskInput) => Promise<string>;
+    /** Edit a planned task (before Start). A created task is edited like any task. */
+    updateTask: (projectId: string, workflowId: string, key: string, input: Partial<WorkflowTaskInput>) => Promise<void>;
+    removeTask: (projectId: string, workflowId: string, key: string) => Promise<void>;
+    setLink: (projectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<void>;
+    /** The columns of the task's route, by swimlane id; every other column is skipped. */
+    setRoute: (projectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<void>;
+    /** Where hands placed cards; null puts every card back in the automatic layout. */
+    setPositions: (projectId: string, workflowId: string, positions: WorkflowCanvasPosition[] | null) => Promise<void>;
+    onChanged: (callback: (event: WorkflowChangedEvent) => void) => () => void;
   };
 
   // Mobile Bridge -- machine-global (like config), not project-scoped.

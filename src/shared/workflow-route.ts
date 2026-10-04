@@ -94,3 +94,26 @@ export function startColumn<Column extends RouteColumn>(columns: readonly Column
 export function isOnRoute(columns: readonly RouteColumn[], route: RouteFields, columnId: string): boolean {
   return routeColumns(columns, route).some((column) => column.id === columnId);
 }
+
+/**
+ * The route that visits exactly `includedColumnIds` (the Workflows view's route
+ * switches). An end that is the board's own first or last route column is
+ * stored open (null), so a column a team adds there later joins the route, as
+ * for a task nobody customized. Null when nothing is included: a task visits at
+ * least one column.
+ */
+export function routeFromColumns(columns: readonly RouteColumn[], includedColumnIds: readonly string[]): RouteFields | null {
+  const candidates = routeCandidates(columns);
+  const included = new Set(includedColumnIds);
+  const firstIndex = candidates.findIndex((column) => included.has(column.id));
+  if (firstIndex < 0) return null;
+  let lastIndex = firstIndex;
+  candidates.forEach((column, index) => {
+    if (included.has(column.id)) lastIndex = index;
+  });
+  return {
+    route_start_swimlane_id: firstIndex === 0 ? null : candidates[firstIndex].id,
+    route_last_swimlane_id: lastIndex === candidates.length - 1 ? null : candidates[lastIndex].id,
+    skipped_swimlane_ids: candidates.slice(firstIndex, lastIndex + 1).filter((column) => !included.has(column.id)).map((column) => column.id),
+  };
+}

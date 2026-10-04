@@ -1,0 +1,277 @@
+/**
+ * The Workflows view's operations on real, migrated SQLite: the read model the
+ * canvas and inspector draw, the planned-workflow edits addressed by key and
+ * column id, the positions write that changes no plan, and the change push.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Database from 'better-sqlite3';
+
+type SqliteModule = typeof import('node:sqlite');
+let sqlite: SqliteModule | null = null;
+try {
+  sqlite = await import('node:sqlite');
+} catch {
+  sqlite = null;
+}
+const describeWithSqlite = sqlite ? describe : describe.skip;
+
+const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), sent: [] as Array<{ channel: string; payload: unknown }> }));
+vi.mock('../../src/main/db/database', () => ({
+  getProjectDb: (projectId: string) => {
+    const db = harness.dbs.get(projectId);
+    if (!db) throw new Error(`No database for ${projectId}`);
+    return db;
+  },
+}));
+vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/sessions', () => ({ pauseTaskSession: vi.fn(), resumeTaskSession: vi.fn() }));
+vi.mock('../../src/main/ipc/send-to-renderer', () => ({
+  sendToRenderer: (_window: unknown, channel: string, payload: unknown) => harness.sent.push({ channel, payload }),
+}));
+
+const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
+const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
+const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const service = await import('../../src/main/workflows/workflow-service');
+const view = await import('../../src/main/workflows/workflow-view-service');
+const { setWorkflowChangedWindow } = await import('../../src/main/workflows/workflow-changed');
+const { IPC } = await import('../../src/shared/ipc-channels');
+
+import { adaptDatabase } from './helpers/node-sqlite-database';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+
+describeWithSqlite('the Workflows view operations', () => {
+  let context: IpcContext;
+
+  function database(projectId: string): Database.Database {
+    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    db.exec('PRAGMA foreign_keys = ON');
+    runProjectMigrations(db);
+    harness.dbs.set(projectId, db);
+    return db;
+  }
+
+  beforeEach(() => {
+    harness.dbs.clear();
+    harness.sent.length = 0;
+    database('home');
+    database('mobile');
+    const projects = [
+      { id: 'home', name: 'kangentic', path: '/projects/home' },
+      { id: 'mobile', name: 'kangentic-mobile', path: '/projects/mobile' },
+    ];
+    context = {
+      projectRepo: {
+        list: () => projects,
+        getById: (id: string) => projects.find((project) => project.id === id),
+      },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    } as unknown as IpcContext;
+  });
+
+  afterEach(() => {
+    setWorkflowChangedWindow(null);
+    vi.useRealTimers();
+  });
+
+  const homeDb = () => harness.dbs.get('home') as Database.Database;
+  const lanesOf = (projectId: string) => new SwimlaneRepository(harness.dbs.get(projectId) as Database.Database).list();
+  const laneId = (projectId: string, name: string) => lanesOf(projectId).find((lane) => lane.name === name)!.id;
+
+  it('adds planned tasks by key, every route column ahead', () => {
+    const workflow = service.createWorkflow('home', {});
+    const first = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    const second = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets UI', labels: ['ui'] });
+    expect([first, second]).toEqual(['task-1', 'task-2']);
+
+    const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+    expect(detail.tasks.map((task) => task.place)).toEqual(['planned', 'planned']);
+    expect(detail.tasks[0].steps.map((step) => step.name)).toEqual(['Planning', 'Executing', 'Code Review', 'Testing', 'Merge']);
+    expect(detail.tasks[0].steps.every((step) => step.state === 'ahead')).toBe(true);
+    expect(detail.tasks[1].planned?.labels).toEqual(['ui']);
+  });
+
+  it('sets a route from the switched-on columns, open at the ends, and refuses an empty one', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    view.setViewRoute(context, 'home', workflow.id, key, [laneId('home', 'Executing'), laneId('home', 'Code Review')]);
+    const planned = new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!.tasks[0];
+    expect(planned.route_start_swimlane_id).toBe(laneId('home', 'Executing'));
+    expect(planned.route_last_swimlane_id).toBe(laneId('home', 'Code Review'));
+    expect(planned.skipped_swimlane_ids).toEqual([]);
+
+    const steps = view.readWorkflowDetail(context, 'home', workflow.id).tasks[0].steps;
+    expect(steps.map((step) => step.state)).toEqual(['skipped', 'ahead', 'ahead', 'skipped', 'skipped']);
+
+    // Every column on again is the open route a task nobody customized has.
+    view.setViewRoute(context, 'home', workflow.id, key, lanesOf('home').filter((lane) => lane.role === null).map((lane) => lane.id));
+    const reopened = new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!.tasks[0];
+    expect(reopened.route_start_swimlane_id).toBeNull();
+    expect(reopened.route_last_swimlane_id).toBeNull();
+
+    expect(() => view.setViewRoute(context, 'home', workflow.id, key, [])).toThrow(/at least one column/);
+  });
+
+  it('links planned tasks, refuses a loop or a self-link, and unlinks', () => {
+    const workflow = service.createWorkflow('home', {});
+    const api = view.addViewTask(context, 'home', workflow.id, { title: 'API' });
+    const ui = view.addViewTask(context, 'home', workflow.id, { title: 'UI' });
+    view.setViewLink(context, 'home', workflow.id, api, ui, true);
+    view.setViewLink(context, 'home', workflow.id, api, ui, true);
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toEqual([{ blockerKey: api, blockedKey: ui }]);
+    expect(() => view.setViewLink(context, 'home', workflow.id, ui, api, true)).toThrow(/loop/);
+    expect(() => view.setViewLink(context, 'home', workflow.id, api, api, true)).toThrow(/itself/);
+    view.setViewLink(context, 'home', workflow.id, api, ui, false);
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toEqual([]);
+  });
+
+  it('edits a planned task, and moving it to another board resets its route', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'Phone' });
+    view.setViewRoute(context, 'home', workflow.id, key, [laneId('home', 'Executing')]);
+    view.updatePlannedTask(context, 'home', workflow.id, key, { title: 'Phone budgets', projectId: 'mobile' });
+    const planned = new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!.tasks[0];
+    expect(planned.title).toBe('Phone budgets');
+    expect(planned.project_id).toBe('mobile');
+    expect(planned.route_start_swimlane_id).toBeNull();
+    expect(planned.route_last_swimlane_id).toBeNull();
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).projectNames).toEqual({ home: 'kangentic', mobile: 'kangentic-mobile' });
+    expect(() => view.updatePlannedTask(context, 'home', workflow.id, key, { title: '  ' })).toThrow(/needs a title/);
+  });
+
+  it('removes a planned task with its links', () => {
+    const workflow = service.createWorkflow('home', {});
+    const api = view.addViewTask(context, 'home', workflow.id, { title: 'API' });
+    const ui = view.addViewTask(context, 'home', workflow.id, { title: 'UI' });
+    view.setViewLink(context, 'home', workflow.id, api, ui, true);
+    view.removeViewTask(context, 'home', workflow.id, api);
+    const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+    expect(detail.tasks.map((task) => task.key)).toEqual([ui]);
+    expect(detail.links).toEqual([]);
+  });
+
+  it('stores card positions without changing the plan revision', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'API' });
+    const before = new WorkflowRepository(homeDb()).getById(workflow.id)!.revision;
+    view.setViewPositions(context, 'home', workflow.id, [{ key, x: 120.4, y: 80.6 }]);
+    const after = new WorkflowRepository(homeDb()).getById(workflow.id)!;
+    expect(after.revision).toBe(before);
+    expect(after.draft!.tasks[0]).toMatchObject({ canvas_x: 120, canvas_y: 81 });
+    // A save the agent built on its last read still goes through.
+    expect(() => service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key, title: 'API' }], links: [], revision: before,
+    })).not.toThrow();
+    // ...and keeps where the hand put the card.
+    expect(new WorkflowRepository(homeDb()).getById(workflow.id)!.draft!.tasks[0].canvas_x).toBe(120);
+  });
+
+  describe('once started', () => {
+    async function started() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        tasks: [
+          { key: 'api', title: 'Budgets API' },
+          { key: 'ui', title: 'Budgets UI' },
+          { key: 'docs', title: 'Budgets docs' },
+        ],
+        links: [{ blocker: 'api', blocked: 'ui' }],
+      });
+      await service.startWorkflow(context, 'home', workflow.id);
+      const tasks = new TaskRepository(homeDb()).listByWorkflow(workflow.id);
+      const byTitle = (title: string) => tasks.find((task) => task.title === title)!;
+      return { workflow, api: byTitle('Budgets API'), ui: byTitle('Budgets UI'), docs: byTitle('Budgets docs') };
+    }
+
+    it('reads tasks by id, with their place, steps and links', async () => {
+      const { workflow, api, ui, docs } = await started();
+      const detail = view.readWorkflowDetail(context, 'home', workflow.id);
+      expect(detail.tasks.map((task) => task.key).sort()).toEqual([api.id, ui.id, docs.id].sort());
+      expect(detail.tasks.every((task) => task.place === 'todo' && task.task?.id === task.key)).toBe(true);
+      expect(detail.links).toEqual([{ blockerKey: api.id, blockedKey: ui.id }]);
+    });
+
+    it('counts what waits and what is ready for the picker', async () => {
+      const { workflow } = await started();
+      const [summary] = view.listWorkflowSummaries(context, 'home');
+      expect(summary.workflow.id).toBe(workflow.id);
+      expect(summary).toMatchObject({ taskCount: 3, doneCount: 0, inProgressCount: 0, queuedCount: 2, blockedCount: 1 });
+    });
+
+    it('shows a moved task as current, the columns before it done and the rest ahead', async () => {
+      const { workflow, api } = await started();
+      const tasks = new TaskRepository(homeDb());
+      tasks.move({ taskId: api.id, targetSwimlaneId: laneId('home', 'Planning'), targetPosition: 0 }, { origin: 'workflow' });
+      tasks.move({ taskId: api.id, targetSwimlaneId: laneId('home', 'Code Review'), targetPosition: 0 }, { origin: 'workflow' });
+      const task = view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((candidate) => candidate.key === api.id)!;
+      expect(task.place).toBe('working');
+      expect(task.steps.map((step) => step.state)).toEqual(['done', 'done', 'current', 'ahead', 'ahead']);
+      expect(task.steps[0].finishedAt).not.toBeNull();
+    });
+
+    it('links, routes and removes started tasks through the same rules an agent gets', async () => {
+      const { workflow, api, ui, docs } = await started();
+      view.setViewLink(context, 'home', workflow.id, docs.id, ui.id, true);
+      expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toHaveLength(2);
+      view.setViewLink(context, 'home', workflow.id, docs.id, ui.id, false);
+
+      view.setViewRoute(context, 'home', workflow.id, api.id, [laneId('home', 'Executing')]);
+      expect(new TaskRepository(homeDb()).getById(api.id)!.route_start_swimlane_id).toBe(laneId('home', 'Executing'));
+
+      view.removeViewTask(context, 'home', workflow.id, ui.id);
+      const after = new TaskRepository(homeDb()).getById(ui.id)!;
+      expect(after.workflow_id).toBeNull();
+      expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toEqual([]);
+    });
+
+    it('adds a task to a running workflow in To Do', async () => {
+      const { workflow } = await started();
+      const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets alerts' });
+      const added = new TaskRepository(homeDb()).getById(key)!;
+      expect(added.workflow_id).toBe(workflow.id);
+      expect(lanesOf('home').find((lane) => lane.id === added.swimlane_id)?.role).toBe('todo');
+    });
+
+    it('stores a started card position without touching updated_at', async () => {
+      const { workflow, api } = await started();
+      const before = new TaskRepository(homeDb()).getById(api.id)!.updated_at;
+      view.setViewPositions(context, 'home', workflow.id, [{ key: api.id, x: 40, y: 60 }]);
+      const after = new TaskRepository(homeDb()).getById(api.id)!;
+      expect(after.canvas_x).toBe(40);
+      expect(after.updated_at).toBe(before);
+      view.setViewPositions(context, 'home', workflow.id, null);
+      expect(new TaskRepository(homeDb()).getById(api.id)!.canvas_x).toBeNull();
+    });
+
+    it('refuses an edit on a finished workflow', async () => {
+      const { workflow } = await started();
+      new WorkflowRepository(homeDb()).setState(workflow.id, 'done');
+      expect(() => view.addViewTask(context, 'home', workflow.id, { title: 'Late' })).toThrow(/complete/);
+    });
+  });
+
+  it('makes a workflow from a To Do task, its title and description the brief', () => {
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const source = new TaskRepository(homeDb()).create({ title: 'Usage budgets', description: 'Cap spend per project.', swimlane_id: todo.id });
+    const workflow = view.createWorkflowForView(context, 'home', source.id);
+    expect(workflow.brief).toBe('Usage budgets\n\nCap spend per project.');
+    expect(workflow.source_task_id).toBe(source.id);
+
+    const executing = laneId('home', 'Executing');
+    const started = new TaskRepository(homeDb()).create({ title: 'Already going', description: '', swimlane_id: executing });
+    expect(() => view.createWorkflowForView(context, 'home', started.id)).toThrow(/Only a task in To Do/);
+  });
+
+  it('pushes one coalesced change per workflow to the window', () => {
+    vi.useFakeTimers();
+    setWorkflowChangedWindow(() => context.mainWindow);
+    const workflow = service.createWorkflow('home', {});
+    view.addViewTask(context, 'home', workflow.id, { title: 'API' });
+    view.addViewTask(context, 'home', workflow.id, { title: 'UI' });
+    expect(harness.sent).toEqual([]);
+    vi.advanceTimersByTime(50);
+    expect(harness.sent).toEqual([{ channel: IPC.WORKFLOW_CHANGED, payload: { projectId: 'home', workflowId: workflow.id } }]);
+  });
+});

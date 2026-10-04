@@ -49,6 +49,7 @@ import { deliverExitMessage } from '../helpers/exit-message-delivery';
 import { supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
 import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
+import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
@@ -500,6 +501,8 @@ export async function handleTaskMove(
       // design). That second emit is what corrects a committed-then-rolled-back
       // move. Same row, same shape, two emits.
       emitBoardChanged();
+      // An open Workflows view shows where each of its tasks is.
+      notifyWorkflowOfTask(task, announceProjectId);
       // Kangentic's own moves (a Move to column row, a workflow step or start)
       // have no optimistic renderer write behind them, so without this the card
       // sat in its old column until the move settled: through a Done move's

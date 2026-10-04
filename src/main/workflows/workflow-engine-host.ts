@@ -18,6 +18,7 @@ import {
   type CoreWorkflow,
 } from './engine/workflow-engine-core';
 import { announceWorkflowComplete } from './workflow-complete';
+import { notifyWorkflowChanged, setWorkflowChangedWindow } from './workflow-changed';
 import { setWorkflowWake } from './workflow-wake';
 import { setWorkflowRuntimeContext } from './workflow-runtime';
 
@@ -177,6 +178,7 @@ export class WorkflowEngineHost {
       try {
         new WorkflowRepository(getProjectDb(intent.homeProjectId)).setState(intent.workflowId, 'done');
         announceWorkflowComplete(this.context, intent.homeProjectId, intent.workflowId, taskCounts.get(intent.workflowId) ?? 0);
+        notifyWorkflowChanged(intent.homeProjectId, intent.workflowId);
       } catch (error) {
         console.error(`[WORKFLOW] Could not complete workflow ${intent.workflowId.slice(0, 8)}:`, error);
       }
@@ -244,10 +246,17 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
   const engine = new WorkflowEngineHost(context);
   host = engine;
   setWorkflowRuntimeContext(context);
+  setWorkflowChangedWindow(() => context.mainWindow);
   const wake = (): void => engine.wake();
   // Every move announces on the board bus, whatever its origin: a blocker
   // reaching Done, a workflow task moving on, a start landing.
-  context.boardEvents.onBoardChanged(wake);
+  context.boardEvents.onBoardChanged((event) => {
+    wake();
+    // An agent's delete announces after the row is gone, so which workflow it
+    // was in is no longer readable: every open workflow of that board reloads.
+    // Deletes are rare; a move names its own workflow at commit (task-move.ts).
+    if (event.change === 'task-deleted') notifyOpenWorkflows(event.projectId);
+  });
   // A slot freed.
   context.sessionManager.on('session-removed', wake);
   context.sessionManager.on('exit', wake);
@@ -259,4 +268,14 @@ export function registerWorkflowEngine(context: IpcContext): WorkflowEngineHost 
 
 export function getWorkflowEngine(): WorkflowEngineHost | null {
   return host;
+}
+
+function notifyOpenWorkflows(projectId: string): void {
+  try {
+    for (const workflow of new WorkflowRepository(getProjectDb(projectId)).listOpen()) {
+      notifyWorkflowChanged(projectId, workflow.id);
+    }
+  } catch {
+    // A board whose database cannot be read has no view to refresh.
+  }
 }

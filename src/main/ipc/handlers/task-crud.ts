@@ -27,8 +27,9 @@ import { createProgressCallback, clearSpawnProgress } from '../../transition-eng
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { wakeWorkflowEngine } from '../../workflows/workflow-wake';
+import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import type { IpcContext } from '../ipc-context';
-import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
+import type { Task, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
 
 /**
  * Cap on concurrent bulk-delete workers. Git mutations serialize through the
@@ -253,6 +254,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         console.error(`[pr-linking] link-time resolve failed for task ${String(input.id).slice(0, 8)}:`, error);
       });
     }
+    // A workflow task's title shows on its canvas card and in the inspector.
+    notifyWorkflowOfTask(updated, resolvedProjectId);
     return updated;
   });
 
@@ -274,8 +277,10 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
     // Serialize against any in-flight session lifecycle op for this task so
     // the long awaits inside cleanup don't race with spawn/resume/etc.
+    let deletedTask: Task | undefined;
     await withTaskLock(id, async () => {
       const task = tasks.getById(id);
+      deletedTask = task;
       if (task) {
         attachments.deleteByTaskId(id);
         await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
@@ -285,6 +290,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     drainAutoNameAskedIds(context, [id]);
     // A deleted blocker's links went with it, so what waited for it may start.
     wakeWorkflowEngine();
+    notifyWorkflowOfTask(deletedTask, resolvedProjectId);
   });
 
   ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[], projectId?: string | null): Promise<TaskBulkDeleteResult> => {
@@ -334,11 +340,13 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         const startedAt = Date.now();
         let cleanupError: unknown = null;
         let worktreePathBefore: string | null = null;
+        let deletedTask: Task | undefined;
         console.log(`[TASK_BULK_DELETE] start ${shortId}`);
 
         try {
           await withTaskLock(id, async () => {
             const task = tasks.getById(id);
+            deletedTask = task;
             worktreePathBefore = task?.worktree_path ?? null;
             if (task) {
               // Cleanup may legitimately take time (git worktree remove + prune)
@@ -369,6 +377,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
             tasks.delete(id);
           });
           wakeWorkflowEngine();
+          notifyWorkflowOfTask(deletedTask, resolvedProjectId);
 
           if (cleanupError) {
             const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
