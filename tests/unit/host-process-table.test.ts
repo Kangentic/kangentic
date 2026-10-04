@@ -1,7 +1,7 @@
 /**
  * The background-shell watcher's process table in the pty host
  * (src/main/pty/host/host-process-table.ts): Toolhelp on Windows, the
- * PowerShell probe only when koffi cannot load, `ps` on POSIX. The real
+ * PowerShell probe for good once a Toolhelp listing fails, `ps` on POSIX. The real
  * Toolhelp listing runs in tests/unit/task-process-readers.test.ts on Windows.
  */
 

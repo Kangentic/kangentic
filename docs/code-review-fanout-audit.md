@@ -1365,16 +1365,16 @@ token query check and the tag strip in place, and saw each test go red.
 The task 736 ninth pass kept that layout at 19,642 pack lines: eleven area shards of 893 to 2,260
 lines, six gated auditors on their own ranges (cross-platform in two of 4,530 and 4,403 lines), and
 the integration finder on a 1,029-line delta. The focus was `ec95aa25`, the eighth pass's fixes,
-and `2971793e`, which only wrote down the two decisions that pass left to the owner. Before the
-fan-out the driver ran the 52 changed unit files, 41 unchanged importers and parity tests, the
-mock parity and project-scoped IPC tests, and the leftover-processes UI spec, and all passed.
-Every finder reported reading all of its shard, and nothing above Low was raised. The focus held:
-both cross-platform halves, Area C and the integration finder found the `\\.\` strip consistent
-with `process-label.ts` and pinned by tests that fail on revert, and Areas D and E showed the
+and `2971793e`, which only wrote down the two decisions that pass left to the owner. Before and
+alongside the fan-out the driver ran the 52 changed unit files, 41 unchanged importers and parity
+tests, the mock parity and project-scoped IPC tests, and the leftover-processes UI spec, and all
+passed. Every finder reported reading all of its shard, and nothing above Low was raised. The focus
+held: both cross-platform halves and Area C found the `\\.\` strip consistent with
+`process-label.ts` and pinned by tests that fail on revert, and Areas D and E showed the
 `wsl.exe` tag delete red-green and the host passing that environment through unmerged. The
 applied fixes are prose. The host process table falls back to PowerShell for good on any failed
-Toolhelp listing, not only when koffi cannot load, and the header, the rule and three docs now
-say so. The deployment doc's workflow row names `vitest.config.ts`, and two audit paragraphs lost
+Toolhelp listing, not only when koffi cannot load, and the header, the rule, three docs and its
+test now say so; the latch itself is unchanged. The deployment doc's workflow row names `vitest.config.ts`, and two audit paragraphs lost
 their broken wraps. Six candidates were refuted, among them a Windows token guard no test can pin
 because the overrun check after it always refuses the same input, and the task-row read outside
 the reap's `try` that the fourth pass already refuted. Two were skipped: Linux reading a
