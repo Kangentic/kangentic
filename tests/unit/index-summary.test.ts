@@ -1,5 +1,5 @@
 /**
- * The fold both Index surfaces share (`src/shared/index-summary.ts`): the
+ * The fold both Index views share (`src/shared/index-summary.ts`): the
  * Settings card sums every indexed project with it on main, and the map's panel
  * sums the projects it draws with it in the renderer. On All projects the two
  * then read the same figures, which is what this file pins:

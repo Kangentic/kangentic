@@ -35,7 +35,7 @@ import { codeStatus, createBranchSizes } from './code/code-status';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { graphService } from './graph-facade';
 import {
-  NO_SOURCE, NO_SUMMARY_ACTIVITY, sourceStatusOf, sumIndexCounts, summaryStatusOf, waitingCorporaOf, type SummaryActivity,
+  NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf, waitingCorporaOf, type SummaryActivity,
 } from '../../shared/index-summary';
 import { createSummaryScheduler } from './summary/summary-scheduler';
 import { resolveAnswerRun } from './answer-run';
@@ -627,11 +627,15 @@ function summaryActivityFor(projectId: string): SummaryActivity {
  * wait, each drag would push two snapshot re-reads for nothing.
  */
 const SUMMARY_PUSH_DEBOUNCE_MS = 250;
-const summaryPushTimers = new Map<string, NodeJS.Timeout>();
+/** Projects with a push timer armed; `pendingTimers` holds the timers. */
+const summaryPushTimers = new Set<string>();
 /**
  * What each project's last snapshot carried, as the Index line reads it. Set on
  * every snapshot read, not only on a push: a map read mid-pass shows `writing`,
  * and a pass that ends before the push timer must still be pushed to clear it.
+ * A project with no entry is on no map, so nothing is pushed for it: the
+ * launch's ask of every project would otherwise push twice per project, and
+ * an open map re-reads its own snapshot on a push for any project.
  */
 const shownSummaryActivity = new Map<string, string>();
 
@@ -648,15 +652,17 @@ function pushSummaryActivity(projectId: string): void {
   const timer = setTimeout(() => {
     pendingTimers.delete(timer);
     summaryPushTimers.delete(projectId);
+    const shown = shownSummaryActivity.get(projectId);
+    // No snapshot has read it, so no map shows it.
+    if (shown === undefined) return;
     const key = summaryActivityKey(summaryActivityFor(projectId));
-    // A project never read was last shown idle with nothing skipped.
-    if ((shownSummaryActivity.get(projectId) ?? summaryActivityKey(NO_SUMMARY_ACTIVITY)) === key) return;
+    if (shown === key) return;
     shownSummaryActivity.set(projectId, key);
     graphService.notifyChanged(projectId);
   }, SUMMARY_PUSH_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
-  summaryPushTimers.set(projectId, timer);
+  summaryPushTimers.add(projectId);
 }
 
 /** One indexed project as the map's panel counts it: the worker's counts, and

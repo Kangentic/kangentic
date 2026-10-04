@@ -158,7 +158,7 @@ describe('the status read\'s budget', () => {
     expect(second.projects.map((project) => project.projectId)).toEqual(projectIds);
   });
 
-  // Red-green: `lastReads.delete(projectId)` in `forget` (index-status.ts:158).
+  // Red-green: `lastReads.delete(projectId)` in `forget`.
   // Without it b keeps the last read it had before the index was cleared. The
   // second read stops after c, so b is not reached, and b is served from that
   // stale read: the list is c, b, a and not c, a.
@@ -185,8 +185,8 @@ describe('the status read\'s budget', () => {
     expect(status.projects.map((project) => project.projectId)).toEqual(['proj-c', 'proj-a']);
   });
 
-  // Red-green: `lastReads.delete(projectId)` in the catch of `readAll`
-  // (index-status.ts:140). Without it a keeps its read from before the failure.
+  // Red-green: `lastReads.delete(projectId)` in the catch of `readAll`.
+  // Without it a keeps its read from before the failure.
   // The third read stops after q, so a is not reached, and a is served from that
   // read: the list is q, a and not q.
   it('does not serve a project that stopped being readable from the read it had before', async () => {

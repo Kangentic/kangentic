@@ -7474,7 +7474,7 @@ export interface KnowledgeGraphCodeStatus {
 /**
  * Task summaries for one project, or for every project summed (`sumSummaryCounts`
  * in `shared/index-summary.ts`). The retrieval worker reads the counts; main adds
- * what its summary scheduler is doing. Both Index surfaces sum this one record,
+ * what its summary scheduler is doing. Both Index views sum this one record,
  * so the Settings card and the map's panel cannot disagree.
  */
 export interface KnowledgeGraphSummaryCounts {

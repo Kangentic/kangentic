@@ -77,7 +77,7 @@ describe('graph service when a project\'s summary store cannot be obtained', () 
     openSummaries.mockReset();
   });
 
-  // Red-green: graph-service.ts:429-435, `summarySourceFor`, wraps
+  // Red-green: `summarySourceFor` in graph-service.ts wraps
   // `summariesFor(projectId)` in a try/catch that returns an empty source. Drop the
   // catch and the throw runs up through `indexSummaryFor` and `snapshotWithKey`,
   // neither of which catches, so `getSnapshotWire` throws and this test fails.
