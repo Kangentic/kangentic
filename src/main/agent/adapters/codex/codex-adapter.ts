@@ -170,6 +170,8 @@ export class CodexAdapter implements AgentAdapter {
     // Content deduplication in SessionManager provides an agent-agnostic
     // safety net: if any TUI agent does continuously redraw, repeated
     // frames with identical stripped text are filtered automatically.
+    // Only terminal silence says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
     sessionId: {
       fromHook(hookContext) {

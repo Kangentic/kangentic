@@ -1,4 +1,4 @@
-import type { Task } from '../../../shared/types';
+import type { AutomationTrigger, Task } from '../../../shared/types';
 import { sanitizeForPty } from '../../../shared/paths';
 import { TASK_TEMPLATE_VAR_NAMES, type TaskTemplateVarName } from '../../../shared/task-template-vars';
 import { buildTaskXml } from './prompt-xml';
@@ -61,8 +61,15 @@ export interface TaskTemplateContext {
     column: string;
     fromColumn: string | null;
     toColumn: string | null;
-    trigger: 'enter' | 'exit';
+    trigger: AutomationTrigger;
   } | null;
+  /**
+   * The agent's final message of the turn that just ended, full text, read by
+   * the turn-end runner from the session whose turn it was. Absent everywhere
+   * else (on enter and exit there is no turn behind the run), which resolves
+   * `{{agentReply}}` empty.
+   */
+  agentReply?: string | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -135,6 +142,9 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   fromColumn: ({ move }) => move?.fromColumn ?? '',
   toColumn: ({ move }) => move?.toColumn ?? '',
   trigger: ({ move }) => move?.trigger ?? '',
+  // Verbatim, newlines kept: it is prose for the next agent, and the delivery
+  // path (bracketed paste) carries line breaks intact.
+  agentReply: ({ agentReply }) => agentReply ?? '',
 };
 
 /** Resolve every task template variable for the given context. */

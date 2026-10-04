@@ -4,6 +4,7 @@ import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handle
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
   DEFAULT_SCRIPT_TIMEOUT_MINUTES,
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
@@ -35,8 +36,10 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   id: z.string().optional().describe('Existing automation id, to keep this row\'s identity and run history across the write. Omit for a new row. Read one from kangentic_list_automations.'),
   name: z.string().max(200).describe('Label for this automation, unique on its column ignoring case. Shown in the Column Manager and in the run log.'),
   type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification.'),
-  on: z.enum(['enter', 'exit']).optional().describe('Whether it runs when a task ENTERS this column or LEAVES it. Defaults to "enter". To Do and Done can only run exit automations.'),
+  on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
+  condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows.'),
+  maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column (a review loop\'s round-trip limit). Omit or null for no limit.'),
 
   // The per-type fields. Every type's keys live on one object because the row
   // shape is flat; a key belonging to another type is dropped on write rather
@@ -66,7 +69,8 @@ const AUTOMATION_ROW_SCHEMA = z.object({
  *
  * A column's behavior used to be two swimlane fields (`auto_command` and its
  * mode) and a table of named actions nothing could edit. It is now an ordered
- * list of typed rows per column, split into On enter and On exit. These tools
+ * list of typed rows per column, split into On task enter, On agent turn end
+ * and On task exit. These tools
  * are how an agent reads and writes that list; `kangentic_update_column`'s
  * `autoCommand` still works and writes the first send_message enter row, which
  * covers the common case in one argument.
@@ -76,7 +80,7 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
   server.registerTool(
     'kangentic_list_automations',
     {
-      description: 'Read what happens when a task enters or leaves a column: the ordered On enter and On exit automations, their types, settings, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
+      description: 'Read what happens when a task enters a column, each time its agent finishes a turn there, and when it leaves: the ordered On task enter, On agent turn end and On task exit automations, their types, settings, Conditions and Frequency limits, and whether each one can actually run. Omit `column` to read the whole board, which is the right first call for "what does this board do". Pair with kangentic_set_automations to change them.',
       inputSchema: z.object({
         column: z.string().optional().describe('Column name (case-insensitive, e.g. "Code Review"). Omit to read every column.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

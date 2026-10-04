@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
@@ -377,6 +377,9 @@ export class TaskRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.created_at, task.updated_at);
 
+    // A task born into a column has entered it: its first visit starts here.
+    this.recordMove(task.id, null, task.swimlane_id, { origin: 'create' });
+
     return task;
   }
 
@@ -446,7 +449,16 @@ export class TaskRepository {
     this.db.prepare('UPDATE tasks SET detail_view_state = ? WHERE id = ?').run(detailViewState, taskId);
   }
 
-  move(input: TaskMoveInput): void {
+  /**
+   * Move a task, and record the move in `task_moves` in the same transaction.
+   *
+   * `provenance` is required so no caller can move a task without saying who
+   * moved it: the record is the visit boundary column automations count from
+   * and a workflow task's step history, and a move it missed would let a
+   * turn-end row run twice in one visit. A reorder within the column records
+   * nothing, since the task did not enter a column.
+   */
+  move(input: TaskMoveInput, provenance: TaskMoveProvenance): void {
     const { taskId, targetSwimlaneId, targetPosition } = input;
     const task = this.getById(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -463,8 +475,19 @@ export class TaskRepository {
       // Move the task
       this.db.prepare('UPDATE tasks SET swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
         .run(targetSwimlaneId, targetPosition, new Date().toISOString(), taskId);
+
+      if (task.swimlane_id !== targetSwimlaneId) {
+        this.recordMove(taskId, task.swimlane_id, targetSwimlaneId, provenance);
+      }
     });
     tx();
+  }
+
+  /** One `task_moves` row. Called inside the transaction that made the move. */
+  private recordMove(taskId: string, fromSwimlaneId: string | null, toSwimlaneId: string, provenance: TaskMoveProvenance): void {
+    this.db.prepare(
+      'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(uuidv4(), taskId, fromSwimlaneId, toSwimlaneId, provenance.origin, provenance.reason ?? null, new Date().toISOString());
   }
 
   /**
@@ -561,9 +584,14 @@ export class TaskRepository {
   }
 
   unarchive(id: string, targetSwimlaneId: string, position: number): Task {
+    const before = this.getById(id);
     const now = new Date().toISOString();
-    this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
-      .run(targetSwimlaneId, position, now, id);
+    writeTransaction(this.db, () => {
+      this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
+        .run(targetSwimlaneId, position, now, id);
+      // Entering a column out of the archive is a visit like any other.
+      if (before) this.recordMove(id, before.swimlane_id, targetSwimlaneId, { origin: 'unarchive' });
+    })();
     return this.getById(id)!;
   }
 

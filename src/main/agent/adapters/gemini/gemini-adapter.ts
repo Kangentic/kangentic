@@ -139,6 +139,8 @@ export class GeminiAdapter implements AgentAdapter {
       parseEvent: GeminiStatusParser.parseEvent,
       isFullRewrite: false,
     },
+    // Its AfterAgent hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty((data: string) => {
       // Patterns derived from real Gemini 0.37 PTY captures (see
       // tests/unit/agent-pty-detection.test.ts and the .bin fixtures).

@@ -59,6 +59,10 @@ export const IPC = {
   TASK_SESSION_RESYNC: 'task:sessionResync',
   TASK_PR_LINK_CHANGED: 'task:prLinkChanged',
   TASK_MOVED_BY_MOBILE: 'task:movedByMobile',
+  // A move Kangentic made on its own: a Move to column automation at a turn
+  // end, or a workflow starting or advancing a task. Quiet: the board reloads,
+  // and the run log (or the workflow) says why.
+  TASK_MOVED_BY_AUTOMATION: 'task:movedByAutomation',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
   // Non-blocking spawn anomaly: the agent still started, but from a base that
   // could not be freshened (network/credential fetch failure).

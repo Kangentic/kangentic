@@ -6,7 +6,15 @@ import type {
   BoardColumnConfig,
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
-import { AUTOMATION_MANIFEST, isAutomationType, isRetiredActionType } from '../../../shared/automation-manifest';
+import { normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
+import {
+  AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
+  AUTOMATION_TRIGGER_FILE_KEYS,
+  isAutomationType,
+  isRetiredActionType,
+  isTypeOfferedOnTrigger,
+} from '../../../shared/automation-manifest';
 import { uniqueName } from '../../automations/column-message';
 import { isJsonObject, isMalformedList } from './config-helpers';
 
@@ -92,19 +100,19 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
   const automations: unknown = column.automations;
   if (isMalformedAutomations(automations)) {
     warnings.push(
-      `In "${column.name}", automations must be an object with onEnter and onExit lists. Kept the column's current automations.`,
+      `In "${column.name}", automations must be an object with ${listFileKeys()} lists. Kept the column's current automations.`,
     );
     return { rows, warnings, keepExisting: true };
   }
 
   if (column.automations) {
-    const groups: Record<AutomationTrigger, unknown> = {
-      enter: column.automations.onEnter,
-      exit: column.automations.onExit,
-    };
-    const malformedKeys = (['enter', 'exit'] as const)
+    const fileAutomations = column.automations;
+    const groups = Object.fromEntries(
+      AUTOMATION_TRIGGERS.map((trigger) => [trigger, fileAutomations[AUTOMATION_TRIGGER_FILE_KEYS[trigger]]]),
+    ) as Record<AutomationTrigger, unknown>;
+    const malformedKeys = AUTOMATION_TRIGGERS
       .filter((trigger) => isMalformedList(groups[trigger]))
-      .map((trigger) => (trigger === 'enter' ? 'onEnter' : 'onExit'));
+      .map((trigger) => AUTOMATION_TRIGGER_FILE_KEYS[trigger]);
     if (malformedKeys.length > 0) {
       const verb = malformedKeys.length === 1 ? 'must be a list' : 'must be lists';
       warnings.push(
@@ -121,7 +129,7 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
     // a warning instead, matching how every other malformed row in `readRow` is
     // handled: the file is reported, never allowed to take the board down.
     const takenNames: string[] = [];
-    for (const trigger of ['enter', 'exit'] as const) {
+    for (const trigger of AUTOMATION_TRIGGERS) {
       const group = groups[trigger];
       if (!Array.isArray(group)) continue;
       for (const entry of group as unknown[]) {
@@ -198,13 +206,39 @@ function readRow(
     return null;
   }
 
+  // A type filed under a trigger it is not offered on (a Move to column row in
+  // onEnter, written by hand) would run inside the move that triggered it.
+  if (!isTypeOfferedOnTrigger(type, trigger)) {
+    warnings.push(
+      `Automation "${name}" on "${columnName}" is a ${AUTOMATION_MANIFEST[type].label} row, which runs only in `
+      + `${offeredFileKeys(type)}, not ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. Skipped.`,
+    );
+    return null;
+  }
+
   return {
     name,
     type: type as AutomationType,
     trigger,
     enabled: entry.enabled !== false,
     config: readConfig(entry, type as AutomationType),
+    condition: normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null),
+    max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
   };
+}
+
+/** "onEnter, onTurnEnd and onExit", from the one trigger list. */
+function listFileKeys(): string {
+  const keys = AUTOMATION_TRIGGERS.map((trigger) => AUTOMATION_TRIGGER_FILE_KEYS[trigger]);
+  return `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`;
+}
+
+/** The file keys a type may be filed under. */
+function offeredFileKeys(type: AutomationType): string {
+  return AUTOMATION_TRIGGERS
+    .filter((trigger) => isTypeOfferedOnTrigger(type, trigger))
+    .map((trigger) => AUTOMATION_TRIGGER_FILE_KEYS[trigger])
+    .join(' or ');
 }
 
 /** Read only the keys the type declares, so a stray key in a hand-edited file is dropped. */

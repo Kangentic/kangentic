@@ -123,6 +123,8 @@ export class DroidAdapter implements AgentAdapter {
    * `~/.factory/settings.json` to inject project-level hooks.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only terminal silence says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
     sessionId: {
       // The TUI does not print the session UUID in stdout, so the

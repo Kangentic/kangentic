@@ -17,6 +17,7 @@ import { AddAutomationPicker } from './board-manager/AddAutomationPicker';
 import { EditAutomationDialog } from './board-manager/EditAutomationDialog';
 import {
   appendRow,
+  columnFacts,
   copyAutomation,
   describeAutomationChanges,
   dirtyColumnIds,
@@ -38,6 +39,7 @@ import {
   type AutomationDraftsByColumn,
 } from './board-manager/automation-drafts';
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
+import { canTriggerRun } from '../../../shared/automation-manifest';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
@@ -1067,15 +1069,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         isolated: applies && laneDraft.session_target === 'isolated',
         // The DRAFT's counts, not the saved ones, so switching a row off
         // updates the rail before Save, like every other number on this
-        // surface. Enter and exit together: the rail says how much happens
-        // here, and the two groups on the column page say which end.
+        // surface. Every group together: the rail says how much happens here,
+        // and the groups on the column page say when.
         automationCount: (() => {
-          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], laneDraft);
-          return counts.enter + counts.exit;
+          const reportsTurnEnd = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent))?.reportsTurnEnd;
+          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], { ...laneDraft, reportsTurnEnd });
+          return counts.enter + counts.turn_end + counts.exit;
         })(),
       }];
     });
-  }, [laneOrder, drafts, originals, newDraftIds, agentList, automationDrafts]);
+  }, [laneOrder, drafts, originals, newDraftIds, agentList, automationDrafts, projectDefaultAgent]);
 
   // Rows for the "All columns" overview grid, read from drafts so unsaved edits show.
   const overviewRows: OverviewRow[] = useMemo(() => {
@@ -1122,10 +1125,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const newerModel = modelOverride ? newerModelFor(modelOverride, laneKnownModels) : null;
 
       const rows = automationDrafts[id] ?? [];
-      const counts = runnableAutomationCounts(rows, laneDraft);
+      const columnInput = { ...laneDraft, reportsTurnEnd: laneAgentInfo?.reportsTurnEnd };
+      const counts = runnableAutomationCounts(rows, columnInput);
       // The tooltip names exactly the rows the number counts.
       const nameRows = (trigger: AutomationTrigger): string =>
-        runnableRows(rows, laneDraft, trigger).map((row) => row.name).join(', ');
+        runnableRows(rows, columnInput, trigger).map((row) => row.name).join(', ');
+      const turnEndGroup = canTriggerRun(columnFacts(columnInput), 'turn_end');
 
       return [{
         id,
@@ -1176,6 +1181,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         onEnter: isTerminal
           ? { label: '0', changed: false, applicable: false, reason: `Nothing runs when a task enters ${terminalName}.` }
           : { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
+        // No agent works in To Do or Done, so no turn ends there either; nor in
+        // a column with no agent, or one whose agent reports no turn end.
+        onTurnEnd: isTerminal
+          ? { label: '0', changed: false, applicable: false, reason: `No agent works in ${terminalName}, so nothing runs at a turn end there.` }
+          : !turnEndGroup.ok
+            ? { label: '0', changed: false, applicable: false, reason: turnEndGroup.reason }
+            : { label: String(counts.turn_end), changed: counts.turn_end > 0, applicable: true, reason: nameRows('turn_end') },
         onExit: { label: String(counts.exit), changed: counts.exit > 0, applicable: true, reason: nameRows('exit') },
       }];
     });
@@ -2422,6 +2434,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
             <div className="w-full shrink-0 @[1100px]:flex-1 @[1100px]:w-auto @[1100px]:min-w-0 @[1100px]:shrink @[1100px]:min-h-0 @[1100px]:overflow-y-auto">
               <AutomationsPane
                 column={draft}
+                reportsTurnEnd={effectiveAgentInfo?.reportsTurnEnd}
                 drafts={rowsForColumn(draft.id)}
                 readOnly={activeProfileId !== null}
                 isDirty={(row) => {
@@ -2488,6 +2501,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           key={editing.rowId}
           draft={editingRow}
           column={editingColumn}
+          reportsTurnEnd={agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))?.reportsTurnEnd}
           isNew={editing.isNew}
           takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
           templatePicker={TemplateVariablePicker}

@@ -125,6 +125,20 @@ export interface SessionManagerOptions {
   ptyHostTransport?: PtyHostTransport;
 }
 
+/**
+ * The `'turn-ended'` event's payload: a turn the agent itself ended has
+ * settled (`ActivityEngineCallbacks.onTurnEnded`). Carries the session that
+ * ended the turn, which for an isolated column (Code Review) is that column's
+ * session, never the task's main one.
+ */
+export interface TurnEndedPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  agentSessionId: string | null;
+  isolatedSwimlaneId: string | null;
+}
+
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
 export interface SessionPipelineStats {
   sessionId: string;
@@ -493,6 +507,27 @@ export class SessionManager extends EventEmitter {
       // only new information is which reason to draw.
       onReasonChange: (sessionId, activity, reason) =>
         this.emit('activity-reason', sessionId, activity, reason),
+      // Its own event too, not an 'activity' idle: that idle also comes from an
+      // interrupt, a failed turn, PTY silence and the watchdogs, and the
+      // listeners here (column automations, workflow steps) act only on a turn
+      // the agent finished. A listener that throws must not unwind the engine's
+      // commit, so the emit is guarded.
+      onTurnEnded: (sessionId) => {
+        const session = this.registry.get(sessionId);
+        if (!session || session.transient) return;
+        const payload: TurnEndedPayload = {
+          sessionId,
+          taskId: session.taskId,
+          projectId: session.projectId,
+          agentSessionId: session.agentSessionId ?? null,
+          isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+        };
+        try {
+          this.emit('turn-ended', payload);
+        } catch (error) {
+          console.error(`[SESSION] turn-ended listener threw for ${sessionId.slice(0, 8)}:`, error);
+        }
+      },
       onEvent: (sessionId, event) => {
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);

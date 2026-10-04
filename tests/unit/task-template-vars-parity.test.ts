@@ -96,10 +96,11 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     const spawn = templateVarsFor('spawn').map((entry) => entry.name);
     const automation = templateVarsFor('automation').map((entry) => entry.name);
 
-    // The four move keywords have no meaning outside a move: a spawn prompt is
+    // The five move keywords have no meaning outside a move: a spawn prompt is
     // not one, so offering them there would be offering a permanent empty
     // string.
-    for (const name of ['column', 'fromColumn', 'toColumn', 'trigger']) {
+    const moveOnly = ['column', 'fromColumn', 'toColumn', 'trigger', 'agentReply'];
+    for (const name of moveOnly) {
       expect(spawn, `${name} must not be offered in a spawn prompt`).not.toContain(name);
       expect(automation, `${name} must be offered in an automation`).toContain(name);
     }
@@ -107,7 +108,7 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     // Everything else is available in both, and an automation sees the whole
     // catalog.
     expect(automation.length).toBe(TASK_TEMPLATE_VAR_NAMES.length);
-    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - 4);
+    expect(spawn.length).toBe(TASK_TEMPLATE_VAR_NAMES.length - moveOnly.length);
   });
 
   it('every chip is documented in docs/transition-engine.md', () => {

@@ -230,6 +230,26 @@ export function useAgentDrivenInvalidation(): void {
       }));
     }
 
+    if (tasks?.onMovedByAutomation) {
+      cleanups.push(tasks.onMovedByAutomation((movedProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const matchesActiveProject = !movedProjectId || movedProjectId === activeProjectId;
+        console.debug('[agent-push] task:movedByAutomation received', {
+          pushProjectId: movedProjectId,
+          activeProjectId,
+          action: matchesActiveProject ? 'reload' : 'invalidate-cache',
+        });
+        if (matchesActiveProject) {
+          scheduleBoardReload();
+        } else {
+          invalidateProject(movedProjectId);
+        }
+        // No toast: a Move to column automation or a workflow step moved the
+        // card, and a workflow can do that many times an hour. The card moving
+        // is the news, and the run log says which automation did it and why.
+      }));
+    }
+
     const swimlanes = window.electronAPI?.swimlanes;
     if (swimlanes?.onUpdatedByAgent) {
       cleanups.push(swimlanes.onUpdatedByAgent((_swimlaneId, swimlaneName, updatedByAgentProjectId) => {

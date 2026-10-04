@@ -177,6 +177,9 @@ export interface AgentDetectionInfo {
   pastedImageReferenceTemplate?: string;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
+  /** True if the agent says when its turn ended (`AdapterRuntimeStrategy.reportsTurnEnd`), which
+   *  is what a column's On agent turn end automations and a workflow task's step check need. */
+  reportsTurnEnd?: boolean;
   /** True if the adapter can answer a question over supplied context (used by the
    *  Knowledge Graph's Ask). Read instead of the agent's name, per
    *  `.claude/rules/agent-adapters-boundary.md`. */
@@ -890,12 +893,15 @@ export type AutomationType =
   | 'spawn_agent';
 
 /**
- * When an automation runs, relative to the column that owns it. There is
+ * When an automation runs, relative to the column that owns it: as a task
+ * enters it, each time the agent working there finishes a turn (`turn_end`, the
+ * session manager's `'turn-ended'`), or as the task leaves. There is
  * deliberately no 'both': every both-ends workflow needs different settings per
- * direction, so it is two automations, and without it a column's two group
- * counts always sum to its total.
+ * direction, so it is two automations, and without it a column's group counts
+ * always sum to its total. `AUTOMATION_TRIGGERS` (`automation-manifest.ts`)
+ * lists them in the order a column shows and runs them.
  */
-export type AutomationTrigger = 'enter' | 'exit';
+export type AutomationTrigger = 'enter' | 'turn_end' | 'exit';
 
 /**
  * An automation's per-type payload. Keys are declared by the adapter's manifest
@@ -942,10 +948,21 @@ export interface ColumnAutomation {
   name: string;
   type: AutomationType;
   trigger: AutomationTrigger;
-  /** 0..n WITHIN (swimlane_id, trigger), so the two groups never interleave. */
+  /** 0..n WITHIN (swimlane_id, trigger), so the groups never interleave. */
   position: number;
   enabled: boolean;
   config: AutomationConfig;
+  /**
+   * Prose the Automation agent judges before the row runs ("All tests pass").
+   * Null means the row always runs, which is every automation made before
+   * Conditions existed. A no is not a run: the row is checked again next time.
+   */
+  condition: string | null;
+  /**
+   * The most times this row may run on one task, counted across every visit
+   * to the column (a review loop's round-trip limit). Null means no limit.
+   */
+  max_runs: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -958,6 +975,10 @@ export interface AutomationWriteInput {
   trigger: AutomationTrigger;
   enabled: boolean;
   config: AutomationConfig;
+  /** See `ColumnAutomation.condition`. Omitted or null: always runs. */
+  condition?: string | null;
+  /** See `ColumnAutomation.max_runs`. Omitted or null: no limit. */
+  max_runs?: number | null;
 }
 
 /**
@@ -1010,6 +1031,14 @@ export interface AutomationRun {
   attempts: number;
   started_at: string;
   finished_at: string | null;
+  /**
+   * What the Automation agent answered for the row's Condition: true (it ran),
+   * false (a skipped run, checked again next time), null when the row has no
+   * Condition or it was never asked.
+   */
+  condition_met: boolean | null;
+  /** The Automation agent's one-line reason for its answer, or null. */
+  condition_reason: string | null;
 }
 
 /**
@@ -4732,6 +4761,41 @@ export interface TaskMoveInput {
   targetPosition: number;
 }
 
+/**
+ * Who moved a task into a column, as `task_moves` records it. The four move
+ * origins `handleTaskMove` takes, plus the writes that place a task without it:
+ * a rollback of a failed move, an unarchive, and a create into a column.
+ */
+export type TaskMoveRecordOrigin =
+  | 'renderer'
+  | 'agent'
+  | 'mobile'
+  | 'auto-move'
+  | 'workflow'
+  | 'automation'
+  | 'rollback'
+  | 'unarchive'
+  | 'create';
+
+/** What a repository write that moves a task records about it. */
+export interface TaskMoveProvenance {
+  origin: TaskMoveRecordOrigin;
+  /** A short why, when the mover knows one ("Back for revisions", "Step done"). */
+  reason?: string | null;
+}
+
+/** One `task_moves` row: a task entering a column. */
+export interface TaskMoveRecord {
+  id: string;
+  task_id: string;
+  /** Null when the task was born into the column. */
+  from_swimlane_id: string | null;
+  to_swimlane_id: string;
+  origin: TaskMoveRecordOrigin;
+  reason: string | null;
+  at: string;
+}
+
 export interface TaskUnarchiveInput {
   id: string;
   targetSwimlaneId: string;
@@ -4967,6 +5031,18 @@ export const ActivityDetection = {
 export interface AdapterRuntimeStrategy {
   /** How thinking vs idle is detected (hooks, PTY patterns, or both). */
   readonly activity: ActivityDetectionStrategy;
+
+  /**
+   * Whether the agent says when its turn ended: a hook or a wire record that
+   * reaches the activity engine as a real `Idle` event, which is what fires
+   * the session manager's `'turn-ended'` (column automations' On agent turn
+   * end, a workflow task's step check). False for an agent whose only idle
+   * signal is terminal silence or a prompt pattern: a quiet compile looks the
+   * same, so its column offers no On agent turn end group and a workflow task
+   * there advances only when a person moves it. Required, so every adapter
+   * states it.
+   */
+  readonly reportsTurnEnd: boolean;
 
   /**
    * How the agent's real CLI session ID is captured for resume support.
@@ -5611,10 +5687,16 @@ export type BoardAutomationConfig = {
   type: string;
   /** Omitted means enabled. Only `false` is ever written. */
   enabled?: boolean;
+  /** Prose the Automation agent judges before the row runs. Omitted means it always runs. */
+  condition?: string;
+  /** The most times the row may run on one task, across visits. Omitted means no limit. */
+  maxRuns?: number;
 } & Record<string, unknown>;
 
 export interface BoardColumnAutomations {
   onEnter?: BoardAutomationConfig[];
+  /** Each time the agent working in the column finishes a turn there. */
+  onTurnEnd?: BoardAutomationConfig[];
   onExit?: BoardAutomationConfig[];
 }
 
@@ -6109,6 +6191,13 @@ export interface ElectronAPI {
      * came from.
      */
     onMovedByMobile: (callback: (projectId?: string) => void) => () => void;
+    /**
+     * A task Kangentic moved on its own: a Move to column automation at a turn
+     * end, or a workflow starting or advancing a task. Quiet, like
+     * `onMovedByMobile`: the board reloads and nothing toasts, because a
+     * workflow can move many cards an hour and the run log already records why.
+     */
+    onMovedByAutomation: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

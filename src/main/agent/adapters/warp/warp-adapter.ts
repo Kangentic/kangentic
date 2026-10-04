@@ -142,6 +142,8 @@ export class WarpAdapter implements AgentAdapter {
    * detection mechanism.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only terminal silence says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
   };
 

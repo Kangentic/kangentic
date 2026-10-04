@@ -374,6 +374,8 @@ export class ClaudeAdapter implements AgentAdapter {
   // demand by transcript-parser.ts for the renderer's Transcript tab and
   // lifetime-token refinement.)
   readonly runtime: AdapterRuntimeStrategy = {
+    // Its Stop hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooks(),
     statusFile: {
       parseStatus: ClaudeStatusParser.parseStatus,

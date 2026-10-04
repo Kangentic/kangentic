@@ -1598,6 +1598,22 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onMovedByAutomation: function (callback) {
+        // Tests can fire this via window.__mockFireTaskMovedByAutomation(projectId).
+        if (!window.__mockTaskMovedByAutomationListeners) window.__mockTaskMovedByAutomationListeners = [];
+        window.__mockTaskMovedByAutomationListeners.push(callback);
+        if (!window.__mockFireTaskMovedByAutomation) {
+          window.__mockFireTaskMovedByAutomation = function (projectId) {
+            var listeners = (window.__mockTaskMovedByAutomationListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockTaskMovedByAutomationListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onMovedByMobile: function (callback) {
         // Tests can fire this via window.__mockFireTaskMovedByMobile(projectId).
         if (!window.__mockTaskMovedByMobileListeners) window.__mockTaskMovedByMobileListeners = [];

@@ -19,6 +19,27 @@ import type { AutoCommandMode, AutomationTrigger, AutomationType, SwimlaneRole }
 /** A capability an automation needs from its column before it can run. */
 export type AutomationNeed = 'agent';
 
+/**
+ * Every trigger, in the order a column shows its groups: what happens as a task
+ * enters, each time its agent finishes a turn there, and as it leaves. The one
+ * list every consumer iterates (the Automations pane, the drafts' sort,
+ * `kangentic.json`'s reader and writer, the MCP enum), so a fourth trigger is
+ * added here and nowhere is left assuming two.
+ */
+export const AUTOMATION_TRIGGERS = ['enter', 'turn_end', 'exit'] as const satisfies readonly AutomationTrigger[];
+
+/** The `kangentic.json` key each trigger's list is written under. */
+export const AUTOMATION_TRIGGER_FILE_KEYS = {
+  enter: 'onEnter',
+  turn_end: 'onTurnEnd',
+  exit: 'onExit',
+} as const satisfies Record<AutomationTrigger, string>;
+
+/** Narrow a stored or received trigger string; anything else is not a trigger this build knows. */
+export function isAutomationTrigger(value: unknown): value is AutomationTrigger {
+  return typeof value === 'string' && (AUTOMATION_TRIGGERS as readonly string[]).includes(value);
+}
+
 export type AutomationFieldKind =
   | 'text'
   | 'textarea'
@@ -104,6 +125,21 @@ export interface AutomationManifestEntry {
    */
   timeoutMs: number | null;
   retry: { attempts: number; on: 'network-or-5xx' } | null;
+  /**
+   * The triggers this type is offered on. Omitted means every trigger. Move to
+   * column declares turn end only: on enter or exit its move would run inside
+   * the move that triggered it, and `withTaskLock` is not reentrant. The Edit
+   * automation dialog disables the others with `triggerUnavailableReason`, and
+   * the `kangentic.json` reader skips a row filed under one.
+   */
+  triggers?: readonly AutomationTrigger[];
+  /** Why the type is not offered on a trigger it leaves out of `triggers`. */
+  triggerUnavailableReason?: string;
+  /**
+   * A row of this type that runs ends its group: the task has left the column,
+   * so the rows after it no longer apply. Move to column is the one.
+   */
+  endsGroup?: boolean;
 }
 
 /**
@@ -112,7 +148,7 @@ export interface AutomationManifestEntry {
  * (`{ name, type, enabled, ...fields }`) safe as reserved keys grow, and it is
  * checked by `tests/unit/automation-manifest-reserved-keys.test.ts`.
  */
-export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled'] as const;
+export const RESERVED_AUTOMATION_KEYS = ['name', 'type', 'enabled', 'condition', 'maxRuns'] as const;
 
 /**
  * Action types that existed before automations and are dropped outright, rows
@@ -302,6 +338,13 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
 export interface AutomationColumnFacts {
   autoSpawn: boolean;
   role: SwimlaneRole | null;
+  /**
+   * Whether the agent this column runs says when its turn ended
+   * (`AgentDetectionInfo.reportsTurnEnd`). Undefined when the caller cannot
+   * tell (the agent list has not loaded), which allows rather than blocks:
+   * the engine only fires a turn end for an agent that reports one anyway.
+   */
+  reportsTurnEnd?: boolean;
 }
 
 export type AutomationRunnability = { ok: true } | { ok: false; reason: string };
@@ -318,6 +361,24 @@ export function canColumnRun(
   column: AutomationColumnFacts,
   trigger: AutomationTrigger,
 ): AutomationRunnability {
+  const group = canTriggerRun(column, trigger);
+  if (!group.ok) return group;
+  if (!isTypeOfferedOnTrigger(type, trigger)) {
+    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.' };
+  }
+  if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
+    return { ok: false, reason: 'Start an agent here is off.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Can ANY automation run on this trigger in this column? The half of
+ * `canColumnRun` that does not depend on the type, so the Automations pane can
+ * replace a whole group with its reason instead of offering an Add that builds
+ * something inert.
+ */
+export function canTriggerRun(column: AutomationColumnFacts, trigger: AutomationTrigger): AutomationRunnability {
   // Reads `NEVER_AUTO_SPAWN_ROLES` rather than naming todo and done again. The
   // two rules are NOT the same concept and this is not derived from that one:
   // `spawnAgent` refuses those roles an agent, while this refuses them an ENTER
@@ -328,13 +389,31 @@ export function canColumnRun(
   // other, leaving the board offering a row the engine will never run.
   // A future role has to decide BOTH questions; sharing the set is what forces
   // whoever adds it to come here and say so.
-  if (trigger === 'enter' && column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role)) {
+  const systemColumn = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role);
+  if (trigger === 'enter' && systemColumn) {
     return { ok: false, reason: 'Nothing runs when a task enters To Do or Done.' };
   }
-  if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
-    return { ok: false, reason: 'Start an agent here is off.' };
+  if (trigger === 'turn_end') {
+    // No agent works in To Do or Done, and one that never starts here ends no
+    // turn here. An agent that reports no turn end (only terminal silence)
+    // cannot tell a finished turn from a quiet compile.
+    if (systemColumn) {
+      return { ok: false, reason: 'No agent works in To Do or Done, so nothing runs at a turn end there.' };
+    }
+    if (!column.autoSpawn) {
+      return { ok: false, reason: 'Start an agent here is off, so no agent ends a turn here.' };
+    }
+    if (column.reportsTurnEnd === false) {
+      return { ok: false, reason: "This column's agent does not report when its turn ends." };
+    }
   }
   return { ok: true };
+}
+
+/** Is this type offered on this trigger? (`AutomationManifestEntry.triggers`) */
+export function isTypeOfferedOnTrigger(type: AutomationType, trigger: AutomationTrigger): boolean {
+  const triggers = AUTOMATION_MANIFEST[type].triggers;
+  return triggers === undefined || triggers.includes(trigger);
 }
 
 /** The types offered for a NEW automation, in picker order. Never includes a legacy type. */

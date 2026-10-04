@@ -233,16 +233,16 @@ describe('what runs here', () => {
       draft({ id: 'a4', type: 'webhook', trigger: 'exit' }),
     ];
 
-    expect(automationCounts(list)).toEqual({ enter: 3, exit: 1 });
-    expect(runnableAutomationCounts(list, AGENT_COLUMN)).toEqual({ enter: 2, exit: 1 });
+    expect(automationCounts(list)).toEqual({ enter: 3, turn_end: 0, exit: 1 });
+    expect(runnableAutomationCounts(list, AGENT_COLUMN)).toEqual({ enter: 2, turn_end: 0, exit: 1 });
     // With no agent the message cannot run, so the count drops rather than
     // reporting something that will not happen.
-    expect(runnableAutomationCounts(list, NO_AGENT_COLUMN)).toEqual({ enter: 1, exit: 1 });
+    expect(runnableAutomationCounts(list, NO_AGENT_COLUMN)).toEqual({ enter: 1, turn_end: 0, exit: 1 });
   });
 
   it('counts no enter rows on To Do, where an enter automation can never fire', () => {
     const list = [draft({ trigger: 'enter' }), draft({ id: 'a2', trigger: 'exit' })];
-    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 0, exit: 1 });
+    expect(runnableAutomationCounts(list, TODO_COLUMN)).toEqual({ enter: 0, turn_end: 0, exit: 1 });
   });
 
   it('names the rows a count covers, for the tooltip', () => {

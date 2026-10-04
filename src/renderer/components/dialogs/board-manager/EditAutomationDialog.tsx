@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Zap } from 'lucide-react';
-import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS, stableAutomationTypes } from '../../../../shared/automation-manifest';
+import {
+  AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
+  EXIT_GROUP_BUDGET_MS,
+  canTriggerRun,
+  isTypeOfferedOnTrigger,
+  stableAutomationTypes,
+} from '../../../../shared/automation-manifest';
 import type { AutomationField } from '../../../../shared/automation-manifest';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
@@ -11,6 +18,7 @@ import { SegmentedControl, type SegmentedControlOption } from '../../SegmentedCo
 import { AutomationTypePicker } from './AutomationTypePicker';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
+  TRIGGER_LABELS,
   findNameConflict,
   formatHeaderLines,
   parseHeaderLines,
@@ -41,28 +49,43 @@ const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
  * any text field, so a fresh array per render would tear down and rebuild the
  * control's ResizeObserver (and force a synchronous layout read) per character.
  */
-const TRIGGER_OPTIONS: SegmentedControlOption<AutomationTrigger>[] = [
-  { value: 'enter', label: 'On enter', testId: 'edit-automation-trigger-enter' },
-  { value: 'exit', label: 'On exit', testId: 'edit-automation-trigger-exit' },
-];
+const TRIGGER_OPTIONS: SegmentedControlOption<AutomationTrigger>[] = AUTOMATION_TRIGGERS.map((trigger) => ({
+  value: trigger,
+  label: TRIGGER_LABELS[trigger],
+  testId: `edit-automation-trigger-${trigger}`,
+}));
 
 /**
- * The exit-only variant To Do and Done need, cached by REASON so the same
- * array instance comes back for the same column kind. Mirrors
+ * The triggers this type can take in this column, each disabled one carrying
+ * its reason as the hover tip. Cached by the reasons, so the same array comes
+ * back while nothing that decides them changes. Mirrors
  * `WorktreePlacementControl`'s `blockedOptionsFor`, and for the same reason:
- * a fresh array would defeat the memo above.
+ * a fresh array would defeat the memo on the control.
  */
 const blockedTriggerOptions = new Map<string, SegmentedControlOption<AutomationTrigger>[]>();
-function triggerOptionsFor(column: Swimlane): SegmentedControlOption<AutomationTrigger>[] {
-  if (column.role !== 'todo' && column.role !== 'done') return TRIGGER_OPTIONS;
-  const reason = `Nothing runs when a task enters ${column.name}.`;
-  const cached = blockedTriggerOptions.get(reason);
+function triggerOptionsFor(
+  type: AutomationType,
+  column: Swimlane,
+  reportsTurnEnd: boolean | undefined,
+): SegmentedControlOption<AutomationTrigger>[] {
+  const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
+  const reasons = AUTOMATION_TRIGGERS.map((trigger) => {
+    const group = canTriggerRun(facts, trigger);
+    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : group.reason;
+    if (!isTypeOfferedOnTrigger(type, trigger)) {
+      return AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.';
+    }
+    return null;
+  });
+  if (reasons.every((reason) => reason === null)) return TRIGGER_OPTIONS;
+  const cacheKey = reasons.map((reason) => reason ?? '').join('\n');
+  const cached = blockedTriggerOptions.get(cacheKey);
   if (cached) return cached;
-  const built: SegmentedControlOption<AutomationTrigger>[] = [
-    { ...TRIGGER_OPTIONS[0], disabled: true, title: reason },
-    TRIGGER_OPTIONS[1],
-  ];
-  blockedTriggerOptions.set(reason, built);
+  const built = TRIGGER_OPTIONS.map((option, index) => {
+    const reason = reasons[index];
+    return reason === null ? option : { ...option, disabled: true, title: reason };
+  });
+  blockedTriggerOptions.set(cacheKey, built);
   return built;
 }
 
@@ -75,6 +98,8 @@ const AUTO_COMMAND_MODE_OPTIONS: SegmentedControlOption<string>[] = [
 export interface EditAutomationDialogProps {
   draft: AutomationDraft;
   column: Swimlane;
+  /** Whether the column's agent reports a turn end. Undefined while unknown. */
+  reportsTurnEnd?: boolean;
   isNew: boolean;
   /** The column's other rows, for the uniqueness check. */
   takenNames: string[];
@@ -104,7 +129,10 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
   const nameEmpty = local.name.trim() === '';
   const blocked = nameEmpty || conflict !== null;
 
-  const triggerOptions = useMemo(() => triggerOptionsFor(props.column), [props.column]);
+  const triggerOptions = useMemo(
+    () => triggerOptionsFor(local.type, props.column, props.reportsTurnEnd),
+    [local.type, props.column, props.reportsTurnEnd],
+  );
 
   const setConfigValue = (key: string, value: unknown): void => {
     setLocal((current) => ({ ...current, config: { ...current.config, [key]: value } }));

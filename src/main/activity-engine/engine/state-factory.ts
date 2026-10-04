@@ -25,6 +25,7 @@ export function createSessionEngineState(): SessionEngineState {
     idleTimestamp: null,
     needsUserSince: null,
     idleAuthoritative: false,
+    turnEndSource: null,
     lastPushedReason: null,
     turnForcedByHeartbeat: false,
     pendingIdleAt: null,

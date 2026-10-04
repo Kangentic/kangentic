@@ -245,6 +245,8 @@ export class ActivityEngine {
 
     if (TURN_INITIATING_EVENTS.has(event.type)) {
       state.turnActive = true;
+      // A new turn: whatever ended the previous one no longer describes it.
+      state.turnEndSource = null;
       // A real turn hook confirms the turn - it is no longer merely
       // heartbeat-forced (task #364).
       state.turnForcedByHeartbeat = false;
@@ -290,6 +292,15 @@ export class ActivityEngine {
         if (!isSyntheticWatchdogTimeout) {
           state.idleAuthoritative = true;
         }
+        // Only the agent's own turn-end hook ends a turn for the consumers of
+        // `onTurnEnded`. A permission prompt reports as `Idle:permission` and is
+        // the agent waiting mid-turn; an interrupt and a failed turn are not
+        // finished work.
+        state.turnEndSource = event.type === EventType.Idle
+          && !isSyntheticWatchdogTimeout
+          && event.detail !== IdleReason.Permission
+          ? 'stop'
+          : null;
       }
     } else if (event.type === EventType.IdleHint) {
       // The agent reported it is waiting for input. Record it so the
@@ -312,6 +323,9 @@ export class ActivityEngine {
         // turn, so this idle is hook-authoritative (same provenance as a real
         // Idle hook): the heartbeat recovery must not force-think it.
         state.idleAuthoritative = true;
+        // But not a turn end for `onTurnEnded`: Esc between tool calls fires
+        // no hook and ends the turn exactly this way.
+        state.turnEndSource = 'idle-hint';
       }
     }
 
@@ -329,6 +343,7 @@ export class ActivityEngine {
     ) {
       state.turnActive = true;
       state.turnForcedByHeartbeat = false;
+      state.turnEndSource = null;
       state.pendingIdleAt = null;
     }
 
@@ -443,6 +458,9 @@ export class ActivityEngine {
     state.currentTool = null;
     state.idleHintPending = false;
     state.retryFailurePending = false;
+    // An interrupt, a failed turn, and a retry each end or suspend the turn
+    // without the agent saying it finished.
+    state.turnEndSource = null;
   }
 
   /**
@@ -537,6 +555,7 @@ export class ActivityEngine {
     const before = snapshotCounters(state);
     state.turnActive = true;
     state.turnForcedByHeartbeat = forcedByHeartbeat;
+    state.turnEndSource = null;
     state.lastSignalAt = this.now();
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
@@ -592,6 +611,9 @@ export class ActivityEngine {
     // PTY-silence / shutdown idle is a fallback, not a hook turn-end: leave the
     // heartbeat recovery free to wake a session that resumes generating.
     state.idleAuthoritative = false;
+    // Nor a turn end for `onTurnEnded`: silence and a dead agent say nothing
+    // about whether the work finished.
+    state.turnEndSource = null;
     state.compensationCounters.forceIdle += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'idle', 'force-idle', delta);
@@ -982,10 +1004,20 @@ export class ActivityEngine {
     } else {
       state.needsUserSince = null;
     }
+    // Entering thinking starts work the previous turn end does not describe
+    // (a turn-initiating hook already cleared it; this also covers adopted
+    // background shells, which start no turn).
+    if (newActivity === 'thinking') state.turnEndSource = null;
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);
     state.lastPushedReason = reason;
     this.callbacks.onActivityChange(sessionId, newActivity, reason);
+    // A turn the agent ended, now fully settled (its stability window passed and
+    // any background work it left has drained). Consumed so it reports once.
+    if (fromActivity === 'thinking' && newActivity === 'idle' && state.turnEndSource === 'stop') {
+      state.turnEndSource = null;
+      this.callbacks.onTurnEnded?.(sessionId);
+    }
     this.scheduleTimer(sessionId, state);
   }
 

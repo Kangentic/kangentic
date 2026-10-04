@@ -210,7 +210,7 @@ type MoveSpawnPlan = {
  * from the phone left the desktop board rendering the card in its old column
  * indefinitely.
  */
-export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move';
+export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move' | 'automation' | 'workflow';
 
 /**
  * The renderer push for each origin, or null for "say nothing".
@@ -239,6 +239,13 @@ const MOVE_PUSH_BY_ORIGIN: Record<
     sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_MOBILE, projectId),
   'auto-move': (context, projectId, input, title) =>
     sendToRenderer(context.mainWindow, IPC.TASK_AUTO_MOVED, input.taskId, input.targetSwimlaneId, title, projectId),
+  // A Move to column automation and a workflow step are Kangentic acting on its
+  // own. Quiet: a workflow can move many cards an hour, and the run log (or the
+  // workflow view) is where "why did this move" is answered.
+  automation: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
+  workflow: (context, projectId) =>
+    sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
 };
 
 export async function handleTaskMove(
@@ -258,7 +265,10 @@ export async function handleTaskMove(
   // answer someone on a deadline (the mobile bridge verb, against the phone's
   // 10s per-verb budget) answers on this signal and lets the tail finish behind
   // the response. Every other caller keeps awaiting the whole move.
-  options?: { continuationPrompt?: string; onCommitted?: () => void },
+  //
+  // `moveReason` is recorded on the move's `task_moves` row: the name of the
+  // Move to column automation that made it, or a workflow's "Step done".
+  options?: { continuationPrompt?: string; onCommitted?: () => void; moveReason?: string },
 ): Promise<void> {
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
@@ -386,8 +396,9 @@ export async function handleTaskMove(
       // move injects per column config. See spawnAgent's `suppressAutoCommand`.
       const suppressAutoCommand = fromLane?.role === 'done';
 
-      // Move the task in the database
-      tasks.move(input);
+      // Move the task in the database, recording who moved it (the visit
+      // boundary turn-end automations count from).
+      tasks.move(input, { origin, reason: options?.moveReason ?? null });
 
       // Atomic archive for Done-role target: run synchronously in the same tick
       // as tasks.move so no reader can observe the intermediate state
@@ -1431,7 +1442,7 @@ export async function handleTaskMove(
               taskId: input.taskId,
               targetSwimlaneId: fromSwimlaneId,
               targetPosition: originalPosition,
-            });
+            }, { origin: 'rollback', reason: 'The move into the column failed.' });
           }
         } catch (rollbackError) {
           console.error('[TASK_MOVE] Rollback after move failure failed:', rollbackError);

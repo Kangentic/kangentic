@@ -420,6 +420,8 @@ export class AntigravityAdapter implements AgentAdapter {
       parseEvent: AntigravityStatusParser.parseEvent,
       isFullRewrite: false,
     },
+    // Its turn-end hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty((data: string) => {
       const clean = data.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07\x1b]*[\x07\x1b]/g, '');
       return /\?\s+for shortcuts/.test(clean);

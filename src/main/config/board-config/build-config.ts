@@ -2,6 +2,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { getProjectDb } from '../../db/database';
 import type {
+  AutomationTrigger,
   BoardConfig,
   BoardColumnConfig,
   BoardAutomationConfig,
@@ -9,7 +10,14 @@ import type {
   ColumnAutomation,
 } from '../../../shared/types';
 import { CURRENT_VERSION } from './config-helpers';
-import { AUTOMATION_MANIFEST, isAutomationType } from '../../../shared/automation-manifest';
+import {
+  AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
+  AUTOMATION_TRIGGER_FILE_KEYS,
+  RESERVED_AUTOMATION_KEYS,
+  isAutomationType,
+  isRetiredActionType,
+} from '../../../shared/automation-manifest';
 
 /**
  * Build a BoardConfig object from the current SQLite state for a project.
@@ -71,7 +79,13 @@ export function buildBoardConfigFromDb(params: {
       if (lane.session_target !== 'main') column.sessionTarget = lane.session_target;
       if (lane.session_spawn_strategy !== 'create_or_resume') column.sessionSpawnStrategy = lane.session_spawn_strategy;
 
-      const automations = serializeAutomations(automationsByLane.get(lane.id) ?? []);
+      const existingColumn = params.existingTeamConfig?.columns?.find((candidate) => candidate.id === lane.id)
+        ?? params.existingTeamConfig?.columns?.find((candidate) => candidate.name === lane.name)
+        ?? null;
+      const automations = serializeAutomations(
+        automationsByLane.get(lane.id) ?? [],
+        readExistingAutomations(existingColumn),
+      );
       if (automations) column.automations = automations;
 
       // Resolve plan_exit_target_id to target column name
@@ -110,30 +124,52 @@ export function buildBoardConfigFromDb(params: {
 }
 
 /**
- * Serialize a column's automations into the file's two named arrays.
+ * Serialize a column's automations into the file's named arrays, one per
+ * trigger (`AUTOMATION_TRIGGER_FILE_KEYS`).
  *
- * Array order IS each row's position within its group, so the file, the UI's two
+ * Array order IS each row's position within its group, so the file, the UI's
  * groups, and the DB's per-trigger `position` are the same fact rather than
- * three that have to be kept in step. A group with no rows is an absent key, and
- * a column with no automations at all serializes to nothing.
+ * several that have to be kept in step. A group with no rows is an absent key,
+ * and a column with no automations at all serializes to nothing.
  *
  * Only fields the type actually declares are written, so a config key left
  * behind by a type change (a script's retired `workingDir`, a webhook body kept
  * while the draft was briefly a notification) does not leak into a file the team
  * reviews.
+ *
+ * What this build does not understand is carried over from the file it last
+ * read instead of dropped (`existing`): a list under a key it does not know, a
+ * row whose type it does not know (kept after the row it followed), and a key
+ * it does not know on a row it matches by name. The file is rebuilt from the
+ * database, and none of those ever reached the database, so without this a
+ * build older than whoever wrote the file strips their work on its next export
+ * and the commit after that takes it from the whole team.
  */
-function serializeAutomations(automations: ColumnAutomation[]): BoardColumnAutomations | undefined {
-  const onEnter = serializeGroup(automations, 'enter');
-  const onExit = serializeGroup(automations, 'exit');
-  if (onEnter.length === 0 && onExit.length === 0) return undefined;
-
-  const result: BoardColumnAutomations = {};
-  if (onEnter.length > 0) result.onEnter = onEnter;
-  if (onExit.length > 0) result.onExit = onExit;
-  return result;
+function serializeAutomations(
+  automations: ColumnAutomation[],
+  existing: Record<string, unknown> | null,
+): BoardColumnAutomations | undefined {
+  const result: Record<string, unknown> = {};
+  for (const trigger of AUTOMATION_TRIGGERS) {
+    const fileKey = AUTOMATION_TRIGGER_FILE_KEYS[trigger];
+    const existingGroup = Array.isArray(existing?.[fileKey]) ? (existing?.[fileKey] as unknown[]) : [];
+    const group = carryUnknownRows(serializeGroup(automations, trigger, existingGroup), existingGroup);
+    if (group.length > 0) result[fileKey] = group;
+  }
+  if (existing) {
+    const knownKeys = new Set<string>(Object.values(AUTOMATION_TRIGGER_FILE_KEYS));
+    for (const [key, value] of Object.entries(existing)) {
+      if (!knownKeys.has(key) && value !== undefined) result[key] = value;
+    }
+  }
+  return Object.keys(result).length > 0 ? (result as BoardColumnAutomations) : undefined;
 }
 
-function serializeGroup(automations: ColumnAutomation[], trigger: 'enter' | 'exit'): BoardAutomationConfig[] {
+function serializeGroup(
+  automations: ColumnAutomation[],
+  trigger: AutomationTrigger,
+  existingGroup: unknown[],
+): BoardAutomationConfig[] {
   return automations
     .filter((automation) => automation.trigger === trigger)
     .sort((left, right) => left.position - right.position)
@@ -142,6 +178,8 @@ function serializeGroup(automations: ColumnAutomation[], trigger: 'enter' | 'exi
       // Only `false` is written: an absent key means enabled, which keeps the
       // common row to two keys plus its fields.
       if (!automation.enabled) row.enabled = false;
+      if (automation.condition) row.condition = automation.condition;
+      if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 
       const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];
       for (const field of fields) {
@@ -150,6 +188,59 @@ function serializeGroup(automations: ColumnAutomation[], trigger: 'enter' | 'exi
         if (typeof value === 'object' && Object.keys(value as object).length === 0) continue;
         row[field.key] = value;
       }
+
+      // Keys a newer build wrote on this same row, which this one has no field for.
+      const existingRow = existingGroup.find(
+        (candidate): candidate is Record<string, unknown> =>
+          isPlainObject(candidate) && candidate.name === automation.name && candidate.type === automation.type,
+      );
+      if (existingRow) {
+        const understood = understoodRowKeys(automation.type);
+        for (const [key, value] of Object.entries(existingRow)) {
+          if (!understood.has(key) && !(key in row) && value !== undefined) row[key] = value;
+        }
+      }
       return row;
     });
+}
+
+/**
+ * Put back the rows of a type this build does not know, each right after the
+ * row it followed in the file (or first, when it led the list). Order is the
+ * run order, so appending them at the end would change what runs first.
+ */
+function carryUnknownRows(group: BoardAutomationConfig[], existingGroup: unknown[]): BoardAutomationConfig[] {
+  const merged = group.slice();
+  let previousName: string | null = null;
+  for (const candidate of existingGroup) {
+    if (!isPlainObject(candidate)) continue;
+    const candidateType = typeof candidate.type === 'string' ? candidate.type : '';
+    const candidateName = typeof candidate.name === 'string' ? candidate.name : null;
+    const known = isAutomationType(candidateType) || candidateType === 'send_command' || isRetiredActionType(candidateType);
+    if (!known && candidateName) {
+      const anchorIndex = previousName === null ? -1 : merged.findIndex((row) => row.name === previousName);
+      merged.splice(anchorIndex + 1, 0, candidate as BoardAutomationConfig);
+    }
+    if (candidateName) previousName = candidateName;
+  }
+  return merged;
+}
+
+/** The keys this build reads off a row of `type`: the row's own, the type's fields, and legacy keys. */
+function understoodRowKeys(type: string): Set<string> {
+  const keys = new Set<string>([...RESERVED_AUTOMATION_KEYS, 'command', 'workingDir']);
+  if (isAutomationType(type)) {
+    for (const field of AUTOMATION_MANIFEST[type].fields) keys.add(field.key);
+  }
+  return keys;
+}
+
+/** The column's `automations` object from the file on disk, when it is one. */
+function readExistingAutomations(column: BoardColumnConfig | null): Record<string, unknown> | null {
+  const automations: unknown = column?.automations;
+  return isPlainObject(automations) ? automations : null;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

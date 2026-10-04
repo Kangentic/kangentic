@@ -133,6 +133,10 @@ function toWriteInput(row: ColumnAutomation): AutomationWriteInput {
     trigger: row.trigger,
     enabled: row.enabled,
     config: row.config,
+    // Carried, not defaulted: `replaceForColumn` rewrites every row, so a row
+    // passed back without its guards would lose them.
+    condition: row.condition,
+    max_runs: row.max_runs,
   };
 }
 

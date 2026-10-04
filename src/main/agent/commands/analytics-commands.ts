@@ -5,6 +5,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
+import { AUTOMATION_TRIGGERS } from '../../../shared/automation-manifest';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
@@ -660,12 +661,20 @@ export const handleGetColumnDetail: CommandHandler = (
   const automations = new AutomationRepository(db).listForColumn(matched.id);
   const columnMessage = resolveColumnMessage(automations)?.message ?? null;
   if (columnMessage) lines.push(`  Message to agent: ${columnMessage}`);
-  for (const trigger of ['enter', 'exit'] as const) {
+  for (const trigger of AUTOMATION_TRIGGERS) {
     const group = automations.filter((row) => row.trigger === trigger).sort((left, right) => left.position - right.position);
     if (group.length === 0) continue;
-    lines.push(`  On ${trigger}:`);
+    lines.push(`  On ${trigger === 'turn_end' ? 'agent turn end' : `task ${trigger}`}:`);
     for (const row of group) {
-      lines.push(`    ${row.position + 1}. ${row.name} (${row.type})${row.enabled ? '' : ' [off]'}`);
+      const guards = [
+        row.condition ? `only if: ${row.condition}` : null,
+        row.max_runs !== null ? `at most ${row.max_runs} per task` : null,
+      ].filter((guard): guard is string => guard !== null);
+      lines.push(
+        `    ${row.position + 1}. ${row.name} (${row.type})`
+        + (guards.length > 0 ? ` (${guards.join('; ')})` : '')
+        + (row.enabled ? '' : ' [off]'),
+      );
     }
   }
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);

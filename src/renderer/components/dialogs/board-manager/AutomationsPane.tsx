@@ -3,7 +3,7 @@ import { GripVertical, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, canTriggerRun } from '../../../../shared/automation-manifest';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -15,6 +15,7 @@ import {
   TRIGGERS,
   TRIGGER_LABELS,
   canRunRow,
+  columnFacts,
   describeDraft,
   dropIndexFor,
   rowsFor,
@@ -37,6 +38,12 @@ import {
 
 export interface AutomationsPaneProps {
   column: Swimlane;
+  /**
+   * Whether the agent this column runs reports a turn end, from the agent
+   * list. Undefined while the list loads, which shows the group rather than
+   * blocking it on a guess.
+   */
+  reportsTurnEnd?: boolean;
   drafts: AutomationDraft[];
   /**
    * Read-only under a profile: a list belongs to the COLUMN, not to a profile
@@ -228,7 +235,7 @@ export function AutomationsPane(props: AutomationsPaneProps) {
       id="automations"
       label="Automations"
       icon={Zap}
-      info="What happens when a task enters or leaves this column, from or to any column, in this order."
+      info="What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
       className="flex flex-col min-h-0"
     >
       {props.readOnly && (
@@ -263,17 +270,24 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
   registerList: (node: HTMLUListElement | null) => void;
 }) {
   const rows = rowsFor(props.drafts, trigger);
-  // To Do and Done can never run an ENTER automation, so that group is replaced
+  // A group no row could ever run in (On task enter in To Do or Done; On agent
+  // turn end with no agent here, or one that reports no turn end) is replaced
   // by the reason rather than shown empty with an Add control that would build
-  // something inert.
-  const enterBlocked = trigger === 'enter' && (props.column.role === 'todo' || props.column.role === 'done');
+  // something inert. The shared rule, so the engine skips exactly these.
+  //
+  // Rows already in a blocked group stay listed under the reason: the column's
+  // agent can change, and a list that vanished would read as deleted.
+  const group = canTriggerRun(columnFacts({ ...props.column, reportsTurnEnd: props.reportsTurnEnd }), trigger);
+  const blockedReason = group.ok
+    ? null
+    : (trigger === 'enter' ? `Nothing runs when a task enters ${props.column.name}.` : group.reason);
 
   return (
     <section data-testid="column-automation-group" data-trigger={trigger}>
       <GroupHeading label={TRIGGER_LABELS[trigger]} />
-      {enterBlocked ? (
-        <p className="text-xs text-fg-faint py-1">
-          Nothing runs when a task enters {props.column.name}.
+      {blockedReason !== null && rows.length === 0 ? (
+        <p data-testid="column-automation-group-blocked" className="text-xs text-fg-faint py-1">
+          {blockedReason}
         </p>
       ) : (
         <SortableContext items={rows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
@@ -284,7 +298,11 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
               <AutomationRow key={draft.id} draft={draft} index={index} reorderable={rows.length > 1} {...props} />
             ))}
           </ul>
-          {!props.readOnly && <AddAutomationButton trigger={trigger} onAdd={props.onAdd} />}
+          {blockedReason !== null ? (
+            <p data-testid="column-automation-group-blocked" className="text-xs text-fg-faint py-1">
+              {blockedReason}
+            </p>
+          ) : (!props.readOnly && <AddAutomationButton trigger={trigger} onAdd={props.onAdd} />)}
         </SortableContext>
       )}
     </section>
@@ -310,6 +328,7 @@ function AutomationRow({
   draft,
   index,
   column,
+  reportsTurnEnd,
   readOnly,
   onEdit,
   onDelete,
@@ -318,7 +337,7 @@ function AutomationRow({
   reorderable,
 }: AutomationsPaneProps & { draft: AutomationDraft; index: number; reorderable: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.id });
-  const runnable = canRunRow(draft, column);
+  const runnable = canRunRow(draft, { ...column, reportsTurnEnd });
   const entry = AUTOMATION_MANIFEST[draft.type];
   const legacy = entry.status === 'legacy';
 

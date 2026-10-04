@@ -713,7 +713,7 @@ paths, and the legacy-action migration alike, so a hand-written file that predat
 opens. Neither alias is written back. See
 [Configuration](configuration.md#column-automations).
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}` and `{{trigger}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](transition-engine.md#template-variables).
 
 ## PTY Session Manager
 

@@ -11,6 +11,7 @@
  */
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
   canColumnRun,
   stableAutomationTypes,
   type AutomationColumnFacts,
@@ -39,17 +40,23 @@ export interface AutomationDraft {
   trigger: AutomationTrigger;
   enabled: boolean;
   config: AutomationConfig;
+  /** Condition: prose the Automation agent judges. Null: always runs. */
+  condition: string | null;
+  /** Frequency: the most runs on one task. Null: no limit. */
+  max_runs: number | null;
 }
 
 export type AutomationDraftsByColumn = Record<string, AutomationDraft[]>;
 
+/** Each label names who acts: the task enters, the agent ends a turn, the task leaves. */
 export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
-  enter: 'On enter',
-  exit: 'On exit',
+  enter: 'On task enter',
+  turn_end: 'On agent turn end',
+  exit: 'On task exit',
 };
 
-/** The two groups, in the order the pane stacks them. */
-export const TRIGGERS: readonly AutomationTrigger[] = ['enter', 'exit'];
+/** The groups, in the order the pane stacks them and a task meets them. */
+export const TRIGGERS: readonly AutomationTrigger[] = AUTOMATION_TRIGGERS;
 
 /**
  * A draft id no saved row can hold and no other draft can collide with.
@@ -77,6 +84,8 @@ export function toDraft(automation: ColumnAutomation): AutomationDraft {
     trigger: automation.trigger,
     enabled: automation.enabled,
     config: { ...automation.config },
+    condition: automation.condition,
+    max_runs: automation.max_runs,
   };
 }
 
@@ -91,12 +100,9 @@ export function draftsByColumn(automations: ColumnAutomation[]): AutomationDraft
   return byColumn;
 }
 
-/** Group order first, then the order within the group. */
+/** Group order first (`TRIGGERS`), then the order within the group (a stable sort keeps it). */
 function sortDrafts(drafts: AutomationDraft[]): AutomationDraft[] {
-  return drafts.sort((left, right) => {
-    if (left.trigger !== right.trigger) return left.trigger === 'enter' ? -1 : 1;
-    return 0;
-  });
+  return drafts.sort((left, right) => TRIGGERS.indexOf(left.trigger) - TRIGGERS.indexOf(right.trigger));
 }
 
 export function describeDraft(draft: AutomationDraft): string {
@@ -127,6 +133,9 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     trigger,
     enabled: true,
     config: defaultConfigForType(type),
+    // Both start off, so a new row runs the way every row did before they existed.
+    condition: null,
+    max_runs: null,
   };
 }
 
@@ -143,6 +152,8 @@ export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigg
     trigger,
     enabled: source.enabled,
     config: { ...source.config },
+    condition: source.condition,
+    max_runs: source.max_runs,
   };
 }
 
@@ -174,11 +185,12 @@ export function setEnabled(drafts: AutomationDraft[], id: string, enabled: boole
 }
 
 /**
- * Move a row to a new index WITHIN its group, or across into the other group.
+ * Move a row to a new index WITHIN its group, or across into another group.
  *
- * Index is group-relative, because that is what the user is looking at: the two
- * groups number from 1 independently, and a drag across the heading is a trigger
- * change plus a position.
+ * Index is group-relative, because that is what the user is looking at: the
+ * groups number from 1 independently, and a drag across a heading is a trigger
+ * change plus a position. A type the destination trigger does not offer (Move to
+ * column outside On agent turn end) stays where it is.
  */
 export function moveRow(
   drafts: AutomationDraft[],
@@ -188,15 +200,15 @@ export function moveRow(
 ): AutomationDraft[] {
   const moving = drafts.find((draft) => draft.id === id);
   if (!moving) return drafts;
+  const offered = AUTOMATION_MANIFEST[moving.type].triggers;
+  if (offered && !offered.includes(trigger)) return drafts;
 
   const others = drafts.filter((draft) => draft.id !== id);
   const destination = others.filter((draft) => draft.trigger === trigger);
   const clamped = Math.max(0, Math.min(indexInGroup, destination.length));
   destination.splice(clamped, 0, { ...moving, trigger });
 
-  const otherGroup = trigger === 'enter' ? 'exit' : 'enter';
-  const untouched = others.filter((draft) => draft.trigger === otherGroup);
-  return trigger === 'enter' ? [...destination, ...untouched] : [...untouched, ...destination];
+  return TRIGGERS.flatMap((group) => (group === trigger ? destination : others.filter((draft) => draft.trigger === group)));
 }
 
 /**
@@ -261,18 +273,31 @@ export function takenNamesFor(drafts: AutomationDraft[], exceptId?: string): str
 
 // --- runnability and counts -------------------------------------------------
 
-export function columnFacts(column: Pick<Swimlane, 'auto_spawn' | 'role'>): AutomationColumnFacts {
-  return { autoSpawn: column.auto_spawn, role: column.role };
+/**
+ * What the runnability helpers read off a column: its draft, plus whether the
+ * agent it runs reports a turn end (from the agent list). The flag is
+ * optional, and absent means "cannot tell", which allows: the board glyph's
+ * counts are computed in a store that does not resolve the column's agent.
+ */
+export type AutomationColumnInput = Pick<Swimlane, 'auto_spawn' | 'role'> & { reportsTurnEnd?: boolean };
+
+export function columnFacts(column: AutomationColumnInput): AutomationColumnFacts {
+  return { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd: column.reportsTurnEnd };
 }
 
-export function canRunRow(draft: AutomationDraft, column: Pick<Swimlane, 'auto_spawn' | 'role'>): AutomationRunnability {
+export function canRunRow(draft: AutomationDraft, column: AutomationColumnInput): AutomationRunnability {
   return canColumnRun(draft.type, columnFacts(column), draft.trigger);
 }
 
 /** Every row, by group. What EXISTS. */
-export function automationCounts(drafts: AutomationDraft[]): { enter: number; exit: number } {
+export function automationCounts(drafts: AutomationDraft[]): Record<AutomationTrigger, number> {
+  return countByTrigger(drafts);
+}
+
+function countByTrigger(drafts: AutomationDraft[]): Record<AutomationTrigger, number> {
   return {
     enter: rowsFor(drafts, 'enter').length,
+    turn_end: rowsFor(drafts, 'turn_end').length,
     exit: rowsFor(drafts, 'exit').length,
   };
 }
@@ -288,19 +313,15 @@ export function automationCounts(drafts: AutomationDraft[]): { enter: number; ex
  */
 export function runnableAutomationCounts(
   drafts: AutomationDraft[],
-  column: Pick<Swimlane, 'auto_spawn' | 'role'>,
-): { enter: number; exit: number } {
-  const runnable = drafts.filter((draft) => draft.enabled && canRunRow(draft, column).ok);
-  return {
-    enter: rowsFor(runnable, 'enter').length,
-    exit: rowsFor(runnable, 'exit').length,
-  };
+  column: AutomationColumnInput,
+): Record<AutomationTrigger, number> {
+  return countByTrigger(drafts.filter((draft) => draft.enabled && canRunRow(draft, column).ok));
 }
 
 /** The rows a count covers, for the tooltip that names them. */
 export function runnableRows(
   drafts: AutomationDraft[],
-  column: Pick<Swimlane, 'auto_spawn' | 'role'>,
+  column: AutomationColumnInput,
   trigger: AutomationTrigger,
 ): AutomationDraft[] {
   return rowsFor(drafts, trigger).filter((draft) => draft.enabled && canRunRow(draft, column).ok);
@@ -323,7 +344,28 @@ export function serializeAutomation(draft: AutomationDraft): string {
     if (typeof value === 'object' && Object.keys(value as object).length === 0) continue;
     config[key] = value;
   }
-  return JSON.stringify({ name: draft.name.trim(), type: draft.type, trigger: draft.trigger, enabled: draft.enabled, config });
+  return JSON.stringify({
+    name: draft.name.trim(),
+    type: draft.type,
+    trigger: draft.trigger,
+    enabled: draft.enabled,
+    config,
+    condition: normalizeDraftCondition(draft.condition),
+    max_runs: normalizeDraftMaxRuns(draft.max_runs),
+  });
+}
+
+/** A blank Condition is none, so clearing the field does not read as a change. */
+export function normalizeDraftCondition(condition: string | null): string | null {
+  const trimmed = condition?.trim() ?? '';
+  return trimmed ? trimmed : null;
+}
+
+/** A Frequency below 1, or not a whole number, is no limit. */
+export function normalizeDraftMaxRuns(maxRuns: number | null): number | null {
+  if (maxRuns === null || !Number.isFinite(maxRuns)) return null;
+  const whole = Math.floor(maxRuns);
+  return whole >= 1 ? whole : null;
 }
 
 function serializeList(drafts: AutomationDraft[]): string {
@@ -397,6 +439,8 @@ export function toWriteInput(draft: AutomationDraft): AutomationWriteInput {
     trigger: draft.trigger,
     enabled: draft.enabled,
     config: config as AutomationConfig,
+    condition: normalizeDraftCondition(draft.condition),
+    max_runs: normalizeDraftMaxRuns(draft.max_runs),
   };
 }
 
@@ -548,11 +592,18 @@ export function formatHeaderLines(headers: Record<string, string> | undefined): 
 
 /** The types the picker offers, with the reason each disabled one cannot run here. */
 export function pickerTypes(
-  column: Pick<Swimlane, 'auto_spawn' | 'role'>,
+  column: AutomationColumnInput,
   trigger: AutomationTrigger,
 ): Array<{ type: AutomationType; runnable: AutomationRunnability }> {
-  return stableAutomationTypes().map((type) => ({
-    type,
-    runnable: canColumnRun(type, columnFacts(column), trigger),
-  }));
+  // Only the types this trigger offers: Move to column is not a choice under
+  // On task enter at all, rather than a choice that is always disabled.
+  return stableAutomationTypes()
+    .filter((type) => {
+      const offered = AUTOMATION_MANIFEST[type].triggers;
+      return offered === undefined || offered.includes(trigger);
+    })
+    .map((type) => ({
+      type,
+      runnable: canColumnRun(type, columnFacts(column), trigger),
+    }));
 }

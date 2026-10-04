@@ -191,13 +191,21 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{column}}` | The column the automation belongs to. Automations only |
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |
 | `{{toColumn}}` | The column the task moved into. Automations only |
-| `{{trigger}}` | Which end of the move this is: `enter` or `exit`. Automations only |
+| `{{trigger}}` | When this automation runs: `enter`, `turn_end` or `exit`. Automations only |
+| `{{agentReply}}` | The agent's reply at the end of its last turn in this column: the final message, full text with its line breaks. Empty on task enter, and for an agent whose transcript Kangentic cannot read. Automations only |
 
-The last four are marked **automations only** because each entry declares
+The last five are marked **automations only** because each entry declares
 its `contexts` (`src/shared/task-template-vars.ts`). A `spawn_agent` prompt
-template is not a move, so those four would resolve permanently empty there,
+template is not a move, so those five would resolve permanently empty there,
 and the picker does not offer them in that context. A flat list that offered
-everything everywhere would be lying about four of its entries.
+everything everywhere would be lying about five of its entries.
+
+`{{agentReply}}` is read from the session whose turn just ended, which for an
+isolated column is that column's own session, not the task's main one. It is
+the same final answer `kangentic_get_transcript` returns for `view: "result"`,
+uncut: the newest assistant message after the last user prompt, its text blocks
+joined. It is what carries a review's findings to the column a Move to column
+row sends the task to.
 
 Drop-and-collapse preserves newlines: only runs of spaces and tabs collapse,
 and only in the template's own text, never inside a substituted value. That is

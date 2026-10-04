@@ -130,6 +130,8 @@ export class CopilotAdapter implements AgentAdapter {
     streamOutput: {
       createParser: () => new CopilotStreamParser(),
     },
+    // Its turn-end hook reaches the engine as an Idle event.
+    reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty(),
   };
 

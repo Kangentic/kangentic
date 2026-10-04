@@ -60,6 +60,7 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'fromColumn',
   'toColumn',
   'trigger',
+  'agentReply',
 ] as const;
 
 export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
@@ -236,8 +237,19 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'trigger',
     chip: '{{trigger}}',
-    description: 'Which end of the move this is: enter or exit.',
+    description: 'When this automation runs: enter, turn_end or exit.',
     contexts: MOVE_ONLY,
+  },
+  // The agent's final message of the turn that just ended, so a review's
+  // findings can ride along with a move back to Executing. Full text, newlines
+  // kept. Read from the session whose turn ended (for an isolated column, that
+  // column's own session), never "the task's latest session".
+  {
+    name: 'agentReply',
+    chip: '{{agentReply}}',
+    description: "The agent's reply at the end of its last turn in this column.",
+    contexts: MOVE_ONLY,
+    availability: 'Empty on task enter, and for an agent whose transcript Kangentic cannot read.',
   },
 ];
 

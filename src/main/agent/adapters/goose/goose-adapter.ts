@@ -189,6 +189,8 @@ export class GooseAdapter implements AgentAdapter {
    * supportsCallerSessionId), so no capture strategy is needed.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Only terminal silence says a turn ended.
+    reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
   };
 

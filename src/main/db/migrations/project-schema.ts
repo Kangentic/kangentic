@@ -1784,4 +1784,53 @@ export function runProjectMigrations(db: Database.Database): void {
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_column_automations_name ON column_automations(swimlane_id, name COLLATE NOCASE)',
   );
+
+  // Migration: an automation's Condition (prose an agent judges at each run,
+  // NULL = always runs) and Frequency (the most times it may run on one task,
+  // NULL = no limit). Nullable with no default, so every automation that exists
+  // keeps running exactly as it did, and a build from before these columns that
+  // shares the database still inserts.
+  const automationColumnNames = new Set(
+    (db.pragma('table_info(column_automations)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!automationColumnNames.has('condition')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN condition TEXT DEFAULT NULL');
+  }
+  if (!automationColumnNames.has('max_runs')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN max_runs INTEGER DEFAULT NULL');
+  }
+
+  // Migration: what the Automation agent answered for a run's Condition (1 yes,
+  // 0 no, NULL when the row has none) and its one-line reason. A no is recorded
+  // as a skipped run with these filled in, so "why didn't it run" has an answer.
+  const runColumnNames = new Set(
+    (db.pragma('table_info(automation_runs)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!runColumnNames.has('condition_met')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN condition_met INTEGER DEFAULT NULL');
+  }
+  if (!runColumnNames.has('condition_reason')) {
+    db.exec('ALTER TABLE automation_runs ADD COLUMN condition_reason TEXT DEFAULT NULL');
+  }
+
+  // Migration: one row per column a task entered. The visit boundary for
+  // automations ("has this row run since the task arrived here"), a workflow
+  // task's step history, and the counts `{{columns}}` reports. Written by
+  // TaskRepository inside the same transaction as the move itself, so a move
+  // that bypasses `handleTaskMove` (a rollback, an unarchive, a create) is still
+  // recorded. No foreign key to swimlanes: a deleted column must not erase the
+  // history of the tasks that passed through it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_moves (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      from_swimlane_id TEXT,
+      to_swimlane_id TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      reason TEXT,
+      at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_task ON task_moves(task_id, at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_task_moves_to_column ON task_moves(to_swimlane_id, at DESC)');
 }
