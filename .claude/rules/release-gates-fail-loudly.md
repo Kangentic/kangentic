@@ -91,7 +91,9 @@ Any step in the release path that exists to guarantee something must fail when i
   reached by calling the config module's default export directly (`defineConfig` returns it
   unchanged), since neither function is otherwise exported. It also pins the same upload
   authorization as the build side: a local build with a token reaches neither guard, and one with
-  `KANGENTIC_SENTRY_UPLOAD=1` reaches both.
+  `KANGENTIC_SENTRY_UPLOAD=1` reaches both. A table of `CI` and `KANGENTIC_SENTRY_UPLOAD` values
+  runs through both halves' checks and fails on any row where they disagree, since a value one
+  half accepted and the other refused would upload half a release's symbols with both builds green.
 - **Test (mechanical, CI):** `tests/unit/verify-unpacked-worker.test.ts` pins the packaged
   embed-worker gate in `build/verify-unpacked-worker.js` (run from `build/afterPack.js`): it
   throws with the child's stderr when the worker's externals do not load from the

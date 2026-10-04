@@ -416,7 +416,7 @@ export class PtyHostCore {
         // after its exit-sequence grace (pty-teardown-grace), so killing here
         // would cut that grace short. Nothing writes the transcripts after this.
         this.transcriptWriter.finalizeAll();
-        this.disposeProcessTreeProbe();
+        this.disposeProcessTable();
         // Raw PTYs are probes nobody waits on; end them now so the exit wait
         // covers them too.
         for (const ptyId of [...this.rawPtys.keys()]) this.killRaw(ptyId);
@@ -480,7 +480,7 @@ export class PtyHostCore {
   }
 
   /** End the process table's fallback PowerShell child, if one runs. */
-  disposeProcessTreeProbe(): void {
+  disposeProcessTable(): void {
     this.processTable?.dispose();
     this.processTable = null;
   }

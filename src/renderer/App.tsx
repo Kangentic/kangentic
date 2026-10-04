@@ -948,8 +948,7 @@ export function App() {
       cleanups.push(window.electronAPI.leftoverProcesses.onReport((report) => {
         const toast = describeLeftoverReport(report);
         if (!toast) return;
-        useLeftoverProcessesStore.getState().addReport(report);
-        useToastStore.getState().addToast({
+        const toastId = useToastStore.getState().addToast({
           message: toast.message,
           variant: toast.variant,
           ...(toast.sticky ? { duration: 0 } : {}),
@@ -958,6 +957,11 @@ export function App() {
             onClick: () => useLeftoverProcessesStore.getState().openReport(report.id),
           },
         });
+        // A toast whose report the store no longer keeps has a Review link
+        // that opens nothing, so it closes with its report.
+        for (const evictedToastId of useLeftoverProcessesStore.getState().addReport(report, toastId)) {
+          useToastStore.getState().dismissToast(evictedToastId);
+        }
       }));
     }
 

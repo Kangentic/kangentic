@@ -2,17 +2,25 @@ import { create } from 'zustand';
 import type { LeftoverProcessReport } from '../../shared/types';
 import type { LeftoverStopState } from '../lib/leftover-processes';
 
-/** Reports kept for Review. A toast's Review link outlives few of them. */
+/** Reports kept for Review. A toast whose report is evicted closes with it. */
 const RETAINED_REPORTS = 20;
 
 interface LeftoverProcessesStore {
   /** Recent reports by id, oldest first, for the toast's Review link. */
   reports: Record<string, LeftoverProcessReport>;
+  /** The toast each retained report opened, by report id. */
+  reportToasts: Record<string, string>;
   /** The report the list shows, or null when it is closed. */
   openReportId: string | null;
   /** What the user's Stop did to a row, by process id. */
   stopStates: Record<string, LeftoverStopState>;
-  addReport: (report: LeftoverProcessReport) => void;
+  /**
+   * Keep a report for Review, with the id of the toast that links to it.
+   * Returns the toast ids of the reports this evicted: their Review links
+   * would open nothing, so the caller closes them. A toast that waits to be
+   * closed can outlive many newer reports.
+   */
+  addReport: (report: LeftoverProcessReport, toastId?: string) => string[];
   openReport: (reportId: string) => void;
   closeReport: () => void;
   /** Stop one listed process. The row reads `stopping` until main answers. */
@@ -21,24 +29,34 @@ interface LeftoverProcessesStore {
 
 const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, get) => ({
   reports: {},
+  reportToasts: {},
   openReportId: null,
   stopStates: {},
 
-  addReport: (report) => {
-    set((state) => {
-      const ids = [...Object.keys(state.reports).filter((id) => id !== report.id), report.id];
-      const kept = ids.slice(-RETAINED_REPORTS);
-      const reports: Record<string, LeftoverProcessReport> = {};
-      for (const id of kept) reports[id] = id === report.id ? report : state.reports[id];
-      // A Stop outcome belongs to a row of a retained report; drop the rest
-      // so the map does not outgrow the reports it describes.
-      const retainedProcessIds = new Set(kept.flatMap((id) => reports[id].processes.map((entry) => entry.id)));
-      const stopStates: Record<string, LeftoverStopState> = {};
-      for (const [processId, stopState] of Object.entries(state.stopStates)) {
-        if (retainedProcessIds.has(processId)) stopStates[processId] = stopState;
-      }
-      return { reports, stopStates };
-    });
+  addReport: (report, toastId) => {
+    const state = get();
+    const ids = [...Object.keys(state.reports).filter((id) => id !== report.id), report.id];
+    const kept = ids.slice(-RETAINED_REPORTS);
+    const keptIds = new Set(kept);
+    const reports: Record<string, LeftoverProcessReport> = {};
+    for (const id of kept) reports[id] = id === report.id ? report : state.reports[id];
+    const reportToasts: Record<string, string> = {};
+    for (const id of kept) {
+      const reportToastId = id === report.id ? toastId : state.reportToasts[id];
+      if (reportToastId !== undefined) reportToasts[id] = reportToastId;
+    }
+    const evictedToastIds = Object.keys(state.reportToasts)
+      .filter((id) => !keptIds.has(id))
+      .map((id) => state.reportToasts[id]);
+    // A Stop outcome belongs to a row of a retained report; drop the rest
+    // so the map does not outgrow the reports it describes.
+    const retainedProcessIds = new Set(kept.flatMap((id) => reports[id].processes.map((entry) => entry.id)));
+    const stopStates: Record<string, LeftoverStopState> = {};
+    for (const [processId, stopState] of Object.entries(state.stopStates)) {
+      if (retainedProcessIds.has(processId)) stopStates[processId] = stopState;
+    }
+    set({ reports, reportToasts, stopStates });
+    return evictedToastIds;
   },
 
   openReport: (reportId) => {

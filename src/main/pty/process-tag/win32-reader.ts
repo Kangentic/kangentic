@@ -416,12 +416,17 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
 
   async scan(): Promise<ProcessScan> {
     const api = await this.loadApi();
+    // Both gates below need the caller's own session and user. Without the
+    // session every process would be compared against session 0, where
+    // services run; without the user no process could be read. Either way the
+    // scan would see nothing and look clean, so it fails instead, and the reap
+    // reports it rather than quietly stopping nothing.
     const ownSession = [0];
-    // With its own session unknown, the gate below would compare every process
-    // against session 0, where services run. No process is opened then, as
-    // when the caller's own token cannot be read.
-    const ownSessionKnown = api.processIdToSessionId(process.pid, ownSession) !== 0;
+    if (api.processIdToSessionId(process.pid, ownSession) === 0) {
+      throw new Error('the Windows reader could not read its own session');
+    }
     const ownSid = readTokenUserSid(api, api.getCurrentProcess());
+    if (ownSid === null) throw new Error('the Windows reader could not read its own user');
 
     const rows = await enumerateProcesses(api);
     const windowPids = api.visibleWindowPids();
@@ -440,20 +445,18 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       // stays in the table with an unknown start key, which the kill refuses
       // and the protection walk treats permissively, so nothing is lost.
       const sessionId = [0];
-      if (!ownSessionKnown || api.processIdToSessionId(row.pid, sessionId) === 0 || sessionId[0] !== ownSession[0]) continue;
+      if (api.processIdToSessionId(row.pid, sessionId) === 0 || sessionId[0] !== ownSession[0]) continue;
       const limited = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, row.pid);
       if (isNullHandle(api, limited)) continue;
-      let sameUser = false;
+      let sameUser: boolean;
       try {
         const creation = readCreationTime(api, limited);
         if (creation !== null) {
           scanned.startKey = creation.toString();
           scanned.startedAtMs = filetimeToEpochMs(creation);
         }
-        if (ownSid) {
-          const sid = readTokenUserSid(api, limited);
-          sameUser = sid !== null && sid.equals(ownSid);
-        }
+        const sid = readTokenUserSid(api, limited);
+        sameUser = sid !== null && sid.equals(ownSid);
       } finally {
         api.closeHandle(limited);
       }

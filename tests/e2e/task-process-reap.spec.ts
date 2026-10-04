@@ -103,6 +103,8 @@ test.describe('Task process reap', () => {
   let resultFile: string;
   let lanes: LaneIds;
   let survivorPid: number | null = null;
+  /** Linux only: the survivor's start time when its record arrived, so cleanup can tell it from a process that reused its pid. */
+  let survivorStartTicks: string | null = null;
   let survivorKnownDead = false;
   const mainProcessLines: string[] = [];
 
@@ -166,6 +168,7 @@ test.describe('Task process reap', () => {
 
   test.beforeEach(() => {
     survivorPid = null;
+    survivorStartTicks = null;
     survivorKnownDead = false;
     // afterEach may read this file for a pid; only this test's record may be there.
     fs.rmSync(resultFile, { force: true });
@@ -183,10 +186,12 @@ test.describe('Task process reap', () => {
       }
     }
     // A failed run can leave the survivor alive. Kill only a pid this test saw alive
-    // and never saw die, so a recycled pid is never signalled. The launcher and the
-    // agent pids are deliberately not touched: both are long dead by now and a
-    // recycled pid would name an unrelated process.
-    if (survivorPid !== null && !survivorKnownDead && isProcessAlive(survivorPid)) {
+    // and never saw die, so a recycled pid is never signalled. A survivor reaped
+    // before the test failed was never seen dying, so on Linux the start time read
+    // when its record arrived must still match as well. The launcher and the agent
+    // pids are deliberately not touched: both are long dead by now and a recycled
+    // pid would name an unrelated process.
+    if (survivorPid !== null && !survivorKnownDead && isProcessAlive(survivorPid) && stillTheSurvivor(survivorPid)) {
       try {
         process.kill(survivorPid, 'SIGKILL');
       } catch {
@@ -242,6 +247,16 @@ test.describe('Task process reap', () => {
     }, taskId);
   }
 
+  /**
+   * Whether `pid` still has the start time the survivor had when its record
+   * arrived. True where there is no reading to compare: off Linux, or when the
+   * pid came from the record file after a failure.
+   */
+  function stillTheSurvivor(pid: number): boolean {
+    if (process.platform !== 'linux' || survivorStartTicks === null) return true;
+    return readLinuxProcessStat(pid)?.startTicks === survivorStartTicks;
+  }
+
   function diagnostics(record: FastDetachRecord): string {
     const lines = [
       `survivor pid ${record.survivorPid}, tag it saw: ${record.tag}`,
@@ -288,6 +303,7 @@ test.describe('Task process reap', () => {
     await waitForTaskSession(page, taskId);
     const record = await waitForFastDetachRecord();
     survivorPid = record.survivorPid;
+    if (process.platform === 'linux') survivorStartTicks = readLinuxProcessStat(record.survivorPid)?.startTicks ?? null;
 
     // The session PTY carried the task tag, and the survivor inherited it. Without
     // this the end of the spec could only say "still alive" and not why.

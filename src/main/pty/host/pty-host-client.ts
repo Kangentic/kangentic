@@ -627,6 +627,6 @@ export class InProcessPtyHostTransport implements PtyHostTransport {
 
   shutdown(): void {
     this.core.finalizeTranscripts();
-    this.core.disposeProcessTreeProbe();
+    this.core.disposeProcessTable();
   }
 }

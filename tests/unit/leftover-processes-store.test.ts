@@ -63,7 +63,7 @@ function reportIds(): string[] {
 beforeEach(() => {
   stopMock.mockReset();
   vi.stubGlobal('window', { electronAPI: { leftoverProcesses: { stop: stopMock } } });
-  useLeftoverProcessesStore.setState({ reports: {}, openReportId: null, stopStates: {} });
+  useLeftoverProcessesStore.setState({ reports: {}, reportToasts: {}, openReportId: null, stopStates: {} });
 });
 
 afterEach(() => {
@@ -92,6 +92,33 @@ describe('leftover-processes-store addReport retention', () => {
     addNumberedReports(RETAINED_REPORT_COUNT + 1);
 
     expect(useLeftoverProcessesStore.getState().reports['report-7']).toEqual(makeReport('report-7', ['process-7']));
+  });
+});
+
+describe('leftover-processes-store addReport and the toasts that link to reports', () => {
+  it('returns the toast of a report it evicts, so its dead Review link can be closed', () => {
+    const store = useLeftoverProcessesStore.getState();
+    expect(store.addReport(makeReport('report-sticky'), 'toast-sticky')).toEqual([]);
+    // Positive control: twenty more reports fill the store without evicting the first one's toast.
+    for (let index = 0; index < RETAINED_REPORT_COUNT - 1; index += 1) {
+      expect(useLeftoverProcessesStore.getState().addReport(makeReport(`report-${index}`), `toast-${index}`)).toEqual([]);
+    }
+    expect(useLeftoverProcessesStore.getState().reportToasts['report-sticky']).toBe('toast-sticky');
+
+    const evicted = useLeftoverProcessesStore.getState().addReport(makeReport('report-newest'), 'toast-newest');
+
+    expect(evicted).toEqual(['toast-sticky']);
+    expect(reportIds()).not.toContain('report-sticky');
+    expect(useLeftoverProcessesStore.getState().reportToasts['report-sticky']).toBeUndefined();
+    expect(useLeftoverProcessesStore.getState().reportToasts['report-newest']).toBe('toast-newest');
+  });
+
+  it('returns nothing for an evicted report that was added without a toast', () => {
+    useLeftoverProcessesStore.getState().addReport(makeReport('report-quiet'));
+    addNumberedReports(RETAINED_REPORT_COUNT - 1);
+
+    expect(useLeftoverProcessesStore.getState().addReport(makeReport('report-newest'), 'toast-newest')).toEqual([]);
+    expect(reportIds()).not.toContain('report-quiet');
   });
 });
 

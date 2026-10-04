@@ -69,6 +69,33 @@ export interface ProcessScan {
   unreadableCount: number;
 }
 
+/**
+ * The processes `isSeed` picks and everything below them, by parent link. A
+ * POSIX reader reads roles (and on macOS working directories) for these only,
+ * since a reap can touch nothing else. A process listed as its own parent is
+ * not its own child, so the walk ends.
+ */
+export function seedsAndDescendants(
+  processes: readonly ScannedProcess[],
+  isSeed: (scanned: ScannedProcess) => boolean,
+): Set<ScannedProcess> {
+  const children = new Map<number, ScannedProcess[]>();
+  for (const scanned of processes) {
+    const bucket = children.get(scanned.ppid);
+    if (bucket) bucket.push(scanned);
+    else children.set(scanned.ppid, [scanned]);
+  }
+  const reached = new Set<ScannedProcess>();
+  const queue = processes.filter(isSeed);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const next = queue[cursor];
+    if (reached.has(next)) continue;
+    reached.add(next);
+    for (const child of children.get(next.pid) ?? []) if (child.pid !== next.pid) queue.push(child);
+  }
+  return reached;
+}
+
 /** `graceful` asks a process to exit (SIGTERM; a hard terminate on Windows,
  *  which has no polite signal for a windowless process). `force` cannot be
  *  refused (SIGKILL, TerminateProcess). */

@@ -49,7 +49,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from './process-scan';
+import { seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 
 const TOOL_TIMEOUT_MS = 5000;
 const LAUNCHD_PID = 1;
@@ -432,23 +432,11 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
    * ones, withheld orphans, and everything below them.
    */
   private async readDirectoriesAndRoles(kernel: DarwinKernel, processes: ScannedProcess[], executablePaths: Map<number, string>): Promise<void> {
-    const children = new Map<number, ScannedProcess[]>();
-    for (const scanned of processes) {
-      const bucket = children.get(scanned.ppid);
-      if (bucket) bucket.push(scanned);
-      else children.set(scanned.ppid, [scanned]);
-    }
-    const relevant = new Set<ScannedProcess>();
-    const queue = processes.filter((scanned) => (
+    const relevant = seedsAndDescendants(processes, (scanned) => (
       (scanned.tagValue !== null && scanned.tagValue !== '')
-      || (scanned.environmentWithheld && scanned.ppid === LAUNCHD_PID)
+      || (scanned.environmentWithheld === true && scanned.ppid === LAUNCHD_PID)
     ));
-    while (queue.length > 0) {
-      const next = queue.shift()!;
-      if (relevant.has(next)) continue;
-      relevant.add(next);
-      for (const child of children.get(next.pid) ?? []) if (child.pid !== next.pid) queue.push(child);
-    }
+    // Nothing a reap could touch, so no `lsappinfo` run, which costs time and can fail the scan.
     if (relevant.size === 0) return;
     // The window list is the only protection a dev-built app outside an
     // Applications folder has. Without it the scan fails, so the reap stops

@@ -89,7 +89,8 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   stripped, since it is about this install and not about a process.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
-  terminates through.
+  terminates through. A scan that cannot read the caller's own session or user fails, so the reap
+  reports `reap_error`, rather than returning a table in which nothing reads as tagged.
 
 ## Enforcement (self-maintaining)
 
@@ -119,8 +120,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `tests/ui/leftover-processes.spec.ts` pin the toast and the list.
 - **Test (Windows reader gates):** `tests/unit/win32-reader-gates.test.ts` runs the Windows
   reader on a fake API on every OS: no handle for another session's process, no
-  `PROCESS_VM_READ` for another user's or an untagged one, a kill only through a handle whose
-  creation time matches, and every handle closed. It also walks a 32-bit (WOW64) PEB laid out
+  `PROCESS_VM_READ` for another user's or an untagged one, a failed scan when the caller's own
+  session or user cannot be read, a kill only through a handle whose creation time matches, and
+  every handle closed. It also walks a 32-bit (WOW64) PEB laid out
   from Windows' own offsets, caps an environment read at 1 MiB whatever size the PEB claims, and
   expands an 8.3 working directory.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached

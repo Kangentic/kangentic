@@ -67,21 +67,50 @@ function findRootProject(worktreeDir) {
 // ---------------------------------------------------------------------------
 
 /**
+ * The dependency tree a lockfile declares, as one comparable string: every
+ * `packages` entry, with the `version` dropped from the root and workspace
+ * entries (the keys outside `node_modules/`). A release bumps those versions
+ * without changing a dependency, and a root checkout one release ahead of the
+ * branch would otherwise read as a different tree.
+ */
+function dependencyTree(lockText) {
+  const lock = JSON.parse(lockText);
+  const packages = {};
+  for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+    if (!key.startsWith('node_modules/') && entry && typeof entry === 'object') {
+      const withoutVersion = { ...entry };
+      delete withoutVersion.version;
+      packages[key] = withoutVersion;
+    } else {
+      packages[key] = entry;
+    }
+  }
+  return JSON.stringify({ packages, dependencies: lock.dependencies ?? null });
+}
+
+/**
  * Whether the worktree's package-lock.json declares a different dependency tree
  * than the root's. A branch that adds, removes or bumps a dependency needs its
  * OWN install: previewing it against the root's junctioned node_modules runs
  * the root's packages, which either fails to resolve the new one (a Vite
  * "Failed to resolve import") or, worse, quietly runs a code path whose native
  * module is missing. Unreadable lockfiles count as "same", keeping the old
- * junction behavior.
+ * junction behavior. A lockfile that is not JSON (a merge left conflict
+ * markers in it) is compared as text.
  */
 function lockfilesDiffer(worktreeDir, rootDir) {
+  let worktreeLock;
+  let rootLock;
   try {
-    const worktreeLock = fs.readFileSync(path.join(worktreeDir, 'package-lock.json'), 'utf8');
-    const rootLock = fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8');
-    return worktreeLock.replace(/\r\n/g, '\n') !== rootLock.replace(/\r\n/g, '\n');
+    worktreeLock = fs.readFileSync(path.join(worktreeDir, 'package-lock.json'), 'utf8');
+    rootLock = fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8');
   } catch {
     return false;
+  }
+  try {
+    return dependencyTree(worktreeLock) !== dependencyTree(rootLock);
+  } catch {
+    return worktreeLock.replace(/\r\n/g, '\n') !== rootLock.replace(/\r\n/g, '\n');
   }
 }
 

@@ -26,12 +26,62 @@ import {
 import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
 import { findTagInWindowsEnvironment, listWin32Processes } from '../../src/main/pty/process-tag/win32-reader';
 import { toProcessInfo } from '../../src/main/pty/host/host-process-table';
+import { seedsAndDescendants, type ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe('seedsAndDescendants', () => {
+  function processWith(pid: number, ppid: number, extra: Partial<ScannedProcess> = {}): ScannedProcess {
+    return { pid, ppid, startKey: String(pid), startedAtMs: null, tagValue: null, ...extra };
+  }
+  const pidsOf = (processes: Set<ScannedProcess>): number[] => [...processes].map((scanned) => scanned.pid).sort((left, right) => left - right);
+
+  it('returns each seed and every process below it, and nothing beside them', () => {
+    const processes = [
+      processWith(1, 0),
+      processWith(10, 1, { tagValue: TASK }),
+      processWith(11, 10),
+      processWith(12, 11),
+      // A sibling of the seed and its child are outside the tree.
+      processWith(20, 1),
+      processWith(21, 20),
+    ];
+    expect(pidsOf(seedsAndDescendants(processes, (scanned) => scanned.tagValue === TASK))).toEqual([10, 11, 12]);
+  });
+
+  it('takes the seeds the caller names, such as the macOS withheld orphans beside the tagged processes', () => {
+    const launchdPid = 1;
+    const processes = [
+      processWith(launchdPid, 0),
+      processWith(30, launchdPid, { tagValue: TASK }),
+      processWith(40, launchdPid, { environmentWithheld: true }),
+      processWith(41, 40),
+      // Withheld but not an orphan, so not a seed: it is reached as the tagged process's child.
+      processWith(50, 30, { environmentWithheld: true }),
+      // An untagged orphan with a readable environment is no seed.
+      processWith(60, launchdPid),
+    ];
+    const isSeed = (scanned: ScannedProcess) => scanned.tagValue === TASK || (scanned.environmentWithheld === true && scanned.ppid === launchdPid);
+    expect(pidsOf(seedsAndDescendants(processes, isSeed))).toEqual([30, 40, 41, 50]);
+  });
+
+  it('ends on a process listed as its own parent, and on a cycle of parents', () => {
+    const processes = [
+      processWith(70, 70, { tagValue: TASK }),
+      processWith(80, 81, { tagValue: TASK }),
+      processWith(81, 80),
+    ];
+    expect(pidsOf(seedsAndDescendants(processes, (scanned) => scanned.tagValue === TASK))).toEqual([70, 80, 81]);
+  });
+
+  it('returns nothing when no process is a seed', () => {
+    expect(seedsAndDescendants([processWith(1, 0), processWith(2, 1)], () => false).size).toBe(0);
+  });
 });
 
 function environBuffer(entries: string[]): Buffer {

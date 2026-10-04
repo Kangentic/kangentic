@@ -34,7 +34,8 @@ const sentryAuthToken = [process.env.KANGENTIC_SENTRY_TOKEN, process.env.SENTRY_
 // environment variable, so a local build would upload an unreleased tree. CI
 // (release.yml) or an explicit KANGENTIC_SENTRY_UPLOAD=1 authorizes it. Kept in
 // step with isSentryUploadAuthorized in scripts/build.js, where the unit test for
-// this check lives.
+// this check lives; vite-config-sentry-guards.test.ts runs both over one table
+// and fails when they disagree.
 const continuousIntegration = (process.env.CI ?? '').trim().toLowerCase();
 const sentryUploadAuthorized = (continuousIntegration !== '' && continuousIntegration !== 'false' && continuousIntegration !== '0')
   || (process.env.KANGENTIC_SENTRY_UPLOAD ?? '').trim() === '1';

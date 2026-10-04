@@ -443,8 +443,8 @@ describe('Win32TaggedProcessReader.scan: which processes are opened at all', () 
     expectEveryHandleClosedOnce(fake);
   });
 
-  it('opens no process at all when its own session cannot be read, and never takes session 0 for its own', async () => {
-    // Session 0 is where services run, and what the gate compares against when the lookup leaves its answer at 0.
+  it('fails the scan, opening no process, when its own session cannot be read, and never takes session 0 for its own', async () => {
+    // Session 0 is where services run, and what the gate would compare against with the lookup's answer left at 0.
     const table: FakeProcess[] = [
       { pid: 300, session: SERVICES_SESSION, tag: TASK },
       { pid: 400, tag: TASK },
@@ -459,17 +459,14 @@ describe('Win32TaggedProcessReader.scan: which processes are opened at all', () 
 
     const fake = new FakeWin32(table);
     fake.ownSessionLookupFails = true;
-    const scan = await readerFor(fake).scan();
+    // A scan that could see no process would read as clean; it fails, so the reap reports it.
+    await expect(readerFor(fake).scan()).rejects.toThrow('could not read its own session');
 
     // The lookup was asked, so the empty ledger is the gate and not a scan that never ran.
     expect(fake.sessionLookups).toContain(process.pid);
     expect(fake.opens).toEqual([]);
-    // Both stay in the table, unopened: no start key, no tag, so a kill refuses them and nothing was read.
-    for (const pid of [300, 400]) {
-      expect(scanned(scan, pid)).toMatchObject({ pid, startKey: '', tagValue: null });
-    }
-    expect(scan.unreadableCount).toBe(0);
-    expectEveryHandleClosedOnce(fake);
+    // It fails before the process snapshot too, so no handle was ever created to leak.
+    expect(fake.createdHandleIds).toEqual([]);
   });
 });
 
@@ -498,17 +495,21 @@ describe('Win32TaggedProcessReader.scan: who may be read with PROCESS_VM_READ', 
     expectEveryHandleClosedOnce(fake);
   });
 
-  it('opens PROCESS_VM_READ on nothing when the caller\'s own token cannot be read', async () => {
-    const fake = new FakeWin32([{ pid: 500, tag: TASK }, { pid: 510, tag: TASK }]);
-    fake.ownTokenReadable = false;
-    const scan = await readerFor(fake).scan();
+  it('fails the scan, opening no process, when the caller\'s own token cannot be read', async () => {
+    const table: FakeProcess[] = [{ pid: 500, tag: TASK }, { pid: 510, tag: TASK }];
 
-    // Positive control: both were still opened for the limited query.
-    expect(fake.openedPids(PROCESS_QUERY_LIMITED_INFORMATION)).toEqual(expect.arrayContaining([500, 510]));
-    expect(fake.openedPids(PROCESS_VM_READ)).toEqual([]);
-    expect(scanned(scan, 500).tagValue).toBeNull();
-    expect(scanned(scan, 510).tagValue).toBeNull();
-    expectEveryHandleClosedOnce(fake);
+    // Positive control: with its own token readable, the caller's processes are opened and read.
+    const control = new FakeWin32(table);
+    const controlScan = await readerFor(control).scan();
+    expect(control.openedPids(PROCESS_VM_READ)).toEqual(expect.arrayContaining([500, 510]));
+    expect(scanned(controlScan, 500).tagValue).toBe(TASK);
+
+    const fake = new FakeWin32(table);
+    fake.ownTokenReadable = false;
+    // No process could be told apart as the caller's, so the scan would read as clean; it fails instead.
+    await expect(readerFor(fake).scan()).rejects.toThrow('could not read its own user');
+    expect(fake.opens).toEqual([]);
+    expect(fake.createdHandleIds).toEqual([]);
   });
 });
 

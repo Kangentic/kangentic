@@ -25,7 +25,7 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from './process-scan';
+import { seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 
 const READ_BATCH_SIZE = 64;
 const TAG_PREFIX = Buffer.from(`${TASK_PROCESS_TAG_ENV}=`);
@@ -203,20 +203,7 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
 
   /** Roles for tagged processes and their descendants only (see the module comment). */
   private async readRoles(processes: ScannedProcess[]): Promise<void> {
-    const children = new Map<number, ScannedProcess[]>();
-    for (const scanned of processes) {
-      const bucket = children.get(scanned.ppid);
-      if (bucket) bucket.push(scanned);
-      else children.set(scanned.ppid, [scanned]);
-    }
-    const relevant = new Set<ScannedProcess>();
-    const queue = processes.filter((scanned) => scanned.tagValue !== null && scanned.tagValue !== '');
-    while (queue.length > 0) {
-      const next = queue.shift()!;
-      if (relevant.has(next)) continue;
-      relevant.add(next);
-      for (const child of children.get(next.pid) ?? []) if (child.pid !== next.pid) queue.push(child);
-    }
+    const relevant = seedsAndDescendants(processes, (scanned) => scanned.tagValue !== null && scanned.tagValue !== '');
     const list = [...relevant];
     for (let offset = 0; offset < list.length; offset += READ_BATCH_SIZE) {
       await Promise.all(list.slice(offset, offset + READ_BATCH_SIZE).map(async (scanned) => {

@@ -59,7 +59,7 @@ Open a new terminal window running a Kangentic dev server for previewing live co
   name in place.
 
 - This script must be run from inside a `.kangentic/worktrees/` directory. It will error with a clear message if run from the project root.
-- Creates a filesystem junction (Windows) or symlink (Unix) from `<worktree>/node_modules` → `<root>/node_modules` - no `npm install` or rebuild needed. The exception is a branch whose `package-lock.json` differs from the root's (it adds, removes or bumps a dependency): a real `npm install` in the worktree is then KEPT, since the root's packages cannot run that branch, and a worktree still on the junction gets a printed warning telling you to install.
+- Creates a filesystem junction (Windows) or symlink (Unix) from `<worktree>/node_modules` → `<root>/node_modules` - no `npm install` or rebuild needed. The exception is a branch whose `package-lock.json` declares a different dependency tree from the root's (it adds, removes or bumps a dependency; a release that only moves the app's or a workspace package's own version does not count): a real `npm install` in the worktree is then KEPT, since the root's packages cannot run that branch, and a worktree still on the junction gets a printed warning telling you to install.
 - The preview instance runs on a dynamically assigned port (starting from 5174) so it does not conflict with the root dev server on 5173.
 - Each preview instance has its own empty board - board state does NOT sync between instances. Use the root instance for task management.
 - When the preview terminal is closed, the worktree's `.kangentic/` and `.vite/` directories are automatically cleaned up (ephemeral mode). The node_modules junction is left in place for instant restarts.

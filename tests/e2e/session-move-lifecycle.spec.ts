@@ -343,33 +343,26 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     const originalSessionId = extractSessionId(scrollback1, 'SESSION');
     expect(originalSessionId).toBeTruthy();
 
-    // Send /exit to make mock Claude exit on its own, and keep the session id
-    // for the kill below.
     const runningSessionId = await page.evaluate(async (tid) => {
       const sessions = await window.electronAPI.sessions.list();
       const runningSession = sessions.find(
         (session: { taskId: string; status: string }) => session.taskId === tid && session.status === 'running',
       );
-      if (!runningSession) return null;
-      await window.electronAPI.sessions.write(runningSession.id, '/exit\r');
-      return runningSession.id;
+      return runningSession?.id ?? null;
     }, taskId);
     expect(runningSessionId).toBeTruthy();
 
-    // /exit ends the AGENT only. The agent runs inside an interactive shell,
-    // and that shell survives it: the PTY stays up, so the session row stays
-    // 'running' until the agent-absence sweep retires it, 60 to 120 s later on
-    // an idle machine (AGENT_ABSENCE_SWEEP_INTERVAL_MS in
-    // background-shell/watcher.ts). This wait used to be a page.waitForFunction
-    // with an async predicate, which resolves on its first evaluation, so it
-    // never waited and Done always found a still-'running' row. This test then
-    // never exercised its own title: an 'exited' record preserved through
-    // Done -> Unarchive.
+    // The session has to end on its own terms, with an 'exited' record, not a
+    // suspend. Typing /exit does not do it: it ends the AGENT, but the agent runs
+    // inside an interactive shell that survives it, so the PTY stays up and the
+    // row stays 'running' until the agent-absence sweep retires it, 60 to 120 s
+    // later on an idle machine (AGENT_ABSENCE_SWEEP_INTERVAL_MS in
+    // background-shell/watcher.ts).
     //
-    // End the PTY the way the sweep itself does (a kill through the session
-    // manager) to get that 'exited' record deterministically, then wait on THIS
-    // task's rows only: earlier tests in this file leave sessions alive in the
-    // shared app, so a global "no running sessions" wait would never be true.
+    // So end the PTY the way the sweep itself does, with a kill through the
+    // session manager, then wait on THIS task's rows only: earlier tests in this
+    // file leave sessions alive in the shared app, so a global "no running
+    // sessions" wait would never be true.
     await page.evaluate((sessionId) => window.electronAPI.sessions.kill(sessionId), runningSessionId!);
     await waitForTaskSessionNotRunning(page, taskId);
     const taskStatusesAfterKill = await page.evaluate(async (tid) => {
@@ -379,8 +372,10 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
         .map((session: { status: string }) => session.status);
     }, taskId);
     // The row is either kept as 'exited' or already evicted; never 'suspended'
-    // or 'running' at this point.
-    expect(taskStatusesAfterKill.every((status: string) => status === 'exited')).toBe(true);
+    // or 'running' at this point. An evicted row leaves no status at all, which
+    // is allowed here: the resume after Unarchive below is what proves the
+    // record survived.
+    expect(taskStatusesAfterKill.filter((status: string) => status !== 'exited')).toEqual([]);
 
     // Move to Done → should mark 'exited' record as 'suspended' + archive.
     await moveTask(page, taskId, lanes['role:done']);

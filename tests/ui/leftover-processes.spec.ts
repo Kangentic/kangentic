@@ -289,6 +289,38 @@ test.describe('Leftover processes toast lifetime', () => {
     }
   });
 
+  test('a waiting toast closes once its report is no longer kept for Review', async () => {
+    // The store keeps 20 reports. A waiting toast outlives the timed toasts the
+    // newer reports raise, so without this its Review link would open nothing.
+    const { browser, page } = await launchPage();
+    try {
+      await fireReport(page, ONE_TASK);
+      const waitingToast = page.locator('[data-testid="toast"]', { hasText: '2 still running.' });
+      await expect(waitingToast).toBeVisible({ timeout: 5000 });
+
+      const stoppedOnly = (index: number): LeftoverProcessReport => ({
+        id: `report-stopped-${index}`,
+        stoppingEnabled: true,
+        processes: [leftover(`stopped-${index}`)],
+      });
+      // Nineteen newer reports fill the store to 20 and keep ONE_TASK's report.
+      await page.evaluate((reports) => {
+        for (const report of reports) window.__mockFireLeftoverReport?.(report);
+      }, Array.from({ length: 19 }, (_unused, index) => stoppedOnly(index)));
+      // Positive control: its toast still stands, and Review still opens the list.
+      await expect(waitingToast).toBeVisible();
+      await waitingToast.getByRole('button', { name: 'Review' }).click();
+      await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toContainText('Processes from "Fix login"');
+      await page.locator('[data-testid="leftover-processes-close"]').click();
+
+      // The twentieth evicts ONE_TASK's report, and its toast goes with it.
+      await fireReport(page, stoppedOnly(19));
+      await waitingToast.waitFor({ state: 'detached', timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a toast for a report where every process was stopped closes on its own', async () => {
     // 2 s rather than 1: this test has to SEE the toast before it can see it
     // leave, and a starved worker should not lose it in the gap between the

@@ -515,14 +515,18 @@ export function isProcessAlive(pid: number): boolean {
   return true;
 }
 
-/** State and parent pid from /proc/<pid>/stat (fields 3 and 4), or null when unreadable. */
-export function readLinuxProcessStat(pid: number): { state: string; parentPid: number } | null {
+/**
+ * State, parent pid and start time from /proc/<pid>/stat (fields 3, 4 and 22),
+ * or null when unreadable. The start time, in clock ticks since boot, tells a
+ * process apart from a later one that reused its pid.
+ */
+export function readLinuxProcessStat(pid: number): { state: string; parentPid: number; startTicks: string } | null {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
     // The command name is parenthesised and may itself contain spaces or parens,
-    // so split after the LAST closing paren.
+    // so split after the LAST closing paren. Field 3 is then index 0.
     const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return { state: afterCommand[0], parentPid: parseInt(afterCommand[1], 10) };
+    return { state: afterCommand[0], parentPid: parseInt(afterCommand[1], 10), startTicks: afterCommand[19] };
   } catch {
     return null;
   }
