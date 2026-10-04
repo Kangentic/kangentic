@@ -4,7 +4,7 @@
  * the Index (one line per source and one Rebuild). Every line state is pinned by
  * `tests/unit/index-sources.test.ts`; these check the wiring.
  */
-import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
+import { test, expect, chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
@@ -111,6 +111,45 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
+/**
+ * What is wrong with where a caution or failure row puts its warning icon, or
+ * an empty list when it is right. The icon sits inline BEFORE the row's label
+ * (it used to hang in a gutter beside the tile), starting on the tile's content
+ * edge, which is the left edge of the card's own icon, and on the label's line.
+ *
+ * `row` is the tile (`CardStatusRow`) or the line (`CardSourceLine`) holding
+ * the one icon. Every edge is read in one evaluate and compared to another
+ * edge with a real tolerance, so font metrics and the panel's slide-in do not
+ * matter.
+ */
+function warningPlacementProblems(row: Locator): Promise<string[]> {
+  return row.evaluate((rowElement) => {
+    const EDGE_TOLERANCE_PX = 1.5;
+    const SAME_LINE_TOLERANCE_PX = 3;
+    const icons = rowElement.querySelectorAll('svg.text-warning, svg.text-danger');
+    if (icons.length !== 1) return [`expected one warning icon, found ${icons.length}`];
+    const icon = icons[0];
+    // The label is the span beside the icon: the icon's parent holds the icon and the label.
+    const label = icon.parentElement?.querySelector(':scope > span');
+    const card = rowElement.closest('section[aria-label]');
+    const cardIcon = card?.children[0]?.querySelector('span[aria-hidden="true"]');
+    if (!label || !cardIcon) return ['the row\'s label or its card\'s icon is missing'];
+
+    const iconBox = icon.getBoundingClientRect();
+    const labelBox = label.getBoundingClientRect();
+    const problems: string[] = [];
+    if (Math.abs(iconBox.left - cardIcon.getBoundingClientRect().left) > EDGE_TOLERANCE_PX) {
+      problems.push(`the icon starts at ${iconBox.left}, not on the card icon's left edge ${cardIcon.getBoundingClientRect().left}`);
+    }
+    if (iconBox.right > labelBox.left + EDGE_TOLERANCE_PX) {
+      problems.push(`the icon ends at ${iconBox.right}, past the label's start ${labelBox.left}`);
+    }
+    const centerOffset = Math.abs((iconBox.top + iconBox.bottom) / 2 - (labelBox.top + labelBox.bottom) / 2);
+    if (centerOffset > SAME_LINE_TOLERANCE_PX) problems.push(`the icon and label centres are ${centerOffset}px apart`);
+    return problems;
+  });
+}
+
 async function openKnowledgeGraphTab(page: Page) {
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
@@ -176,7 +215,7 @@ test.describe('Embedding model picker', () => {
     }
   });
 
-  test('a failed download tints the label and keeps the model name neutral', async () => {
+  test('a failed download tints the label, puts the warning before it, and keeps the model name neutral', async () => {
     const { browser, page } = await launchWithState(makePreConfig('error'));
     try {
       await openKnowledgeGraphTab(page);
@@ -185,6 +224,8 @@ test.describe('Embedding model picker', () => {
       await expect(label).toHaveClass(/text-danger/);
       await expect(page.getByTestId('embedding-model-card-text')).toHaveText('bge small');
       await expect(page.getByTestId('embedding-model-card-text')).not.toHaveClass(/text-danger/);
+      // Polled: the panel slides in, and the edges are read once it settles.
+      await expect.poll(() => warningPlacementProblems(page.getByTestId('embedding-model-card')), { timeout: 5000 }).toEqual([]);
     } finally {
       await browser.close();
     }
@@ -417,7 +458,7 @@ test.describe('Index card', () => {
     }
   });
 
-  test('a failed call tints its state word and puts the warning in the gutter; the rest stays neutral', async () => {
+  test('a failed call tints its state word and puts the warning before its name; the rest stays neutral', async () => {
     const summaries = { ...SUMMARIES, written: 200, state: 'retrying', retryInMs: 5 * 60_000 };
     const { browser, page } = await launchWithState(makePreConfig('ready', undefined, summaries, CODE, SOURCES));
     try {
@@ -427,6 +468,8 @@ test.describe('Index card', () => {
       await expect(value).toHaveText('A call failed, retrying in 5 min');
       await expect(value.locator('.text-warning')).toHaveText('A call failed');
       await expect(page.getByTestId('index-source-summaries').locator('svg.text-warning')).toHaveCount(1);
+      // Polled: the panel slides in, and the edges are read once it settles.
+      await expect.poll(() => warningPlacementProblems(page.getByTestId('index-source-summaries')), { timeout: 5000 }).toEqual([]);
     } finally {
       await browser.close();
     }

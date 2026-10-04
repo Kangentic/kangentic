@@ -9,8 +9,9 @@
  *    fire the click handler.
  * 4. Context bar rows - clicking one row's label flips that row only.
  * 5. Card header (McpServerTab) - the icon, the header switch, a header click,
- *    the info icon, one right edge for every switch on a tab, and one left
- *    edge for a card's icon and its tiles' content.
+ *    the info icon, one right edge for every switch on a tab, one left
+ *    edge for a card's icon and its tiles' content, and the same insets on a
+ *    group tile's header (McpServerTab's tool groups).
  * 6. Filter detach - when search hides a row's searchId the element is removed
  *    from the DOM (not.toBeAttached()).
  * 7. Persistence - clicking a CardToggleRow saves the new value to global
@@ -28,6 +29,7 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
+import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST } from '../../src/shared/mcp-tool-manifest';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -315,6 +317,75 @@ test.describe('Settings card header', () => {
     for (const card of cards) {
       expect(Math.abs(card.iconLeft - card.contentLeft), `${card.label}: icon left ${card.iconLeft}, tile content left ${card.contentLeft}`).toBeLessThanOrEqual(1.5);
     }
+    await closeSettings();
+  });
+
+  test('a group tile\'s header keeps the tile edges for its content and clears them with its hover fill', async () => {
+    // A CardGroupTile (MCP Server's tool groups) is not a plain tile: its
+    // header button sits 4px inside the tile and pads 12px, so the content
+    // lands on the tiles' 16px inset by arithmetic of its own. The measurement
+    // above reads the first tile of a card, which on this tab is the docs row,
+    // so nothing else checks a group's header. Three things, per group: the
+    // label starts on the card icon's left edge, the chevron ends on the header
+    // switch's right edge, and the button (the hover fill) stands off the tile's
+    // edges and off the first item below it. Every edge is read in one
+    // evaluate, relative to another edge, and polled until the panel settles.
+    await setGlobalConfigAndSync({ mcpServer: { enabled: true } });
+    await openTab('MCP Server');
+    await expect(page.getByTestId('mcp-tool-group-tasks')).toBeVisible();
+
+    const expectedGroups = MCP_TOOL_CATEGORIES
+      .filter((category) => MCP_TOOL_MANIFEST.some((tool) => tool.category === category.id))
+      .map((category) => category.id);
+    const EDGE_TOLERANCE_PX = 1.5;
+    const MIN_HOVER_FILL_INSET_PX = 2;
+    const MIN_HOVER_FILL_GAP_PX = 6;
+
+    await expect.poll(() => page.evaluate(({ tolerance, minInset, minGap }) => {
+      const card = document.querySelector('[data-testid="settings-panel"] section[aria-label="MCP server"]');
+      const iconColumn = card?.children[0]?.querySelector('span[aria-hidden="true"]');
+      const headerSwitch = card?.querySelector('[role="switch"]');
+      if (!card || !iconColumn || !headerSwitch) {
+        return { groups: [], violations: ['the MCP server card, its icon column or its header switch is missing'] };
+      }
+      const iconLeft = iconColumn.getBoundingClientRect().left;
+      const switchRight = headerSwitch.getBoundingClientRect().right;
+
+      const violations: string[] = [];
+      const groups = Array.from(card.querySelectorAll('section[data-testid^="mcp-tool-group-"]'));
+      const groupNames = groups.map((group) => (group.getAttribute('data-testid') ?? '').replace('mcp-tool-group-', ''));
+      for (const group of groups) {
+        const name = (group.getAttribute('data-testid') ?? '').replace('mcp-tool-group-', '');
+        const toggle = group.querySelector('button[aria-expanded]');
+        const label = toggle?.firstElementChild;
+        const chevron = toggle?.querySelector('.card-group-chevron');
+        if (!toggle || !label || !chevron) {
+          violations.push(`${name}: the toggle, its label or its chevron is missing`);
+          continue;
+        }
+        const tileBox = group.getBoundingClientRect();
+        const toggleBox = toggle.getBoundingClientRect();
+        const labelLeft = label.getBoundingClientRect().left;
+        const chevronRight = chevron.getBoundingClientRect().right;
+        if (Math.abs(labelLeft - iconLeft) > tolerance) violations.push(`${name}: label left ${labelLeft} is not the card icon's left ${iconLeft}`);
+        if (Math.abs(chevronRight - switchRight) > tolerance) violations.push(`${name}: chevron right ${chevronRight} is not the header switch's right ${switchRight}`);
+        const leftInset = toggleBox.left - tileBox.left;
+        const rightInset = tileBox.right - toggleBox.right;
+        if (leftInset < minInset) violations.push(`${name}: the hover fill is ${leftInset}px from the tile's left edge`);
+        if (rightInset < minInset) violations.push(`${name}: the hover fill is ${rightInset}px from the tile's right edge`);
+        // An open group's first item: the fill must not run into it. A closed
+        // group's items are collapsed to no height, so there is nothing to clear.
+        if (toggle.getAttribute('aria-expanded') === 'true') {
+          const firstItem = group.querySelector('[data-testid="mcp-tool-cell"]');
+          const gap = firstItem ? firstItem.getBoundingClientRect().top - toggleBox.bottom : NaN;
+          if (!(gap >= minGap)) violations.push(`${name}: the hover fill is ${gap}px above the first item`);
+        }
+      }
+      return { groups: groupNames, violations };
+    }, { tolerance: EDGE_TOLERANCE_PX, minInset: MIN_HOVER_FILL_INSET_PX, minGap: MIN_HOVER_FILL_GAP_PX }), { timeout: 5000 })
+      // The group list pins that the scan found every group, so a renamed
+      // testid cannot pass it vacuously.
+      .toEqual({ groups: expectedGroups, violations: [] });
     await closeSettings();
   });
 
