@@ -29,7 +29,7 @@ src/
       commands/   # MCP command handlers
     automations/  # Column automation adapter system (mirrors agent/, boards/, pr/)
       shared/     # AutomationAdapter contract, context, errors, describe helpers
-      adapters/   # Per-type subfolders (send-message/, run-script/, webhook/, notify/, legacy/)
+      adapters/   # Per-type subfolders (send-message/, run-script/, webhook/, notify/, move-to-column/, legacy/)
       automation-registry.ts  # Central AutomationRegistry + automationRegistry singleton
     boards/       # Board integration adapter system (mirrors agent/)
       shared/     # BoardAdapter interface + auth, mapping, download, rate-limit helpers
@@ -44,6 +44,8 @@ src/
     pr/           # PR subsystem (mirrors agent/boards): shared/ contract + errors,
                   #   adapters/github/ connector, pr-registry, linking, refresh, scheduler
     pty/          # PTY session manager, shell resolver
+    workflows/    # Linked tasks that run on their own: pure engine/ core (starts, lock) + main host,
+                  #   turn-end step check, operations behind the kangentic_*_workflow MCP tools
   preload/        # Context bridge (preload.ts)
   renderer/       # React UI
     components/   # Board, dialogs, layout, terminal, sidebar

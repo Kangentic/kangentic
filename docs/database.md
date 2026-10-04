@@ -263,11 +263,27 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | profile_id | TEXT | | NULL |
 | run_mode | TEXT | NOT NULL | 'column_settings' |
 | detail_view_state | TEXT | | NULL |
+| workflow_id | TEXT | | NULL |
+| workflow_project_id | TEXT | | NULL |
+| route_start_swimlane_id | TEXT | | NULL |
+| route_last_swimlane_id | TEXT | | NULL |
+| skipped_swimlane_ids | TEXT | | NULL |
+| canvas_x | REAL | | NULL |
+| canvas_y | REAL | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id).
+Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id), `idx_tasks_workflow` on (workflow_id).
+
+The seven workflow columns are NULL on an ordinary task. `workflow_id` names the task's workflow and
+`workflow_project_id` the project whose database holds it (the task's own project unless the
+workflow put it on another board). The route is `route_start_swimlane_id` (NULL: the first column
+after To Do), `route_last_swimlane_id` (NULL: the column before Done) and `skipped_swimlane_ids` (a
+JSON array, NULL for none), read through `src/shared/workflow-route.ts`. `canvas_x` / `canvas_y`
+are where a hand placed the card on the Workflows canvas. None of them is in `update()`'s column
+list: `setWorkflowMembership`, `setRoute` and `setCanvasPosition` write them without bumping
+`updated_at`, so a canvas drag never re-indexes the task.
 
 `worktree_folder` is the DIRECTORY NAME of the task's worktree, written once and never rewritten
 (`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get
@@ -459,6 +475,55 @@ automation as `interrupted` and raise a toast saying it did not finish.
 
 Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
 blind, so the user gets Run again on the row instead.
+
+### workflows table
+
+A set of linked tasks with its own agent, in its HOME project's database. Its tasks live on their
+own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| title | TEXT | NOT NULL | |
+| brief | TEXT | | NULL |
+| source_task_id | TEXT | | NULL |
+| state | TEXT | NOT NULL | 'draft' |
+| draft_json | TEXT | | NULL |
+| color_slot | INTEGER | NOT NULL | 1 |
+| revision | INTEGER | NOT NULL | 1 |
+| created_at | TEXT | NOT NULL | |
+| started_at | TEXT | | NULL |
+| finished_at | TEXT | | NULL |
+
+`state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
+reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
+`draft_json` (`WorkflowDraft`: tasks by local key, with their project, route and an optional board
+task to take in) rather than as rows on any board, so no board read has to filter planned work out;
+Start creates the tasks and clears it. `revision` goes up on every save and edit, and
+`kangentic_save_workflow` refuses a save that carries an older one. `color_slot` is the
+`--kng-chart-N` slot of the workflow's icon, the first no unfinished workflow holds.
+
+Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
+
+### task_links table
+
+"blocked waits for blocker to reach Done", in the workflow's home database.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| workflow_id | TEXT | NOT NULL, FK->workflows ON DELETE CASCADE | |
+| blocker_project_id | TEXT | NOT NULL | |
+| blocker_task_id | TEXT | NOT NULL | |
+| blocked_project_id | TEXT | NOT NULL | |
+| blocked_task_id | TEXT | NOT NULL | |
+| created_at | TEXT | NOT NULL | |
+
+No foreign key to tasks: either end can be a task in another project's database. A task delete
+removes the links that name it in its own database (`TaskRepository.delete`), and the engine never
+counts a link whose blocker is gone as satisfied. Indexes: `idx_task_links_workflow`,
+`idx_task_links_blocker`, `idx_task_links_blocked`, and `idx_task_links_pair` UNIQUE on
+(blocker_task_id, blocked_task_id).
 
 ### task_moves table
 
@@ -1066,6 +1131,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 74. **`result_tokens_read_at` column on sessions** - adds `result_tokens_read_at TEXT DEFAULT NULL`, the UTC ISO time a transcript read for the record's per-tool Tokens answered and left it nothing to keep, so `fillEarlierRunResultTokens` does not parse that transcript again on every launch. NULL for every existing row, which the fill then reads once.
 74. **`condition` / `max_runs` on column_automations, and `condition_met` / `condition_reason` on automation_runs** - every automation's Condition and Frequency, and the Automation agent's answer on each run (see both tables above). All nullable with no default, so a build from before them still inserts. Guarded `ALTER TABLE`s.
 75. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
+76. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read.
 
 ### Key Migrations (Global DB)
 

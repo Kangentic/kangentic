@@ -506,6 +506,27 @@ Drag a column by the grip in its header to reorder, or Tab to the grip and use S
 
 Columns can only be deleted when empty (no tasks).
 
+## Workflows
+
+A workflow is a set of linked tasks that runs through the board on its own. Each task follows a
+route (the columns it visits, every column between To Do and Done unless it skips some) and starts
+when every task it waits for has reached Done, as agent slots allow.
+
+**Planning one.** Ask an agent: "plan the usage budgets work as a workflow". It saves the plan
+with `kangentic_save_workflow` (nothing reaches the board yet), and you start it when you are
+ready ("start it"). The tasks then appear in To Do, and those with nothing to wait for start.
+
+**Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
+judges whether that column's work is done and the agent is not waiting on you. Done moves the task
+to the next column on its route, and the last one to Done; not done leaves it where it is. A task
+that finishes a plan moves on when you approve the plan. Without an Automation agent, or in a
+column with no agent, you drag the card on yourself.
+
+**Locked while it runs.** A running workflow's cards cannot be dragged (except out of a column you
+move by hand), and no workflow task can be moved back to To Do. Ask an agent to pause it ("pause
+the workflow") to move cards by hand, and to resume it after. When every task is in Done, a
+Workflow complete notification says so (Settings > Notifications).
+
 ## Settings
 
 Settings are accessed from two entry points, both opening the same unified panel:

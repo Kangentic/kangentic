@@ -123,7 +123,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (30 channels)
+### Tasks (31 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -149,7 +149,8 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a session restart or respawn that cleared `task.session_id`, so the board store's stale `task.session_id` reloads |
 | `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the `pr-candidate` resolve after an agent's PR command, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
 | `task:movedByMobile` | on | Event: quiet (toast-free) board reload after a task was moved from the paired mobile app. A third provenance, distinct from both siblings above: `task:updatedByAgent` would announce "Task updated by agent" for a card the user dragged on their own phone, and this is not the app reconciling itself either. Payload is the bare `projectId` |
-| `task:movedByAutomation` | on | Event: quiet (toast-free) board reload after Kangentic moved a task on its own, as a Move to column automation does at a turn end (move origins `automation` and `workflow`). The run log records why, so nothing toasts. Renderer subscribes via `onMovedByAutomation`. Payload is the bare `projectId` |
+| `task:movedByAutomation` | on | Event: quiet (toast-free) board reload after Kangentic moved a task on its own, as a Move to column automation does at a turn end (move origins `automation` and `workflow`). The run log records why, so nothing toasts. Sent at the move's commit point and again when it settles, so the card moves before a Done move's cleanup finishes. Renderer subscribes via `onMovedByAutomation`. Payload is the bare `projectId` |
+| `workflow:completed` | on | Event: every task in a workflow reached Done (`WorkflowCompletedEvent`: id, title, task count, home project). The renderer raises the Workflow Complete toast and desktop notification, each behind its `notifications.*.onWorkflowComplete` switch. Renderer subscribes via `tasks.onWorkflowCompleted` |
 | `task:spawnBlocked` | on | Event: the task's agent could not start. Fires for three steps, and the entry points differ per step. WORKTREE and CHECKOUT: only on create, promote, unarchive, MCP auto-spawn, or the phone's `start-session`, which deliberately keep the task (a move instead rejects the invoke, which the renderer already toasts). A phone Start reaches them through `autoSpawnForTask`; a phone Resume of a paused task reports its worktree and agent steps through `resumeTaskSession`'s `onFailed` hook, because the phone was answered at acceptance and no rejection reaches a toast (the desktop Resume button still rejects instead). Any git failure at those two steps fires this, not only the case where another task holds the checkout. AGENT (the spawn itself, most often a CLI that is not installed or not on PATH): every board-driven entry point including a drag move, because `spawnAgent`'s catch swallows that error and resolves the invoke, so this event is the only user-visible notice on that path. Without it the result is indistinguishable from a healthy spawn |
 | `task:spawnWarning` | on | Event: non-blocking spawn anomaly - the agent still started, but its base branch could not be freshened (network or credential fetch failure), so it may be running from a stale base. The message is composed in main and toasted verbatim, cooldown-guarded per project and reason class so a bulk unarchive while offline produces one toast, not one per task |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
@@ -966,6 +967,45 @@ src/main/automations/
 The manifest (`src/shared/automation-manifest.ts`) is renderer-safe and holds each type's label,
 description, icon name, `needs`, fields, timeout and retry policy.
 `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
+
+### Workflows
+
+A workflow is a set of linked tasks that run through their boards on their own (#732). It lives in
+its home project's database with its links (`workflows`, `task_links`); its tasks live on their own
+boards. A task's route (the columns it visits) is one pure shared module,
+`src/shared/workflow-route.ts`.
+
+```
+src/main/workflows/
+  engine/
+    workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, loops
+    workflow-lock.ts         # pure: who may move a workflow task, as one predicate
+  workflow-engine-host.ts    # main: wake-ups, debounce, read every running workflow, carry out the plan
+  workflow-lock-check.ts     # reads the databases and config the lock predicate needs
+  workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
+  workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
+  workflow-complete.ts       # the workflow:completed push
+  workflow-runtime.ts        # the IPC context the operations act through
+  workflow-wake.ts           # wake the engine from a write the board bus does not announce
+```
+
+- **The engine never polls.** The board bus (every move announces there), a freed agent slot
+  (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into
+  one pass after 150 ms. A pass with nothing running costs one indexed query per project, and each
+  is timed (`WorkflowEngineHost.stats()`). The core imports no Electron, IPC, database, analytics or
+  Sentry and schedules no timer (`tests/unit/workflow-engine-boundary.test.ts`), so it can move to a
+  utility process as a transport change.
+- **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
+  after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
+  Do order, up to `SessionManager.getFreeAgentSlots()`.
+- **A step** finishes at a turn end the Automation agent judges done (after the column's own
+  turn-end rows), at plan approval, or when the task's own agent moves it. The answer is recorded in
+  `automation_runs` as a `workflow_step` row.
+- **The lock** (`workflowMoveRefusal`) is asked by `handleTaskMove` before it aborts anything and
+  again inside its Phase 1 lock, and by `kangentic_move_task` before it fires. The caller's task
+  comes from the MCP request's caller segment (`CommandContext.callerTaskId`).
+- **MCP:** twelve `kangentic_*_workflow` tools in their own category (`workflow-tools.ts`,
+  `workflow-commands.ts`), off the phone's board-tool path.
 
 ## Board Adapters
 
