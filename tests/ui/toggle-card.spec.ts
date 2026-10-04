@@ -233,11 +233,11 @@ test.describe('Settings card header', () => {
 
     const toggle = page.getByRole('switch', { name: 'MCP server' });
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
-    await expect(page.getByTestId('mcp-tool-list')).toBeVisible();
+    await expect(page.getByTestId('mcp-tool-group-tasks')).toBeVisible();
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await expect(page.getByTestId('mcp-tool-list')).toHaveCount(0);
+    await expect(page.getByTestId('mcp-tool-group-tasks')).toHaveCount(0);
 
     // Restore for subsequent tests.
     await setGlobalConfigAndSync({ mcpServer: { enabled: true } });

@@ -673,6 +673,8 @@
   --toast-duration: 250ms;
 
   --maximize-duration: 125ms;
+
+  --group-collapse-duration: 200ms;
 }
 
 /* Dialog transitions */
@@ -731,6 +733,37 @@
 
 .no-motion .dialog-maximize-anim {
   transition-duration: 0s;
+}
+
+/* A settings group tile's open and close (`CardGroupTile`). The body's one
+   grid row tweens between 0fr and 1fr, so it sizes to its content with no
+   measured height. Visibility tweens with it: it stays visible for the whole
+   of a close and turns on at the start of an open, so a closed body leaves the
+   tab order and the accessibility tree once it has shut. */
+.card-group-body {
+  display: grid;
+  transition:
+    grid-template-rows var(--group-collapse-duration) var(--overlay-enter-ease),
+    visibility var(--group-collapse-duration);
+}
+
+/* Its chevron turns over with the body, on the same clock. */
+.card-group-chevron {
+  transition:
+    color var(--group-collapse-duration) var(--overlay-enter-ease),
+    transform var(--group-collapse-duration) var(--overlay-enter-ease);
+}
+
+.no-motion .card-group-body,
+.no-motion .card-group-chevron {
+  transition-duration: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-group-body,
+  .card-group-chevron {
+    transition-duration: 0s;
+  }
 }
 
 /* Disable all CSS keyframe animations when user opts out via Appearance settings.

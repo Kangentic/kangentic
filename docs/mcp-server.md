@@ -111,10 +111,11 @@ No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timesta
 
 ## Available Tools
 
-The **Settings -> MCP Server** panel lists every tool below as a pill, grouped by the same
-categories. Each pill deep-links to that tool's entry on the live docs page
-(`https://kangentic.com/mcp-server/`, anchored by the tool name), opening it in the default
-browser.
+The **Settings -> MCP Server** panel lists every tool below in one collapsible group per
+category, each group open on every visit. Each tool's cell deep-links to that tool's entry on
+the live docs page (`https://kangentic.com/mcp-server/`, anchored by the tool name), opening it
+in the default browser, and its tooltip says what the tool does. A Documentation row above the
+groups opens the page itself.
 
 **Tool annotations.** Every registered tool declares MCP `annotations` from the shared constants
 in `src/main/agent/mcp-http/annotations.ts`: read-only tools carry

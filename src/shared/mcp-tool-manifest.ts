@@ -14,13 +14,13 @@
  * directions plus presence in `docs/mcp-server.md`; the convention is
  * documented in `.claude/rules/mcp-tool-list-parity.md`.
  *
- * The panel renders every entry as a pill, grouped by `category` in
+ * The panel renders every entry as a cell in its `category`'s group, in
  * `MCP_TOOL_CATEGORIES` order, so the complete tool catalogue is visible
- * (the dev-leaning diagnostics group sorts last under its own header). The
- * array below is ordered to mirror that grouping; `category`, not array
- * position, is what drives the panel grouping.
+ * (the dev-leaning diagnostics group sorts last). The array below is ordered
+ * to mirror that grouping; `category`, not array position, is what drives the
+ * panel grouping.
  *
- * Each panel pill deep-links to its entry on the live docs page
+ * Each panel cell deep-links to its entry on the live docs page
  * (`MCP_SERVER_DOCS_URL`) via `mcpToolDocsUrl(tool.name)`; the docs page uses
  * one anchor per tool named after the registered tool, so the link is derived
  * from `name` with no per-tool hardcoding.
@@ -41,12 +41,12 @@ export interface McpToolManifestEntry {
   category: McpToolCategoryId;
 }
 
-/** Categories in panel render order. The diagnostics group sorts last under its own header. */
+/** Categories in panel render order. The diagnostics group sorts last. Labels are sentence case, like every settings label. */
 export const MCP_TOOL_CATEGORIES: { id: McpToolCategoryId; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'board', label: 'Board' },
   { id: 'sessions', label: 'Sessions' },
-  { id: 'browser', label: 'Browser Automation' },
+  { id: 'browser', label: 'Browser automation' },
   { id: 'diagnostics', label: 'Diagnostics' },
 ];
 

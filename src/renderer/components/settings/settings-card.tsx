@@ -1,8 +1,9 @@
 import type React from 'react';
-import { Children } from 'react';
-import { Check, Info, TriangleAlert } from 'lucide-react';
+import { Children, useId } from 'react';
+import { Check, ChevronDown, Info, TriangleAlert } from 'lucide-react';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
+import { CountBadge } from '../CountBadge';
 import { ToggleSwitch } from './shared';
 import { SegmentedControl } from '../SegmentedControl';
 import type { SegmentedControlOption } from '../SegmentedControl';
@@ -17,8 +18,9 @@ import type { SegmentedControlOption } from '../SegmentedControl';
  *  - The card itself is clear (the panel shows through) and each control sits
  *    in a tile LIGHTER than the panel. Nothing is darker than the panel: a
  *    recessed well reads heavy and dim, and was ruled out for that.
- *  - Every child of a card body is a tile: `CardRow`, `CardToggleRow`, or
- *    `CardTile` for anything custom. Tabs never style a tile by hand.
+ *  - Every child of a card body is a tile: `CardRow`, `CardToggleRow`,
+ *    `CardGroupTile` for a titled group that collapses, or `CardTile` for
+ *    anything custom. Tabs never style a tile by hand.
  *  - Every switch, trailing button and dropdown arrow in a card ends on one
  *    right edge, the header's switch included, and the header's icon and every
  *    tile's content start on one left edge, the same inset on both sides. Both
@@ -61,11 +63,6 @@ const TILE_RIGHT_PADDING_PX = 16;
 const HEADER_ICON_INSET_PX = TILE_RIGHT_PADDING_PX;
 const HEADER_ICON_COLUMN_PX = 16;
 const HEADER_ICON_GAP_PX = 12;
-/**
- * The header's right inset is the tiles' inset plus their right padding, so the
- * header's switch ends on the same edge as every switch in the tiles below it.
- */
-const HEADER_RIGHT_INSET_PX = CARD_BODY_INSET_PX + TILE_RIGHT_PADDING_PX;
 /** A tile's content starts under the header's icon: the same inset as its right side. */
 const TILE_LEFT_PADDING_PX = TILE_RIGHT_PADDING_PX;
 /**
@@ -77,14 +74,22 @@ const TILE_LEFT_PADDING_PX = TILE_RIGHT_PADDING_PX;
 const HEADER_TARGET_VERTICAL_PADDING_PX = 8;
 /** A nested tile (Only localhost under Allow navigation) starts this much further in. */
 const NESTED_TILE_INDENT_PX = 30;
+/** A tile's vertical padding: Tailwind's `py-3`, which `TILE_CLASS` carries. */
+const TILE_VERTICAL_PADDING_PX = 12;
 /**
- * The space under a wide body's grid. Its sides use the header's right inset,
- * so the grid's right edge is the switch's.
+ * A group tile's header target sits this far inside the tile, so its hover
+ * fill is its own rounded rect that clears the tile's edge and the items
+ * below. The header's content keeps the tiles' insets, which is why the
+ * target's own padding is the tile's less this.
  */
-const WIDE_BODY_BOTTOM_PADDING_PX = 16;
+const GROUP_HEADER_TARGET_INSET_PX = 4;
+/** The space between a group header's hover fill and the group's first items. */
+const GROUP_BODY_TOP_GAP_PX = 4;
 
+/** The fill and corners every tile shares. */
+const TILE_FILL_CLASS = 'rounded-md bg-surface-hover/40';
 /** The fill, corners and vertical padding every tile shares. The horizontal padding is `TILE_STYLE`. */
-const TILE_CLASS = 'rounded-md bg-surface-hover/40 py-3';
+const TILE_CLASS = `${TILE_FILL_CLASS} py-3`;
 const TILE_STYLE: React.CSSProperties = { paddingLeft: TILE_LEFT_PADDING_PX, paddingRight: TILE_RIGHT_PADDING_PX };
 
 /** Controls inside a toggle's row that own their click. */
@@ -140,21 +145,15 @@ interface SettingsCardProps {
    */
   tag?: string;
   /**
-   * Tiles only: `CardRow`, `CardToggleRow`, `CardTile`. Pass it only when it
-   * should show.
+   * Tiles only: `CardRow`, `CardToggleRow`, `CardGroupTile`, `CardTile`. Pass
+   * it only when it should show.
    */
   children?: React.ReactNode;
-  /**
-   * A grid of items with no label column to line up (MCP Server's tool list):
-   * the body runs between the header's title and switch edges and holds the
-   * grid directly, with no tiles.
-   */
-  wideBody?: boolean;
   testId?: string;
 }
 
 export function SettingsCard({
-  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, wideBody, testId,
+  icon, label, description, searchId, searchIds, checked, onChange, info, requirement, tag, children, testId,
 }: SettingsCardProps) {
   const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(searchIds ?? [])]);
   if (!visible) return null;
@@ -227,9 +226,7 @@ export function SettingsCard({
       {Children.toArray(children).length > 0 ? (
         <div
           className="flex flex-col"
-          style={wideBody
-            ? { paddingLeft: HEADER_RIGHT_INSET_PX, paddingRight: HEADER_RIGHT_INSET_PX, paddingBottom: WIDE_BODY_BOTTOM_PADDING_PX }
-            : { paddingLeft: CARD_BODY_INSET_PX, paddingRight: CARD_BODY_INSET_PX, paddingBottom: CARD_BODY_INSET_PX, rowGap: TILE_GAP_PX }}
+          style={{ paddingLeft: CARD_BODY_INSET_PX, paddingRight: CARD_BODY_INSET_PX, paddingBottom: CARD_BODY_INSET_PX, rowGap: TILE_GAP_PX }}
         >
           {children}
         </div>
@@ -293,6 +290,84 @@ export function CardTile({ children, className, style, ref, testId }: CardTilePr
     >
       {children}
     </div>
+  );
+}
+
+interface CardGroupTileProps {
+  /** The group's name, on the tile's label line. */
+  label: string;
+  /** How many items the group holds, in a badge after the label. */
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  /** The group's items. Mounted while closed, but hidden, so they animate and leave the tab order. */
+  children: React.ReactNode;
+  testId?: string;
+}
+
+/** The header target's padding: the tile's insets less the target's own inset, so the content does not move. */
+const GROUP_HEADER_TARGET_STYLE: React.CSSProperties = {
+  paddingLeft: TILE_LEFT_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
+  paddingRight: TILE_RIGHT_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
+  paddingTop: TILE_VERTICAL_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
+  paddingBottom: TILE_VERTICAL_PADDING_PX - GROUP_HEADER_TARGET_INSET_PX,
+};
+const GROUP_BODY_STYLE: React.CSSProperties = {
+  ...TILE_STYLE,
+  paddingTop: GROUP_BODY_TOP_GAP_PX,
+  paddingBottom: TILE_VERTICAL_PADDING_PX,
+};
+
+/**
+ * A titled group of items in one tile that collapses (MCP Server's tool
+ * groups): the label and its count on the left, a chevron on the switches'
+ * right edge. The header is the click target. Like the card header's, it is
+ * tile-shaped and inset, so its hover fill clears the tile's edge and never
+ * touches the first items. The caller owns `open`, which is how a group can
+ * open again on every visit.
+ *
+ * The body stays mounted while closed so it can animate both ways: its height
+ * tweens through a 0fr/1fr grid row and the chevron turns with it
+ * (`.card-group-body` and `.card-group-chevron` in index.css, which honor the
+ * Animations setting and reduced motion), and the body is hidden once shut,
+ * so a closed group's items leave the tab order.
+ */
+export function CardGroupTile({ label, count, open, onToggle, children, testId }: CardGroupTileProps) {
+  const bodyId = useId();
+  return (
+    <section className={TILE_FILL_CLASS} aria-label={label} data-testid={testId}>
+      <div style={{ padding: GROUP_HEADER_TARGET_INSET_PX }}>
+        {/* The hover fill sits on the tile's own /40, so /50 here reads as
+            strong as a toggle row's /70 on the bare panel. */}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          className="group flex w-full cursor-pointer items-center gap-2 rounded text-left transition-colors hover:bg-surface-hover/50"
+          style={GROUP_HEADER_TARGET_STYLE}
+          data-testid={testId ? `${testId}-toggle` : undefined}
+        >
+          <span className={SETTING_LABEL_CLASS}>{label}</span>
+          <CountBadge count={count} />
+          <ChevronDown
+            size={16}
+            className={`card-group-chevron ml-auto flex-shrink-0 text-fg-muted group-hover:text-fg ${open ? 'rotate-180' : ''}`}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+      <div
+        id={bodyId}
+        className="card-group-body"
+        style={{ gridTemplateRows: open ? '1fr' : '0fr', visibility: open ? 'visible' : 'hidden' }}
+        data-testid={testId ? `${testId}-body` : undefined}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div style={GROUP_BODY_STYLE}>{children}</div>
+        </div>
+      </div>
+    </section>
   );
 }
 
