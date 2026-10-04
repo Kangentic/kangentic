@@ -16,7 +16,7 @@ import { PriorityLabelsRow } from './PriorityLabelsRow';
 import { DialogFooterActions } from './DialogFooterActions';
 import { AdvancedOverridesSection } from './AdvancedOverridesSection';
 import { useBranchSettings, type BranchSettingsInitial } from '../../hooks/useBranchSettings';
-import { DEFAULT_AGENT, type PermissionMode, type TaskRunMode } from '../../../shared/types';
+import { DEFAULT_AGENT, type PermissionMode, type TaskRunMode, type WorkflowTaskInput } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from './AttachmentChipStrip';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from './attachment-utils';
@@ -33,6 +33,15 @@ interface PendingAttachment {
 interface NewTaskDialogProps {
   swimlaneId: string;
   onClose: () => void;
+  /**
+   * Create into a workflow instead of onto the board (the Workflows canvas's
+   * Add task). A workflow task carries what it has before Start creates it:
+   * title, description, priority and labels. Its branch, agent settings and
+   * attachments are set in the task's own window once it exists, so those rows
+   * are left out here rather than taking input that would be dropped.
+   * Resolves true once the task is in the workflow.
+   */
+  workflow?: { onCreate: (input: WorkflowTaskInput) => Promise<boolean> };
 }
 
 // Non-task sentinel key for the maximize toggle (the create dialog has no task
@@ -42,7 +51,7 @@ const NEW_TASK_ENTITY_ID = 'new-task-dialog';
 /** A new task starts with nothing pinned: base, branch name, and worktree all inherit. */
 const EMPTY_BRANCH_SETTINGS: BranchSettingsInitial = { baseBranch: '', customBranchName: '', useWorktree: null };
 
-export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
+export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogProps) {
   const createTask = useBoardStore((s) => s.createTask);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
   const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
@@ -226,6 +235,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   }, []);
 
   const handlePaste = useCallback((event: React.ClipboardEvent) => {
+    // A workflow task takes no attachments until it exists (see `workflow`).
+    if (workflow) return;
     const items = event.clipboardData?.items;
     if (!items) return;
 
@@ -255,13 +266,13 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         await addFile(outFile, `${prefix}${pastedIndex}${finalExtension}`);
       })();
     }
-  }, [attachments, addFile]);
+  }, [attachments, addFile, workflow]);
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    setIsDragOver(true);
-  }, []);
+    if (!workflow) setIsDragOver(true);
+  }, [workflow]);
 
   const handleDragLeave = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -275,11 +286,11 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     setIsDragOver(false);
 
     const files = event.dataTransfer?.files;
-    if (!files) return;
+    if (!files || workflow) return;
     for (let index = 0; index < files.length; index++) {
       addFile(files[index]);
     }
-  }, [addFile]);
+  }, [addFile, workflow]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -288,6 +299,17 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     setSubmitting(true);
     try {
       const taskTitle = title.trim();
+      if (workflow) {
+        // The store reports its own failure; the dialog stays open to retry.
+        const created = await workflow.onCreate({
+          title: taskTitle,
+          description: description.trim(),
+          ...(labels.length > 0 ? { labels } : {}),
+          ...(priority > 0 ? { priority } : {}),
+        });
+        if (created) onClose();
+        return;
+      }
       await createTask({
         title: taskTitle,
         description: description.trim(),
@@ -399,13 +421,15 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               className="flex-1"
             />
 
-            <AttachmentChipStrip
-              attachments={attachments}
-              onOpen={(attachment) => {
-                if (isImageMediaType(attachment.media_type)) setPreviewAttachment(attachment);
-              }}
-              onRemove={removeAttachment}
-            />
+            {!workflow && (
+              <AttachmentChipStrip
+                attachments={attachments}
+                onOpen={(attachment) => {
+                  if (isImageMediaType(attachment.media_type)) setPreviewAttachment(attachment);
+                }}
+                onRemove={removeAttachment}
+              />
+            )}
 
             <PriorityLabelsRow
               priority={priority}
@@ -415,6 +439,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               testIdPrefix="task-"
             />
 
+            {!workflow && (<>
             <TaskBranchRow
               customBranchName={customBranchName}
               setCustomBranchName={setCustomBranchName}
@@ -445,6 +470,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               profileId={profileId}
               setProfileId={setProfileId}
             />
+            </>)}
 
             {/* Drag overlay */}
             {isDragOver && (

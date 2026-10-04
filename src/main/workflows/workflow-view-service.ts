@@ -14,6 +14,7 @@ import type {
   WorkflowViewTask,
 } from '../../shared/types';
 import { routeCandidates, routeColumns, routeFromColumns } from '../../shared/workflow-route';
+import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -339,7 +340,7 @@ export function setViewLink(
   blockedKey: string,
   linked: boolean,
 ): void {
-  if (blockerKey === blockedKey) throw new WorkflowRequestError('A task cannot wait for itself.');
+  if (blockerKey === blockedKey) throw new WorkflowRequestError(WORKFLOW_REFUSALS.selfLink);
   const workflow = requireWorkflow(homeProjectId, workflowId);
   requireViewMayChange(workflow);
   if (workflow.state === 'draft') {
@@ -354,7 +355,7 @@ export function setViewLink(
       if (exists) return;
       const asCore = draft.links.map((link) => ({ blockerTaskId: link.blocker, blockedTaskId: link.blocked }));
       if (wouldCreateCycle(asCore, blockerKey, blockedKey)) {
-        throw new WorkflowRequestError('That link closes a loop. A workflow\'s links cannot go in a circle.');
+        throw new WorkflowRequestError(WORKFLOW_REFUSALS.loop);
       }
       draft.links.push({ blocker: blockerKey, blocked: blockedKey });
     });
@@ -375,7 +376,7 @@ export function setViewRoute(context: IpcContext, homeProjectId: string, workflo
     editDraft(homeProjectId, workflowId, (draft) => {
       const planned = requirePlanned(draft, key);
       const route = routeFromColumns(safeLanes(planned.project_id ?? homeProjectId), swimlaneIds);
-      if (!route) throw new WorkflowRequestError('A task visits at least one column.');
+      if (!route) throw new WorkflowRequestError(WORKFLOW_REFUSALS.routeEmpty);
       planned.route_start_swimlane_id = route.route_start_swimlane_id;
       planned.route_last_swimlane_id = route.route_last_swimlane_id;
       planned.skipped_swimlane_ids = route.skipped_swimlane_ids;
@@ -384,7 +385,7 @@ export function setViewRoute(context: IpcContext, homeProjectId: string, workflo
   }
   const { projectId, task } = requireCreated(context, homeProjectId, workflowId, key);
   const route = routeFromColumns(safeLanes(projectId), swimlaneIds);
-  if (!route) throw new WorkflowRequestError('A task visits at least one column.');
+  if (!route) throw new WorkflowRequestError(WORKFLOW_REFUSALS.routeEmpty);
   setTaskRouteByIds(context, homeProjectId, workflowId, { taskId: task.id, projectId, route });
 }
 

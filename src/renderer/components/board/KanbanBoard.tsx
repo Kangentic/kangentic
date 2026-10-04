@@ -17,7 +17,7 @@ import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useHmrGeneration } from '../../utils/hmr-generation';
-import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
+import { boardTaskFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
 import type { Task } from '../../../shared/types';
 
 /** Wrapper that registers a column with @dnd-kit/sortable.
@@ -276,11 +276,12 @@ export function KanbanBoard() {
   const priorityFilters = useBoardStore((s) => s.priorityFilters);
   const labelFilters = useBoardStore((s) => s.labelFilters);
   const boardSearchQuery = useBoardStore((s) => s.boardSearchQuery);
-  const normalizedSearch = boardSearchQuery.trim().toLowerCase();
-  // A `#<digits>` query filters by ticket number (display_id, prefix) instead of
-  // substring-matching title/description. Parsed once here so tasksPerLane can
-  // branch per task. See src/shared/ticket-query.ts.
-  const ticketDigits = parseTicketQuery(boardSearchQuery);
+  // One rule for the board and the Workflows canvas, which share the toolbar's
+  // query and filter set. Parsed once here so tasksPerLane can test each task.
+  const taskFilter = useMemo(
+    () => boardTaskFilter(boardSearchQuery, priorityFilters, labelFilters),
+    [boardSearchQuery, priorityFilters, labelFilters],
+  );
 
   // New Task hotkey (task.create): a nonce increments in the board store; we open
   // a board-level New Task dialog targeting the first actionable (non-Done) lane,
@@ -346,16 +347,7 @@ export function KanbanBoard() {
       // source column and Done for the whole flight, even if a mid-flight
       // loadBoard() re-injects it at its source swimlane_id from the DB.
       if (completingTaskIds.has(task.id)) continue;
-      if (priorityFilters.size > 0 && !priorityFilters.has(task.priority)) continue;
-      if (labelFilters.size > 0 && !(task.labels ?? []).some((label) => labelFilters.has(label))) continue;
-      if (ticketDigits !== null) {
-        // `#<digits>` filters by ticket number (prefix), not text.
-        if (!matchesTicketPrefix(task.display_id, ticketDigits)) continue;
-      } else if (normalizedSearch) {
-        const title = task.title.toLowerCase();
-        const description = (task.description ?? '').toLowerCase();
-        if (!title.includes(normalizedSearch) && !description.includes(normalizedSearch)) continue;
-      }
+      if (!matchesBoardTaskFilter(task, taskFilter)) continue;
       // A task whose optimistic move is still in flight renders at its pinned
       // destination, not the lane the server last reported. Without this, a
       // reload issued before the move's DB write (endBoardDrag flushes parked
@@ -387,7 +379,7 @@ export function KanbanBoard() {
     }
     stableLanesRef.current = stable;
     return stable;
-  }, [swimlanes, tasks, priorityFilters, labelFilters, normalizedSearch, ticketDigits, completingTaskIds, lanePins]);
+  }, [swimlanes, tasks, taskFilter, completingTaskIds, lanePins]);
   /* eslint-enable react-hooks/refs */
 
   if (!hydrated) return null;

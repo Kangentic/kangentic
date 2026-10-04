@@ -10,6 +10,7 @@ import type {
 } from '../../shared/types';
 import { IPC } from '../../shared/ipc-channels';
 import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../shared/workflow-route';
+import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { getProjectDb } from '../db/database';
 import { writeTransaction } from '../db/transaction';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -588,16 +589,17 @@ export function linkTasks(
   requireStarted(workflow, 'linking tasks');
   const blocker = resolveWorkflowTask(context, homeProjectId, workflow, input.blocker, input.blockerProject);
   const blocked = resolveWorkflowTask(context, homeProjectId, workflow, input.blocked, input.blockedProject);
+  if (blocker.task.id === blocked.task.id) throw new WorkflowRequestError(WORKFLOW_REFUSALS.selfLink);
   if (placeOf(blocked) !== 'todo') {
-    throw new WorkflowRequestError(`#${blocked.task.display_id} has started. Only a task in To Do can wait for another.`);
+    throw new WorkflowRequestError(WORKFLOW_REFUSALS.cannotWait(`#${blocked.task.display_id}`));
   }
   if (placeOf(blocker) === 'done') {
-    throw new WorkflowRequestError(`#${blocker.task.display_id} is done, so waiting for it changes nothing.`);
+    throw new WorkflowRequestError(WORKFLOW_REFUSALS.blockerDone(`#${blocker.task.display_id}`));
   }
   const repository = new TaskLinkRepository(getProjectDb(homeProjectId));
   const existing = repository.listForWorkflow(workflowId).map((link) => ({ blockerTaskId: link.blocker_task_id, blockedTaskId: link.blocked_task_id }));
   if (wouldCreateCycle(existing, blocker.task.id, blocked.task.id)) {
-    throw new WorkflowRequestError(`#${blocked.task.display_id} waiting for #${blocker.task.display_id} closes a loop.`);
+    throw new WorkflowRequestError(WORKFLOW_REFUSALS.loop);
   }
   const link = repository.insert({
     workflow_id: workflowId,
@@ -681,7 +683,7 @@ function applyTaskRoute(
 ): Task {
   const label = `#${resolved.task.display_id}`;
   const place = placeOf(resolved);
-  if (place === 'done') throw new WorkflowRequestError(`${label} is done and stays with its workflow.`);
+  if (place === 'done') throw new WorkflowRequestError(WORKFLOW_REFUSALS.doneStays(label));
   const lanes = resolved.lanes;
 
   if (place === 'working') {
@@ -689,7 +691,7 @@ function applyTaskRoute(
     const before = routeColumns(lanes, resolved.task).filter((lane) => current && lane.position <= current.position).map((lane) => lane.id);
     const after = routeColumns(lanes, next).filter((lane) => current && lane.position <= current.position).map((lane) => lane.id);
     if (before.join() !== after.join()) {
-      throw new WorkflowRequestError(`${label} has reached ${current?.name ?? 'its column'}. Only the columns after it can change.`);
+      throw new WorkflowRequestError(WORKFLOW_REFUSALS.stepReached(label, current?.name ?? 'its column'));
     }
     if (current && routeColumns(lanes, next).length > 0 && next.route_last_swimlane_id) {
       const last = lanes.find((lane) => lane.id === next.route_last_swimlane_id);
@@ -770,7 +772,7 @@ export function removeFromWorkflow(
   const workflow = requireWorkflow(homeProjectId, workflowId);
   const resolved = resolveWorkflowTask(context, homeProjectId, workflow, input.task, input.project);
   if (placeOf(resolved) === 'done') {
-    throw new WorkflowRequestError(`#${resolved.task.display_id} is done and stays with its workflow.`);
+    throw new WorkflowRequestError(WORKFLOW_REFUSALS.doneStays(`#${resolved.task.display_id}`));
   }
   const tasks = new TaskRepository(getProjectDb(resolved.projectId));
   tasks.setWorkflowMembership(resolved.task.id, null);

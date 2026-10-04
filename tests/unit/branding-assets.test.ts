@@ -71,7 +71,11 @@ const SUPPORTED_MARKS: readonly string[] = ACTIVITY_MARK_NAMES;
 // Every renderer file that shows an activity mark goes through the shared component. Rendering a
 // lucide glyph (or a fresh inline <svg>) for one of these states is the drift this set removes.
 const ACTIVITY_MARK_CONSUMERS = [
-  'src/renderer/components/board/TaskCard.tsx',
+  // The board card's body, shared with the Workflows canvas (TaskCard renders it).
+  'src/renderer/components/board/task-card-view.tsx',
+  'src/renderer/components/workflows/WorkflowHeader.tsx',
+  'src/renderer/components/workflows/WorkflowInspector.tsx',
+  'src/renderer/components/workflows/WorkflowPicker.tsx',
   'src/renderer/components/board/ActivityReasonTooltip.tsx',
   'src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx',
   'src/renderer/components/command-bar/CommandTerminalIcon.tsx',

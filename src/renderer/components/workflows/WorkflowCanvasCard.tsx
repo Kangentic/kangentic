@@ -18,7 +18,8 @@ export const CANVAS_CARD_HEIGHT: Record<AppConfig['cardDensity'], number> = {
   default: 204,
   comfortable: 224,
 };
-export const CANVAS_DONE_CARD_HEIGHT = 120;
+/** The strip over the Done column's compact card (title, a line, labels, when it finished), measured at 127. */
+export const CANVAS_DONE_CARD_HEIGHT = 132;
 
 export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity']): number {
   return task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];

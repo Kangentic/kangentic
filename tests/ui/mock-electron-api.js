@@ -5035,10 +5035,11 @@
           var blocked = requireTask(entry, blockedKey);
           links = links.filter(function (link) { return !(link.blocker_task_id === blocker.id && link.blocked_task_id === blocked.id); });
           if (linked) {
+            // KEEP IN SYNC with src/shared/workflow-refusals.ts.
             if (placeOf(blocked) !== 'todo') throw new Error('#' + blocked.display_id + ' has started. Only a task in To Do can wait for another.');
-            if (placeOf(blocker) === 'done') throw new Error('#' + blocker.display_id + ' is done, so waiting for it changes nothing.');
+            if (placeOf(blocker) === 'done') throw new Error('#' + blocker.display_id + ' is done. Waiting for it changes nothing.');
             var edges = links.filter(function (link) { return link.workflow_id === workflowId; }).map(function (link) { return { blocker: link.blocker_task_id, blocked: link.blocked_task_id }; });
-            if (wouldLoop(edges, blocker.id, blocked.id)) throw new Error('#' + blocked.display_id + ' waiting for #' + blocker.display_id + ' closes a loop.');
+            if (wouldLoop(edges, blocker.id, blocked.id)) throw new Error('That link closes a loop. A workflow\'s links cannot go in a circle.');
             links.push({ workflow_id: workflowId, blocker_task_id: blocker.id, blocked_task_id: blocked.id });
           }
           entry.workflow.revision += 1;

@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LayoutGrid, Plus, Scan } from 'lucide-react';
 import {
   Background,
   BackgroundVariant,
   ConnectionMode,
+  Panel,
   ReactFlow,
   applyNodeChanges,
   useReactFlow,
@@ -73,6 +75,7 @@ function reseedNodes(current: WorkflowFlowNode[], derived: WorkflowFlowNode[]): 
       && previous.selected === node.selected
       && previous.draggable === node.draggable
       && previous.connectable === node.connectable
+      && previous.hidden === node.hidden
       && previous.position.x === node.position.x
       && previous.position.y === node.position.y;
     return unchanged ? previous : { ...node, data, measured: previous.measured };
@@ -90,6 +93,13 @@ interface WorkflowCanvasProps {
   onOpenTask: (key: string) => void;
   onMoveCards: (positions: Array<{ key: string; x: number; y: number }>) => void;
   onLink: (blockerKey: string, blockedKey: string) => void;
+  /** Tasks the board's search and filter leave showing; null shows all. A hidden card keeps its place. */
+  visibleKeys: ReadonlySet<string> | null;
+  /** Add task's refusal (the workflow agent is working), or null while it can add. */
+  addTaskRefusal: string | null;
+  onAddTask: () => void;
+  /** Put every hand-placed card back in the automatic layout. */
+  onAutoLayout: () => void;
 }
 
 export function WorkflowCanvas({
@@ -101,6 +111,10 @@ export function WorkflowCanvas({
   onOpenTask,
   onMoveCards,
   onLink,
+  visibleKeys,
+  addTaskRefusal,
+  onAddTask,
+  onAutoLayout,
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
@@ -116,6 +130,7 @@ export function WorkflowCanvas({
     type: 'workflowTask',
     position: layout.positions.get(task.key) ?? { x: 0, y: 0 },
     selected: task.key === selectedTaskKey,
+    hidden: visibleKeys !== null && !visibleKeys.has(task.key),
     draggable: editable,
     connectable: editable && !planHeld,
     data: {
@@ -126,7 +141,7 @@ export function WorkflowCanvas({
       canBlock: canBlock(task),
       editable: editable && !planHeld,
     },
-  })), [detail, layout, selectedTaskKey, editable, planHeld, locked]);
+  })), [detail, layout, selectedTaskKey, editable, planHeld, locked, visibleKeys]);
 
   // Controlled nodes: React Flow writes positions during a drag through
   // `onNodesChange`, and the layout re-seeds them whenever the workflow
@@ -151,6 +166,8 @@ export function WorkflowCanvas({
     source: edge.blockerKey,
     target: edge.blockedKey,
     type: 'workflowLink',
+    // A link goes with either end the search hides.
+    hidden: visibleKeys !== null && (!visibleKeys.has(edge.blockerKey) || !visibleKeys.has(edge.blockedKey)),
     selectable: false,
     focusable: false,
     data: {
@@ -160,7 +177,7 @@ export function WorkflowCanvas({
       satisfied: doneKeys.has(edge.blockerKey),
       emphasized: selectedTaskKey !== null && (edge.blockerKey === selectedTaskKey || edge.blockedKey === selectedTaskKey),
     },
-  })), [layout.edges, doneKeys, selectedTaskKey]);
+  })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys]);
 
   // Fit every card in view when a workflow opens, and when its card count
   // changes (Add task, the agent's first plan).
@@ -232,7 +249,64 @@ export function WorkflowCanvas({
         nodeDragThreshold={3}
       >
         {editable && <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--color-edge-input)" />}
+        <Panel position="bottom-left">
+          <CanvasTools
+            moved={detail.tasks.some((task) => task.canvasX !== null || task.canvasY !== null)}
+            addTaskRefusal={addTaskRefusal}
+            onFitView={() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }}
+            onAddTask={onAddTask}
+            onAutoLayout={() => {
+              onAutoLayout();
+              // The cards move on the next render; fit them once they have.
+              requestAnimationFrame(() => requestAnimationFrame(() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }));
+            }}
+          />
+        </Panel>
       </ReactFlow>
+    </div>
+  );
+}
+
+/**
+ * The canvas's own tools, bottom left, always drawn in the same places. Fit
+ * view leads in every state: the canvas pans and zooms, and a workflow panned
+ * out of sight needs one way back. Add task uses the To Do column's words and
+ * opens the same New Task dialog. Auto layout puts hand-placed cards back, and
+ * is disabled until a card sits where a hand put it.
+ */
+function CanvasTools({ moved, addTaskRefusal, onFitView, onAddTask, onAutoLayout }: {
+  moved: boolean;
+  addTaskRefusal: string | null;
+  onFitView: () => void;
+  onAddTask: () => void;
+  onAutoLayout: () => void;
+}) {
+  const tool = 'inline-flex items-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+  return (
+    <div className="flex gap-2" data-testid="workflow-canvas-tools">
+      <button type="button" onClick={onFitView} title="Fit every card in view" className={tool} data-testid="workflow-fit-view">
+        <Scan size={14} className="text-fg-muted" />Fit view
+      </button>
+      <button
+        type="button"
+        onClick={onAddTask}
+        disabled={addTaskRefusal !== null}
+        title={addTaskRefusal ?? 'Add a task to this workflow'}
+        className={tool}
+        data-testid="workflow-add-task"
+      >
+        <Plus size={14} className="text-fg-muted" />Add task
+      </button>
+      <button
+        type="button"
+        onClick={onAutoLayout}
+        disabled={!moved}
+        title={moved ? 'Put moved cards back in the automatic layout' : 'No card has been moved'}
+        className={tool}
+        data-testid="workflow-auto-layout"
+      >
+        <LayoutGrid size={14} className="text-fg-muted" />Auto layout
+      </button>
     </div>
   );
 }
