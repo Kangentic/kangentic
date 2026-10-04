@@ -423,11 +423,11 @@ export function runProjectMigrations(db: Database.Database): void {
   // respawn already starts at its predecessor's grid; this is the copy that
   // survives the registry. NULL = never recorded (rows from before this column,
   // or a session whose grid never reached the record).
-  const sessionGridCols = new Set(
-    (db.pragma('table_info(sessions)') as Array<{ name: string }>).map((col) => col.name),
+  const sessionColumnNames = new Set(
+    (db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name),
   );
   for (const gridColumn of ['last_pty_cols', 'last_pty_rows']) {
-    if (!sessionGridCols.has(gridColumn)) {
+    if (!sessionColumnNames.has(gridColumn)) {
       db.exec(`ALTER TABLE sessions ADD COLUMN ${gridColumn} INTEGER DEFAULT NULL`);
     }
   }

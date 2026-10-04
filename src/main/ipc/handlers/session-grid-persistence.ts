@@ -5,6 +5,12 @@ import type { PtyResizeOrigin } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
+ * A spawn's deferred write, per session id, until it runs. A later write for
+ * the same session cancels it: the spawn grid it carries is older.
+ */
+const pendingSpawnWrites = new Map<string, NodeJS.Immediate>();
+
+/**
  * Write a session's new PTY grid to its record (`last_pty_cols/rows`), from the
  * session manager's `pty-resize` event, so a resume after a desktop restart or a
  * pty host crash can spawn at it (SpawnSessionInput.restoredGrid). Every change
@@ -18,6 +24,8 @@ import type { IpcContext } from '../ipc-context';
  *   spawn caller inserts synchronously once `spawn()` resolves, which is a
  *   microtask, so the row exists by then. A queue promotion's announcement
  *   finds its `queued` row already there and is merely deferred with the rest.
+ *   A desktop or park write that lands before the deferred one runs cancels
+ *   it, so the older spawn grid never overwrites a newer one.
  * - Only a project database already open is written: `getProjectDb` would
  *   silently reopen one a close or the quit just released.
  */
@@ -41,6 +49,17 @@ export function persistPtyGrid(
       // Best-effort: a resume without a recorded grid spawns at the default.
     }
   };
-  if (origin === 'spawn') setImmediate(write);
-  else write();
+  const pendingSpawnWrite = pendingSpawnWrites.get(sessionId);
+  if (pendingSpawnWrite !== undefined) {
+    clearImmediate(pendingSpawnWrite);
+    pendingSpawnWrites.delete(sessionId);
+  }
+  if (origin !== 'spawn') {
+    write();
+    return;
+  }
+  pendingSpawnWrites.set(sessionId, setImmediate(() => {
+    pendingSpawnWrites.delete(sessionId);
+    write();
+  }));
 }

@@ -72,6 +72,12 @@ export interface SpawnFlowContext {
    */
   forgetSessionGrid?: (sessionId: string) => void;
   /**
+   * Drop a resize stashed under this spawn's own id after `takePendingResize`
+   * read it: one that reached a promotion's placeholder during the host round
+   * trip. A context built without this keeps it.
+   */
+  discardPendingResize?: (sessionId: string) => void;
+  /**
    * The grid a successor spawned under a new id should start at, from the row
    * it replaces (the scrollback carry-over source), or undefined for the
    * default. The policy (which predecessors qualify, the strip-grid guard)
@@ -405,6 +411,15 @@ export async function performSpawn(
   };
 
   context.registry.set(id, session);
+  // A queue promotion keeps its id, and its row stayed 'queued' through the
+  // host round trip, so a resize that reached it meanwhile (a renderer fit, or
+  // a phone's subscribe-time park) was stashed for a spawn that had already
+  // read its stash. Drop it. Left in place it would outlive this PTY and,
+  // after a later suspend, outrank the grid the PTY really had
+  // (successorGridFor). Neither intent is lost: the 'spawn' pty-resize below
+  // lets a mounted xterm re-assert its fit, and SessionManager reconsiders the
+  // park once this spawn resolves.
+  context.discardPendingResize?.(id);
 
   // The host seeded the ring at the ACTUAL spawn cols, so the first renderer
   // resize reports colsChanged truthfully: an unchanged width (PTY spawned at

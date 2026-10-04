@@ -578,6 +578,31 @@ describe('Respawn grid', () => {
   });
 
   /**
+   * suspend() marks the row `suspended` BEFORE its graceful shutdown resolves,
+   * so for up to a few seconds the row is suspended with a live PTY and a
+   * phone can still resize it. That resize reaches the stash branch, which
+   * serves a desktop fit and must not take a phone's: the successor starts at
+   * the stash (successorGridFor), and an exit disarms the size guard without
+   * giving the phone's grid back.
+   */
+  it('does not stash a phone resize that lands while the predecessor is suspending', async () => {
+    const { session } = await spawnFor('task-respawn-phone-suspending');
+    manager.resize(session.id, 190, 50);
+
+    // No await yet: suspend() has run up to its graceful shutdown, so the row
+    // is already suspended but its PTY is still alive.
+    const suspending = manager.suspend(session.id);
+    expect(manager.getSession(session.id)?.status).toBe('suspended');
+    expect(manager.isWritable(session.id)).toBe(true);
+    expect(manager.resize(session.id, 80, 40, 'mobile')).toEqual({ colsChanged: false });
+    await suspending;
+
+    await spawnFor('task-respawn-phone-suspending', { resuming: true });
+
+    expect(lastSpawnGrid()).toEqual([190, 50]);
+  });
+
+  /**
    * After a desktop restart the registry is empty, so no in-memory row speaks
    * for the session being resumed: the grid recorded on its session record does.
    */
@@ -594,6 +619,23 @@ describe('Respawn grid', () => {
 
     await spawnFor('task-restored-garbage', { restoredGrid: { cols: Number.NaN, rows: 48 } });
     expect(lastSpawnGrid()).toEqual([120, 30]);
+  });
+
+  /**
+   * The grid comes off disk, and nothing downstream clamps it before pty.spawn:
+   * a fractional size must be floored here, and a width below the 2-column
+   * minimum SessionManager.resize also clamps to must not become a PTY.
+   */
+  it('floors a recorded grid to whole cells and refuses one narrower than 2 columns', async () => {
+    await spawnFor('task-restored-fractional', { restoredGrid: { cols: 210.7, rows: 48.9 } });
+    expect(lastSpawnGrid()).toEqual([210, 48]);
+
+    await spawnFor('task-restored-one-column', { restoredGrid: { cols: 1, rows: 48 } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+
+    // The floor is inclusive: 2 columns is the narrowest real grid.
+    await spawnFor('task-restored-two-columns', { restoredGrid: { cols: 2, rows: 48 } });
+    expect(lastSpawnGrid()).toEqual([2, 48]);
   });
 
   it('lets an in-memory predecessor win over the recorded grid', async () => {
@@ -631,6 +673,48 @@ describe('Respawn grid', () => {
     await spawnFor('task-killed-resize');
 
     expect(lastSpawnGrid()).toEqual([120, 30]);
+  });
+
+  /**
+   * A queue promotion keeps its id, and its row stays `queued` with no PTY
+   * through the host round trip, which is after the spawn read its stash. A
+   * resize that reaches the placeholder in that window (a renderer fit, a
+   * phone's subscribe-time park) is stashed for a spawn that already read it.
+   * Left orphaned under the live id, it would outrank the PTY's real grid in
+   * successorGridFor after a suspend and start the successor at a grid the
+   * PTY never had.
+   */
+  it('does not let a resize stashed during a promotion outrank the live grid for the successor', async () => {
+    manager.setMaxConcurrent(1);
+    const { session: slotHolder } = await spawnFor('task-promotion-slot');
+    const queued = await manager.spawn({ taskId: 'task-promotion-resize', command: '', cwd: tmpDir });
+    expect(queued.status).toBe('queued');
+
+    // pty.spawn runs synchronously inside the host round trip, while the
+    // placeholder is still the task's registry row and still `queued`.
+    const duringHostSpawn: { statusSeen?: string; dimensionsAfterResize?: { cols: number; rows: number } | null } = {};
+    const promotedMock = createMockPty();
+    vi.mocked(pty.spawn).mockImplementationOnce(() => {
+      duringHostSpawn.statusSeen = manager.getSession(queued.id)?.status;
+      manager.resize(queued.id, 200, 45);
+      duringHostSpawn.dimensionsAfterResize = manager.getDimensions(queued.id);
+      return promotedMock.mockPty as unknown as pty.IPty;
+    });
+    manager.kill(slotHolder.id);
+    await vi.waitFor(() => expect(manager.getSession(queued.id)?.status).toBe('running'));
+
+    // The injection landed where it was meant to: the stash existed for the
+    // placeholder, which had not yet become the live row.
+    expect(duringHostSpawn.statusSeen).toBe('queued');
+    expect(duringHostSpawn.dimensionsAfterResize).toEqual({ cols: 200, rows: 45 });
+
+    // The PTY is then fitted to a grid of its own and suspended.
+    manager.resize(queued.id, 190, 50);
+    await manager.suspend(queued.id);
+
+    await spawnFor('task-promotion-resize', { resuming: true });
+
+    expect(lastSpawnGrid()).toEqual([190, 50]);
   });
 });
 

@@ -1239,6 +1239,49 @@ describe('performSpawn - cols/rows precedence', () => {
   });
 });
 
+describe('performSpawn - a resize stashed while the spawn waits on the host', () => {
+  // A queue promotion keeps its id, and its placeholder row stays 'queued' with
+  // no PTY through the host round trip. takePendingResize has already run by
+  // then, so a resize that reaches the placeholder in that window (a renderer
+  // fit, or a phone's subscribe-time park) is stashed for a spawn that will
+  // never read it. discardPendingResize drops it once the live row exists, so
+  // it cannot outlive the PTY and outrank the PTY's real grid later.
+  //
+  // Tier: Unit - the SessionManager end of this (the orphan reaching
+  // successorGridFor) is pinned in session-manager.test.ts, 'Respawn grid'.
+
+  const PLACEHOLDER_ID = 'input-session-id-0000-000000000000';
+
+  function contextWithQueuedPlaceholder(): SpawnFlowContext {
+    const context = makeContext();
+    context.registry.set(PLACEHOLDER_ID, {
+      id: PLACEHOLDER_ID,
+      taskId: 'task-001',
+      projectId: 'project-001',
+      pty: null,
+      status: 'queued',
+    } as never);
+    return context;
+  }
+
+  it('discards the stash under the spawn id, after the registry holds the live row', async () => {
+    const context = contextWithQueuedPlaceholder();
+    const statusWhenDiscarded: Array<string | undefined> = [];
+    context.discardPendingResize = vi.fn((sessionId: string) => {
+      statusWhenDiscarded.push(context.registry.get(sessionId)?.status);
+    });
+
+    await performSpawn(makeInput(), context);
+
+    expect(context.discardPendingResize).toHaveBeenCalledTimes(1);
+    expect(context.discardPendingResize).toHaveBeenCalledWith(PLACEHOLDER_ID);
+    // Any other status (or no row at all) would mean the discard ran before
+    // the live row replaced the placeholder, i.e. before the window it exists
+    // to close had ended.
+    expect(statusWhenDiscarded).toEqual(['running']);
+  });
+});
+
 describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candidate', () => {
   // The onExit handler emits the pushed-branch fallback immediately BEFORE the
   // PR-candidate fallback, with a comment claiming this is deliberate: both

@@ -138,6 +138,65 @@ describe('persistPtyGrid (the pty-resize listener)', () => {
     expect(capture.runParams).toEqual([[210, 48, 'session-1']]);
   });
 
+  /**
+   * Every spawn caller inserts the record synchronously once spawn() resolves,
+   * and that continuation is a microtask. A microtask-deferred write would run
+   * right behind it or ahead of it depending on queue order, so the write has
+   * to wait for a macrotask, which no microtask continuation can outrun.
+   */
+  it('defers the spawn write to a macrotask, not a microtask', async () => {
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 210, rows: 48 }, 'spawn');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(capture.runParams).toEqual([]);
+
+    await nextMacrotask();
+    expect(capture.runParams).toEqual([[210, 48, 'session-1']]);
+  });
+
+  /**
+   * The spawn announcement is the oldest grid a session has. A desktop or park
+   * write that lands before the deferred one runs is newer, and the deferred
+   * write would overwrite it with the spawn grid.
+   */
+  it('cancels a pending spawn write when a later desktop write arrives', async () => {
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 120, rows: 30 }, 'spawn');
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 190, rows: 50 }, 'desktop');
+    await nextMacrotask();
+
+    expect(capture.runParams).toEqual([[190, 50, 'session-1']]);
+  });
+
+  it('cancels a pending spawn write when a later park write arrives', async () => {
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 120, rows: 30 }, 'spawn');
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 210, rows: 48 }, 'park');
+    await nextMacrotask();
+
+    expect(capture.runParams).toEqual([[210, 48, 'session-1']]);
+  });
+
+  it('cancels only the same session\'s pending spawn write', async () => {
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 120, rows: 30 }, 'spawn');
+    persistPtyGrid(contextFor('project-1'), 'session-2', { cols: 190, rows: 50 }, 'desktop');
+    await nextMacrotask();
+
+    expect(capture.runParams).toEqual([[190, 50, 'session-2'], [120, 30, 'session-1']]);
+  });
+
+  /**
+   * A phone's grid is never recorded, so it must not count as a newer write
+   * either: cancelling the spawn write on its account would leave the record
+   * with no grid at all.
+   */
+  it('a phone write does not cancel a pending spawn write', async () => {
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 120, rows: 30 }, 'spawn');
+    persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 80, rows: 40 }, 'mobile');
+    await nextMacrotask();
+
+    expect(capture.runParams).toEqual([[120, 30, 'session-1']]);
+  });
+
   it('never records a phone-held grid', async () => {
     persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 80, rows: 40 }, 'mobile');
     await nextMacrotask();
