@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import type { ReactElement } from 'react';
-import { Bell, Bot, MessageSquare, SquareTerminal, Webhook, Zap, type LucideIcon } from 'lucide-react';
+import { Bell, Bot, MessageSquare, SquareArrowRight, SquareTerminal, Webhook, Zap, type LucideIcon } from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 
 /**
@@ -20,6 +20,7 @@ const ICONS: Record<string, LucideIcon> = {
   'square-terminal': SquareTerminal,
   webhook: Webhook,
   bell: Bell,
+  'square-arrow-right': SquareArrowRight,
   bot: Bot,
   zap: Zap,
 };

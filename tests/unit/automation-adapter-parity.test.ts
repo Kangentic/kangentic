@@ -35,6 +35,9 @@ import type { AutomationType } from '../../src/shared/types';
 const RAW_SUBSTITUTION_FIELDS = [
   // Prose the agent reads as text, never as code.
   'send_message.message',
+  // The same, for the agent in the column a Move to column row sends the task
+  // to: often a whole review verdict through {{agentReply}}.
+  'move_to_column.message',
   // A notification's own strings. They are rendered by the OS, not executed or parsed.
   'notify.title',
   'notify.body',
@@ -77,7 +80,7 @@ describe('automation manifest and registry parity', () => {
   });
 
   it('offers only stable types for a new automation', () => {
-    expect(stableAutomationTypes()).toEqual(['send_message', 'run_script', 'webhook', 'notify']);
+    expect(stableAutomationTypes()).toEqual(['send_message', 'run_script', 'webhook', 'notify', 'move_to_column']);
     expect(automationRegistry.stable().map((adapter) => adapter.id)).toEqual(stableAutomationTypes());
   });
 });

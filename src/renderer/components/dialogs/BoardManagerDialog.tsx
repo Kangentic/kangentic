@@ -30,6 +30,7 @@ import {
   pruneColumnRows,
   remapDraftIds,
   removeRow,
+  renameColumnInDrafts,
   replaceRow,
   runnableAutomationCounts,
   runnableRows,
@@ -40,6 +41,7 @@ import {
 } from './board-manager/automation-drafts';
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
 import { canTriggerRun } from '../../../shared/automation-manifest';
+import { automationAgentReady } from '../../../shared/answer-agent';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
@@ -731,6 +733,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // implicitly updates this subscription too.
   const agentList = useConfigStore((state) => state.agentList);
   const loadAgentList = useConfigStore((state) => state.loadAgentList);
+  // The Automation agent's choice, which decides whether an automation's
+  // Condition can be switched on in the edit dialog.
+  const globalConfig = useConfigStore((state) => state.globalConfig);
   // The overview's "newer version available" mark reads the same model union
   // the Model combobox lists (useKnownModels), so the two never disagree.
   const discoveredModelsByAgent = useConfigStore((state) => state.config.discoveredModelsByAgent);
@@ -1533,6 +1538,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // A column staged for deletion takes its rows with it; writing them back
       // would recreate rows for a column that is gone.
       for (const deletedId of pendingDeleteIds) plannedDrafts = pruneColumnRows(plannedDrafts, deletedId);
+      // A row that names a column renamed in this same Save (Move to column's
+      // Column) follows the new name. Main renames saved rows on its own; this
+      // covers the drafts about to overwrite them.
+      for (const [id, laneDraft] of Object.entries(drafts)) {
+        const before = originals[id]?.name;
+        if (before && laneDraft.name.trim() && before !== laneDraft.name) {
+          plannedDrafts = renameColumnInDrafts(plannedDrafts, before, laneDraft.name);
+        }
+      }
 
       for (const entry of planAutomationSave(automationOriginals, plannedDrafts)) {
         try {
@@ -2502,6 +2516,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           draft={editingRow}
           column={editingColumn}
           reportsTurnEnd={agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))?.reportsTurnEnd}
+          columnNames={laneOrder
+            .filter((id) => id !== editing.columnId)
+            .map((id) => drafts[id]?.name ?? '')
+            .filter((name) => name.trim() !== '')}
+          automationAgentReady={automationAgentReady(agentList, globalConfig.automation, true)}
+          onOpenAutomationSettings={() => {
+            const store = useConfigStore.getState();
+            store.setLastSettingsTab('workflows');
+            store.setSettingsOpen(true);
+          }}
           isNew={editing.isNew}
           takenNames={takenNamesFor(rowsForColumn(editing.columnId), editing.rowId)}
           templatePicker={TemplateVariablePicker}

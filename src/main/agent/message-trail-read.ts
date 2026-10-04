@@ -3,6 +3,7 @@ import type { AgentAdapter } from './agent-adapter';
 import type { AssistantMessageTrailEntry, TranscriptEntry } from '../../shared/types';
 import { assistantMessagePreviews } from './shared/message-preview';
 import { getCachedTranscript } from './transcript-cache';
+import { finalAgentReply, type AgentReply } from './shared/agent-reply';
 import {
   MESSAGE_TRAIL_ENTRY_MAX_CHARS,
   MESSAGE_TRAIL_MAX_ENTRIES,
@@ -47,7 +48,10 @@ export async function readTrail(
   const parseWindow = adapter.parseTranscriptWindow;
   const locateFile = adapter.locateSessionHistoryFile;
   if (parseWindow && locateFile) {
-    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, cursor, fileSize);
+    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, cursor, fileSize, {
+      tailBytes: MESSAGE_TRAIL_TAIL_BYTES,
+      maxWindows: MESSAGE_TRAIL_MAX_WINDOWS_PER_READ,
+    });
     return { previews: previewsOf(read.entries), cursor: read.cursor, usedFallback: false };
   }
   const parseTranscript = adapter.parseTranscript;
@@ -74,6 +78,47 @@ export function localTrailReader(
   };
 }
 
+/**
+ * How much of a transcript's end a final-reply read parses. A review's verdict
+ * runs about 11k characters, but the tool results before it can be large, and
+ * the read has to reach back to the turn's own prompt to know where the turn
+ * began. One megabyte reaches it in the cases measured; past it the reply is
+ * still found, since it is the newest thing in the file.
+ */
+const FINAL_REPLY_TAIL_BYTES = 1024 * 1024;
+const FINAL_REPLY_MAX_WINDOWS = 8;
+
+/**
+ * The session's final reply (`finalAgentReply`) from a bounded tail of its
+ * transcript, for `{{agentReply}}`. Runs in the retrieval worker
+ * (`transcript.finalReply`). Null for an agent with no transcript reader.
+ */
+export async function readFinalReply(
+  adapter: MessageTrailAdapter,
+  facts: MessageTrailSessionFacts & { agentSessionId: string },
+  fileSize: (filePath: string) => Promise<number> = statSize,
+): Promise<AgentReply | null> {
+  const parseWindow = adapter.parseTranscriptWindow;
+  const locateFile = adapter.locateSessionHistoryFile;
+  if (parseWindow && locateFile) {
+    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, null, fileSize, {
+      tailBytes: FINAL_REPLY_TAIL_BYTES,
+      maxWindows: FINAL_REPLY_MAX_WINDOWS,
+    });
+    return finalAgentReply(read.entries);
+  }
+  const parseTranscript = adapter.parseTranscript;
+  if (parseTranscript) {
+    const cached = await getCachedTranscript(
+      facts.sessionType,
+      facts.agentSessionId,
+      () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd),
+    );
+    return finalAgentReply(cached.entries);
+  }
+  return null;
+}
+
 function previewsOf(entries: TranscriptEntry[]): AssistantMessageTrailEntry[] {
   if (entries.length === 0) return [];
   return assistantMessagePreviews(entries, { count: MESSAGE_TRAIL_MAX_ENTRIES, maxChars: MESSAGE_TRAIL_ENTRY_MAX_CHARS });
@@ -87,22 +132,23 @@ async function readWindows(
   agentSessionId: string,
   startCursor: number | null,
   fileSize: (filePath: string) => Promise<number>,
+  bounds: { tailBytes: number; maxWindows: number },
 ): Promise<{ entries: TranscriptEntry[]; cursor: number | null }> {
   let cursor: number;
   if (startCursor === null) {
     const filePath = await locateFile.call(adapter, agentSessionId, cwd);
     if (!filePath) return { entries: [], cursor: null };
     const size = await fileSize(filePath);
-    cursor = Math.max(0, size - MESSAGE_TRAIL_TAIL_BYTES);
+    cursor = Math.max(0, size - bounds.tailBytes);
   } else {
     cursor = startCursor;
   }
   const collected: TranscriptEntry[] = [];
-  for (let windowIndex = 0; windowIndex < MESSAGE_TRAIL_MAX_WINDOWS_PER_READ; windowIndex += 1) {
+  for (let windowIndex = 0; windowIndex < bounds.maxWindows; windowIndex += 1) {
     const window = await parseWindow.call(adapter, agentSessionId, cwd, cursor, MESSAGE_TRAIL_WINDOW_BYTES);
     if (window.totalBytes < cursor) {
       // The file shrank under the cursor (a rotate, or a reused id): re-anchor at the new tail.
-      cursor = Math.max(0, window.totalBytes - MESSAGE_TRAIL_TAIL_BYTES);
+      cursor = Math.max(0, window.totalBytes - bounds.tailBytes);
       continue;
     }
     collected.push(...window.entries);

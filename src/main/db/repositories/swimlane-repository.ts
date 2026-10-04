@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput, SwimlaneRole, PermissionMode, SessionTarget, SessionSpawnStrategy } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { renameAutomationColumnReferences } from './automation-repository';
 
 /** Raw row shape returned by better-sqlite3 for the swimlanes table. */
 interface SwimlaneRow {
@@ -165,9 +166,17 @@ export class SwimlaneRepository {
     // reopen the hole the read-path narrowing above closes, by giving a Board Manager
     // save a way to persist an arbitrary role string. A bad role already on disk is
     // repaired by the catch-all in runProjectMigrations, not from here.
-    this.db.prepare(
-      'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
-    ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
+    writeTransaction(this.db, () => {
+      this.db.prepare(
+        'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
+      ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
+      // An automation that names this column (Move to column's Column) follows
+      // the rename, in the same transaction, so a renamed column never strands
+      // a row that pointed at it.
+      if (existing.name !== updated.name) {
+        renameAutomationColumnReferences(this.db, existing.name, updated.name);
+      }
+    })();
 
     return updated;
   }

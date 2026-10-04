@@ -40,11 +40,39 @@ export function describeAutomation(type: AutomationType, config: AutomationConfi
       return title ? `Notifies "${firstLine(title, 52)}"` : 'Shows a desktop notification.';
     }
 
+    case 'move_to_column': {
+      const column = typeof config.column === 'string' ? config.column.trim() : '';
+      const where = column ? `to ${firstLine(column, 40)}` : 'to the next column';
+      const message = typeof config.message === 'string' ? config.message.trim() : '';
+      return message ? `Moves the task ${where} with "${firstLine(message, 40)}"` : `Moves the task ${where}.`;
+    }
+
     case 'spawn_agent': {
       const prompt = (config.promptTemplate ?? '').trim();
       return prompt ? `Starts the agent with "${firstLine(prompt, 48)}"` : 'Starts the agent.';
     }
   }
+}
+
+/**
+ * The line under a row that names its guards, or null when it has none:
+ * "Only if the review is clean. At most 3 times for each task." Read in the
+ * same order the rule runs, condition first.
+ */
+export function describeAutomationGuards(guards: { condition: string | null; max_runs: number | null }): string | null {
+  const parts: string[] = [];
+  const condition = guards.condition?.trim() ?? '';
+  if (condition) {
+    const sentence = firstLine(condition, 72);
+    // Lower-case the first letter so it reads as one sentence, unless it starts
+    // an acronym or a name ("CI is green" stays as written).
+    const continued = /^[A-Z][a-z]/.test(sentence) ? sentence[0].toLowerCase() + sentence.slice(1) : sentence;
+    parts.push(`Only if ${continued.replace(/[.!?]+$/, '')}.`);
+  }
+  if (guards.max_runs !== null) {
+    parts.push(guards.max_runs === 1 ? 'At most once for each task.' : `At most ${guards.max_runs} times for each task.`);
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 /** Collapse to one line and cut at `max`, so a multi-line script stays a row. */

@@ -62,6 +62,11 @@ contract was kept in sync across three files by prose comments alone.
   finding no session skips with that reason. That method is scanned alongside the two spawn sinks
   even though it cannot spawn: it is a second public way into the engine, and an unscanned one
   would grow callers with no test watching.
+- **A column's On agent turn end rows** (`automations/turn-end/turn-end-runner.ts`) are the fifth
+  allowlisted direct engine call, and not a spawn either. They run when the agent working the task
+  finishes a turn, act on that agent, pass no `startAgent`, and run outside the task lock. A Move
+  to column row moves the task through `handleTaskMove`, so any spawn it causes goes through
+  `spawnAgent` like every other move.
 - Every file that calls `<receiver>.buildCommand(` calls `<receiver>.ensureTrust(cwd)` on that
   same receiver first. That is the adapter's pre-spawn global-config step (trust entries; for
   Claude also the `~/.claude.json` diff-panel write in `adapters/claude/diff-panel.ts`), and it

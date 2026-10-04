@@ -34,6 +34,7 @@ import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
+import { checkAutomationConditions, type ConditionCheckDeps } from '../../automations/condition-check/condition-check';
 
 /**
  * Whether a column may spawn an agent at all, independent of its `auto_spawn`
@@ -130,7 +131,19 @@ export function createTransitionEngine(
     attachments,
     automations,
     automationRuns,
+    { checkConditions: (input) => checkAutomationConditions(conditionCheckDeps(context), input) },
   );
+}
+
+/** What a Condition check reads from the app: the config, and the agent registry. */
+export function conditionCheckDeps(context: IpcContext): ConditionCheckDeps {
+  return {
+    loadConfig: () => context.configManager.load(),
+    listAgents: async () => agentRegistry.list().flatMap((name) => {
+      const adapter = agentRegistry.get(name);
+      return adapter ? [{ name, adapter }] : [];
+    }),
+  };
 }
 
 export interface AgentSpawnOptions {

@@ -52,7 +52,7 @@ interface SessionTelemetryCallbacks {
    * `ActivityEngineCallbacks.onTurnEnded`). Optional: only the production
    * wiring consumes it.
    */
-  onTurnEnded?(sessionId: string): void;
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null): void;
   onEvent(sessionId: string, event: SessionEvent): void;
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
@@ -280,7 +280,7 @@ export class SessionTelemetry {
         // change in any listener that observes both streams.
         this.pushEvent(sessionId, event);
       },
-      onTurnEnded: (sessionId) => this.callbacks.onTurnEnded?.(sessionId),
+      onTurnEnded: (sessionId, turnStartedAt) => this.callbacks.onTurnEnded?.(sessionId, turnStartedAt),
     }, activityEngineOptions);
 
     this.ptyTracker = new PtyActivityTracker({

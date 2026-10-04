@@ -46,6 +46,7 @@ import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane }
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { deliverExitMessage } from '../helpers/exit-message-delivery';
+import { supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
@@ -268,12 +269,20 @@ export async function handleTaskMove(
   //
   // `moveReason` is recorded on the move's `task_moves` row: the name of the
   // Move to column automation that made it, or a workflow's "Step done".
-  options?: { continuationPrompt?: string; onCommitted?: () => void; moveReason?: string },
+  //
+  // `fromTurnEndGroup` marks a Move to column row's own move, which must not
+  // stop the turn-end group that made it (`supersedeTurnEndWork`).
+  options?: { continuationPrompt?: string; onCommitted?: () => void; moveReason?: string; fromTurnEndGroup?: boolean },
 ): Promise<void> {
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
   taskMoveControllers.get(input.taskId)?.abort();
   abortBacklogPromotion(input.taskId);
+  // The same for turn-end work: a group running for the column the task is
+  // leaving, or a moved task's message still waiting for an agent it is about
+  // to leave. Outside the lock, like the aborts above, which the turn-end group
+  // never holds.
+  supersedeTurnEndWork(input.taskId, { exceptOwnGroup: options?.fromTurnEndGroup });
   const moveController = new AbortController();
   taskMoveControllers.set(input.taskId, moveController);
   const { signal } = moveController;

@@ -38,6 +38,10 @@ export function deliverExitMessage(
   mode: AutoCommandMode,
   verifier: CommandVerifier | null,
   signal: AbortSignal,
+  // What the run log says when `signal` fires first. The exit group's budget is
+  // the usual reason, so that is the default; the turn-end group, which has no
+  // shared budget, says it its own way.
+  abortReason = 'The message was not delivered before the exit budget ran out.',
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -54,7 +58,7 @@ export function deliverExitMessage(
     // here: the runner already passed this signal down, and the scheduler's
     // own cancel paths belong to the move, not to us.
     function onAbort(): void {
-      finish(new Error('The message was not delivered before the exit budget ran out.'));
+      finish(new Error(abortReason));
     }
     signal.addEventListener('abort', onAbort, { once: true });
 

@@ -4,6 +4,7 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type C
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, canTriggerRun } from '../../../../shared/automation-manifest';
+import { describeAutomationGuards } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -340,6 +341,7 @@ function AutomationRow({
   const runnable = canRunRow(draft, { ...column, reportsTurnEnd });
   const entry = AUTOMATION_MANIFEST[draft.type];
   const legacy = entry.status === 'legacy';
+  const guardLine = describeAutomationGuards(draft);
 
   // A row the column cannot run is shown OFF with its switch disabled, and the
   // draft keeps its stored `enabled`, so turning the setting back on restores it
@@ -469,6 +471,13 @@ function AutomationRow({
           {isDirty(draft) && <span title="Unsaved" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
         </span>
         <span className={`block truncate ${SETTING_DESCRIPTION_CLASS}`}>{describeDraft(draft)}</span>
+        {/* The guards, read as the rule runs: the Condition, then the
+            Frequency. Only on a row that has one, so most rows stay two lines. */}
+        {guardLine && (
+          <span data-testid="column-automation-guards" className={`block truncate ${SETTING_DESCRIPTION_CLASS}`}>
+            {guardLine}
+          </span>
+        )}
         {/* No last-run line. One used to print under the description once a row
             had run, so rows in one list differed in height by their history,
             and nobody found the history valuable here: a failure reaches the

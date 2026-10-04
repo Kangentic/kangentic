@@ -47,7 +47,9 @@ export type AutomationFieldKind =
   | 'segmented'
   | 'lines'
   | 'headers'
-  | 'number';
+  | 'number'
+  /** One of the board's columns, by name, with Next column (empty) first. */
+  | 'column';
 
 /**
  * How a substituted template value is escaped for THIS field.
@@ -105,6 +107,14 @@ export interface AutomationField {
    * already uses: still read from the file, no longer offered.
    */
   hidden?: boolean;
+  /**
+   * The automation works without it, so the dialog marks the label Optional
+   * (the Agent tab's `OptionalTag`). Required fields stay unmarked: only the
+   * exception needs calling out.
+   */
+  optional?: boolean;
+  /** A note behind an info icon beside the label, for a field whose effect is not obvious from its name. */
+  info?: string;
 }
 
 export interface AutomationManifestEntry {
@@ -317,6 +327,47 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
       // that system's two name collisions with this one.
       { key: 'title', label: 'Title', kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{title}}' },
       { key: 'body', label: 'Body', kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{toColumn}}' },
+    ],
+  },
+
+  move_to_column: {
+    label: 'Move to column',
+    description: 'Moves the task to another column, with a message for the agent there.',
+    // The Backlog's own Move to Board glyph.
+    icon: 'square-arrow-right',
+    status: 'stable',
+    // The agent that just finished its turn is what triggers it, but the row
+    // does not use it: the move suspends or re-points that session itself.
+    needs: [],
+    // The move owns its deadlines (the lock, the worktree, the spawn), and the
+    // message reaches the agent where the task lands in the background, so the
+    // row never waits on that agent's first turn.
+    timeoutMs: null,
+    retry: null,
+    triggers: ['turn_end'],
+    triggerUnavailableReason: 'Move to column runs at a turn end only. On enter or exit the task is already moving.',
+    endsGroup: true,
+    fields: [
+      {
+        key: 'column',
+        label: 'Column',
+        kind: 'column',
+        escape: 'none',
+        defaultValue: '',
+        info: "Next column is the first choice: the next column on the task's route, or on the board.",
+      },
+      {
+        key: 'message',
+        label: 'Message',
+        kind: 'textarea',
+        // Prose for the agent in the next column, often a whole review verdict
+        // through `{{agentReply}}`. Delivered whole, line breaks kept.
+        escape: 'none',
+        templateVariables: true,
+        rows: 3,
+        optional: true,
+        info: 'Sent to the agent in that column once it is ready.',
+      },
     ],
   },
 

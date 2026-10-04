@@ -7,7 +7,7 @@ import type {
   AutomationWriteInput,
   ColumnAutomation,
 } from '../../../shared/types';
-import { isAutomationTrigger } from '../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
 import { writeTransaction } from '../transaction';
 
 interface AutomationRow {
@@ -128,6 +128,31 @@ export class AutomationRepository {
   deleteForColumn(swimlaneId: string): void {
     this.db.prepare('DELETE FROM column_automations WHERE swimlane_id = ?').run(swimlaneId);
   }
+}
+
+/**
+ * Point every automation field that names a column (`kind: 'column'`, Move to
+ * column's Column) at the column's new name. Run by `SwimlaneRepository.update`
+ * inside the rename's own transaction. The fields come from the manifest, so a
+ * second type that names a column needs no change here.
+ *
+ * Case-blind, like `resolveMoveTarget`, which is how the name is read back.
+ */
+export function renameAutomationColumnReferences(db: Database.Database, oldName: string, newName: string): number {
+  let changed = 0;
+  for (const [type, entry] of Object.entries(AUTOMATION_MANIFEST)) {
+    for (const field of entry.fields) {
+      if (field.kind !== 'column') continue;
+      const path = `$.${field.key}`;
+      changed += db
+        .prepare(
+          `UPDATE column_automations SET config_json = json_set(config_json, ?, ?)
+           WHERE type = ? AND json_valid(config_json) AND LOWER(json_extract(config_json, ?)) = LOWER(?)`,
+        )
+        .run(path, newName, type, path, oldName).changes;
+    }
+  }
+  return changed;
 }
 
 /** A blank or whitespace-only Condition is no Condition: the row always runs. */

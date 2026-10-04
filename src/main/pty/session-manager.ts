@@ -137,6 +137,12 @@ export interface TurnEndedPayload {
   projectId: string;
   agentSessionId: string | null;
   isolatedSwimlaneId: string | null;
+  /**
+   * When the turn began (epoch ms), or null when the engine never saw it begin.
+   * A consumer compares it with when the task entered its column, so a turn
+   * that started before a move is never judged by the new column.
+   */
+  turnStartedAt: number | null;
 }
 
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
@@ -512,7 +518,7 @@ export class SessionManager extends EventEmitter {
       // listeners here (column automations, workflow steps) act only on a turn
       // the agent finished. A listener that throws must not unwind the engine's
       // commit, so the emit is guarded.
-      onTurnEnded: (sessionId) => {
+      onTurnEnded: (sessionId, turnStartedAt) => {
         const session = this.registry.get(sessionId);
         if (!session || session.transient) return;
         const payload: TurnEndedPayload = {
@@ -521,6 +527,7 @@ export class SessionManager extends EventEmitter {
           projectId: session.projectId,
           agentSessionId: session.agentSessionId ?? null,
           isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+          turnStartedAt,
         };
         try {
           this.emit('turn-ended', payload);

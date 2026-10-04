@@ -411,6 +411,37 @@ export function describeAutomationChanges(
 }
 
 /** The whole-column writes a Save should send. Untouched columns are skipped. */
+/**
+ * Point every column-naming field (`kind: 'column'`) that holds `oldName` at
+ * `newName`, across every column's drafts. Case-blind, as the engine reads the
+ * name. Returns the same object when nothing changed, so a Save with no rename
+ * plans nothing new.
+ */
+export function renameColumnInDrafts(
+  drafts: AutomationDraftsByColumn,
+  oldName: string,
+  newName: string,
+): AutomationDraftsByColumn {
+  const wanted = oldName.trim().toLowerCase();
+  let changed = false;
+  const next: AutomationDraftsByColumn = {};
+  for (const [columnId, rows] of Object.entries(drafts)) {
+    next[columnId] = rows.map((row) => {
+      const columnFields = AUTOMATION_MANIFEST[row.type].fields.filter((field) => field.kind === 'column');
+      let config = row.config;
+      for (const field of columnFields) {
+        const value = (config as Record<string, unknown>)[field.key];
+        if (typeof value === 'string' && value.trim().toLowerCase() === wanted) {
+          config = { ...config, [field.key]: newName };
+          changed = true;
+        }
+      }
+      return config === row.config ? row : { ...row, config };
+    });
+  }
+  return changed ? next : drafts;
+}
+
 export function planAutomationSave(
   originals: AutomationDraftsByColumn,
   drafts: AutomationDraftsByColumn,

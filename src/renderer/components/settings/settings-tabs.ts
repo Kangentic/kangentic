@@ -80,6 +80,10 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'hotkeys', label: 'Hotkeys', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   // -- Shared settings: Advanced tier --
+  // First in the tier: the opt-in subsystem most likely to be opened. Its
+  // Automation agent answers every automation's Condition, so a user setting up
+  // a Code Review loop lands here before any workflow exists.
+  { id: 'workflows', label: 'Workflows', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   { id: 'dictation', label: 'Dictation', category: 'system', tier: 'advanced', tooltip: 'Applies to all projects' },
   // Every card here serves the Knowledge Graph; the index also feeds Quick Find
   // and `kangentic_search`.

@@ -890,6 +890,7 @@ export type AutomationType =
   | 'run_script'
   | 'webhook'
   | 'notify'
+  | 'move_to_column'
   | 'spawn_agent';
 
 /**
@@ -934,6 +935,14 @@ export interface AutomationConfig {
 
   /** webhook payload, and the notification's body. */
   body?: string;
+
+  // move_to_column
+  /**
+   * The destination column's NAME, as `kangentic.json`'s `planExitTarget` names
+   * one. Empty or absent means the next column (on the task's route in a
+   * workflow, else on the board). Renaming a column renames it here too.
+   */
+  column?: string;
 
   // legacy spawn_agent
   agent?: string;
@@ -3686,6 +3695,27 @@ export interface AppConfig {
      * which the branch can always rebuild.
      */
     sourceCode?: boolean;
+  };
+
+  /**
+   * The Automation agent: which agent, model and effort answer an automation's
+   * Condition (and, with workflows, judge whether a column's work is done).
+   * GLOBAL, in Settings > Workflows, first card.
+   *
+   * Its own choice, not the Knowledge Graph's and not the project's default
+   * agent: a user may run workflows without the Knowledge Graph, and a check
+   * that silently spent on the project's agent is exactly what the Knowledge
+   * Graph's explicit choice was made to end (`src/shared/answer-agent.ts`). Unset
+   * means no Condition can be switched on and nothing is spent.
+   *
+   * Resolved like `agentJobChoice`: an adapter NAME, a model id cleared whenever
+   * the agent changes, and an effort that is optional (unset runs the adapter's
+   * recommended level).
+   */
+  automation?: {
+    agent?: string | null;
+    model?: string | null;
+    effort?: string | null;
   };
 
   /**

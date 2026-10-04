@@ -143,6 +143,18 @@ export class AutomationRunRepository {
     return row !== undefined;
   }
 
+  /**
+   * Has this automation already been skipped on this task, for exactly this
+   * reason, since `since`? Lets a turn-end group record "Set up an Automation
+   * agent" once per visit rather than at every turn end of a long chat.
+   */
+  hasSkipSince(automationId: string, taskId: string, since: string | null, detail: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM automation_runs WHERE automation_id = ? AND task_id = ? AND status = 'skipped' AND detail = ? AND started_at >= ? LIMIT 1`)
+      .get(automationId, taskId, detail, since ?? '');
+    return row !== undefined;
+  }
+
   /** How many times this automation has run on this task, across every visit. */
   countRuns(automationId: string, taskId: string): number {
     const row = this.db

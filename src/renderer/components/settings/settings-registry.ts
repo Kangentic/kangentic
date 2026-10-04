@@ -180,6 +180,12 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud endpoint', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine.', scope: 'global', section: 'Transcription', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation', 'refinement', 'custom'] },
 
   // ── Knowledge Graph (tab id `knowledgeGraph`; the index, the local model that finds by meaning, the agent that answers) ──
+  // ── Workflows ──
+  { id: 'automation.agentCard', tabId: 'workflows', label: 'Automation agent', description: 'Judges conditions and workflow steps.', scope: 'global', keywords: ['automation', 'condition', 'check', 'checks', 'workflow', 'step', 'judge', 'agent', 'model', 'turn end', 'only if'] },
+  { id: 'automation.agent', tabId: 'workflows', label: 'Agent', description: "Which agent answers an automation's Condition. Nothing runs on an agent nobody chose.", scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'agent', 'claude', 'codex', 'workflow', 'only if'] },
+  { id: 'automation.model', tabId: 'workflows', label: 'Model', description: 'A small, fast model is usually enough to read one reply and answer yes or no.', scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'model', 'cost', 'cheap', 'haiku', 'sonnet', 'tokens'] },
+  { id: 'automation.effort', tabId: 'workflows', label: 'Effort', description: "Unset runs at the agent's recommended level.", scope: 'global', section: 'Automation agent', keywords: ['automation', 'condition', 'check', 'effort', 'reasoning', 'speed', 'low', 'high'] },
+
   { id: 'knowledgeGraph.indexingEnabled', tabId: 'knowledgeGraph', label: 'Index', description: 'What Quick Find and the Knowledge Graph search.', scope: 'global', keywords: ['index', 'conversation', 'conversations', 'transcript', 'tasks', 'commits', 'sources', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history', 'rebuild'] },
   { id: 'knowledgeGraph.enabled', tabId: 'knowledgeGraph', label: 'Knowledge Graph', description: 'Finds your work by meaning and answers questions.', scope: 'global', keywords: ['knowledge graph', 'graph', 'semantic', 'semantic search', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'local model', 'offline', 'memory', 'download', 'ask'] },
   { id: 'knowledgeGraph.localModel', tabId: 'knowledgeGraph', label: 'Search quality', description: 'The local model that finds by meaning and draws the map; changing it re-indexes in the background.', scope: 'global', section: 'Knowledge Graph', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'accurate', 'best', 'light', 'granite', 'bge', 'tier', 'download', 'license'] },
@@ -272,6 +278,7 @@ export const TAB_LABELS: Record<string, string> = {
   terminal: 'Terminal',
   behavior: 'Behavior',
   performance: 'Performance',
+  workflows: 'Workflows',
   dictation: 'Dictation',
   knowledgeGraph: 'Knowledge Graph',
   hotkeys: 'Hotkeys',

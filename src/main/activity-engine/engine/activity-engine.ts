@@ -102,6 +102,9 @@ export class ActivityEngine {
       // Anchor the liveness signal so the stale-thinking watchdog measures the
       // seeded turn from spawn, not from null.
       state.lastSignalAt = nowMs;
+      // A spawn seeded thinking is a turn beginning now: its prompt rides the
+      // command line, so no idle-to-thinking commit will stamp it.
+      state.turnStartedAt = nowMs;
     } else {
       // Idle seed: stamp the idle clock so the idle-timeout sweep measures from
       // spawn. A seeded 'thinking' turn leaves idleTimestamp null, preserving
@@ -1008,6 +1011,9 @@ export class ActivityEngine {
     // (a turn-initiating hook already cleared it; this also covers adopted
     // background shells, which start no turn).
     if (newActivity === 'thinking') state.turnEndSource = null;
+    // A turn begins on idle to thinking. Permission back to thinking is the
+    // same turn resuming, so it keeps the turn's original start.
+    if (newActivity === 'thinking' && fromActivity === 'idle') state.turnStartedAt = this.now();
     const reason = deriveReason(state);
     this.recordTransition(state, fromActivity, newActivity, reason.kind, trigger, counterDelta);
     state.lastPushedReason = reason;
@@ -1016,7 +1022,7 @@ export class ActivityEngine {
     // any background work it left has drained). Consumed so it reports once.
     if (fromActivity === 'thinking' && newActivity === 'idle' && state.turnEndSource === 'stop') {
       state.turnEndSource = null;
-      this.callbacks.onTurnEnded?.(sessionId);
+      this.callbacks.onTurnEnded?.(sessionId, state.turnStartedAt);
     }
     this.scheduleTimer(sessionId, state);
   }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, Zap } from 'lucide-react';
+import { Clock, Info, Repeat, Split, SquareArrowRight, Zap } from 'lucide-react';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -11,10 +11,13 @@ import {
 import type { AutomationField } from '../../../../shared/automation-manifest';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
-import { Select } from '../../settings/shared';
+import { Select, ToggleSwitch } from '../../settings/shared';
+import { InfoTip } from '../../settings/settings-card';
 import { FIELD_CONTROL_CLASS } from '../../Field';
 import { SETTING_DESCRIPTION_CLASS, SETTING_LABEL_CLASS } from '../../SettingText';
 import { SegmentedControl, type SegmentedControlOption } from '../../SegmentedControl';
+import { NumberStepper } from '../../NumberStepper';
+import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
@@ -27,8 +30,16 @@ import {
 } from './automation-drafts';
 
 /**
- * The ONE place an automation is edited: name, type, the type's own fields, and
- * when it runs. Nothing else.
+ * The ONE place an automation is edited, laid out as the rule reads: a Name,
+ * then one card for each part, Trigger, Condition, Frequency and Action
+ * (approved on the #732 canvas, board 15c, as the "condensed cards").
+ *
+ * Each card is a settings card's header (icon, title, one line, its switch
+ * alone on the right) over ONE lighter panel holding all of that card's
+ * fields. The switch in a card's header is what makes clear what it controls:
+ * the card's border encloses its field, and a click anywhere on the header
+ * flips it. Off, a field stays in place, dimmed, with an example in it, so the
+ * dialog never changes height (no control comes or goes).
  *
  * Everything type-specific is rendered from the manifest, so a new automation
  * type needs no change here at all.
@@ -42,6 +53,11 @@ import {
  * the line off three quarters of the rows that would never see it fire.
  */
 const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
+
+/** What a switched-off Condition shows, and the placeholder of an empty one. */
+const CONDITION_EXAMPLE = 'All tests pass';
+/** How tall a growing prose field may get before it scrolls. */
+const PROSE_MAX_ROWS = 8;
 
 /**
  * Module scope, not an inline literal: `SegmentedControl` keys its measuring
@@ -68,15 +84,7 @@ function triggerOptionsFor(
   column: Swimlane,
   reportsTurnEnd: boolean | undefined,
 ): SegmentedControlOption<AutomationTrigger>[] {
-  const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
-  const reasons = AUTOMATION_TRIGGERS.map((trigger) => {
-    const group = canTriggerRun(facts, trigger);
-    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : group.reason;
-    if (!isTypeOfferedOnTrigger(type, trigger)) {
-      return AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.';
-    }
-    return null;
-  });
+  const reasons = triggerReasons(type, column, reportsTurnEnd);
   if (reasons.every((reason) => reason === null)) return TRIGGER_OPTIONS;
   const cacheKey = reasons.map((reason) => reason ?? '').join('\n');
   const cached = blockedTriggerOptions.get(cacheKey);
@@ -87,6 +95,19 @@ function triggerOptionsFor(
   });
   blockedTriggerOptions.set(cacheKey, built);
   return built;
+}
+
+/** Why each trigger is unavailable for this type in this column, or null where it is fine. */
+function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: boolean | undefined): Array<string | null> {
+  const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
+  return AUTOMATION_TRIGGERS.map((trigger) => {
+    const group = canTriggerRun(facts, trigger);
+    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : group.reason;
+    if (!isTypeOfferedOnTrigger(type, trigger)) {
+      return AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.';
+    }
+    return null;
+  });
 }
 
 /** Moved verbatim from BoardManagerDialog, where it carried the same comment. */
@@ -100,6 +121,15 @@ export interface EditAutomationDialogProps {
   column: Swimlane;
   /** Whether the column's agent reports a turn end. Undefined while unknown. */
   reportsTurnEnd?: boolean;
+  /** The board's other columns, by name in board order, for a Column field. */
+  columnNames: string[];
+  /**
+   * Whether the Automation agent is set up (Settings > Workflows). Until it
+   * is, a Condition cannot be switched on: nothing could check it.
+   */
+  automationAgentReady: boolean;
+  /** Open Settings at the Automation agent, from the Condition card's notice. */
+  onOpenAutomationSettings: () => void;
   isNew: boolean;
   /** The column's other rows, for the uniqueness check. */
   takenNames: string[];
@@ -119,7 +149,12 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
   // A LOCAL copy: Done applies it to the board draft, Cancel discards it. That
   // is what makes the dialog safe to experiment in.
   const [local, setLocal] = useState<AutomationDraft>(props.draft);
+  // What a switched-off guard returns to when switched back on, so turning a
+  // Condition off and on again does not lose what was written.
+  const [conditionDraft, setConditionDraft] = useState<string>(props.draft.condition ?? '');
+  const [maxRunsDraft, setMaxRunsDraft] = useState<number>(props.draft.max_runs ?? 1);
   const nameRef = useRef<HTMLInputElement | null>(null);
+  const conditionInsertRef = useRef<TemplateTextFieldInsert | null>(null);
 
   const entry = AUTOMATION_MANIFEST[local.type];
   const conflict = findNameConflict(
@@ -138,6 +173,17 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     setLocal((current) => ({ ...current, config: { ...current.config, [key]: value } }));
   };
 
+  // A type that is not offered on the current trigger moves the row to the
+  // first trigger it is offered on (Move to column to On agent turn end), so
+  // the dialog never holds a rule the engine would refuse.
+  const changeType = (type: AutomationType): void => {
+    setLocal((current) => {
+      if (isTypeOfferedOnTrigger(type, current.trigger)) return { ...current, type };
+      const offered = AUTOMATION_TRIGGERS.find((trigger) => isTypeOfferedOnTrigger(type, trigger)) ?? current.trigger;
+      return { ...current, type, trigger: offered };
+    });
+  };
+
   // Mount only, and deliberately not on every focus: a new row arrives named
   // "New run script", which is a placeholder rather than a choice, so the first
   // keystroke should replace it. Re-selecting whenever the field regains focus
@@ -148,6 +194,20 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only, see above
   }, []);
 
+  // The Condition card. With no Automation agent its switch reads off and is
+  // disabled, and a Condition written earlier is KEPT on the row, untouched, so
+  // it returns once an agent is set up.
+  const conditionOn = props.automationAgentReady && local.condition !== null;
+  const setConditionOn = (on: boolean): void => {
+    setLocal((current) => ({ ...current, condition: on ? (conditionDraft.trim() || null) ?? '' : null }));
+  };
+  const frequencyOn = local.max_runs !== null;
+  const setFrequencyOn = (on: boolean): void => {
+    setLocal((current) => ({ ...current, max_runs: on ? maxRunsDraft : null }));
+  };
+
+  const pairColumn = entry.fields.find((field) => field.kind === 'column' && !field.hidden) ?? null;
+  const otherFields = entry.fields.filter((field) => !field.hidden && field !== pairColumn);
 
   return (
     <BaseDialog
@@ -197,50 +257,12 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           )}
         </label>
 
-        {/* A <div>, not a <label>: the control is a button, and a label
-            wrapping one steals its click. */}
-        <div className="flex flex-col gap-1">
-          <span className={SETTING_LABEL_CLASS}>Type</span>
-          {/* Carries each type's icon, which a native <select> cannot: an
-              <option> holds text only. The row and the Add automation menu both
-              show the glyph, so the one place the type is CHOSEN was the only
-              place without it. */}
-          <AutomationTypePicker
-            testId="edit-automation-type"
-            ariaLabel="Type"
-            value={local.type}
-            // Just the offerable set. The picker lists the current value too,
-            // which is what keeps a legacy row's type readable.
-            options={stableAutomationTypes()}
-            onChange={(type) => setLocal((current) => ({ ...current, type }))}
-          />
-        </div>
-
-        {/* A hidden field is declared so its value round-trips through a save,
-            not so the dialog offers it. See `AutomationField.hidden`. */}
-        {entry.fields.filter((field) => !field.hidden).map((field) => (
-          <ManifestField
-            key={field.key}
-            field={field}
-            value={(local.config as Record<string, unknown>)[field.key]}
-            onChange={(value) => setConfigValue(field.key, value)}
-            templatePicker={props.templatePicker}
-          />
-        ))}
-
-        <div className="flex flex-col gap-1">
-          <span className={SETTING_LABEL_CLASS}>When</span>
-          {/* `self-start` because this wrapper is a flex COLUMN. A flex item is
-              blockified, so the control's own `inline-flex` stops sizing to its
-              options and `align-items: stretch` runs it the full width of the
-              dialog, which is not a shape a two-option control has any use for.
-              `SettingField` avoids this by wrapping children in a plain block,
-              which is why the same control hugs its content in the Column
-              Manager's Conversation card. */}
+        <RuleCard testId="edit-automation-card-trigger" icon={<Zap size={16} />} title="Trigger" description="What starts it.">
+          {/* Full width: three options that each name who acts. */}
           <SegmentedControl
             quiet
-            className="self-start"
-            ariaLabel="When"
+            fullWidth
+            ariaLabel="Trigger"
             testId="edit-automation-trigger"
             options={triggerOptions}
             value={local.trigger}
@@ -252,26 +274,228 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               declare, so a script written for the five minutes its own default
               allows is killed at sixty seconds and the rows behind it are
               skipped. Learning that at runtime, from a run log, is learning it
-              too late. This passes the essential-and-non-obvious bar the other
-              hints in this dialog are held to: it changes what you build. */}
+              too late. */}
           {local.trigger === 'exit' && SLOW_TYPES.has(local.type) && (
             <p data-testid="edit-automation-exit-budget" className={SETTING_DESCRIPTION_CLASS}>
               {`On exit, this column's automations share ${Math.round(EXIT_GROUP_BUDGET_MS / 1000)} seconds in total. Put longer work on enter.`}
             </p>
           )}
-        </div>
-      </div>
+        </RuleCard>
 
+        <RuleCard
+          testId="edit-automation-card-condition"
+          icon={<Split size={16} />}
+          title="Condition"
+          description="Describe it in plain words; an agent checks it."
+          checked={conditionOn}
+          onToggle={props.automationAgentReady ? setConditionOn : undefined}
+          switchDisabled={!props.automationAgentReady}
+          dimmed={!props.automationAgentReady}
+          switchLabel="Condition"
+        >
+          {props.automationAgentReady ? (
+            <div className="flex flex-col gap-2">
+              <TemplateTextField
+                value={conditionOn ? (local.condition ?? '') : ''}
+                onChange={(next) => {
+                  setConditionDraft(next);
+                  // An empty Condition while on is kept as '' in the dialog so
+                  // the field does not switch itself off mid-edit; the save
+                  // normalizes a blank one to none.
+                  setLocal((current) => ({ ...current, condition: next }));
+                }}
+                context="automation"
+                testId="edit-automation-condition"
+                placeholder={CONDITION_EXAMPLE}
+                ariaLabel="Condition"
+                grow={{ maxRows: PROSE_MAX_ROWS }}
+                disabled={!conditionOn}
+                insertRef={conditionInsertRef}
+              />
+              <div className={`flex ${conditionOn ? '' : 'pointer-events-none opacity-50'}`}>
+                <props.templatePicker onInsert={(variable) => conditionInsertRef.current?.(variable)} />
+              </div>
+            </div>
+          ) : (
+            // No field and no Template variable: there is nothing to write a
+            // condition for until something can check it.
+            <div
+              data-testid="edit-automation-condition-setup"
+              className="flex items-center gap-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-fg-secondary"
+            >
+              <Info size={14} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+              <span className="flex-1">Set up an Automation agent</span>
+              <button
+                type="button"
+                data-testid="edit-automation-open-settings"
+                onClick={props.onOpenAutomationSettings}
+                className="cursor-pointer rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
+              >
+                Open Settings
+              </button>
+            </div>
+          )}
+        </RuleCard>
+
+        <RuleCard
+          testId="edit-automation-card-frequency"
+          icon={<Repeat size={16} />}
+          title="Frequency"
+          description="How many times it can run on a task."
+          checked={frequencyOn}
+          onToggle={setFrequencyOn}
+          switchLabel="Frequency"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <span className={SETTING_LABEL_CLASS}>Maximum runs</span>
+              <InfoTip label="Maximum runs" text="Counted for each task, across every visit. A run its Condition skipped does not count." />
+            </span>
+            <NumberStepper
+              testId="edit-automation-max-runs"
+              ariaLabel="Maximum runs"
+              value={frequencyOn ? (local.max_runs ?? 1) : 1}
+              disabled={!frequencyOn}
+              onChange={(next) => {
+                setMaxRunsDraft(next);
+                setLocal((current) => ({ ...current, max_runs: next }));
+              }}
+            />
+          </div>
+        </RuleCard>
+
+        <RuleCard testId="edit-automation-card-action" icon={<SquareArrowRight size={16} />} title="Action" description="What it does.">
+          <div className={pairColumn ? 'grid grid-cols-2 gap-3' : 'flex flex-col'}>
+            {/* A <div>, not a <label>: the control is a button, and a label
+                wrapping one steals its click. */}
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <span className={SETTING_LABEL_CLASS}>Type</span>
+              {/* Carries each type's icon, which a native <select> cannot: an
+                  <option> holds text only. */}
+              <AutomationTypePicker
+                testId="edit-automation-type"
+                ariaLabel="Type"
+                value={local.type}
+                // Just the offerable set. The picker lists the current value
+                // too, which is what keeps a legacy row's type readable.
+                options={stableAutomationTypes()}
+                onChange={changeType}
+              />
+            </div>
+            {pairColumn && (
+              <ManifestField
+                field={pairColumn}
+                value={(local.config as Record<string, unknown>)[pairColumn.key]}
+                onChange={(value) => setConfigValue(pairColumn.key, value)}
+                templatePicker={props.templatePicker}
+                columnNames={props.columnNames}
+              />
+            )}
+          </div>
+
+          {/* A hidden field is declared so its value round-trips through a
+              save, not so the dialog offers it. See `AutomationField.hidden`. */}
+          {otherFields.map((field) => (
+            <ManifestField
+              key={field.key}
+              field={field}
+              value={(local.config as Record<string, unknown>)[field.key]}
+              onChange={(value) => setConfigValue(field.key, value)}
+              templatePicker={props.templatePicker}
+              columnNames={props.columnNames}
+            />
+          ))}
+        </RuleCard>
+      </div>
     </BaseDialog>
   );
 }
 
+/**
+ * One part of the rule: a settings card's header over one lighter panel.
+ *
+ * The geometry is `settings-card.tsx`'s (a tile-shaped header target, the
+ * icon in a 16px column, the switch on the panel's right edge), reused by
+ * choice: `settings-card-design.md` scopes out dialogs, but one tile shape in
+ * Settings and in this dialog reads as one design.
+ */
+function RuleCard({
+  testId, icon, title, description, checked, onToggle, switchDisabled, dimmed, switchLabel, children,
+}: {
+  testId: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  /** The card's switch, when it has one. */
+  checked?: boolean;
+  onToggle?: (on: boolean) => void;
+  switchDisabled?: boolean;
+  /** Dim the header (the Condition card with no Automation agent). */
+  dimmed?: boolean;
+  switchLabel?: string;
+  children: React.ReactNode;
+}) {
+  const hasSwitch = checked !== undefined;
+  const toggle = hasSwitch && onToggle && !switchDisabled ? () => onToggle(!checked) : undefined;
+  return (
+    <section data-testid={testId} aria-label={title} className="rounded-lg border border-edge">
+      <div className="px-3 py-1.5">
+        <div
+          // A click anywhere on the header flips its switch, as a settings
+          // card's does. The switch's own click is left to the switch.
+          onClick={toggle ? (event) => {
+            if (event.target instanceof Element && event.target.closest('[role="switch"], button, a')) return;
+            toggle();
+          } : undefined}
+          className={`flex items-center gap-3 rounded-md px-4 py-2 ${toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/40' : ''}`}
+        >
+          <span className={`flex w-4 flex-shrink-0 justify-center text-fg-muted ${dimmed ? 'opacity-50' : ''}`} aria-hidden="true">
+            {icon}
+          </span>
+          <span className={`min-w-0 flex-1 ${dimmed ? 'opacity-50' : ''}`}>
+            <span className="block text-sm font-semibold text-fg">{title}</span>
+            <span className="mt-0.5 block text-xs text-fg-tertiary">{description}</span>
+          </span>
+          {hasSwitch && (
+            <span className="flex flex-shrink-0">
+              <ToggleSwitch
+                checked={checked}
+                onChange={(next) => onToggle?.(next)}
+                disabled={switchDisabled}
+                ariaLabel={switchLabel ?? title}
+                testId={`${testId}-switch`}
+              />
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="px-3 pb-3">
+        <div className="flex flex-col gap-3 rounded-md bg-surface-hover/40 px-4 py-3">
+          {children}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** A field's label row: the label, an info tip, and the Optional tag. */
+function FieldLabel({ field }: { field: AutomationField }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={SETTING_LABEL_CLASS}>{field.label}</span>
+      {field.info && <InfoTip label={field.label} text={field.info} />}
+      {field.optional && <OptionalTag />}
+    </span>
+  );
+}
+
 /** One field, rendered from its manifest declaration. No type branching. */
-function ManifestField({ field, value, onChange, templatePicker: TemplatePicker }: {
+function ManifestField({ field, value, onChange, templatePicker: TemplatePicker, columnNames }: {
   field: AutomationField;
   value: unknown;
   onChange: (value: unknown) => void;
   templatePicker: EditAutomationDialogProps['templatePicker'];
+  columnNames: string[];
 }) {
   const text = typeof value === 'string' ? value : '';
   const testId = `automation-config-${field.key}`;
@@ -314,21 +538,20 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker 
   };
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className={SETTING_LABEL_CLASS}>{field.label}</span>
-        {field.templateVariables && <TemplatePicker onInsert={insertAtCaret} />}
-      </div>
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <FieldLabel field={field} />
 
       {field.kind === 'textarea' && highlighted && (
         <TemplateTextField
           value={text}
           onChange={onChange}
-          // Every automation runs on a move, so this is the catalog that can
-          // actually resolve here. A spawn prompt would pass 'spawn'.
+          // Every automation runs on a move or a turn end, so this is the
+          // catalog that can actually resolve here. A spawn prompt passes 'spawn'.
           context="automation"
           testId={testId}
-          rows={field.rows ?? 3}
+          // An optional prose field starts one row tall and grows with its
+          // text; a required one keeps the rows its type asks for.
+          {...(field.optional ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows ?? 3 })}
           placeholder={field.placeholder}
           ariaLabel={field.label}
           insertRef={templateInsertRef}
@@ -389,10 +612,29 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker 
         </Select>
       )}
 
+      {field.kind === 'column' && (
+        // The board's columns by NAME, Next column (empty) first. A name the
+        // board no longer has (the column was deleted) stays listed and marked,
+        // so opening the dialog never silently re-points the row.
+        <Select
+          data-testid={testId}
+          value={text}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">Next column</option>
+          {columnNames.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+          {text && !columnNames.includes(text) && (
+            <option value={text}>{`${text} (not on this board)`}</option>
+          )}
+        </Select>
+      )}
+
       {field.kind === 'segmented' && (
         <SegmentedControl
           quiet
-          // Sizes to its options rather than stretching. See the When field.
+          // Sizes to its options rather than stretching.
           className="self-start"
           ariaLabel={field.label}
           testId={testId}
@@ -416,6 +658,14 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker 
           onChange={(event) => onChange(parseHeaderLines(event.target.value))}
           className="w-full resize-y rounded border border-edge-input bg-surface-control px-3 py-1.5 font-mono text-xs text-fg-tertiary placeholder-fg-muted focus:border-accent focus:outline-none"
         />
+      )}
+
+      {/* Template variable sits UNDER its field, at the left, where the typing
+          is (the Agent prompt card's layout). */}
+      {field.templateVariables && (
+        <div className="flex">
+          <TemplatePicker onInsert={insertAtCaret} />
+        </div>
       )}
 
       {field.hint && <span className="text-[11px] text-fg-faint">{field.hint}</span>}

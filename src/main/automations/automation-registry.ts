@@ -20,6 +20,7 @@ import { sendMessageAdapter } from './adapters/send-message';
 import { runScriptAdapter } from './adapters/run-script';
 import { webhookAdapter } from './adapters/webhook';
 import { notifyAdapter } from './adapters/notify';
+import { moveToColumnAdapter } from './adapters/move-to-column';
 import { legacySpawnAgentAdapter } from './adapters/legacy/spawn-agent';
 
 export class AutomationRegistry {
@@ -66,6 +67,7 @@ automationRegistry.register(sendMessageAdapter);
 automationRegistry.register(runScriptAdapter);
 automationRegistry.register(webhookAdapter);
 automationRegistry.register(notifyAdapter);
+automationRegistry.register(moveToColumnAdapter);
 automationRegistry.register(legacySpawnAgentAdapter);
 
 /**

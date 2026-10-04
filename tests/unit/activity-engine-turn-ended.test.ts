@@ -23,16 +23,20 @@ const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');
 interface Harness {
   engine: ActivityEngine;
   turnEnds: number[];
+  /** The `turnStartedAt` each turn end reported, in order. */
+  turnStarts: Array<number | null>;
   send: (type: EventType, extra?: Partial<SessionEvent>) => void;
 }
 
 function createHarness(options: { stabilityMs?: number; seedThinking?: boolean } = {}): Harness {
   const turnEnds: number[] = [];
+  const turnStarts: Array<number | null> = [];
   const engine = new ActivityEngine(
     {
       onActivityChange() {},
-      onTurnEnded() {
+      onTurnEnded(_sessionId, turnStartedAt) {
         turnEnds.push(Date.now());
+        turnStarts.push(turnStartedAt);
       },
     },
     {
@@ -45,7 +49,7 @@ function createHarness(options: { stabilityMs?: number; seedThinking?: boolean }
   const send = (type: EventType, extra: Partial<SessionEvent> = {}) => {
     engine.processEvent(SESSION_ID, { ts: Date.now(), type, ...extra });
   };
-  return { engine, turnEnds, send };
+  return { engine, turnEnds, turnStarts, send };
 }
 
 function loadFixture(name: string): SessionEvent[] {
@@ -75,9 +79,44 @@ describe('onTurnEnded', () => {
   });
 
   it('fires for a fresh spawn seeded thinking, whose first Stop is its first turn end', () => {
+    const seededAt = Date.now();
     const harness = createHarness({ seedThinking: true });
+    vi.advanceTimersByTime(5_000);
     harness.send(EventType.Idle);
     expect(harness.turnEnds).toHaveLength(1);
+    // The seed is the turn's start: its prompt rode the command line.
+    expect(harness.turnStarts).toEqual([seededAt]);
+    harness.engine.dispose();
+  });
+
+  it('reports when the turn began, so a turn started before a move can be told apart', () => {
+    const harness = createHarness();
+    vi.advanceTimersByTime(1_000);
+    const firstStart = Date.now();
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(10_000);
+    harness.send(EventType.Idle);
+    vi.advanceTimersByTime(2_000);
+    const secondStart = Date.now();
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(3_000);
+    harness.send(EventType.Idle);
+    expect(harness.turnStarts).toEqual([firstStart, secondStart]);
+    harness.engine.dispose();
+  });
+
+  it('keeps the turn start when a permission prompt resolves back to thinking', () => {
+    const harness = createHarness();
+    const start = Date.now();
+    harness.send(EventType.Prompt);
+    vi.advanceTimersByTime(1_000);
+    harness.send(EventType.Idle, { detail: IdleReason.Permission });
+    vi.advanceTimersByTime(4_000);
+    harness.send(EventType.ToolStart, { tool: 'Bash', toolId: 'p' });
+    harness.send(EventType.ToolEnd, { tool: 'Bash', toolId: 'p' });
+    vi.advanceTimersByTime(1_000);
+    harness.send(EventType.Idle);
+    expect(harness.turnStarts).toEqual([start]);
     harness.engine.dispose();
   });
 

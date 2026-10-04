@@ -515,6 +515,15 @@ export interface SessionEngineState {
    */
   turnEndSource: 'stop' | 'idle-hint' | null;
   /**
+   * When the session last went from idle to thinking (engine clock), or null
+   * before its first turn. Reported with a turn end so a consumer can tell a
+   * turn that began before some boundary from one that began after it: a task
+   * dragged into a column while its agent is mid-turn must not have that
+   * column's turn-end automations judge the old column's work. A permission
+   * prompt resolving back to thinking is the same turn and does not restamp it.
+   */
+  turnStartedAt: number | null;
+  /**
    * The last `ActivityReason` handed to a consumer, or null before the first
    * one. Exists so a reason that changes KIND without the activity changing can
    * still be reported.
@@ -766,8 +775,12 @@ export interface ActivityEngineCallbacks {
    * Always fires AFTER the matching `onActivityChange`, so a listener that
    * reads the session's activity sees `idle`. Optional: only the production
    * wiring consumes it (column automations and workflow steps).
+   *
+   * `turnStartedAt` is when the turn that just ended began
+   * (`SessionEngineState.turnStartedAt`), or null when the engine never saw it
+   * begin.
    */
-  onTurnEnded?(sessionId: string): void;
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null): void;
 }
 
 /**
