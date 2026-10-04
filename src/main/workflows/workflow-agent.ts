@@ -6,6 +6,8 @@ import { DEFAULT_AGENT } from '../../shared/types';
 import type { Session, WorkflowAgentStatus } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
+import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { isActive } from '../../shared/activity-state';
 import { getProjectDb } from '../db/database';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { agentRegistry } from '../agent/agent-registry';
@@ -48,6 +50,21 @@ const resumedSessions = new Map<string, { homeProjectId: string; workflowId: str
 
 function unavailable(reason: string): WorkflowAgentStatus {
   return { session: null, unavailable: reason };
+}
+
+/**
+ * Refuse a change to the plan made in the view while the workflow's agent is
+ * mid-turn (#732, board 2c): it works from what it read when the turn began, so
+ * a hand edit meanwhile would leave it building on a plan that no longer exists.
+ * The view disables these controls; this is the check a stale click cannot slip
+ * past. The agent's own saves come over MCP and are never held.
+ */
+export function requireWorkflowAgentIdle(context: IpcContext, workflowId: string): void {
+  const session = findWorkflowAgentSession(context, workflowId);
+  if (!session || session.status !== 'running') return;
+  if (isActive(context.sessionManager.getActivityCache()[session.id])) {
+    throw new Error(`${WORKFLOW_REFUSALS.agentWorking}.`);
+  }
 }
 
 /** The workflow's agent session that has not exited, if any (running, queued or paused). */

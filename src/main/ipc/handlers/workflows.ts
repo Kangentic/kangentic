@@ -24,6 +24,7 @@ import {
   openWorkflowAgent,
   pauseWorkflowAgent,
   registerWorkflowAgentLifecycle,
+  requireWorkflowAgentIdle,
   resumeWorkflowAgent,
 } from '../../workflows/workflow-agent';
 
@@ -50,6 +51,7 @@ export function registerWorkflowHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.WORKFLOW_START, async (_, projectId: string, workflowId: string) => {
+    requireWorkflowAgentIdle(context, workflowId);
     await startWorkflow(context, projectId, workflowId);
   });
 
@@ -61,25 +63,31 @@ export function registerWorkflowHandlers(context: IpcContext): void {
     await resumeWorkflow(context, projectId, workflowId);
   });
 
-  ipcMain.handle(IPC.WORKFLOW_ADD_TASK, (_, projectId: string, workflowId: string, input: WorkflowTaskInput) =>
-    addViewTask(context, projectId, workflowId, input));
+  ipcMain.handle(IPC.WORKFLOW_ADD_TASK, (_, projectId: string, workflowId: string, input: WorkflowTaskInput) => {
+    requireWorkflowAgentIdle(context, workflowId);
+    return addViewTask(context, projectId, workflowId, input);
+  });
 
   ipcMain.handle(IPC.WORKFLOW_UPDATE_TASK, (_, projectId: string, workflowId: string, key: string, input: Partial<WorkflowTaskInput>) => {
+    requireWorkflowAgentIdle(context, workflowId);
     updatePlannedTask(context, projectId, workflowId, key, input);
   });
 
   ipcMain.handle(IPC.WORKFLOW_REMOVE_TASK, (_, projectId: string, workflowId: string, key: string) => {
+    requireWorkflowAgentIdle(context, workflowId);
     removeViewTask(context, projectId, workflowId, key);
   });
 
   ipcMain.handle(
     IPC.WORKFLOW_SET_LINK,
     (_, projectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => {
+      requireWorkflowAgentIdle(context, workflowId);
       setViewLink(context, projectId, workflowId, blockerKey, blockedKey, linked === true);
     },
   );
 
   ipcMain.handle(IPC.WORKFLOW_SET_ROUTE, (_, projectId: string, workflowId: string, key: string, swimlaneIds: string[]) => {
+    requireWorkflowAgentIdle(context, workflowId);
     setViewRoute(context, projectId, workflowId, key, Array.isArray(swimlaneIds) ? swimlaneIds : []);
   });
 

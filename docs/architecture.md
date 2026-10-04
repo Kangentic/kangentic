@@ -1055,7 +1055,8 @@ build where it is reachable by a static import.
 
 ```
 src/renderer/components/workflows/
-  WorkflowsView.tsx        # header, canvas, inspector, dialogs, the canvas card menu
+  WorkflowsView.tsx        # header, agent pane, canvas, inspector, dialogs, the canvas card menu
+  WorkflowAgentPane.tsx    # the workflow agent's terminal, Pause / Resume, and the plan hold while it works
   WorkflowHeader.tsx       # picker, Rename, Start / Running / Resume, Delete, progress (a width ladder)
   WorkflowCanvas.tsx       # React Flow: nodes, lane-routed edges, tools, search hiding
   WorkflowTaskNode.tsx     # one card: ports, the full-card link target, the drop hint

@@ -34,7 +34,7 @@ import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../s
  *     to the active ring once the session is running.
  *   - suspended: the resume control.
  */
-function PauseButtonIcon({
+export function PauseButtonIcon({
   toggling,
   isQueued,
   isThinking,

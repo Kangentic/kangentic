@@ -4,6 +4,7 @@ import { findSessionForTask } from '../stores/session-store/session-index';
 import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
+import { useWorkflowStore } from '../stores/workflow-store';
 import { deriveFocusedSessionIds, derivePanelSessionId } from '../utils/focused-sessions';
 import { derivePanelSessions } from '../utils/panel-sessions';
 import { selectCurrentProjectTransientSessionIds, transientKey } from '../stores/session-store/transient-session-slice';
@@ -80,6 +81,8 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
   const transientSessionIdsKey = useSessionStore((s) =>
     selectCurrentProjectTransientSessionIds(s.transientSessions, currentProjectId).join(','),
   );
+  // The Workflows view's agent pane, while it has a terminal mounted.
+  const workflowAgentSessionId = useWorkflowStore((s) => s.agentPaneSessionId);
 
   // Per-layer window fingerprints (same joined-primitive idiom): re-run the
   // effect when a window opens/closes/focuses/maximizes or its session binding
@@ -259,6 +262,7 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
       transientSessionIds: transientSessionIdsKey ? transientSessionIdsKey.split(',') : [],
       parkedSessionIds,
       remotelyOwnedSessionIds,
+      workflowAgentSessionId,
     });
     // Same reasoning as the parked publish above, one step later because the
     // focused set is only known now: fire the refocus catch-up BEFORE the IPC
@@ -281,6 +285,7 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     remoteDetailTaskIds,
     commandBarVisible,
     transientSessionIdsKey,
+    workflowAgentSessionId,
     boardWindowsKey,
     commandWindowsKey,
     currentProjectId,

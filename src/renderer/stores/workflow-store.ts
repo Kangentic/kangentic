@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Workflow,
+  WorkflowAgentStatus,
   WorkflowCanvasPosition,
   WorkflowChangedEvent,
   WorkflowDetail,
@@ -9,6 +10,7 @@ import type {
 } from '../../shared/types';
 import { describeIpcError } from '../lib/ipc-error';
 import { useProjectStore } from './project-store';
+import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
 
 /**
@@ -90,6 +92,25 @@ interface WorkflowStore {
   watchedDetails: Record<string, { homeProjectId: string; watchers: number; detail: WorkflowDetail | null }>;
   /** Start watching a workflow; the returned function stops. */
   watchDetail: (homeProjectId: string, workflowId: string) => () => void;
+
+  /**
+   * The workflow agent, in the view's left pane. Its session lives in the
+   * session store (it carries `workflowId`); this holds why a workflow's agent
+   * cannot run, from its last open, by workflow id.
+   */
+  agentUnavailable: Record<string, string>;
+  /** The session whose terminal the pane has mounted, so main streams its bytes here. */
+  agentPaneSessionId: string | null;
+  setAgentPaneSessionId: (sessionId: string | null) => void;
+  /** The pane folded to a strip, for the most canvas. Kept across workflows and view switches. */
+  agentPaneCollapsed: boolean;
+  setAgentPaneCollapsed: (collapsed: boolean) => void;
+  /** The pane opened on the selected workflow: its agent as it is, or started when it has none. */
+  openAgent: (grid?: { cols: number; rows: number } | null) => Promise<void>;
+  /** The pane's Resume. */
+  resumeAgent: (grid?: { cols: number; rows: number } | null) => Promise<void>;
+  /** The pane's Pause. */
+  pauseAgent: () => Promise<void>;
 }
 
 /** Bumped per detail request, so a slow answer cannot overwrite a newer one. */
@@ -188,6 +209,17 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail) } } });
   }
 
+  /**
+   * Show what an open or resume answered. The session arrives in the session
+   * store by its own push too; upserting it here saves the pane a frame with
+   * nothing in it.
+   */
+  function applyAgentStatus(workflowId: string, status: WorkflowAgentStatus): void {
+    if (status.session) useSessionStore.getState().upsertSession(status.session);
+    const { [workflowId]: _previous, ...rest } = get().agentUnavailable;
+    set({ agentUnavailable: status.unavailable ? { ...rest, [workflowId]: status.unavailable } : rest });
+  }
+
   /** One change against a workflow named by its home and id. */
   async function onWorkflow(failure: string, run: () => Promise<unknown>): Promise<boolean> {
     try {
@@ -209,6 +241,45 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     pendingOpen: null,
     linkFocus: null,
     watchedDetails: {},
+    agentUnavailable: {},
+    agentPaneSessionId: null,
+    agentPaneCollapsed: false,
+
+    setAgentPaneSessionId: (sessionId) => {
+      if (get().agentPaneSessionId !== sessionId) set({ agentPaneSessionId: sessionId });
+    },
+
+    setAgentPaneCollapsed: (collapsed) => set({ agentPaneCollapsed: collapsed }),
+
+    openAgent: async (grid) => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return;
+      try {
+        applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentOpen(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
+      } catch (error) {
+        reportFailure('Could not start the workflow agent', error);
+      }
+    },
+
+    resumeAgent: async (grid) => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return;
+      try {
+        applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentResume(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
+      } catch (error) {
+        reportFailure('Could not resume the workflow agent', error);
+      }
+    },
+
+    pauseAgent: async () => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return;
+      try {
+        await window.electronAPI.workflows.agentPause(projectId, selectedWorkflowId);
+      } catch (error) {
+        reportFailure('Could not pause the workflow agent', error);
+      }
+    },
 
     loadWorkflows: async () => {
       const projectId = currentProjectId();

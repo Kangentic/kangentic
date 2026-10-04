@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import { ListTree, Plus } from 'lucide-react';
@@ -21,6 +21,7 @@ import { DeleteWorkflowDialog, RemoveTaskDialog, RenameWorkflowDialog, StartWork
 import { WorkflowCardMenu } from './WorkflowCardMenu';
 import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
 import { findTask } from './workflow-graph';
+import { useWorkflowAgentWorking, WORKFLOW_AGENT_PANE_DOCKED_MIN, WorkflowAgentPane } from './WorkflowAgentPane';
 
 /**
  * The Workflows view: the header (which workflow, its lifecycle, its
@@ -41,9 +42,6 @@ type ViewDialog =
   | { kind: 'addTask' }
   | { kind: 'editPlanned'; key: string }
   | { kind: 'deleteTask'; task: Task; projectId: string };
-
-/** The workflow agent arrives in a later step; until then nothing holds the plan. */
-const PLAN_HELD = false;
 
 function refuse(message: string): void {
   useToastStore.getState().addToast({ message, variant: 'warning' });
@@ -95,6 +93,27 @@ export function WorkflowsView() {
   // React Flow keeps internal subscription state: re-key its provider on a
   // Fast Refresh, as every DndContext is (hmr-patterns.md, Pattern C).
   const hmrGeneration = useHmrGeneration();
+  // While the workflow agent is mid-turn, what would change its plan waits (board 2c).
+  const planHeld = useWorkflowAgentWorking(selectedWorkflowId);
+  // The body row's width decides whether the open agent pane takes its own
+  // width or floats over the canvas.
+  // The row exists only outside the empty state, so the observer follows it.
+  const showsBody = summaries.length > 0 || detail !== null;
+  const bodyRowRef = useRef<HTMLDivElement>(null);
+  const [bodyRowWidth, setBodyRowWidth] = useState(Number.POSITIVE_INFINITY);
+  useLayoutEffect(() => {
+    const row = bodyRowRef.current;
+    if (!showsBody || !row) return;
+    // Measured now as well, so the first frame already has the right layout
+    // rather than a docked pane that squeezes the canvas to nothing.
+    setBodyRowWidth(row.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) setBodyRowWidth(width);
+    });
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [showsBody]);
 
   useEffect(() => {
     void useWorkflowStore.getState().loadWorkflows();
@@ -209,7 +228,7 @@ export function WorkflowsView() {
       summaries={summaries}
       selected={selected}
       detail={detail}
-      planHeld={PLAN_HELD}
+      planHeld={planHeld}
       onSelect={(workflowId) => selectWorkflow(workflowId)}
       onRename={() => setDialog({ kind: 'rename' })}
       onStart={() => setDialog({ kind: 'start' })}
@@ -247,21 +266,40 @@ export function WorkflowsView() {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="workflows-view">
       {header}
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
+      <div ref={bodyRowRef} className="flex min-h-0 flex-1">
+        {selectedWorkflowId && (
+          <WorkflowAgentPane workflowId={selectedWorkflowId} floating={bodyRowWidth < WORKFLOW_AGENT_PANE_DOCKED_MIN} />
+        )}
+        <div className="relative min-w-0 flex-1">
+          {/* The workflow agent is working, said on the canvas as the Agent
+              Browser says an agent is driving: an accent ring at the edge and a
+              label, both breathing. No veil: cards stay movable, and only what
+              would change the plan waits. Always mounted, opacity-toggled. */}
+          <div
+            className={`pointer-events-none absolute inset-0 z-10 transition-opacity duration-200 ${planHeld ? 'opacity-100' : 'opacity-0'}`}
+            data-testid="workflow-agent-working"
+            data-working={planHeld ? 'true' : 'false'}
+            aria-hidden={!planHeld}
+          >
+            <div className={`absolute inset-0 ring-2 ring-inset ring-accent/70 ${planHeld ? 'kng-drive-pulse' : ''}`} />
+            <span className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded bg-surface-raised/95 px-2.5 py-1 text-xs text-fg-secondary shadow">
+              <span className={`h-1.5 w-1.5 rounded-full bg-active ${planHeld ? 'kng-drive-pulse' : ''}`} />
+              Workflow agent is working
+            </span>
+          </div>
           {detail && (
             <ReactFlowProvider key={hmrGeneration}>
               <WorkflowCanvas
                 detail={detail}
                 selectedTaskKey={selectedTaskKey}
                 editable
-                planHeld={PLAN_HELD}
+                planHeld={planHeld}
                 onSelectTask={selectTask}
                 onOpenTask={openTask}
                 onMoveCards={moveCards}
                 onLink={link}
                 visibleKeys={visibleKeys}
-                addTaskRefusal={PLAN_HELD ? WORKFLOW_REFUSALS.agentWorking : null}
+                addTaskRefusal={planHeld ? WORKFLOW_REFUSALS.agentWorking : null}
                 onAddTask={() => setDialog({ kind: 'addTask' })}
                 onAutoLayout={() => { void setPositions(null); }}
                 onCardContextMenu={handleCardContextMenu}
@@ -273,7 +311,7 @@ export function WorkflowsView() {
           <WorkflowInspector
             detail={detail}
             selectedTaskKey={selectedTaskKey}
-            planHeld={PLAN_HELD}
+            planHeld={planHeld}
             doneColumnColor={doneColumnColor}
             visibleKeys={visibleKeys}
             onSelectTask={selectTask}

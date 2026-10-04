@@ -541,6 +541,18 @@ from, if any, to Done. A task can go on another project's board; the inspector t
 task's board. Delete removes a workflow that has not started, with its planned tasks; once
 started, its unfinished tasks stay where they are as ordinary tasks.
 
+**The workflow agent.** The pane on the left is the workflow's own agent, the project's default
+agent launched read-only: it reads the code and the board and changes only this workflow's plan,
+never a file. A new workflow's agent starts with the first message (Settings > Workflows >
+Workflow agent prompt, which you can edit), reads the brief, plans the tasks, and saves them;
+made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
+plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
+task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
+header pauses and resumes it, and the conversation is kept across a restart. It keeps running when
+you leave the view, and ends when its workflow is deleted or finishes. Only an agent Kangentic can
+launch read-only can be a workflow's agent; for any other, the pane says so and you plan on the
+canvas.
+
 **Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
 the pointer says what a release would do, or why it cannot. In the inspector, the route switches
 turn a column on or off for that task, the X on a link row removes the link, and Add blocker makes
