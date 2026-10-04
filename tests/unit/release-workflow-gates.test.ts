@@ -203,6 +203,15 @@ describe('release.yml job graph', () => {
     expect(preflight?.body).not.toMatch(/^ {4}environment:/m);
   });
 
+  it('authorizes the release build\'s symbol upload explicitly, not through the runner\'s ambient CI', () => {
+    // isSentryUploadAuthorized (scripts/build.js) needs CI or KANGENTIC_SENTRY_UPLOAD=1 beside the
+    // token. Without the flag a runner that stopped setting CI would skip every upload while the
+    // build went green, the v0.37.0 failure this rule exists for.
+    const build = stepBody('release', 'Build and publish');
+    expect(build).toContain('KANGENTIC_SENTRY_TOKEN: ${{ secrets.KANGENTIC_SENTRY_TOKEN }}');
+    expect(build).toMatch(/^ {10}KANGENTIC_SENTRY_UPLOAD: '1'$/m);
+  });
+
   it('reaches the build matrix from the preflight, transitively', () => {
     const releaseJob = jobs.find((job) => job.name === 'release');
     // `release` does not name preflight-symbols directly; it inherits the gate through

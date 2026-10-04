@@ -27,13 +27,19 @@
  * `tag` is the KANGENTIC_TASK_ID the launcher saw, so a missing tag fails with
  * its own message instead of a generic "still alive" at the end.
  *
+ * Worktrees are on, as they are by default, so the agent and the survivor work
+ * in the task's worktree. That is the case the reap exists for: a leftover
+ * holding the worktree as its cwd is what made the Done removal fail on Windows.
+ *
  * Flow:
- *   1. To Do -> Executing spawns the agent, which fast-detaches the survivor.
+ *   1. To Do -> Executing creates the worktree and spawns the agent, which
+ *      fast-detaches the survivor.
  *   2. Executing -> a column with auto_spawn off suspends the session. The agent
  *      process is gone and the survivor is STILL alive (the keep-running decision).
  *   3. Back to Executing resumes the session. The survivor is still alive.
- *   4. Executing -> Done. The survivor dies. This is the assertion that proves
- *      the reap; it is never weakened to "eventually" without a bound.
+ *   4. Executing -> Done. The survivor dies, and the worktree is removed after
+ *      it. The death is the assertion that proves the reap; it is never weakened
+ *      to "eventually" without a bound.
  *
  * Red-green. The spec was shown to fail when the survivor is started with
  * KANGENTIC_TASK_ID deleted from its environment (the documented opt-out): the
@@ -115,7 +121,7 @@ test.describe('Task process reap', () => {
           maxConcurrentSessions: 5,
           queueOverflow: 'queue',
         },
-        git: { worktreesEnabled: false },
+        git: { worktreesEnabled: true },
       }),
     );
 
@@ -227,6 +233,15 @@ test.describe('Task process reap', () => {
     return record as unknown as FastDetachRecord;
   }
 
+  /** The task's row, active or archived. */
+  async function taskRow(taskId: string): Promise<{ worktree_path: string | null; archived_at: string | null } | null> {
+    return page.evaluate(async (id) => {
+      const active = await window.electronAPI.tasks.list();
+      const archived = await window.electronAPI.tasks.listArchived();
+      return [...active, ...archived].find((task) => task.id === id) ?? null;
+    }, taskId);
+  }
+
   function diagnostics(record: FastDetachRecord): string {
     const lines = [
       `survivor pid ${record.survivorPid}, tag it saw: ${record.tag}`,
@@ -277,6 +292,11 @@ test.describe('Task process reap', () => {
     // The session PTY carried the task tag, and the survivor inherited it. Without
     // this the end of the spec could only say "still alive" and not why.
     expect(record.tag, 'the agent saw no KANGENTIC_TASK_ID: the PTY was not tagged').toBe(taskId);
+
+    // The agent runs in the task's worktree, so the survivor holds it as its cwd.
+    const worktreePath = (await taskRow(taskId))?.worktree_path ?? null;
+    expect(worktreePath, 'the Executing move should have created a worktree').toBeTruthy();
+    expect(fs.existsSync(worktreePath!), `worktree dir should exist on disk: ${worktreePath}`).toBe(true);
 
     // The detach really was fast: the launcher is gone, so the survivor has no live
     // parent in the PTY tree, and it is itself alive.
@@ -335,6 +355,18 @@ test.describe('Task process reap', () => {
       throw new Error(`${(error as Error).message}\n${diagnostics(record)}`, { cause: error });
     }
     survivorKnownDead = true;
+
+    // The reap runs before the worktree removal, so nothing the agent left holds
+    // the directory when Done removes it.
+    await expect
+      .poll(
+        async () => {
+          const task = await taskRow(taskId);
+          return { worktreePathCleared: task?.worktree_path === null, worktreeDirGone: !fs.existsSync(worktreePath!) };
+        },
+        { timeout: 15_000, message: `the Done move should remove the worktree at ${worktreePath}` },
+      )
+      .toEqual({ worktreePathCleared: true, worktreeDirGone: true });
 
     // 5. The user is told: one toast for the move, counts only, and Review lists
     // the survivor by pid as stopped. This is the whole report path for real:

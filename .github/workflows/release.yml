@@ -275,6 +275,11 @@ jobs:
           # with it set every upload failure now fails the build rather than
           # warning past it, so "the job went green" means the symbols landed.
           KANGENTIC_SENTRY_TOKEN: ${{ secrets.KANGENTIC_SENTRY_TOKEN }}
+          # A token alone does not authorize an upload (isSentryUploadAuthorized
+          # in scripts/build.js, sentryUploadAuthorized in vite.config.mts): CI
+          # or this flag does. The runner's own CI=true would do, but the release
+          # states its intent rather than lean on an ambient variable.
+          KANGENTIC_SENTRY_UPLOAD: '1'
           # macOS notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
