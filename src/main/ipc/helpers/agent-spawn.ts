@@ -35,6 +35,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { registerResumeController, releaseResumeController } from '../handlers/session-resume-controllers';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { checkAutomationConditions, type ConditionCheckDeps } from '../../automations/condition-check/condition-check';
+import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 
 /**
  * Whether a column may spawn an agent at all, independent of its `auto_spawn`
@@ -277,6 +278,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // A spawn prompt is not a move; the picker does not offer the move
       // keywords in this context.
       move: null,
+      workflow: readWorkflowPromptFacts(currentTask, options.projectId ?? null),
     });
 
   const run = async (): Promise<void> => {

@@ -72,10 +72,12 @@ export interface TaskTemplateContext {
   agentReply?: string | null;
   /**
    * A workflow task's workflow facts, read by the caller
-   * (`readWorkflowPromptFacts`). Absent or null for an ordinary task, which
-   * resolves `{{workflow_xml}}` empty.
+   * (`readWorkflowPromptFacts`). Null for an ordinary task, which resolves
+   * `{{workflow_xml}}` empty. Required, not optional, for the reason
+   * `projectPath` is: the picker offers the variable in every context, so a
+   * call site that forgot it would resolve it empty with nothing to say so.
    */
-  workflow?: WorkflowXmlInput | null;
+  workflow: WorkflowXmlInput | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;

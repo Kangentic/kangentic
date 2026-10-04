@@ -48,6 +48,7 @@ import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { deliverExitMessage } from '../helpers/exit-message-delivery';
 import { supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
 import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
+import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
@@ -1092,6 +1093,7 @@ export async function handleTaskMove(
                 move: toLane
                   ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
                   : null,
+                workflow: readWorkflowPromptFacts(task, resolvedProjectId),
               }))
             : '';
           // Whether the burst below actually carries the COLUMN's message, as

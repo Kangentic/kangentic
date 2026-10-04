@@ -372,7 +372,7 @@ Default setup: Planning column has `plan_exit_target_id` pointing to the Executi
 
 New projects get seven columns and NO automations. Every column's list starts empty.
 
-The two rows the seed used to write were both dead weight. `* -> Planning: Kill Session` ran at Priority 4, where the task has no active session, so it found nothing to suspend and did nothing at all. `Start Planning Agent` carried `DEFAULT_SPAWN_PROMPT_TEMPLATE` (`{{task_xml}}{{attachments}}`), which is exactly what the fallback spawn uses when nothing supplies a prompt, so it duplicated what the column's own "Start an agent here" setting already produces.
+The two rows the seed used to write were both dead weight. `* -> Planning: Kill Session` ran at Priority 4, where the task has no active session, so it found nothing to suspend and did nothing at all. `Start Planning Agent` carried `{{task_xml}}{{attachments}}`, which was then exactly what the fallback spawn used when nothing supplied a prompt (the default has since gained `{{workflow_xml}}`; the migration compares against the literal the seed wrote), so it duplicated what the column's own "Start an agent here" setting already produces.
 
 Seeding them also taught the wrong model: it made starting an agent look like an automation a user could reorder or delete, when it is a column setting. An empty list is both true and the right blank page to start from. `tests/unit/default-swimlanes-seed-parity.test.ts` pins it.
 
