@@ -15,6 +15,8 @@ import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTa
 import { isAbortError } from '../../../shared/abort-utils';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { workflowTitleOf } from '../../workflows/workflow-lock-check';
 import type { IpcContext } from '../ipc-context';
 import type {
   BacklogTaskCreateInput,
@@ -321,7 +323,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       // A demote deletes the task, which would drop it from its workflow and
       // unblock what waits for it, from a menu that says only "Backlog".
       if (task.workflow_id) {
-        throw new Error(`#${task.display_id} is in a workflow. Remove it from the workflow first.`);
+        throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
       }
 
       // Cancel any pending auto_command injection before cleanup

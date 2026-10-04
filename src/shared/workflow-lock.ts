@@ -1,4 +1,5 @@
-import type { SwimlaneRole, WorkflowState } from '../../../shared/types';
+import type { SwimlaneRole, WorkflowState } from './types';
+import { WORKFLOW_REFUSALS } from './workflow-refusals';
 
 /**
  * Who may move a workflow task, as one pure predicate.
@@ -6,8 +7,9 @@ import type { SwimlaneRole, WorkflowState } from '../../../shared/types';
  * Every move path asks this before it moves anything: `handleTaskMove`
  * (drags, the phone, plan exit, automations, the engine), and the MCP move
  * tool before it fires its move, which is the only place an agent can see a
- * refusal. The answer is a sentence for the person or agent that asked, or
- * null to allow.
+ * refusal. The board asks it too, before a drag or a menu move leaves the
+ * card's column, so a refused move never shows the card moving first. The
+ * answer is a sentence for the person or agent that asked, or null to allow.
  *
  * The rules (the plan's "Running, pausing, the lock" and "Revise and return"):
  * - A task in a running workflow moves only by the workflow and its
@@ -43,17 +45,16 @@ export interface WorkflowMoveCheck {
 export function workflowMoveRefusal(check: WorkflowMoveCheck): string | null {
   if (check.fromSwimlaneId === check.toSwimlaneId) return null;
   if (check.workflowState === 'draft' || check.workflowState === 'done') return null;
-  if (check.toRole === 'todo') {
-    return `#${check.displayId} is in ${check.workflowTitle}. Remove it from the workflow to move it to To Do.`;
-  }
+  const label = `#${check.displayId}`;
+  if (check.toRole === 'todo') return WORKFLOW_REFUSALS.toDoNeedsRemove(label, check.workflowTitle);
   if (check.origin === 'workflow' || check.origin === 'automation' || check.origin === 'auto-move') return null;
   if (check.origin === 'agent' && check.moverIsTaskAgent) return null;
 
   const byHand = check.origin === 'renderer' || check.origin === 'mobile';
   if (check.workflowState === 'paused') {
     if (byHand) return null;
-    return `#${check.displayId} is in ${check.workflowTitle}, which is paused. Resume it to move its tasks.`;
+    return WORKFLOW_REFUSALS.pausedForAgents(label, check.workflowTitle);
   }
   if (byHand && check.humanGateTargetId !== null && check.humanGateTargetId === check.toSwimlaneId) return null;
-  return `#${check.displayId} is locked while ${check.workflowTitle} runs.`;
+  return WORKFLOW_REFUSALS.locked(label, check.workflowTitle);
 }

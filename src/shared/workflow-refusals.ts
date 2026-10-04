@@ -24,6 +24,14 @@ export const WORKFLOW_REFUSALS = {
   stepReached: (label: string, columnName: string) => `${label} has reached ${columnName}. Only the columns after it can change.`,
   /** While the workflow agent's turn runs, whatever would change its plan waits. */
   agentWorking: 'Available when the workflow agent finishes',
+  /** A move of a running workflow's task that only the workflow may make. */
+  locked: (label: string, workflowTitle: string) => `${label} is locked while ${workflowTitle} runs.`,
+  /** A move into To Do, which would delete the task's worktree and branch. */
+  toDoNeedsRemove: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}. Remove it from the workflow to move it to To Do.`,
+  /** An agent's move of a paused workflow's task (a person may still move it by hand). */
+  pausedForAgents: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}, which is paused. Resume it to move its tasks.`,
+  /** Sending a workflow task to the backlog or the archive. */
+  removeFirst: (label: string, workflowTitle: string) => `Remove ${label} from ${workflowTitle} first.`,
 } as const;
 
 /** How a task is named in a refusal: its number once it exists, its title before Start. */

@@ -68,6 +68,8 @@ describeWithSqlite('the Workflows view operations', () => {
       },
       boardEvents: { emitBoardChanged: vi.fn() },
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      // No Automation agent chosen: every column is a human gate unless it starts no agent at all.
+      configManager: { load: () => ({}) },
     } as unknown as IpcContext;
   });
 
@@ -198,6 +200,22 @@ describeWithSqlite('the Workflows view operations', () => {
       const [summary] = view.listWorkflowSummaries(context, 'home');
       expect(summary.workflow.id).toBe(workflow.id);
       expect(summary).toMatchObject({ taskCount: 3, doneCount: 0, inProgressCount: 0, queuedCount: 2, blockedCount: 1 });
+    });
+
+    it('gives each board card what it waits for and where a hand may move it', async () => {
+      const { workflow, api, ui, docs } = await started();
+      const [before] = view.listWorkflowSummaries(context, 'home');
+      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null });
+      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null });
+
+      // In a column whose work no agent can judge (here, none is chosen), a person drags it on.
+      new TaskRepository(homeDb()).move(
+        { taskId: api.id, targetSwimlaneId: laneId('home', 'Executing'), targetPosition: 0 },
+        { origin: 'renderer' },
+      );
+      const [after] = view.listWorkflowSummaries(context, 'home');
+      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review') });
+      expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
     });
 
     it('shows a moved task as current, the columns before it done and the rest ahead', async () => {

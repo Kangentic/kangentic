@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare } from 'lucide-react';
+import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, ListTree } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 
@@ -12,7 +12,15 @@ import type { Task, Swimlane } from '../../../shared/types';
  * Positions itself at the click coordinates, clamped to stay fully
  * visible in the viewport. Closes on outside click or Escape. The
  * parent owns the `position` prop and the `onClose` callback.
+ *
+ * A row the task cannot take (a workflow's lock) stays in place, disabled,
+ * with the reason as its tooltip: controls never come and go with state.
  */
+
+const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2';
+const LIVE_ROW_CLASS = `${ROW_CLASS} text-fg-secondary hover:bg-surface-hover/40`;
+const DISABLED_ROW_CLASS = `${ROW_CLASS} text-fg-disabled cursor-default`;
+
 export function TaskContextMenu({
   position,
   task,
@@ -25,6 +33,9 @@ export function TaskContextMenu({
   onDelete,
   onClose,
   leading,
+  moveRefusal,
+  sendAwayRefusal,
+  onNewWorkflow,
   testId = 'task-context-menu',
 }: {
   /** Root `data-testid`, so each host can address its own instance. */
@@ -43,6 +54,12 @@ export function TaskContextMenu({
   onArchive: () => void;
   onDelete: () => void;
   onClose: () => void;
+  /** Why a Move to row is refused (a workflow's lock); null leaves it live. */
+  moveRefusal?: (targetSwimlaneId: string) => string | null;
+  /** Why Backlog and Archive are refused: each would take the task out of its workflow. */
+  sendAwayRefusal?: string | null;
+  /** New workflow from this task, offered on a To Do card that is in no workflow. */
+  onNewWorkflow?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -128,42 +145,62 @@ export function TaskContextMenu({
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
             Move to
           </div>
-          {moveTargets.map((lane) => (
-            <button
-              key={lane.id}
-              type="button"
-              onClick={() => { onMoveTo(lane.id); onClose(); }}
-              className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
-              data-testid="context-move-to"
-            >
-              <div
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: lane.color }}
-              />
-              {lane.name}
-            </button>
-          ))}
+          {moveTargets.map((lane) => {
+            const refusal = moveRefusal?.(lane.id) ?? null;
+            return (
+              <button
+                key={lane.id}
+                type="button"
+                onClick={() => { if (refusal) return; onMoveTo(lane.id); onClose(); }}
+                aria-disabled={refusal ? true : undefined}
+                title={refusal ?? undefined}
+                className={refusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
+                data-testid="context-move-to"
+              >
+                <div
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${refusal ? 'opacity-50' : ''}`}
+                  style={{ backgroundColor: lane.color }}
+                />
+                {lane.name}
+              </button>
+            );
+          })}
         </>
       )}
 
       <div className="border-t border-edge my-1" />
 
+      {onNewWorkflow && (
+        <button
+          type="button"
+          onClick={() => { onNewWorkflow(); onClose(); }}
+          className={LIVE_ROW_CLASS}
+          data-testid="context-new-workflow"
+        >
+          <ListTree size={14} className="text-fg-faint" />
+          New workflow
+        </button>
+      )}
       <button
         type="button"
-        onClick={() => { onSendToBacklog(); }}
-        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        onClick={() => { if (sendAwayRefusal) return; onSendToBacklog(); }}
+        aria-disabled={sendAwayRefusal ? true : undefined}
+        title={sendAwayRefusal ?? undefined}
+        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
         data-testid="context-send-to-backlog"
       >
-        <Inbox size={14} className="text-fg-faint" />
+        <Inbox size={14} className={sendAwayRefusal ? 'opacity-50' : 'text-fg-faint'} />
         Backlog
       </button>
       <button
         type="button"
-        onClick={() => { onArchive(); onClose(); }}
-        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        onClick={() => { if (sendAwayRefusal) return; onArchive(); onClose(); }}
+        aria-disabled={sendAwayRefusal ? true : undefined}
+        title={sendAwayRefusal ?? undefined}
+        className={sendAwayRefusal ? DISABLED_ROW_CLASS : LIVE_ROW_CLASS}
         data-testid="context-archive-task"
       >
-        <Archive size={14} className="text-fg-faint" />
+        <Archive size={14} className={sendAwayRefusal ? 'opacity-50' : 'text-fg-faint'} />
         Archive
       </button>
 

@@ -63,9 +63,10 @@ function coreGraph(): Map<string, string[]> {
 describe('the workflow engine core boundary', () => {
   it('reaches at least the core modules, so the scan cannot pass vacuously', () => {
     const files = [...coreGraph().keys()].map((file) => path.relative(REPO_ROOT, file).replace(/\\/g, '/'));
+    // The lock predicate is shared with the board (`src/shared/workflow-lock.ts`), so it is pure by
+    // living in `shared/`, which imports nothing from main.
     expect(files).toEqual(expect.arrayContaining([
       'src/main/workflows/engine/workflow-engine-core.ts',
-      'src/main/workflows/engine/workflow-lock.ts',
     ]));
   });
 

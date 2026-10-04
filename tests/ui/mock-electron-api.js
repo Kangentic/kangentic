@@ -4812,24 +4812,45 @@
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0 };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {} };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
+        var boardTasks = {};
         created.forEach(function (task) {
           var place = placeOf(task);
-          if (place !== 'todo') { counts[place] += 1; return; }
-          var waiting = links.some(function (link) {
-            if (link.blocked_task_id !== task.id) return false;
+          if (place === 'done') { counts.done += 1; return; }
+          if (place === 'working') {
+            counts.working += 1;
+            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task) };
+            return;
+          }
+          var waitingFor = links.filter(function (link) {
+            if (link.workflow_id !== workflow.id || link.blocked_task_id !== task.id) return false;
             var blocker = created.find(function (candidate) { return candidate.id === link.blocker_task_id; });
             return !blocker || placeOf(blocker) !== 'done';
+          }).map(function (link) {
+            var blocker = created.find(function (candidate) { return candidate.id === link.blocker_task_id; });
+            return blocker ? '#' + blocker.display_id : 'a removed task';
           });
-          counts[waiting ? 'blocked' : 'queued'] += 1;
+          counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
+          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null };
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
-          inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked,
+          inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked, boardTasks: boardTasks,
         };
+      }
+
+      // Main's human gate also counts a column whose agent reports no turn end, or no
+      // Automation agent; the mock has neither, so a column that starts no agent is its gate.
+      function humanGateExit(workflow, task) {
+        if (workflow.state !== 'running') return null;
+        var column = laneOf(task.swimlane_id);
+        if (!column || column.auto_spawn) return null;
+        var after = routeColumns(task).find(function (lane) { return lane.position > column.position; });
+        var next = after || doneLane();
+        return next ? next.id : null;
       }
 
       function editDraft(entry, edit) {

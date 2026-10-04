@@ -49,12 +49,46 @@ interface WorkflowStore {
   setLink: (blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
   setRoute: (key: string, swimlaneIds: string[]) => Promise<boolean>;
   setPositions: (positions: WorkflowCanvasPosition[] | null) => Promise<boolean>;
+
+  /**
+   * The same edits addressed to a workflow by its home project and id, for the
+   * surfaces that act on a task's OWN workflow whatever the view shows (task
+   * detail's workflow panel, the board card's menu). The ids are read when the
+   * user acts (project-scoped-ipc.md).
+   */
+  setLinkIn: (homeProjectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
+  setRouteIn: (homeProjectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<boolean>;
+  removeTaskIn: (homeProjectId: string, workflowId: string, key: string) => Promise<boolean>;
+
+  /**
+   * The unfinished workflows of OTHER projects that have a task on this board,
+   * by home project, so a card on this board can name and lock by its workflow.
+   * The board's own project's workflows are `summaries`.
+   */
+  homeSummaries: Record<string, WorkflowSummary[]>;
+  loadHomeSummaries: (homeProjectIds: string[]) => Promise<void>;
+
+  /**
+   * Open the Workflows view on a workflow and one of its tasks. A workflow
+   * whose home is another project opens there: the selection waits in
+   * `pendingOpen` until that project's list arrives, as a task waits in the
+   * session store's pending open.
+   */
+  openWorkflow: (homeProjectId: string, workflowId: string, taskKey?: string | null) => void;
+  pendingOpen: { projectId: string; workflowId: string; taskKey: string | null } | null;
+
+  /** The board's links overlay: the card it is on, and that card's workflow. */
+  linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail } | null;
+  showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
+  clearLinks: () => void;
 }
 
 /** Bumped per detail request, so a slow answer cannot overwrite a newer one. */
 let detailGeneration = 0; // hmr-safe: a reset generation only discards in-flight answers, and the store reloads on HMR (App.tsx).
 /** The same, for the picker list. */
 let listGeneration = 0; // hmr-safe: as above.
+/** The same, for other projects' lists. */
+let homeGeneration = 0; // hmr-safe: as above.
 
 function currentProjectId(): string | null {
   return useProjectStore.getState().currentProject?.id ?? null;
@@ -87,6 +121,28 @@ export function shareUnchanged(previous: WorkflowDetail | null, next: WorkflowDe
   };
 }
 
+/**
+ * The same for the summaries: keep each workflow row and each task's board
+ * facts that a reload did not change. A board card reads its own facts by
+ * reference, so a move in a 100-task workflow re-renders the cards whose
+ * footer or lock changed, not every card in the workflow.
+ */
+export function shareSummaries(previous: readonly WorkflowSummary[], next: WorkflowSummary[]): WorkflowSummary[] {
+  if (previous.length === 0) return next;
+  const before = new Map(previous.map((summary) => [summary.workflow.id, summary]));
+  return next.map((summary) => {
+    const old = before.get(summary.workflow.id);
+    if (!old) return summary;
+    const workflow = JSON.stringify(old.workflow) === JSON.stringify(summary.workflow) ? old.workflow : summary.workflow;
+    const boardTasks: WorkflowSummary['boardTasks'] = {};
+    for (const [taskId, facts] of Object.entries(summary.boardTasks)) {
+      const oldFacts = old.boardTasks[taskId];
+      boardTasks[taskId] = oldFacts && JSON.stringify(oldFacts) === JSON.stringify(facts) ? oldFacts : facts;
+    }
+    return { ...summary, workflow, boardTasks };
+  });
+}
+
 const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   /**
    * Run one change against the workflow on screen. `projectId` is read when the
@@ -107,12 +163,26 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     }
   }
 
+  /** One change against a workflow named by its home and id. */
+  async function onWorkflow(failure: string, run: () => Promise<unknown>): Promise<boolean> {
+    try {
+      await run();
+      return true;
+    } catch (error) {
+      reportFailure(failure, error);
+      return false;
+    }
+  }
+
   return {
     projectId: null,
     summaries: [],
     selectedWorkflowId: null,
     detail: null,
     selectedTaskKey: null,
+    homeSummaries: {},
+    pendingOpen: null,
+    linkFocus: null,
 
     loadWorkflows: async () => {
       const projectId = currentProjectId();
@@ -130,20 +200,70 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       }
       if (generation !== listGeneration) return;
       const previous = get();
+      // An Open workflow that switched projects to get here picks its workflow
+      // and task once that project's list arrives.
+      const pending = previous.pendingOpen?.projectId === projectId
+        && summaries.some((summary) => summary.workflow.id === previous.pendingOpen?.workflowId)
+        ? previous.pendingOpen
+        : null;
       const sameProject = previous.projectId === projectId;
-      const keepSelection = sameProject && previous.selectedWorkflowId !== null
+      const keepSelection = pending === null && sameProject && previous.selectedWorkflowId !== null
         && summaries.some((summary) => summary.workflow.id === previous.selectedWorkflowId);
-      const selectedWorkflowId = keepSelection ? previous.selectedWorkflowId : (summaries[0]?.workflow.id ?? null);
+      const selectedWorkflowId = pending?.workflowId
+        ?? (keepSelection ? previous.selectedWorkflowId : (summaries[0]?.workflow.id ?? null));
       set({
         projectId,
-        summaries,
+        summaries: sameProject ? shareSummaries(previous.summaries, summaries) : summaries,
         selectedWorkflowId,
         // A workflow that left the picker (finished, deleted) leaves the view.
         detail: selectedWorkflowId === previous.detail?.workflow.id ? previous.detail : null,
-        selectedTaskKey: selectedWorkflowId === previous.selectedWorkflowId ? previous.selectedTaskKey : null,
+        selectedTaskKey: pending
+          ? pending.taskKey
+          : selectedWorkflowId === previous.selectedWorkflowId ? previous.selectedTaskKey : null,
+        pendingOpen: previous.pendingOpen?.projectId === projectId ? null : previous.pendingOpen,
       });
       if (selectedWorkflowId && (!keepSelection || !get().detail)) await get().loadDetail();
     },
+
+    loadHomeSummaries: async (homeProjectIds) => {
+      const own = currentProjectId();
+      const wanted = [...new Set(homeProjectIds)].filter((id) => id && id !== own);
+      const generation = ++homeGeneration;
+      const loaded: Record<string, WorkflowSummary[]> = {};
+      await Promise.all(wanted.map(async (homeProjectId) => {
+        try {
+          const list = await window.electronAPI.workflows.list(homeProjectId);
+          loaded[homeProjectId] = shareSummaries(get().homeSummaries[homeProjectId] ?? [], list);
+        } catch (error) {
+          // A home that cannot be read (closed, deleted) names nothing; its cards show no workflow strip.
+          console.warn('[workflow-store] Failed to load another project\'s workflows:', describeIpcError(error));
+        }
+      }));
+      if (generation !== homeGeneration) return;
+      set({ homeSummaries: loaded });
+    },
+
+    openWorkflow: (homeProjectId, workflowId, taskKey = null) => {
+      if (homeProjectId === currentProjectId()) {
+        set({ pendingOpen: null });
+        get().selectWorkflow(workflowId, taskKey);
+        return;
+      }
+      set({ pendingOpen: { projectId: homeProjectId, workflowId, taskKey } });
+      void useProjectStore.getState().openProject(homeProjectId);
+    },
+
+    showLinks: async (taskId, homeProjectId, workflowId) => {
+      try {
+        const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
+        set({ linkFocus: { taskId, homeProjectId, detail } });
+      } catch (error) {
+        console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
+        set({ linkFocus: null });
+      }
+    },
+
+    clearLinks: () => set({ linkFocus: null }),
 
     selectWorkflow: (workflowId, taskKey = null) => {
       if (workflowId === get().selectedWorkflowId) {
@@ -179,9 +299,17 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     handleChanged: (event) => {
-      if (event.projectId !== get().projectId) return;
-      void get().loadWorkflows();
-      if (event.workflowId === get().selectedWorkflowId) void get().loadDetail();
+      const { projectId, homeSummaries, linkFocus } = get();
+      if (event.projectId === projectId) {
+        void get().loadWorkflows();
+        if (event.workflowId === get().selectedWorkflowId) void get().loadDetail();
+      } else if (homeSummaries[event.projectId]) {
+        // Another project's workflow with a task on this board: its name, state and lock.
+        void get().loadHomeSummaries(Object.keys(homeSummaries));
+      }
+      if (linkFocus && linkFocus.detail.workflow.id === event.workflowId) {
+        void get().showLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId);
+      }
     },
 
     createWorkflow: async (sourceTaskId) => {
@@ -237,19 +365,34 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         window.electronAPI.workflows.updateTask(projectId, workflowId, key, input))).ok,
 
     removeTask: async (key) => {
-      const result = await onSelected('Could not remove the task', (projectId, workflowId) =>
-        window.electronAPI.workflows.removeTask(projectId, workflowId, key));
-      if (result.ok && get().selectedTaskKey === key) set({ selectedTaskKey: null });
-      return result.ok;
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return false;
+      const ok = await get().removeTaskIn(projectId, selectedWorkflowId, key);
+      if (ok && get().selectedTaskKey === key) set({ selectedTaskKey: null });
+      return ok;
     },
 
-    setLink: async (blockerKey, blockedKey, linked) =>
-      (await onSelected(linked ? 'Could not link the tasks' : 'Could not remove the link', (projectId, workflowId) =>
-        window.electronAPI.workflows.setLink(projectId, workflowId, blockerKey, blockedKey, linked))).ok,
+    setLink: async (blockerKey, blockedKey, linked) => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return false;
+      return get().setLinkIn(projectId, selectedWorkflowId, blockerKey, blockedKey, linked);
+    },
 
-    setRoute: async (key, swimlaneIds) =>
-      (await onSelected('Could not change the route', (projectId, workflowId) =>
-        window.electronAPI.workflows.setRoute(projectId, workflowId, key, swimlaneIds))).ok,
+    setRoute: async (key, swimlaneIds) => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return false;
+      return get().setRouteIn(projectId, selectedWorkflowId, key, swimlaneIds);
+    },
+
+    removeTaskIn: (homeProjectId, workflowId, key) =>
+      onWorkflow('Could not remove the task', () => window.electronAPI.workflows.removeTask(homeProjectId, workflowId, key)),
+
+    setLinkIn: (homeProjectId, workflowId, blockerKey, blockedKey, linked) =>
+      onWorkflow(linked ? 'Could not link the tasks' : 'Could not remove the link', () =>
+        window.electronAPI.workflows.setLink(homeProjectId, workflowId, blockerKey, blockedKey, linked)),
+
+    setRouteIn: (homeProjectId, workflowId, key, swimlaneIds) =>
+      onWorkflow('Could not change the route', () => window.electronAPI.workflows.setRoute(homeProjectId, workflowId, key, swimlaneIds)),
 
     setPositions: async (positions) => {
       const detail = get().detail;

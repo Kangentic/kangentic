@@ -21,7 +21,7 @@ import {
   type CoreTask,
   type CoreWorkflow,
 } from '../../src/main/workflows/engine/workflow-engine-core';
-import { workflowMoveRefusal, type WorkflowMoveCheck } from '../../src/main/workflows/engine/workflow-lock';
+import { workflowMoveRefusal, type WorkflowMoveCheck } from '../../src/shared/workflow-lock';
 
 function column(id: string, position: number, role: RouteColumn['role'] = null, extra: Partial<RouteColumn> = {}): RouteColumn {
   return { id, position, role, is_archived: false, is_ghost: false, ...extra };

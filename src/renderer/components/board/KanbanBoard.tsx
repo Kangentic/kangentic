@@ -13,6 +13,7 @@ import { Swimlane, type SwimlaneProps } from './Swimlane';
 import { DoneSwimlane } from './DoneSwimlane';
 import { TaskCard } from './TaskCard';
 import { BoardDialogs } from './BoardDialogs';
+import { WorkflowLinksOverlay } from './WorkflowLinksOverlay';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
@@ -382,10 +383,13 @@ export function KanbanBoard() {
   }, [swimlanes, tasks, taskFilter, completingTaskIds, lanePins]);
   /* eslint-enable react-hooks/refs */
 
+  // The links overlay draws over the lanes, measured against this root.
+  const boardRootRef = useRef<HTMLDivElement>(null);
+
   if (!hydrated) return null;
 
   return (
-    <div className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
+    <div ref={boardRootRef} className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
       <ConfigWarningBanner />
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
       <DndContext
@@ -399,7 +403,7 @@ export function KanbanBoard() {
       >
         <SortableContext items={sortableColumnIds} strategy={horizontalListSortingStrategy}>
           {/* Trailing pseudo-element ensures right-side scroll padding after the last column */}
-          <div className="flex gap-4 h-full after:content-[''] after:flex-shrink-0 after:w-px">
+          <div className="flex gap-4 h-full after:content-[''] after:flex-shrink-0 after:w-px" data-board-lanes>
             {swimlanes.map((swimlane) => (
               <SortableSwimlane
                 key={swimlane.id}
@@ -436,6 +440,7 @@ export function KanbanBoard() {
       </DndContext>
       <FlyingCard key={completingTaskId ?? 'idle'} />
       </div>
+      <WorkflowLinksOverlay boardRef={boardRootRef} />
 
       {newTaskOpen && newTaskLaneId && (
         <NewTaskDialog swimlaneId={newTaskLaneId} onClose={dismissNewTask} />

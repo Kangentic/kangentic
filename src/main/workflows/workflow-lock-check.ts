@@ -8,7 +8,7 @@ import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { agentRegistry } from '../agent/agent-registry';
 import type { IpcContext } from '../ipc/ipc-context';
-import { workflowMoveRefusal, type WorkflowMoveOrigin } from './engine/workflow-lock';
+import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workflow-lock';
 
 /**
  * Gather what `workflowMoveRefusal` needs for one move, from the databases and
@@ -94,6 +94,17 @@ export function checkWorkflowMoveForAgent(
   } catch {
     // The move path asks again inside the task lock, with the same rule.
     return null;
+  }
+}
+
+/** The title of the workflow a task is in, for a refusal that names it; "its workflow" if unreadable. */
+export function workflowTitleOf(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): string {
+  if (!task.workflow_id) return 'its workflow';
+  try {
+    const workflow = new WorkflowRepository(getProjectDb(task.workflow_project_id ?? projectId)).getById(task.workflow_id);
+    return workflow?.title ?? 'its workflow';
+  } catch {
+    return 'its workflow';
   }
 }
 

@@ -15,6 +15,11 @@ import type { Task } from '../../../shared/types';
 import { TaskContextMenu } from './TaskContextMenu';
 import { ArchivedTaskContextMenu } from './ArchivedTaskContextMenu';
 import { TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from './task-card-view';
+import { WorkflowTaskCardBody } from './WorkflowTaskCardBody';
+import { OpenWorkflowMenuItem, ShowWorkflowLinksMenuItem } from './workflow-menu-items';
+import { useWorkflowStore } from '../../stores/workflow-store';
+import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
+import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
 
 interface TaskCardProps {
   task: Task;
@@ -139,6 +144,22 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     setConfirmDelete(false);
   };
 
+  // The menu's workflow facts, read when it opens rather than subscribed: an
+  // ordinary card pays nothing, and an open menu is a moment, not a view.
+  const menuWorkflow = contextMenu && task.workflow_id ? boardWorkflowNow(task) : null;
+  const offersNewWorkflow = !!contextMenu && !task.workflow_id && !task.archived_at
+    && useBoardStore.getState().swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'todo';
+
+  const openTaskWorkflow = (workflow: BoardWorkflow) => {
+    useBoardStore.getState().setActiveView('workflows');
+    useWorkflowStore.getState().openWorkflow(workflow.homeProjectId, workflow.workflowId, task.id);
+  };
+
+  const handleNewWorkflow = async () => {
+    const created = await useWorkflowStore.getState().createWorkflow(task.id);
+    if (created) useBoardStore.getState().setActiveView('workflows');
+  };
+
   if (compact) {
     return (
       <>
@@ -207,7 +228,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         data-task-id={task.id}
         className={`${taskCardFrameClass(view, boardDensity)} cursor-grab active:cursor-grabbing select-none transition-colors ${isDragOverlay ? 'shadow-xl' : ''}`}
       >
-        <TaskCardBody task={task} view={view} density={boardDensity} />
+        {task.workflow_id
+          ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} />
+          : <TaskCardBody task={task} view={view} density={boardDensity} />}
       </div>
 
       {contextMenu && (
@@ -215,6 +238,18 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           position={contextMenu}
           task={task}
           swimlanes={useBoardStore.getState().swimlanes}
+          leading={menuWorkflow && (
+            <>
+              <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
+              <ShowWorkflowLinksMenuItem
+                onShow={() => void useWorkflowStore.getState().showLinks(task.id, menuWorkflow.homeProjectId, menuWorkflow.workflowId)}
+                onClose={() => setContextMenu(null)}
+              />
+            </>
+          )}
+          moveRefusal={menuWorkflow ? (laneId) => refusedBoardMove(task, laneId, useBoardStore.getState().swimlanes) : undefined}
+          sendAwayRefusal={sendAwayRefusal(menuWorkflow, task)}
+          onNewWorkflow={offersNewWorkflow ? handleNewWorkflow : undefined}
           onEdit={() => setDetailTaskId(task.id, { initialEdit: true })}
           onShowChanges={() => setShowChanges(true)}
           onMoveTo={handleMoveTo}

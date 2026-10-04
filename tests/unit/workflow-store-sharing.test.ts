@@ -4,7 +4,7 @@
  * 100). It must never keep an object whose contents changed.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { WorkflowDetail, WorkflowViewTask } from '../../src/shared/types';
+import type { WorkflowDetail, WorkflowSummary, WorkflowViewTask } from '../../src/shared/types';
 
 vi.mock('../../src/renderer/stores/project-store', () => ({
   useProjectStore: { getState: () => ({ currentProject: null }) },
@@ -13,7 +13,7 @@ vi.mock('../../src/renderer/stores/toast-store', () => ({
   useToastStore: { getState: () => ({ addToast: vi.fn() }) },
 }));
 
-const { shareUnchanged } = await import('../../src/renderer/stores/workflow-store');
+const { shareUnchanged, shareSummaries } = await import('../../src/renderer/stores/workflow-store');
 
 function viewTask(key: string, canvasX: number | null = null): WorkflowViewTask {
   return {
@@ -57,5 +57,36 @@ describe('workflow reload sharing', () => {
     const before = detail('w', [viewTask('a')]);
     const next = detail('other', [viewTask('a')]);
     expect(shareUnchanged(before, next)).toBe(next);
+  });
+});
+
+describe('summary reload sharing', () => {
+  function summary(title: string, boardTasks: WorkflowSummary['boardTasks']): WorkflowSummary {
+    return {
+      workflow: { ...detail('w', []).workflow, title, state: 'running' },
+      taskCount: 3, doneCount: 0, inProgressCount: 1, queuedCount: 1, blockedCount: 1, boardTasks,
+    };
+  }
+
+  it('keeps the workflow row and each card\'s facts that did not change', () => {
+    const before = summary('Usage budgets', {
+      a: { waitingFor: [], humanGateTargetId: null },
+      b: { waitingFor: ['#1'], humanGateTargetId: null },
+    });
+    const [after] = shareSummaries([before], [summary('Usage budgets', {
+      a: { waitingFor: [], humanGateTargetId: 'lane-4' },
+      b: { waitingFor: ['#1'], humanGateTargetId: null },
+    })]);
+    expect(after.workflow).toBe(before.workflow);
+    expect(after.boardTasks.a).not.toBe(before.boardTasks.a);
+    expect(after.boardTasks.a.humanGateTargetId).toBe('lane-4');
+    expect(after.boardTasks.b).toBe(before.boardTasks.b);
+  });
+
+  it('takes a renamed workflow\'s new row', () => {
+    const before = summary('Usage budgets', {});
+    const [after] = shareSummaries([before], [summary('Usage caps', {})]);
+    expect(after.workflow).not.toBe(before.workflow);
+    expect(after.workflow.title).toBe('Usage caps');
   });
 });

@@ -997,13 +997,13 @@ description, icon name, `needs`, fields, timeout and retry policy.
 A workflow is a set of linked tasks that run through their boards on their own (#732). It lives in
 its home project's database with its links (`workflows`, `task_links`); its tasks live on their own
 boards. A task's route (the columns it visits) is one pure shared module,
-`src/shared/workflow-route.ts`.
+`src/shared/workflow-route.ts`, and so is who may move a workflow task,
+`src/shared/workflow-lock.ts`, which main and the board both ask.
 
 ```
 src/main/workflows/
   engine/
     workflow-engine-core.ts  # pure: what is ready, start order up to free slots, completion, loops
-    workflow-lock.ts         # pure: who may move a workflow task, as one predicate
   workflow-engine-host.ts    # main: wake-ups, debounce, read every running workflow, carry out the plan
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)

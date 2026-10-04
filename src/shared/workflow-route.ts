@@ -1,4 +1,4 @@
-import type { Swimlane, Task } from './types';
+import type { Swimlane, Task, WorkflowRouteStep, WorkflowTaskPlace } from './types';
 
 /**
  * A workflow task's route: the columns it visits, from its start column to its
@@ -93,6 +93,50 @@ export function startColumn<Column extends RouteColumn>(columns: readonly Column
 /** Is this column on the route (a step the task visits)? */
 export function isOnRoute(columns: readonly RouteColumn[], route: RouteFields, columnId: string): boolean {
   return routeColumns(columns, route).some((column) => column.id === columnId);
+}
+
+/** A column as a route step names it. */
+export type StepColumn = RouteColumn & Pick<Swimlane, 'name' | 'color' | 'icon'>;
+
+function step(column: StepColumn, state: WorkflowRouteStep['state'], finishedAt: string | null): WorkflowRouteStep {
+  return { swimlaneId: column.id, name: column.name, color: column.color ?? null, icon: column.icon ?? null, state, finishedAt };
+}
+
+/** Where a created task is in its workflow: not started (To Do), working, or done. */
+export function taskPlace(columns: readonly RouteColumn[], task: Pick<Task, 'swimlane_id' | 'archived_at'>): Exclude<WorkflowTaskPlace, 'planned'> {
+  const column = columns.find((candidate) => candidate.id === task.swimlane_id);
+  if (task.archived_at || column?.role === 'done') return 'done';
+  return column?.role === 'todo' ? 'todo' : 'working';
+}
+
+/**
+ * One step per route candidate on the board, each done, current, ahead or
+ * skipped: what the step track on a card and the inspector's rail draw. The
+ * Workflows view (main's read model) and a board card (the renderer's own
+ * board) both read it here, so the two tracks of one task always agree.
+ * `finishedAt` is when the task left each column, where known.
+ */
+export function routeSteps(
+  columns: readonly StepColumn[],
+  task: RouteFields & Pick<Task, 'swimlane_id' | 'archived_at'>,
+  finishedAt: ReadonlyMap<string, string> = new Map(),
+): WorkflowRouteStep[] {
+  const place = taskPlace(columns, task);
+  const onRoute = new Set(routeColumns(columns, task).map((column) => column.id));
+  const current = columns.find((column) => column.id === task.swimlane_id);
+  return routeCandidates(columns).map((column) => {
+    if (place === 'working' && current && column.id === current.id) return step(column, 'current', null);
+    if (!onRoute.has(column.id)) return step(column, 'skipped', null);
+    if (place === 'done') return step(column, 'done', finishedAt.get(column.id) ?? null);
+    if (place === 'working' && current && column.position < current.position) return step(column, 'done', finishedAt.get(column.id) ?? null);
+    return step(column, 'ahead', null);
+  });
+}
+
+/** A planned task's steps: on its route or skipped, none reached yet. */
+export function plannedRouteSteps(columns: readonly StepColumn[], route: RouteFields): WorkflowRouteStep[] {
+  const onRoute = new Set(routeColumns(columns, route).map((column) => column.id));
+  return routeCandidates(columns).map((column) => step(column, onRoute.has(column.id) ? 'ahead' : 'skipped', null));
 }
 
 /**

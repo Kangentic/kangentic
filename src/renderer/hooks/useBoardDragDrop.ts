@@ -25,6 +25,7 @@ import { useProjectStore } from '../stores/project-store';
 import { useConfigStore } from '../stores/config-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
+import { refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
 
 interface UseBoardDragDropParams {
@@ -460,6 +461,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
         return;
       }
       await reorderTaskInColumn(taskId, targetSwimlaneId, active.id as string, over.id as string);
+      return;
+    }
+
+    // --- A workflow's lock ---
+    // Asked before anything moves or flies, with main's own predicate, so a
+    // refused card goes back to its column (the reload undoes the drag-over
+    // placement) and the reason shows with the card's links.
+    const movingTask = state.tasks.find((candidate) => candidate.id === taskId);
+    const refusal = movingTask ? refusedBoardMove(movingTask, targetSwimlaneId, swimlanes) : null;
+    if (movingTask && refusal) {
+      useBoardStore.getState().loadBoard();
+      showWorkflowRefusal(movingTask, refusal, () => useBoardStore.getState().setActiveView('workflows'));
       return;
     }
 

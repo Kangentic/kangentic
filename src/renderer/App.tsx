@@ -1255,6 +1255,7 @@ if (import.meta.hot) {
     useBacklogStore.getState().loadBacklog();
     useWorkflowStore.getState().loadWorkflows();
     useWorkflowStore.getState().loadDetail();
+    useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
     // Usage dashboard Pattern B: refetch the composite payload from

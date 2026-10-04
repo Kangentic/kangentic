@@ -4992,6 +4992,22 @@ export interface WorkflowSummary {
   queuedCount: number;
   /** In To Do, waiting for a task that is not done. */
   blockedCount: number;
+  /**
+   * Each created task as a board card shows it, by task id: what its footer
+   * says it waits for, and where a person may drag it. Empty before Start.
+   */
+  boardTasks: Record<string, WorkflowBoardTask>;
+}
+
+/** A started workflow's task as its board card shows it: the footer and the lock. */
+export interface WorkflowBoardTask {
+  /** The tasks it waits for that are not done, as the footer names them ("#413"). */
+  waitingFor: string[];
+  /**
+   * While the workflow runs and the task sits in a human gate (a column whose
+   * work no agent can judge): the column a person may drag it to. Null otherwise.
+   */
+  humanGateTargetId: string | null;
 }
 
 /** A task the Workflows view adds (Add task) or edits before Start (the Edit Task window). */

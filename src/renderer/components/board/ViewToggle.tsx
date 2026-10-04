@@ -56,6 +56,19 @@ export const ViewToggle = React.memo(function ViewToggle() {
   useEffect(() => {
     if (currentProjectId) void useWorkflowStore.getState().loadWorkflows();
   }, [currentProjectId]);
+  // A card on this board whose workflow lives in another project names and locks
+  // by that project's list. Keyed by the set of homes, so a board reload that
+  // changes no home loads nothing.
+  const foreignHomes = useMemo(() => {
+    const homes = new Set<string>();
+    for (const task of boardTasks) {
+      if (task.workflow_id && task.workflow_project_id && task.workflow_project_id !== currentProjectId) homes.add(task.workflow_project_id);
+    }
+    return [...homes].sort().join('\n');
+  }, [boardTasks, currentProjectId]);
+  useEffect(() => {
+    void useWorkflowStore.getState().loadHomeSummaries(foreignHomes ? foreignHomes.split('\n') : []);
+  }, [foreignHomes]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 

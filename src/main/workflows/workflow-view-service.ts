@@ -2,6 +2,7 @@ import type {
   Swimlane,
   Task,
   Workflow,
+  WorkflowBoardTask,
   WorkflowCanvasPosition,
   WorkflowDetail,
   WorkflowDraft,
@@ -13,7 +14,7 @@ import type {
   WorkflowViewLink,
   WorkflowViewTask,
 } from '../../shared/types';
-import { routeCandidates, routeColumns, routeFromColumns } from '../../shared/workflow-route';
+import { nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -23,6 +24,7 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { isHumanGate } from './workflow-lock-check';
 import {
   MAX_WORKFLOW_TASKS,
   WorkflowRequestError,
@@ -54,35 +56,8 @@ import {
 // Reading
 // ---------------------------------------------------------------------------
 
-function placeOfTask(task: Task, lanes: Swimlane[]): Exclude<WorkflowTaskPlace, 'planned'> {
-  const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
-  if (task.archived_at || lane?.role === 'done') return 'done';
-  return lane?.role === 'todo' ? 'todo' : 'working';
-}
-
 function plannedSteps(lanes: Swimlane[], planned: WorkflowDraftTask): WorkflowRouteStep[] {
-  const onRoute = new Set(routeColumns(lanes, {
-    route_start_swimlane_id: planned.route_start_swimlane_id,
-    route_last_swimlane_id: planned.route_last_swimlane_id,
-    skipped_swimlane_ids: planned.skipped_swimlane_ids,
-  }).map((lane) => lane.id));
-  return routeCandidates(lanes).map((lane) => step(lane, onRoute.has(lane.id) ? 'ahead' : 'skipped', null));
-}
-
-function createdSteps(lanes: Swimlane[], task: Task, place: Exclude<WorkflowTaskPlace, 'planned'>, finishedAt: Map<string, string>): WorkflowRouteStep[] {
-  const onRoute = new Set(routeColumns(lanes, task).map((lane) => lane.id));
-  const current = lanes.find((lane) => lane.id === task.swimlane_id);
-  return routeCandidates(lanes).map((lane) => {
-    if (place === 'working' && current && lane.id === current.id) return step(lane, 'current', null);
-    if (!onRoute.has(lane.id)) return step(lane, 'skipped', null);
-    if (place === 'done') return step(lane, 'done', finishedAt.get(lane.id) ?? null);
-    if (place === 'working' && current && lane.position < current.position) return step(lane, 'done', finishedAt.get(lane.id) ?? null);
-    return step(lane, 'ahead', null);
-  });
-}
-
-function step(lane: Swimlane, state: WorkflowRouteStep['state'], finishedAt: string | null): WorkflowRouteStep {
-  return { swimlaneId: lane.id, name: lane.name, color: lane.color ?? null, icon: lane.icon ?? null, state, finishedAt };
+  return plannedRouteSteps(lanes, planned);
 }
 
 /** When the task last left each column, from its recorded moves. */
@@ -133,7 +108,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   const tasks = created.map(({ projectId, task }): WorkflowViewTask => {
     projectNames[projectId] ??= projectNameOf(context, projectId);
     const lanes = safeLanes(projectId);
-    const place = placeOfTask(task, lanes);
+    const place = taskPlace(lanes, task);
     return {
       key: task.id,
       projectId,
@@ -143,7 +118,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       displayId: task.display_id,
       place,
       swimlaneId: task.swimlane_id,
-      steps: createdSteps(lanes, task, place, place === 'todo' ? new Map() : leftAtByColumn(projectId, task.id)),
+      steps: routeSteps(lanes, task, place === 'todo' ? new Map() : leftAtByColumn(projectId, task.id)),
       canvasX: task.canvas_x,
       canvasY: task.canvas_y,
     };
@@ -165,27 +140,52 @@ export function listWorkflowSummaries(context: IpcContext, homeProjectId: string
 
 function summarize(context: IpcContext, homeProjectId: string, workflow: Workflow): WorkflowSummary {
   if (workflow.state === 'draft') {
-    return { workflow, taskCount: workflow.draft?.tasks.length ?? 0, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0 };
+    return { workflow, taskCount: workflow.draft?.tasks.length ?? 0, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {} };
   }
+  const created = workflowTasks(context, homeProjectId, workflow.id);
   const places = new Map<string, Exclude<WorkflowTaskPlace, 'planned'>>();
-  for (const { projectId, task } of workflowTasks(context, homeProjectId, workflow.id)) {
-    places.set(task.id, placeOfTask(task, safeLanes(projectId)));
+  const displayIds = new Map<string, number>();
+  for (const { projectId, task } of created) {
+    places.set(task.id, taskPlace(safeLanes(projectId), task));
+    displayIds.set(task.id, task.display_id);
   }
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflow.id);
   let doneCount = 0;
   let inProgressCount = 0;
   let queuedCount = 0;
   let blockedCount = 0;
-  for (const [taskId, place] of places) {
+  const boardTasks: Record<string, WorkflowBoardTask> = {};
+  for (const { projectId, task } of created) {
+    const place = places.get(task.id)!;
+    let waitingFor: string[] = [];
+    let humanGateTargetId: string | null = null;
     if (place === 'done') doneCount += 1;
-    else if (place === 'working') inProgressCount += 1;
-    else {
-      const waiting = links.some((link) => link.blocked_task_id === taskId && places.get(link.blocker_task_id) !== 'done');
-      if (waiting) blockedCount += 1;
+    else if (place === 'working') {
+      inProgressCount += 1;
+      humanGateTargetId = humanGateExit(context, projectId, task, workflow);
+    } else {
+      // A blocker that left every board (deleted) still holds the task, as the engine reads it.
+      waitingFor = links
+        .filter((link) => link.blocked_task_id === task.id && places.get(link.blocker_task_id) !== 'done')
+        .map((link) => {
+          const displayId = displayIds.get(link.blocker_task_id);
+          return displayId ? `#${displayId}` : 'a removed task';
+        });
+      if (waitingFor.length > 0) blockedCount += 1;
       else queuedCount += 1;
     }
+    if (place !== 'done') boardTasks[task.id] = { waitingFor, humanGateTargetId };
   }
-  return { workflow, taskCount: places.size, doneCount, inProgressCount, queuedCount, blockedCount };
+  return { workflow, taskCount: places.size, doneCount, inProgressCount, queuedCount, blockedCount, boardTasks };
+}
+
+/** While the workflow runs: where a person may drag a task out of the human gate it sits in. */
+function humanGateExit(context: IpcContext, projectId: string, task: Task, workflow: Workflow): string | null {
+  if (workflow.state !== 'running') return null;
+  const lanes = safeLanes(projectId);
+  const column = lanes.find((lane) => lane.id === task.swimlane_id);
+  if (!column || !isHumanGate(context, projectId, task, column)) return null;
+  return nextOnRoute(lanes, task, column.id)?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
