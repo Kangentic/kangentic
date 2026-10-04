@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { captureSessionMetrics } from '../../src/main/ipc/handlers/session-metrics';
+import { captureSessionMetrics, captureWorkflowAgentUsage } from '../../src/main/ipc/handlers/session-metrics';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../src/main/db/repositories/usage-history-repository';
 import type { SessionManager } from '../../src/main/pty/session-manager';
@@ -80,6 +80,32 @@ function makeMocks(usageBySessionId: Record<string, SessionUsage> = {}): Mocks {
 
   return { sessionManager, sessionRepo, usageHistoryRepo, updateMetrics, recordSessionUsage, getSessionAgentName, findByAnyId };
 }
+
+describe('captureWorkflowAgentUsage', () => {
+  const session = { id: 'pty-agent-1', startedAt: '2026-10-04T12:00:00.000Z', agentSessionId: 'conv-wf' };
+
+  it('writes the workflow agent\'s spend under its own session id and conversation', () => {
+    const { sessionManager, usageHistoryRepo, recordSessionUsage } = makeMocks({ 'pty-agent-1': makeUsage() });
+    captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+    expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionRecordId: 'pty-agent-1',
+      sessionStartedAt: '2026-10-04T12:00:00.000Z',
+      conversationId: 'conv-wf',
+      cumulativeCostUsd: 0.42,
+      agent: 'claude',
+    }));
+  });
+
+  it('writes nothing with no usage yet, or with no conversation to key its legs by', () => {
+    const noUsage = makeMocks({});
+    captureWorkflowAgentUsage(noUsage.sessionManager, noUsage.usageHistoryRepo, session);
+    expect(noUsage.recordSessionUsage).not.toHaveBeenCalled();
+
+    const noConversation = makeMocks({ 'pty-agent-1': makeUsage() });
+    captureWorkflowAgentUsage(noConversation.sessionManager, noConversation.usageHistoryRepo, { ...session, agentSessionId: null });
+    expect(noConversation.recordSessionUsage).not.toHaveBeenCalled();
+  });
+});
 
 describe('captureSessionMetrics history write', () => {
   beforeEach(() => {

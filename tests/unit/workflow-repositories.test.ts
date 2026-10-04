@@ -202,9 +202,9 @@ describeWithSqlite('workflow tables', () => {
     const { workflows } = freshDatabase();
     const workflow = workflows.create({ title: 'Usage budgets' });
     expect([workflow.agent_name, workflow.agent_session_id]).toEqual([null, null]);
-    workflows.setAgentConversation(workflow.id, { agentName: 'claude', agentSessionId: 'conv-1' });
+    workflows.setAgentConversation(workflow.id, { agentName: 'claude', agentSessionId: 'conv-1', cwd: '/work/project' });
     const recorded = workflows.getById(workflow.id)!;
-    expect([recorded.agent_name, recorded.agent_session_id]).toEqual(['claude', 'conv-1']);
+    expect([recorded.agent_name, recorded.agent_session_id, recorded.agent_cwd]).toEqual(['claude', 'conv-1', '/work/project']);
     // A save the agent built on its last read must still go through.
     expect(recorded.revision).toBe(workflow.revision);
     workflows.setAgentConversation(workflow.id, null);

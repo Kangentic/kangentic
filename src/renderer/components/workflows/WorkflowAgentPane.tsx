@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Info, Loader2, PanelLeftClose, PanelLeftOpen, Play } from 'lucide-react';
+import { Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play } from 'lucide-react';
 import type { Session } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useSessionStore } from '../../stores/session-store';
@@ -131,6 +131,10 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);
+  // The conversation the workflow keeps, which outlives any one session of its agent.
+  const conversationId = useWorkflowStore((state) => (
+    state.summaries.find((summary) => summary.workflow.id === workflowId)?.workflow.agent_session_id ?? null
+  ));
   const collapsed = useWorkflowStore((state) => state.agentPaneCollapsed);
   const setCollapsed = useWorkflowStore((state) => state.setAgentPaneCollapsed);
   const openAgent = useWorkflowStore((state) => state.openAgent);
@@ -223,6 +227,19 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           </button>
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">Workflow agent</span>
+        {/* Task detail's own Conversation control: the transcript viewer, on the
+            conversation the workflow keeps, so it opens with the agent paused too. */}
+        <button
+          type="button"
+          onClick={() => { if (conversationId) useSessionStore.getState().setConversationSessionId(conversationId); }}
+          disabled={!conversationId}
+          className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          title={conversationId ? 'View conversation' : 'No conversation yet'}
+          aria-label="View conversation"
+          data-testid="workflow-agent-conversation"
+        >
+          <MessageSquare size={16} />
+        </button>
         <button
           type="button"
           onClick={() => setCollapsed(true)}

@@ -21,10 +21,17 @@ vi.mock('../../src/main/retrieval/retrieval-client', async () => (
   (await import('./helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
 ));
 
+// A workflow's agent's transcript resolves through its workflow row.
+vi.mock('../../src/main/workflows/workflow-service', () => ({
+  resolveWorkflow: vi.fn(),
+  WorkflowRequestError: class WorkflowRequestError extends Error {},
+}));
+
 // transcript-format is NOT mocked: filterTranscriptView / searchTranscript /
 // renderTranscriptBudgeted are pure and agent-agnostic, so the handler's
 // view/tail/search/budget wiring is exercised against the real implementations.
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { resolveWorkflow } from '../../src/main/workflows/workflow-service';
 
 /**
  * Build a stub adapter for a session_type. Pass `parseTranscript` to simulate
@@ -218,7 +225,42 @@ describe('handleGetTranscript', () => {
     const result = await handleGetTranscript({}, context);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('taskId or sessionId');
+    expect(result.error).toContain('taskId, sessionId, or workflow');
+  });
+
+  describe('a workflow\'s own agent', () => {
+    const baseWorkflow = {
+      id: 'wf-1', title: 'Usage budgets', created_at: '2026-06-01T09:00:00Z',
+      agent_name: 'claude', agent_session_id: 'conv-wf', agent_cwd: '/work/project',
+    };
+
+    it('says so when the agent has no conversation yet', async () => {
+      vi.mocked(resolveWorkflow).mockReturnValue({ ...baseWorkflow, agent_session_id: null } as unknown as ReturnType<typeof resolveWorkflow>);
+      const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('has no conversation yet');
+    });
+
+    it('keeps no raw scrollback for it', async () => {
+      vi.mocked(resolveWorkflow).mockReturnValue(baseWorkflow as unknown as ReturnType<typeof resolveWorkflow>);
+      vi.mocked(agentRegistry.get).mockReturnValue({ sessionType: 'claude_agent' } as unknown as AgentAdapter);
+      const result = await handleGetTranscript({ workflow: 'Usage budgets', format: 'raw' }, createMockContext(createMockDb()));
+      expect(result.message).toContain('No raw terminal scrollback');
+    });
+
+    it('reads its conversation by the id and checkout the workflow recorded', async () => {
+      vi.mocked(resolveWorkflow).mockReturnValue(baseWorkflow as unknown as ReturnType<typeof resolveWorkflow>);
+      vi.mocked(agentRegistry.get).mockReturnValue({ sessionType: 'claude_agent' } as unknown as AgentAdapter);
+      const parseTranscript = vi.fn(async (): Promise<ParsedTranscript> => ({
+        entries: [{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }],
+        sourcePath: '/history/conv-wf.jsonl',
+      }));
+      vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
+      const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
+      expect(result.success).toBe(true);
+      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project');
+      expect(result.message).toContain('plan the budgets');
+    });
   });
 
   it('returns raw transcript by sessionId when format="raw"', async () => {

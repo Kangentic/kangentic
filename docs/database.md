@@ -496,6 +496,7 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | finished_at | TEXT | | NULL |
 | agent_name | TEXT | | NULL |
 | agent_session_id | TEXT | | NULL |
+| agent_cwd | TEXT | | NULL |
 | agent_read_project_ids | TEXT | NOT NULL | '[]' |
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
@@ -509,6 +510,10 @@ Start creates the tasks and clears it. `revision` goes up on every save and edit
 and the id it resumes by. They live here rather than in `sessions`, whose `task_id` is a foreign
 key to tasks, and they change no plan, so writing them leaves `revision` alone. Null until the agent
 first starts, and again after a resume finds no conversation to resume.
+
+`agent_cwd` is the checkout that conversation ran in, rewritten at every start. The agent CLI keeps
+the history under it (Claude keys the file by it), so the conversation viewer and
+`kangentic_get_transcript` read the conversation through it, with no sessions row.
 
 `agent_read_project_ids` is a JSON array of project ids: the other registered projects the workflow
 agent asked to read (`kangentic_request_project_access`). It reads these, and every project its
@@ -1145,7 +1150,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 75. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
 76. **Workflows** (`runWorkflowsMigration`) - the `workflows` and `task_links` tables (see above) and seven nullable task columns: `workflow_id`, `workflow_project_id`, `route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`, `canvas_x`, `canvas_y`, plus `idx_tasks_workflow`. Every existing task reads as an ordinary one. Idempotent: `CREATE ... IF NOT EXISTS` and guarded `ALTER TABLE`s sharing one `table_info` read.
 77. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
-78. **`agent_read_project_ids` on workflows** - `TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE` on the same `table_info` read.
+78. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
 
 ### Key Migrations (Global DB)
 

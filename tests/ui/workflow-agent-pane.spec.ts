@@ -228,6 +228,21 @@ test('the picker\'s row says what the workflow agent is doing', async () => {
   }
 });
 
+test('the pane opens the agent\'s conversation once it has one', async () => {
+  const { browser, page } = await launch();
+  try {
+    await agentSessionId(page);
+    // The summary carries the conversation the workflow now keeps.
+    await page.evaluate(([projectId, workflowId]) => window.__mockFireWorkflowChanged({ projectId, workflowId }), [PROJECT_ID, WORKFLOW_ID]);
+    const button = byTestId(page, 'workflow-agent-conversation');
+    await expect(button).toBeEnabled();
+    await button.click();
+    await expect(byTestId(page, 'conversation-window')).toBeVisible();
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Workflows hides the bottom panel, and the board gets it back', async () => {
   const { browser, page } = await launch();
   try {

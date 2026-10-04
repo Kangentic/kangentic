@@ -15,6 +15,8 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { CommandContext, CommandResponse } from './types';
 import type { SessionRecord } from '../../../shared/types';
+import { resolveWorkflow, WorkflowRequestError } from '../../workflows/workflow-service';
+import { workflowAgentSessionRecord } from '../../workflows/workflow-agent-record';
 
 type TranscriptFormat = 'structured' | 'raw';
 
@@ -102,8 +104,9 @@ export async function handleGetTranscript(
   const sessionIndex =
     typeof params.sessionIndex === 'number' && params.sessionIndex >= 0 ? Math.floor(params.sessionIndex) : 0;
 
-  if (!rawTaskId && !sessionId) {
-    return { success: false, error: 'Provide either taskId or sessionId.' };
+  const workflowSelector = typeof params.workflow === 'string' && params.workflow.trim() ? params.workflow : undefined;
+  if (!rawTaskId && !sessionId && !workflowSelector) {
+    return { success: false, error: 'Provide taskId, sessionId, or workflow.' };
   }
 
   try {
@@ -114,7 +117,24 @@ export async function handleGetTranscript(
     // agree on. This avoids the prior split where structured and raw could
     // disagree about whether a session exists.
     let record: SessionRecord | undefined;
-    if (rawTaskId) {
+    if (workflowSelector && !rawTaskId && !sessionId) {
+      // A workflow's own agent has no sessions row: its conversation is on the
+      // workflow, and no raw scrollback is kept for it.
+      const workflow = resolveWorkflow(context.projectId, workflowSelector);
+      const workflowAdapter = workflow.agent_name ? agentRegistry.get(workflow.agent_name) : undefined;
+      if (!workflow.agent_session_id || !workflow.agent_cwd || !workflowAdapter) {
+        return { success: true, message: `"${workflow.title}"'s agent has no conversation yet.` };
+      }
+      if (format === 'raw') {
+        return { success: true, message: 'No raw terminal scrollback is kept for a workflow\'s agent. Use format="structured".' };
+      }
+      record = workflowAgentSessionRecord({
+        agentSessionId: workflow.agent_session_id,
+        sessionType: workflowAdapter.sessionType,
+        cwd: workflow.agent_cwd,
+        startedAt: workflow.created_at,
+      });
+    } else if (rawTaskId) {
       const taskRepo = new TaskRepository(db);
       const task = resolveTask(taskRepo, rawTaskId);
       if (!task) {
@@ -184,6 +204,8 @@ export async function handleGetTranscript(
     // format === 'raw' - view/tail/search do not apply, but the char budget does.
     return rawTranscriptResponse(db, targetSessionId, charBudget, Boolean(adapter?.parseTranscript));
   } catch (error) {
+    // A workflow that does not resolve says how to find one.
+    if (error instanceof WorkflowRequestError) return { success: false, error: error.message };
     return { success: false, error: `Failed to get transcript: ${error instanceof Error ? error.message : String(error)}` };
   }
 }

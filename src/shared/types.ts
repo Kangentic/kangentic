@@ -4943,6 +4943,8 @@ export interface Workflow {
   agent_name: string | null;
   /** The id that conversation resumes by (`--resume`); null until it first starts. */
   agent_session_id: string | null;
+  /** The checkout that conversation ran in, where the agent CLI keeps its history; null until it first starts. */
+  agent_cwd: string | null;
   /**
    * Registered projects the workflow agent asked to read
    * (`kangentic_request_project_access`), beyond its home project and the projects

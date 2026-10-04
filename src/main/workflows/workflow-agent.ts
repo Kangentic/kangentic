@@ -10,6 +10,8 @@ import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { isActive } from '../../shared/activity-state';
 import { getProjectDb } from '../db/database';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
+import { UsageHistoryRepository } from '../db/repositories/usage-history-repository';
+import { captureWorkflowAgentUsage } from '../ipc/handlers/session-metrics';
 import { agentRegistry } from '../agent/agent-registry';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
@@ -178,6 +180,7 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
   // A paused agent reads the grant when it is resumed, from the workflow row.
   if (!session || session.status !== 'running') return;
   try {
+    captureSpend(context, session);
     await context.sessionManager.suspend(session.id);
     await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
   } catch (error) {
@@ -242,7 +245,20 @@ export function resumeWorkflowAgent(
 export async function pauseWorkflowAgent(context: IpcContext, workflowId: string): Promise<void> {
   const session = findWorkflowAgentSession(context, workflowId);
   if (!session || session.status === 'suspended') return;
+  captureSpend(context, session);
   await context.sessionManager.suspend(session.id);
+}
+
+/**
+ * Write the agent's spend to its home project's ledger (Stats), before a stop
+ * clears its live usage. The 45-second snapshot covers it while it runs.
+ */
+function captureSpend(context: IpcContext, session: Session): void {
+  try {
+    captureWorkflowAgentUsage(context.sessionManager, new UsageHistoryRepository(getProjectDb(session.projectId)), session);
+  } catch {
+    // Best-effort: a project database closing under a quit or a delete.
+  }
 }
 
 /**
@@ -260,6 +276,7 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   const exits: Promise<void>[] = [];
   for (const session of sessions) {
     resumedSessions.delete(session.id);
+    captureSpend(context, session);
     context.sessionManager.kill(session.id);
     exits.push(context.sessionManager.awaitExit(session.id));
     context.sessionManager.remove(session.id);
@@ -401,7 +418,9 @@ async function startWorkflowAgent(
     cols: grid.cols,
     rows: grid.rows,
   });
-  if (!resume) repository.setAgentConversation(workflow.id, { agentName, agentSessionId });
+  // Recorded on every start, so a conversation from before `agent_cwd` existed
+  // gains its checkout on its next resume.
+  repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
   if (resume) resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
   grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
   lastGrid.set(workflow.id, grid);
@@ -466,6 +485,10 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   });
   context.sessionManager.on('exit', (sessionId: string, exitCode: number, intentional?: boolean) => {
     agentActivity.delete(sessionId);
+    // A stop Kangentic made captured the spend first; one the CLI made is
+    // caught here, while its usage is still in the manager.
+    const ended = context.sessionManager.listSessions().find((session) => session.id === sessionId);
+    if (!intentional && ended?.workflowId) captureSpend(context, ended);
     if (intentional) {
       resumedSessions.delete(sessionId);
       return;

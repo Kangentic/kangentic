@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import type { LiveSessionRow, UsageCustomWindow, UsageDayDrill, UsageStatsScope, UsageTimePeriod } from '../../../shared/types';
 import { usageStatsService } from '../../usage-stats/usage-stats-service';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { SessionManager } from '../../pty/session-manager';
 import type { IpcContext } from '../ipc-context';
 
@@ -9,8 +10,11 @@ import type { IpcContext } from '../ipc-context';
  * Snapshot of in-flight (running/queued) sessions for the requested scope,
  * read straight from the live `SessionManager` - the piece of "current
  * usage" the finalized `usage_history` ledger structurally cannot see until
- * a session finalizes. Excludes transient (Command Terminal) sessions: they
- * have no real task/project the dashboard scopes by.
+ * a session finalizes. Excludes Command Terminal sessions: they have no real
+ * task/project the dashboard scopes by, and no ledger row. A workflow's agent
+ * is transient too but counts: it belongs to its home project, and its spend
+ * is written to the ledger under the same id (`captureWorkflowAgentUsage`).
+ * `selectLiveSessionIds` in the renderer applies the same filter.
  */
 function buildLiveSessionRows(sessionManager: SessionManager, scope: UsageStatsScope): LiveSessionRow[] {
   const usageCache = scope.kind === 'project'
@@ -20,7 +24,7 @@ function buildLiveSessionRows(sessionManager: SessionManager, scope: UsageStatsS
   const rows: LiveSessionRow[] = [];
   for (const session of sessionManager.listSessions()) {
     if (session.status !== 'running' && session.status !== 'queued') continue;
-    if (session.transient) continue;
+    if (isCommandTerminalSession(session)) continue;
     if (scope.kind === 'project' && session.projectId !== scope.projectId) continue;
 
     // A just-spawned session may have no usage snapshot yet (status.json

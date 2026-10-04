@@ -4708,9 +4708,16 @@
           commandTerminalBranch: null,
           commandTerminalLabel: null,
           isolatedSwimlaneId: null,
-          agentSessionId: null,
+          agentSessionId: crypto.randomUUID(),
         };
         sessions.push(session);
+        // Main records the conversation on the workflow at every start.
+        var owner = entries.find(function (entry) { return entry.workflow.id === workflowId; });
+        if (owner && !owner.workflow.agent_session_id) {
+          owner.workflow.agent_name = 'claude';
+          owner.workflow.agent_session_id = session.agentSessionId;
+          owner.workflow.agent_cwd = session.cwd;
+        }
         fireMockWorkflowAgentStatus(session);
         return { session: JSON.parse(JSON.stringify(session)), unavailable: null };
       }
@@ -4724,7 +4731,7 @@
             projectId: seed.projectId || null,
             workflow: Object.assign({
               brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
-              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null, agent_read_project_ids: [],
+              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
             }, JSON.parse(JSON.stringify(row))),
           });
         });
@@ -4961,7 +4968,7 @@
             brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
             source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
             color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null,
-            agent_name: null, agent_session_id: null, agent_read_project_ids: [],
+            agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
           };
           entries.unshift({ projectId: projectId, workflow: workflow });
           emit(projectId, workflow.id, false);

@@ -1874,7 +1874,9 @@ function runWorkflowsMigration(db: Database.Database): void {
   const workflowColumnNames = new Set(
     (db.pragma('table_info(workflows)') as Array<{ name: string }>).map((column) => column.name),
   );
-  for (const columnName of ['agent_name', 'agent_session_id']) {
+  // `agent_cwd` is the checkout the conversation ran in, which is where the
+  // agent CLI keeps its history (Claude keys the file by it).
+  for (const columnName of ['agent_name', 'agent_session_id', 'agent_cwd']) {
     if (!workflowColumnNames.has(columnName)) {
       db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} TEXT DEFAULT NULL`);
     }

@@ -8,7 +8,8 @@ import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
 import { markRecordSuspended, markRecordExited } from './transition-engine/session-lifecycle';
-import { captureSessionMetrics } from './ipc/handlers/session-metrics';
+import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers/session-metrics';
+import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
@@ -178,6 +179,12 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
           const usageHistoryRepo = new UsageHistoryRepository(db);
           const taskRepo = new TaskRepository(db);
           for (const session of sessions) {
+            // A workflow's agent has no sessions row to suspend; its spend has
+            // its own synchronous writer, and its conversation is on the workflow.
+            if (isWorkflowAgentSession(session)) {
+              captureWorkflowAgentUsage(sessionManager, usageHistoryRepo, session);
+              continue;
+            }
             // The session's own record with no fallback (see
             // resolveOwnSessionRecord). A Command Terminal has no record and
             // is skipped.

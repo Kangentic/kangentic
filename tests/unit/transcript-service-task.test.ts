@@ -18,7 +18,7 @@ import type { SessionRecord } from '../../src/shared/types';
  */
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { getBySessionType: vi.fn() },
+  agentRegistry: { getBySessionType: vi.fn(), get: vi.fn() },
 }));
 
 import { resolveTaskTranscript, setIndexedChunkReaderForTests } from '../../src/main/agent/transcript-service';
@@ -55,6 +55,8 @@ interface FakeDbOptions {
   swimlaneNames?: Record<string, string>;
   /** Indexed chunks keyed by doc_id (the Kangentic session id), for the
    *  index-fallback path when a session's live parse comes back empty. */
+  /** Workflow rows keyed by their agent's conversation id, for a workflow agent's transcript. */
+  workflowsByConversation?: Record<string, { title: string; agent_name: string; agent_session_id: string; agent_cwd: string; created_at: string }>;
   chunkRowsByDocId?: Record<string, Array<{ id: number; role: string; text: string; turn_uuid_start: string | null; ts_start: number | null }>>;
 }
 
@@ -66,6 +68,9 @@ function makeFakeDb(options: FakeDbOptions): Database.Database {
           if (sql.includes('FROM sessions WHERE id = ? OR agent_session_id = ?')) {
             const id = args[0] as string;
             return options.sessionsById[id];
+          }
+          if (sql.includes('FROM workflows WHERE agent_session_id = ?')) {
+            return options.workflowsByConversation?.[args[0] as string];
           }
           if (sql.includes('SELECT title FROM tasks WHERE id = ?')) {
             return options.taskTitle ? { title: options.taskTitle } : undefined;
@@ -288,6 +293,31 @@ describe('resolveTaskTranscript', () => {
     expect(result!.entries.some((entry) => entry.kind === 'system')).toBe(false);
     expect(result!.sessions).toHaveLength(1);
     expect(result!.sessions[0].sessionId).toBe('session-orphan');
+  });
+
+  it('reads a workflow agent\'s conversation from its workflow, which has no sessions row', async () => {
+    const db = makeFakeDb({
+      sessionsById: {},
+      sessionsByTask: {},
+      workflowsByConversation: {
+        'conv-wf': { title: 'Usage budgets', agent_name: 'claude', agent_session_id: 'conv-wf', agent_cwd: '/work/project', created_at: '2026-06-01T09:00:00Z' },
+      },
+    });
+    const parseTranscript = vi.fn(async () => ({
+      entries: [{ kind: 'user' as const, uuid: 'w1', ts: 1, text: 'plan the budgets' }],
+      sourcePath: '/history/conv-wf.jsonl',
+    }));
+    vi.mocked(agentRegistry.get).mockReturnValue({ sessionType: 'claude_agent' } as unknown as ReturnType<typeof agentRegistry.get>);
+    getBySessionType.mockReturnValue({ displayName: 'Claude Code', parseTranscript } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'conv-wf');
+
+    expect(result).not.toBeNull();
+    // The conversation lives where it ran: by its id in the checkout the workflow recorded.
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project');
+    expect(result!.entries).toEqual([{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }]);
+    expect(result!.taskTitle).toBe('Workflow agent: Usage budgets');
+    expect(result!.sessions).toHaveLength(1);
   });
 
   it('preserves an assistant turn\'s per-turn token usage through the stitch (so burn-rate analysis can read it off the unified conversation)', async () => {

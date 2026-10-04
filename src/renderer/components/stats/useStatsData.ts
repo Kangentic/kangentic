@@ -8,6 +8,7 @@ import type {
   UsageStatsScopeKind,
 } from '../../../shared/types';
 import { isLiveSessionStatus } from '../../../shared/session-liveness';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { useUsageDashboardStore, type UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { agentShortName } from '../../utils/agent-display-name';
 
@@ -367,14 +368,15 @@ export function resolveAvgActiveMs(activeMs: number, activeSessionsCovered: numb
  * set also has to match what main puts in `liveSessions`, since that is what
  * `liveLedgerBaseline` is measured over.
  *
- * Transient sessions are excluded for that second reason, not the first.
- * `buildLiveSessionRows` in `ipc/handlers/usage-stats.ts` skips them, so main
- * never measures a baseline for one - while `getUsageCache` does NOT filter
- * them, so a running Command Terminal does sit in `sessionUsage`. Including it
- * here would add cost the ledger has no row for and the baseline cannot
- * subtract, putting the Cost tile back above the by-model / by-agent /
+ * Command Terminal sessions are excluded for that second reason, not the
+ * first. `buildLiveSessionRows` in `ipc/handlers/usage-stats.ts` skips them, so
+ * main never measures a baseline for one - while `getUsageCache` does NOT
+ * filter them, so a running Command Terminal does sit in `sessionUsage`.
+ * Including it here would add cost the ledger has no row for and the baseline
+ * cannot subtract, putting the Cost tile back above the by-model / by-agent /
  * by-effort breakdowns, which is the discrepancy this whole path exists to
- * close.
+ * close. A workflow's agent is transient too but kept, on both sides: its
+ * spend reaches the ledger under its session id (`captureWorkflowAgentUsage`).
  */
 export function selectLiveSessionIds(
   sessions: ReadonlyArray<{
@@ -382,6 +384,7 @@ export function selectLiveSessionIds(
     projectId: string;
     status: SessionStatus;
     transient?: boolean;
+    workflowId?: string | null;
   }>,
   options: { includeLive: boolean; scopeKind: UsageStatsScopeKind; effectiveProjectId: string | null },
 ): Set<string> {
@@ -390,7 +393,7 @@ export function selectLiveSessionIds(
   return new Set(
     sessions
       .filter((session) => isLiveSessionStatus(session.status))
-      .filter((session) => session.transient !== true)
+      .filter((session) => !isCommandTerminalSession(session))
       .filter((session) => !scopedToProject || session.projectId === options.effectiveProjectId)
       .map((session) => session.id),
   );

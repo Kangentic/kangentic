@@ -27,6 +27,7 @@ interface WorkflowRow {
   finished_at: string | null;
   agent_name: string | null;
   agent_session_id: string | null;
+  agent_cwd?: string | null;
   agent_read_project_ids?: string | null;
 }
 
@@ -155,9 +156,9 @@ export class WorkflowRepository {
    * The agent conversation the workflow's agent resumes by. Changes no plan, so
    * the revision stays; null forgets it, so the next open starts a new one.
    */
-  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string } | null): void {
-    this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ? WHERE id = ?')
-      .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, id);
+  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string; cwd: string } | null): void {
+    this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ?, agent_cwd = ? WHERE id = ?')
+      .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, conversation?.cwd ?? null, id);
   }
 
   /**
@@ -224,6 +225,7 @@ function mapRow(row: WorkflowRow): Workflow {
     finished_at: row.finished_at,
     agent_name: row.agent_name ?? null,
     agent_session_id: row.agent_session_id ?? null,
+    agent_cwd: row.agent_cwd ?? null,
     agent_read_project_ids: parseProjectIds(row.agent_read_project_ids),
   };
 }

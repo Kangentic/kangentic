@@ -243,6 +243,19 @@ describe('selectLiveSessionIds', () => {
     expect([...ids]).toEqual(['agent-a']);
   });
 
+  it('keeps a workflow\'s agent, which is transient but has its own ledger rows', () => {
+    // `captureWorkflowAgentUsage` writes its spend under its session id, and
+    // `buildLiveSessionRows` keeps it, so main measures its baseline.
+    const ids = selectLiveSessionIds(
+      [
+        { id: 'workflow-agent', projectId: 'p1', status: 'running' as SessionStatus, transient: true, workflowId: 'wf-1' },
+        makeSession('command-terminal-a', 'p1', 'running', true),
+      ],
+      { includeLive: true, scopeKind: 'all', effectiveProjectId: null },
+    );
+    expect([...ids]).toEqual(['workflow-agent']);
+  });
+
   it('keeps a live session that carries no transient flag at all', () => {
     // The flag is optional on the DTO, so an absent one must read as "not
     // transient" rather than excluding every task agent from the overlay.

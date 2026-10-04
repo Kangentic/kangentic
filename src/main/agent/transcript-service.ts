@@ -12,6 +12,7 @@
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
+import { workflowAgentSessionRecord } from '../workflows/workflow-agent-record';
 import { RetrievalStore } from '../retrieval/retrieval-store';
 import type { StoredChunk } from '../retrieval/types';
 import { touchBounded, heldBytes } from './shared/bounded-lru';
@@ -104,6 +105,35 @@ async function entriesFromIndex(db: Database.Database, docId: string): Promise<T
 }
 
 /**
+ * The record a transcript resolves from, by any id: the session row, or, for a
+ * workflow's own agent, which has no sessions row, one assembled from its
+ * workflow when the id is that workflow's conversation id
+ * (`workflowAgentSessionRecord`). `title` names the workflow.
+ */
+function findTranscriptRecord(db: Database.Database, anyId: string): { record: SessionRecord; title: string | null } | null {
+  const record = new SessionRepository(db).findByAnyId(anyId);
+  if (record) return { record, title: null };
+  let row: { title: string; agent_name: string | null; agent_session_id: string; agent_cwd: string | null; created_at: string } | undefined;
+  try {
+    row = db.prepare('SELECT title, agent_name, agent_session_id, agent_cwd, created_at FROM workflows WHERE agent_session_id = ?')
+      .get(anyId) as typeof row;
+  } catch {
+    return null;
+  }
+  const adapter = row?.agent_name ? agentRegistry.get(row.agent_name) : undefined;
+  if (!row || !adapter || !row.agent_cwd) return null;
+  return {
+    title: `Workflow agent: ${row.title}`,
+    record: workflowAgentSessionRecord({
+      agentSessionId: row.agent_session_id,
+      sessionType: adapter.sessionType,
+      cwd: row.agent_cwd,
+      startedAt: row.created_at,
+    }),
+  };
+}
+
+/**
  * Resolve a session's structured conversation for the viewer. Live-parse
  * primary (freshest, full block structure), indexed-chunk fallback when the
  * native history has been pruned, `source: 'none'` when neither is available.
@@ -116,14 +146,14 @@ export async function resolveSessionTranscript(
   db: Database.Database,
   sessionId: string,
 ): Promise<ResolvedTranscript | null> {
-  const sessionRepo = new SessionRepository(db);
-  const record = sessionRepo.findByAnyId(sessionId);
-  if (!record) return null;
+  const found = findTranscriptRecord(db, sessionId);
+  if (!found) return null;
+  const { record } = found;
 
   const taskRow = db.prepare('SELECT title FROM tasks WHERE id = ?').get(record.task_id) as
     | { title: string }
     | undefined;
-  const taskTitle = taskRow?.title ?? '(unknown task)';
+  const taskTitle = found.title ?? taskRow?.title ?? '(unknown task)';
   const adapter = agentRegistry.getBySessionType(record.session_type);
   const agentName = adapter?.displayName ?? record.session_type;
 
@@ -436,7 +466,7 @@ export async function resolveTaskTranscript(
   anchorSessionId: string,
 ): Promise<ResolvedTaskTranscript | null> {
   const sessionRepo = new SessionRepository(db);
-  const anchor = sessionRepo.findByAnyId(anchorSessionId);
+  const anchor = findTranscriptRecord(db, anchorSessionId)?.record ?? null;
   if (!anchor) return null;
 
   const sessions = anchor.task_id

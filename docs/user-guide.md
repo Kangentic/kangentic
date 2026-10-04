@@ -553,7 +553,8 @@ task, links, routes, Remove) wait until its turn ends; moving cards does not. Th
 header pauses and resumes it, and the conversation is kept across a restart. It also reads the
 other projects its workflow's tasks are on, and when it needs another of your projects to plan, it
 asks for it and gets it without a prompt: it restarts on the same conversation with that project
-readable and carries on. Drag the pane's right
+readable and carries on. The speech-bubble button in its header opens its conversation in the
+transcript viewer, paused or not, and its spend counts in Stats. Drag the pane's right
 edge to widen it; the width is kept. Opening Workflows folds the project sidebar for room, and
 leaving restores it as you had it. It keeps running when you leave the view, and ends when its
 workflow is deleted or finishes. Only an agent Kangentic can
