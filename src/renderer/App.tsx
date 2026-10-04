@@ -1153,9 +1153,10 @@ export function App() {
 }
 
 // Dev-only: re-sync all IPC-backed Zustand stores after Vite HMR updates.
-// Most store modules revert to defaults when HMR replaces them (e.g. config
-// resets to DEFAULT_CONFIG); re-fetching from the main process restores them.
-// The board/backlog/project stores are instance-pinned across HMR (Pattern E in
+// A store that is not instance-pinned reverts to its defaults when HMR replaces
+// its module, and re-fetching from the main process restores it. The stores in
+// PATTERN_E_STORES (tests/unit/hmr-resync.test.ts), board, backlog, project,
+// session and config among them, are instance-pinned (Pattern E in
 // .claude/rules/hmr-patterns.md), so for them this re-sync RECONCILES the pinned
 // instance with main-process truth rather than restoring it from scratch. Keep
 // the calls either way; the unit test below enforces them.
@@ -1214,6 +1215,10 @@ if (import.meta.hot) {
     useConfigStore.getState().loadConfig();
     useConfigStore.getState().loadAgentList();
     useConfigStore.getState().detectGit();
+    // The version never changes in a session, but the store holding it can be new: an
+    // update that finds no pinned instance builds one with no version, and the status
+    // bar drops its version pill.
+    useConfigStore.getState().loadAppVersion();
     useBoardStore.getState().loadBoard();
     useBoardStore.getState().loadBoardProfiles();
     useBoardStore.getState().loadAutomations();

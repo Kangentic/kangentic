@@ -21,7 +21,6 @@ const APP_TSX = path.resolve(__dirname, '../../src/renderer/App.tsx');
 // the current project's data.
 const EXCLUDED_METHODS = new Set([
   'loadArchivedTasks', // only loaded when archive panel is opened
-  'loadAppVersion',    // static, doesn't change during a session
   'loadProjectOverrides', // called internally by loadConfig
   'loadShortcuts',     // called internally by loadBoard
 ]);
@@ -277,7 +276,7 @@ describe('HMR store re-sync', () => {
   // intrinsic cycle (-> terminal-arrival-focus -> dictation-target -> back) and so
   // pins WITHOUT self-accepting. See .claude/rules/hmr-patterns.md, and
   // tests/unit/renderer-store-import-cycles.test.ts for the cycle guard itself.
-  it('instance-pinned stores read, write, and self-accept across HMR (Pattern E)', () => {
+  it('instance-pinned stores read, write, self-accept, and release their listeners in one dispose (Pattern E)', () => {
     const PATTERN_E_STORES: ReadonlyArray<{ file: string; key: string; selfAccepts: boolean }> = [
       { file: 'board-store.ts', key: 'boardStore', selfAccepts: true },
       { file: 'backlog-store.ts', key: 'backlogStore', selfAccepts: true },
@@ -292,10 +291,40 @@ describe('HMR store re-sync', () => {
       { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true },
       { file: 'knowledge-graph-store.ts', key: 'knowledgeGraphStore', selfAccepts: true },
       { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true },
+      { file: 'config-store.ts', key: 'configStore', selfAccepts: true },
     ];
+    // Blank out comments but keep every newline, so a line number reported below
+    // still matches the file and prose that mentions `hot.dispose` is never counted.
+    const stripComments = (rawSource: string): string => rawSource
+      .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^:])\/\/[^\n]*/g, (match, prefix: string) => prefix + ' '.repeat(match.length - prefix.length));
+
+    // Return the full text of every `import.meta.hot.dispose(...)` (or `hot?.dispose`)
+    // call, from the opening paren to its matching close. It counts parens instead of
+    // braces, so a nested `if (...) { ... }` in the callback cannot cut the body short.
+    const extractDisposeCallbacks = (codeOnlySource: string): string[] => {
+      const registrationPattern = /import\.meta\.hot\??\.dispose\s*\(/g;
+      const callbacks: string[] = [];
+      let registration: RegExpExecArray | null;
+      while ((registration = registrationPattern.exec(codeOnlySource)) !== null) {
+        const callbackStart = registration.index + registration[0].length;
+        let cursor = callbackStart;
+        let depth = 1;
+        while (cursor < codeOnlySource.length && depth > 0) {
+          const character = codeOnlySource[cursor];
+          if (character === '(') depth += 1;
+          else if (character === ')') depth -= 1;
+          cursor += 1;
+        }
+        callbacks.push(codeOnlySource.slice(callbackStart, cursor));
+      }
+      return callbacks;
+    };
+
     const violations: string[] = [];
     for (const { file: fileName, key, selfAccepts: mustSelfAccept } of PATTERN_E_STORES) {
       const source = fs.readFileSync(path.join(STORES_DIR, fileName), 'utf-8');
+      const codeOnlySource = stripComments(source);
       const readsPreserved = new RegExp(`import\\.meta\\.hot\\?\\.data\\?\\.${key}\\b`).test(source);
       const writesPreserved = new RegExp(`import\\.meta\\.hot\\.data\\.${key}\\s*=`).test(source);
       const selfAccepts = /import\.meta\.hot\.accept\s*\(/.test(source);
@@ -304,6 +333,50 @@ describe('HMR store re-sync', () => {
           `${fileName} (key: ${key}) -> reads:${readsPreserved} writes:${writesPreserved} `
           + `accepts:${selfAccepts} (expected accepts:${mustSelfAccept})`,
         );
+      }
+      // A pinned instance outlives the module that subscribed to it, so a bare
+      // module-scope `useXStore.subscribe(...)` gains one more listener on every
+      // update. Capture the unsubscriber and release it in import.meta.hot.dispose.
+      // This regex matches only the unassigned column-0 form. The release check
+      // below covers an assigned one.
+      const bareSubscribe = /^use\w+Store\.subscribe\(/m.exec(source);
+      if (bareSubscribe) {
+        const lineNumber = source.slice(0, bareSubscribe.index).split('\n').length;
+        violations.push(
+          `${fileName}:${lineNumber} -> module-scope subscribe on a pinned store is never released; `
+          + 'assign its unsubscriber and call it in import.meta.hot.dispose',
+        );
+      }
+
+      // Vite keeps ONE dispose callback per module. A later `hot.dispose` call replaces
+      // the earlier one in a map, so the first callback never runs. Two registrations
+      // in a pinned store therefore switch off whichever teardown was registered first,
+      // and its listener stacks up on every update. Keep every stash and teardown in a
+      // single callback. Scoped to the pinned stores on purpose.
+      const disposeCallbacks = extractDisposeCallbacks(codeOnlySource);
+      if (disposeCallbacks.length > 1) {
+        violations.push(
+          `${fileName} -> ${disposeCallbacks.length} import.meta.hot.dispose registrations; `
+          + 'Vite keeps only the last one per module, so merge them into one callback',
+        );
+      }
+
+      // Capturing an unsubscriber is not enough. A `const unsubscribeX = useXStore.subscribe(...)`
+      // that no dispose ever calls still stacks one listener per update, exactly like
+      // the bare form. Every captured name must be called inside the dispose callback.
+      const disposeText = disposeCallbacks.join('\n');
+      const capturedSubscribePattern = /^(?:const|let)\s+(\w+)\s*=\s*use\w+Store\.subscribe\(/gm;
+      let capturedSubscribe: RegExpExecArray | null;
+      while ((capturedSubscribe = capturedSubscribePattern.exec(codeOnlySource)) !== null) {
+        const unsubscriberName = capturedSubscribe[1];
+        const isReleased = new RegExp(`\\b${unsubscriberName}\\s*(?:\\?\\.)?\\(`).test(disposeText);
+        if (!isReleased) {
+          const lineNumber = codeOnlySource.slice(0, capturedSubscribe.index).split('\n').length;
+          violations.push(
+            `${fileName}:${lineNumber} -> ${unsubscriberName}() is never called in import.meta.hot.dispose; `
+            + 'a captured unsubscriber that is not released still stacks a listener per update',
+          );
+        }
       }
     }
 
@@ -342,6 +415,8 @@ describe('HMR store re-sync', () => {
       `Pattern E stores must pin their Zustand instance across HMR.\n` +
       `Each must read import.meta.hot?.data?.<key>, assign import.meta.hot.data.<key> = useXStore,\n` +
       `and call import.meta.hot.accept(() => import.meta.hot.invalidate()).\n` +
+      `Register at most one import.meta.hot.dispose per store, and call every captured subscribe\n` +
+      `unsubscriber in it.\n` +
       `See .claude/rules/hmr-patterns.md (Pattern E):\n` +
       violations.map((v) => `  - ${v}`).join('\n'),
     ).toHaveLength(0);
