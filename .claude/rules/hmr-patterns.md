@@ -30,6 +30,13 @@ front rather than reaching for ad-hoc fixes later.
    the mounted view stays subscribed to the first. Pattern E: pin the instance via
    `import.meta.hot.data` and self-accept with `accept(() => invalidate())`. Pair with Pattern B.
 
+   A pinned instance outlives the module that built it. So a module-scope
+   `useXStore.subscribe(...)` in a pinned store gains one more listener on every update unless the
+   module keeps its unsubscriber and calls it in `import.meta.hot.dispose`, as `config-store.ts`
+   does. Register that dispose ONCE per module. Vite keeps a single dispose callback per module,
+   and a later `hot.dispose` call silently replaces an earlier one, so a second registration
+   switches the first one off.
+
    **The self-accept is unsafe inside an import CYCLE.** Vite answers an `invalidate()` raised
    from a module that participates in a cycle by abandoning the hot update:
 
@@ -69,7 +76,8 @@ already collapse to no-ops).
   declaration under the watched dirs has `import.meta.hot.dispose(` or a `// hmr-safe:` opt-out
   (A); every `<DndContext>` has `key={hmrGeneration}` (C); and each instance-pinned store
   (the test's `PATTERN_E_STORES` array - extend it whenever a store adopts the pin) reads and
-  writes its instance in `import.meta.hot.data` and self-accepts (E). Runs in CI via
+  writes its instance in `import.meta.hot.data`, self-accepts, registers at most one
+  `dispose`, and calls every module-scope `subscribe` unsubscriber inside it (E). Runs in CI via
   `npm run test:unit`.
 - **Test (cycles):** `tests/unit/renderer-store-import-cycles.test.ts` fails on any value-import
   cycle under `src/renderer/stores/**`, naming the loop. This is the mechanical guard for the
@@ -101,9 +109,16 @@ editing `AppLayout.tsx` did NOT remount (the memoized frame skipped the render e
 Renderer code under `src/renderer/`. Main-process state is not subject to HMR (esbuild does not
 Fast-Refresh the main process).
 
-`config-store.ts` shares Pattern E's shape (its only runtime export is the non-component hook) and
-is a candidate for the same instance pinning; it currently relies on Pattern B re-sync. Extend the
-Pattern E test's store list when pinning it.
+`config-store.ts` IS pinned and self-accepts. It sits in no cycle: its only store imports are
+`announcements-store` and `project-cache`, and neither imports it back. Before the pin, any update
+that re-evaluated it (an edit to it or to anything it imports) built a second store whose
+`appVersion` was never loaded. The status bar lost its version pill, and the devtools mirror plus
+the pinned stores that import it kept reading the first instance. It still writes its Pattern A
+stashes, which the pin makes redundant, since a pinned store never re-runs the initializer that
+reads them. `loadAppVersion` is in the `vite:afterUpdate` re-sync as a backstop for an update
+that finds no pinned instance and builds a store with no version, and `hmr-resync.test.ts`
+requires the call. Its one `dispose` releases the two
+module-scope `subscribe` calls and the `matchMedia` listener (see the decision tree's step 2).
 
 `session-store.ts` IS pinned, and is the one store that pins without self-accepting (see the
 decision tree's step 2). It also keeps its Pattern A dispose stash: the pin means the initializer

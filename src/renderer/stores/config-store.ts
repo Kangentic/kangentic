@@ -16,21 +16,14 @@ let lastSettingsTabHmr: string | null = import.meta.hot?.data?.lastSettingsTab ?
 /** Onboarding steps ticked off this session, preserved across HMR (Pattern A).
  *
  *  This state is session-only by design, which means Pattern B cannot rescue it: there is no
- *  main-process truth for `loadConfig()` to re-fetch. So a Fast Refresh of this module (or of
- *  `shared/types.ts`, which it imports) rebuilt the store with an empty map and silently
- *  un-ticked completed steps - including `taskDetailOpened`, step 5's ONLY signal. A dogfooder
- *  editing this very feature would watch the checklist walk backwards. */
+ *  main-process truth for `loadConfig()` to re-fetch. Before the store was pinned (Pattern E,
+ *  below), a Fast Refresh of this module or of anything it imports rebuilt the store with an
+ *  empty map and silently un-ticked completed steps - including `taskDetailOpened`, step 5's
+ *  ONLY signal. The pin now keeps the instance, and this state with it. Both stashes are still
+ *  written in the one dispose at the bottom of this file, but the pin makes them redundant,
+ *  because a pinned store never re-runs the initializer that reads them back. */
 // @ts-expect-error -- Vite handles import.meta.hot
 let onboardingStepsCompletedHmr: Record<string, OnboardingStepKey[]> = import.meta.hot?.data?.onboardingStepsCompleted ?? {};
-
-// @ts-expect-error -- Vite handles import.meta.hot
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.lastSettingsTab = lastSettingsTabHmr;
-    data.onboardingStepsCompleted = onboardingStepsCompletedHmr;
-  });
-}
 
 /** The OS appearance query. In Electron `prefers-color-scheme` follows the OS because
  *  `nativeTheme.themeSource` is `'system'`, so no IPC is needed; the UI tier's Chromium
@@ -101,7 +94,7 @@ interface ConfigStore {
   flushMonitorWorkspace: (workspace: SerializedWorkspace) => void;
   /** Internal: whether workspaceByProject has been seeded from disk yet. After the first
    *  config fetch the renderer owns the layout map, so later fetches preserve it instead of
-   *  letting a stale disk read clobber an in-flight save. Resets with the store on HMR. */
+   *  letting a stale disk read clobber an in-flight save. Survives HMR with the pinned store. */
   workspaceSeeded: boolean;
 
   // -- App version --
@@ -208,14 +201,16 @@ async function refreshConfigs(): Promise<{ config: AppConfig; globalConfig: AppC
   return { config, globalConfig };
 }
 
-export const useConfigStore = create<ConfigStore>((set, get) => {
+const createConfigStore = () => create<ConfigStore>((set, get) => {
   /** Overlay freshly-fetched configs, preserving the renderer-authoritative workspaceByProject
    *  after the first (seeding) fetch so a stale disk read can never revert the live layout. The
    *  renderer is the SOLE writer of workspaceByProject (saveWorkspaceForProject updates it
    *  optimistically + persists async, the quit flush persists it synchronously), so once seeded
    *  from disk its in-memory map is always at least as fresh as disk for every project. The
-   *  `workspaceSeeded` flag lives in store state so it resets with the store on HMR, where the
-   *  post-HMR loadConfig (Pattern B) re-seeds from disk. */
+   *  `workspaceSeeded` flag lives in store state, so it survives HMR with the pinned instance:
+   *  the post-HMR loadConfig (Pattern B) keeps the live layout rather than re-seeding from disk,
+   *  which is correct for the same reason. A fresh store (cold boot, or an update with no pinned
+   *  instance to inherit) starts unseeded and seeds from disk. */
   const withSeededWorkspace = (
     fetched: { config: AppConfig; globalConfig: AppConfig },
   ): { config: AppConfig; globalConfig: AppConfig; workspaceSeeded?: boolean } => {
@@ -276,13 +271,9 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
   };
 
   /** The tail of the project-override write chain; see `updateProjectOverride`. */
-  // hmr-safe: this lives in the store factory's closure, not module scope, so the Pattern A
-  // scan does not reach it and a Fast Refresh of this module replaces it with a fresh
-  // resolved chain. That is acceptable rather than overlooked: the chain only ORDERS writes,
-  // and a write already in flight has reached main before the reload, so nothing is lost on
-  // disk. The reload's own loadConfig() re-reads it. Do not pin this without pinning the
-  // store instance too (Pattern E), or the chain and the store it writes into come from
-  // different generations.
+  // hmr-safe: this lives in the store factory's closure, not module scope, so it rides the
+  // pinned instance (Pattern E). A Fast Refresh keeps the instance and the chain with it, so
+  // the chain and the store it writes into always come from the same generation.
   let projectOverrideWrites: Promise<void> = Promise.resolve();
 
   return {
@@ -661,6 +652,30 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
   };
 });
 
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module exports no React component, so it is not a React Fast Refresh
+// boundary. Unpinned, a re-eval (an edit here or to anything
+// this imports) built a second store whose `appVersion` was never loaded, so the
+// status bar dropped its version pill, while the devtools mirror and the pinned
+// stores that import this one kept reading the first.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedConfigStore: ReturnType<typeof createConfigStore> | undefined = import.meta.hot?.data?.configStore;
+
+export const useConfigStore = preservedConfigStore ?? createConfigStore();
+
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.configStore = useConfigStore;
+  // Hand every update on to this module's importers, so each re-evaluates against
+  // the pinned instance. Safe only because this module is in no import cycle (Vite
+  // turns an invalidate() from inside one into a full page reload). An edit to an
+  // action body here still runs the pinned instance's original closure until a full
+  // reload. Prod is unaffected: import.meta.hot is undefined there.
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
+}
+
 /** The committed theme as the app resolves it: the hand-picked one, or with
  *  `themeFollowsSystem` on, the pair member for the OS's current side. */
 export function resolvedTheme(state: Pick<ConfigStore, 'config' | 'systemPrefersDark'>): ThemeMode {
@@ -675,21 +690,16 @@ export function shownTheme(state: Pick<ConfigStore, 'config' | 'themePreview' | 
 
 // Keep the OS reading live. A theme following the system repaints through the
 // subscription below the moment the OS flips, with no restart and no config write.
-if (systemAppearance) {
-  const onAppearanceChange = (event: MediaQueryListEvent) => useConfigStore.setState({ systemPrefersDark: event.matches });
-  systemAppearance.addEventListener('change', onAppearanceChange);
-  // The callback body sits on its own line so the suppression covers only the
-  // `import.meta.hot` access, as the dispose block at the top of the file does.
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot?.dispose(() => {
-    systemAppearance.removeEventListener('change', onAppearanceChange);
-  });
-}
+// Removed by the dispose at the bottom of this file.
+const onAppearanceChange = (event: MediaQueryListEvent) => useConfigStore.setState({ systemPrefersDark: event.matches });
+systemAppearance?.addEventListener('change', onAppearanceChange);
 
 // Sync the shown theme -> <html> class whenever it changes, and the RESOLVED committed
 // theme -> localStorage, which seeds the FOUC-prevention script on the next launch and
 // so must never see a preview. Runs outside React render so the DOM is always in sync.
-useConfigStore.subscribe((state, prevState) => {
+// hmr-safe: the pinned instance outlives this module, so the dispose below releases this
+// listener and the next evaluation subscribes its own; otherwise they would stack per update.
+const unsubscribeThemeSync = useConfigStore.subscribe((state, prevState) => {
   const resolved = resolvedTheme(state);
   if (resolved !== resolvedTheme(prevState)) {
     try { localStorage.setItem('kng-resolved-theme', resolved); } catch { /* localStorage may be unavailable */ }
@@ -713,8 +723,23 @@ useConfigStore.subscribe((state, prevState) => {
 });
 
 // Toggle CSS keyframe animations via .no-motion class on <html>.
-useConfigStore.subscribe((state, prevState) => {
+// hmr-safe: released by the dispose below, for the same reason as the theme sync.
+const unsubscribeMotionSync = useConfigStore.subscribe((state, prevState) => {
   if (state.config.animationsEnabled !== prevState.config.animationsEnabled) {
     document.documentElement.classList.toggle('no-motion', !state.config.animationsEnabled);
   }
 });
+
+// Vite keeps one dispose callback per module, and a later `hot.dispose` call replaces an
+// earlier one. So every stash and teardown in this module lives in this one callback.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.lastSettingsTab = lastSettingsTabHmr;
+    data.onboardingStepsCompleted = onboardingStepsCompletedHmr;
+    systemAppearance?.removeEventListener('change', onAppearanceChange);
+    unsubscribeThemeSync();
+    unsubscribeMotionSync();
+  });
+}
