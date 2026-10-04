@@ -29,6 +29,9 @@ export const BOARD_TOOL_READ_NAMES = [
   'get_session_files',
   'get_session_events',
   'get_activity_intervals',
+  // Workflows: the project's workflows and one workflow's tasks, routes and links.
+  'list_workflows',
+  'get_workflow',
 ] as const;
 
 export const BOARD_TOOL_WRITE_NAMES = [
@@ -45,6 +48,9 @@ export const BOARD_TOOL_WRITE_NAMES = [
   'promote_backlog',
   'update_backlog_item',
   'delete_backlog_item',
+  // Workflows: stop every task of a running workflow at once, and start them again.
+  'pause_workflow',
+  'resume_workflow',
 ] as const;
 
 export type BoardToolReadName = (typeof BOARD_TOOL_READ_NAMES)[number];

@@ -461,6 +461,38 @@ export interface BoardTaskWire {
    * key from every real wire response.
    */
   pausable?: boolean | null;
+  /**
+   * The workflow the task belongs to (a set of linked tasks that runs through
+   * its boards by itself), or null for an ordinary task. Absent from desktops
+   * that predate workflows, which the parser reads as null, as it does a value
+   * it cannot read. Declared OPTIONAL for the reason `pr_merge_readiness` is.
+   */
+  workflow?: BoardTaskWorkflowWire | null;
+}
+
+/**
+ * A board task's workflow, as its card draws it: the strip (name, color), what
+ * the task waits for, and whether a hand may move it. `lock_reason` is the
+ * desktop's own sentence, so a phone that refuses a move says what the desktop
+ * would; the desktop refuses a locked move on its own anyway.
+ */
+export interface BoardTaskWorkflowWire {
+  id: string;
+  title: string;
+  /** The workflow's home project, which may not be the board's. */
+  project_id: string;
+  /** `running`, `paused`, `draft` or `done`; a value a client does not know reads as running. */
+  state: string;
+  /** Which of six categorical colors (1 to 6) the desktop paints its icon in. */
+  color_slot: number;
+  /** The columns the task visits, by id, in board order. */
+  route: string[];
+  /** The tasks it waits for that are not done, named as the card's footer names them ("#413"). */
+  waiting_for: string[];
+  /** Why a hand may not move the card, in the desktop's words; null when it may. */
+  lock_reason: string | null;
+  /** While it sits in a column no agent judges, the column a hand may move it to; null otherwise. */
+  gate_target_id: string | null;
 }
 
 /**
@@ -794,6 +826,29 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
     pausable: nullableBoolean(value, 'pausable'),
+    workflow: parseBoardTaskWorkflowWire(value.workflow),
+  };
+}
+
+/**
+ * A board task's workflow, or null when absent or unreadable. Lenient on
+ * purpose: a malformed workflow costs the card its strip, never the board.
+ */
+export function parseBoardTaskWorkflowWire(value: JsonValue | undefined): BoardTaskWorkflowWire | null {
+  if (value === undefined || !isRecord(value)) return null;
+  const strings = (field: JsonValue | undefined): string[] =>
+    Array.isArray(field) ? field.filter((entry): entry is string => typeof entry === 'string') : [];
+  if (typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.project_id !== 'string') return null;
+  return {
+    id: value.id,
+    title: value.title,
+    project_id: value.project_id,
+    state: typeof value.state === 'string' ? value.state : 'running',
+    color_slot: typeof value.color_slot === 'number' ? value.color_slot : 1,
+    route: strings(value.route),
+    waiting_for: strings(value.waiting_for),
+    lock_reason: typeof value.lock_reason === 'string' ? value.lock_reason : null,
+    gate_target_id: typeof value.gate_target_id === 'string' ? value.gate_target_id : null,
   };
 }
 

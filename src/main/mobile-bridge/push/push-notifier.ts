@@ -22,7 +22,10 @@
  * hasn't produced one yet) - it is driven externally via
  * notifyTaskStalled(taskId) (wired to spawn-stall-watcher.ts), which
  * resolves task context by taskId and cools down per (device, taskId,
- * category) instead of per session.
+ * category) instead of per session. A sixth, 'workflow-complete', has
+ * neither a session nor one task: notifyWorkflowComplete (called by
+ * workflows/workflow-complete.ts) names the workflow and cools down per
+ * workflow.
  *
  * Per registered device: presence suppression (a bridge session reporting
  * 'connected' means the user is already watching from that device), then
@@ -97,6 +100,7 @@ const PLACEHOLDER_BODIES: Record<PushCategory, string> = {
   'session-failed': 'Session stopped',
   'plan-complete': 'Plan complete',
   'spawn-stalled': 'Task is taking a while to start',
+  'workflow-complete': 'Workflow complete',
 };
 
 export interface PushTaskContext {
@@ -319,6 +323,18 @@ export class PushNotifier {
     const taskContext = this.options.resolveTaskContextByTaskId(taskId);
     if (!taskContext) return;
     this.notifyWithContext(taskContext, taskId, '', 'spawn-stalled', '');
+  }
+
+  /**
+   * Every task of a workflow reached Done. A workflow has no session and no one
+   * task, so the envelope names the workflow as its task title, carries no task
+   * or session id (the phone routes such a tap to the project), and cools down
+   * per workflow.
+   */
+  notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
+    if (this.disposed) return;
+    const detail = input.taskCount === 1 ? 'Its task is in Done.' : `All ${input.taskCount} tasks are in Done.`;
+    this.notifyWithContext({ projectId: input.projectId, taskId: '', taskTitle: input.title }, input.workflowId, '', 'workflow-complete', detail);
   }
 
   private notifyWithContext(taskContext: PushTaskContext, cooldownSubject: string, envelopeSessionId: string, category: PushCategory, detail: string): void {

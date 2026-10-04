@@ -1,6 +1,7 @@
 import {
   parseCapabilityRequestPayload,
   type BoardTaskWire,
+  type BoardTaskWorkflowWire,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
   type CommandTerminalWire,
@@ -26,6 +27,7 @@ import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
 import { resolveKnownProject } from './known-project';
 import { toActivityReasonWire, toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
+import { workflowWireFacts } from './workflow-wire';
 
 function subscriptionKeyFor(projectId: string): string {
   return `board:${projectId}`;
@@ -127,14 +129,14 @@ export async function handleReadBoard(
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
   const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(context.sessionManager.listSessions());
-  const toTaskWire = (task: Task): BoardTaskWire => {
+  const toTaskWire = (task: Task, workflow: BoardTaskWorkflowWire | null): BoardTaskWire => {
     const paused = pausedTaskIds.has(task.id);
     const laneRole = laneRoleById.get(task.swimlane_id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
       paused,
       resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole }),
       pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
-    });
+    }, workflow);
   };
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot
@@ -151,17 +153,20 @@ export async function handleReadBoard(
       // nothing to summarize, which is a normal state rather than an error.
       if (summary) summariesByTaskId[task.id] = toSessionSummaryWire(summary);
     }
+    const archivedWorkflows = workflowWireFacts(context, projectId, page.tasks);
     const archivedPayload: ReadBoardArchivedResponsePayload = {
       projectId,
       // A restore from Done labels the task ("Resuming session...") while
       // its row is still archived.
-      archivedTasks: page.tasks.map(toTaskWire),
+      archivedTasks: page.tasks.map((task) => toTaskWire(task, archivedWorkflows.get(task.id) ?? null)),
       archivedTotalCount: page.totalCount,
       summariesByTaskId,
     };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(archivedPayload) };
   }
-  const allTasks = repos.tasks.list().map(toTaskWire);
+  const boardTasks = repos.tasks.list();
+  const workflows = workflowWireFacts(context, projectId, boardTasks);
+  const allTasks = boardTasks.map((task) => toTaskWire(task, workflows.get(task.id) ?? null));
 
   // A phone that names a `view` (protocol 0.9.0) gets only what it renders:
   // no backlog in either projection, and under 'sessions' only the tasks an

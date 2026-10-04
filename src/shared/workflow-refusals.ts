@@ -30,6 +30,8 @@ export const WORKFLOW_REFUSALS = {
   toDoNeedsRemove: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}. Remove it from the workflow to move it to To Do.`,
   /** An agent's move of a paused workflow's task (a person may still move it by hand). */
   pausedForAgents: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}, which is paused. Resume it to move its tasks.`,
+  /** Starting a paused workflow's task on its own (the phone's Start), which Resume does for all of them. */
+  pausedStart: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}, which is paused. Resume the workflow to start its tasks again.`,
   /** Sending a workflow task to the backlog or the archive. */
   removeFirst: (label: string, workflowTitle: string) => `Remove ${label} from ${workflowTitle} first.`,
 } as const;

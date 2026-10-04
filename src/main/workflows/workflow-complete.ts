@@ -9,7 +9,7 @@ import type { IpcContext } from '../ipc/ipc-context';
  * Say that a workflow finished: every task in it reached Done. The renderer
  * raises the Workflow Complete toast and desktop notification from this push,
  * each behind its own switch (`notifications.toasts|desktop.onWorkflowComplete`),
- * the way Plan Complete is raised.
+ * the way Plan Complete is raised; paired phones get a `workflow-complete` push.
  */
 export function announceWorkflowComplete(
   context: IpcContext,
@@ -22,4 +22,6 @@ export function announceWorkflowComplete(
   console.log(`[WORKFLOW] "${workflow.title}" is complete (${taskCount} tasks in Done)`);
   const event: WorkflowCompletedEvent = { workflowId, title: workflow.title, taskCount, projectId: homeProjectId };
   sendToRenderer(context.mainWindow, IPC.WORKFLOW_COMPLETED, event);
+  // And to the paired phones, as their own push category.
+  context.mobileBridgeService?.notifyWorkflowComplete({ projectId: homeProjectId, workflowId, title: workflow.title, taskCount });
 }

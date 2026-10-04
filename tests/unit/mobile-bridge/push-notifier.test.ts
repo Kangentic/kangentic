@@ -339,6 +339,21 @@ describe('PushNotifier', () => {
     expect(typeof body.data.blob).toBe('string'); // real seal succeeded with sessionId: ''
   });
 
+  it('notifyWorkflowComplete seals the workflow as the title, with no task or session, cooled down per workflow', () => {
+    buildNotifier();
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    expect(sealedCategories()).toEqual(['workflow-complete']);
+    const plaintext = sealSpy.mock.calls[0][2] as { projectId: string; taskId: string; sessionId: string; taskTitle: string; detail: string };
+    expect(plaintext).toMatchObject({ projectId: 'proj-1', taskId: '', sessionId: '', taskTitle: 'Usage budgets', detail: 'All 9 tasks are in Done.' });
+
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-1', title: 'Usage budgets', taskCount: 9 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // Another workflow finishing in the same moment is its own push.
+    notifier.notifyWorkflowComplete({ projectId: 'proj-1', workflowId: 'wf-2', title: 'Relay reconnect', taskCount: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((sealSpy.mock.calls[1][2] as { detail: string }).detail).toBe('Its task is in Done.');
+  });
+
   it('an unintentional exit (or the flag-less spawn-failure emit) notifies session-failed; a deliberate stop does not', () => {
     buildNotifier();
     sessionManager.emit('exit', 'sess-1', 0, true); // deliberate stop

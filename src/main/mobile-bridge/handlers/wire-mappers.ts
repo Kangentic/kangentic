@@ -16,6 +16,7 @@ import {
   type BacklogItemWire,
   type BoardColumnWire,
   type BoardTaskWire,
+  type BoardTaskWorkflowWire,
   type JsonValue,
   type ReadStreamSessionStatusWire,
   type SessionEventWire,
@@ -380,11 +381,16 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * the column; see `BoardTaskWire.paused`, `BoardTaskWire.resumable` and
  * `BoardTaskWire.pausable`. One object rather than positional booleans, so a
  * call site cannot swap them.
+ *
+ * `workflow` is read per board, not per task (`workflowWireFacts`), since a
+ * card's lock and what it waits for come from its whole workflow; a task
+ * outside one, or a caller that has not read them, sends null.
  */
 export function toBoardTaskWire(
   task: Task,
   spawnProgressLabel: string | null,
   pauseFlags: { paused: boolean; resumable: boolean; pausable: boolean },
+  workflow: BoardTaskWorkflowWire | null = null,
 ): BoardTaskWire {
   return {
     id: task.id,
@@ -412,6 +418,7 @@ export function toBoardTaskWire(
     resumable: pauseFlags.resumable,
     paused: pauseFlags.paused,
     pausable: pauseFlags.pausable,
+    workflow,
   };
 }
 

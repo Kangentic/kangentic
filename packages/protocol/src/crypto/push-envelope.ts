@@ -20,7 +20,12 @@ import { randomBytes, xaeadEncrypt, xaeadDecrypt, concatBytes, XCHACHA_NONCE_LEN
 import { base64UrlEncode, base64UrlDecode } from '../wire/base64url';
 import { isRecord } from '../wire/json-value';
 
-export const PUSH_CATEGORIES = ['input-required', 'turn-complete', 'session-failed', 'plan-complete', 'spawn-stalled'] as const;
+/**
+ * Append only. `workflow-complete` (every task of a workflow reached Done) is
+ * the newest; a phone that predates it reads the envelope as an unknown
+ * category and shows the generic placeholder.
+ */
+export const PUSH_CATEGORIES = ['input-required', 'turn-complete', 'session-failed', 'plan-complete', 'spawn-stalled', 'workflow-complete'] as const;
 
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
 

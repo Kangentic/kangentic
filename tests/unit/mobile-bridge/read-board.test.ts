@@ -191,7 +191,8 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false }],
+      // An ordinary task carries a null workflow: the key is always sent.
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false, workflow: null }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,

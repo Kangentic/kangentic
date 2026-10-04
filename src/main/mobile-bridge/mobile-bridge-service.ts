@@ -387,6 +387,11 @@ export class MobileBridgeService extends EventEmitter {
     this.emitStateChanged();
   }
 
+  /** Push a workflow's completion to the paired phones (a no-op while the bridge is off). */
+  notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
+    this.pushNotifier?.notifyWorkflowComplete(input);
+  }
+
   /**
    * Re-grants the full verb set to every paired device missing any verb:
    * devices paired before pairing granted everything, and every device once a

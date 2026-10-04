@@ -1134,7 +1134,9 @@ export function App() {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (completed.projectId === activeProjectId && notifyConfig.toasts.onWorkflowComplete) {
           useToastStore.getState().addToast({
-            message: `Workflow complete. All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
+            message: completed.taskCount === 1
+              ? `Workflow complete. The task of "${completed.title}" is in Done.`
+              : `Workflow complete. All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
             variant: 'success',
           });
         }
