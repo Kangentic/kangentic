@@ -955,6 +955,164 @@ It will not start an agent: a `send_message` automation against a task with no l
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
 a hung row cannot wedge that task's next move.
 
+### Workflows
+
+A workflow is a set of linked tasks that run through their boards on their own. Each task has a
+**route**, the columns it visits (every column between To Do and Done unless it starts later, ends
+earlier, or skips some), and starts when every task it waits for has reached Done. A step finishes
+when the column's work is done: the Automation agent judges the agent's final message at each turn
+end (or a plan is approved, or the task's own agent moves it with `kangentic_move_task`), and the
+task moves to the next column on its route. A column with no agent, an agent that reports no turn
+end, or no Automation agent set up is a human gate: a person drags the card on.
+
+While a workflow runs its tasks are locked. Only the workflow, its column automations, plan exit
+and a task's OWN agent move them; a drag, the phone or another agent is refused with
+"#414 is locked while Usage budgets runs." Nothing moves a workflow task into To Do. Paused, its
+cards move by hand except into To Do.
+
+A workflow lives in the project it was made in (pass `project` to reach another). Its tasks can sit
+on other registered projects' boards: name the project on the planned task. The tools are not on
+the phone's board-tool path.
+
+### kangentic_list_workflows
+
+The project's workflows with their state (not started, running, paused) and progress, newest first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `includeFinished` | boolean | No | Include workflows whose tasks are all in Done. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_get_workflow
+
+One workflow: its state, its `revision`, and each task with its column, route and what it waits
+for. A workflow not started lists its planned tasks by key.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title (case-insensitive). |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_save_workflow
+
+Save the plan of a workflow that has not started, replacing what it held: its title, every planned
+task, and the links. Omit `workflow` to create one. Nothing reaches a board until it starts.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | No | The workflow to replace the plan of. Omit to create a new one. |
+| `title` | string | No | Its name. |
+| `brief` | string | No | A new workflow only: the text it was made from. |
+| `tasks` | array | Yes | Every planned task (at most 60). See below. |
+| `links` | array | No | `{ blocker, blocked }` by key: blocked waits for blocker to reach Done. |
+| `revision` | number | No | The revision `kangentic_get_workflow` reported. A save over a newer one is refused, so the user's edits win. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally
+`project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
+one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`. Every problem is
+reported before anything is written: a duplicate key, a column a route cannot use, a link to an
+unknown key, a loop. The answer reads "Saved: 9 tasks, 13 links."
+
+### kangentic_start_workflow
+
+Start a planned workflow: its tasks appear in To Do on their boards and each starts on its own when
+nothing it waits for is left, up to the free agent slots, in To Do order. A start fetches the base
+first, so a task is cut from its blockers' merged code. The task the workflow was made from moves
+to Done, unless the plan took it in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_pause_workflow
+
+Pause every agent in a running workflow at once (a mid-board suspend: nothing is reaped). Nothing
+starts or moves until it is resumed.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_resume_workflow
+
+Resume a paused workflow: each task's agent resumes in the column it is in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_add_workflow_task
+
+Add a task to a started workflow. It lands in To Do and starts once nothing it waits for is left.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `title` | string | Yes | The task's title. |
+| `description` | string | No | What its agent should do. |
+| `taskProject` | string | No | Another project's board to put it on. |
+| `routeStart` / `routeLast` | string | No | First and last columns it visits. |
+| `skip` | string[] | No | Columns inside its route it skips. |
+| `waitsFor` | string[] | No | Tasks in this workflow it waits for. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_link_workflow_tasks
+
+Make a task in a started workflow wait for another to reach Done. Only a task still in To Do can
+wait, only for one not yet done, and a link that closes a loop is refused.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `blocker` / `blocked` | string | Yes | Task numbers or ids: blocked waits for blocker. |
+| `blockerProject` / `blockedProject` | string | No | The project each is on, when not the workflow's. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_unlink_workflow_tasks
+
+Remove a link. A task in To Do whose last blocker this was starts as soon as a slot is free. Same
+parameters as `kangentic_link_workflow_tasks`.
+
+### kangentic_set_task_route
+
+Change which columns a task in a started workflow visits. A task in To Do can take any route; one
+that has started can change only the columns after the one it is in.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `task` | string | Yes | Task number or id. |
+| `taskProject` | string | No | The project it is on, when not the workflow's. |
+| `routeStart` / `routeLast` | string \| null | No | Pass only what changes; null resets to the open end. |
+| `skip` | string[] | No | The complete list of columns to skip. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_remove_from_workflow
+
+Take a task out of its workflow. It stays where it is as an ordinary task, and its links are
+removed. A task in Done stays with its workflow.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `task` | string | Yes | Task number or id. |
+| `taskProject` | string | No | The project it is on, when not the workflow's. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
+### kangentic_delete_workflow
+
+Delete a workflow. One not started loses its plan and nothing else changes. A started one's
+unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow` | string | Yes | The workflow's id or exact title. |
+| `project` | string | No | Project name or UUID. Omit for the active project. |
+
 ### kangentic_delete_task
 
 Permanently delete a task from the board. Removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. This cannot be undone.

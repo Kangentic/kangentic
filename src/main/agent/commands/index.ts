@@ -25,6 +25,20 @@ import { handleGetTranscript, handleQueryDb } from './inspect-commands';
 import { handleGetSessionFiles, handleGetSessionEvents } from './session-files-commands';
 import { handleGetActivityIntervals } from './activity-interval-commands';
 import { handleReserveDevPorts, handleCheckDevPorts } from './dev-port-commands';
+import {
+  handleListWorkflows,
+  handleGetWorkflow,
+  handleSaveWorkflow,
+  handleStartWorkflow,
+  handlePauseWorkflow,
+  handleResumeWorkflow,
+  handleAddWorkflowTask,
+  handleLinkWorkflowTasks,
+  handleUnlinkWorkflowTasks,
+  handleSetTaskRoute,
+  handleRemoveFromWorkflow,
+  handleDeleteWorkflow,
+} from './workflow-commands';
 import type { CommandHandler } from './types';
 
 /**
@@ -75,4 +89,16 @@ export const commandHandlers: Record<string, CommandHandler> = {
   get_activity_intervals: handleGetActivityIntervals,
   reserve_dev_ports: handleReserveDevPorts,
   check_dev_ports: handleCheckDevPorts,
+  list_workflows: handleListWorkflows,
+  get_workflow: handleGetWorkflow,
+  save_workflow: handleSaveWorkflow,
+  start_workflow: handleStartWorkflow,
+  pause_workflow: handlePauseWorkflow,
+  resume_workflow: handleResumeWorkflow,
+  add_workflow_task: handleAddWorkflowTask,
+  link_workflow_tasks: handleLinkWorkflowTasks,
+  unlink_workflow_tasks: handleUnlinkWorkflowTasks,
+  set_task_route: handleSetTaskRoute,
+  remove_from_workflow: handleRemoveFromWorkflow,
+  delete_workflow: handleDeleteWorkflow,
 };

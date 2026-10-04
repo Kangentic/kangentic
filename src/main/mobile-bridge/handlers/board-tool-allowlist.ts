@@ -108,6 +108,23 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   'set_automations',
   'get_automation_runs',
   'run_automation',
+  // Workflows (#732). The phone's workflow surface (the strip and lock on its
+  // cards, pause and resume) is a follow-up in the mobile app, and classifying
+  // any of these would put the names into the published protocol tuples,
+  // which ship only through a protocol release. Planning a workflow is the
+  // workflow agent's job on the desktop and stays off this path regardless.
+  'list_workflows',
+  'get_workflow',
+  'save_workflow',
+  'start_workflow',
+  'pause_workflow',
+  'resume_workflow',
+  'add_workflow_task',
+  'link_workflow_tasks',
+  'unlink_workflow_tasks',
+  'set_task_route',
+  'remove_from_workflow',
+  'delete_workflow',
 ]);
 
 /** True only for a `commandHandlers` key that is both classified here and not on the exclusion list. */
