@@ -327,9 +327,10 @@ export class PushNotifier {
 
   /**
    * Every task of a workflow reached Done. A workflow has no session and no one
-   * task, so the envelope names the workflow as its task title, carries no task
-   * or session id (the phone routes such a tap to the project), and cools down
-   * per workflow.
+   * task, so the envelope names the workflow as its task title, carries an empty
+   * task and session id, and cools down per workflow. Where a tap on it lands is
+   * the mobile app's to decide; its tap router was written for envelopes that
+   * name a task.
    */
   notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
     if (this.disposed) return;

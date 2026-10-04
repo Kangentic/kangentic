@@ -62,6 +62,7 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
     const workflow = summary?.workflow ?? finishedWorkflow(homeId, workflowId);
     if (!workflow) continue;
     const boardTask = summary?.boardTasks[task.id];
+    const gateTargetId = boardTask?.humanGateTargetId ?? null;
     facts.set(task.id, {
       id: workflow.id,
       title: workflow.title,
@@ -70,10 +71,13 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       color_slot: workflow.color_slot,
       route: routeColumns(lanes, task).map((column) => column.id),
       waiting_for: boardTask?.waitingFor ?? [],
-      // A paused workflow's cards move by hand (never into To Do, which the
-      // desktop refuses on its own), so only a running one locks the card.
-      lock_reason: workflow.state === 'running' ? WORKFLOW_REFUSALS.locked(`#${task.display_id}`, workflow.title) : null,
-      gate_target_id: boardTask?.humanGateTargetId ?? null,
+      // The card is locked as the desktop board draws it (`isLockedOnBoard`):
+      // while the workflow runs, unless it waits in a human gate, where a hand
+      // may move it to the gate's target. A paused workflow's cards move by hand.
+      lock_reason: workflow.state === 'running' && gateTargetId === null
+        ? WORKFLOW_REFUSALS.locked(`#${task.display_id}`, workflow.title)
+        : null,
+      gate_target_id: gateTargetId,
     });
   }
   return facts;

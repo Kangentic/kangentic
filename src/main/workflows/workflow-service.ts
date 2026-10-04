@@ -466,6 +466,17 @@ async function supersedeSourceTask(context: IpcContext, homeProjectId: string, w
   return source.display_id;
 }
 
+/**
+ * Every board holding a task of the workflow hears that its cards changed,
+ * for a change that writes no task row: a pause, a resume, a rename. Each card
+ * carries its workflow's state and name (its lock, its strip), and a paired
+ * phone redraws them only on a board event.
+ */
+function announceWorkflowBoards(context: IpcContext, homeProjectId: string, workflowId: string): void {
+  const projects = new Set(workflowTasks(context, homeProjectId, workflowId).map(({ projectId }) => projectId));
+  for (const projectId of projects) announceBoardChange(context, projectId);
+}
+
 /** A quiet board reload for a board whose tasks a workflow wrote. */
 function announceBoardChange(context: IpcContext, projectId: string): void {
   try {
@@ -487,6 +498,7 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'paused');
   // The header flips to Resume at once; the sessions suspend after.
   notifyWorkflowChanged(homeProjectId, workflowId);
+  announceWorkflowBoards(context, homeProjectId, workflowId);
   let paused = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
     if (!task.session_id) continue;
@@ -505,6 +517,7 @@ export async function resumeWorkflow(context: IpcContext, homeProjectId: string,
   if (workflow.state !== 'paused') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, not paused.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'running');
   notifyWorkflowChanged(homeProjectId, workflowId);
+  announceWorkflowBoards(context, homeProjectId, workflowId);
   let resumed = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
     if (task.archived_at) continue;
@@ -798,10 +811,11 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
   return { workflow, released };
 }
 
-export function renameWorkflow(homeProjectId: string, workflowId: string, title: string): Workflow {
+export function renameWorkflow(context: IpcContext, homeProjectId: string, workflowId: string, title: string): Workflow {
   requireWorkflow(homeProjectId, workflowId);
   const renamed = new WorkflowRepository(getProjectDb(homeProjectId)).rename(workflowId, title);
   notifyWorkflowChanged(homeProjectId, workflowId);
+  announceWorkflowBoards(context, homeProjectId, workflowId);
   return renamed;
 }
 

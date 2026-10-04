@@ -44,7 +44,7 @@ export function registerWorkflowHandlers(context: IpcContext): void {
     createWorkflowForView(context, projectId, sourceTaskId ?? null));
 
   ipcMain.handle(IPC.WORKFLOW_RENAME, (_, projectId: string, workflowId: string, title: string) =>
-    renameWorkflow(projectId, workflowId, title));
+    renameWorkflow(context, projectId, workflowId, title));
 
   ipcMain.handle(IPC.WORKFLOW_DELETE, (_, projectId: string, workflowId: string) => {
     deleteWorkflow(context, projectId, workflowId);

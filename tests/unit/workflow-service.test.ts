@@ -117,6 +117,28 @@ describeWithSqlite('workflow operations', () => {
       .toThrow(/changed since you read it/);
   });
 
+  it('announces a pause, a resume and a rename on every board holding its tasks, though no task row changed', async () => {
+    // Every card carries its workflow's state and name, and a paired phone
+    // redraws them only on a board event.
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const emit = vi.mocked(context.boardEvents.emitBoardChanged);
+    const boardsAnnounced = (): string[] => [...new Set(emit.mock.calls.map(([event]) => event.projectId))].sort();
+
+    emit.mockClear();
+    await service.pauseWorkflow(context, 'home', workflow.id);
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+
+    emit.mockClear();
+    await service.resumeWorkflow(context, 'home', workflow.id);
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+
+    emit.mockClear();
+    service.renameWorkflow(context, 'home', workflow.id, 'Spend limits');
+    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+  });
+
   it('starts: tasks in To Do on their boards, with routes and cross-board links', async () => {
     const workflow = service.createWorkflow('home', {});
     service.savePlan(context, 'home', workflow.id, plan());

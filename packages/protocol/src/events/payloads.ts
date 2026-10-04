@@ -489,9 +489,18 @@ export interface BoardTaskWorkflowWire {
   route: string[];
   /** The tasks it waits for that are not done, named as the card's footer names them ("#413"). */
   waiting_for: string[];
-  /** Why a hand may not move the card, in the desktop's words; null when it may. */
+  /**
+   * While the card is locked (its workflow runs and it is not waiting in a
+   * human gate), the desktop's sentence for a refused move; null otherwise,
+   * which is when the desktop draws no lock. An unlocked card still never
+   * moves into To Do, and while `gate_target_id` is set it moves only there.
+   */
   lock_reason: string | null;
-  /** While it sits in a column no agent judges, the column a hand may move it to; null otherwise. */
+  /**
+   * While the workflow runs and the card waits in a column no agent judges
+   * (a human gate): the one column a hand may move it to, the next on its
+   * route. Moving it there is how the person reports the step done. Null otherwise.
+   */
   gate_target_id: string | null;
 }
 

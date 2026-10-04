@@ -84,6 +84,8 @@ describe('workflowWireFacts', () => {
       task({ id: 't-2', display_id: 415, swimlane_id: 'todo', workflow_id: 'wf-1' }),
     ]);
 
+    // A card waiting in a human gate shows no lock, as on the desktop board,
+    // and names the one column a hand may move it to.
     expect(facts.get('t-1')).toEqual({
       id: 'wf-1',
       title: 'Usage budgets',
@@ -92,11 +94,15 @@ describe('workflowWireFacts', () => {
       color_slot: 3,
       route: ['exec', 'review'],
       waiting_for: [],
-      lock_reason: '#414 is locked while Usage budgets runs.',
+      lock_reason: null,
       gate_target_id: 'review',
     });
-    expect(facts.get('t-2')?.waiting_for).toEqual(['#414']);
-    expect(facts.get('t-2')?.route).toEqual(['plan', 'exec', 'review']);
+    expect(facts.get('t-2')).toMatchObject({
+      waiting_for: ['#414'],
+      route: ['plan', 'exec', 'review'],
+      lock_reason: '#415 is locked while Usage budgets runs.',
+      gate_target_id: null,
+    });
     // One summaries read per home project, however many of its tasks are here.
     expect(listSummaries).toHaveBeenCalledTimes(1);
   });
