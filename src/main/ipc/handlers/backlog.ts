@@ -304,8 +304,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
     if (!context.currentProjectId || !context.currentProjectPath) {
       throw new Error('No project is currently open');
     }
+    const projectId = context.currentProjectId;
     const projectPath = context.currentProjectPath;
-    const db = getProjectDb(context.currentProjectId);
+    const db = getProjectDb(projectId);
     const backlogRepo = new BacklogRepository(db);
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
     const { tasks, attachments } = getProjectRepos(context);
@@ -321,8 +322,10 @@ export function registerBacklogHandlers(context: IpcContext): void {
       // Cancel any pending auto_command injection before cleanup
       context.terminalSubmitScheduler.cancel(input.taskId);
 
-      // Clean up session, worktree, and branch
-      await cleanupTaskResources(context, task, tasks);
+      // Clean up session, worktree, and branch. The project captured at entry:
+      // a switch while this waited on the lock must not scope the leftover
+      // reap or the session cleanup to the newly opened project.
+      await cleanupTaskResources(context, task, tasks, projectId, projectPath);
 
       // Create backlog task from task, preserving labels/priority (input overrides
       // task values) and external origin so a demote->reimport stays deduplicated.

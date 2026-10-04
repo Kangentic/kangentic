@@ -38,6 +38,12 @@ class FakeReader implements TaggedProcessReader {
   described: number[] = [];
   failScan = false;
 
+  /**
+   * Labels by `pid:startKey`, which win over `labels` (by pid alone). A reused
+   * pid can name two different processes, and each is described on its own.
+   */
+  labelsByIdentity: Record<string, string> = {};
+
   constructor(scans: ScannedProcess[][], private readonly labels: Record<number, string> = {}) {
     this.scans = scans.map((processes) => ({ processes: [{ pid: MAIN_PID, ppid: 900, startKey: 'main', startedAtMs: null, tagValue: null }, ...processes], unreadableCount: 0 }));
   }
@@ -56,7 +62,12 @@ class FakeReader implements TaggedProcessReader {
 
   async describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>> {
     this.described.push(...targets.map((target) => target.pid));
-    return new Map(targets.filter((target) => this.labels[target.pid]).map((target) => [target.pid, this.labels[target.pid]]));
+    const named = new Map<number, string>();
+    for (const target of targets) {
+      const label = this.labelsByIdentity[`${target.pid}:${target.startKey}`] ?? this.labels[target.pid];
+      if (label) named.set(target.pid, label);
+    }
+    return named;
   }
 }
 
@@ -314,6 +325,72 @@ describe('reapTaggedOnce report', () => {
     expect(result.entries).toEqual([
       { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'process', outcome: 'stopped', reason: null, place: 'project' },
       { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'process', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+  });
+
+  it('labels a stopped root by its own command line when a survivor took its pid, and the survivor by its own', async () => {
+    const reader = new FakeReader([
+      [tagged(2001, TASK, 'start-A')],
+      // The root exited on the graceful kill, and a new tagged process took its pid.
+      [tagged(2001, TASK, 'start-B')],
+      // The force kill of the new process did not remove it.
+      [tagged(2001, TASK, 'start-B')],
+    ]);
+    reader.labelsByIdentity = { '2001:start-A': 'node (npm)', '2001:start-B': 'esbuild' };
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    // The scenario is the one claimed: the second plan targeted the new process, by its own start key.
+    expect(reader.kills).toEqual([
+      { pid: 2001, startKey: 'start-A', strength: 'graceful' },
+      { pid: 2001, startKey: 'start-B', strength: 'force' },
+    ]);
+    // Labels are keyed by pid, so a survivor's label merged into the root's would read as the root's label.
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'node (npm)', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'esbuild', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+  });
+
+  it('never gives a survivor its stopped root\'s label when the reader could not name the survivor', async () => {
+    const reader = new FakeReader([
+      [tagged(2001, TASK, 'start-A')],
+      [tagged(2001, TASK, 'start-B')],
+      [tagged(2001, TASK, 'start-B')],
+    ]);
+    // Only the root can be named. The survivor holds the same pid.
+    reader.labelsByIdentity = { '2001:start-A': 'node (npm)' };
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => `${kill.startKey}:${kill.strength}`)).toEqual(['start-A:graceful', 'start-B:force']);
+    expect(result.entries.map((entry) => `${entry.startKey}:${entry.outcome}:${entry.label}`)).toEqual([
+      'start-A:stopped:node (npm)',
+      'start-B:failed:process',
+    ]);
+  });
+
+  it('reports a surviving child only through the root it hangs under, never as an entry of its own', async () => {
+    const root = tagged(2001, TASK);
+    const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
+    // Neither exits, so the child is a survivor of the force pass that sits under a reported root.
+    const reader = new FakeReader([[root, child], [root, child], [root, child]], { 2001: 'node (npm)', 2002: 'node (vite)' });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    // The scenario is the one claimed: the second plan force-killed the child too, and a last scan listed it.
+    expect(reader.kills.filter((kill) => kill.strength === 'force').map((kill) => kill.pid).sort()).toEqual([2001, 2002]);
+    expect(reader.scanCount).toBe(3);
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+    expect(reader.described).not.toContain(2002);
+  });
+
+  it('walks up more than one level to the reported root a surviving grandchild hangs under', async () => {
+    const root = tagged(2001, TASK);
+    const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
+    const grandchild = tagged(2003, TASK, 'start-2003', PROJECT, 2002);
+    const reader = new FakeReader([[root, child, grandchild], [root, child, grandchild], [root, child, grandchild]], { 2001: 'node (npm)' });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.filter((kill) => kill.strength === 'force').map((kill) => kill.pid).sort()).toEqual([2001, 2002, 2003]);
+    expect(reader.scanCount).toBe(3);
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-2001', label: 'node (npm)', outcome: 'failed', reason: null, place: 'project' },
     ]);
   });
 

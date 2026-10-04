@@ -13,13 +13,19 @@ const { removeWorktree, taskRows, updates } = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
 }));
 
-vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
-vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
     tasks: {
       getById: (id: string) => taskRows.get(id),
-      update: (patch: Record<string, unknown>) => { updates.push(patch); },
+      // Applies the patch the way the real repository does, as a fresh row, so a
+      // second retry that re-reads under the lock sees the first one's update
+      // and a read taken before the lock holds a stale row.
+      update: (patch: Record<string, unknown>) => {
+        updates.push(patch);
+        const existing = taskRows.get(String(patch.id));
+        if (existing) taskRows.set(existing.id, { ...existing, ...patch });
+      },
     },
     swimlanes: { list: () => [{ id: 'lane-todo', role: 'todo' }, { id: 'lane-done', role: 'done' }] },
   })),
@@ -35,6 +41,7 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
 }));
 
 import { retryDoneWorktreeRemoval } from '../../src/main/ipc/helpers/task-cleanup';
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
 const PROJECT_PATH = '/mock/project';
 const WORKTREE = '/mock/project/.kangentic/worktrees/task-1';
@@ -81,5 +88,39 @@ describe('retryDoneWorktreeRemoval', () => {
     removeWorktree.mockResolvedValue(false);
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(false);
     expect(updates.filter((patch) => patch.worktree_path === null)).toEqual([]);
+  });
+
+  // These two run against the real withTaskLock (nothing here mocks it): the
+  // lock is what makes the re-read in retryDoneWorktreeRemoval current.
+  describe('under the task lock', () => {
+    it('removes the worktree once when two retries for the same task start together', async () => {
+      // Two Stop clicks on a task's two leftover processes land together. The
+      // second must queue, re-read the row the first one cleared, and find
+      // nothing to remove.
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      const first = retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
+      const second = retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
+      expect(await Promise.all([first, second])).toEqual([true, false]);
+      expect(removeWorktree).toHaveBeenCalledTimes(1);
+      expect(taskRows.get('task-1')?.worktree_path).toBeNull();
+    });
+
+    it('leaves the worktree alone when the task leaves Done while the retry waits for the lock', async () => {
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+      let releaseLock!: () => void;
+      const lockHeld = new Promise<void>((resolve) => { releaseLock = resolve; });
+      // The user's move out of Done holds the task's lock while it works.
+      const holder = withTaskLock('task-1', () => lockHeld);
+
+      const retrying = retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
+      // The move lands: a fresh row, not a mutation of one the retry may hold.
+      taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-todo', worktree_path: WORKTREE, branch_name: null });
+      releaseLock();
+      await holder;
+
+      expect(await retrying).toBe(false);
+      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(updates).toEqual([]);
+    });
   });
 });

@@ -822,6 +822,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 736, whole branch, third pass | 156f +11700 -1724 | 944KB, 16632 lines | 8 (0) | 148 | 0 | 14, sharded by area: 7 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 40 of 13 pack-carrying, most of them rule files and callers | 35 raised, 31 distinct / 12 applied, 7 refuted, 10 skipped; 8 coverage holes filled |
 | task 736, whole branch, fourth pass | 159f +12196 -1727 | 977KB, 17163 lines | 7 (0) | 152 | 0 | 15, sharded by area: 8 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 14 pack-carrying, most of them rule files, greps and callers | 34 raised, 30 distinct / 18 applied, 3 refuted, 9 skipped; 6 coverage holes filled |
 | task 736, whole branch, fifth pass | 159f +12596 -1743 | 1007KB, 17608 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 16 pack-carrying, most of them the WSL sources the focus questions named; the integration finder read no body | 36 raised, 18 distinct / 4 applied, 6 refuted (2 by measurement), 6 skipped; 2 coverage holes filled |
+| task 736, whole branch, sixth pass | 159f +12958 -1743 | 1029KB, 17970 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 70 of 16 pack-carrying, most of them rule files, callers and greps; the integration finder read 4 bodies | 43 raised, 42 distinct / 9 applied, 4 refuted, 22 skipped; 7 coverage holes filled |
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 | task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
 | task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped, plus 3 found in verification (2 applied, 1 skipped); 4 tests added, 1 hole skipped as unreachable |
@@ -1274,6 +1275,28 @@ more. Four finders raised that one and none could decide it from the code. Two c
 refuted by tests the finders had not found (`task-reap-plan.test.ts:110`,
 `task-process-tag.test.ts:112`). The one other fix was a reap report that matched a force-pass
 survivor to its root by pid alone, so a reused pid could report a stopped root as failed.
+
+The task 736 sixth pass kept that layout at 17,970 pack lines: ten area shards of 1,004 to 2,153
+lines, six gated auditors on their own ranges (cross-platform in two of 4,241 and 4,194 lines), and
+the integration finder on a 764-line delta. Since the fifth pass one copy commit (`fd92045c`) had
+landed and main had been merged in, so before the fan-out the driver ran the 49 changed unit files,
+three parity scans, and the leftover-processes and settings UI specs against main's rewritten UI
+helpers, and all passed. Every finder reported, and nothing above Medium survived verification. The
+driver refuted four candidates by reading the code: a stale barrel mock on a path the test's warm
+reopen never reaches, an empty `every()` whose test pins its title with a later resume assertion, a
+claim that the WSL script never runs under test (the Linux real-process test runs it), and an 8.3
+gap that `fs.promises.realpath`, a native call, does not have. The kept fixes were small. A
+survivor's label merged by pid could rename a stopped root whose pid it took. A failed own-session
+lookup in the Windows reader compared every process against session 0, and with that fix reverted
+the reader opened a session-0 process with `PROCESS_VM_READ`. A label's file check could stat an
+unreachable share. The backlog demote scoped its reap to whatever project was open when its lock
+came free. The real-process unit test's cleanup signalled pids it had already seen die. The pass
+skipped 22 Lows, most as owner decisions or documented trade-offs: the failed-stop row copy
+(`rowDetailOf` returns the generic failure line before any keep reason, so a tmux row invites a
+retry without its warning), the macOS record parser's title and argv tolerances, and a Linux role
+read whose refusal leaves a process unprotected. Two test-builders worked with `src/` closed and
+showed red-green on scratch copies or test-side stand-ins; the driver then reverted each of the five
+fixes in place, saw its test go red, and restored it.
 
 The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
 mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and

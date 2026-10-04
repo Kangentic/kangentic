@@ -369,9 +369,13 @@ export async function reapTaggedOnce(
       const topOrphans = orphanSurvivors.filter((orphan) => !isUnderOrphanOfTask(orphan.survivor, orphan.taskId, secondByPid, orphanTaskByPid));
       orphanSurvivors.splice(0, orphanSurvivors.length, ...topOrphans);
     }
+    // A separate map, not merged into `labels`: a survivor can hold the pid of
+    // a first-plan root that exited, and that root's entry keeps its own label.
     const survivorLabels = await describeSafely(deps.reader, orphanSurvivors.map((orphan) => orphan.survivor));
-    for (const [pid, label] of survivorLabels) labels.set(pid, label);
-    const orphanEntries = orphanSurvivors.map((orphan) => entryFor(orphan.survivor, orphan.taskId, 'failed', null));
+    const orphanEntries = orphanSurvivors.map((orphan) => ({
+      ...entryFor(orphan.survivor, orphan.taskId, 'failed', null),
+      label: survivorLabels.get(orphan.survivor.pid) ?? UNNAMED_LABEL,
+    }));
 
     return {
       killedPids: [...killed].sort((left, right) => left - right),

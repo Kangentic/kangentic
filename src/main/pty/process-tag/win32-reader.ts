@@ -417,7 +417,10 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
   async scan(): Promise<ProcessScan> {
     const api = await this.loadApi();
     const ownSession = [0];
-    api.processIdToSessionId(process.pid, ownSession);
+    // With its own session unknown, the gate below would compare every process
+    // against session 0, where services run. No process is opened then, as
+    // when the caller's own token cannot be read.
+    const ownSessionKnown = api.processIdToSessionId(process.pid, ownSession) !== 0;
     const ownSid = readTokenUserSid(api, api.getCurrentProcess());
 
     const rows = await enumerateProcesses(api);
@@ -437,7 +440,7 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       // stays in the table with an unknown start key, which the kill refuses
       // and the protection walk treats permissively, so nothing is lost.
       const sessionId = [0];
-      if (api.processIdToSessionId(row.pid, sessionId) === 0 || sessionId[0] !== ownSession[0]) continue;
+      if (!ownSessionKnown || api.processIdToSessionId(row.pid, sessionId) === 0 || sessionId[0] !== ownSession[0]) continue;
       const limited = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, row.pid);
       if (isNullHandle(api, limited)) continue;
       let sameUser = false;

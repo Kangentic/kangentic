@@ -26,6 +26,7 @@ import { IPC } from '../../src/shared/ipc-channels';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const PROJECT_PATH = '/mock/project';
+const OTHER_PROJECT_PATH = '/mock/other-project';
 
 function reportOne(): Promise<string> {
   return new Promise((resolve) => {
@@ -42,9 +43,9 @@ function reportOne(): Promise<string> {
   });
 }
 
-function setup(outcome: 'stopped' | 'ended' | 'failed') {
+function setup(outcome: 'stopped' | 'ended' | 'failed', ambient: { currentProjectPath?: string | null } = {}) {
   const stopReportedProcess = vi.fn(async () => outcome);
-  const context = { sessionManager: { stopReportedProcess } } as unknown as IpcContext;
+  const context = { sessionManager: { stopReportedProcess }, ...ambient } as unknown as IpcContext;
   registerLeftoverProcessHandlers(context);
   const handler = handlers.get(IPC.LEFTOVER_PROCESSES_STOP)!;
   return { context, stopReportedProcess, stop: (processId: unknown) => handler({}, processId) };
@@ -62,6 +63,19 @@ describe('LEFTOVER_PROCESSES_STOP', () => {
     expect(await stop(processId)).toBe('stopped');
     expect(stopReportedProcess).toHaveBeenCalledWith(4242, 'start-4242');
     expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+  });
+
+  it('retries in the project the report was minted for, not the one open when Stop is pressed', async () => {
+    // The report was minted for PROJECT_PATH. By the time the user presses Stop
+    // another project is open, so the ambient current path is a different one.
+    // The task belongs to the first project: asking the open one to remove its
+    // worktree would look the task up in the wrong database and do nothing.
+    const processId = await reportOne();
+    const { context, stop } = setup('stopped', { currentProjectPath: OTHER_PROJECT_PATH });
+    expect(await stop(processId)).toBe('stopped');
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledTimes(1);
+    expect(retryDoneWorktreeRemoval).toHaveBeenCalledWith(context, PROJECT_PATH, TASK);
+    expect(retryDoneWorktreeRemoval).not.toHaveBeenCalledWith(expect.anything(), OTHER_PROJECT_PATH, expect.anything());
   });
 
   it('retries too when the process had already ended, since the worktree may be free now', async () => {

@@ -148,6 +148,35 @@ describe('LeftoverProcessReports', () => {
     expect(reports.resolve('made-up')).toBeNull();
   });
 
+  it('keeps only the newest ids the Stop button can reach, dropping the oldest first', () => {
+    // Mirrors RETAINED_PROCESS_IDS in leftover-process-reports.ts, which is not
+    // exported. If the source cap changes, change this too: the boundary
+    // assertions below fail until it matches, which is the point.
+    const RETAINED_PROCESS_IDS = 500;
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    const firstPid = 10_000;
+    const entries = Array.from({ length: RETAINED_PROCESS_IDS + 1 }, (_unused, index) => entry(firstPid + index));
+    reports.add((report) => sent.push(report), entries, TITLES, true);
+    vi.runAllTimers();
+
+    // The report itself is not trimmed: every process is told to the renderer.
+    const ids = sent[0].processes.map((process) => process.id);
+    expect(ids).toHaveLength(RETAINED_PROCESS_IDS + 1);
+
+    // One over the cap evicts exactly one id, the first minted.
+    expect(reports.resolve(ids[0])).toBeNull();
+    // The second-oldest is the boundary: still reachable at exactly the cap.
+    expect(reports.resolve(ids[1])).toEqual({ pid: firstPid + 1, startKey: `start-${firstPid + 1}`, taskId: TASK, projectPath: null });
+    // The newest is retained with its full identity.
+    expect(reports.resolve(ids[RETAINED_PROCESS_IDS])).toEqual({
+      pid: firstPid + RETAINED_PROCESS_IDS,
+      startKey: `start-${firstPid + RETAINED_PROCESS_IDS}`,
+      taskId: TASK,
+      projectPath: null,
+    });
+  });
+
   it('falls back to a generic title for a task it was not told about', () => {
     const reports = new LeftoverProcessReports();
     const sent: LeftoverProcessReport[] = [];

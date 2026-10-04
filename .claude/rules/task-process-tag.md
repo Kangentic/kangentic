@@ -39,7 +39,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   tasks included), and the startup sweep for archived and To Do tasks. A new terminal transition
   calls it too, with the project path and each task's `worktree_path`.
 - **A kill needs the tag AND the task's directory, and nothing in `reap-plan.ts` may relax that.**
-  A process is killed only when it carries the task's tag, works inside the task's project or
+  In the host reap, a process is killed only when it carries the task's tag, works inside the task's project or
   worktree, nothing under it shows it is shared (a readable descendant without this task's tag, or
   one working elsewhere), and it is not protected (Kangentic's tree, a held PTY, a visible app, a
   tmux server, each with everything under them). A process whose directory cannot be read is never
@@ -49,6 +49,12 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   Apple's `CS_RESTRICT` tools from the kernel record, so the reap also kills a process whose
   environment was withheld, whose parent is `launchd`, and whose working directory is inside a
   reaped task's worktree. All four conditions, never fewer.
+- **The in-distro WSL reap applies the tag and the directory only.** A WSL task's processes run
+  inside the distro, out of the host scan's sight, so `wsl-reap.ts` scans there itself and cannot
+  see the shared-subtree, visible-app or tmux signals. It runs only while the distro is running,
+  leaves out a task with a live or starting session (asked again just before the script runs),
+  validates task ids before they enter the script text, and takes directories only as positional
+  arguments. Do not interpolate a directory or any other caller value into the script.
 - **A mid-board suspend never reaps.** Pause, Stop, an `auto_spawn=false` column (Code Review
   entry), a handoff or settings respawn, an idle-timeout suspend, and quit leave the processes
   running, by decision: the task is parked, and its dev server stays up for testing.

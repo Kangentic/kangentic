@@ -153,7 +153,15 @@ async function waitUntilDead(pids: number[]): Promise<number[]> {
   while (Date.now() < deadline && pids.some((pid) => isProcessAlive(pid))) {
     await new Promise((resolve) => { setTimeout(resolve, 50); });
   }
-  return pids.filter((pid) => isProcessAlive(pid));
+  const stillAlive = pids.filter((pid) => isProcessAlive(pid));
+  // Seen dead: afterEach must not signal these. Windows hands a freed pid to a
+  // new process within seconds, so a later SIGKILL could end an unrelated one.
+  for (const pid of pids) {
+    if (stillAlive.includes(pid)) continue;
+    const index = startedPids.indexOf(pid);
+    if (index !== -1) startedPids.splice(index, 1);
+  }
+  return stillAlive;
 }
 
 async function reap(scratch: Scratch, taskIds: string[] = [TASK_ID]) {

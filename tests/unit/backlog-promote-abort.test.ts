@@ -182,6 +182,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 
 // Import under test AFTER all mocks are registered.
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -513,6 +514,63 @@ describe('BACKLOG_DEMOTE external-origin carry-back', () => {
       ['bug'],
       { externalId: '77', externalSource: 'github_issues', externalUrl: 'https://github.com/acme/repo/issues/77' },
     );
+  });
+
+  it('scopes the cleanup to the project open at entry when a switch lands while the demote waits for the lock', async () => {
+    // The demote queues on the task's lock behind another operation. The user
+    // opens a different project in that gap. The session cleanup and the
+    // leftover reap inside cleanupTaskResources must still be scoped to the
+    // project the demote was invoked in; with no explicit scope they fall back
+    // to the ambient current project, which is now the wrong one. Red-green:
+    // reverting the call to cleanupTaskResources(context, task, tasks) leaves
+    // the 4th and 5th arguments undefined and this test red.
+    const demotedTask = {
+      id: 'task-demoted',
+      title: 'Demote me',
+      description: 'desc',
+      labels: [],
+      priority: 0,
+      external_id: null,
+      external_source: null,
+      external_url: null,
+      session_id: null,
+    };
+    taskRepoMock.getById.mockReturnValue(demotedTask);
+    backlogRepoMock.createFromTask.mockReturnValue({ id: 'backlog-demoted', title: 'Demote me', description: 'desc' });
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_DEMOTE);
+    if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
+
+    const entryProjectId = context.currentProjectId;
+    const entryProjectPath = context.currentProjectPath;
+
+    // Hold the task's real lock so the demote cannot start its locked body yet.
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const holder = withTaskLock(demotedTask.id, () => lockHeld);
+
+    const demoting = handler(null, { taskId: demotedTask.id }) as Promise<unknown>;
+
+    // The user opens another project while the demote waits.
+    context.currentProjectId = 'proj-2';
+    context.currentProjectPath = '/mock/other-project';
+
+    // A fixed turn of the event loop, on purpose: the absence of a cleanup call
+    // cannot be polled. It proves the demote is parked on the lock, so the
+    // assertions below are about a body that ran after the switch.
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+
+    releaseLock();
+    await holder;
+    await demoting;
+
+    expect(mockCleanupTaskResources).toHaveBeenCalledTimes(1);
+    const [, cleanedTask, , cleanedProjectId, cleanedProjectPath] = mockCleanupTaskResources.mock.calls[0] as unknown[];
+    expect(cleanedTask).toBe(demotedTask);
+    expect(cleanedProjectId).toBe(entryProjectId);
+    expect(cleanedProjectPath).toBe(entryProjectPath);
+    expect(cleanedProjectId).not.toBe('proj-2');
   });
 
   it('passes null origin fields when the task has no external origin', async () => {

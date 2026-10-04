@@ -32,6 +32,38 @@ describe('isUsableReapRoot', () => {
   });
 });
 
+describe('isUsableReapRoot with a long-path prefix', () => {
+  // A literal home, so the cases below are the same on every OS. `isUsableReapRoot`
+  // only compares home as text, never reading it from the filesystem.
+  const HOME = 'C:/Users/dev';
+
+  it('refuses a share root or a drive root written with the prefix, in its forward-slash form', () => {
+    // `//?/UNC/server/share` is `\\server\share`, the same share root a bare UNC path names.
+    expect(isUsableReapRoot('//?/UNC/server/share', HOME)).toBe(false);
+    expect(isUsableReapRoot('//?/UNC/server/share/', HOME)).toBe(false);
+    expect(isUsableReapRoot('//?/unc/server/share', HOME)).toBe(false);
+    expect(isUsableReapRoot('//?/C:/', HOME)).toBe(false);
+    // Positive controls: something inside the share, and a project on the drive, is still a root.
+    expect(isUsableReapRoot('//?/UNC/server/share/project', HOME)).toBe(true);
+    expect(isUsableReapRoot('//?/C:/work/project', HOME)).toBe(true);
+  });
+
+  it('refuses the home directory written with the prefix', () => {
+    expect(isUsableReapRoot('//?/C:/Users/dev', HOME)).toBe(false);
+    expect(isUsableReapRoot('//?/C:/Users/dev/', HOME)).toBe(false);
+    // Positive control: a project inside home, written the same way, is still a root.
+    expect(isUsableReapRoot('//?/C:/Users/dev/project', HOME)).toBe(true);
+  });
+
+  it.runIf(process.platform === 'win32')('refuses the same roots in their backslash form, and keeps a project under the prefix usable', () => {
+    expect(isUsableReapRoot('\\\\?\\UNC\\server\\share', HOME)).toBe(false);
+    expect(isUsableReapRoot('\\\\?\\C:\\', HOME)).toBe(false);
+    expect(isUsableReapRoot('\\\\?\\C:\\Users\\dev', HOME)).toBe(false);
+    expect(isUsableReapRoot('\\\\?\\UNC\\server\\share\\project', HOME)).toBe(true);
+    expect(isUsableReapRoot('\\\\?\\C:\\work\\project', HOME)).toBe(true);
+  });
+});
+
 describe('resolveTaskDirectories', () => {
   it('keeps the stored and the real form of the project and worktree, and drops what is missing', async () => {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-dirs-'));

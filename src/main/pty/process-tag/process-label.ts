@@ -28,6 +28,8 @@ const INLINE_CODE_FLAGS = new Set(['-e', '--eval', '-p', '--print', '-c']);
 const MODULE_FLAG = '-m';
 const MODULE_NAME_PATTERN = /^[A-Za-z_][\w.]{0,80}$/;
 const TITLE_WORD_PATTERN = /^[\w.@-]{1,40}$/;
+/** A UNC path, `\\host\share` or `//host/share`. Not the `\\?\` and `\\.\` local device prefixes. */
+const NETWORK_PATH_PATTERN = /^[\\/]{2}[^\\/?.]/;
 /** How many arguments after the program are searched for the script. */
 const SCRIPT_SEARCH_LIMIT = 4;
 const FALLBACK_LABEL = 'process';
@@ -80,6 +82,11 @@ export interface ProcessLabelInput {
  */
 export async function isFileFrom(workingDirectory: string | null, candidate: string): Promise<boolean> {
   if (!path.isAbsolute(candidate) && !workingDirectory) return false;
+  // A network path (`\\host\share\app.js`, or a relative script under a
+  // working directory on a share) makes Windows contact the share, and an
+  // unreachable one holds the stat, and the report waiting on it, until the
+  // SMB timeout. The label drops the script name instead.
+  if (NETWORK_PATH_PATTERN.test(path.isAbsolute(candidate) ? candidate : workingDirectory ?? '')) return false;
   const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(workingDirectory ?? '', candidate);
   try {
     return (await fsPromises.stat(resolved)).isFile();

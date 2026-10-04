@@ -5,7 +5,9 @@
  *
  * The gates pinned here:
  * - `scan` never opens a process outside the caller's Windows session, nor a
- *   pid at or below 4.
+ *   pid at or below 4, and opens none at all when the caller's own session
+ *   cannot be read (it would otherwise compare against session 0, where
+ *   services run).
  * - `scan` opens PROCESS_VM_READ only on a same-session process whose token
  *   user is the caller's, and never when the caller's own token is unreadable.
  * - `kill` terminates only through a handle whose creation time still matches
@@ -174,6 +176,8 @@ class FakeWin32 {
   failedReads = 0;
   throwOnFailingRead = false;
   ownTokenReadable = true;
+  /** ProcessIdToSessionId reports failure for the caller's own pid. */
+  ownSessionLookupFails = false;
 
   private nextHandleId = 1;
   private snapshotCursor = 0;
@@ -213,6 +217,7 @@ class FakeWin32 {
     processIdToSessionId: (pid, sessionOut) => {
       this.sessionLookups.push(pid);
       if (pid === process.pid) {
+        if (this.ownSessionLookupFails) return 0;
         sessionOut[0] = OWN_SESSION;
         return 1;
       }
@@ -435,6 +440,35 @@ describe('Win32TaggedProcessReader.scan: which processes are opened at all', () 
       expect(scanned(scan, pid)).toMatchObject({ pid, startKey: '', tagValue: null });
     }
     expect(scanned(scan, 400)).toMatchObject({ startKey: fake.startKeyOf(400), tagValue: TASK });
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('opens no process at all when its own session cannot be read, and never takes session 0 for its own', async () => {
+    // Session 0 is where services run, and what the gate compares against when the lookup leaves its answer at 0.
+    const table: FakeProcess[] = [
+      { pid: 300, session: SERVICES_SESSION, tag: TASK },
+      { pid: 400, tag: TASK },
+    ];
+
+    // Positive control: with the lookup answering, the caller's own session's process is opened and read.
+    const control = new FakeWin32(table);
+    const controlScan = await readerFor(control).scan();
+    expect(control.openedPids()).toContain(400);
+    expect(control.openedPids()).not.toContain(300);
+    expect(scanned(controlScan, 400).tagValue).toBe(TASK);
+
+    const fake = new FakeWin32(table);
+    fake.ownSessionLookupFails = true;
+    const scan = await readerFor(fake).scan();
+
+    // The lookup was asked, so the empty ledger is the gate and not a scan that never ran.
+    expect(fake.sessionLookups).toContain(process.pid);
+    expect(fake.opens).toEqual([]);
+    // Both stay in the table, unopened: no start key, no tag, so a kill refuses them and nothing was read.
+    for (const pid of [300, 400]) {
+      expect(scanned(scan, pid)).toMatchObject({ pid, startKey: '', tagValue: null });
+    }
+    expect(scan.unreadableCount).toBe(0);
     expectEveryHandleClosedOnce(fake);
   });
 });

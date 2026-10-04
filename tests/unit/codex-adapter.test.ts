@@ -99,6 +99,19 @@ describe('Codex Adapter', () => {
       expect(command).toContain(`-c '${TAG_OVERRIDE}'`);
     });
 
+    // The override carries an `=`, which is outside quoteArg's bare-token set, so
+    // it is always quoted, and in the form the target shell parses. The expected
+    // strings are derived from quoteArg's rules in src/shared/paths.ts and
+    // escapeForDoubleQuotedShell in src/shared/shell-quote.ts: PowerShell and cmd
+    // both use a flat double-quoted token, and neither escaper changes this
+    // payload (no backslash, double quote, backtick or `$` in it), so the two
+    // come out identical. The test does not call quoteArg to build its answer.
+    it.each(['powershell', 'cmd'])('quotes the override as one double-quoted token for %s', (shell) => {
+      const command = adapter.buildCommand(makeOptions({ taskProcessTag: TASK_TAG, shell }));
+      expect(command).toContain(`-c "${TAG_OVERRIDE}"`);
+      expect(command).not.toContain(`'${TAG_OVERRIDE}'`);
+    });
+
     it('re-injects it on a resume too, before the positional prompt grammar', () => {
       const command = adapter.buildCommand(makeOptions({
         taskProcessTag: TASK_TAG,

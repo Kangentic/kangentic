@@ -5,8 +5,11 @@
  * nothing else from the arguments ever reaches it.
  */
 
-import { describe, it, expect } from 'vitest';
-import { labelProcess, programName, scriptName, splitWindowsCommandLine } from '../../src/main/pty/process-tag/process-label';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { isFileFrom, labelProcess, programName, scriptName, splitWindowsCommandLine } from '../../src/main/pty/process-tag/process-label';
 
 const SECRET = 'sk-live-0123456789abcdef';
 
@@ -107,5 +110,69 @@ describe('splitWindowsCommandLine', () => {
     expect(splitWindowsCommandLine('node C:\\dir\\file.js')).toEqual(['node', 'C:\\dir\\file.js']);
     expect(splitWindowsCommandLine('node "say ""hi"""')).toEqual(['node', 'say "hi"']);
     expect(splitWindowsCommandLine('   ')).toEqual([]);
+  });
+});
+
+describe('isFileFrom', () => {
+  const temporaryRoots: string[] = [];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const root of temporaryRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * `fs.promises.stat` (the same object the module imports) failing at once, so a
+   * network path that did reach it would not wait on a real share.
+   */
+  function failingStat() {
+    return vi.spyOn(fs.promises, 'stat').mockRejectedValue(Object.assign(new Error('unreachable'), { code: 'ENOENT' }));
+  }
+
+  it('answers false for a UNC candidate without asking the filesystem', async () => {
+    const stat = failingStat();
+    // `//host/share` is absolute on every OS, so this runs everywhere.
+    expect(await isFileFrom(null, '//host/share/app.js')).toBe(false);
+    expect(await isFileFrom('/mock/work', '//host/share/app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it('answers false for a relative candidate under a UNC working directory without asking the filesystem', async () => {
+    const stat = failingStat();
+    expect(await isFileFrom('//host/share/work', 'app.js')).toBe(false);
+    expect(await isFileFrom('//host/share/work', './scripts/app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it.runIf(process.platform === 'win32')('answers false for a backslash UNC candidate, or one under a backslash UNC working directory, without asking the filesystem', async () => {
+    const stat = failingStat();
+    expect(await isFileFrom(null, '\\\\host\\share\\app.js')).toBe(false);
+    expect(await isFileFrom('\\\\host\\share\\work', 'app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it('does not take a local device path for a share, and still asks the filesystem about it', async () => {
+    const stat = failingStat();
+    expect(await isFileFrom(null, '//?/C:/work/app.js')).toBe(false);
+    expect(stat).toHaveBeenCalledTimes(1);
+  });
+
+  it('still asks the filesystem about a local file, absolute or relative to its working directory, and finds it', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-label-'));
+    temporaryRoots.push(directory);
+    const script = path.join(directory, 'app.js');
+    fs.writeFileSync(script, '');
+    const stat = vi.spyOn(fs.promises, 'stat');
+
+    expect(await isFileFrom(null, script)).toBe(true);
+    expect(await isFileFrom(directory, 'app.js')).toBe(true);
+    expect(stat).toHaveBeenCalledTimes(2);
+    // A directory is not a file, and a missing path is not one either.
+    expect(await isFileFrom(null, directory)).toBe(false);
+    expect(await isFileFrom(directory, 'missing.js')).toBe(false);
+    // A relative path with no working directory is never a file, and never reaches the filesystem.
+    stat.mockClear();
+    expect(await isFileFrom(null, 'app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
   });
 });

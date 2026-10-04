@@ -17,7 +17,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 function comparable(directory: string): string {
-  const normalized = directory.replace(/\\/g, '/').replace(/\/+$/, '');
+  // The same prefix handling as reap-plan.ts's normalizeDirectory, so a
+  // `\\?\UNC\server\share` root reads as the share root it is and is refused.
+  const normalized = directory
+    .replace(/\\/g, '/')
+    .replace(/^\/\/\?\/UNC\//i, '//')
+    .replace(/^\/\/\?\//, '')
+    .replace(/\/+$/, '');
   return process.platform === 'linux' ? normalized : normalized.toLowerCase();
 }
 

@@ -245,8 +245,10 @@ export async function performSpawn(
   }
   // Tag every process this task's agent starts, so a terminal transition can
   // kill what it left running however it detached (see process-tag/). A
-  // Command Terminal is the user's own shell, not task work, so it is never
-  // tagged.
+  // Command Terminal is the user's own shell, not task work, so it gets no tag
+  // of its own. It still inherits main's environment, which carries a tag when
+  // Kangentic itself was started from a task's terminal; that tag names the
+  // outer task, whose reap should stop this app and its shells anyway.
   if (!input.transient) {
     spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
       wslShell: parseWslShellSpec(shell) !== null,
