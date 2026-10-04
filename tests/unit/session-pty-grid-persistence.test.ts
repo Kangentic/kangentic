@@ -12,7 +12,7 @@
  * session-repository-applied-settings.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
 const hoisted = vi.hoisted(() => ({
@@ -28,6 +28,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
   isShuttingDown: () => hoisted.shuttingDown,
 }));
 
+import { getOpenProjectDb } from '../../src/main/db/database';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { recordedPtyGrid } from '../../src/main/db/recorded-pty-grid';
 import { persistPtyGrid } from '../../src/main/ipc/handlers/session-grid-persistence';
@@ -228,6 +229,62 @@ describe('persistPtyGrid (the pty-resize listener)', () => {
     persistPtyGrid(contextFor(undefined), 'session-1', { cols: 190, rows: 50 }, 'desktop');
 
     expect(capture.runParams).toEqual([]);
+  });
+
+  /**
+   * The record lives in the database of the project that owns the session. A
+   * write aimed at any other project's database matches no row and loses the
+   * grid without a sound, so the id handed to the lookup is the thing to pin.
+   */
+  it('writes to the database of the project that owns the session', () => {
+    vi.mocked(getOpenProjectDb).mockClear();
+
+    persistPtyGrid(contextFor('project-2'), 'session-1', { cols: 190, rows: 50 }, 'desktop');
+
+    expect(getOpenProjectDb).toHaveBeenCalledTimes(1);
+    expect(getOpenProjectDb).toHaveBeenCalledWith('project-2');
+  });
+
+  describe('when the write fails', () => {
+    // The listener runs synchronously inside EventEmitter.emit, from
+    // SessionManager.resize and from performSpawn, and a spawn's write runs
+    // inside a setImmediate. A throw from a database a close just released, or
+    // from a locked one, must stay inside the write: out of the emit it would
+    // fail the resize or the spawn that announced the grid, and out of the
+    // immediate it would be an uncaught exception in the main process. The
+    // cost of swallowing it is a resume that spawns at the default grid.
+    let failingPrepare: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      failingPrepare = vi.fn(() => {
+        throw new Error('SQLITE_BUSY: database is locked');
+      });
+      hoisted.openDb = { prepare: failingPrepare };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not throw out of a desktop or park write', () => {
+      expect(() => persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 190, rows: 50 }, 'desktop')).not.toThrow();
+      expect(() => persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 210, rows: 48 }, 'park')).not.toThrow();
+
+      // The write was attempted: the throw above was reached and contained.
+      expect(failingPrepare).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not throw out of the deferred spawn write', () => {
+      // Fake timers rethrow what a timer callback throws from the call that
+      // runs it, which is how an uncaught exception in main shows up here.
+      vi.useFakeTimers({ toFake: ['setImmediate', 'clearImmediate'] });
+      persistPtyGrid(contextFor('project-1'), 'session-1', { cols: 210, rows: 48 }, 'spawn');
+      expect(failingPrepare).not.toHaveBeenCalled();
+
+      expect(() => vi.runAllTimers()).not.toThrow();
+
+      expect(failingPrepare).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

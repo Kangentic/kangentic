@@ -562,6 +562,24 @@ describe('Respawn grid', () => {
   });
 
   /**
+   * The strip floor is MOBILE_USABLE_MIN_ROWS (20): a 20-row grid is usable, so
+   * an unheld successor still starts there, and only a shorter one is dropped.
+   */
+  it('treats a 20-row grid as usable, so it carries to an unheld successor and 19 rows does not', async () => {
+    const { session: usable } = await spawnFor('task-respawn-floor-usable');
+    manager.resize(usable.id, 306, 20);
+    await manager.suspend(usable.id);
+    await spawnFor('task-respawn-floor-usable', { resuming: true });
+    expect(lastSpawnGrid()).toEqual([306, 20]);
+
+    const { session: sliver } = await spawnFor('task-respawn-floor-sliver');
+    manager.resize(sliver.id, 306, 19);
+    await manager.suspend(sliver.id);
+    await spawnFor('task-respawn-floor-sliver', { resuming: true });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+  });
+
+  /**
    * A phone-held grid is given back by the size guard on release, but an exit
    * disarms the guard without restoring. Inherited, it would stick to the
    * successor with nothing left to undo it.
@@ -619,6 +637,14 @@ describe('Respawn grid', () => {
 
     await spawnFor('task-restored-garbage', { restoredGrid: { cols: Number.NaN, rows: 48 } });
     expect(lastSpawnGrid()).toEqual([120, 30]);
+
+    // Either axis alone is enough to refuse it, and a NaN row would sail past
+    // the row floor (NaN < 20 is false) into pty.spawn if only cols were checked.
+    await spawnFor('task-restored-garbage-rows', { restoredGrid: { cols: 210, rows: Number.NaN } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+
+    await spawnFor('task-restored-infinite', { restoredGrid: { cols: 210, rows: Number.POSITIVE_INFINITY } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
   });
 
   /**
@@ -636,6 +662,14 @@ describe('Respawn grid', () => {
     // The floor is inclusive: 2 columns is the narrowest real grid.
     await spawnFor('task-restored-two-columns', { restoredGrid: { cols: 2, rows: 48 } });
     expect(lastSpawnGrid()).toEqual([2, 48]);
+
+    // The row floor is inclusive too: 20 rows is the shortest usable grid (a
+    // phone can fill its screen from it), one fewer is a strip.
+    await spawnFor('task-restored-twenty-rows', { restoredGrid: { cols: 210, rows: 20 } });
+    expect(lastSpawnGrid()).toEqual([210, 20]);
+
+    await spawnFor('task-restored-nineteen-rows', { restoredGrid: { cols: 210, rows: 19 } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
   });
 
   it('lets an in-memory predecessor win over the recorded grid', async () => {
@@ -3425,6 +3459,34 @@ describe('Resting grid restore', () => {
     await settle();
 
     expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+  });
+
+  /**
+   * The park is a grid the PTY really has, and the surface or phone that shows
+   * the session next meets its successor, which gets a new id. Starting that
+   * successor at the parked grid means a phone still streaming the task finds
+   * the resting grid in place with no park mid-boot (and agrees with what
+   * persistPtyGrid records, which counts a park too). Remembering only desktop
+   * resizes would hand the successor the pre-park spawn grid instead.
+   */
+  it('starts a respawn at the resting grid its predecessor was parked at', async () => {
+    const { session, mockPty } = await spawnSession('task-rest-respawn-parked');
+    await settle();
+    expect([mockPty.cols, mockPty.rows]).toEqual([REST_COLS, REST_ROWS]);
+    await manager.suspend(session.id);
+
+    const successorMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(successorMock.mockPty as unknown as pty.IPty);
+    const successor = await manager.spawn({ taskId: 'task-rest-respawn-parked', command: '', cwd: tmpDir, resuming: true });
+    spawnedSessionIds.push(successor.id);
+
+    expect(successor.id).not.toBe(session.id);
+    // The mock reports 120x30 whatever it was spawned at, so read the spawn.
+    // Compared as a bare grid: a failed toHaveBeenCalledWith would print the
+    // whole spawn environment.
+    const spawnCalls = vi.mocked(pty.spawn).mock.calls;
+    const spawnOptions = spawnCalls[spawnCalls.length - 1][2] as { cols: number; rows: number };
+    expect([spawnOptions.cols, spawnOptions.rows]).toEqual([REST_COLS, REST_ROWS]);
   });
 
   /**

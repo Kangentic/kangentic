@@ -1179,6 +1179,31 @@ describe('performSpawn - cols/rows precedence', () => {
 
       expect(context.registry.get('input-session-id-0000-000000000000')?.lastPtyGrid).toEqual(INHERITED);
     });
+
+    it('case (k): forgets the grids kept for the row a respawn replaces, never a promotion\'s own', async () => {
+      // A new-id respawn replaces the predecessor and nothing reads its stash,
+      // desktop restore target or pending park again, so they are dropped.
+      const respawn = contextWithPredecessor();
+      respawn.forgetSessionGrid = vi.fn();
+      await performSpawn(makeInput(), respawn);
+      expect(respawn.forgetSessionGrid).toHaveBeenCalledTimes(1);
+      expect(respawn.forgetSessionGrid).toHaveBeenCalledWith('predecessor-id');
+
+      // A queue promotion keeps its id, so what the placeholder holds (the
+      // desktop's restore target above all) belongs to the session being born.
+      ptySpawnMock.mockClear();
+      const promotion = makeContext();
+      promotion.registry.set('input-session-id-0000-000000000000', {
+        id: 'input-session-id-0000-000000000000',
+        taskId: 'task-001',
+        projectId: 'project-001',
+        pty: null,
+        status: 'queued',
+      } as never);
+      promotion.forgetSessionGrid = vi.fn();
+      await performSpawn(makeInput(), promotion);
+      expect(promotion.forgetSessionGrid).not.toHaveBeenCalled();
+    });
   });
 
   it('case (d): takePendingResize is consumed exactly once, unconditionally, keyed on the resolved session id', async () => {
