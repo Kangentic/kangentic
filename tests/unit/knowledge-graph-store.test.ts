@@ -133,7 +133,11 @@ function makeSnapshot(projectId: string, overrides: Partial<KnowledgeGraphSnapsh
       embeddedFraction: 0,
       knownDocumentIdsMatched: 0,
     },
-    index: { corpora: [], summaries: { written: 0, finishedTasks: 0 }, storageBytes: 0 },
+    index: {
+      corpora: [],
+      summaries: { written: 0, finishedTasks: 0, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
+      storageBytes: 0,
+    },
     building: false,
     buildProgress: null,
     stale: false,
