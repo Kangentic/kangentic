@@ -1324,7 +1324,12 @@ Windows host and now fake the platform so CI's Linux runs them. The driver rever
 guard, the UNC strip and the real-path lookup in place and saw each test go red. The toast reorder
 was only run green, once on Windows with worktrees on, since a timing race cannot cheaply be forced
 red. The WSL tests were checked off Windows only under a faked platform on this host, so their first
-real Linux run is CI.
+real Linux run is CI. At the user's request a follow-up then fixed all nine skipped Lows
+(`656f5dd8`). For the owner decision on the blind Windows scan it chose failing the scan over
+counting the skipped rows, because `unreadableCount` reaches only a log line while a failure reports
+`reap_error`. The driver showed four of the fixes red in place: the scan failure, the toast that now
+closes with its evicted report (in the store and in a UI case against `App.tsx`), the upload parity
+table, and the lockfile comparison. The reap E2E's Linux start-time check first runs on CI.
 
 The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
 mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and
