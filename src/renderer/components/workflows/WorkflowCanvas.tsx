@@ -7,6 +7,7 @@ import {
   Panel,
   ReactFlow,
   applyNodeChanges,
+  useNodesInitialized,
   useReactFlow,
   type Connection,
   type IsValidConnection,
@@ -21,6 +22,7 @@ import { canBlock, canWait, linkRefusal, waitingOf } from './workflow-graph';
 import { canvasCardHeight } from './WorkflowCanvasCard';
 import { WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
 import { WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
+import { WorkflowDetailContext } from './workflow-canvas-context';
 
 /**
  * The Workflows canvas: React Flow for the interaction layer (pan, zoom, card
@@ -180,15 +182,18 @@ export function WorkflowCanvas({
   })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys]);
 
   // Fit every card in view when a workflow opens, and when its card count
-  // changes (Add task, the agent's first plan).
+  // changes (Add task, the agent's first plan). Only once React Flow has
+  // measured every card: a fit before that frames the cards against sizes it
+  // does not have yet, and left the third card of a three-card workflow
+  // under the inspector.
+  const nodesInitialized = useNodesInitialized();
+  const fitSignature = `${detail.workflow.id}:${detail.tasks.length}`;
   const fittedFor = useRef<string | null>(null);
   useEffect(() => {
-    const signature = `${detail.workflow.id}:${detail.tasks.length}`;
-    if (fittedFor.current === signature) return;
-    fittedFor.current = signature;
-    const frame = requestAnimationFrame(() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); });
-    return () => cancelAnimationFrame(frame);
-  }, [detail.workflow.id, detail.tasks.length, reactFlow]);
+    if (!nodesInitialized || fittedFor.current === fitSignature) return;
+    fittedFor.current = fitSignature;
+    void reactFlow.fitView(FIT_VIEW_OPTIONS);
+  }, [nodesInitialized, fitSignature, reactFlow]);
 
   const handleNodeClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onSelectTask(node.id), [onSelectTask]);
   const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onOpenTask(node.id), [onOpenTask]);
@@ -216,6 +221,7 @@ export function WorkflowCanvas({
     // canvas must not close a task window (light-dismiss-denylist.md).
     <div className="relative h-full w-full workflow-canvas" data-no-dismiss onKeyDown={handleKeyDown} data-testid="workflow-canvas">
       {WORKFLOW_EDGE_MARKERS}
+      <WorkflowDetailContext.Provider value={detail}>
       <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>
         nodes={nodes}
         edges={edges}
@@ -263,6 +269,7 @@ export function WorkflowCanvas({
           />
         </Panel>
       </ReactFlow>
+      </WorkflowDetailContext.Provider>
     </div>
   );
 }

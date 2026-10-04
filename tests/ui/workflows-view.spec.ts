@@ -346,6 +346,55 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
+  test('a planned task opens in the task form, and Save writes into the workflow', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await card(page, 'task-2').dblclick();
+      const dialog = byTestId(page, 'new-task-dialog');
+      await expect(dialog).toContainText('Edit Task');
+      const title = dialog.getByPlaceholder('Task title');
+      await expect(title).toHaveValue('Token picker');
+      await title.fill('Token picker with search');
+      await dialog.getByRole('button', { name: 'Save' }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(card(page, 'task-2')).toContainText('Token picker with search');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('drawing a link says what a release does over each card, and links on release', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      const port = page.locator('.react-flow__node[data-id="task-1"] .react-flow__handle.source').first();
+      const portBox = await port.boundingBox();
+      const loopTarget = await card(page, 'task-1').boundingBox();
+      const target = await card(page, 'task-3').boundingBox();
+      if (!portBox || !target || !loopTarget) throw new Error('canvas not laid out');
+      await page.mouse.move(portBox.x + portBox.width / 2, portBox.y + portBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 });
+      const hint = byTestId(page, 'workflow-link-hint');
+      await expect(hint).toHaveText('Release to make "Token docs" wait for "Token table"');
+      await page.mouse.up();
+      // The task that now waits is selected, with both of its blockers.
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      await expect(page.locator('[data-testid="workflow-link-row"]')).toHaveCount(2);
+
+      // From the last task back onto the first closes a loop: refused, and said so.
+      const lastPort = await page.locator('.react-flow__node[data-id="task-3"] .react-flow__handle.source').first().boundingBox();
+      if (!lastPort) throw new Error('no port on the last task');
+      await page.mouse.move(lastPort.x + lastPort.width / 2, lastPort.y + lastPort.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(loopTarget.x + loopTarget.width / 2, loopTarget.y + loopTarget.height / 2, { steps: 12 });
+      await expect(byTestId(page, 'workflow-link-hint')).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.');
+      await page.mouse.up();
+      await expect(byTestId(page, 'workflow-link-hint')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Auto layout stays disabled until a card is moved by hand', async () => {
     const { browser, page } = await launch('draft');
     try {

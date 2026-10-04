@@ -34,7 +34,8 @@ type ViewDialog =
   | { kind: 'delete' }
   | { kind: 'rename' }
   | { kind: 'remove'; key: string }
-  | { kind: 'addTask' };
+  | { kind: 'addTask' }
+  | { kind: 'editPlanned'; key: string };
 
 /** The workflow agent arrives in a later step; until then nothing holds the plan. */
 const PLAN_HELD = false;
@@ -55,6 +56,7 @@ export function WorkflowsView() {
   const setLink = useWorkflowStore((state) => state.setLink);
   const setRoute = useWorkflowStore((state) => state.setRoute);
   const addTask = useWorkflowStore((state) => state.addTask);
+  const updateTask = useWorkflowStore((state) => state.updateTask);
   const removeTask = useWorkflowStore((state) => state.removeTask);
   const createWorkflow = useWorkflowStore((state) => state.createWorkflow);
   const renameWorkflow = useWorkflowStore((state) => state.renameWorkflow);
@@ -106,7 +108,13 @@ export function WorkflowsView() {
 
   const openTask = useCallback((key: string) => {
     const viewTask = useWorkflowStore.getState().detail?.tasks.find((task) => task.key === key);
-    if (!viewTask?.task) return;
+    if (!viewTask) return;
+    // A task that is still only planned has no task window yet: it opens in
+    // the task form, and Save writes into the workflow.
+    if (!viewTask.task) {
+      if (viewTask.planned) setDialog({ kind: 'editPlanned', key });
+      return;
+    }
     const taskId = viewTask.task.id;
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
     if (viewTask.projectId === currentProjectId) {
@@ -145,6 +153,7 @@ export function WorkflowsView() {
   }, [selected, boardTasks, todoLane]);
 
   const removing: WorkflowViewTask | null = dialog?.kind === 'remove' ? findTask(detail, dialog.key) : null;
+  const editing: WorkflowViewTask | null = dialog?.kind === 'editPlanned' ? findTask(detail, dialog.key) : null;
 
   const header = (
     <WorkflowHeader
@@ -261,7 +270,26 @@ export function WorkflowsView() {
         <NewTaskDialog
           swimlaneId={todoLane.id}
           onClose={() => setDialog(null)}
-          workflow={{ onCreate: async (input) => (await addTask(input)) !== null }}
+          workflow={{ onSubmit: async (input) => (await addTask(input)) !== null }}
+        />
+      )}
+      {dialog?.kind === 'editPlanned' && todoLane && editing?.planned && (
+        <NewTaskDialog
+          // Keyed by the task, so opening another planned task starts a fresh form.
+          key={editing.key}
+          swimlaneId={todoLane.id}
+          onClose={() => setDialog(null)}
+          workflow={{
+            title: 'Edit Task',
+            submitLabel: 'Save',
+            initial: {
+              title: editing.planned.title,
+              description: editing.planned.description,
+              labels: editing.planned.labels,
+              priority: editing.planned.priority,
+            },
+            onSubmit: (input) => updateTask(editing.key, input),
+          }}
         />
       )}
     </div>

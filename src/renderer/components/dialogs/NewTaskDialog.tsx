@@ -34,14 +34,24 @@ interface NewTaskDialogProps {
   swimlaneId: string;
   onClose: () => void;
   /**
-   * Create into a workflow instead of onto the board (the Workflows canvas's
-   * Add task). A workflow task carries what it has before Start creates it:
-   * title, description, priority and labels. Its branch, agent settings and
-   * attachments are set in the task's own window once it exists, so those rows
-   * are left out here rather than taking input that would be dropped.
-   * Resolves true once the task is in the workflow.
+   * Write into a workflow instead of onto the board: the Workflows canvas's
+   * Add task, and the editor for a task that is still only planned (it has no
+   * task id yet, so the task window cannot host it). A workflow task carries
+   * what it has before Start creates it: title, description, priority and
+   * labels. Its branch, agent settings and attachments are set in the task's
+   * own window once it exists, so those rows are left out here rather than
+   * taking input that would be dropped. `onSubmit` resolves true once the
+   * workflow has the task.
    */
-  workflow?: { onCreate: (input: WorkflowTaskInput) => Promise<boolean> };
+  workflow?: {
+    /** The dialog's title; "New Task" when omitted. */
+    title?: string;
+    /** The submit button's label; "Create" when omitted. */
+    submitLabel?: string;
+    /** A planned task's current fields, when editing one. */
+    initial?: { title: string; description: string; labels: string[]; priority: number };
+    onSubmit: (input: WorkflowTaskInput) => Promise<boolean>;
+  };
 }
 
 // Non-task sentinel key for the maximize toggle (the create dialog has no task
@@ -59,11 +69,12 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   const isMaximized = useSessionStore((s) => s.maximizedTasks.has(NEW_TASK_ENTITY_ID));
   const toggleMaximized = useSessionStore((s) => s.toggleMaximized);
   const handleToggleMaximized = useCallback(() => toggleMaximized(NEW_TASK_ENTITY_ID), [toggleMaximized]);
-  const [title, setTitle] = useState('');
+  const initial = workflow?.initial;
+  const [title, setTitle] = useState(initial?.title ?? '');
   const [submitting, setSubmitting] = useState(false);
-  const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState(0);
-  const [labels, setLabels] = useState<string[]>([]);
+  const [description, setDescription] = useState(initial?.description ?? '');
+  const [priority, setPriority] = useState(initial?.priority ?? 0);
+  const [labels, setLabels] = useState<string[]>(initial?.labels ?? []);
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<PendingAttachment | null>(null);
@@ -120,7 +131,12 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   // Every field the user can touch, including the two that pin nothing on their
   // own: selecting Agent Override with all four inherited, or picking a Board
   // Profile, is still work to lose, so Escape must prompt.
-  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '' || profileId !== null || runMode !== 'column_settings';
+  // Editing a planned task measures against what it already holds, not an empty form.
+  const isDirty = title.trim() !== (initial?.title ?? '').trim()
+    || description.trim() !== (initial?.description ?? '').trim()
+    || labels.join('\n') !== (initial?.labels ?? []).join('\n')
+    || priority !== (initial?.priority ?? 0)
+    || customBranchName.trim() !== '' || attachments.length > 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '' || profileId !== null || runMode !== 'column_settings';
 
   // Guard close gestures (X, Escape, backdrop, Ctrl+Shift+W) so unsaved work is
   // not lost: when the form is dirty, ask before discarding. Returns true to let
@@ -301,13 +317,9 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       const taskTitle = title.trim();
       if (workflow) {
         // The store reports its own failure; the dialog stays open to retry.
-        const created = await workflow.onCreate({
-          title: taskTitle,
-          description: description.trim(),
-          ...(labels.length > 0 ? { labels } : {}),
-          ...(priority > 0 ? { priority } : {}),
-        });
-        if (created) onClose();
+        // Labels and priority are always sent, so an edit can clear them.
+        const saved = await workflow.onSubmit({ title: taskTitle, description: description.trim(), labels, priority });
+        if (saved) onClose();
         return;
       }
       await createTask({
@@ -375,7 +387,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           // or Settings (agent) over this dialog; Escape then belongs to
           // whichever of those is on top, alone.
           suppressEscape={boardManagerOpen || settingsOpen}
-          title="New Task"
+          title={workflow?.title ?? 'New Task'}
           icon={<Plus size={14} className="text-fg-muted" />}
           headerRight={
             <MaximizeToggleButton isMaximized={isMaximized} onToggle={handleToggleMaximized} />
@@ -389,7 +401,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           footer={
             <DialogFooterActions
               onCancel={closeWithAnimation}
-              submitLabel="Create"
+              submitLabel={workflow?.submitLabel ?? 'Create'}
               busy={submitting}
               disabled={!!branchNameError}
             />
@@ -489,7 +501,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           variant="warning"
           confirmLabel="Discard"
           cancelLabel="Keep editing"
-          message="Closing now will discard this new task and its unsaved changes."
+          message={initial ? 'Closing now will discard your changes to this task.' : 'Closing now will discard this new task and its unsaved changes.'}
           onConfirm={() => { setConfirmDiscard(false); onClose(); }}
           onCancel={() => setConfirmDiscard(false)}
         />
