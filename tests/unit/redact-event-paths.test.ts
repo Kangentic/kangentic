@@ -83,6 +83,27 @@ describe('redactEventHomeDirectory: what it leaves alone', () => {
     expect(event.extra).toEqual({ count: 4, flag: true, nothing: null });
   });
 
+  it('leaves Date, Buffer and Uint8Array values intact: same instance, same bytes, never stringified', () => {
+    const when = new Date('2026-01-02T03:04:05.000Z');
+    // The bytes spell a home path on purpose. They are binary payload, not text,
+    // and a walk that decoded them would rewrite them.
+    const buffer = Buffer.from('C:\\Users\\dev\\x');
+    const view = new Uint8Array([1, 2, 3]);
+    const event = { message: 'C:\\Users\\dev\\y', extra: { when, buffer, view } } as unknown as ErrorEvent;
+
+    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+
+    const extra = event.extra as { when: Date; buffer: Buffer; view: Uint8Array };
+    expect(event.message).toBe('~\\y');
+    expect(extra.when).toBe(when);
+    expect(extra.when.toISOString()).toBe('2026-01-02T03:04:05.000Z');
+    expect(extra.buffer).toBe(buffer);
+    expect(Buffer.isBuffer(extra.buffer)).toBe(true);
+    expect(extra.buffer.toString()).toBe('C:\\Users\\dev\\x');
+    expect(extra.view).toBe(view);
+    expect(Array.from(extra.view)).toEqual([1, 2, 3]);
+  });
+
   it('is idempotent, so the breadcrumb policy and this pass can both run', () => {
     const event: ErrorEvent = { message: 'C:\\Users\\dev\\x' };
     redactEventHomeDirectory(event, WINDOWS_HOME, true);
@@ -105,6 +126,29 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
     expect(event.message).toBe('~\\y');
   });
 
+  it('stops descending past its depth cap without throwing, and still reaches realistic nesting', () => {
+    // Builds `extra` so that the object holding `text` sits `depth` levels below
+    // the event. The cap only needs to be far from real event nesting (a few
+    // levels), so this checks well inside it and well past it, not the exact edge.
+    function eventWithTextAtDepth(depth: number): { event: ErrorEvent; readText: () => unknown } {
+      let holder: Record<string, unknown> = { text: 'C:\\Users\\dev\\x' };
+      const innermost = holder;
+      for (let level = 1; level < depth; level += 1) holder = { child: holder };
+      return {
+        event: { extra: holder } as unknown as ErrorEvent,
+        readText: () => innermost.text,
+      };
+    }
+
+    const shallow = eventWithTextAtDepth(10);
+    expect(() => redactEventHomeDirectory(shallow.event, WINDOWS_HOME, true)).not.toThrow();
+    expect(shallow.readText()).toBe('~\\x');
+
+    const tooDeep = eventWithTextAtDepth(40);
+    expect(() => redactEventHomeDirectory(tooDeep.event, WINDOWS_HOME, true)).not.toThrow();
+    expect(tooDeep.readText()).toBe('C:\\Users\\dev\\x');
+  });
+
   it('survives a value whose property read throws, and still returns the event', () => {
     const hostile = {};
     Object.defineProperty(hostile, 'boom', {
@@ -116,5 +160,35 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
     const event = { message: 'C:\\Users\\dev\\y', extra: hostile } as unknown as ErrorEvent;
     expect(() => redactEventHomeDirectory(event, WINDOWS_HOME, true)).not.toThrow();
     expect(redactEventHomeDirectory(event, WINDOWS_HOME, true)).toBe(event);
+  });
+
+  it('keeps redacting later fields after a frozen object and a throwing getter', () => {
+    // Key order is the point: the fields that cannot be written or read come FIRST, so a walk that
+    // aborts on them would leave `message` and `tags` below them unredacted.
+    const hostile = {};
+    Object.defineProperty(hostile, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter exploded');
+      },
+    });
+    const event = {
+      extra: Object.freeze({ note: 'hello', nested: Object.freeze({ deep: 'world' }) }),
+      contexts: { hostile },
+      message: 'C:\\Users\\dev\\y',
+      tags: { source: 'C:\\Users\\dev\\z' },
+    } as unknown as ErrorEvent;
+    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    expect(event.message).toBe('~\\y');
+    expect(event.tags?.source).toBe('~\\z');
+    expect(event.extra).toEqual({ note: 'hello', nested: { deep: 'world' } });
+  });
+
+  it('does not write back a value that did not change, so a read-only object is not an error', () => {
+    const frozenExtra = Object.freeze({ note: 'nothing to redact here' });
+    const event = { extra: frozenExtra, message: 'C:\\Users\\dev\\x' } as unknown as ErrorEvent;
+    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    expect(event.extra).toBe(frozenExtra);
+    expect(event.message).toBe('~\\x');
   });
 });
