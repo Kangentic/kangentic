@@ -342,6 +342,8 @@ export async function launchApp(options?: {
     throw new Error(`electron.launch() failed after ${maxLaunchAttempts} attempts: ${lastLaunchError?.message}`);
   }
 
+  await watchProcessDeaths(app, page);
+
   // When HEADED=1 (user-invoked), maximize so the user can watch.
   // Otherwise (CI/automated), just let it run at default size.
   const isHeaded = process.env.HEADED === '1' || process.env.HEADED === 'true';
@@ -364,6 +366,46 @@ export async function launchApp(options?: {
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { app, page };
+}
+
+const PROCESS_DEATH_TAG = '[E2E process-gone]';
+
+/**
+ * Print why a renderer or child process died, into the test output.
+ *
+ * Playwright reports a dead renderer only as "Target crashed". The app records
+ * the reason and exit code in a crash file, but that lives in the test's data
+ * or project directory, which the spec deletes and CI does not upload. So main
+ * logs each death under a tag, with the free system memory at that moment,
+ * and this prints the tagged lines: `oom` with little memory free points at a
+ * crowded runner, `crashed` with plenty free points at Electron itself.
+ *
+ * Best-effort: a failure to install the listeners must not fail the launch.
+ */
+async function watchProcessDeaths(app: ElectronApplication, page: Page): Promise<void> {
+  app.on('console', (message) => {
+    // Not startsWith: main prefixes every console line with a timestamp.
+    const text = message.text();
+    if (text.includes(PROCESS_DEATH_TAG)) console.error(text);
+  });
+  page.on('crash', () => console.error(`${PROCESS_DEATH_TAG} Playwright saw the page crash`));
+  try {
+    await app.evaluate(({ app: electronApp, webContents }, tag) => {
+      const freeMemoryKb = (): number => process.getSystemMemoryInfo().free;
+      const watch = (contents: Electron.WebContents): void => {
+        contents.on('render-process-gone', (_event, details) => {
+          console.error(`${tag} renderer ${JSON.stringify({ ...details, url: contents.getURL(), freeMemoryKb: freeMemoryKb() })}`);
+        });
+      };
+      for (const contents of webContents.getAllWebContents()) watch(contents);
+      electronApp.on('web-contents-created', (_event, contents) => watch(contents));
+      electronApp.on('child-process-gone', (_event, details) => {
+        console.error(`${tag} child ${JSON.stringify({ ...details, freeMemoryKb: freeMemoryKb() })}`);
+      });
+    }, PROCESS_DEATH_TAG);
+  } catch (error) {
+    console.warn(`${PROCESS_DEATH_TAG} could not install the death listeners:`, error);
+  }
 }
 
 /**
