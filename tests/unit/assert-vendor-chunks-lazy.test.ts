@@ -1,7 +1,7 @@
 /**
  * Unit coverage for `assertVendorChunksLazy` in scripts/build.js - the
- * build-time backstop that fails `npm run build` unless the recharts and
- * monaco vendor bundles stayed OUT of the renderer entry's static import
+ * build-time backstop that fails `npm run build` unless the recharts, three,
+ * xyflow and monaco vendor bundles stayed OUT of the renderer entry's static import
  * closure (see the function's own doc comment for the three invariants).
  *
  * Before this file, the function had zero test coverage: it ran only as a
@@ -111,6 +111,7 @@ describe('assertVendorChunksLazy', () => {
     // step (b) passes and the walk reaches the monaco scan.
     writeAsset('recharts-xyz789.js');
     writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
     writeAsset('chunk-with-monaco.js', 'some code ... editorViewZones ... more code\n');
     writeManifest({
       'src/renderer/index.tsx': {
@@ -130,6 +131,7 @@ describe('assertVendorChunksLazy', () => {
   it('(d) throws "gone blind" when no chunk anywhere contains a monaco marker', () => {
     writeAsset('entry-abc123.js', 'plain entry code, no vendor markers\n');
     writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
     writeAsset('recharts-xyz789.js');
     writeManifest({
       'src/renderer/index.tsx': {
@@ -145,6 +147,7 @@ describe('assertVendorChunksLazy', () => {
   it('(e) falls back to the index.html check when the manifest is missing, and throws if it references the recharts chunk', () => {
     writeAsset('recharts-xyz789.js');
     writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
     // No .vite/manifest.json written at all.
     writeIndexHtml('<html><body><script type="module" src="./assets/recharts-xyz789.js"></script></body></html>');
 
@@ -156,6 +159,7 @@ describe('assertVendorChunksLazy', () => {
     // recharts chunk exists but the entry does not statically import it.
     writeAsset('recharts-xyz789.js');
     writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
     // A monaco-bearing chunk exists (proves the marker scan is not blind)
     // but is likewise not in the entry's static closure - only reachable via
     // a dynamic import, exactly the shape a correctly lazy-split build
@@ -198,6 +202,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('entry-abc123.js');
     writeAsset('recharts-xyz789.js');
     writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
     writeManifest({
       'src/renderer/index.tsx': {
         file: 'assets/entry-abc123.js',
@@ -220,5 +225,39 @@ describe('assertVendorChunksLazy', () => {
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/STATIC import closure/);
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/three-def456\.js/);
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyKnowledgeGraph/);
+  });
+
+  it('(i) throws when no xyflow-*.js chunk exists in assets/', () => {
+    // React Flow loads only with the Workflows view; a missing named chunk
+    // means it was folded into another one and the check cannot run.
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/No xyflow-\*\.js chunk/);
+  });
+
+  it('(j) throws when the xyflow chunk is in the entry STATIC import closure', () => {
+    writeAsset('entry-abc123.js');
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
+    writeManifest({
+      'src/renderer/index.tsx': {
+        file: 'assets/entry-abc123.js',
+        isEntry: true,
+        // A startup module that imports the canvas directly instead of
+        // through LazyWorkflowsView.
+        imports: ['layout-key'],
+      },
+      'layout-key': { file: 'assets/layout.js', imports: ['xyflow-chunk-key'] },
+      'xyflow-chunk-key': { file: 'assets/xyflow-ghi321.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/xyflow-ghi321\.js is in the entry's STATIC import closure/);
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/LazyWorkflowsView/);
   });
 });

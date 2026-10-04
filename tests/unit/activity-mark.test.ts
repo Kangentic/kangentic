@@ -249,7 +249,8 @@ describe('activity indicator smoothness', () => {
       .join('\n');
 
   const activityCss = fs.readFileSync(path.join(ACTIVITY_DIR, 'activity.css'), 'utf-8');
-  const taskCard = readSource('src/renderer/components/board/TaskCard.tsx');
+  // The card's body, which TaskCard and the Workflows canvas both render.
+  const taskCard = readSource('src/renderer/components/board/task-card-view.tsx');
   const activityMark = readSource('src/renderer/components/ActivityMark.tsx');
 
   it('every packaged primitive is an infinite linear loop of the SAME period', () => {

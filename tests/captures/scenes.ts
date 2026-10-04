@@ -417,6 +417,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
   },
+  workflows: { ready: '[data-testid="setting-row-automation.agent"]', alt: 'Settings on the Workflows tab: the Automation agent card, with the agent, model and effort that judge automation conditions and workflow steps, none chosen yet.' },
   // The sample install has the Knowledge Graph on, as its maps were built (DEMO_KNOWLEDGE_GRAPH_CONFIG),
   // so the card shows the rows a switched-on graph has. The Index counts are the derived status's.
   knowledgeGraph: {

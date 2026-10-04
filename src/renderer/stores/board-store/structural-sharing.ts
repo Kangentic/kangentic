@@ -123,14 +123,25 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.detail_view_state !== next.detail_view_state ||
     previous.archived_at !== next.archived_at ||
     previous.created_at !== next.created_at ||
-    previous.updated_at !== next.updated_at
+    previous.updated_at !== next.updated_at ||
+    // Workflow membership, route and canvas place: a card's workflow strip
+    // and lock read the first two, and the Workflows canvas the rest.
+    previous.workflow_id !== next.workflow_id ||
+    previous.workflow_project_id !== next.workflow_project_id ||
+    previous.route_start_swimlane_id !== next.route_start_swimlane_id ||
+    previous.route_last_swimlane_id !== next.route_last_swimlane_id ||
+    previous.canvas_x !== next.canvas_x ||
+    previous.canvas_y !== next.canvas_y
   ) return false;
 
-  const previousLabels = previous.labels ?? [];
-  const nextLabels = next.labels ?? [];
-  if (previousLabels.length !== nextLabels.length) return false;
-  for (let index = 0; index < previousLabels.length; index += 1) {
-    if (previousLabels[index] !== nextLabels[index]) return false;
+  return sameStrings(previous.labels ?? [], next.labels ?? [])
+    && sameStrings(previous.skipped_swimlane_ids ?? [], next.skipped_swimlane_ids ?? []);
+}
+
+function sameStrings(previous: readonly string[], next: readonly string[]): boolean {
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
   }
   return true;
 }
