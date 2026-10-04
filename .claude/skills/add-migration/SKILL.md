@@ -17,7 +17,7 @@ Example: `/add-migration Add priority column to tasks table`
 ## Instructions
 
 1. **Read current schema:**
-   - Read `src/main/db/migrations.ts` to understand existing tables, columns, and migration patterns
+   - Read `src/main/db/migrations/global-schema.ts` and `src/main/db/migrations/project-schema.ts` to understand existing tables, columns, and migration patterns (`src/main/db/migrations.ts` is only a 2-line re-export)
    - Identify which migration function to modify: `runGlobalMigrations()` (for `index.db`) or `runProjectMigrations()` (for per-project `<projectId>.db`)
    - Most migrations go in `runProjectMigrations()` -- global is only for the projects list
 
@@ -71,8 +71,8 @@ for (const row of rows) {
 ```
 
 3. **Placement rules:**
-   - Add new migrations AFTER seed logic guards but BEFORE seed `INSERT` statements
-   - Wrap multi-statement migrations in transactions if they involve data movement
+   - `runProjectMigrations()` is one unversioned function of self-guarding steps. Add a new step at its END, and give it the next number in `docs/database.md`'s "Key Migrations" list
+   - Wrap multi-statement migrations that move data in `writeTransaction` (`src/main/db/transaction.ts`); `transaction-helper.test.ts` fails on a bare `.transaction(` under `src`
    - Use `db.exec()` for DDL (CREATE, ALTER, DROP)
    - Use `db.prepare().run()` for parameterized DML (INSERT, UPDATE, DELETE)
 

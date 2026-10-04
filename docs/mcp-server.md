@@ -629,8 +629,9 @@ Move a task to a different column, optionally placing it at a chosen slot in tha
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
-| `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`) |
+| `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`), or `"next"` for the column after the task's current one. A column literally named "next" wins. |
 | `position` | number | No | Zero-based ordinal slot among the column's tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Omit to append to the end of the column, which is the default. |
+| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. Refused on a move that stays in the task's column. |
 
 Naming the task's **current** column together with `position` repositions it in place. That path is
 presentation only: it does not change the task's column, session, worktree, or `session_id`, and it
@@ -797,8 +798,9 @@ This cannot be undone.
 
 ### Column automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-two groups (On enter and On exit), and each row has its own switch. Four types ship:
+What a column does when a task enters it, each time its agent finishes a turn there, and when it
+leaves. Each column owns one ordered list, split into three groups (`on`: `enter`, `turn_end`,
+`exit`), and each row has its own switch. Five types ship:
 
 | Type | What it does | Fields |
 |------|--------------|--------|
@@ -806,6 +808,19 @@ two groups (On enter and On exit), and each row has its own switch. Four types s
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (1 to 120, default 10, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |
+| `move_to_column` | `turn_end` only. Moves the task, and hands the agent there a message; ends the group | `targetColumn` (omit for the next column), `message` |
+
+Every row also takes two guards:
+
+- **`condition`**: a sentence in plain words, answered yes or no by the Automation agent (Settings >
+  Workflows) before the row runs. A no is not a run, so the next trigger checks it again. Omit or
+  `null` to always run. A row with a Condition is skipped until an Automation agent is set up.
+- **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
+  loop's round-trip limit). Omit or `null` for no limit.
+
+A `turn_end` row runs when the column's agent finishes a turn on its own (not an interrupt or a
+failed turn), at most once per visit, top to bottom. `{{agentReply}}` resolves to that agent's final
+message of the turn, whole, which is how a review's findings reach the next column.
 
 Two names are accepted but not offered:
 
@@ -827,6 +842,10 @@ Three rules decide whether a row actually runs, and they are reported by
 - A row whose switch is off is skipped.
 - A `send_message` row on a column whose `autoSpawn` is off can never run: no agent starts there.
 - An On enter row on To Do or Done can never run: neither column runs automations on entry.
+- A `turn_end` row can never run on To Do or Done, on a column whose `autoSpawn` is off, or where
+  the column's agent does not report when its turn ends.
+- A type written under a trigger it does not run on (`move_to_column` on `enter` or `exit`) is
+  refused by `kangentic_set_automations`, with the reason.
 
 Every execution writes a row to the run log, whatever happens, which is what
 `kangentic_get_automation_runs` reads. A row left `running` was in flight when Kangentic quit; the
@@ -859,15 +878,25 @@ change applied. Pass `[]` to remove them all.
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
 Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
-`on` (`enter` by default), an optional `enabled` (true by default), an optional `id`, and the
-type's own fields flat on the object:
+`on` (`enter` by default, or `turn_end` or `exit`), an optional `enabled` (true by default), an
+optional `condition` and `maxRuns` (both off by default), an optional `id`, and the type's own
+fields flat on the object:
 
 ```json
 {
   "column": "Code Review",
   "automations": [
     { "id": "623a36ef-...", "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
-    { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" },
+    {
+      "name": "Back for revisions",
+      "type": "move_to_column",
+      "on": "turn_end",
+      "targetColumn": "Executing",
+      "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
+      "condition": "The review found work the implementer can do",
+      "maxRuns": 3
+    },
+    { "name": "Clean", "type": "move_to_column", "on": "turn_end", "condition": "The review is clean" },
     { "name": "Archive the log", "type": "run_script", "on": "exit", "enabled": false, "script": "scripts/archive.sh" }
   ]
 }
@@ -877,10 +906,14 @@ Whole-column rather than per-row because a reorder, a delete and an insert arriv
 applying them separately would make the unique name index reject an intermediate state the final
 state does not have. Carry each existing row's `id` through so it keeps its identity and its run
 history; a row with no `id` is created fresh. Array order is each row's position within its trigger
-group, so the two groups number independently.
+group, so the three groups number independently.
 
 A row the column cannot run as things stand is stored and warned about, not refused: building a
-list before switching the column's agent on is a legitimate order of operations.
+list before switching the column's agent on is a legitimate order of operations. Two things ARE
+refused, with the reason, so nothing is stored that could never be what the caller meant: an
+unknown `on`, and a type written under a trigger it does not run on (`move_to_column` runs on
+`turn_end` only). A `maxRuns` that is not a whole number of at least 1, or a `condition` that is
+not a string, is refused too.
 
 ### kangentic_get_automation_runs
 

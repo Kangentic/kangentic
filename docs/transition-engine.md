@@ -38,7 +38,7 @@ The delta is computed against what the session is *actually running at*, not the
 
 ## Triggers
 
-An automation's `trigger` is `enter` or `exit`, and it means any move into or out of the column it belongs to. There is no `from -> to` pair and no wildcard, because a list belongs to one column rather than to a lane pair.
+An automation's `trigger` is `enter`, `turn_end` or `exit`. `enter` and `exit` mean any move into or out of the column it belongs to; `turn_end` means each time the agent working the task finishes a turn there. There is no `from -> to` pair and no wildcard, because a list belongs to one column rather than to a lane pair. The three are declared once in `AUTOMATION_TRIGGERS`.
 
 **On exit runs in Phase 1**, inside the short task lock, after the DB write and the `board:changed` emit and BEFORE the priority branches. That order is load-bearing: Priority 1 kills the session, so an exit automation that needs the agent has to find it still attached. Two consequences:
 
@@ -46,6 +46,27 @@ An automation's `trigger` is `enter` or `exit`, and it means any move into or ou
 - **The exit group is capped at 60 seconds in aggregate** (`EXIT_GROUP_BUDGET_MS`), overriding the adapters' own budgets, because holding the short lock is what wedges that task's next move. A row that would exceed the cap is recorded `failed` with "Exit automations are capped so the board stays responsive." Exit is for quick handoffs; long work belongs on enter, where Phase 3 already holds the lock across the spawn and has a progress spinner to show for it.
 
 **On enter runs at both of the destination's session paths.** Priority 3's two keep-alive returns run the group against the live session (`runWarmEnterAutomations`), and Priority 4 runs it with the fallback spawn handed in as `startAgent`. To Do and Done run exit rows only: an enter automation can never fire there, so the Column Manager does not offer the group and `canColumnRun` blocks one written by hand.
+
+### On agent turn end
+
+`src/main/automations/turn-end/turn-end-runner.ts`, wired in `register-all.ts`. It is not part of a move: it runs when the agent working a task finishes a turn.
+
+- **What a turn end is.** The activity engine's `onTurnEnded` (`SessionManager`'s `'turn-ended'` event): a thinking-to-idle commit whose turn the agent's own turn-end hook cleared (a Stop: a non-permission `Idle` at subagent depth 0), after any background work the turn left has drained. Never an interrupt, a failed turn, an `idle_hint` (Esc between tool calls ends a turn that way, with no hook), PTY silence or a watchdog guess. Only agents that declare `reportsTurnEnd` on their runtime strategy have one; a column whose agent does not (its only signal is terminal silence) offers no turn-end group. The listener only schedules: the work runs off the engine's commit stack.
+- **Only a turn that began in this visit counts.** The payload carries `turnStartedAt`, and a turn that began before the task's latest `task_moves` entry into the column is ignored: a task dragged in mid-turn ends that turn here, but the turn did the last column's work.
+- **The session must still be the task's.** A turn end from a session that is no longer `task.session_id`, or from an isolated column's session the task has left, does nothing.
+- **Cheap when there is nothing to do:** a column with no enabled turn-end rows costs one indexed query.
+- **Then:** wait out the turn's last paint (`waitForTurnCompletion`, 1.5 s of PTY silence); read `{{agentReply}}` if a pending row needs it (`transcript.finalReply` in the retrieval worker, 15 s cap, empty on failure); answer every pending Condition in one call on the Automation agent; re-check that the same session is still idle in the same column (a turn the user started meanwhile abandons the pass, writing nothing); run the rows.
+- **The run rule:** rows run top to bottom. A row runs at most once per visit (an executed run since the task's latest entry into the column), and only a row that executes counts: a Condition that answers no is recorded `skipped` with its reason, and the next turn end checks it again. A row past its Frequency, already run this visit, or that the column cannot run is left out without a record. A Move to column row that runs ends the group.
+- **Outside the task lock, one pass per task.** A row can take minutes, and a Move to column row's own move takes that lock (`withTaskLock` is not reentrant). A move made meanwhile supersedes the group (`supersedeTurnEndWork`, called by `handleTaskMove` before it takes the lock); the group's own move passes `fromTurnEndGroup` and does not. A second turn end during a pass runs once more after it, so two passes never both read "not run this visit".
+- **Delivery waits.** A Send message row on a turn end awaits its outcome, like exit's, and a message with more than one line (or over 1,000 characters) is pasted (`submitContent`), so a `{{agentReply}}` keeps its line breaks.
+
+### Condition and Frequency
+
+Every row, on every trigger, can carry a **Condition** (`condition`, plain words) and a **Frequency** (`max_runs`). The runner owns both; no adapter reads either.
+
+- **Frequency** is checked first: a row that has run `max_runs` times on the task (counted across every visit, executed runs only) is skipped with "Already ran N times on this task, its limit."
+- **Condition** is answered by the Automation agent (`automation.agent` in Settings > Workflows) in one headless, read-only call for the group (`automations/condition-check/`): the task, the move or the agent's final message, and each Condition under a label. The reply is one `C1: yes - reason` line per Condition; a label missing or written twice counts as no. Outside text is framed in tags that are defused inside it, and the prompt says it is data, never instructions. On enter and exit the call happens inside the group (on exit, within the 60 s budget); at a turn end it happens before anything runs. With no Automation agent, a row with a Condition is skipped with "Set up an Automation agent in Settings > Workflows to check this condition."
+- The answer (`condition_met`, `condition_reason`) rides the run row, yes or no.
 
 ## The agent starts on demand
 
@@ -57,7 +78,7 @@ A column that cannot meet a need shows the row switched off with its switch disa
 
 ## Automation adapters
 
-Five types, four of them offered for a new automation. Each declares its fields, its per-field escaping, its timeout and its retry policy in `AUTOMATION_MANIFEST`, which the renderer reads for the picker, the Edit automation dialog and the row sentence. `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
+Six types, five of them offered for a new automation. Each declares its fields, its per-field escaping, its timeout and its retry policy in `AUTOMATION_MANIFEST`, which the renderer reads for the picker, the Edit automation dialog and the row sentence. A type may also declare the triggers it runs on (`triggers`, with `triggerUnavailableReason`) and that a row of it ends its group (`endsGroup`). `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree.
 
 ### `send_message` -- Send message to agent
 
@@ -103,6 +124,15 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 
 One desktop notification through the same `showNotification` path `DesktopNotifier` uses, so it inherits click-to-task. No timeout, no retry.
 
+### `move_to_column` -- Move to column
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `targetColumn` | string | The destination column's name. Empty or absent is Next column: the column after the task's own (on its route in a workflow, else on the board), resolved by `resolveMoveTarget`, the same answer `kangentic_move_task`'s `column: "next"` gets. Renaming a column rewrites the rows that name it |
+| `message` | string | Optional. Sent to the agent in the destination column once its turn ends, after that column's own On task enter rows. Escaping is `none`; a multi-line message (a review's `{{agentReply}}`) is pasted whole |
+
+Offered on `turn_end` only: on enter or exit its move would run inside the move that fired it, under that move's own task lock. It moves through `context.moveTask`, which runs `handleTaskMove` with origin `'automation'` (a quiet push, `TASK_MOVED_BY_AUTOMATION`, and the row's name as the move's `task_moves` reason), so the source column's exit rows and the destination's enter rows run as they do for a drag. A row that runs ends its group (`endsGroup`). The message is handed on in the background (`deliverMessageAfterMove`), so the run row reads "Moved to Executing, with a message." as soon as the move commits rather than waiting out the destination agent's first turn. No timeout of its own and no retry: the move owns its deadlines.
+
 ### `spawn_agent` -- Start agent (legacy)
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
@@ -117,7 +147,7 @@ The one legacy adapter, kept because a row carrying a custom `promptTemplate` is
 - **Bounded.** Nothing timed out: `withTaskLock` is a PQueue with no timeout and Phase 3 holds it across the whole list, so one hung webhook wedged every later operation on that task until a restart. Each row now runs under its adapter's `timeoutMs`, combined with the move's own signal.
 - **Recorded.** There was no run table at all, so "did my automation run" had no answer. Every row writes an `automation_runs` row: `running` before the attempt, closed on every exit path as `succeeded`, `failed`, `skipped` or `interrupted`, with a one-line `detail` (`HTTP 204`, `exit 0`, the skip reason, the error).
 
-  A message reports **"Delivered" on exit and "Sent" on enter**, and the difference is real rather than cosmetic. The exit hook awaits the keystroke burst, so the row is written only once it has gone out. The enter group cannot await: Phase 3 holds the task lock across it, and a deferred message waits for the agent's current turn to end, so awaiting would hold that lock for as long as the scheduler's ladder runs. Neither word is "Confirmed": only Claude implements a submission verifier, so on every other agent even the exit case is unconfirmed and the scheduler reports that outcome on its own channel.
+  A message reports **"Delivered" on exit and at a turn end, and "Sent" on enter**, and the difference is real rather than cosmetic. The exit hook awaits the keystroke burst, so the row is written only once it has gone out. The enter group cannot await: Phase 3 holds the task lock across it, and a deferred message waits for the agent's current turn to end, so awaiting would hold that lock for as long as the scheduler's ladder runs. Neither word is "Confirmed": only Claude implements a submission verifier, so on every other agent even the exit case is unconfirmed and the scheduler reports that outcome on its own channel.
 
 The runner never throws for an automation's sake. It rethrows exactly one thing: an abort of the move itself.
 

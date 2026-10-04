@@ -435,11 +435,12 @@ When a column's agent override differs from the current session's agent, moving 
 
 ### Automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-**On enter** and **On exit**, and each row has its own switch. A row belongs to one column; there
-is no sharing and no library.
+What a column does when a task enters it, each time its agent finishes a turn there, and when it
+leaves. Each column owns one ordered list, split into **On task enter**, **On agent turn end** and
+**On task exit**, and each row has its own switch. A row belongs to one column; there is no sharing
+and no library.
 
-Four types:
+Five types:
 
 | Type | What it does |
 |------|--------------|
@@ -447,20 +448,37 @@ Four types:
 | **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
 | **Call webhook** | Calls a URL. Retries a transport error, 408, 429 or 5xx up to three times. |
 | **Notify me** | Raises one desktop notification. Clicking it opens the task. |
+| **Move to column** | Moves the task to another column (or the next one), with a message for the agent there. On agent turn end only. |
 
 **Adding one.** Each group has its own **Add automation** control, so where you add decides when
-it runs. The picker offers the four types, and below them every row on every other column, to
-copy. A copy is independent of the original. A type the column cannot run is offered disabled,
-with the reason.
+it runs. The picker offers the types that group runs, and below them every row on every other
+column, to copy. A copy is independent of the original. A type the column cannot run is offered
+disabled, with the reason.
 
-**Editing one.** Clicking the row opens a dialog with the name, the type, the type's own fields,
-and When. Nothing else. The pencil does the same, for a pointer that is already over it; the grip,
-the switch and the trash keep their own jobs and do not open it. A name is required and must be unique on its column. Every text field takes
-template variables: type `{{` to pick one, or use the **Template variable** button. A known
-variable is highlighted; an unknown one is flagged and sent as written.
+**Editing one.** Clicking the row opens a dialog with the name, then one card for each part of the
+rule: **Trigger** (when it runs), **Condition**, **Frequency**, and **Action** (the type and its own
+fields). The pencil does the same, for a pointer that is already over it; the grip, the switch and
+the trash keep their own jobs and do not open it. A name is required and must be unique on its
+column. Every text field takes template variables: type `{{` to pick one, or use the **Template
+variable** button. A known variable is highlighted; an unknown one is flagged and sent as written.
+
+**Condition and Frequency.** Any row can carry a **Condition**, a sentence in plain words ("the
+review found work the implementer can do"). An agent checks it before the row runs, and a no means
+the row did not run: it is checked again next time. The agent that checks is the **Automation
+agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. **Frequency**
+caps how many times a row runs on one task, across every visit, which is what keeps a review loop
+from bouncing a task forever. Both start off, and a row with either shows them on a line under its
+sentence ("Only if the review is clean. At most 3 times for each task.").
+
+**On agent turn end.** Runs when the column's agent finishes a turn on its own, not when you stop
+it or a request fails. Each row runs at most once per visit to the column, top to bottom, and a
+**Move to column** row that runs ends the list. `{{agentReply}}` is the agent's final message of
+the turn, whole, so a review's findings can ride a Move to column message back to the column that
+fixes them. A column whose agent cannot report a finished turn (agents that only go quiet) shows the
+reason instead of Add automation.
 
 **Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
-sits, never when it runs. To change when it runs, open the row and set When.
+sits, never when it runs. To change when it runs, open the row and set its Trigger.
 
 **The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent
 row. On enter, Kangentic starts the column's agent right before the first automation that needs

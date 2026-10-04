@@ -365,15 +365,23 @@ one column.
 | position | INTEGER | NOT NULL | |
 | enabled | INTEGER | NOT NULL | 1 |
 | config_json | TEXT | NOT NULL | |
+| condition | TEXT | | NULL |
+| max_runs | INTEGER | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-Valid types: `send_message`, `run_script`, `webhook`, `notify`, plus legacy `spawn_agent` on boards
-that already had one. `trigger` is `enter` or `exit`. It is TEXT rather than a boolean `on_exit`
-deliberately, so a third trigger (an agent going idle, a PR merging) is a new value rather than a
-migration.
+Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
+`spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
+column's agent finishes a turn there) or `exit`. It is TEXT rather than a boolean, so the third
+trigger was a new value rather than a migration. A row read with a trigger this build does not know
+is skipped with a warning, never read as `enter`.
 
-`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the two can
+`condition` is the row's Condition in plain words, judged by the Automation agent before the row
+runs; NULL (or blank) means the row always runs. `max_runs` is its Frequency, the most times it may
+run on one task across every visit; NULL means no limit. Both are nullable so a build from before
+them still inserts into a database that has them.
+
+`position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
 never interleave.
 
 The foreign key is genuine and enforced (`database.ts` sets `foreign_keys = ON`). The one on
@@ -411,9 +419,19 @@ the durable record; the failure toast is the rationed interruption, following
 | attempts | INTEGER | NOT NULL | 0 |
 | started_at | TEXT | NOT NULL | |
 | finished_at | TEXT | | |
+| condition_met | INTEGER | | NULL |
+| condition_reason | TEXT | | NULL |
 
 `status` is `running`, `succeeded`, `failed`, `skipped`, or `interrupted`. `detail` carries the skip
-reason, the error, or a one-line success (`HTTP 204`, `exit 0`).
+reason, the error, or a one-line success (`HTTP 204`, `exit 0`). `condition_met` and
+`condition_reason` hold the Automation agent's answer for a row with a Condition (1 or 0, and its
+one-line reason), NULL for a row without one.
+
+**What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
+Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
+`skipped` row, including a Condition that answered no, is not a run, so the next trigger checks it
+again. The project-open prune keeps every counted run of an automation that has a Frequency limit,
+on a task that is not archived, so pruning can never reset a limit.
 
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.
@@ -440,6 +458,33 @@ automation as `interrupted` and raise a toast saying it did not finish.
 
 Nothing is retried automatically, ever. A fired webhook and a half-run script are not safe to repeat
 blind, so the user gets Run again on the row instead.
+
+### task_moves table
+
+Every column a task entered, one row per entry. It is the visit boundary turn-end automations count
+from ("has this row run since the task came into the column?"), and a workflow task's step history.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| task_id | TEXT | NOT NULL, FK->tasks ON DELETE CASCADE | |
+| from_swimlane_id | TEXT | | NULL |
+| to_swimlane_id | TEXT | NOT NULL | |
+| origin | TEXT | NOT NULL | |
+| reason | TEXT | | NULL |
+| at | TEXT | NOT NULL | |
+
+Written by `TaskRepository` inside the same transaction as the move (`move`, `unarchive`, and a
+create into a column), so no move lands without its record, including the ones that bypass
+`handleTaskMove` (the Phase 3 rollback, unarchive, create). A reorder within a column writes
+nothing. `origin` is who moved it: `renderer`, `agent`, `mobile`, `auto-move`, `automation`,
+`workflow`, `rollback`, `unarchive` or `create`. `reason` is the Move to column row's name, or a
+workflow's step. `from_swimlane_id` is NULL for a task born into the column.
+
+There is no foreign key to `swimlanes`: deleting a column must not delete a task's history.
+
+Indices: `idx_task_moves_task` on (task_id, at DESC) for a task's latest entry into a column, and
+`idx_task_moves_to_column` on (to_swimlane_id).
 
 ### actions table (retired)
 
@@ -1018,6 +1063,8 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 72. **`memory_task_summaries` and its `effort` column** - creates the task summaries table (see the section above) and adds `effort TEXT DEFAULT NULL` to one made before it, recording the effort each summary was written at so Rebuild rewrites only those written some other way. Idempotent `CREATE TABLE IF NOT EXISTS` plus a guarded `ALTER TABLE`.
 73. **`last_pty_cols` / `last_pty_rows` columns on sessions** - adds both as `INTEGER DEFAULT NULL`, the PTY grid a session last had, so a resume after a desktop restart or a pty host crash spawns at it instead of the 120x30 default (see the `sessions` table notes above). In memory a respawn already starts at its predecessor's grid; this is the copy that outlives the session registry. No backfill: NULL correctly means "never recorded", and the next grid change fills it. Idempotent guarded `ALTER TABLE`s sharing one `table_info` read.
 74. **`result_tokens_read_at` column on sessions** - adds `result_tokens_read_at TEXT DEFAULT NULL`, the UTC ISO time a transcript read for the record's per-tool Tokens answered and left it nothing to keep, so `fillEarlierRunResultTokens` does not parse that transcript again on every launch. NULL for every existing row, which the fill then reads once.
+74. **`condition` / `max_runs` on column_automations, and `condition_met` / `condition_reason` on automation_runs** - every automation's Condition and Frequency, and the Automation agent's answer on each run (see both tables above). All nullable with no default, so a build from before them still inserts. Guarded `ALTER TABLE`s.
+75. **`task_moves`** - creates the record of every column a task entered (see the table above), with `idx_task_moves_task` and `idx_task_moves_to_column`. No backfill: a task with no recorded entry into its column has no visit boundary, which counts its earlier runs there as this visit's. Idempotent `CREATE ... IF NOT EXISTS`.
 
 ### Key Migrations (Global DB)
 

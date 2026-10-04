@@ -543,6 +543,18 @@ fork that threw), and the
 same text is in `<project>/.kangentic/logs/<date>.log` as a
 `[utility-process]` warning.
 
+### Workflows (Automation agent)
+
+Settings > Workflows, first in the Advanced tier. Global-only: it applies to every project and works
+with no project open. Its first card is the **Automation agent**, which answers every automation's
+Condition (and judges when a workflow step is done).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `automation.agent` | `string \| null` | `null` | The agent that answers Conditions, an adapter name (`claude`, `codex`). Its own choice, separate from the Knowledge Graph's and from the project's default agent, with no fallback to either: while it is unset, a row with a Condition is skipped ("Set up an Automation agent") and nothing is spent. Resolved through `automationAgentChoice` and checked with `automationAgentReady` (`src/shared/answer-agent.ts`), which the Edit automation dialog and the engine both read. A check runs through the same headless, read-only answer path as Ask (`answerFromContext`, in the shared answer home), at most two at once, with the CLI's detection cached for five minutes. |
+| `automation.model` | `string \| null` | `null` | The model the check runs at, as that CLI's own id. Required when the agent's answer run takes a model. Cleared whenever `automation.agent` changes. A small, fast model is usually enough: a check reads one reply and answers yes or no. |
+| `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. |
+
 ### Mobile Bridge
 
 The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile Bridge](mobile-bridge.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
@@ -609,20 +621,42 @@ Each swimlane has its own overrides (stored in the per-project DB):
 
 ## Column automations
 
-What a column does when a task enters or leaves it. Each column owns one ordered list, split into
-two groups, **On enter** and **On exit**, and each row has its own switch. They are edited in the
+What a column does when a task enters it, each time its agent finishes a turn there, and when the
+task leaves. Each column owns one ordered list, split into three groups, **On task enter**, **On
+agent turn end** and **On task exit**, and each row has its own switch. They are edited in the
 **Column Manager** (click a column header on the board), and they round-trip through
 `kangentic.json` under the column that owns them.
 
-Four types ship. Each is an adapter under `src/main/automations/adapters/`, declared once in
+Five types ship. Each is an adapter under `src/main/automations/adapters/`, declared once in
 `AUTOMATION_MANIFEST`, which is also what the editor renders its fields from.
 
 | Type | What it does | Fields |
 |------|--------------|--------|
-| `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` \| `deferred`) |
+| `send_message` | Types a message at the column's agent (pasted whole when it has more than one line) | `message`, `mode` (`immediate` \| `deferred`) |
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (default 10, range 1 to 120, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |
+| `move_to_column` | Moves the task to another column, and hands the agent there a message. On agent turn end only; a row that runs ends its group | `targetColumn` (a column name; absent means the next column), `message` |
+
+**On agent turn end** runs when the agent working the task finishes a turn on its own (not an
+interrupt, a failed turn, or a background job still running), once the turn has settled. Only a
+turn that began after the task entered the column counts. Rows run top to bottom, each at most
+once per visit, and only a row that actually runs counts: a row whose Condition answered no is
+checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
+is off or does not report turn ends (agents whose only signal is terminal silence).
+
+**Condition and Frequency apply to every type.** A row's **Condition** is a sentence in plain words
+("the review found work the implementer can do"), answered yes or no by the **Automation agent**
+(Settings > Workflows) before the row runs, with a one-line reason the run log keeps. One headless,
+read-only call answers every pending Condition of a group at once; at a turn end it reads the
+task and the agent's final message, on enter or exit the task and the move. Until an Automation
+agent is set up, a row with a Condition is skipped (a Condition written earlier is kept). A row's
+**Frequency** is the most times it may run on one task, counted across every visit; a row past it
+is skipped. Both are off on every row unless set, so a board from before them runs as it did.
+
+The Code Review loop is two `move_to_column` rows on a review column's On agent turn end: "Back for
+revisions" to Executing with the reviewer's `{{agentReply}}` in its message, behind a Condition and
+a Frequency, and "Clean" to the next column behind its own Condition.
 
 A fifth, `spawn_agent`, is legacy: it survives on boards that already had a `spawn_agent` row
 carrying a custom prompt, and cannot be created. `kill_session`, `create_worktree` and
@@ -758,6 +792,17 @@ Ghost columns are invisible on the board but still exist in the database. Once a
           { "name": "Review", "type": "send_message", "message": "/code-review {{baseBranch}}" },
           { "name": "Ping the channel", "type": "webhook", "url": "https://hooks.example.com/abc" }
         ],
+        "onTurnEnd": [
+          {
+            "name": "Back for revisions",
+            "type": "move_to_column",
+            "targetColumn": "Executing",
+            "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
+            "condition": "The review found work the implementer can do",
+            "maxRuns": 3
+          },
+          { "name": "Clean", "type": "move_to_column", "condition": "The review is clean" }
+        ],
         "onExit": [
           { "name": "Archive the log", "type": "run_script", "enabled": false, "script": "scripts/archive.sh" }
         ]
@@ -791,14 +836,25 @@ before the first picker scan on a machine, write the alias in lowercase. What an
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
 
-**Automations nest under the column that owns them, as two named arrays.** Array order IS the
-run order within its group, an empty group is an absent key, and the type's own fields sit flat
-on the row beside `name`, `type` and `enabled` rather than under a `with` object. Those three
-keys are reserved: `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a
-field colliding with one, which is what keeps the flat shape safe as the reserved set grows.
+**Automations nest under the column that owns them, as three named arrays** (`onEnter`,
+`onTurnEnd`, `onExit`). Array order IS the run order within its group, an empty group is an absent
+key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`
+and `maxRuns` rather than under a `with` object. Those five keys are reserved:
+`automation-manifest-reserved-keys.test.ts` fails an adapter that declares a field colliding with
+one, which is what keeps the flat shape safe as the reserved set grows.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it. There is
-no `on` key, because the array a row sits in already says which trigger it runs on.
+`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`
+and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits in already
+says which trigger it runs on. A `move_to_column` row names its column by name, as `planExitTarget`
+does, and renaming that column rewrites the row.
+
+**Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
+carries over any automation list, row type, or row key it does not recognize from the file it last
+read (a row is matched by name and type). So a field or trigger that a NEWER build added survives a
+save by this one. The reverse cannot be fixed from here: a build from before On agent turn end
+ignores `onTurnEnd`, `condition` and `maxRuns`, drops those rows from its database, and its next
+export writes the file without them. **A team that shares `kangentic.json` should update
+Kangentic together.**
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -813,8 +869,12 @@ board:
 - A row that is not an object, has no name, or has a `type` outside the registry is skipped.
 - A RETIRED type (`kill_session`, `create_worktree`, `cleanup_worktree`) is skipped, matching
   what the migration did to the same row in the database.
+- A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
+  `onExit`) is skipped: it would run inside the move that fired it.
+- A `maxRuns` below 1 or not a number, or a blank `condition`, reads as off. A fraction is rounded
+  down.
 - A second row with a name already used in the same column is renamed (`Notify 2`).
-- An `automations` value that is not an object, or an `onEnter` / `onExit` that is not a list
+- An `automations` value that is not an object, or an `onEnter` / `onTurnEnd` / `onExit` that is not a list
   (`{}`, or a single row written without brackets), keeps that column's current automations
   untouched. Treating it as empty would delete the column's rows, and on project open the export
   that follows would write the deletion into the file. A malformed value also does not count as

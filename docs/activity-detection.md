@@ -190,7 +190,7 @@ The 24 `EventType` values written to `events.jsonl` by `event-bridge.js`, define
 | `ToolStart` | `tool_start` | `thinking` | Agent began invoking a tool |
 | `ToolEnd` | `tool_end` | log-only | Tool returned; counters update and `lastSignalAt` refreshes (a `PostToolUse` hook proves the agent is alive, so `tool_end` is NOT in the engine's `LOG_ONLY_EVENTS` set), but the activity state does not change |
 | `Idle` | `idle` | `idle` | Agent finished its turn (Stop hook, prompt-regex, or silence timer) |
-| `Interrupted` | `interrupted` | `idle` | User pressed Esc / Ctrl+C; clears counters and commits idle |
+| `Interrupted` | `interrupted` | `idle` | The user stopped the turn: Esc while a tool runs, or Ctrl+C; clears counters and commits idle. Esc BETWEEN tool calls fires no hook at all, so that turn ends through `idle_hint` instead (see "Turn ends" below) |
 | `TurnFailed` | `turn_failed` | `idle` | Turn aborted by a TERMINAL service/API error (Claude's `StopFailure` hook, which fires instead of `Stop`); `detail` carries the error type (e.g. `authentication_error`). Routed through the Interrupted bypass: clears counters and commits idle immediately (see "Aborted-turn recovery") |
 | `TurnRetrying` | `turn_retrying` | conditional idle | `StopFailure` fired for a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error), classified at the source (like `IdleHint`). Holds the session `thinking` through a live retry (preserving `subagentDepth` and deferring to the stale-thinking or stuck-subagent watchdog); idles immediately if the turn had already wound down or ended (see "Aborted-turn recovery") |
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
@@ -230,6 +230,33 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 - **Gemini / Qwen Code** share the same hook shape (`AfterAgent` -> `idle` stop-equivalent, `Notification` -> `notification`), so they could be susceptible. But they wire no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm their notification text. Wire only after capturing evidence.
 - **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
 - **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
+
+### Turn ends (`onTurnEnded`)
+
+Going idle and finishing a turn are different facts, and On agent turn end automations need the
+second. The engine reports one through `ActivityEngineCallbacks.onTurnEnded(sessionId,
+turnStartedAt)`, which `SessionTelemetry` relays and `SessionManager` emits as `'turn-ended'`
+(`TurnEndedPayload`, with the task, project, agent session and isolated column). `'activity'` is
+not overloaded for it: that event fires on every state change, and a Stop commits as
+`timer:stability`, the same trigger three watchdogs use.
+
+- **What counts.** The engine records what cleared the turn in `turnEndSource`: `'stop'` for the
+  agent's own turn-end hook (a non-permission, non-timeout `Idle`), `'idle-hint'` for an
+  `idle_hint` that ended it, and null for everything else. `onTurnEnded` fires once, on the
+  thinking-to-idle COMMIT, only when the source is `'stop'`. The commit, not the hook, so a turn
+  whose background shells or subagents were still held reports only once they drain.
+- **What does not.** An `idle_hint` (Esc between tool calls fires no hook and ends the turn exactly
+  this way, so the two cannot be told apart), `Interrupted`, `TurnFailed`, a `TurnRetrying` that
+  idles, a permission prompt, every watchdog and silence timer, and a resume's idle seed.
+- **`turnStartedAt`** is stamped on every idle-to-thinking commit, and at spawn when the session is
+  seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
+  turn. The turn-end runner uses it to ignore a turn that began before the task entered its column.
+- **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for the
+  hook agents and Kimi (whose wire protocol emits `TurnEnd`); false for agents whose only signal is
+  terminal silence, where a quiet compile and a finished turn look the same.
+- Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and the
+  `session-030-code-review-background-subagents` replay fixture (#529's pass #76: 12 Stops, 3 turn
+  ends, because the background reviewers held the other nine).
 
 ### Aborted-turn recovery (service errors)
 

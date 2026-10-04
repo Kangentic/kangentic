@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
-import type { BoardColumnAutomations, BoardColumnConfig } from '../../src/shared/types';
+import type { BoardColumnAutomations, BoardColumnConfig, BoardConfig } from '../../src/shared/types';
 
 /** The one database every module under test shares, swapped per test. */
 const harness = vi.hoisted(() => ({ db: null as unknown }));
@@ -136,6 +136,182 @@ describe('kangentic.json automations round-trip', () => {
     const second = build();
 
     expect(second.columns).toEqual(first.columns);
+  });
+
+  describe('On agent turn end, Condition and Frequency', () => {
+    function seedReviewLoop() {
+      const fixture = freshDatabase();
+      const codeReview = fixture.lanes.list().find((lane) => lane.name === 'Code Review')!;
+      fixture.automations.replaceForColumn(codeReview.id, [
+        { name: 'Review', type: 'send_message', trigger: 'enter', enabled: true, config: { message: '/code-review' } },
+        {
+          name: 'Back for revisions',
+          type: 'move_to_column',
+          trigger: 'turn_end',
+          enabled: true,
+          config: { targetColumn: 'Executing', message: 'Back from review:\n{{agentReply}}' },
+          condition: 'The review found work the implementer can do',
+          max_runs: 3,
+        },
+        { name: 'Clean', type: 'move_to_column', trigger: 'turn_end', enabled: true, config: {}, condition: 'The review is clean' },
+      ]);
+      return fixture;
+    }
+
+    it('writes onTurnEnd with the guards as camelCase row keys, and the column by name', () => {
+      seedReviewLoop();
+      const automations = columnNamed(build(), 'Code Review')?.automations;
+
+      expect(automations?.onTurnEnd).toEqual([
+        {
+          name: 'Back for revisions',
+          type: 'move_to_column',
+          condition: 'The review found work the implementer can do',
+          maxRuns: 3,
+          targetColumn: 'Executing',
+          message: 'Back from review:\n{{agentReply}}',
+        },
+        // No targetColumn: Next column is the absent key, not a stored value.
+        { name: 'Clean', type: 'move_to_column', condition: 'The review is clean' },
+      ]);
+      // A row with neither guard carries neither key.
+      expect(automations?.onEnter?.[0]).toEqual({ name: 'Review', type: 'send_message', message: '/code-review' });
+    });
+
+    it('round-trips the turn-end group, the guards and an absent targetColumn through apply unchanged', () => {
+      seedReviewLoop();
+      const first = build();
+      applyBoardConfigToDb('p1', first);
+      const second = build();
+
+      expect(second.columns).toEqual(first.columns);
+    });
+
+    it('warns and skips a Move to column row filed under onEnter or onExit', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onEnter: [{ name: 'Too early', type: 'move_to_column', targetColumn: 'Executing' }],
+          onExit: [{ name: 'Too late', type: 'move_to_column' }],
+          onTurnEnd: [{ name: 'Clean', type: 'move_to_column' }],
+        },
+      });
+
+      expect(plan.rows.map((row) => row.name)).toEqual(['Clean']);
+      expect(plan.warnings).toHaveLength(2);
+      expect(plan.warnings[0]).toContain('"Too early"');
+      expect(plan.warnings[0]).toContain('onTurnEnd');
+    });
+
+    it('keeps the column when onTurnEnd is not a list', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: { onTurnEnd: { name: 'Clean', type: 'move_to_column' } } as unknown as BoardColumnAutomations,
+      });
+
+      expect(plan.keepExisting).toBe(true);
+      expect(plan.rows).toEqual([]);
+      expect(plan.warnings[0]).toContain('onTurnEnd must be a list');
+    });
+
+    it('reads a blank condition and a maxRuns below 1 as off, and floors a fraction', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [
+            { name: 'Blank', type: 'notify', condition: '   ', maxRuns: 0 },
+            { name: 'Text limit', type: 'notify', maxRuns: '3' as unknown as number },
+            { name: 'Fraction', type: 'notify', maxRuns: 2.7 },
+          ],
+        },
+      });
+
+      expect(plan.rows.map((row) => [row.name, row.condition, row.max_runs])).toEqual([
+        ['Blank', null, null],
+        ['Text limit', null, null],
+        ['Fraction', null, 2],
+      ]);
+    });
+  });
+
+  describe('keeping what this build does not understand', () => {
+    // A file written by a NEWER build. The list, the row type and the row key are
+    // invented: they stand for whatever a later release adds.
+    function newerFile(executingId: string): BoardConfig {
+      return {
+        version: 1,
+        columns: [{
+          id: executingId,
+          name: 'Executing',
+          automations: {
+            onEnter: [
+              { name: 'Setup', type: 'run_script', script: 'npm ci', retryLimit: 2 },
+              { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' },
+              { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' },
+            ],
+            onPullRequestMerged: [{ name: 'Close the loop', type: 'notify' }],
+          } as unknown as BoardColumnAutomations,
+        }],
+      };
+    }
+
+    function seedExecuting() {
+      const fixture = freshDatabase();
+      const executing = fixture.lanes.list().find((lane) => lane.name === 'Executing')!;
+      return { ...fixture, executing };
+    }
+
+    it('applies what it knows and warns about the type it does not', () => {
+      const { executing, automations } = seedExecuting();
+      const result = applyBoardConfigToDb('p1', newerFile(executing.id));
+
+      expect(automations.listForColumn(executing.id).map((row) => row.name)).toEqual(['Setup', 'Ping']);
+      expect(result.warnings.some((warning) => warning.includes('post_chat_message'))).toBe(true);
+    });
+
+    it('carries the unknown list, row type and row key into the next export', () => {
+      const { executing } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+
+      const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      const automations = columnNamed(exported, 'Executing')?.automations as Record<string, unknown> | undefined;
+
+      // The unknown row keeps its place in the run order, after the row it followed.
+      expect(automations?.onEnter).toEqual([
+        { name: 'Setup', type: 'run_script', script: 'npm ci', retryLimit: 2 },
+        { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' },
+        { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' },
+      ]);
+      expect(automations?.onPullRequestMerged).toEqual([{ name: 'Close the loop', type: 'notify' }]);
+    });
+
+    it('keeps them across a second apply and export, so they survive every save', () => {
+      const { executing } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+      const firstExport = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      applyBoardConfigToDb('p1', firstExport);
+      const secondExport = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: firstExport, fingerprint: 'test' });
+
+      expect(secondExport.columns).toEqual(firstExport.columns);
+    });
+
+    it('drops an unknown key once its row is gone from the database', () => {
+      // Matching is by name and type: a row the user deleted takes its unknown
+      // keys with it rather than leaving them stranded on a neighbor.
+      const { executing, automations } = seedExecuting();
+      const file = newerFile(executing.id);
+      applyBoardConfigToDb('p1', file);
+      automations.replaceForColumn(executing.id, [
+        { name: 'Ping', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://hooks.example.com/abc' } },
+      ]);
+
+      const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+      const onEnter = columnNamed(exported, 'Executing')?.automations?.onEnter as Array<Record<string, unknown>>;
+
+      expect(onEnter.some((row) => 'retryLimit' in row)).toBe(false);
+    });
   });
 
   describe('reading a file written by an older build', () => {
