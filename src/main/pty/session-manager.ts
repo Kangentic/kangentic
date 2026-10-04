@@ -270,8 +270,10 @@ export class SessionManager extends EventEmitter {
    * promotion, which is also where the resting-grid park stashes for a queued
    * placeholder. A board respawn mints a NEW id, so it reads the replaced row's
    * stash as that row's grid (successorGridFor) and then drops it
-   * (forgetSessionGrid). Otherwise consumed at spawn (takePendingResize) or
-   * dropped on kill.
+   * (forgetSessionGrid). Otherwise consumed at spawn (takePendingResize), with
+   * anything a promotion's placeholder stashed during the host round trip
+   * dropped once the new row is registered, or dropped on kill. A phone's
+   * grid is never stashed.
    */
   private pendingResizes = new Map<string, { cols: number; rows: number }>();
   /**
@@ -1362,6 +1364,9 @@ export class SessionManager extends EventEmitter {
         this.lastDesktopDimensions.delete(sessionId);
         this.cancelRestingGridRestore(sessionId);
       },
+      discardPendingResize: (sessionId) => {
+        this.pendingResizes.delete(sessionId);
+      },
       inheritedGrid: (predecessor) => this.successorGridFor(predecessor),
       restoredGrid: (grid) => this.vetRestoredGrid(grid),
       emit: (event, ...args) => this.emit(event, ...args),
@@ -1544,7 +1549,13 @@ export class SessionManager extends EventEmitter {
         origin === 'desktop' &&
         clampedRows < MOBILE_USABLE_MIN_ROWS &&
         this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
-      if (!subFloorForStreamingPhone) {
+      // A phone's grid is never stashed. The one row a phone can resize here
+      // is a suspended one still tearing down (a queued row has no PTY, so the
+      // interactive-terminal verb refuses it), and its successor starts at
+      // this stash (successorGridFor). An exit disarms the size guard without
+      // restoring, so nothing would give that grid back.
+      const stashed = origin !== 'mobile' && !subFloorForStreamingPhone;
+      if (stashed) {
         this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
       }
       if (origin === 'desktop') {
@@ -1555,7 +1566,7 @@ export class SessionManager extends EventEmitter {
         cols: clampedCols,
         rows: clampedRows,
         status: session.status,
-        stashed: !subFloorForStreamingPhone,
+        stashed,
       });
       return { colsChanged: false };
     }

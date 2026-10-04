@@ -931,7 +931,11 @@ phone needs and reads the rest by request.
      real spawn. The park stashes the resting grid for such a placeholder in `pendingResizes`, so
      the promotion spawns there with no reflow mid-boot, and the seed served at subscribe already
      reports 210x48. A suspended row is left alone: its resume spawns under a NEW id, and that
-     spawn drops the grids kept for the row it replaces (`forgetSessionGrid`).
+     spawn drops the grids kept for the row it replaces (`forgetSessionGrid`). A resize that
+     reaches the placeholder during the promotion's own host round trip is stashed after the
+     spawn read its stash, so the spawn drops it once the new row is registered
+     (`discardPendingResize`); left behind, it would outrank the PTY's real grid at a later
+     respawn. Path 1 still re-runs the park decision for the new PTY.
   3. The subscribe-time park also overrides a focus claim with no xterm mounted anywhere (a
      minimized pop-out monitor, a detail window whose Changes view unmounted its terminal). Such
      a claim holds no grid, so nothing can disagree with the reshape, and the surface fits the PTY
@@ -1127,7 +1131,9 @@ phone needs and reads the rest by request.
   therefore starts at the grid of the row it replaces (`SessionManager.successorGridFor`, read
   through `SpawnFlowContext.inheritedGrid`). That is a resize stashed while the old row was
   suspended, else `ManagedSession.lastPtyGrid` (its spawn grid, then every applied resize except a
-  phone's, which the size guard owns and an exit disarms without restoring). Before
+  phone's, which the size guard owns and an exit disarms without restoring). The stash keeps the
+  same exclusion: `resize()` never stashes a phone's grid, so a phone resizing a row in suspend's
+  marked-but-alive window cannot hand its grid on that way either. Before
   this, a respawn spawned at 120x30 and whatever showed the old session reshaped it mid-boot: the
   surface's mount fit, or a streaming phone's resting-grid park. Each one was a resize plus two
   boot-time geometry re-asserts. Only a running or suspended in-memory predecessor hands its grid
@@ -1140,7 +1146,8 @@ phone needs and reads the rest by request.
   row can speak for: after a desktop restart the registry is empty, and after a pty host crash the
   lost row is exited, which `successorGridFor` refuses. The record is written at every grid change
   by the `pty-resize` listener (`session-grid-persistence.ts`); the spawn's own announcement fires
-  before the caller inserts the record, so that one write waits for `setImmediate`.
+  before the caller inserts the record, so that one write waits for `setImmediate`, and a desktop
+  or park write that lands first cancels it.
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint

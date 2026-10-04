@@ -120,7 +120,6 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
   }
 
   return {
-    ...(forceFresh && matchGrid ? { restoredGrid: matchGrid } : {}),
     mode: 'fresh',
     agentSessionId: null,
     resumeFromCwd: null,
@@ -137,5 +136,6 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
     // it does not linger or get resumed later. (retireRecord no-ops on records
     // not in a retireable state, so passing a non-eligible match.id is safe.)
     retireRecordId: forceFresh ? (match?.id ?? null) : null,
+    ...(forceFresh && matchGrid ? { restoredGrid: matchGrid } : {}),
   };
 }
