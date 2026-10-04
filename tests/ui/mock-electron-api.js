@@ -23,6 +23,9 @@
   // function; `__mockBoardProfiles` below is the module-scope exception, and it
   // works only because a Playwright spec sets it via addInitScript.
   let automations = [];
+  // KEEP IN SYNC with AUTOMATION_TRIGGERS in src/shared/automation-manifest.ts:
+  // the three groups, in the order a task meets them.
+  const AUTOMATION_TRIGGER_ORDER = ['enter', 'turn_end', 'exit'];
   let automationsHydrated = false;
   let swimlanePatchesHydrated = false;
   // Run records. Seedable through `__mockPreConfigure` so a spec can read run
@@ -611,7 +614,7 @@
     if (!Array.isArray(window.__mockAutomations)) return;
     window.__mockAutomations.forEach(function (row, index) {
       automations.push(Object.assign(
-        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, created_at: now(), updated_at: now() },
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, max_runs: null, created_at: now(), updated_at: now() },
         row,
         { config: Object.assign({}, row.config) },
       ));
@@ -1614,6 +1617,22 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onWorkflowCompleted: function (callback) {
+        // Tests can fire this via window.__mockFireWorkflowCompleted({ workflowId, title, taskCount, projectId }).
+        if (!window.__mockWorkflowCompletedListeners) window.__mockWorkflowCompletedListeners = [];
+        window.__mockWorkflowCompletedListeners.push(callback);
+        if (!window.__mockFireWorkflowCompleted) {
+          window.__mockFireWorkflowCompleted = function (completed) {
+            var listeners = (window.__mockWorkflowCompletedListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](completed); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockWorkflowCompletedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onMovedByMobile: function (callback) {
         // Tests can fire this via window.__mockFireTaskMovedByMobile(projectId).
         if (!window.__mockTaskMovedByMobileListeners) window.__mockTaskMovedByMobileListeners = [];
@@ -2000,7 +2019,12 @@
           .slice()
           .sort(function (left, right) {
             if (left.swimlane_id !== right.swimlane_id) return left.swimlane_id < right.swimlane_id ? -1 : 1;
-            if (left.trigger !== right.trigger) return left.trigger === 'enter' ? -1 : 1;
+            // The triggers in the order a task meets them (AUTOMATION_TRIGGERS),
+            // not the repository's alphabetical `ORDER BY trigger`: the renderer
+            // groups by trigger itself, so only the order WITHIN a group matters.
+            if (left.trigger !== right.trigger) {
+              return AUTOMATION_TRIGGER_ORDER.indexOf(left.trigger) - AUTOMATION_TRIGGER_ORDER.indexOf(right.trigger);
+            }
             return left.position - right.position;
           })
           .map(function (row) {
@@ -2013,9 +2037,11 @@
         automations = automations.filter(function (row) {
           return row.swimlane_id !== swimlaneId;
         });
-        var nextPosition = { enter: 0, exit: 0 };
+        var nextPosition = { enter: 0, turn_end: 0, exit: 0 };
         (rows || []).forEach(function (row) {
-          var trigger = row.trigger === 'exit' ? 'exit' : 'enter';
+          // A trigger the repository would not know is stored as 'enter', the
+          // column's original and default group; the other two are kept as sent.
+          var trigger = AUTOMATION_TRIGGER_ORDER.indexOf(row.trigger) >= 0 ? row.trigger : 'enter';
           automations.push({
             id: row.id || uuid(),
             swimlane_id: swimlaneId,
@@ -2025,6 +2051,10 @@
             position: nextPosition[trigger],
             enabled: row.enabled !== false,
             config: Object.assign({}, row.config),
+            // Null when absent, as the repository returns it. `undefined` is not
+            // the same thing to a consumer: the guard line tests `max_runs !== null`.
+            condition: typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
+            max_runs: Number.isFinite(row.max_runs) && Math.floor(row.max_runs) >= 1 ? Math.floor(row.max_runs) : null,
             created_at: now(),
             updated_at: now(),
           });

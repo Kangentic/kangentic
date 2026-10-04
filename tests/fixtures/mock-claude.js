@@ -297,6 +297,61 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
   }
 }
 
+// Turn-end harness for the On agent turn end automation guard
+// (tests/e2e/turn-end-automation.spec.ts).
+//
+// When MOCK_CLAUDE_TURN_END=1 is set, a FRESH session start (--session-id, not
+// --resume, and not a --print run) plays one finished turn into the session's
+// events.jsonl, in the post-bridge shape the activity engine reads:
+//
+//   prompt  (UserPromptSubmit: the turn begins)
+//   idle    (Stop: the agent finished, and nothing else holds the turn)
+//
+// A Stop with no pending tool, subagent, background shell or permission is what
+// the engine reports as a turn end, and the turn-end runner then waits out the
+// CLI's last paint (1.5 s of PTY silence) before it runs the column's rows. This
+// mock prints nothing after its startup markers, so that silence is genuine.
+//
+// The events are written after MOCK_CLAUDE_TURN_END_DELAY_MS (default 1500) so
+// the spawn has finished registering the session and the task's session_id by
+// the time the turn ends, as it has in the real app (a real turn takes seconds).
+// The session directory comes from `--settings`, the only reliable way to find
+// it (see the bg-bash branch above for why guessing from --session-id fails).
+//
+// A resume plays nothing (the !resumed check), so a task that moves on and has
+// its agent resumed in the next column does not run a second turn there. A fresh
+// start in another column does play one, which is harmless to a spec whose
+// destination column has no turn-end rows.
+if (process.env.MOCK_CLAUDE_TURN_END === '1' && sessionId && !resumed && settingsPath && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const sessionDir = pathMod.dirname(settingsPath);
+  const eventsPath = pathMod.join(sessionDir, 'events.jsonl');
+  const markerPath = pathMod.join(sessionDir, 'turn-end.emitted');
+  const startDelayMs = parseInt(process.env.MOCK_CLAUDE_TURN_END_DELAY_MS || '1500', 10);
+  const promptToIdleMs = parseInt(process.env.MOCK_CLAUDE_TURN_END_PROMPT_TO_IDLE_MS || '500', 10);
+
+  setTimeout(() => {
+    try {
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.appendFileSync(eventsPath, JSON.stringify({ ts: Date.now(), type: 'prompt', detail: 'mock turn' }) + '\n');
+    } catch (error) {
+      console.error('MOCK_CLAUDE_TURN_END_PROMPT_ERROR:' + error.message);
+      return;
+    }
+    setTimeout(() => {
+      try {
+        fs.appendFileSync(eventsPath, JSON.stringify({ ts: Date.now(), type: 'idle' }) + '\n');
+        // A breadcrumb the spec reads on failure: it separates "the mock never
+        // reached its write" from "the write landed and the app ignored it".
+        fs.writeFileSync(markerPath, JSON.stringify({ emittedAt: Date.now(), sessionId, eventsPath }));
+      } catch (error) {
+        console.error('MOCK_CLAUDE_TURN_END_IDLE_ERROR:' + error.message);
+      }
+    }, promptToIdleMs);
+  }, startDelayMs);
+}
+
 // Fast-detach harness for the task-process reap guard
 // (tests/e2e/task-process-reap.spec.ts).
 //
