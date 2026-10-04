@@ -832,6 +832,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 746, pre-PR | 25f +1243 -88, 2 new files | 117KB, 2079 lines | 6 (1) | 19 | 0 | 10 | 11 of 9 pack-carrying | 18 raised, 15 distinct / 5 applied, 8 skipped; 2 coverage holes filled, 3 skipped |
 | task 745, pre-PR | 1f +56 -14 plus 3 new files | 130KB, 2280 lines | 4 (1) | 0 | 0 | 7 | 0 of 6 pack-carrying; 1 finder re-read the pack after a 2000-line Read hit the token cap, 1 left about 600 lines unread | 24 raised, 23 distinct / 7 applied, 1 refuted; 11 of 17 coverage holes filled |
 | task 745, second pass | 2f +58 -14 plus 3 new files | 145KB, 2533 lines | 4 (1) | 1 | 0 | 7 | 3 of 6 pack-carrying, 2 of them re-reads of in-pack files; all 6 hit the token cap on the first 2000-line Read and re-chunked, 1 skipped the test section | 30 raised, 30 distinct / 4 applied, 2 refuted; 8 of 10 coverage holes filled |
+| task 749, pre-PR | 32f +1506 -621 plus 4 new files | 299KB, 4881 lines | 8 (2) | 28 | 0 | 7 | about 17 of 6 pack-carrying, most of them callers and rule files; 2 reported the token cap on a 2000-line Read: 1 re-chunked at 1000 lines, the IPC auditor reviewed from the source without loading the pack | 21 raised, 19 distinct / 10 applied, 2 refuted, 7 skipped; 9 coverage holes filled, 1 of them for a fix the pass made |
 
 Row one is the format's own review, and it is weak evidence for the hunk tier: four of its six
 files were body tier, so the finders were mostly reading whole bodies. The integration finder is
