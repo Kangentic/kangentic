@@ -39,7 +39,7 @@
  *      answers the phone inside its 10s budget.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Task, Swimlane } from '../../src/shared/types';
@@ -140,6 +140,16 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
 const mockAutoLinkPRForTask = vi.fn();
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: (...args: unknown[]) => mockAutoLinkPRForTask(...args),
+}));
+
+// The workflow lock. Allows by default; the refused-move suite below drives it.
+const workflowLock = vi.hoisted(() => ({
+  check: vi.fn((): string | null => null),
+  precheckTask: vi.fn((): unknown => null),
+}));
+vi.mock('../../src/main/workflows/workflow-lock-check', () => ({
+  checkWorkflowMove: () => workflowLock.check(),
+  readTaskForWorkflowPrecheck: () => workflowLock.precheckTask(),
 }));
 
 import { handleTaskMove, type TaskMoveOrigin } from '../../src/main/ipc/handlers/task-move';
@@ -468,6 +478,63 @@ describe('what each origin announces', () => {
       await move(origin);
       expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
     }
+  });
+});
+
+describe('a move the workflow lock refuses changes nothing', () => {
+  // The lock is asked twice: before handleTaskMove aborts anything in flight
+  // (so a refused drag cannot cancel the workflow's own move of the task), and
+  // inside the Phase 1 lock against the reconciled row. Phase 1 sits outside
+  // the Phase 2/3 rollback, so a refusal there must not reach the rollback's
+  // `removeByTaskId` either: that would kill a running workflow agent.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    workflowLock.check.mockReturnValue(null);
+    workflowLock.precheckTask.mockReturnValue(null);
+  });
+
+  // `clearAllMocks` keeps a return value, so a refusal set here would refuse
+  // every move in the suites after this one.
+  afterEach(() => {
+    workflowLock.check.mockReturnValue(null);
+    workflowLock.precheckTask.mockReturnValue(null);
+  });
+
+  async function refusedMove(): Promise<{ context: ReturnType<typeof makeContext>; error: unknown }> {
+    const task = makeTask({ session_id: 'live-session' });
+    const context = makeContext(task);
+    let error: unknown = null;
+    try {
+      await handleTaskMove(context as never, { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 }, 'renderer');
+    } catch (thrown) {
+      error = thrown;
+    }
+    return { context, error };
+  }
+
+  function expectUntouched(context: ReturnType<typeof makeContext>): void {
+    const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } } | undefined;
+    if (repos) expect(repos.tasks.move).not.toHaveBeenCalled();
+    expect(context.sessionManager.removeByTaskId).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
+  }
+
+  it('refuses at the pre-check, before anything moves or stops', async () => {
+    workflowLock.precheckTask.mockReturnValue(makeTask());
+    workflowLock.check.mockReturnValue('#1 is locked while Usage budgets runs.');
+    const { context, error } = await refusedMove();
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('#1 is locked while Usage budgets runs.');
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+    expectUntouched(context);
+  });
+
+  it('refuses inside the lock without the rollback killing the session', async () => {
+    workflowLock.check.mockReturnValue('#1 is locked while Usage budgets runs.');
+    const { context, error } = await refusedMove();
+    expect((error as Error).message).toBe('#1 is locked while Usage budgets runs.');
+    expectUntouched(context);
   });
 });
 
