@@ -110,7 +110,9 @@ export function AppLayout() {
     };
   }, [walkthroughStep]);
 
-  const sidebar = useSidebarResize(config);
+  // Workflows folds the project sidebar for its canvas and its agent's
+  // terminal, and the user's own choice comes back on the way out.
+  const sidebar = useSidebarResize(config, activeView === 'workflows');
   // The bottom panel drops a task's tab whenever its detail is open (a board window, the in-app
   // Agent Monitor, or the detached monitor), and collapses once no tab is left - see
   // `derivePanelSessions` / `shouldForceCollapseTerminal`. Derived inside ONE selector returning a
@@ -473,6 +475,8 @@ export function AppLayout() {
                 sidebar.ready && !sidebar.isResizing ? 'transition-[width] duration-200 ease-in-out' : ''
               }`}
               style={{ width: sidebar.open ? sidebar.width : COLLAPSED_STRIP_WIDTH }}
+              data-testid="sidebar-area"
+              data-open={sidebar.open ? 'true' : 'false'}
             >
               {/* Full sidebar content -- hidden when collapsed */}
               <div

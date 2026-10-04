@@ -147,6 +147,89 @@ test('an agent that cannot run says why, with no terminal', async () => {
   }
 });
 
+test('Workflows folds the project sidebar, and leaving restores it at the width it had', async () => {
+  const { browser, page } = await launch();
+  try {
+    const sidebar = byTestId(page, 'sidebar-area');
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+    const openWidth = await sidebar.evaluate((element) => (element as HTMLElement).style.width);
+
+    // Open it inside Workflows: the fold lifts for that visit only.
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    await page.locator('[data-testid="sidebar-expand-button"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+    await expect.poll(() => sidebar.evaluate((element) => (element as HTMLElement).style.width)).toBe(openWidth);
+
+    // A sidebar the user had closed stays closed in and out.
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.locator('button[title^="Hide sidebar"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('dragging the pane\'s edge widens it, and the width is kept', async () => {
+  const { browser, page } = await launch();
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-floating', 'false');
+    const before = await pane.evaluate((element) => element.getBoundingClientRect().width);
+    // Window error events, which is how the browser reports a ResizeObserver
+    // loop: resizing the canvas under React Flow must not raise one.
+    await page.evaluate(() => {
+      const errors: string[] = [];
+      (window as unknown as { __paneDragErrors: string[] }).__paneDragErrors = errors;
+      window.addEventListener('error', (event) => errors.push(event.message));
+    });
+    const handle = byTestId(page, 'workflow-agent-pane-resize');
+    const box = await handle.boundingBox();
+    if (!box) throw new Error('resize handle has no box');
+    const centerY = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, centerY);
+    await page.mouse.down();
+    // Paced one move per frame, as a hand moves; a burst of synthetic moves in
+    // one frame is not a gesture a person can make.
+    for (let step = 1; step <= 6; step++) {
+      await page.mouse.move(box.x + box.width / 2 + step * 20, centerY);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    }
+    await page.mouse.up();
+    expect(await page.evaluate(() => (window as unknown as { __paneDragErrors: string[] }).__paneDragErrors)).toEqual([]);
+    await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).workflows?.agentPaneWidth ?? null))
+      .toBeGreaterThan(before + 100);
+    const after = await pane.evaluate((element) => element.getBoundingClientRect().width);
+    expect(after).toBeGreaterThan(before + 100);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a window that jumps narrower floats the pane without a frame of zero-width canvas', async () => {
+  const { browser, page } = await launch();
+  try {
+    await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-floating', 'false');
+    // React Flow warns when its container has no width, which a docked pane
+    // caused for the one layout pass before the body row's observer ran.
+    const zeroSizeWarnings: string[] = [];
+    page.on('console', (message) => {
+      if (message.text().includes('parent container needs a width')) zeroSizeWarnings.push(message.text());
+    });
+    await page.setViewportSize({ width: 900, height: 600 });
+    await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-floating', 'true');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(zeroSizeWarnings).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('in a narrow view the open pane lies over the canvas instead of taking its width', async () => {
   const { browser, page } = await launch({ width: 1100 });
   try {

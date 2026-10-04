@@ -85,6 +85,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers automation Conditions, in the Workflows tab; see [Workflows (Automation agent)](#workflows-automation-agent))
 - `workflows.agentPrompt` (the workflow agent's first message, in the Workflows tab)
+- `workflows.agentPaneWidth` (the Workflows view's agent pane width; set by dragging the pane's edge, not in Settings)
 - `dictation.*` (all voice dictation settings)
 - `knowledgeGraph.*` (conversation search + recall, in the Knowledge Graph tab, id `knowledgeGraph`)
 - `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
@@ -559,6 +560,7 @@ Condition (and judges when a workflow step is done).
 | `automation.model` | `string \| null` | `null` | The model the check runs at, as that CLI's own id. Required when the agent's answer run takes a model. Cleared whenever `automation.agent` changes. A small, fast model is usually enough: a check reads one reply and answers yes or no. |
 | `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. |
 | `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
+| `workflows.agentPaneWidth` | `number \| null` | `null` | The agent pane's width in the Workflows view, in pixels. Written when a drag on the pane's right edge ends, never shown in Settings. Unset means 560; read back clamped to 360 to 960 (`workflowAgentPaneWidth`, `WorkflowAgentPane.tsx`). Below that width plus 780 (the inspector and a 400px canvas), the open pane lies over the canvas instead of taking its width. |
 
 ### Mobile Bridge
 

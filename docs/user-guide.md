@@ -548,8 +548,10 @@ Workflow agent prompt, which you can edit), reads the brief, plans the tasks, an
 made from nothing, it first asks what you want to build. Talk to it in its terminal to reshape the
 plan. While it works, the canvas says so and the controls that would change its plan (Start, Add
 task, links, routes, Remove) wait until its turn ends; moving cards does not. The toggle in its
-header pauses and resumes it, and the conversation is kept across a restart. It keeps running when
-you leave the view, and ends when its workflow is deleted or finishes. Only an agent Kangentic can
+header pauses and resumes it, and the conversation is kept across a restart. Drag the pane's right
+edge to widen it; the width is kept. Opening Workflows folds the project sidebar for room, and
+leaving restores it as you had it. It keeps running when you leave the view, and ends when its
+workflow is deleted or finishes. Only an agent Kangentic can
 launch read-only can be a workflow's agent; for any other, the pane says so and you plan on the
 canvas.
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Info, Loader2, PanelLeftClose, PanelLeftOpen, Play } from 'lucide-react';
 import type { Session } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
@@ -15,6 +15,7 @@ import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ActivityMark } from '../ActivityMark';
 import { PauseButtonIcon } from '../dialogs/task-detail/TaskDetailHeader';
 import { INSPECTOR_WIDTH } from './WorkflowInspector';
+import { startPanelDrag } from '../../hooks/panel-drag';
 
 /**
  * The Workflows view's left pane: the workflow's own agent (#732, boards 1b and
@@ -28,13 +29,30 @@ import { INSPECTOR_WIDTH } from './WorkflowInspector';
  * shows it.
  */
 
-/** The pane's width when open. */
-export const WORKFLOW_AGENT_PANE_WIDTH = 440;
+/**
+ * The pane's width when open, until the user drags its edge: 77 columns at the
+ * default terminal font (measured), room for an agent's plan without wrapping.
+ */
+export const WORKFLOW_AGENT_PANE_DEFAULT_WIDTH = 560;
+const MIN_PANE_WIDTH = 360;
+const MAX_PANE_WIDTH = 960;
+/** The canvas the docked pane always leaves, beside the inspector. */
+export const WORKFLOW_CANVAS_MIN_WIDTH = 400;
+
+/** The pane's width: the dragged one, clamped, or the default. */
+export function workflowAgentPaneWidth(stored: number | null | undefined): number {
+  if (typeof stored !== 'number' || !Number.isFinite(stored)) return WORKFLOW_AGENT_PANE_DEFAULT_WIDTH;
+  return Math.round(Math.min(MAX_PANE_WIDTH, Math.max(MIN_PANE_WIDTH, stored)));
+}
+
 /**
  * The narrowest view body the open pane takes its own width in: the pane, the
- * inspector (380) and a canvas of 400. Narrower, it floats over the canvas.
+ * inspector and a canvas of 400. Narrower, it floats over the canvas.
  */
-export const WORKFLOW_AGENT_PANE_DOCKED_MIN = WORKFLOW_AGENT_PANE_WIDTH + INSPECTOR_WIDTH + 400;
+export function workflowAgentPaneDockedMin(paneWidth: number): number {
+  return paneWidth + INSPECTOR_WIDTH + WORKFLOW_CANVAS_MIN_WIDTH;
+}
+
 /** The collapsed strip. */
 const COLLAPSED_WIDTH = 36;
 
@@ -64,11 +82,31 @@ export function useWorkflowAgentWorking(workflowId: string | null): boolean {
 
 /**
  * `floating`: the view is too narrow to give the pane its width (below
- * `WORKFLOW_AGENT_PANE_DOCKED_MIN`), so the open pane lies over the canvas's
- * left edge instead of taking the canvas's width, and keeps the collapsed
- * strip's place in the row.
+ * `workflowAgentPaneDockedMin`), so the open pane lies over the canvas's left
+ * edge instead of taking the canvas's width, and keeps the collapsed strip's
+ * place in the row.
  */
 export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId: string; floating?: boolean }) {
+  const storedWidth = useConfigStore((state) => state.config.workflows?.agentPaneWidth);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
+  // The width while its edge is dragged; null otherwise, which reads the setting.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const width = workflowAgentPaneWidth(dragWidth ?? storedWidth);
+  const startResize = useCallback((event: ReactMouseEvent) => {
+    const startX = event.clientX;
+    const startWidth = workflowAgentPaneWidth(storedWidth);
+    let latest = startWidth;
+    startPanelDrag(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        latest = workflowAgentPaneWidth(startWidth + moveEvent.clientX - startX);
+        setDragWidth(latest);
+      },
+      onRelease: () => {
+        void updateConfig({ workflows: { agentPaneWidth: latest } }).finally(() => setDragWidth(null));
+      },
+    });
+  }, [storedWidth, updateConfig]);
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);
@@ -133,8 +171,8 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
 
   const pane = (
     <div
-      className="flex h-full min-h-0 flex-shrink-0 flex-col border-r border-edge bg-surface"
-      style={{ width: WORKFLOW_AGENT_PANE_WIDTH }}
+      className="relative flex h-full min-h-0 flex-shrink-0 flex-col border-r border-edge bg-surface"
+      style={{ width }}
       data-testid="workflow-agent-pane"
       data-collapsed="false"
       data-floating={floating ? 'true' : 'false'}
@@ -208,6 +246,18 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           </PaneNotice>
         )}
       </div>
+      {/* The edge: drag to widen or narrow the pane; the width is kept. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the workflow agent"
+        aria-valuenow={width}
+        title="Drag to resize"
+        onMouseDown={startResize}
+        data-no-dismiss
+        data-testid="workflow-agent-pane-resize"
+        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize select-none transition-colors hover:bg-accent/30"
+      />
     </div>
   );
 
@@ -216,7 +266,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   // strip's while floating), and the pane inside lies over the canvas when it
   // floats.
   return (
-    <div className="relative flex-shrink-0" style={{ width: floating ? COLLAPSED_WIDTH : WORKFLOW_AGENT_PANE_WIDTH }}>
+    <div className="relative flex-shrink-0" style={{ width: floating ? COLLAPSED_WIDTH : width }}>
       <div className={floating ? 'absolute inset-y-0 left-0 z-20 shadow-xl' : 'h-full'}>{pane}</div>
     </div>
   );

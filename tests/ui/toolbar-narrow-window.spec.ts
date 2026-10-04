@@ -184,10 +184,22 @@ async function switchToBacklog(page: Page): Promise<void> {
   await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
-/** The seeded workflow has no tasks yet, so the view opens on an empty canvas. */
+/**
+ * The seeded workflow has no tasks yet, so the view opens on an empty canvas.
+ * Workflows folds the sidebar on the way in, which would leave this toolbar
+ * 860px at the floor. Opening it there, as a user can, keeps these cases on the
+ * 400px sidebar their names promise.
+ */
 async function switchToWorkflows(page: Page): Promise<void> {
   await page.locator('[data-testid="view-toggle-workflows"]').click();
   await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 10000 });
+  const sidebar = page.locator('[data-testid="sidebar-area"]');
+  await expect(sidebar).toHaveAttribute('data-open', 'false');
+  await page.locator('[data-testid="sidebar-expand-button"]').click();
+  await expect(sidebar).toHaveAttribute('data-open', 'true');
+  // Its width transition has run, so the row is measured beside the full 400px.
+  await expect.poll(() => sidebar.evaluate((element) => Math.round(element.getBoundingClientRect().width)))
+    .toBeGreaterThanOrEqual(400);
 }
 
 interface RowReading {

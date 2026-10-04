@@ -3763,6 +3763,8 @@ export interface AppConfig {
    */
   workflows?: {
     agentPrompt?: string | null;
+    /** The Workflows view's agent pane width in px, set by dragging its edge. Unset is the default (560). */
+    agentPaneWidth?: number | null;
   };
 
   /**

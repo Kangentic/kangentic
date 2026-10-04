@@ -21,7 +21,13 @@ import { DeleteWorkflowDialog, RemoveTaskDialog, RenameWorkflowDialog, StartWork
 import { WorkflowCardMenu } from './WorkflowCardMenu';
 import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
 import { findTask } from './workflow-graph';
-import { useWorkflowAgentWorking, WORKFLOW_AGENT_PANE_DOCKED_MIN, WorkflowAgentPane } from './WorkflowAgentPane';
+import {
+  useWorkflowAgentWorking,
+  workflowAgentPaneDockedMin,
+  workflowAgentPaneWidth,
+  WorkflowAgentPane,
+  WORKFLOW_CANVAS_MIN_WIDTH,
+} from './WorkflowAgentPane';
 
 /**
  * The Workflows view: the header (which workflow, its lifecycle, its
@@ -95,21 +101,35 @@ export function WorkflowsView() {
   const hmrGeneration = useHmrGeneration();
   // While the workflow agent is mid-turn, what would change its plan waits (board 2c).
   const planHeld = useWorkflowAgentWorking(selectedWorkflowId);
+  const agentPaneWidth = workflowAgentPaneWidth(useConfigStore((state) => state.config.workflows?.agentPaneWidth));
   // The body row's width decides whether the open agent pane takes its own
-  // width or floats over the canvas.
+  // width or floats over the canvas. Only that decision is state, so a window
+  // resize re-renders the view when it flips, not at every pixel.
   // The row exists only outside the empty state, so the observer follows it.
   const showsBody = summaries.length > 0 || detail !== null;
+  const dockedMin = workflowAgentPaneDockedMin(agentPaneWidth);
+  const dockedMinRef = useRef(dockedMin);
   const bodyRowRef = useRef<HTMLDivElement>(null);
-  const [bodyRowWidth, setBodyRowWidth] = useState(Number.POSITIVE_INFINITY);
+  const bodyRowWidthRef = useRef(Number.POSITIVE_INFINITY);
+  const [paneFloats, setPaneFloats] = useState(false);
+  // A new pane width moves the threshold. Declared first, so the observer's
+  // first measure below reads the current one.
+  useLayoutEffect(() => {
+    dockedMinRef.current = dockedMin;
+    setPaneFloats(bodyRowWidthRef.current < dockedMin);
+  }, [dockedMin]);
   useLayoutEffect(() => {
     const row = bodyRowRef.current;
     if (!showsBody || !row) return;
     // Measured now as well, so the first frame already has the right layout
     // rather than a docked pane that squeezes the canvas to nothing.
-    setBodyRowWidth(row.getBoundingClientRect().width);
+    bodyRowWidthRef.current = row.getBoundingClientRect().width;
+    setPaneFloats(bodyRowWidthRef.current < dockedMinRef.current);
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width;
-      if (width !== undefined) setBodyRowWidth(width);
+      if (width === undefined) return;
+      bodyRowWidthRef.current = width;
+      setPaneFloats(width < dockedMinRef.current);
     });
     observer.observe(row);
     return () => observer.disconnect();
@@ -268,9 +288,17 @@ export function WorkflowsView() {
       {header}
       <div ref={bodyRowRef} className="flex min-h-0 flex-1">
         {selectedWorkflowId && (
-          <WorkflowAgentPane workflowId={selectedWorkflowId} floating={bodyRowWidth < WORKFLOW_AGENT_PANE_DOCKED_MIN} />
+          <WorkflowAgentPane workflowId={selectedWorkflowId} floating={paneFloats} />
         )}
-        <div className="relative min-w-0 flex-1">
+        {/* While the pane is docked the canvas keeps its minimum. A window that
+            jumps narrower (a snap, a restore) lays out once with the pane still
+            docked before the observer floats it; the row then overflows and
+            clips for that frame instead of crushing the canvas to 0, which React
+            Flow cannot render. */}
+        <div
+          className="relative min-w-0 flex-1"
+          style={paneFloats ? undefined : { minWidth: WORKFLOW_CANVAS_MIN_WIDTH }}
+        >
           {/* The workflow agent is working, said on the canvas as the Agent
               Browser says an agent is driving: an accent ring at the edge and a
               label, both breathing. No veil: cards stay movable, and only what
