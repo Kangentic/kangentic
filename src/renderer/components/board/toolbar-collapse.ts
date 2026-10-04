@@ -62,9 +62,10 @@
  * filter labels about 120px of window earlier than it needs to.
  *
  * At the absolute floor (495px, a 400px sidebar at a 900px window, 463px of
- * content) the backlog search lands at about 120px, or about 95px once both
- * count badges show. There is nothing left to give there; that is the width the
- * dividers turn into gaps, and the switcher's options narrow, to claw back for.
+ * content) the backlog search is at its narrowest with both count badges
+ * showing; `toolbar-narrow-window.spec.ts` seeds both and holds it to its floor.
+ * There is nothing left to give there; that is the width the dividers turn into
+ * gaps, and the switcher's options tighten, to claw back for.
  *
  * Every class string below is a COMPLETE literal. Tailwind scans source text for
  * class candidates, so a breakpoint composed from a variable at a call site would
@@ -113,12 +114,14 @@ export interface ToolbarCollapseClasses {
    */
   viewSwitcherIcon: string;
   /**
-   * The switcher's option padding, on the same query as its label: 12px a side
-   * around a word, 6px around an icon alone. The three icon-only options give
-   * back 36px, which at the floor is the difference between a backlog search
-   * field and a slot.
+   * The switcher's option padding and gap, on the same query as its label:
+   * 12px a side around a word, 4px around an icon alone (the control's own
+   * `tight` value), with 2px before a count badge instead of 6. The three
+   * icon-only options and their two badges give back 44px, which at the floor,
+   * with both counts showing, is the difference between a backlog search field
+   * and a slot.
    */
-  viewSwitcherPadding: string;
+  viewSwitcherSpacing: string;
   /** Add column, or New Task. Last to give: a primary action's word is worth most. */
   primaryAction: ToolbarControlCollapse;
   /**
@@ -137,7 +140,7 @@ export const BOARD_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   },
   viewSwitcherLabel: 'hidden @[730px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[730px]:hidden',
-  viewSwitcherPadding: 'px-1.5 @[730px]:px-3',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[730px]:px-3 @[730px]:gap-1.5',
   primaryAction: {
     button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[580px]:w-auto @[580px]:h-auto @[580px]:px-3',
     label: 'hidden @[580px]:inline',
@@ -152,7 +155,7 @@ export const BACKLOG_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   },
   viewSwitcherLabel: 'hidden @[760px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[760px]:hidden',
-  viewSwitcherPadding: 'px-1.5 @[760px]:px-3',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[760px]:px-3 @[760px]:gap-1.5',
   primaryAction: {
     // `px-4`, not the board action's `px-3`: New Task keeps its own wider padding
     // above the threshold.
@@ -174,7 +177,7 @@ export const WORKFLOWS_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   },
   viewSwitcherLabel: 'hidden @[590px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[590px]:hidden',
-  viewSwitcherPadding: 'px-1.5 @[590px]:px-3',
+  viewSwitcherSpacing: 'px-1 gap-0.5 @[590px]:px-3 @[590px]:gap-1.5',
   // Unused: the view has no toolbar action. Kept so the branch has the same shape.
   primaryAction: {
     button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[450px]:w-auto @[450px]:h-auto @[450px]:px-3',

@@ -80,13 +80,14 @@ interface SegmentedControlProps<T extends string> {
    */
   tight?: boolean;
   /**
-   * Replaces every option's horizontal padding, for a group whose options shed
-   * their labels (`labelClassName`): the board toolbar narrows an icon-only
-   * option on the same container query that hides its label, because at the
-   * 900px floor the 12px a side the label needs is width the search field
-   * cannot spare. Overrides `tight`.
+   * Replaces every option's horizontal padding and its gap (icon, label,
+   * trailing badge), for a group whose options shed their labels
+   * (`labelClassName`): the board toolbar narrows an icon-only option on the
+   * same container query that hides its label, because at the 900px floor the
+   * spacing a label needs is width the search field cannot spare. Overrides
+   * `tight`.
    */
-  optionPaddingClassName?: string;
+  optionSpacingClassName?: string;
   /** Stretch to fill the container, options sharing the width equally. */
   fullWidth?: boolean;
   /** Group-level test hook. */
@@ -159,7 +160,7 @@ export function SegmentedControl<T extends string>({
   quiet = false,
   labelClassName = '',
   tight = false,
-  optionPaddingClassName,
+  optionSpacingClassName,
   fullWidth = false,
   testId,
   ariaLabel,
@@ -365,7 +366,7 @@ export function SegmentedControl<T extends string>({
               onClick={() => onChange(option.value)}
               data-testid={option.testId}
               data-selected={selected}
-              className={`relative z-[1] flex items-center justify-center gap-1.5 rounded ${optionPaddingClassName ?? (tight ? text.tightPadding : text.padding)} ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
+              className={`relative z-[1] flex items-center justify-center rounded ${optionSpacingClassName ?? `${tight ? text.tightPadding : text.padding} gap-1.5`} ${text.size} whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
                 fullWidth ? 'flex-1' : ''
               } ${
                 selected

@@ -60,11 +60,14 @@ const WIDE = { width: 1600, height: 900 };
 
 /**
  * A project long enough in the name to exercise the title bar, a full set of
- * swimlanes, labelled tasks so the Labels filter has content, and backlog items so
- * the Backlog segment carries its count badge (which widens the switcher).
+ * swimlanes, labelled tasks so the Labels filter has content, backlog items so
+ * the Backlog segment carries its count badge, and an unfinished workflow so the
+ * Workflows segment carries one too. Both badges widen the switcher, so the row
+ * is measured at its widest.
  */
 function seedScript(): string {
   return `
+    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'draft', draft: { tasks: [], links: [] } } }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -181,10 +184,10 @@ async function switchToBacklog(page: Page): Promise<void> {
   await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
-/** The project has no workflows, so the view lands on its empty state. */
+/** The seeded workflow has no tasks yet, so the view opens on an empty canvas. */
 async function switchToWorkflows(page: Page): Promise<void> {
   await page.locator('[data-testid="view-toggle-workflows"]').click();
-  await page.locator('[data-testid="workflows-empty"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 10000 });
 }
 
 interface RowReading {
@@ -306,6 +309,10 @@ async function expectRowSurvivesTheFloor(
   for (const label of wideLabels) {
     expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
   }
+  // Both count badges are what makes this the widest switcher; without them the
+  // floor case below is not the one the ladder was sized for.
+  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 unfinished');
+  await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
 
   const wideHeight = await settledHeight(page);
   expect(wideHeight).toBeGreaterThan(0);

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { CirclePause, Loader2 } from 'lucide-react';
 import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
 import { RegistryIcon } from '../../utils/swimlane-icons';
+import { useBoardStore } from '../../stores/board-store';
 import { CardStatusBar, TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
 import { WorkflowCardStrip } from './WorkflowStrip';
 
@@ -106,7 +107,15 @@ export interface WorkflowWaiting {
 }
 
 export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting }: WorkflowCanvasCardProps) {
-  const task = useMemo(() => viewTask.task ?? plannedAsTask(viewTask), [viewTask]);
+  // The board's own live row when the board holds it (this project, not yet
+  // archived): every writer keeps the board current, including the ones that
+  // never announce a workflow change (an agent's rename, auto-naming, a PR
+  // refresh), so the card reads exactly what its board card reads. The
+  // workflow's snapshot covers the rest: a task in Done, or on another board.
+  const taskId = viewTask.task?.id ?? null;
+  const liveTask = useBoardStore((state) => (taskId ? state.tasks.find((candidate) => candidate.id === taskId) : undefined));
+  const snapshotTask = useMemo(() => viewTask.task ?? plannedAsTask(viewTask), [viewTask]);
+  const task = liveTask ?? snapshotTask;
   const view = useTaskCardViewModel(task);
   const column = stripColumn(viewTask);
   const planned = viewTask.place === 'planned';

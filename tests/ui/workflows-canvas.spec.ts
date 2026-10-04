@@ -25,6 +25,36 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
   };
 }
 
+/** A started workflow's two tasks, both in To Do, the second waiting for the first. */
+function startedSeedScript(): string {
+  return `
+    window.__mockWorkflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null } }];
+    window.__mockWorkflowLinks = [{ workflow_id: 'wf-running', blocker_task_id: 'run-task-1', blocked_task_id: 'run-task-2' }];
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${PROJECT_ID}', name: 'workflows-canvas', path: '/mock/workflows-canvas', github_url: null,
+        default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+        state.swimlanes.push(Object.assign({}, swimlane, { id: 'wf-canvas-lane-' + index, position: index, created_at: ts }));
+      });
+      ['run-task-1', 'run-task-2'].forEach(function (id, index) {
+        state.tasks.push({
+          id: id, display_id: 40 + index, title: 'Reconnect step ' + (index + 1), description: '',
+          swimlane_id: 'wf-canvas-lane-0', position: index, agent: 'claude', session_id: null,
+          worktree_path: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null,
+          base_branch: null, use_worktree: 0, labels: [], priority: 0, attachment_count: 0, archived_at: null,
+          workflow_id: 'wf-running', workflow_project_id: '${PROJECT_ID}',
+          route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+          canvas_x: null, canvas_y: null, created_at: ts, updated_at: ts,
+        });
+      });
+      return { currentProjectId: '${PROJECT_ID}' };
+    });
+  `;
+}
+
 /** One project; with `withWorkflow`, one not-started workflow of three tasks and two links. */
 function seedScript(withWorkflow: boolean): string {
   const workflows = withWorkflow ? [{
@@ -56,12 +86,12 @@ function seedScript(withWorkflow: boolean): string {
   `;
 }
 
-async function launch(withWorkflow: boolean): Promise<{ browser: Browser; page: Page }> {
+async function launch(seed: boolean | 'started'): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seedScript(withWorkflow));
+  await page.addInitScript(seed === 'started' ? startedSeedScript() : seedScript(seed));
   await page.goto(VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   return { browser, page };
@@ -116,6 +146,27 @@ test.describe('Workflows canvas', () => {
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
       await page.keyboard.press('Escape');
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a started task\'s card follows the board when an agent renames it', async () => {
+    // An agent's rename (MCP) reloads the board and announces no workflow
+    // change, so the card has to read the board's live row, not the workflow's
+    // snapshot, or it shows the old title until the view reopens.
+    const { browser, page } = await launch('started');
+    try {
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      await expect(card(page, 'run-task-1')).toContainText('Reconnect step 1');
+      await page.evaluate(async (projectId) => {
+        await window.electronAPI.tasks.update({ id: 'run-task-1', title: 'Reconnect with backoff' });
+        (window as unknown as { __mockFireTaskUpdatedByAgent: (taskId: string, title: string, project: string) => void })
+          .__mockFireTaskUpdatedByAgent('run-task-1', 'Reconnect with backoff', projectId);
+      }, PROJECT_ID);
+      await expect(card(page, 'run-task-1')).toContainText('Reconnect with backoff');
+      // A task in To Do that waits shows why, in the card's own footer.
+      await expect(card(page, 'run-task-2')).toContainText('Blocked by #40...');
     } finally {
       await browser.close();
     }
