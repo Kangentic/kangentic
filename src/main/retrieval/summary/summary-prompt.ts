@@ -117,6 +117,73 @@ export function withoutNumberRefs(text: string): string {
     .trim();
 }
 
+/** One labelled line of a reply: `D3: <summary>`, bold or not. */
+const SUMMARY_LINE = /^\s*\**D(\d+)\**\s*[:.-]\s*(.+?)\s*$/;
+
+/**
+ * A label answered with a note wholly in parentheses rather than a summary.
+ * Captured from a real Haiku reply (`tests/fixtures/summary-replies/`), which
+ * answered three of ten tasks this way: "D2: (No description or outcome
+ * provided; cannot write a meaningful summary)". The note is the one group its
+ * first character opens, closing at its end, nested groups included: "(No
+ * outcome (or description) given)" is a note, while "(Fixed) the parser (in
+ * src)" is a summary, since its first group closes before the end.
+ *
+ * A real summary the model wrapped whole in parentheses reads as a note too.
+ * That costs its task one launch: a task passed over is asked again on the
+ * next. Storing a note instead would show it beside the task as what it did.
+ */
+function isNoteInPlaceOfSummary(text: string): boolean {
+  const body = text.endsWith('.') ? text.slice(0, -1) : text;
+  if (!body.startsWith('(') || !body.endsWith(')')) return false;
+  let depth = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === '(') depth += 1;
+    else if (body[index] === ')') {
+      depth -= 1;
+      if (depth === 0 && index < body.length - 1) return false;
+    }
+  }
+  return depth === 0;
+}
+
+/** A reply read line by line: what each label says, and what nothing labels. */
+function readReply(reply: string, count: number): {
+  summaries: Map<number, string>;
+  writtenTwice: Set<number>;
+  blank: Set<number>;
+  unlabelled: string[];
+  lines: number;
+} {
+  const summaries = new Map<number, string>();
+  const labelled = new Set<number>();
+  const writtenTwice = new Set<number>();
+  const blank = new Set<number>();
+  const unlabelled: string[] = [];
+  const lines = reply.split(/\r?\n/).filter((line) => line.trim() !== '');
+  for (const line of lines) {
+    const match = line.match(SUMMARY_LINE);
+    const position = match ? Number(match[1]) - 1 : -1;
+    if (!match || position < 0 || position >= count) {
+      unlabelled.push(line.trim());
+      continue;
+    }
+    if (labelled.has(position)) {
+      writtenTwice.add(position);
+      continue;
+    }
+    labelled.add(position);
+    const cleaned = withoutNumberRefs(match[2].replace(/^["']|["']$/g, ''));
+    // A note in place of a summary is no summary: stored, it would be searched
+    // and shown beside the task as what the task did.
+    const summary = isNoteInPlaceOfSummary(cleaned) ? '' : clip(cleaned, SUMMARY_MAX_CHARS);
+    if (summary) summaries.set(position, summary);
+    else blank.add(position);
+  }
+  for (const position of writtenTwice) summaries.delete(position);
+  return { summaries, writtenTwice, blank, unlabelled, lines: lines.length };
+}
+
 /**
  * The summaries a reply holds, by the task's position in the batch. A label the
  * reply skipped is absent, so that task is tried again in a later batch.
@@ -127,22 +194,43 @@ export function withoutNumberRefs(text: string): string {
  * the two is genuine cannot be told, so neither is kept.
  */
 export function parseSummaryReply(reply: string, count: number): Map<number, string> {
-  const summaries = new Map<number, string>();
-  const labelled = new Set<number>();
-  const writtenTwice = new Set<number>();
-  for (const line of reply.split(/\r?\n/)) {
-    const match = line.match(/^\s*\**D(\d+)\**\s*[:.-]\s*(.+?)\s*$/);
-    if (!match) continue;
-    const position = Number(match[1]) - 1;
-    if (position < 0 || position >= count) continue;
-    if (labelled.has(position)) {
-      writtenTwice.add(position);
-      continue;
-    }
-    labelled.add(position);
-    const summary = clip(withoutNumberRefs(match[2].replace(/^["']|["']$/g, '')), SUMMARY_MAX_CHARS);
-    if (summary) summaries.set(position, summary);
+  return readReply(reply, count).summaries;
+}
+
+/** How many unlabelled lines a gap report quotes, and how much of each. */
+const UNLABELLED_QUOTED = 3;
+const UNLABELLED_CHARS = 120;
+
+/** Why a reply left some of its batch without a summary, for the log. */
+export interface SummaryReplyGaps {
+  /** Positions (0-based) the reply wrote no line for. */
+  missing: number[];
+  /** Positions the reply wrote twice, so neither line was kept. */
+  writtenTwice: number[];
+  /** Positions whose line was empty once cleaned. */
+  blank: number[];
+  /** Non-empty lines in the reply. */
+  lines: number;
+  /**
+   * The first few lines that carry no label, clipped. They tell a format miss
+   * (`1. Fixed the...`) from a refusal (`I can't...`).
+   */
+  unlabelled: string[];
+}
+
+/** What a reply left out of a batch of `count` tasks, or null when it covered all of them. */
+export function describeReplyGaps(reply: string, count: number): SummaryReplyGaps | null {
+  const read = readReply(reply, count);
+  if (read.summaries.size === count) return null;
+  const missing: number[] = [];
+  for (let position = 0; position < count; position += 1) {
+    if (!read.summaries.has(position) && !read.writtenTwice.has(position) && !read.blank.has(position)) missing.push(position);
   }
-  for (const position of writtenTwice) summaries.delete(position);
-  return summaries;
+  return {
+    missing,
+    writtenTwice: [...read.writtenTwice].sort((left, right) => left - right),
+    blank: [...read.blank].sort((left, right) => left - right),
+    lines: read.lines,
+    unlabelled: read.unlabelled.slice(0, UNLABELLED_QUOTED).map((line) => clip(line, UNLABELLED_CHARS)),
+  };
 }

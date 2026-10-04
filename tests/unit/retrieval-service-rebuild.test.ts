@@ -75,12 +75,12 @@ vi.mock('../../src/main/retrieval/commit/commit-indexer', () => ({ sweepCommitRe
 vi.mock('../../src/main/retrieval/code/code-indexer', () => ({
   sweepCodeRecords: sweepers.sweepCodeRecords,
   purgeCodeRecords: sweepers.purgeCodeRecords,
-  indexedCodeBranch: vi.fn(() => null),
 }));
 vi.mock('../../src/main/retrieval/graph-facade', () => ({
   graphService: {
     notifyChanged: vi.fn(),
-    setSummariesSkipped: vi.fn(),
+    setSummaryActivity: vi.fn(),
+    setOnEmbeddingsWaiting: vi.fn(),
     setSummaryNamesOn: vi.fn(),
     requestRegionNames: vi.fn(),
     setProjectIds: vi.fn(),

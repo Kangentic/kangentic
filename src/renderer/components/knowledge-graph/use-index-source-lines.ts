@@ -5,9 +5,12 @@
  * same lines in the same states.
  *
  * What each line still waits for comes through the rule the Settings card
- * reads. The agent's half comes from config, so choosing one shows at once;
- * whether the Knowledge Graph is on comes from the snapshot, the same signal
- * that shows the map's off card, so the two never disagree.
+ * reads. The agent's half comes from config, so choosing one shows at once.
+ * The Knowledge Graph counts as on only while its setting is on and the
+ * snapshot has vectors, as the Settings card reads it. The vectors alone are
+ * the map's off card signal, so the card and the lines never disagree, but they
+ * outlive switching the Knowledge Graph off: a map still drawn from them would
+ * otherwise show shares that never move, since nothing embeds while it is off.
  */
 
 import { useMemo } from 'react';
@@ -22,16 +25,17 @@ export function useIndexSourceLines(index: KnowledgeGraphIndexSummary, semanticA
   const knowledgeGraphConfig = useConfigStore((state) => state.config.knowledgeGraph);
   const agentList = useConfigStore((state) => state.agentList);
   return useMemo(() => {
+    const knowledgeGraphOn = semanticAvailable && knowledgeGraphConfig?.enabled === true;
     const choice = agentJobChoice(knowledgeGraphConfig, 'answer');
     const requirements = sourceRequirements({
-      semanticEnabled: semanticAvailable,
+      semanticEnabled: knowledgeGraphOn,
       answerCapableAgents: agentList.filter((agent) => agent.found && agent.supportsAnswerFromContext).length,
       agentSetup: answerSetupGap({ agents: agentList, configured: choice.agent, configuredModel: choice.model, requireFound: true }),
       agentChosen: Boolean(choice.agent),
     });
     return indexSourceLines({
       index,
-      semanticAvailable,
+      semanticAvailable: knowledgeGraphOn,
       summariesOn: taskSummariesOn(knowledgeGraphConfig),
       codeOn: knowledgeGraphConfig?.sourceCode !== false,
       requirements,

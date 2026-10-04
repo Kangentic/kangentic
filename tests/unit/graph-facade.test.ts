@@ -7,9 +7,10 @@ import type { KnowledgeGraphBuildProgress, KnowledgeGraphSnapshotWire } from '..
  * worker's `event` relay (a `graph-progress` with its progress reaches the
  * build-progress listener, a `graph-changed` reaches the changed listener, and
  * neither reaches the other), the `respawned` re-read of every registered
- * project, the one-time subscription to the shared client, and the calls it
- * sends with the two settings the worker cannot read (`summaryNamesOn`,
- * `summariesSkipped`). `retrievalClient` is stubbed as a bare emitter with a
+ * project, the one-time subscription to the shared client, the calls it sends
+ * with the setting the worker cannot read (`summaryNamesOn`), and what it adds
+ * to a snapshot from main (the summary scheduler's activity, and a drain request
+ * for passages still waiting). `retrievalClient` is stubbed as a bare emitter with a
  * `call` spy, so nothing here exercises the client or the worker. The facade
  * keeps a `subscribed` latch and module-level listeners, so each test imports
  * a fresh copy of it.
@@ -248,23 +249,78 @@ describe('graphService worker calls', () => {
     vi.restoreAllMocks();
   });
 
-  it('sends the snapshot request with both main-side settings and the caller key, and returns the worker answer', async () => {
+  /** A worker answer: one project's counts, with no scheduler activity of its own. */
+  function workerWire(corpora: KnowledgeGraphSnapshotWire['index']['corpora'] = [], semanticAvailable = true): KnowledgeGraphSnapshotWire {
+    return {
+      projectId: PROJECT_ID,
+      index: {
+        corpora,
+        summaries: { written: 300, finishedTasks: 412, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
+        storageBytes: 0,
+      },
+      semanticAvailable,
+    } as unknown as KnowledgeGraphSnapshotWire;
+  }
+
+  it('sends the snapshot request with summaryNamesOn and the caller key', async () => {
     const { graphService, client } = await loadFacade();
-    const wire = { projectId: PROJECT_ID } as unknown as KnowledgeGraphSnapshotWire;
-    client.call.mockResolvedValue(wire);
+    client.call.mockResolvedValue(workerWire());
     graphService.setSummaryNamesOn(() => true);
-    graphService.setSummariesSkipped((projectId) => (projectId === PROJECT_ID ? 7 : 0));
 
-    const result = await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, 'key-1');
+    await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, 'key-1');
 
-    expect(result).toBe(wire);
     expect(client.call).toHaveBeenCalledWith('graph.snapshot', {
       projectId: PROJECT_ID,
       modelTag: MODEL_TAG,
       summaryNamesOn: true,
-      summariesSkipped: 7,
       knownProjectionKey: 'key-1',
     });
+  });
+
+  // The map's panel hardcoded "idle", so a project nothing wrote drew a running
+  // track forever, and one that was writing could not say so. What the summary
+  // scheduler is doing now rides each snapshot, read from main's scheduler.
+  it('adds what the summary scheduler is doing for the project to the worker\'s counts', async () => {
+    const { graphService, client } = await loadFacade();
+    client.call.mockResolvedValue(workerWire());
+    const choice = { agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low' };
+    graphService.setSummaryActivity((projectId) => (
+      projectId === PROJECT_ID
+        ? { skipped: 7, state: 'writing', retryInMs: null, choice }
+        : { skipped: 0, state: 'idle', retryInMs: null, choice: null }
+    ));
+
+    const result = await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, null);
+
+    expect(result.index.summaries).toEqual({
+      written: 300, finishedTasks: 412, awaitingRewrite: 0, writtenWith: [], skipped: 7, state: 'writing', retryInMs: null, choice,
+    });
+  });
+
+  it('says which of a project\'s corpora wait for vectors, and only when some do', async () => {
+    const { graphService, client } = await loadFacade();
+    const waiting = vi.fn<(projectId: string, waitingCorpora: string[]) => void>();
+    graphService.setOnEmbeddingsWaiting(waiting);
+
+    client.call.mockResolvedValue(workerWire([{ corpus: 'conversation', documents: 2, chunks: 10, embeddedChunks: 10, embeds: true }, { corpus: 'commit', documents: 4, chunks: 4, embeddedChunks: 0, embeds: false }]));
+    await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, null);
+    // A keyword-only corpus never waits for a vector.
+    expect(waiting).not.toHaveBeenCalled();
+
+    client.call.mockResolvedValue(workerWire([
+      { corpus: 'task', documents: 2, chunks: 10, embeddedChunks: 4, embeds: true },
+      { corpus: 'code', documents: 3, chunks: 30, embeddedChunks: 0, embeds: true },
+      { corpus: 'conversation', documents: 1, chunks: 5, embeddedChunks: 5, embeds: true },
+    ]));
+    await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, null);
+    // Main decides which are worth draining (code only while it is on).
+    expect(waiting).toHaveBeenCalledWith(PROJECT_ID, ['task', 'code']);
+
+    // Nothing can embed without the vector extension.
+    waiting.mockClear();
+    client.call.mockResolvedValue(workerWire([{ corpus: 'task', documents: 2, chunks: 10, embeddedChunks: 4, embeds: true }], false));
+    await graphService.getSnapshotWire(PROJECT_ID, MODEL_TAG, null);
+    expect(waiting).not.toHaveBeenCalled();
   });
 
   it('rejects the snapshot request while the worker cannot answer, so the renderer keeps its map', async () => {

@@ -23,7 +23,8 @@
 import { getProjectDb } from '../../db/database';
 import { RetrievalStore } from '../retrieval-store';
 import { SummaryStore } from '../summary/summary-store';
-import { CONVERSATION_CORPUS, isEmbeddedCorpus, INDEX_CORPORA } from '../corpora';
+import { CONVERSATION_CORPUS, INDEX_CORPORA } from '../corpora';
+import { readIndexCounts, type SummaryCountSource } from '../index-counts';
 import { aggregateCoverage, type CoverageSummary } from './coverage-aggregate';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { awaitWriteTurn } from '../write-budget';
@@ -164,8 +165,8 @@ function createProgressReporter(
   };
 }
 
-/** What region names read from a project's summaries. */
-interface SummarySource {
+/** What region names, and the Index panel's counts, read from a project's summaries. */
+interface SummarySource extends SummaryCountSource {
   fingerprint(): string;
   all(): Map<string, { summary: string }>;
 }
@@ -188,12 +189,6 @@ interface NamingState {
   running: boolean;
   again: boolean;
   againUrgent: boolean;
-}
-
-export interface SnapshotOptions {
-  /** How many finished tasks the summary scheduler passed over, which the
-   *  Index row reports. Sent with the read by main, which runs the scheduler. */
-  summariesSkipped?: number;
 }
 
 /** One event-loop turn, so a long job never holds the worker in one piece and
@@ -395,8 +390,8 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
     projectId: string,
     store: RetrievalStore,
     projection: GraphSnapshot['projection'],
+    modelTag: string,
     dimensions: number,
-    summariesSkippedCount: number | undefined,
   ): KnowledgeGraphIndexSummary {
     const fingerprint = store.corpusFingerprint();
     let cached = corpusCache.get(projectId);
@@ -409,44 +404,33 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       corpusCache.set(projectId, cached);
     }
     const totals = cached.totals;
-    const corpora = INDEX_CORPORA.map((corpus) => {
-      const row = totals.find((entry) => entry.corpus === corpus);
-      return {
-        corpus,
-        documents: row?.documents ?? 0,
-        chunks: row?.chunks ?? 0,
-        embeddedChunks: row?.embeddedChunks ?? 0,
-        embeds: isEmbeddedCorpus(corpus),
-      };
-    });
-    const otherEmbedded = corpora
+    // Counted as the Settings card counts them (`index-counts.ts`): only the
+    // selected model's vectors are embedded, and the summaries' counts are read
+    // live so the row moves as the backfill writes. What the summary scheduler
+    // is doing is main's, which adds it to the snapshot (`graph-facade.ts`).
+    const counts = readIndexCounts(store, summarySourceFor(projectId), totals, { modelTag, semantic: true, summaries: true });
+    // Every vector takes its space, whichever model wrote it.
+    const otherEmbedded = totals
       .filter((entry) => entry.corpus !== 'conversation')
       .reduce((total, entry) => total + entry.embeddedChunks, 0);
     return {
-      corpora,
-      summaries: summaryCounts(store, summariesSkippedCount),
+      corpora: counts.corpora,
+      summaries: counts.summaries,
       storageBytes: (projection?.storageBytes ?? 0) + cached.otherTextBytes + otherEmbedded * dimensions * 4,
     };
   }
 
-  /** Summaries written, of the finished tasks: two small reads, never cached, so
-   *  the row moves as the background backfill writes. The count passed over is
-   *  the summary scheduler's, which runs on main and sends it with the read. */
-  function summaryCounts(store: RetrievalStore, skippedCount: number | undefined): KnowledgeGraphIndexSummary['summaries'] {
-    const skipped = skippedCount ?? 0;
+  /** A project's summaries for their counts, or none when they cannot be read. */
+  function summarySourceFor(projectId: string): SummaryCountSource {
     try {
-      return { ...store.summaryCounts(), skipped };
+      return summariesFor(projectId);
     } catch {
-      return { written: 0, finishedTasks: 0, skipped };
+      return { awaitingRewrite: () => 0, writtenWith: () => [] };
     }
   }
 
   /** The snapshot, and the key of the map inside it (`projectionWithNamesAndKey`). */
-  function snapshotWithKey(
-    projectId: string,
-    modelTag: string,
-    options: SnapshotOptions,
-  ): { snapshot: GraphSnapshot; key: string | null } {
+  function snapshotWithKey(projectId: string, modelTag: string): { snapshot: GraphSnapshot; key: string | null } {
     const store = storeFor(projectId);
     const coverage = coverageFor(projectId, store);
     const { projection, key } = projectionWithNamesAndKey(projectId, store, timeSyncWork('graph:projection', () => readCachedProjection(store)));
@@ -455,7 +439,7 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
       projectId,
       projection,
       coverage,
-      index: indexSummaryFor(projectId, store, projection, embedding.dimensions, options.summariesSkipped),
+      index: indexSummaryFor(projectId, store, projection, modelTag, embedding.dimensions),
       building: running.has(projectId),
       buildProgress: running.get(projectId)?.progress ?? null,
       stale: !isProjectionFresh(
@@ -532,18 +516,14 @@ export function createGraphService(deps: GraphServiceDeps = {}) {
      * of which leave the map as it was. The JSON is kept per project, so a map
      * that did change is serialized once however many windows ask for it.
      */
-    getSnapshotWire(
-      projectId: string,
-      modelTag: string,
-      options: SnapshotOptions & { knownProjectionKey?: string | null } = {},
-    ): KnowledgeGraphSnapshotWire {
-      const { snapshot, key } = snapshotWithKey(projectId, modelTag, options);
+    getSnapshotWire(projectId: string, modelTag: string, knownProjectionKey: string | null = null): KnowledgeGraphSnapshotWire {
+      const { snapshot, key } = snapshotWithKey(projectId, modelTag);
       const { projection, ...rest } = snapshot;
       if (!projection || key === null) {
         projectionJson.delete(projectId);
         return { ...rest, projection: null, projectionKey: null };
       }
-      if (options.knownProjectionKey === key) return { ...rest, projectionKey: key, projectionUnchanged: true };
+      if (knownProjectionKey === key) return { ...rest, projectionKey: key, projectionUnchanged: true };
       let cached = projectionJson.get(projectId);
       if (!cached || cached.key !== key) {
         cached = { key, json: timeSyncWork('graph:projection-json', () => JSON.stringify(projection)) };

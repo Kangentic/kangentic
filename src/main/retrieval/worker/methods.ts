@@ -38,7 +38,7 @@ import type {
 } from '../../../shared/types';
 import { ConversationUsageStore } from '../conversation/conversation-usage-store';
 import type { RetrievalEventName } from './protocol';
-import { createIndexStatusReader, type IndexStatus, type IndexStatusParams } from './index-status';
+import { createIndexStatusReader, type IndexAllParams, type IndexAllStatus } from './index-status';
 import { createGraphService } from '../graph/graph-service';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { awaitWriteTurn } from '../write-budget';
@@ -183,7 +183,6 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
       projectId: string;
       modelTag: string;
       summaryNamesOn: boolean;
-      summariesSkipped: number;
       knownProjectionKey: string | null;
     };
     result: KnowledgeGraphSnapshotWire;
@@ -206,10 +205,10 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
     params: { projectId: string; urgent: boolean; summaryNamesOn: boolean };
     result: void;
   };
-  /** The index's half of the status poll (`index-status.ts`). */
-  'status.index': {
-    params: IndexStatusParams;
-    result: IndexStatus & { vecError: string | null };
+  /** The index's half of the status poll, every indexed project (`index-status.ts`). */
+  'status.indexAll': {
+    params: IndexAllParams;
+    result: IndexAllStatus & { vecError: string | null };
   };
   /** One task's written summary, or null. */
   'summary.forTask': {
@@ -378,8 +377,8 @@ export const retrievalHandlers: RetrievalHandlers = {
     // Only a context that ever read a graph has one to forget; never create one here.
     graphs.get(context)?.service.forget(projectId);
   },
-  'graph.snapshot': ({ projectId, modelTag, summaryNamesOn, summariesSkipped, knownProjectionKey }, context) => (
-    graphFor(context, summaryNamesOn).getSnapshotWire(projectId, modelTag, { summariesSkipped, knownProjectionKey })
+  'graph.snapshot': ({ projectId, modelTag, summaryNamesOn, knownProjectionKey }, context) => (
+    graphFor(context, summaryNamesOn).getSnapshotWire(projectId, modelTag, knownProjectionKey)
   ),
   'graph.refresh': ({ projectId, modelTag, dimensions, summaryNamesOn }, context) => (
     graphFor(context, summaryNamesOn).markDirty(projectId, modelTag, dimensions)
@@ -404,7 +403,11 @@ export const retrievalHandlers: RetrievalHandlers = {
       return null;
     }
   }),
-  'status.index': (params, context) => ({ ...indexStatus.read(context.getDb(params.projectId), params), vecError: context.vecLoadError() }),
+  'status.indexAll': async (params, context) => {
+    const status = await indexStatus.readAll((projectId) => context.getDb(projectId), params);
+    // Read after the opens, since opening a database is what loads sqlite-vec.
+    return { ...status, vecError: context.vecLoadError() };
+  },
   'summary.forTask': ({ projectId, taskId }, context) => new SummaryStore(context.getDb(projectId)).summariesFor([taskId]).get(taskId) ?? null,
   'task.knowledge': ({ projectId, taskIds }, context) => readTaskKnowledge(context.getDb(projectId), taskIds),
   'usage.taskSubagents': ({ projectId, taskId }, context) => {

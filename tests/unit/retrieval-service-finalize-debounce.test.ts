@@ -78,7 +78,8 @@ vi.mock('../../src/main/retrieval/task/task-indexer', () => ({
 }));
 const graphServiceMock = vi.hoisted(() => ({
   notifyChanged: vi.fn(),
-  setSummariesSkipped: vi.fn(),
+  setSummaryActivity: vi.fn(),
+  setOnEmbeddingsWaiting: vi.fn(),
   setSummaryNamesOn: vi.fn(),
   setProjectIds: vi.fn(),
 }));

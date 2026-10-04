@@ -14,6 +14,9 @@ const storeState = {
   chunkTotalsCalls: 0,
   corpusFingerprint: 'all:10',
   corpusTotalsCalls: 0,
+  /** Passages without the selected model's vector, by corpus. */
+  waiting: new Map<string, number>([['task', 2]]),
+  waitingModelTags: [] as string[],
 };
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => ({}) }));
@@ -60,11 +63,22 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
     corpusTextBytes(): number {
       return 300;
     }
+    countChunksNeedingEmbedding(modelTag: string): Map<string, number> {
+      storeState.waitingModelTags.push(modelTag);
+      return new Map(storeState.waiting);
+    }
     summaryCounts(): { written: number; finishedTasks: number } {
       return { written: 5, finishedTasks: 6 };
     }
   },
 }));
+
+const summaryStore = {
+  fingerprint: () => 'summaries',
+  all: () => new Map<string, { summary: string }>(),
+  awaitingRewrite: () => 1,
+  writtenWith: () => [{ agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', count: 4 }],
+};
 
 import { createGraphService } from '../../src/main/retrieval/graph/graph-service';
 
@@ -74,6 +88,8 @@ describe('graph service coverage cache', () => {
     storeState.chunkTotalsCalls = 0;
     storeState.corpusFingerprint = 'all:10';
     storeState.corpusTotalsCalls = 0;
+    storeState.waiting = new Map([['task', 2]]);
+    storeState.waitingModelTags = [];
   });
 
   it('reads coverage once while the index is unchanged', () => {
@@ -149,11 +165,35 @@ describe('graph service coverage cache', () => {
     expect(storeState.corpusTotalsCalls).toBe(3);
   });
 
-  it('says how many summaries the scheduler passed over', () => {
+  it('counts the summaries as the Settings card does, and leaves what the scheduler is doing to main', () => {
+    const service = createGraphService({ getDb: () => ({}) as never, summaries: () => summaryStore });
+    expect(service.getSnapshotWire('project-a', 'model').index.summaries).toEqual({
+      written: 5,
+      finishedTasks: 6,
+      awaitingRewrite: 1,
+      writtenWith: [{ agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', count: 4 }],
+      // Main's scheduler runs the passes, and `graph-facade` adds these.
+      skipped: 0,
+      state: 'idle',
+      retryInMs: null,
+      choice: null,
+    });
+  });
+
+  // The map's panel counted any model's vector as embedded while the Settings
+  // card counted only the selected model's, so after a model change the two
+  // disagreed. Both read `index-counts.ts` now.
+  it('counts only the selected model\'s vectors as embedded, read on every snapshot', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    expect(service.getSnapshotWire('project-a', 'model').index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 0 });
-    // Main runs the scheduler and sends its count with every read.
-    const snapshot = service.getSnapshotWire('project-a', 'model', { summariesSkipped: 1 });
-    expect(snapshot.index.summaries).toEqual({ written: 5, finishedTasks: 6, skipped: 1 });
+    storeState.waiting = new Map([['task', 3], ['conversation', 1]]);
+    const first = service.getSnapshotWire('project-a', 'bge@2').index.corpora;
+    expect(first.find((entry) => entry.corpus === 'conversation')).toMatchObject({ chunks: 4, embeddedChunks: 3 });
+    expect(first.find((entry) => entry.corpus === 'task')).toMatchObject({ chunks: 3, embeddedChunks: 0 });
+    expect(storeState.waitingModelTags).toEqual(['bge@2']);
+    // The totals stay cached; what waits moves as the drain works.
+    storeState.waiting = new Map();
+    const second = service.getSnapshotWire('project-a', 'bge@2').index.corpora;
+    expect(second.find((entry) => entry.corpus === 'task')).toMatchObject({ chunks: 3, embeddedChunks: 3 });
+    expect(storeState.corpusTotalsCalls).toBe(1);
   });
 });

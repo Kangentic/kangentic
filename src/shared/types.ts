@@ -7140,21 +7140,26 @@ export interface KnowledgeGraphIndexCorpusSummary {
 }
 
 /**
+ * What the index holds, every corpus, and its task summaries: one project's, or
+ * several summed (`sumIndexCounts` in `shared/index-summary.ts`). The Settings
+ * card sums these; the map's Index panel sums `KnowledgeGraphIndexSummary`,
+ * which adds the size on disk.
+ */
+export interface KnowledgeGraphIndexCounts {
+  /** One entry per corpus the store knows, in `INDEX_CORPORA` order, present
+   *  with zeros when nothing of it is indexed yet. */
+  corpora: KnowledgeGraphIndexCorpusSummary[];
+  /** One project's task summaries, or every summed project's. */
+  summaries: KnowledgeGraphSummaryCounts;
+}
+
+/**
  * Everything the index holds, every corpus, for the Index panel. The map and
  * its coverage describe conversations; this describes the whole store, so a
  * corpus that is indexed but never drawn (task records, session changes) is
  * still accounted for.
  */
-export interface KnowledgeGraphIndexSummary {
-  /** One entry per corpus the store knows, in `INDEX_CORPORA` order, present
-   *  with zeros when nothing of it is indexed yet. */
-  corpora: KnowledgeGraphIndexCorpusSummary[];
-  /**
-   * Task summaries written, of the finished tasks that can have one, and how many
-   * the Knowledge Graph's agent passed over this run of the app (asked, and no summary
-   * came back; tried again on the next launch).
-   */
-  summaries: { written: number; finishedTasks: number; skipped?: number };
+export interface KnowledgeGraphIndexSummary extends KnowledgeGraphIndexCounts {
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
 }
@@ -7399,14 +7404,15 @@ export interface KnowledgeGraphStatus {
    *  restart cap: its exit code plus the first error line of its stderr (home
    *  directory redacted), so the Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
-  /** Task summaries (summaries) for the open project, for their line in the
-   *  Index card. Absent with no project open, or while semantic search is off. */
+  /** Task summaries summed over every indexed project, for their line in the
+   *  Index card. Absent while semantic search is off or no project is indexed. */
   summaries?: KnowledgeGraphSummaryStatus;
-  /** Source code for the open project, for its line in the Index card. Absent
-   *  with no project open, or before its branch has been read. */
+  /** Source code summed over every indexed project, for its line in the Index
+   *  card; the open project's branch size while none holds code. Absent while
+   *  there is nothing to say yet. */
   code?: KnowledgeGraphCodeStatus;
-  /** The open project's always-indexed sources, for their lines in the Index
-   *  card. Absent with no project open or with indexing off. */
+  /** The always-indexed sources summed over every indexed project, for their
+   *  lines in the Index card. Absent with indexing off or no project indexed. */
   sources?: KnowledgeGraphSourcesStatus;
 }
 
@@ -7416,7 +7422,7 @@ export interface KnowledgeGraphRebuildPlan {
 }
 
 /**
- * The sources the index always holds, for one project: conversations and task
+ * The sources the index always holds: conversations and task
  * records (searched by meaning too while semantic search is on) and commits
  * (by keyword only). Session changes are not listed: nothing searches them,
  * they only feed the task summaries.
@@ -7443,7 +7449,7 @@ export interface KnowledgeGraphSourceStatus {
 }
 
 /**
- * The open project's source code, as the Index card's Source code line reads it.
+ * Source code, as the Index card's Source code line reads it.
  *
  * - `estimate`: code is not indexed, and `files` and `passages` are what
  *   switching it on would read: the files counted on the branch, the passages
@@ -7456,8 +7462,6 @@ export interface KnowledgeGraphSourceStatus {
  */
 export interface KnowledgeGraphCodeStatus {
   state: 'estimate' | 'reading' | 'indexing' | 'ready' | 'nothing-committed';
-  /** The branch read, like `origin/main`, or null when there is none. */
-  branch: string | null;
   files: number;
   passages: number;
   /** Passages with their vector: `passages` when ready, 0 in an estimate. */
@@ -7467,27 +7471,32 @@ export interface KnowledgeGraphCodeStatus {
   minutesLeft: number | null;
 }
 
-/** Task summaries for one project, as the Index card's Task summaries line reads them. */
-export interface KnowledgeGraphSummaryStatus {
+/**
+ * Task summaries for one project, or for every project summed (`sumSummaryCounts`
+ * in `shared/index-summary.ts`). The retrieval worker reads the counts; main adds
+ * what its summary scheduler is doing. Both Index surfaces sum this one record,
+ * so the Settings card and the map's panel cannot disagree.
+ */
+export interface KnowledgeGraphSummaryCounts {
   /** Summaries written, of the finished tasks (in a Done column) that can have one. */
   written: number;
   finishedTasks: number;
-  /** Tasks the agent passed over this run of the app; tried again next launch. */
+  /** Summaries marked for rewriting and not rewritten yet. */
+  awaitingRewrite: number;
+  /** The finished tasks' summaries by what wrote them, most first. */
+  writtenWith: SummaryChoiceCount[];
+  /** Tasks the agent passed over this run of the app; asked again next launch. */
   skipped: number;
   /**
-   * What the scheduler is doing for this project. Waiting for an agent is not a
-   * state here: the renderer reads that setup gap from config, the same rule
-   * main applies.
+   * What the scheduler is doing: `writing` while a pass runs or is queued,
+   * `retrying` while a failed call waits out its backoff. Summed, `writing` wins
+   * over `retrying`, which wins over `idle`. Waiting for an agent is not a state
+   * here: the renderer reads that setup gap from config, the same rule main applies.
    */
   state: 'idle' | 'writing' | 'retrying';
   /** How long until a failed call is tried again, as of this read. Set only
    *  while `retrying`; main measures it so the renderer never reads a clock. */
   retryInMs: number | null;
-  /** Minutes the summaries still to write (and to rewrite) take at the current
-   *  run's measured rate, or null before a pass of the run has written any. */
-  minutesLeft: number | null;
-  /** The finished tasks' summaries by what wrote them, most first. */
-  writtenWith: SummaryChoiceCount[];
   /**
    * What a summary would be written with now: the Knowledge Graph's agent, its model, and
    * the recommended effort main resolves for a summary. Null while summaries are
@@ -7495,8 +7504,13 @@ export interface KnowledgeGraphSummaryStatus {
    * way.
    */
   choice: SummaryChoice | null;
-  /** Summaries marked for rewriting and not rewritten yet. */
-  awaitingRewrite: number;
+}
+
+/** Task summaries as the Index card's Task summaries line reads them. */
+export interface KnowledgeGraphSummaryStatus extends KnowledgeGraphSummaryCounts {
+  /** Minutes the summaries still to write (and to rewrite) take at the current
+   *  run's measured rate, or null before a pass of the run has written any. */
+  minutesLeft: number | null;
 }
 
 /** What wrote a summary: an adapter name, its model id, and the effort level it ran at. */

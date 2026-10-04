@@ -47,9 +47,16 @@ function snapshotScript(options: {
   summarySetting?: 'off' | 'on';
   /** Summaries the index holds, of 412 finished tasks. */
   summariesWritten?: number;
+  /** What main's summary scheduler is doing for the project: a track only
+   *  while it writes, "N of M" while it is idle. */
+  summaryState?: 'idle' | 'writing' | 'retrying';
   /** Source code indexed: on in the app by default, so switched off here
    *  unless asked for, and on it comes with the Knowledge Graph it needs. */
   codeIndexed?: boolean;
+  /** The Knowledge Graph setting. On unless asked otherwise, since a map drawn
+   *  from vectors normally means it is on. Off, the vectors that draw the map
+   *  stay, but nothing embeds. */
+  knowledgeGraphOn?: boolean;
 } = {}): string {
   const {
     projection = 'null',
@@ -60,9 +67,12 @@ function snapshotScript(options: {
     answerAgentChosen = true,
     summarySetting = 'off',
     summariesWritten = 300,
+    summaryState = 'writing',
     codeIndexed = false,
+    knowledgeGraphOn = true,
   } = options;
   return `window.__mockPreConfigure(function (state) {
+    state.config.knowledgeGraph = Object.assign({}, state.config.knowledgeGraph, { enabled: ${knowledgeGraphOn} });
     ${answerAgentChosen
       ? "state.config.knowledgeGraph = Object.assign({}, state.config.knowledgeGraph, { agent: 'claude', model: 'haiku' });"
       : ''}
@@ -105,7 +115,12 @@ function snapshotScript(options: {
               ? "{ corpus: 'code', documents: 1488, chunks: 12186, embeddedChunks: 4210, embeds: true },"
               : "{ corpus: 'code', documents: 0, chunks: 0, embeddedChunks: 0, embeds: true },"}
           ],
-          summaries: { written: ${summariesWritten}, finishedTasks: 412, skipped: 1 },
+          // The full record main sends: the snapshot carries what the summary
+          // scheduler is doing, so the line can tell a running pass from none.
+          summaries: {
+            written: ${summariesWritten}, finishedTasks: 412, awaitingRewrite: 0, writtenWith: [],
+            skipped: 1, state: '${summaryState}', retryInMs: null, choice: null,
+          },
           storageBytes: 3221225472,
         },
       },
@@ -282,11 +297,14 @@ async function watchFrames(
   }, { watchedSelector: selector, frameCount: frames });
 }
 
-async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+async function launchWithState(preConfigScript: string, options: { useClock?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await context.newPage();
+  // Before navigation, so the page's timers are Playwright's from the first
+  // script on and a test can fire an interval's ticks with `page.clock.runFor`.
+  if (options.useClock) await page.clock.install();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
   await page.goto(VITE_URL);
@@ -554,7 +572,7 @@ test.describe('knowledge graph', () => {
           { corpus: 'conversation', documents: 10, chunks: 900, embeddedChunks: 300, embeds: true },
           { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 0, embeds: true },
         ],
-        summaries: { written: 0, finishedTasks: 5, skipped: 0 },
+        summaries: { written: 0, finishedTasks: 5, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
         storageBytes: 1048576,
       },
     }`;
@@ -715,16 +733,19 @@ test.describe('knowledge graph', () => {
   });
 
   test('the Index shows task summaries the way Settings does, and names a missing agent', async () => {
-    const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; expected: string }> = [
+    const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; summaryState: 'idle' | 'writing'; expected: string }> = [
       // Off: what switching them on would cover.
-      { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, expected: '412 tasks' },
+      { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, summaryState: 'idle', expected: '412 tasks' },
       // On with no agent: the tag, rather than a count that is not moving.
-      { summarySetting: 'on', answerAgentChosen: false, summariesWritten: 0, expected: 'Needs an agent' },
+      { summarySetting: 'on', answerAgentChosen: false, summariesWritten: 0, summaryState: 'idle', expected: 'Needs an agent' },
       // On and writing: the share, no time left (the map's summary carries no rate).
-      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, expected: '72%' },
+      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'writing', expected: '72%' },
+      // On, behind, and nothing writing: what is written of what could be, never
+      // a track that does not move (the All projects panel sat at 91% this way).
+      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'idle', expected: '300 of 412, 1 skipped' },
     ];
-    for (const { summarySetting, answerAgentChosen, summariesWritten, expected } of states) {
-      const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), summarySetting, answerAgentChosen, summariesWritten }));
+    for (const { summarySetting, answerAgentChosen, summariesWritten, summaryState, expected } of states) {
+      const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), summarySetting, answerAgentChosen, summariesWritten, summaryState }));
       try {
         await openKnowledgeGraph(page);
         await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
@@ -734,6 +755,24 @@ test.describe('knowledge graph', () => {
       } finally {
         await browser.close();
       }
+    }
+  });
+
+  // The map is drawn from the vectors, which outlive switching the Knowledge
+  // Graph off. Nothing embeds while it is off, so the lines read as the
+  // Settings card does then: counts with no share, and the tag for what waits
+  // on it, never a share that does not move.
+  test('the Index reads the Knowledge Graph as off when it is switched off under a map still drawn', async () => {
+    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), knowledgeGraphOn: false, summarySetting: 'on' }));
+    try {
+      await openKnowledgeGraph(page);
+      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
+      // Task records are half embedded in the fixture: the count, not 50%.
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-tasks-value"]')).toHaveText('412');
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-summaries"]')).toContainText('Needs the Knowledge Graph');
+      await expect(page.locator('[data-testid="knowledge-graph-index-source-code"]')).toContainText('Needs the Knowledge Graph');
+    } finally {
+      await browser.close();
     }
   });
 
@@ -1794,6 +1833,76 @@ test.describe('knowledge graph', () => {
       await effort.click();
       await expect(page.locator('[data-testid="knowledge-graph-answer-effort-option-max"]')).toHaveCount(0);
       await expect(page.locator('[data-testid="knowledge-graph-answer-effort-option-xhigh"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The Knowledge Graph tab polls the index status every 1500 ms, one read at a
+  // time: main reads every indexed project, which can outlast the interval on a
+  // busy worker, and a second read only adds to its load. Here every read waits
+  // for the test to let it land, and the page's clock fires the interval's ticks.
+  //
+  // The Vite dev server runs StrictMode, which mounts the tab's effect twice, and
+  // each mount keeps a `polling` flag of its own. The first mount's read is
+  // therefore still out beside the live one's, so the counts below are measured
+  // against what the mount itself started, never against an absolute number.
+  //
+  // Red-green: `if (polling) return;` in the tab's `poll`. Without it each of the
+  // three ticks starts a read of its own, and the count rises by three while the
+  // first read is still out. And `polling = false` in its `finally`: without it
+  // the read that lands is never followed by another, and the last poll times out.
+  test('the Knowledge Graph tab keeps one status read in flight, and reads again once it lands', async () => {
+    const { browser, page } = await launchWithState(snapshotScript(), { useClock: true });
+    try {
+      // The tab polls only while indexing is on, and re-arms when semantic search
+      // changes, so both are settled before it mounts and its effect runs once.
+      await page.evaluate(() => window.electronAPI.config.set({ knowledgeGraph: { indexingEnabled: true, enabled: true } }));
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { config: { getState: () => { loadConfig: () => Promise<void> } } };
+        }).__zustandStores;
+        return stores?.config.getState().loadConfig();
+      });
+      await page.evaluate(() => {
+        const target = window as unknown as {
+          electronAPI: { knowledgeGraph: { getStatus: () => Promise<unknown> } };
+          __statusReads?: { started: number; held: Array<() => void> };
+        };
+        const { knowledgeGraph } = target.electronAPI;
+        const realGetStatus = knowledgeGraph.getStatus.bind(knowledgeGraph);
+        const reads = { started: 0, held: [] as Array<() => void> };
+        target.__statusReads = reads;
+        knowledgeGraph.getStatus = () => new Promise((resolve) => {
+          reads.started += 1;
+          reads.held.push(() => resolve(realGetStatus()));
+        });
+      });
+      const readsStarted = (): Promise<number> => page.evaluate(
+        () => (window as unknown as { __statusReads: { started: number } }).__statusReads.started,
+      );
+
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.locator('[data-testid="settings-panel"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('[data-testid="settings-tab-knowledgeGraph"]').click();
+      await expect.poll(readsStarted, { timeout: 10000 }).toBeGreaterThan(0);
+      const startedAtMount = await readsStarted();
+
+      // Three intervals pass with the mount's reads still out. The clock has
+      // fired every tick by the time this returns, so the count is read once and
+      // there is nothing left to wait for.
+      await page.clock.runFor(4600);
+      expect(await readsStarted()).toBe(startedAtMount);
+
+      // Let every held read land: the next tick reads again.
+      await page.evaluate(() => {
+        const reads = (window as unknown as { __statusReads: { held: Array<() => void> } }).__statusReads;
+        for (const release of reads.held.splice(0)) release();
+      });
+      await expect.poll(async () => {
+        await page.clock.runFor(1500);
+        return readsStarted();
+      }, { timeout: 10000 }).toBe(startedAtMount + 1);
     } finally {
       await browser.close();
     }
@@ -4074,7 +4183,7 @@ test.describe('knowledge graph', () => {
                   { corpus: 'task', documents: 12, chunks: 30, embeddedChunks: 30, embeds: true },
                   { corpus: 'change', documents: 8, chunks: 8, embeddedChunks: 0, embeds: false },
                 ],
-                summaries: { written: 0, finishedTasks: 5 },
+                summaries: { written: 0, finishedTasks: 5, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
                 storageBytes: 1048576,
               },
             },

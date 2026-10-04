@@ -30,7 +30,7 @@ const SUMMARIES: KnowledgeGraphSummaryStatus = {
   awaitingRewrite: 0,
 };
 
-const CODE: KnowledgeGraphCodeStatus = { state: 'estimate', branch: 'origin/main', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
+const CODE: KnowledgeGraphCodeStatus = { state: 'estimate', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
 
 describe('the time left', () => {
   it('says minutes under an hour and a half, then half hours', () => {
@@ -94,6 +94,11 @@ describe('an always-on source', () => {
   it('says nothing before the status has arrived', () => {
     expect(alwaysOnLine(undefined, 'Tasks embedded')).toEqual({});
   });
+
+  it('with nothing in it, says so rather than a checked 0, as the map\'s panel does', () => {
+    expect(alwaysOnLine({ count: 0, percent: null, minutesLeft: null }, 'Commits indexed'))
+      .toEqual({ value: 'Not yet indexed', tone: 'muted' });
+  });
 });
 
 describe('the task summaries line', () => {
@@ -128,9 +133,17 @@ describe('the task summaries line', () => {
 
   it('rewriting, counts what the current choice has written', () => {
     // 120 of 674 rewritten is 17.8%.
-    const rewriting = { ...SUMMARIES, written: 674, choice: opus, awaitingRewrite: 554, minutesLeft: 3, writtenWith: [{ ...sonnet, count: 554 }, { ...opus, count: 120 }] };
+    const rewriting = { ...SUMMARIES, state: 'writing' as const, written: 674, choice: opus, awaitingRewrite: 554, minutesLeft: 3, writtenWith: [{ ...sonnet, count: 554 }, { ...opus, count: 120 }] };
     expect(summariesLine(true, rewriting, undefined))
       .toEqual({ value: '17%, 3 min left', percent: 17, progressLabel: 'Summaries rewritten' });
+  });
+
+  // Rebuild marks every project's summaries but rewrites only where a pass
+  // runs: a project waiting for its next pass must not draw a track that never
+  // moves. Red-green: the rewrite branch used to ignore the state.
+  it('with rewrites waiting and nothing writing them, is the count without a check', () => {
+    const waiting = { ...SUMMARIES, written: 674, choice: opus, awaitingRewrite: 554, writtenWith: [{ ...sonnet, count: 554 }, { ...opus, count: 120 }] };
+    expect(summariesLine(true, waiting, undefined)).toEqual({ value: '674' });
   });
 
   it('after a failed call, tints the state word and says when it is retried', () => {
@@ -141,6 +154,15 @@ describe('the task summaries line', () => {
   it('says what the agent passed over, and when nothing is Done yet', () => {
     expect(summariesLine(true, { ...SUMMARIES, finishedTasks: 673, written: 670, skipped: 3 }, undefined).value).toBe('670 of 673, 3 skipped');
     expect(summariesLine(true, { ...SUMMARIES, finishedTasks: 0 }, undefined).value).toBe('No Done tasks yet');
+  });
+
+  // A project nothing is writing, behind by more than it skipped: it used to
+  // draw the running track forever (the All projects panel stuck at 91%).
+  // Red-green: the old line read "N of M" only once every task left was skipped.
+  it('behind with nothing writing, is what is written of what could be, never a track', () => {
+    expect(summariesLine(true, { ...SUMMARIES, finishedTasks: 412, written: 300 }, undefined)).toEqual({ value: '300 of 412' });
+    expect(summariesLine(true, { ...SUMMARIES, finishedTasks: 1094, written: 997, skipped: 8 }, undefined))
+      .toEqual({ value: '997 of 1,094, 8 skipped' });
   });
 });
 
@@ -168,7 +190,7 @@ describe('the source code line', () => {
   });
 
   it('says so, plainly, when nothing is committed', () => {
-    expect(codeLine({ state: 'nothing-committed', branch: null, files: 0, passages: 0, embedded: 0, minutesLeft: null }, undefined))
+    expect(codeLine({ state: 'nothing-committed', files: 0, passages: 0, embedded: 0, minutesLeft: null }, undefined))
       .toEqual({ value: 'Nothing committed yet', tone: 'muted' });
   });
 });

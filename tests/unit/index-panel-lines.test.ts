@@ -1,9 +1,10 @@
 /**
  * What each line of the Knowledge Graph's Index panel says. It reads as the
  * Settings Index card without its switches, from the graph's own summed index
- * summary rather than the Settings status, so these pin the mapping between
- * the two: the same pattern, the same tags, and a source with nothing in it
- * that says so instead of showing a checked 0.
+ * summary, so these pin the mapping between the two: the same pattern, the
+ * same tags, the summary scheduler's real state (a track only while a pass
+ * writes), and a source with nothing in it that says so instead of showing a
+ * checked 0.
  */
 import { describe, expect, it } from 'vitest';
 import { buildProgressRow, indexMapLines, indexSourceLines, type IndexSourceLinesInput } from '../../src/renderer/components/knowledge-graph/index-panel-lines';
@@ -14,10 +15,25 @@ import type {
   KnowledgeGraphIndexCorpus,
   KnowledgeGraphIndexSummary,
   KnowledgeGraphSnapshot,
+  KnowledgeGraphSummaryCounts,
 } from '../../src/shared/types';
 
 function corpus(name: KnowledgeGraphIndexCorpus, documents: number, chunks: number, embeddedChunks: number, embeds = true) {
   return { corpus: name, documents, chunks, embeddedChunks, embeds };
+}
+
+function summariesOf(overrides: Partial<KnowledgeGraphSummaryCounts> = {}): KnowledgeGraphSummaryCounts {
+  return {
+    written: 674,
+    finishedTasks: 674,
+    awaitingRewrite: 0,
+    writtenWith: [],
+    skipped: 0,
+    state: 'idle',
+    retryInMs: null,
+    choice: null,
+    ...overrides,
+  };
 }
 
 function indexOf(overrides: Partial<KnowledgeGraphIndexSummary> = {}): KnowledgeGraphIndexSummary {
@@ -29,7 +45,7 @@ function indexOf(overrides: Partial<KnowledgeGraphIndexSummary> = {}): Knowledge
       corpus('commit', 2419, 2419, 0, false),
       corpus('code', 1488, 12186, 12186),
     ],
-    summaries: { written: 674, finishedTasks: 674, skipped: 0 },
+    summaries: summariesOf(),
     storageBytes: 412 * 1024 * 1024,
     ...overrides,
   };
@@ -142,14 +158,40 @@ describe('the source lines', () => {
     expect(lineFor(lines, 'Source code')).toMatchObject({ requirement: 'Needs an agent' });
   });
 
-  it('read the summaries share while some are still to write', () => {
-    const index = indexOf({ summaries: { written: 300, finishedTasks: 412, skipped: 0 } });
+  it('read the summaries share while a pass is writing them', () => {
+    const index = indexOf({ summaries: summariesOf({ written: 300, finishedTasks: 412, state: 'writing' }) });
     expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: '72%', percent: 72 });
   });
 
-  it('say how many were skipped once the pass has passed over the rest', () => {
-    const index = indexOf({ summaries: { written: 410, finishedTasks: 412, skipped: 2 } });
-    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ value: `${counted(410)} of ${counted(412)}, ${counted(2)} skipped` });
+  // The All projects panel read 91% on a running track for good: five projects
+  // no pass ever reached sat in the sum, and the panel hardcoded "idle" yet
+  // drew the track. Red-green: with the old line the first case reads 72%.
+  it('read what is written of what could be while nothing is writing, never a track', () => {
+    const behind = indexOf({ summaries: summariesOf({ written: 300, finishedTasks: 412 }) });
+    const behindLine = lineFor(indexSourceLines(input({ index: behind })), 'Task summaries');
+    expect(behindLine).toMatchObject({ value: `${counted(300)} of ${counted(412)}` });
+    expect(behindLine.percent).toBeUndefined();
+
+    const skipped = indexOf({ summaries: summariesOf({ written: 410, finishedTasks: 412, skipped: 2 }) });
+    expect(lineFor(indexSourceLines(input({ index: skipped })), 'Task summaries')).toMatchObject({ value: `${counted(410)} of ${counted(412)}, ${counted(2)} skipped` });
+  });
+
+  it('say a failed call is waiting to retry, as the Settings card does', () => {
+    const index = indexOf({ summaries: summariesOf({ written: 300, finishedTasks: 412, state: 'retrying', retryInMs: 4 * 60_000 }) });
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toMatchObject({ tone: 'caution', problem: 'A call failed', value: 'retrying in 4 min' });
+  });
+
+  it('withhold the check from summaries written with another model, as the Settings card does', () => {
+    const index = indexOf({
+      summaries: summariesOf({
+        written: 674,
+        finishedTasks: 674,
+        choice: { agent: 'claude', model: 'claude-opus-5-5', effort: 'low' },
+        writtenWith: [{ agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', count: 674 }],
+      }),
+    });
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries')).toEqual(expect.objectContaining({ value: counted(674) }));
+    expect(lineFor(indexSourceLines(input({ index })), 'Task summaries').tone).toBeUndefined();
   });
 
   it('keep the summaries already written with a check when switched off', () => {

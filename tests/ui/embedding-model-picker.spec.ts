@@ -356,7 +356,7 @@ test.describe('Index card', () => {
     commits: { count: 2419, percent: null, minutesLeft: null },
   };
   const SUMMARIES = { written: 0, finishedTasks: 674, skipped: 0, state: 'idle', retryInMs: null, minutesLeft: null, writtenWith: [], choice: null, awaitingRewrite: 0 };
-  const CODE = { state: 'estimate', branch: 'origin/main', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
+  const CODE = { state: 'estimate', files: 1488, passages: 12186, embedded: 0, minutesLeft: 28 };
   const AGENT = { agent: 'claude', model: 'sonnet' };
 
   const valueOf = (page: Page, source: string) => page.getByTestId(`index-source-${source}-value`);

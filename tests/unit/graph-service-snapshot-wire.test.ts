@@ -77,20 +77,20 @@ describe('graph snapshot on the wire', () => {
     expect(typeof first.projectionKey).toBe('string');
     expect(JSON.parse(first.projectionJson ?? 'null')).toEqual(state.projection);
 
-    const again = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: first.projectionKey });
+    const again = service.getSnapshotWire('project-a', 'model', first.projectionKey);
     expect(again.projectionUnchanged).toBe(true);
     expect(again.projectionJson).toBeUndefined();
     expect(again.projectionKey).toBe(first.projectionKey);
     // The rest of the snapshot is fresh on every read.
     state.stale = true;
-    expect(service.getSnapshotWire('project-a', 'model', { knownProjectionKey: first.projectionKey }).stale).toBe(true);
+    expect(service.getSnapshotWire('project-a', 'model', first.projectionKey).stale).toBe(true);
   });
 
   it('serializes a map once, however many readers without it ask', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
     const stringify = vi.spyOn(JSON, 'stringify');
     const first = service.getSnapshotWire('project-a', 'model');
-    const second = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: 'another-window-key' });
+    const second = service.getSnapshotWire('project-a', 'model', 'another-window-key');
     const mapStringifies = stringify.mock.calls.filter(([value]) => (value as { signature?: string } | null)?.signature === 'sig-1');
     stringify.mockRestore();
     expect(mapStringifies).toHaveLength(1);
@@ -102,16 +102,16 @@ describe('graph snapshot on the wire', () => {
     const original = service.getSnapshotWire('project-a', 'model').projectionKey;
 
     state.regionNames = storedNames('sig-1', 'alt screen');
-    const renamed = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: original });
+    const renamed = service.getSnapshotWire('project-a', 'model', original);
     expect(renamed.projectionKey).not.toBe(original);
     expect(JSON.parse(renamed.projectionJson ?? 'null').clusterings[0].regions[0].label).toBe('alt screen');
 
     // Names made for another map are not shown, so they do not move the key.
     state.projection = projection('sig-2');
     state.regionNames = storedNames('sig-1', 'alt screen');
-    const rebuilt = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: renamed.projectionKey });
+    const rebuilt = service.getSnapshotWire('project-a', 'model', renamed.projectionKey);
     state.regionNames = storedNames('sig-1', 'something else');
-    const unrelatedNames = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: rebuilt.projectionKey });
+    const unrelatedNames = service.getSnapshotWire('project-a', 'model', rebuilt.projectionKey);
     expect(rebuilt.projectionKey).not.toBe(renamed.projectionKey);
     expect(unrelatedNames.projectionUnchanged).toBe(true);
   });
@@ -119,14 +119,18 @@ describe('graph snapshot on the wire', () => {
   it('sends no key and no map when no map is built', () => {
     state.projection = null;
     const service = createGraphService({ getDb: () => ({}) as never });
-    const wire = service.getSnapshotWire('project-a', 'model', { knownProjectionKey: 'old-key' });
+    const wire = service.getSnapshotWire('project-a', 'model', 'old-key');
     expect(wire.projection).toBeNull();
     expect(wire.projectionKey).toBeNull();
     expect(wire.projectionUnchanged).toBeUndefined();
   });
 
-  it('reports the skipped count main sent with the read', () => {
+  it('carries the summaries\' counts with every read, the map unchanged included, and no scheduler state of its own', () => {
     const service = createGraphService({ getDb: () => ({}) as never });
-    expect(service.getSnapshotWire('project-a', 'model', { summariesSkipped: 3 }).index.summaries.skipped).toBe(3);
+    const first = service.getSnapshotWire('project-a', 'model');
+    const again = service.getSnapshotWire('project-a', 'model', first.projectionKey);
+    expect(again.projectionUnchanged).toBe(true);
+    // Main's scheduler knows what it is doing; `graph-facade` adds it.
+    expect(again.index.summaries).toMatchObject({ written: 0, finishedTasks: 0, skipped: 0, state: 'idle', retryInMs: null, choice: null });
   });
 });

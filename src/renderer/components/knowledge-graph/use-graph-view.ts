@@ -15,9 +15,8 @@ import type {
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphGranularity,
   KnowledgeGraphSnapshot,
-  KnowledgeGraphIndexCorpusSummary,
-  KnowledgeGraphIndexSummary,
 } from '../../../shared/types';
+import { sumIndex } from '../../../shared/index-summary';
 import { composeIslands, type ComposedIslands, type Island, type IslandSource } from './compose-islands';
 
 export interface GraphView {
@@ -61,34 +60,6 @@ export function sumCoverage(summaries: ReadonlyArray<KnowledgeGraphCoverageSumma
     knownDocumentIdsMatched: sum.knownDocumentIdsMatched + next.knownDocumentIdsMatched,
   }), first);
   return { ...total, embeddedFraction: total.totalChunks > 0 ? total.totalEmbeddedChunks / total.totalChunks : 0 };
-}
-
-/** The index across projects: each corpus's counts summed, and the sizes. */
-export function sumIndex(summaries: ReadonlyArray<KnowledgeGraphIndexSummary>): KnowledgeGraphIndexSummary {
-  const byCorpus = new Map<KnowledgeGraphIndexCorpusSummary['corpus'], KnowledgeGraphIndexCorpusSummary>();
-  for (const summary of summaries) {
-    for (const entry of summary.corpora) {
-      const sum = byCorpus.get(entry.corpus);
-      byCorpus.set(entry.corpus, sum
-        ? {
-          corpus: entry.corpus,
-          documents: sum.documents + entry.documents,
-          chunks: sum.chunks + entry.chunks,
-          embeddedChunks: sum.embeddedChunks + entry.embeddedChunks,
-          embeds: sum.embeds && entry.embeds,
-        }
-        : { ...entry });
-    }
-  }
-  return {
-    corpora: [...byCorpus.values()],
-    summaries: {
-      written: summaries.reduce((total, summary) => total + summary.summaries.written, 0),
-      finishedTasks: summaries.reduce((total, summary) => total + summary.summaries.finishedTasks, 0),
-      skipped: summaries.reduce((total, summary) => total + (summary.summaries.skipped ?? 0), 0),
-    },
-    storageBytes: summaries.reduce((total, summary) => total + summary.storageBytes, 0),
-  };
 }
 
 /**

@@ -1110,8 +1110,10 @@ The **Index** card below it lists what the index searches, one line per source:
 that cannot be turned off, each with its count and a check once caught up. **Task summaries** and
 **Source code** have their own switches and are on by default. A running source keeps its line and
 shows the share done and the time left over a progress track ("22%, 3 min left"). Switched off, a
-line shows what switching it on would cover ("674 tasks", "1,488 files"). The figures are the open
-project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
+line shows what switching it on would cover ("674 tasks", "1,488 files"). The figures are every
+indexed project's (each project with a conversation in the index), the same projects the Knowledge
+Graph's All projects map draws, so the two read the same. Source code switched off is the exception:
+its estimate is the open project's. Both wait for the Knowledge Graph and its agent, spending nothing until then, and say
 so ("Needs the Knowledge Graph", "Needs an agent"): the agent writes the summaries, and only its
 answers read the code. Their switches still work while they wait, so you can turn one off before
 choosing the agent that would start it.
@@ -1123,9 +1125,16 @@ branch, and how its last sessions ended. A summary is searched with the task and
 agent beside it, so a question finds a task by what it did, not only by what its title says.
 Summaries are written in the background, ten tasks to a call, three calls at a time (at Sonnet,
 about $0.02 per ten tasks, and about three minutes for 700 tasks), and a task that reaches Done
-gets one on the next pass. Caught up, the line shows the count with a check, or how many the agent
-passed over ("670 of 673, 3 skipped", tried again on the next launch). A failed call reads **A call
-failed** in yellow, with when it is retried. Switching summaries off stops new calls and keeps the
+gets one on the next pass. Every project is asked once each launch, a minute in, whether or not you
+open it, and again when summaries are switched on or the agent is chosen. Caught up, the line shows
+the count with a check. Behind with nothing writing, it shows how many are written of how many
+could be, and how many the agent passed over ("670 of 673, 3 skipped"); those are asked about again
+on the next launch, or after **Rebuild**. When a reply answers none of its batch while another batch
+in the same pass was answered, each of those tasks is asked again on its own, so one task the agent
+will not summarize does not hold back the rest. A failed call reads **A call failed** in yellow, with when
+it is retried. When a call fails and no other call of the pass came back answered, every project's
+summaries wait until then, since the agent is the same for all of them. One call failing beside
+another that answered holds back only its own project. Switching summaries off stops new calls and keeps the
 summaries already written, so they go on helping search. A new model applies to new and changed
 tasks, and the line loses its check until **Rebuild** rewrites the rest; Rebuild asks first when it
 will rewrite summaries, and says how many and about how many calls. Measured on this project's own
@@ -1151,9 +1160,10 @@ check once caught up, its share while it is still being embedded, and a tag whil
 something (the Knowledge Graph, an agent, a model). The sources are **Conversations** (what the map
 draws), **Tasks** (each task's and backlog item's own text), **Commits** (the commits on the
 project's default branch, each tied to the task whose conversation wrote it), **Task summaries**
-(how many Done tasks have one) and **Source code** (the default branch's files). A source with
-nothing in it yet says **Not yet indexed**. Session changes are kept as text for the task summaries
-and never searched, so they have no line.
+(how many Done tasks have one, a track only while a pass is writing them) and **Source code** (the
+default branch's files). A source with nothing in it yet says **Not yet indexed**. Session changes
+are kept as text for the task summaries and never searched, so they have no line. On All projects
+the panel reads the same figures as the Settings card.
 
 Below the sources is what only the map has. **Links** counts the similarity links, computed in full
 embedding dimensionality, so they are exact; a dot's position is an approximate reduction.

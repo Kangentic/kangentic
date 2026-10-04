@@ -66,6 +66,37 @@ describeWithSqlite('retrieval worker methods', () => {
     expect(rows[2]).toMatchObject({ projectId: 'empty', conversations: 0, taskRecords: 0, lastIndexedAt: null });
   });
 
+  // Opening a project's database is what loads sqlite-vec, so a load error exists
+  // only once `status.indexAll` has opened the projects. A worker's first poll is
+  // also its first open: an error read before the opens would report none for
+  // exactly the poll that has one to report.
+  //
+  // Red-green: read `context.vecLoadError()` before `indexStatus.readAll(...)` in
+  // the `status.indexAll` handler. The error is then still null, and `vecError`
+  // reads null.
+  it('status.indexAll reports the sqlite-vec load error that opening the projects produced', async () => {
+    const project = openProject();
+    let opened = false;
+    const context: WorkerContext = {
+      getDb: () => {
+        opened = true;
+        return adaptDatabase(project);
+      },
+      closeDb: () => undefined,
+      // The worker's loader sets this on a connection's open, not before.
+      vecLoadError: () => (opened ? 'the sqlite-vec extension failed to load' : null),
+      emit: () => undefined,
+    };
+
+    const status = await retrievalHandlers['status.indexAll'](
+      { projectIds: ['project-vec'], modelTag: 'bge@1', semantic: false, summaries: false },
+      context,
+    );
+
+    expect(opened).toBe(true);
+    expect(status.vecError).toBe('the sqlite-vec extension failed to load');
+  });
+
   it('usage.read answers the usage dashboard\'s reads by name from the ledgers, and refuses an unknown name', async () => {
     const project = openProject();
     const now = Date.parse('2026-09-30T12:00:00.000Z');

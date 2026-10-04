@@ -1,0 +1,10 @@
+D1: Fixed the mobile bridge relay client so it reconnects with exponential backoff, capped at 30 seconds, after a router restart, and the status bar now shows a Reconnecting state.
+D2: Release 0.5.0, a version release task with no description or recorded changes.
+D3: Fixed the pairing QR code contrast in the mobile PairingCard component so the QR code renders on a white tile in both the dark and light themes.
+D4: Added search to the docs site, with a search box in the header backed by a prebuilt search index.
+D5: Considered showing the latest release version in the docs header, but decided against it because the docs are versionless and the changelog already names each release. No change was made.
+D6: Debounced the window resize handler in the useTerminal hook so terminals re-fit once per 200 ms burst, which removed the stutter with many panes open.
+D7: Restructured the website docs so the getting-started guide walks through the first task end to end, and moved the configuration reference to its own page, with duplicate screenshots cut.
+D8: Sorted the sidebar project list by last opened, most recent first, in the ProjectList component.
+D9: Added a count badge beside the Backlog entry in the sidebar (BacklogEntry component) to show the backlog count.
+D10: Persisted the sidebar width by saving it to config on drag end and restoring it on launch, changing the config manager and the Sidebar layout component.

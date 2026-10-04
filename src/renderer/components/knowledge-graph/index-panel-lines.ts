@@ -4,10 +4,11 @@
  * same value pattern (`settings/tabs/index-sources.ts`). Pure, so each state is
  * pinned by a unit test.
  *
- * The numbers come from the graph's own index summary rather than the Settings
- * status, because the graph can span several projects and its summary already
- * sums them. That summary carries no rate, so a running line shows its share
- * without a time left.
+ * The numbers come from the graph's own index summary, summed over the projects
+ * on the map with `sumIndex` (`shared/index-summary.ts`). The Settings card sums
+ * the same per-project record over every indexed project through the same
+ * functions, so on All projects the two read the same figures. The summary
+ * carries no rate, so a running line shows its share without a time left.
  */
 
 import type { CardSourceLineProps } from '../settings/settings-card';
@@ -15,6 +16,7 @@ import {
   alwaysOnLine,
   CODE_INFO,
   codeLine,
+  NOT_YET_INDEXED,
   SUMMARIES_INFO,
   summariesLine,
   type SourceLineState,
@@ -25,9 +27,8 @@ import type {
   KnowledgeGraphCoverageSummary,
   KnowledgeGraphIndexCorpus,
   KnowledgeGraphIndexSummary,
-  KnowledgeGraphSourceStatus,
-  KnowledgeGraphSummaryStatus,
 } from '../../../shared/types';
+import { NO_SOURCE, sourceStatusOf, summaryStatusOf } from '../../../shared/index-summary';
 import { settingProps } from '../settings/settings-registry';
 import { formatBytes } from './PanelRow';
 
@@ -44,41 +45,12 @@ function corpusOf(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGraphIndex
   return index.corpora.find((entry) => entry.corpus === corpus);
 }
 
-/** A corpus as an always-on source: its count, and while it embeds, its share. */
-function sourceStatus(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGraphIndexCorpus, semanticAvailable: boolean): KnowledgeGraphSourceStatus | undefined {
-  const entry = corpusOf(index, corpus);
-  if (!entry) return undefined;
-  const embedding = entry.embeds && semanticAvailable && entry.chunks > 0 && entry.embeddedChunks < entry.chunks;
-  return {
-    count: entry.documents,
-    // Rounded down, so a line never reads 100% while a passage still waits.
-    percent: embedding ? Math.floor((entry.embeddedChunks / entry.chunks) * 100) : null,
-    minutesLeft: null,
-  };
-}
-
-/** The summary counts as the Settings line reads them, with nothing in flight known. */
-function summaryStatus(index: KnowledgeGraphIndexSummary): KnowledgeGraphSummaryStatus {
-  return {
-    written: index.summaries.written,
-    finishedTasks: index.summaries.finishedTasks,
-    skipped: index.summaries.skipped ?? 0,
-    state: 'idle',
-    retryInMs: null,
-    minutesLeft: null,
-    writtenWith: [],
-    choice: null,
-    awaitingRewrite: 0,
-  };
-}
-
 /** A held source code corpus as the Settings line reads it: still embedding, or ready. */
 function codeStatus(index: KnowledgeGraphIndexSummary): KnowledgeGraphCodeStatus | undefined {
   const entry = corpusOf(index, 'code');
   if (!entry) return undefined;
   return {
     state: entry.embeddedChunks < entry.chunks ? 'indexing' : 'ready',
-    branch: null,
     files: entry.documents,
     passages: entry.chunks,
     embedded: entry.embeddedChunks,
@@ -86,15 +58,13 @@ function codeStatus(index: KnowledgeGraphIndexSummary): KnowledgeGraphCodeStatus
   };
 }
 
-/** A source with nothing in it says so, never a checked 0. */
-const NOT_YET_INDEXED: SourceLineState = { value: 'Not yet indexed', tone: 'muted' };
-
 function isEmpty(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGraphIndexCorpus): boolean {
   return (corpusOf(index, corpus)?.documents ?? 0) === 0;
 }
 
+/** Read as the Settings card reads it: a corpus the summary does not list counts 0, so it reads not yet indexed. */
 function alwaysOnSource(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGraphIndexCorpus, semanticAvailable: boolean, progressLabel: string): SourceLineState {
-  return isEmpty(index, corpus) ? NOT_YET_INDEXED : alwaysOnLine(sourceStatus(index, corpus, semanticAvailable), progressLabel);
+  return alwaysOnLine(sourceStatusOf(index, corpus, semanticAvailable, null) ?? NO_SOURCE, progressLabel);
 }
 
 /**
@@ -118,7 +88,7 @@ export function indexSourceLines(input: IndexSourceLinesInput): CardSourceLinePr
     {
       label: settingProps('knowledgeGraph.taskSummaries').label,
       info: SUMMARIES_INFO,
-      ...summariesLine(summariesOn, summaryStatus(index), requirements.summaries),
+      ...summariesLine(summariesOn, summaryStatusOf(index.summaries, null), requirements.summaries),
       testId: 'knowledge-graph-index-source-summaries',
     },
     {

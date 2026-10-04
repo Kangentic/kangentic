@@ -76,10 +76,14 @@ function runningLine(percent: number, minutesLeft: number | null, progressLabel:
   };
 }
 
+/** A source with nothing in it says so, never a checked 0. */
+export const NOT_YET_INDEXED: SourceLineState = { value: 'Not yet indexed', tone: 'muted' };
+
 /** Conversations, tasks and commits: always on, so only caught up or running. */
 export function alwaysOnLine(source: KnowledgeGraphSourceStatus | undefined, progressLabel: string): SourceLineState {
   if (!source) return {};
   if (source.percent !== null) return runningLine(source.percent, source.minutesLeft, progressLabel);
+  if (source.count === 0) return NOT_YET_INDEXED;
   return { value: source.count.toLocaleString(), tone: 'ready' };
 }
 
@@ -90,6 +94,10 @@ function sameChoice(first: SummaryChoice, second: SummaryChoice): boolean {
 /**
  * The task summaries (summaries) line. `requirement` is what they still wait
  * for (the Knowledge Graph, an agent, a model), which the card decides.
+ *
+ * A track only while a pass is writing (running, queued, or between two passes
+ * of a backfill): a line that is behind with nothing writing it reads "N of M",
+ * so a project no pass reaches never draws a track that does not move.
  */
 export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatus | undefined, requirement: string | undefined): SourceLineState {
   if (requirement) return { requirement };
@@ -104,7 +112,9 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
       tone: 'muted',
     };
   }
-  if (summaries.awaitingRewrite > 0 && summaries.choice) {
+  // The summary pass's own state (idle, writing, retrying), not a session's ActivityState.
+  const writing = summaries.state === 'writing';
+  if (writing && summaries.awaitingRewrite > 0 && summaries.choice) {
     // Every summary written some other way was marked, so what is left
     // unmarked is what the current choice has written.
     const total = summaries.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
@@ -118,18 +128,23 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
   }
   if (summaries.finishedTasks === 0) return { value: 'No Done tasks yet' };
   if (toWrite === 0) {
-    // Written with another agent or model: no check until Rebuild rewrites them.
+    // Written with another agent or model, a rewrite waiting included: no check
+    // until Rebuild's rewrites land.
     const choice = summaries.choice;
     const matches = choice === null || summaries.writtenWith.every((entry) => sameChoice(entry, choice));
     return matches ? { value: count, tone: 'ready' } : { value: count };
   }
-  // The rest are tasks the agent passed over this launch; tried again next launch.
-  // activity-state-ok: the summary pass's own state (idle, writing, retrying),
-  // not a session's ActivityState.
-  if (summaries.state === 'idle' && toWrite <= summaries.skipped) {
-    return { value: `${count} of ${summaries.finishedTasks.toLocaleString()}, ${summaries.skipped.toLocaleString()} skipped` };
+  if (writing) {
+    return runningLine(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
   }
-  return runningLine(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
+  // Behind, and nothing writing: what is written of what could be, and the
+  // tasks the agent passed over this launch (asked again next launch).
+  const finished = summaries.finishedTasks.toLocaleString();
+  return {
+    value: summaries.skipped > 0
+      ? `${count} of ${finished}, ${summaries.skipped.toLocaleString()} skipped`
+      : `${count} of ${finished}`,
+  };
 }
 
 function filesOf(count: number): string {
