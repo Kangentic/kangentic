@@ -250,6 +250,20 @@ Two measurements after the board gained workflow cards and the canvas gained its
   refresh, card drag 0, idle 1, link drag 3, and the board drag of a workflow card now measures
   the same as the plain board (108ms against 109ms overlay latency).
 
+### With the workflow agent's pane open (2026-10-04, #732 M5)
+
+The view now opens its workflow agent in a 560px pane beside the canvas, a live terminal the rig's
+mock agent keeps writing to. At 100 cards, 5 runs, medians: idle 1 missed refresh, card drag 0,
+pan 0, link drag 3. The canvas gestures are where they were without the pane.
+
+The board drag of a workflow card measured 111ms overlay latency and a 62.5ms drag-start frame,
+against 81ms and 41.6ms for the plain board. The workflow figure is inside its earlier 108 to 117ms
+range, and the pane is not mounted on the board. The plain board is what moved: 109ms in the run
+above, 81ms here, and 82ms in the first M4 run. So "the same as the plain board" above was one
+plain run's variance. The taller cards' activation cost described in the M4 bullet remains.
+`releaseToSettle` reads 8,030ms for the workflow card because the lock refuses the drop and the
+card never lands in Executing, so the settle wait runs to its 8-second timeout.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in
