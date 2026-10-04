@@ -31,7 +31,7 @@ type PowerShellChild = ChildProcessByStdio<Writable, Readable, null>;
  * In the app the watcher's probe is `HostProcessTreeProbe`, and the pty host
  * answers it (`src/main/pty/host/host-process-table.ts`): on Windows with
  * Toolhelp through koffi, about 8 ms against the PowerShell query's 140 ms,
- * keeping `WindowsProbe` only as the fallback when koffi cannot load; on
+ * keeping `WindowsProbe` only as the fallback once the Toolhelp listing fails; on
  * POSIX with `PosixProbe`.
  */
 export interface ProcessInfo {

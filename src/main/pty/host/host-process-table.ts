@@ -7,8 +7,9 @@
  * PowerShell child running `Get-CimInstance Win32_Process` on every watcher
  * cycle. Measured on 410 processes: 8 ms against 140 ms (median of 10) for the
  * warm query, with the same pids, parents and names, and the PowerShell child
- * is no longer started at all. If koffi cannot load, the table falls back to
- * that PowerShell probe for the rest of the host's life, so the watcher keeps
+ * is no longer started at all. If the Toolhelp listing fails once, whether
+ * koffi cannot load or a native call fails, the table falls back to that
+ * PowerShell probe for the rest of the host's life, so the watcher keeps
  * working. POSIX runs `ps` (about 10 ms) as before.
  *
  * [] means "no table this cycle", which the watcher's probe-health guard reads

@@ -136,6 +136,16 @@ describe('Linux reader', () => {
     writeProcess(14, 1, 900, [`KANGENTIC_TASK_ID=${TASK}`], { exe: '/usr/bin/tmux', maps: '' });
     // A tmux server whose binary a package upgrade replaced: the kernel marks the link.
     writeProcess(16, 1, 960, [`KANGENTIC_TASK_ID=${TASK}`], { exe: '/usr/bin/tmux (deleted)', maps: '' });
+    // Roles are read for a tagged process and what is below it, never for its
+    // ancestors or an untagged sibling: a desktop shell or terminal emulator maps
+    // a GUI toolkit, and reading one as a visible app would protect everything
+    // under it. Pid 20 is an untagged parent of tagged pid 21, and pid 22 an
+    // untagged sibling, and both map GTK. Pid 11 above is the positive control:
+    // it sits under a tagged process and maps a toolkit, so it reads visible-app.
+    const guiToolkitMaps = '7f00 r-xp /usr/lib/x86_64-linux-gnu/libgtk-3.so.0\n';
+    writeProcess(20, 1, 1000, ['HOME=/home/dev'], { maps: guiToolkitMaps });
+    writeProcess(21, 20, 1010, [`KANGENTIC_TASK_ID=${TASK}`], { maps: '7f00 r-xp /usr/lib/libc.so.6\n' });
+    writeProcess(22, 1, 1020, ['HOME=/home/dev'], { maps: guiToolkitMaps });
     // Non-dumpable and the caller's own: counted. Another user's: not counted.
     writeProcess(12, 1, 700, null);
     writeProcess(13, 1, 800, null, { uid: 0 });
@@ -153,6 +163,13 @@ describe('Linux reader', () => {
     expect(byPid.get(12)).toMatchObject({ environmentUnreadable: true });
     expect(byPid.has(15)).toBe(false);
     expect(byPid.get(10)?.role).toBeUndefined();
+    // Scanned, so an absent role below is the reader's choice and not a missing process.
+    expect(byPid.get(20)).toMatchObject({ ppid: 1, tagValue: null });
+    expect(byPid.get(21)).toMatchObject({ ppid: 20, tagValue: TASK });
+    expect(byPid.get(22)).toMatchObject({ ppid: 1, tagValue: null });
+    expect(byPid.get(20)?.role, 'an untagged ancestor of a tagged process reads no role').toBeUndefined();
+    expect(byPid.get(21)?.role).toBeUndefined();
+    expect(byPid.get(22)?.role, 'an untagged sibling of a tagged process reads no role').toBeUndefined();
     if (symlinks) {
       // The " (deleted)" suffix of a removed directory is dropped.
       expect(byPid.get(10)?.workingDirectory).toBe('/home/dev/project');

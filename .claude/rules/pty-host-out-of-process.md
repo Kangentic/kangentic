@@ -69,8 +69,8 @@ at the Windows timer floor.
   the same way.
   The background-shell watcher's process table also comes from the host (`listProcesses`,
   `host-process-table.ts`): a Toolhelp snapshot through koffi on Windows (about 8 ms, against
-  140 ms for the PowerShell CIM query it replaced, which the host still starts only if koffi
-  cannot load), `ps` on POSIX. So does the task leftover reap (`reapTaggedProcesses`,
+  140 ms for the PowerShell CIM query it replaced, which the host still starts, for good, the
+  first time the Toolhelp listing fails), `ps` on POSIX. So does the task leftover reap (`reapTaggedProcesses`,
   `src/main/pty/process-tag/`): the host scans for the `KANGENTIC_TASK_ID` tag and kills, and on
   Windows and macOS it loads koffi (an esbuild external, unpacked, and loaded by the afterPack
   probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record) and, on
