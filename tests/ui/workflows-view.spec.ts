@@ -45,7 +45,7 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
   };
 }
 
-type Seed = 'running' | 'draft' | 'empty-draft' | 'two';
+type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two';
 
 function seedScript(seed: Seed, sidebarWidth: number): string {
   const draft = {
@@ -53,6 +53,8 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
       id: 'wf-draft', title: 'Theme tokens', state: 'draft', color_slot: 2,
       draft: seed === 'empty-draft'
         ? { tasks: [], links: [] }
+        : seed === 'one-task-draft'
+        ? { tasks: [plannedTask('task-1', 'Token table')], links: [] }
         : {
           tasks: [plannedTask('task-1', 'Token table'), plannedTask('task-2', 'Token picker'), plannedTask('task-3', 'Token docs')],
           links: [{ blocker: 'task-1', blocked: 'task-2' }, { blocker: 'task-2', blocked: 'task-3' }],
@@ -146,6 +148,16 @@ test.describe('Workflows header', () => {
       await confirm.getByRole('button', { name: 'Start workflow' }).click();
       await expect(byTestId(page, 'workflow-pause')).toBeVisible();
       await expect(byTestId(page, 'workflow-progress')).toHaveText('0 of 3 done');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Start\'s confirm reads right for a workflow of one task', async () => {
+    const { browser, page } = await launch('one-task-draft');
+    try {
+      await byTestId(page, 'workflow-start').click();
+      await expect(byTestId(page, 'workflow-start-confirm')).toContainText('Creates 1 task. It starts automatically.');
     } finally {
       await browser.close();
     }

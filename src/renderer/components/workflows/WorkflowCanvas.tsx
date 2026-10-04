@@ -129,10 +129,12 @@ export function WorkflowCanvas({
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
   const linking = useConnection((connection) => connection.inProgress);
 
+  // Once any task is on another board, every card names its board (board 17).
+  const acrossBoards = useMemo(() => detail.tasks.some((task) => task.projectId !== detail.homeProjectId), [detail.tasks, detail.homeProjectId]);
   const layout = useMemo(() => layoutWorkflow(
-    detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density), canvasX: task.canvasX, canvasY: task.canvasY })),
+    detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density, acrossBoards), canvasX: task.canvasX, canvasY: task.canvasY })),
     detail.links,
-  ), [detail.tasks, detail.links, density]);
+  ), [detail.tasks, detail.links, density, acrossBoards]);
 
   const locked = detail.workflow.state === 'running';
   const derivedNodes = useMemo<WorkflowFlowNode[]>(() => detail.tasks.map((task) => ({
@@ -150,8 +152,9 @@ export function WorkflowCanvas({
       canWait: canWait(task),
       canBlock: canBlock(task),
       editable: editable && !planHeld,
+      projectName: acrossBoards ? detail.projectNames[task.projectId] ?? 'Another project' : null,
     },
-  })), [detail, layout, selectedTaskKey, editable, planHeld, locked, visibleKeys]);
+  })), [detail, layout, selectedTaskKey, editable, planHeld, locked, visibleKeys, acrossBoards]);
 
   // Controlled nodes: React Flow writes positions during a drag through
   // `onNodesChange`, and the layout re-seeds them whenever the workflow

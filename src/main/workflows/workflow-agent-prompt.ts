@@ -10,6 +10,7 @@ import { buildBriefXml, escapeXml } from '../agent/shared/prompt-xml';
 import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { resolveProjectRoot } from '../../shared/git-utils';
+import { doneColumn, routeCandidates } from '../../shared/workflow-route';
 
 /**
  * The first message a workflow's own agent gets, resolved from its template
@@ -44,12 +45,14 @@ function describeRun(lane: Swimlane): string {
 export function describeColumnsForPlanning(projectId: string): string {
   let lanes: Swimlane[];
   try {
-    lanes = new SwimlaneRepository(getProjectDb(projectId)).list().filter((lane) => !lane.is_archived && !lane.is_ghost);
+    lanes = new SwimlaneRepository(getProjectDb(projectId)).list();
   } catch {
     return '';
   }
-  const doneLane = lanes.find((lane) => lane.role === 'done') ?? null;
-  const routeLanes = lanes.filter((lane) => lane.role !== 'todo' && lane.role !== 'done');
+  // The route's own helpers: Done is the board's archive lane (`is_archived`),
+  // so a filter on that flag would lose it, and with it every count.
+  const doneLane = doneColumn(lanes);
+  const routeLanes = routeCandidates(lanes);
   let finished = 0;
   let visits = new Map<string, number>();
   let automationsByLane = new Map<string, string[]>();
@@ -62,8 +65,10 @@ export function describeColumnsForPlanning(projectId: string): string {
         .filter((automation) => automation.enabled)
         .map((automation) => `${escapeXml(automation.name)} (${TRIGGER_PHRASES[automation.trigger] ?? automation.trigger})`),
     ]));
-  } catch {
-    // A database that cannot be read leaves the lines without counts or automations.
+  } catch (error) {
+    // A database that cannot be read leaves the lines without counts or
+    // automations; said, since the agent then plans without the board's history.
+    console.warn('[WORKFLOW-AGENT] Could not read the board history for {{columns}}:', error);
   }
   return routeLanes.map((lane, index) => {
     const parts = [`${index + 1}. ${escapeXml(lane.name)}: ${describeRun(lane)}`];

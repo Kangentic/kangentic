@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
 import type { WorkflowViewTask } from '../../../shared/types';
-import { PORT_OFFSET_Y } from './workflow-layout';
+import { PORT_OFFSET_Y, PROJECT_ROW_HEIGHT } from './workflow-layout';
 import { WorkflowCanvasCard, type WorkflowWaiting } from './WorkflowCanvasCard';
 import { WorkflowDetailContext } from './workflow-canvas-context';
 import { findTask, linkRefusal, taskLabel } from './workflow-graph';
@@ -39,6 +39,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   canBlock: boolean;
   /** Ports are drawn only while the canvas is editable. */
   editable: boolean;
+  /** The task's board, named while the workflow spans boards (board 17); null while it is on one. */
+  projectName: string | null;
 }
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, 'workflowTask'>;
@@ -81,6 +83,8 @@ function sameCard(previous: NodeProps<WorkflowFlowNode>, next: NodeProps<Workflo
 export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data, selected }: NodeProps<WorkflowFlowNode>) {
   const showTarget = data.editable && data.canWait;
   const showSource = data.editable && data.canBlock;
+  // The ports stay on the title row, which the project row moves down.
+  const portTop = PORT_OFFSET_Y + (data.projectName !== null ? PROJECT_ROW_HEIGHT : 0);
   return (
     <div className="relative" style={{ width: 256 }}>
       <Handle
@@ -88,20 +92,21 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
         position={Position.Left}
         isConnectable={showTarget}
         className={showTarget ? PORT_CLASS : HIDDEN_PORT_CLASS}
-        style={{ top: PORT_OFFSET_Y }}
+        style={{ top: portTop }}
       />
       <WorkflowCanvasCard
         viewTask={data.viewTask}
         selected={selected ?? false}
         locked={data.locked}
         waiting={data.waiting}
+        projectName={data.projectName}
       />
       <Handle
         type="source"
         position={Position.Right}
         isConnectable={showSource}
         className={showSource ? PORT_CLASS : HIDDEN_PORT_CLASS}
-        style={{ top: PORT_OFFSET_Y }}
+        style={{ top: portTop }}
       />
       {data.editable && (
         <Handle id="card" type="target" position={Position.Left} isConnectable isConnectableStart={false} className={CARD_TARGET_CLASS} />

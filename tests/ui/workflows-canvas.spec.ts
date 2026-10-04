@@ -55,8 +55,13 @@ function startedSeedScript(): string {
   `;
 }
 
-/** One project; with `withWorkflow`, one not-started workflow of three tasks and two links. */
-function seedScript(withWorkflow: boolean): string {
+const OTHER_PROJECT_ID = 'workflows-canvas-mobile';
+
+/**
+ * One project; with `withWorkflow`, one not-started workflow of three tasks and
+ * two links. With `acrossBoards`, its third task goes on a second project's board.
+ */
+function seedScript(withWorkflow: boolean, acrossBoards = false): string {
   const workflows = withWorkflow ? [{
     workflow: {
       id: 'wf-usage', title: 'Usage budgets', state: 'draft',
@@ -64,7 +69,7 @@ function seedScript(withWorkflow: boolean): string {
         tasks: [
           plannedTask('task-1', 'Budget table and repository'),
           plannedTask('task-2', 'Budget checks on spawn'),
-          plannedTask('task-3', 'Budgets in board_summary'),
+          { ...plannedTask('task-3', 'Budgets in board_summary'), project_id: acrossBoards ? OTHER_PROJECT_ID : null },
         ],
         links: [{ blocker: 'task-1', blocked: 'task-2' }, { blocker: 'task-2', blocked: 'task-3' }],
       },
@@ -78,6 +83,10 @@ function seedScript(withWorkflow: boolean): string {
         id: '${PROJECT_ID}', name: 'workflows-canvas', path: '/mock/workflows-canvas', github_url: null,
         default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts,
       });
+      state.projects.push({
+        id: '${OTHER_PROJECT_ID}', name: 'workflows-mobile', path: '/mock/workflows-mobile', github_url: null,
+        default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts,
+      });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'wf-canvas-lane-' + index, position: index, created_at: ts }));
       });
@@ -86,12 +95,12 @@ function seedScript(withWorkflow: boolean): string {
   `;
 }
 
-async function launch(seed: boolean | 'started'): Promise<{ browser: Browser; page: Page }> {
+async function launch(seed: boolean | 'started' | 'acrossBoards'): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seed === 'started' ? startedSeedScript() : seedScript(seed));
+  await page.addInitScript(seed === 'started' ? startedSeedScript() : seed === 'acrossBoards' ? seedScript(true, true) : seedScript(seed));
   await page.goto(VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   return { browser, page };
@@ -124,6 +133,22 @@ test.describe('Workflows canvas', () => {
       await expect(page.locator('.react-flow__edge')).toHaveCount(2);
       // A not-started task has no ticket number yet.
       await expect(card(page, 'task-1')).not.toContainText('#');
+      // Every task on one board: no card names its project (board 17).
+      await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('once a task is on another board, every card names its project', async () => {
+    const { browser, page } = await launch('acrossBoards');
+    try {
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
+      // Home cards too, not only the one on the other board (board 17).
+      await expect(card(page, 'task-1').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-canvas');
+      await expect(card(page, 'task-3').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-mobile');
+      await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(3);
     } finally {
       await browser.close();
     }

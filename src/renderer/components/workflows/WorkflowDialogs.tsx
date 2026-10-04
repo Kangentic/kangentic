@@ -38,7 +38,11 @@ export function StartWorkflowDialog({ summary, sourceTaskLabel, onConfirm, onCan
       icon={<WorkflowIcon summary={summary} />}
       message={(
         <>
-          <p>Creates {plural(summary.taskCount, 'task', 'tasks')}. They start automatically in the order this workflow sets.</p>
+          <p>
+            {summary.taskCount === 1
+              ? 'Creates 1 task. It starts automatically.'
+              : `Creates ${plural(summary.taskCount, 'task', 'tasks')}. They start automatically in the order this workflow sets.`}
+          </p>
           {sourceTaskLabel && <p className="mt-2.5">Task {sourceTaskLabel} moves to Done.</p>}
         </>
       )}

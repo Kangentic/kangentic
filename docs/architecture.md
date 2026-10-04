@@ -1038,9 +1038,20 @@ src/main/workflows/
 - **The engine never polls.** The board bus (every move announces there), a freed agent slot
   (`session-removed`, `exit`), task deletes, and workflow writes wake it; a burst coalesces into
   one pass after 150 ms. A pass with nothing running costs one indexed query per project, and each
-  is timed (`WorkflowEngineHost.stats()`). The core imports no Electron, IPC, database, analytics or
-  Sentry and schedules no timer (`tests/unit/workflow-engine-boundary.test.ts`), so it can move to a
-  utility process as a transport change.
+  is timed (`WorkflowEngineHost.stats()`, reported by the dev-only `kangentic_devtools_event_loop_lag`
+  as `workflowEngine`). The core imports no Electron, IPC, database, analytics or Sentry and
+  schedules no timer (`tests/unit/workflow-engine-boundary.test.ts`), so it can move to a utility
+  process as a transport change.
+
+  Measured (2026-10-04, a dev preview on Windows, the mock CLI): a 20-task workflow (four roots,
+  then waves of 8, 6 and 2 joined by 26 links, each task routed through Executing) ran from Start to
+  complete in 34 s on 8 agent slots. Over 142 evaluations the p95 was 1.1 ms and the worst 1.5 ms,
+  inside the 2 ms budget. The main thread did stall (19 stalls over 75 ms, the worst 152 ms), and
+  every one was a synchronous git spawn through simple-git, about 25 per task lifecycle (worktree
+  creation and removal, the diff reads). Eight ordinary tasks moved by hand made the same 25 per
+  task with no stall, because their lifecycles did not overlap: the workflow adds no git work, it
+  runs up to 8 lifecycles at once. Moving simple-git's spawns off main is a change to the git
+  layer, not to workflows.
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.

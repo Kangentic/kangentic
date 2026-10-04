@@ -4825,8 +4825,15 @@
             homeProjectId: home,
             projectNames: names,
             tasks: draft.tasks.map(function (planned) {
+              // A planned task names its board as main's read model does: its own
+              // project_id, else the workflow's home.
+              var taskProjectId = planned.project_id || home;
+              if (!names[taskProjectId]) {
+                var other = projects.find(function (candidate) { return candidate.id === taskProjectId; });
+                names[taskProjectId] = other ? other.name : 'Another project';
+              }
               return {
-                key: planned.key, projectId: home, task: null, planned: Object.assign({}, planned),
+                key: planned.key, projectId: taskProjectId, task: null, planned: Object.assign({}, planned),
                 title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
                 steps: stepsOf(planned, 'planned'), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
               };

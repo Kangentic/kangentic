@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
+import { Folder } from 'lucide-react';
 import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
+import { PROJECT_ROW_HEIGHT } from './workflow-layout';
 import { RegistryIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
@@ -20,8 +22,28 @@ export const CANVAS_CARD_HEIGHT: Record<AppConfig['cardDensity'], number> = {
 /** The strip over the Done column's compact card (title, a line, labels, when it finished), measured at 127. */
 export const CANVAS_DONE_CARD_HEIGHT = 132;
 
-export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity']): number {
-  return task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
+export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity'], withProjectRow = false): number {
+  const base = task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
+  return withProjectRow ? base + PROJECT_ROW_HEIGHT : base;
+}
+
+/**
+ * The card's project, on a row of its own above the strip (board 17): shown on
+ * every card once any task of the workflow is on another board, and on none
+ * while they all share one, where the name would say nothing.
+ */
+function ProjectRow({ name }: { name: string }) {
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2.5 border-b border-edge/50 text-[11px] text-fg-tertiary min-w-0"
+      style={{ height: PROJECT_ROW_HEIGHT }}
+      title={name}
+      data-testid="workflow-card-project"
+    >
+      <Folder size={12} className="shrink-0" />
+      <span className="truncate">{name}</span>
+    </div>
+  );
 }
 
 /** A planned task drawn as the To Do card it will become. It has no number and no session. */
@@ -98,6 +120,8 @@ interface WorkflowCanvasCardProps {
   locked: boolean;
   /** What the footer says while the task waits in To Do ("Blocked by #413...", "Queued...", "Paused"). */
   waiting: WorkflowWaiting | null;
+  /** The task's board, named while the workflow spans boards; null while it is on one. */
+  projectName: string | null;
 }
 
 /** Why a workflow task in To Do has not started. */
@@ -106,7 +130,7 @@ export interface WorkflowWaiting {
   paused: boolean;
 }
 
-export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting }: WorkflowCanvasCardProps) {
+export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName }: WorkflowCanvasCardProps) {
   // The board's own live row when the board holds it (this project, not yet
   // archived): every writer keeps the board current, including the ones that
   // never announce a workflow change (an agent's rename, auto-naming, a PR
@@ -119,7 +143,8 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   const view = useTaskCardViewModel(task);
   const column = stripColumn(viewTask);
   const planned = viewTask.place === 'planned';
-  const height = canvasCardHeight(viewTask, view.cardDensity);
+  const height = canvasCardHeight(viewTask, view.cardDensity, projectName !== null);
+  const projectRow = projectName !== null ? <ProjectRow name={projectName} /> : null;
 
   const strip = (
     <WorkflowCardStrip
@@ -143,6 +168,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
         data-selected={selected}
         data-testid="workflow-canvas-card"
       >
+        {projectRow}
         {strip}
         <div className="px-2.5 py-1.5 min-h-0 overflow-hidden">
           <TaskCardCompactBody task={task} view={view} />
@@ -161,7 +187,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
       data-selected={selected}
       data-testid="workflow-canvas-card"
     >
-      <div className={view.cardDensity === 'comfortable' ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2'}>{strip}</div>
+      <div className={view.cardDensity === 'comfortable' ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2'}>{projectRow}{strip}</div>
       <TaskCardBody task={task} view={view} density={view.cardDensity} hideDisplayId={planned} idleFooter={idleFooter} fill />
     </div>
   );
