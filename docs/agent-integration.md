@@ -504,6 +504,7 @@ Detection follows the same pattern as Claude: check `config.agent.cliPaths.codex
 codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
   -c mcp_servers.kangentic.url=<url> \
   -c mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN \
+  [-c shell_environment_policy.set.KANGENTIC_TASK_ID=<taskId>] \
   "prompt text"
 ```
 
@@ -511,8 +512,11 @@ codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
 
 ```
 codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
-  -c <the same two MCP overrides>
+  -c <the same two MCP overrides> \
+  [-c <the same task tag override>]
 ```
+
+The task tag override is added for a task session only, never a Command Terminal. Codex passes its environment to tool shells through `shell_environment_policy`, which a user can narrow (`inherit = "core"`), and that strips `KANGENTIC_TASK_ID`, the tag a terminal transition finds a task's leftover processes by (see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree)). A `set` entry always wins over the inherit and filter steps, and it adds to the user's own `set` table rather than replacing it (measured on codex-cli 0.154.0).
 
 Resume is a subcommand in Codex (not a flag like Claude). Both forms emit the same flags: `codex resume` accepts `-c`, `-s/--sandbox`, `-a/--ask-for-approval`, `-m/--model`, `-C/--cd`, and `--disable`. The resume branch used to return early after `-C`, so a resumed session silently lost its permission mode, model override, and MCP wiring.
 

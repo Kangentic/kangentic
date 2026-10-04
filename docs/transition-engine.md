@@ -12,8 +12,8 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **To Do** (role=`todo`) | Kill session, preserve worktree |
-| 2 | Target is **Done** (role=`done`) | Suspend session (resumable), archive task |
+| 1 | Target is **To Do** (role=`todo`) | Kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
+| 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task |
 | 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
 | 3 | Task has **active session** | Permission-mode delta suspends and respawns with the destination's CLI flags. Live injection plan injects into the running session. Model/effort delta without live-swap suspends and respawns. Otherwise keep alive. |
 | 4 | Task has **no session** | Resume suspended session (with the column's message preloaded as resume prompt) OR create worktree (if enabled) + run the destination's On enter group |
@@ -269,8 +269,8 @@ Two special roles affect behavior:
 
 | Role | Behavior |
 |------|----------|
-| `todo` | Task moves here → session killed (not suspended), worktree preserved |
-| `done` | Task moves here → session suspended (resumable), task archived |
+| `todo` | Task moves here → session killed (not suspended), leftover processes reaped, worktree removed |
+| `done` | Task moves here → session suspended (resumable), leftover processes reaped, task archived |
 
 Both roles still run their On EXIT group (in Phase 1, before the kill or the suspend), and neither runs an On enter group: the Column Manager offers only the exit group there, and `canColumnRun` blocks an enter row written by hand.
 

@@ -21,7 +21,9 @@ with a crash policy and stderr capture:
   also runs main's one-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
   (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`: Ask, task summaries,
   auto-name, the warm answer session) and the background-shell watcher's process table, because
-  on Windows each spawn's CreateProcess is synchronous on the calling thread. Forked once at startup, restarted on
+  on Windows each spawn's CreateProcess is synchronous on the calling thread. It also scans for
+  and stops what a task left running (`reapTaggedProcesses`, `src/main/pty/process-tag/`, loading
+  koffi on Windows and macOS), and stops one reported process when the user asks. Forked once at startup, restarted on
   a crash (the lost agent sessions resume), and replaced by the same core running in main after
   five crashes. Measured under a 15 s terminal flood: main 40.6% busy before, 0.6 to 0.7% after.
   See `.claude/rules/pty-host-out-of-process.md`.

@@ -7,7 +7,7 @@ the same kill switch (below).
 
 ## What We Collect (Aptabase)
 
-Eighteen event types are tracked, all on critical-path actions only:
+Nineteen event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -28,7 +28,7 @@ Eighteen event types are tracked, all on critical-path actions only:
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
 | `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), phase (`first` / `latched`) |
 | `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
-| `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
+| `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder, or the startup sweep stopped or failed to stop something. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
 
 There is no close event. Every quit path exits before a network send can complete, so

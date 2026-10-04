@@ -140,13 +140,13 @@ sessions bypass all of this (not task agents).
 Session teardown varies by target column:
 
 - **To Do** (role=`todo`), via `TASK_MOVE` - full cleanup via `cleanupTaskResources()`: kills the PTY (via `SessionManager.remove()`), deletes session files from disk, deletes all session DB records for the task, and then removes the worktree and (when `git.autoCleanup` is on) force-deletes the branch. Destructive, which is why the drop is gated behind a pending-changes confirmation. Moving back to an active column spawns a fresh session.
-- **To Do** (role=`todo`), via `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` (restore from Done) - the SESSION-only half, `cleanupTaskSession()`. The worktree and branch are left alone. Without this the task keeps the session Done deliberately suspended, and since `listSessions()` has no status filter the restored card renders "Paused" for the rest of the app session. It is not the full `cleanupTaskResources()` on purpose: `deleteTaskWorktree` nulls `worktree_path` only when the Done-time removal SUCCEEDED, so a task whose worktree was pinned at Done time (routine on Windows) still carries both fields, and the full helper would re-attempt the removal and force-delete the branch holding its committed work with no confirmation on this route.
+- **To Do** (role=`todo`), via `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` (restore from Done) - the SESSION-only half, `cleanupTaskSession()`, which also reaps what the task's agents left running (`reapTaskLeftovers`). The worktree and branch are left alone. Without this the task keeps the session Done deliberately suspended, and since `listSessions()` has no status filter the restored card renders "Paused" for the rest of the app session. It is not the full `cleanupTaskResources()` on purpose: `deleteTaskWorktree` nulls `worktree_path` only when the Done-time removal SUCCEEDED, so a task whose worktree was pinned at Done time (routine on Windows) still carries both fields, and the full helper would re-attempt the removal and force-delete the branch holding its committed work with no confirmation on this route.
 - **Done** (role=`done`) - suspends session (preserves for resume via `SessionManager.suspend()`), archives task, and deletes the worktree to reclaim disk while preserving `branch_name` and the session records. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived into an auto-spawn column. That unarchive is the ONLY route back: resuming in place is refused for a Done or archived task (see [Where resume is refused](#where-resume-is-refused)), since it would recreate the worktree this move deleted.
 - **Any column with `auto_spawn=false`** - suspends session (same as Done, but without archiving). A restore into such a column keeps the suspended session and its Resume affordance; only a `role=todo` target resets it.
 
 ### Reaping what the session left running
 
-On the TERMINAL transitions above (move to To Do or Backlog, move to Done, task delete, and project delete), the teardown also kills every process the task's agents left running. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
+On the TERMINAL transitions above (move to To Do or Backlog, move to Done, unarchive into To Do, task delete, and project delete), the teardown also kills every process the task's agents left running. An agent that backgrounds a dev server leaves it running when the session ends; on Windows it then holds the worktree directory as its current directory and blocks the removal.
 
 Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main/pty/process-tag/`), and every process the agent starts inherits it however it detached. The teardown calls `reapTaskLeftovers()` (`src/main/ipc/helpers/task-cleanup.ts`) AFTER every session of the task has exited and before any worktree delete; the pty host then kills every process carrying the task's tag AND working inside the task's project or worktree, except what is shared (something under it is not the task's), a visible app, a tmux server, Kangentic's own process tree, and any PTY it still holds. The order matters because the reap force-kills, and a young agent must get its exit grace (`.claude/rules/pty-teardown-grace.md`).
 
@@ -164,6 +164,7 @@ The tag is the same across every session the task ran, so a dev server started b
 ### What is destroyed on To Do cleanup
 
 - PTY process (force-killed, after the exit-sequence grace when the session is young; see below)
+- What the task's agents left running in its folders, once that PTY has exited (`reapTaskLeftovers`; see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree))
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
 - In-memory caches (usage, activity, events) for the session
@@ -629,6 +630,10 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
   main by pid, since with no terminal open the quit does not wait for the host.
+- **Task leftover reap.** The host also scans for and stops what a task's agents left running
+  (`reapTaggedProcesses`) and stops one reported process when the user asks (`stopReportedProcess`).
+  It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
+  [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree).
 
 See `.claude/rules/pty-host-out-of-process.md`.
 
