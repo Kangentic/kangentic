@@ -15,7 +15,7 @@ import { getProjectDb } from '../db/database';
 import { writeTransaction } from '../db/transaction';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
-import { WorkflowRepository } from '../db/repositories/workflow-repository';
+import { SUPERSEDED_MOVE_REASON_PREFIX, WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { resolveTask } from '../agent/commands/task-resolver';
@@ -461,7 +461,9 @@ async function supersedeSourceTask(context: IpcContext, homeProjectId: string, w
     'workflow',
     homeProjectId,
     projectPath,
-    { moveReason: `Superseded by ${workflow.title}` },
+    // The Done row's "Superseded by" line finds this move by its prefix
+    // (`WorkflowRepository.listSupersessions`).
+    { moveReason: `${SUPERSEDED_MOVE_REASON_PREFIX}${workflow.title}` },
   );
   return source.display_id;
 }

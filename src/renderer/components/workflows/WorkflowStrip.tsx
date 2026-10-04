@@ -48,12 +48,14 @@ interface WorkflowCardStripProps {
   /** The icon, already colored by the caller (the column's color, or the workflow's). */
   icon: React.ReactNode;
   label: string;
+  /** Drawn right after the label and never truncated with it (a paused workflow's pause glyph). */
+  labelTrailing?: React.ReactNode;
   steps: readonly WorkflowRouteStep[];
   /** Set while the workflow runs: the card moves by its workflow, not by hand. */
   lockedTitle?: string | null;
 }
 
-export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ icon, label, steps, lockedTitle }: WorkflowCardStripProps) {
+export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ icon, label, labelTrailing, steps, lockedTitle }: WorkflowCardStripProps) {
   return (
     <div
       className="h-[29px] px-2.5 flex items-center justify-between gap-2 border-b border-edge bg-surface/30 shrink-0"
@@ -62,6 +64,7 @@ export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ icon, l
       <span className="inline-flex items-center gap-[5px] text-xs text-fg-muted min-w-0">
         <span className="inline-flex shrink-0">{icon}</span>
         <span className="truncate" title={label}>{label}</span>
+        {labelTrailing && <span className="inline-flex shrink-0">{labelTrailing}</span>}
       </span>
       <span className="inline-flex items-center gap-[7px] shrink-0">
         <WorkflowStepTrack steps={steps} />

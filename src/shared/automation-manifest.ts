@@ -88,6 +88,13 @@ export interface AutomationField {
   min?: number;
   max?: number;
   defaultValue?: string | number;
+  /**
+   * A fixed height for a `textarea`, for text with a shape of its own (a
+   * script, a JSON body). Omitted on a `textarea` with `templateVariables`, the
+   * field starts one row tall and grows with its text, as the dialog's
+   * Condition does: the prose a message carries. A plain textarea with no
+   * `rows` keeps three.
+   */
   rows?: number;
   /**
    * What a `number` field counts, printed after the input. A bare box holding
@@ -213,8 +220,8 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         // is correct: the agent reads it as text, not as code.
         escape: 'none',
         templateVariables: true,
-        rows: 3,
         placeholder: 'Review the latest changes and fix any issues you find',
+        info: "Sent to the task's agent as if you typed it yourself.",
       },
       {
         key: 'mode',
@@ -223,6 +230,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         escape: 'none',
         options: AUTO_COMMAND_MODE_FIELD_OPTIONS,
         defaultValue: 'immediate',
+        info: 'Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends.',
       },
     ],
   },
@@ -345,7 +353,10 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     timeoutMs: null,
     retry: null,
     triggers: ['turn_end'],
-    triggerUnavailableReason: 'Move to column runs at a turn end only. On enter or exit the task is already moving.',
+    // The hover tip on the dialog's disabled On task enter and On task exit,
+    // so it stays one short line. The why (on enter or exit the task is
+    // already moving) is on `triggers` above.
+    triggerUnavailableReason: 'Move to column runs only at a turn end.',
     endsGroup: true,
     fields: [
       {
@@ -364,7 +375,6 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         // through `{{agentReply}}`. Delivered whole, line breaks kept.
         escape: 'none',
         templateVariables: true,
-        rows: 3,
         optional: true,
         info: 'Sent to the agent in that column once it is ready.',
       },
@@ -424,6 +434,15 @@ export function canColumnRun(
 }
 
 /**
+ * A system column's name in a refusal, by role: the facts carry the role, not
+ * the column. A `Record` so a third role fails to compile until it has one.
+ */
+const SYSTEM_COLUMN_LABELS: Record<SwimlaneRole, string> = {
+  todo: 'To Do',
+  done: 'Done',
+};
+
+/**
  * Can ANY automation run on this trigger in this column? The half of
  * `canColumnRun` that does not depend on the type, so the Automations pane can
  * replace a whole group with its reason instead of offering an Add that builds
@@ -440,22 +459,22 @@ export function canTriggerRun(column: AutomationColumnFacts, trigger: Automation
   // other, leaving the board offering a row the engine will never run.
   // A future role has to decide BOTH questions; sharing the set is what forces
   // whoever adds it to come here and say so.
-  const systemColumn = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role);
-  if (trigger === 'enter' && systemColumn) {
+  const systemRole = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role) ? column.role : null;
+  if (trigger === 'enter' && systemRole !== null) {
     return { ok: false, reason: 'Nothing runs when a task enters To Do or Done.' };
   }
   if (trigger === 'turn_end') {
     // No agent works in To Do or Done, and one that never starts here ends no
     // turn here. An agent that reports no turn end (only terminal silence)
     // cannot tell a finished turn from a quiet compile.
-    if (systemColumn) {
-      return { ok: false, reason: 'No agent works in To Do or Done, so nothing runs at a turn end there.' };
+    if (systemRole !== null) {
+      return { ok: false, reason: `Nothing runs at a turn end in ${SYSTEM_COLUMN_LABELS[systemRole]}.` };
     }
     if (!column.autoSpawn) {
       return { ok: false, reason: 'Start an agent here is off, so no agent ends a turn here.' };
     }
     if (column.reportsTurnEnd === false) {
-      return { ok: false, reason: "This column's agent does not report when its turn ends." };
+      return { ok: false, reason: "This column's agent can't report when it finishes a turn." };
     }
   }
   return { ok: true };

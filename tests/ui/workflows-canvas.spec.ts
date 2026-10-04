@@ -119,6 +119,18 @@ const port = (page: Page, key: string, side: 'left' | 'right') =>
 /** The ports sit on the title row, so the node sets where from its own inline `top`, state rather than measured pixels. */
 const portTop = (offset: number) => new RegExp(`(^|;)\\s*top:\\s*${offset}px`);
 
+/** A theme token's color as this page computes it, so a style check holds in every theme. */
+async function tokenColor(page: Page, token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement('div');
+    probe.style.color = `var(${name})`;
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  }, token);
+}
+
 test.describe('Workflows canvas', () => {
   test('a project with no workflows shows the empty state', async () => {
     const { browser, page } = await launch(false);
@@ -152,6 +164,14 @@ test.describe('Workflows canvas', () => {
         await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(49));
         await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(49));
       }
+      // A port is a dot ringed in the accent on the canvas's own fill (boards 1, 10).
+      const accentForeground = await tokenColor(page, '--color-accent-fg');
+      const surface = await tokenColor(page, '--color-surface');
+      for (const side of ['left', 'right'] as const) {
+        await expect(port(page, 'task-2', side)).toHaveCSS('border-top-color', accentForeground);
+        await expect(port(page, 'task-2', side)).toHaveCSS('border-top-width', '2px');
+        await expect(port(page, 'task-2', side)).toHaveCSS('background-color', surface);
+      }
     } finally {
       await browser.close();
     }
@@ -172,6 +192,11 @@ test.describe('Workflows canvas', () => {
         await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(73));
         await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(73));
       }
+      // The row reads at 12px on a faint fill, its folder in the muted grey.
+      const projectRow = card(page, 'task-1').locator('[data-testid="workflow-card-project"]');
+      await expect(projectRow).toHaveCSS('font-size', '12px');
+      await expect(projectRow).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(projectRow.locator('svg')).toHaveCSS('color', await tokenColor(page, '--color-fg-muted'));
     } finally {
       await browser.close();
     }
@@ -186,9 +211,17 @@ test.describe('Workflows canvas', () => {
       await card(page, 'task-2').click();
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
       await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'false');
+      // Selected: a 2px border inside the card, solid on a planned card, with
+      // no ring outside it. An unselected planned card keeps its 1px dash.
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-width', '2px');
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'solid');
+      await expect(card(page, 'task-2')).toHaveCSS('box-shadow', 'none');
+      await expect(card(page, 'task-1')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 'task-1')).toHaveCSS('border-top-style', 'dashed');
 
       await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'false');
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'dashed');
 
       await card(page, 'task-3').click();
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');

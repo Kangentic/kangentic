@@ -659,6 +659,7 @@ const api: ElectronAPI = {
   // Workflows: every call names the workflow's home project explicitly.
   workflows: {
     list: (projectId) => ipcRenderer.invoke(IPC.WORKFLOW_LIST, projectId),
+    listSupersessions: (projectId) => ipcRenderer.invoke(IPC.WORKFLOW_LIST_SUPERSESSIONS, projectId),
     get: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_GET, projectId, workflowId),
     create: (projectId, sourceTaskId) => ipcRenderer.invoke(IPC.WORKFLOW_CREATE, projectId, sourceTaskId),
     rename: (projectId, workflowId, title) => ipcRenderer.invoke(IPC.WORKFLOW_RENAME, projectId, workflowId, title),

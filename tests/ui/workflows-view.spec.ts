@@ -45,7 +45,8 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
   };
 }
 
-type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two';
+/** `paused`: board 11's pair, the running workflow paused yesterday at 18:20 beside the draft. */
+type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused';
 
 function seedScript(seed: Seed, sidebarWidth: number): string {
   const draft = {
@@ -61,14 +62,21 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
         },
     },
   };
-  const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: 'running', draft: null, color_slot: 5 } };
-  const workflows = seed === 'running' ? [running] : seed === 'two' ? [running, draft] : [draft];
-  const links = seed === 'running' || seed === 'two'
+  const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5 } };
+  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused';
+  const workflows = seed === 'running' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
+  const links = hasRunning
     ? RUNNING_LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }))
     : [];
-  const tasks = seed === 'running' || seed === 'two' ? RUNNING_TASKS : [];
+  const tasks = hasRunning ? RUNNING_TASKS : [];
+  // Yesterday at 18:20 in the page's own time zone, so the note's day is the page's.
+  const pausedAt = seed === 'paused'
+    ? `var pausedAt = new Date(); pausedAt.setDate(pausedAt.getDate() - 1); pausedAt.setHours(18, 20, 0, 0);
+       window.__mockWorkflows[0].workflow.paused_at = pausedAt.toISOString();`
+    : '';
   return `
     window.__mockWorkflows = ${JSON.stringify(workflows)};
+    ${pausedAt}
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -109,6 +117,18 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 const card = (page: Page, key: string) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`);
 
+/** A CSS color as the page computes it, so a token, a hex and an element's own color compare as one string. */
+async function computedColor(page: Page, cssColor: string): Promise<string> {
+  return page.evaluate((value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, cssColor);
+}
+
 test.describe('Workflows header', () => {
   test('a running workflow shows Running, its progress, and pauses and resumes in place', async () => {
     const { browser, page } = await launch('running');
@@ -116,9 +136,25 @@ test.describe('Workflows header', () => {
       await expect(byTestId(page, 'workflow-picker')).toContainText('Usage budgets');
       await expect(byTestId(page, 'workflow-picker')).toContainText('9 tasks');
       await expect(byTestId(page, 'workflow-pause')).toHaveAttribute('aria-label', 'Running. Pause workflow');
+      // A native tooltip cannot follow the width ladder, so each carries the floor's.
+      await expect(byTestId(page, 'workflow-pause')).toHaveAttribute('title', 'Running. Pause workflow');
+      await expect(byTestId(page, 'workflow-rename')).toHaveAttribute('title', 'Rename');
+      await expect(byTestId(page, 'workflow-delete')).toHaveAttribute('title', 'Delete');
       await expect(byTestId(page, 'workflow-progress')).toHaveText('2 of 9 done');
-      // Two done, one in Merge, one in Executing: four segments.
-      await expect(page.locator('[data-testid="workflow-progress-bar"] i')).toHaveCount(4);
+      // Two done, one in Merge, one in Executing: one continuous done segment,
+      // then one segment per working task.
+      const segments = page.locator('[data-testid="workflow-progress-bar"] i');
+      await expect(segments).toHaveCount(3);
+      await expect(segments.first()).toHaveAttribute('data-segment', 'done');
+      await expect(page.locator('[data-testid="workflow-progress-bar"] i[data-segment="working"]')).toHaveCount(2);
+      // The done segment is the Done column's color, as the board draws Done.
+      const doneLaneColor = await page.evaluate(async () => (
+        (await window.electronAPI.swimlanes.list()).find((lane) => lane.role === 'done')?.color ?? ''
+      ));
+      expect(doneLaneColor).not.toBe('');
+      expect(await segments.first().evaluate((element) => getComputedStyle(element).backgroundColor))
+        .toBe(await computedColor(page, doneLaneColor));
+      await expect(byTestId(page, 'workflow-progress-bar')).toHaveAttribute('title', '2 of 9 done. 2 in progress, 1 queued, 4 blocked.');
       await expect(byTestId(page, 'workflow-counts')).toHaveText('2 in progress, 1 queued, 4 blocked');
 
       const lifecycleBox = await byTestId(page, 'workflow-pause').boundingBox();
@@ -145,7 +181,12 @@ test.describe('Workflows header', () => {
       const confirm = byTestId(page, 'workflow-start-confirm');
       await expect(confirm).toContainText('Start Theme tokens?');
       await expect(confirm).toContainText('Creates 3 tasks. They start automatically in the order this workflow sets.');
-      await confirm.getByRole('button', { name: 'Start workflow' }).click();
+      // The confirm button leads with the header's own Play mark (board J5).
+      const startButton = confirm.getByRole('button', { name: 'Start workflow' });
+      await expect(startButton.locator('[data-testid="workflow-start-confirm-icon"]')).toHaveCount(1);
+      // The other confirms keep a label alone.
+      await expect(confirm.getByRole('button', { name: 'Cancel' }).locator('svg')).toHaveCount(0);
+      await startButton.click();
       await expect(byTestId(page, 'workflow-pause')).toBeVisible();
       await expect(byTestId(page, 'workflow-progress')).toHaveText('0 of 3 done');
     } finally {
@@ -179,9 +220,47 @@ test.describe('Workflows header', () => {
       await byTestId(page, 'workflow-rename').click();
       const input = byTestId(page, 'workflow-rename-input');
       await expect(input).toHaveValue('Theme tokens');
+      await expect.poll(() => input.evaluate((element) => {
+        const field = element as HTMLInputElement;
+        return [field.selectionStart, field.selectionEnd];
+      })).toEqual([0, 'Theme tokens'.length]);
+      // Rename is enabled from the start (board 12).
+      await expect(byTestId(page, 'workflow-rename-confirm')).toBeEnabled();
       await page.keyboard.type('Design tokens');
       await page.keyboard.press('Enter');
       await expect(byTestId(page, 'workflow-picker')).toContainText('Design tokens');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Rename\'s footer is the confirms\' own: a bordered Cancel, and Rename in the accent\'s text color', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await byTestId(page, 'workflow-rename').click();
+      const dialog = byTestId(page, 'workflow-rename-dialog');
+      await expect(dialog).toBeVisible();
+      const cancel = byTestId(page, 'workflow-rename-cancel');
+      expect(await cancel.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
+      // The footer sits under a rule, as every confirm's does.
+      expect(await cancel.evaluate((element) => {
+        const footer = element.closest('.border-t');
+        return footer ? getComputedStyle(footer).borderTopStyle : 'none';
+      })).toBe('solid');
+      // `accent-on` is the token: the label is not left at the body's color.
+      const confirm = byTestId(page, 'workflow-rename-confirm');
+      expect(await confirm.evaluate((element) => getComputedStyle(element).color))
+        .toBe(await computedColor(page, 'var(--color-accent-on)'));
+
+      // The same name renames nothing: the dialog closes and the name stands.
+      await confirm.click();
+      await expect(dialog).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+
+      // An empty name cannot rename.
+      await byTestId(page, 'workflow-rename').click();
+      await byTestId(page, 'workflow-rename-input').fill('   ');
+      await expect(byTestId(page, 'workflow-rename-confirm')).toBeDisabled();
     } finally {
       await browser.close();
     }
@@ -219,8 +298,47 @@ test.describe('Workflows header', () => {
     }
   });
 
+  test('the picker\'s paused row says when it paused, and its grey chips carry a ring', async () => {
+    const { browser, page } = await launch('paused');
+    try {
+      await byTestId(page, 'workflow-picker').click();
+      const pausedRow = page.locator('[data-testid="workflow-picker-option"][data-workflow-id="wf-usage"]');
+      const draftRow = page.locator('[data-testid="workflow-picker-option"][data-workflow-id="wf-draft"]');
+      // Seeded paused yesterday at 18:20, in the page's time zone (board 11).
+      await expect(pausedRow.locator('[data-testid="workflow-picker-note"]')).toHaveText(/^Paused yesterday \S/);
+      await expect(pausedRow.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'paused');
+      await expect(draftRow.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'draft');
+      // Paused and Not started: a grey tint inside a ring, as Running's is green.
+      for (const chip of [pausedRow.locator('[data-testid="workflow-state-chip"]'), draftRow.locator('[data-testid="workflow-state-chip"]')]) {
+        const style = await chip.evaluate((element) => {
+          const computed = getComputedStyle(element);
+          return { background: computed.backgroundColor, ring: computed.boxShadow, color: computed.color };
+        });
+        expect(style.ring).toContain('inset');
+        expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
+        expect(style.color).toBe(await computedColor(page, 'var(--color-fg-muted)'));
+      }
+      await page.keyboard.press('Escape');
+
+      // Resume clears the time; Pause stamps today's.
+      await byTestId(page, 'workflow-resume').click();
+      await expect(byTestId(page, 'workflow-pause')).toBeVisible();
+      await byTestId(page, 'workflow-picker').click();
+      await expect(pausedRow.locator('[data-testid="workflow-picker-note"]')).not.toHaveText(/^Paused/);
+      await page.keyboard.press('Escape');
+      await byTestId(page, 'workflow-pause').click();
+      await expect(byTestId(page, 'workflow-resume')).toBeVisible();
+      await byTestId(page, 'workflow-picker').click();
+      await expect(pausedRow.locator('[data-testid="workflow-picker-note"]')).toHaveText(/^Paused \d/);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the header holds at every width from the floor up: no wrap, nothing past its edge', async () => {
-    // A 400px sidebar: the header's own width is the viewport minus about 405.
+    // A 400px sidebar, which Workflows folds on entry: the header is most of the
+    // viewport (about 864px at 900), so this sweep holds the wide rungs; the
+    // rung test below sets the narrower ones on the header directly.
     const { browser, page } = await launch('running', { width: 1700, sidebarWidth: 400 });
     try {
       const wideText = await byTestId(page, 'workflow-header').innerText();
@@ -248,6 +366,51 @@ test.describe('Workflows header', () => {
         for (const id of reading.overflow) broken.push(`${width}px: ${id} ends past the header's edge`);
       }
       expect(broken, 'the header breaks between its steps').toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('each rung of the header ladder: the floor tightens the row, and the bar narrows by step', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      // The ladder reads the header's own width. At the 900px window the app
+      // keeps the sidebar narrow enough that the header stays past 830, so each
+      // rung is set on the header directly: 495 is board 11b's floor (a 900px
+      // window beside a 400px sidebar), 760 sits between 710 and 830.
+      const rungs = [
+        { headerWidth: 495, gap: '6px', padding: '12px', barWidth: '48px', dividerWidth: '0px', lifecycleText: '' },
+        { headerWidth: 760, gap: '12px', padding: '16px', barWidth: '72px', dividerWidth: '1px', lifecycleText: 'Running' },
+        { headerWidth: 1000, gap: '12px', padding: '16px', barWidth: '120px', dividerWidth: '1px', lifecycleText: 'Running' },
+      ];
+      for (const rung of rungs) {
+        const reading = await page.evaluate(async (width) => {
+          const header = document.querySelector('[data-testid="workflow-header"]') as HTMLElement;
+          header.style.width = `${width}px`;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const row = header.firstElementChild as HTMLElement;
+          const style = getComputedStyle(row);
+          const contentRight = Math.round(row.getBoundingClientRect().right - parseFloat(style.paddingRight));
+          const ids = ['workflow-picker', 'workflow-rename', 'workflow-pause', 'workflow-delete', 'workflow-new'];
+          const overflow = ids.filter((id) => {
+            const element = document.querySelector(`[data-testid="${id}"]`);
+            return element !== null && Math.round(element.getBoundingClientRect().right) > contentRight + 1;
+          });
+          const bar = document.querySelector('[data-testid="workflow-progress-bar"]') as HTMLElement;
+          const divider = document.querySelector('[data-testid="workflow-header-divider"]') as HTMLElement;
+          const lifecycle = document.querySelector('[data-testid="workflow-pause"]') as HTMLElement;
+          return {
+            gap: style.columnGap,
+            padding: style.paddingLeft,
+            barWidth: getComputedStyle(bar).width,
+            dividerWidth: getComputedStyle(divider).width,
+            lifecycleText: lifecycle.innerText.trim(),
+            overflow,
+          };
+        }, rung.headerWidth);
+        const { headerWidth, ...wanted } = rung;
+        expect(reading, `the header at ${headerWidth}px`).toEqual({ ...wanted, overflow: [] });
+      }
     } finally {
       await browser.close();
     }
@@ -289,6 +452,26 @@ test.describe('Workflows inspector', () => {
       // A step still ahead switches off.
       await byTestId(page, 'workflow-route-switch-lane-3').click();
       await expect(page.locator('[data-testid="workflow-route-row"]').nth(2)).toHaveAttribute('data-step-state', 'skipped');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a link row names its task at weight 500 and its number in monospace, over a footer with no rule', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      await card(page, 't414').click();
+      // #412 is done (the check-mark row); #417 waits in To Do (the two-line row).
+      for (const [key, title, number] of [['t412', 'Budget settings tab', '#412'], ['t417', 'Suspend a task past its cap', '#417']]) {
+        const row = page.locator(`[data-testid="workflow-link-row"][data-task-key="${key}"]`);
+        const titleElement = row.locator('[data-testid="workflow-link-title"]');
+        const numberElement = row.locator('[data-testid="workflow-link-number"]');
+        await expect(titleElement).toHaveText(title);
+        await expect(numberElement).toHaveText(number);
+        expect(await titleElement.evaluate((element) => getComputedStyle(element).fontWeight)).toBe('500');
+        expect(await numberElement.evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(/mono/i);
+      }
+      expect(await byTestId(page, 'workflow-inspector-footer').evaluate((element) => getComputedStyle(element).borderTopWidth)).toBe('0px');
     } finally {
       await browser.close();
     }

@@ -24,7 +24,11 @@ import { WorkflowPicker } from './WorkflowPicker';
  * collapses it sooner, as the board toolbar's ladder does) nothing is hidden
  * and nothing moves; what gives way keeps its place and turns its text into a
  * tooltip. Text that is not a control goes first; the lifecycle word goes
- * last. Thresholds measured, see `tests/ui/workflows-header.spec.ts`.
+ * last. The width sweep in `tests/ui/workflows-view.spec.ts` holds it.
+ *
+ * A native tooltip cannot follow a container query, so Rename, Delete and the
+ * Running button carry the floor's tooltips ("Rename", "Delete", "Running.
+ * Pause workflow") at every width.
  */
 const LADDER = {
   /** The counts line folds into the bar's tooltip. */
@@ -35,11 +39,16 @@ const LADDER = {
   newButton: 'w-9 px-0 @[1040px]:w-auto @[1040px]:px-3',
   /** "2 of 9 done" folds into the bar's tooltip, and the bar narrows. */
   progressText: 'hidden @[830px]:inline',
-  bar: 'w-12 @[710px]:w-20 @[830px]:w-[120px]',
-  /** The lifecycle word goes last; the dividers become gaps; the picker narrows and its count moves to its tooltip. */
+  bar: 'w-12 @[710px]:w-[72px] @[830px]:w-[120px]',
+  /**
+   * The lifecycle word goes last; the row tightens to a 6px gap and 12px
+   * padding; each divider becomes a 4px space; the picker narrows and its
+   * count moves to its tooltip.
+   */
+  row: 'gap-1.5 px-3 @[710px]:gap-3 @[710px]:px-4',
   lifecycleButton: 'w-9 @[710px]:w-24',
   lifecycleLabel: 'hidden @[710px]:inline',
-  divider: 'hidden @[710px]:block',
+  divider: 'w-0 mx-0.5 @[710px]:w-px @[710px]:mx-0',
   picker: 'w-[176px] @[710px]:w-[260px]',
   pickerPill: 'hidden @[710px]:inline-flex',
 } as const;
@@ -49,20 +58,33 @@ const NEUTRAL = 'border-edge-input text-fg-secondary hover:bg-surface-hover/40 e
 const PRIMARY = 'border-accent-emphasis bg-accent-emphasis text-accent-on enabled:hover:bg-accent enabled:hover:border-accent';
 
 function Divider() {
-  return <span className={`w-px h-5 shrink-0 bg-edge ${LADDER.divider}`} aria-hidden="true" />;
+  return <span className={`block h-5 shrink-0 bg-edge ${LADDER.divider}`} aria-hidden="true" data-testid="workflow-header-divider" />;
 }
 
-/** One segment per task that has left To Do, in its column's color, Done first; furthest along first after that. */
-function progressSegments(detail: WorkflowDetail | null): Array<{ key: string; color: string }> {
+interface ProgressSegment {
+  key: string;
+  color: string;
+  /** How many of the workflow's tasks it stands for. */
+  tasks: number;
+  kind: 'done' | 'working';
+}
+
+/**
+ * The bar's segments: one for every task in Done, in the Done column's color,
+ * then one per working task in its column's color, furthest along first.
+ */
+function progressSegments(detail: WorkflowDetail | null, doneColumnColor: string): ProgressSegment[] {
   if (!detail) return [];
-  const done = detail.tasks.filter((task) => task.place === 'done').map((task) => ({ key: task.key, color: 'var(--color-active)', order: Number.MAX_SAFE_INTEGER }));
+  const doneTasks = detail.tasks.filter((task) => task.place === 'done').length;
+  const done: ProgressSegment[] = doneTasks > 0 ? [{ key: 'done', color: doneColumnColor, tasks: doneTasks, kind: 'done' }] : [];
   const working = detail.tasks
     .filter((task) => task.place === 'working')
     .map((task) => {
       const index = task.steps.findIndex((step) => step.state === 'current');
       return { key: task.key, color: task.steps[index]?.color ?? 'var(--color-fg-faint)', order: index };
     })
-    .sort((left, right) => right.order - left.order);
+    .sort((left, right) => right.order - left.order)
+    .map((task): ProgressSegment => ({ key: task.key, color: task.color, tasks: 1, kind: 'working' }));
   return [...done, ...working];
 }
 
@@ -81,6 +103,8 @@ interface WorkflowHeaderProps {
   detail: WorkflowDetail | null;
   /** The workflow agent's turn is running: what would change its plan waits (Start). */
   planHeld: boolean;
+  /** The Done column's color on the board, for the progress bar's done segment. */
+  doneColumnColor: string;
   onSelect: (workflowId: string) => void;
   onRename: () => void;
   onStart: () => void;
@@ -95,6 +119,7 @@ export function WorkflowHeader({
   selected,
   detail,
   planHeld,
+  doneColumnColor,
   onSelect,
   onRename,
   onStart,
@@ -105,7 +130,7 @@ export function WorkflowHeader({
 }: WorkflowHeaderProps) {
   const state = selected?.workflow.state ?? null;
   const started = state === 'running' || state === 'paused';
-  const segments = useMemo(() => progressSegments(detail), [detail]);
+  const segments = useMemo(() => progressSegments(detail, doneColumnColor), [detail, doneColumnColor]);
   const hasWorkflow = selected !== null;
 
   let lifecycle: React.ReactNode;
@@ -114,7 +139,7 @@ export function WorkflowHeader({
       <button
         type="button"
         onClick={onPause}
-        title="Pause workflow"
+        title="Running. Pause workflow"
         aria-label="Running. Pause workflow"
         className={`${BUTTON} ${LADDER.lifecycleButton} border-active/40 text-active hover:bg-active/10`}
         data-testid="workflow-pause"
@@ -151,11 +176,11 @@ export function WorkflowHeader({
 
   const progress = selected && started ? `${selected.doneCount} of ${selected.taskCount} done` : '';
   const counts = selected && started ? countsLine(selected) : '';
-  const barTitle = [progress, counts].filter(Boolean).join('. ');
+  const barTitle = `${[progress, counts].filter(Boolean).join('. ')}.`;
 
   return (
     <div className="@container shrink-0 border-b border-edge" data-testid="workflow-header">
-      <div className="flex items-center gap-3 h-14 px-4 min-w-0">
+      <div className={`flex items-center h-14 min-w-0 ${LADDER.row}`}>
         {hasWorkflow && (
           <>
             <WorkflowPicker
@@ -165,7 +190,7 @@ export function WorkflowHeader({
               controlClassName={LADDER.picker}
               pillClassName={LADDER.pickerPill}
             />
-            <button type="button" onClick={onRename} title="Rename this workflow" aria-label="Rename" className={`${BUTTON} ${NEUTRAL} ${LADDER.actionButton}`} data-testid="workflow-rename">
+            <button type="button" onClick={onRename} title="Rename" aria-label="Rename" className={`${BUTTON} ${NEUTRAL} ${LADDER.actionButton}`} data-testid="workflow-rename">
               <Pencil size={13} className="shrink-0" />
               <span className={LADDER.actionLabel}>Rename</span>
             </button>
@@ -175,7 +200,7 @@ export function WorkflowHeader({
             <button
               type="button"
               onClick={onDelete}
-              title="Delete this workflow"
+              title="Delete"
               aria-label="Delete"
               className={`${BUTTON} ${LADDER.actionButton} border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60`}
               data-testid="workflow-delete"
@@ -197,7 +222,12 @@ export function WorkflowHeader({
                   data-testid="workflow-progress-bar"
                 >
                   {segments.map((segment) => (
-                    <i key={segment.key} className="block h-full" style={{ width: `${100 / Math.max(1, selected.taskCount)}%`, background: segment.color }} />
+                    <i
+                      key={segment.key}
+                      className="block h-full"
+                      style={{ width: `${(100 * segment.tasks) / Math.max(1, selected.taskCount)}%`, background: segment.color }}
+                      data-segment={segment.kind}
+                    />
                   ))}
                 </span>
                 {counts && (

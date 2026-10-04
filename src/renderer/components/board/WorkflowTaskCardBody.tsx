@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { ListTree } from 'lucide-react';
+import { ListTree, Pause } from 'lucide-react';
 import type { AppConfig, Task } from '../../../shared/types';
 import { routeSteps } from '../../../shared/workflow-route';
 import { useBoardStore } from '../../stores/board-store';
@@ -56,8 +56,11 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
       data-workflow-id={workflow.workflowId}
     >
       <WorkflowCardStrip
-        icon={<ListTree size={12} strokeWidth={1.75} style={{ color: workflowColor(workflow.colorSlot) }} />}
+        icon={<ListTree size={12} strokeWidth={2} style={{ color: workflowColor(workflow.colorSlot) }} />}
         label={workflow.title}
+        labelTrailing={workflow.state === 'paused'
+          ? <Pause size={11} className="text-fg-faint" aria-label="Paused" data-testid="workflow-card-paused" />
+          : null}
         steps={steps}
         lockedTitle={isLockedOnBoard(workflow) ? 'Moved by its workflow' : null}
       />

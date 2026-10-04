@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Pencil, ArrowDownToLine, Maximize2, ClipboardList } from 'lucide-react';
+import { Pencil, ArrowDownToLine, Maximize2, ClipboardList, ListTree } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -9,9 +9,30 @@ import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { ARCHIVED_PREVIEW_LIMIT } from '../../stores/board-store/archived-tasks-slice';
 import { useConfigStore } from '../../stores/config-store';
+import { useWorkflowStore } from '../../stores/workflow-store';
+import { workflowColor } from '../workflows/workflow-graph';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
+
+/**
+ * Under a completed task a workflow replaced at Start (board 7): which
+ * workflow superseded it, by its current name, in its color. Read from the
+ * store's `supersededBy`, which main derives from the move Start wrote, so it
+ * stays once the workflow finishes and never shows for a source that left To
+ * Do before Start and was completed by hand. One keyed lookup per row, whose
+ * entry keeps its identity across reloads: every Done row mounts one.
+ */
+const SupersededLine = React.memo(function SupersededLine({ taskId }: { taskId: string }) {
+  const superseder = useWorkflowStore((state) => state.supersededBy[taskId]);
+  if (!superseder) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5 min-w-0 text-xs text-fg-faint" data-testid="superseded-line">
+      <ListTree size={12} strokeWidth={2} className="flex-shrink-0" style={{ color: workflowColor(superseder.colorSlot) }} />
+      <span className="truncate">Superseded by {superseder.title}</span>
+    </div>
+  );
+});
 
 export interface DoneSwimlaneProps {
   swimlane: SwimlaneType;
@@ -169,6 +190,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           disabled={!hasArchived}
           className={`py-2 px-2.5 flex-shrink-0 flex items-center justify-between rounded-md transition-colors w-full text-left border ${hasArchived ? 'border-edge/30 bg-surface-hover/20 hover:bg-surface-hover/40 hover:border-edge/50 cursor-pointer group' : 'border-transparent'}`}
           data-testid="expand-completed-btn"
+          data-done-completed-header
         >
           <span className="flex items-center gap-1.5 text-sm font-medium text-fg-muted">
             <ClipboardList size={14} />
@@ -190,14 +212,17 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
                 onAnimationEnd={clearRecentlyArchived}
               >
                 <TaskCard task={task} compact onDelete={handleDeleteRequest} />
+                <SupersededLine taskId={task.id} />
               </div>
             ) : (
-              <TaskCard
-                key={task.id}
-                task={task}
-                compact
-                onDelete={handleDeleteRequest}
-              />
+              <div key={task.id}>
+                <TaskCard
+                  task={task}
+                  compact
+                  onDelete={handleDeleteRequest}
+                />
+                <SupersededLine taskId={task.id} />
+              </div>
             );
           })}
           {!hasArchived && (

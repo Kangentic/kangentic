@@ -448,7 +448,7 @@ test.describe('Column automations', () => {
     // No Add control in a blocked group: it would only build something inert.
     await expect(enterGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
     const turnEndGroup = dialog().locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
-    await expect(turnEndGroup).toContainText('nothing runs at a turn end');
+    await expect(turnEndGroup).toContainText('Nothing runs at a turn end in To Do.');
     await expect(turnEndGroup.locator('[data-testid="column-automation-add"]')).toHaveCount(0);
     await expect(dialog().locator('[data-testid="column-automation-add"][data-trigger="exit"]')).toBeVisible();
 

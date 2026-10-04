@@ -4939,6 +4939,8 @@ export interface Workflow {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** When it was last paused, while it is paused (the picker's "Paused yesterday 18:20"); null otherwise. */
+  paused_at: string | null;
   /** The agent holding the workflow agent's conversation; null until it first starts. */
   agent_name: string | null;
   /** The id that conversation resumes by (`--resume`); null until it first starts. */
@@ -5047,6 +5049,15 @@ export interface WorkflowAgentSummary {
   state: 'active' | 'idle' | 'paused';
   /** When its last turn ended in this run of the app (ISO); null when none was seen. */
   lastReplyAt: string | null;
+  /**
+   * The agent's session, when it is a new conversation started because the
+   * earlier one could not be resumed; null otherwise. The agent pane says so
+   * while that session is the one it shows, until the line is closed or the
+   * agent next resumes normally. On the summary, not `WorkflowAgentStatus`,
+   * because the start-over happens after the pane's open has answered, and
+   * only the summary is pushed again.
+   */
+  startedOverSessionId: string | null;
 }
 
 /** A started workflow's task as its board card shows it: the footer and the lock. */
@@ -5075,6 +5086,18 @@ export interface WorkflowCanvasPosition {
   key: string;
   x: number;
   y: number;
+}
+
+/**
+ * A task a workflow replaced at Start: the To Do task it was made from, which
+ * Start moved to Done. Named by the workflow's current title and color, so the
+ * line under the Done row follows a rename and outlives the workflow finishing.
+ */
+export interface WorkflowSupersession {
+  sourceTaskId: string;
+  workflowId: string;
+  title: string;
+  colorSlot: number;
 }
 
 /** Pushed when a workflow or its tasks change, so an open Workflows view reloads it. */
@@ -7049,6 +7072,12 @@ export interface ElectronAPI {
    */
   workflows: {
     list: (projectId: string) => Promise<WorkflowSummary[]>;
+    /**
+     * Every task of the project a workflow replaced at Start, finished
+     * workflows included, which `list` leaves out. What the Done column's
+     * "Superseded by" line reads.
+     */
+    listSupersessions: (projectId: string) => Promise<WorkflowSupersession[]>;
     get: (projectId: string, workflowId: string) => Promise<WorkflowDetail>;
     /** A new workflow, from a To Do task (its brief) or from nothing. */
     create: (projectId: string, sourceTaskId: string | null) => Promise<Workflow>;

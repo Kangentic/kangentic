@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play } from 'lucide-react';
+import { Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, X } from 'lucide-react';
 import type { Session } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useSessionStore } from '../../stores/session-store';
@@ -55,6 +55,13 @@ export function workflowAgentPaneDockedMin(paneWidth: number): number {
 
 /** The collapsed strip. */
 const COLLAPSED_WIDTH = 36;
+
+/**
+ * Start-over lines the user closed, by the session that started over, for this
+ * run of the app. The pane remounts on every visit to the view, and a closed
+ * line stays closed. A new session (the next resume) never matches.
+ */
+const dismissedStartOvers = new Set<string>(); // hmr-safe: a reset only shows a closed line again, until the agent next resumes
 
 /** The workflow's agent session: its live or paused one first, else the last that exited. */
 function selectAgentSession(sessions: readonly Session[], workflowId: string): Session | null {
@@ -140,7 +147,15 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   const openAgent = useWorkflowStore((state) => state.openAgent);
   const resumeAgent = useWorkflowStore((state) => state.resumeAgent);
   const pauseAgent = useWorkflowStore((state) => state.pauseAgent);
+  // The session main started over in when the conversation could not be
+  // resumed. Main pushes the summary again when that happens, after this
+  // pane's open has answered.
+  const startedOverSessionId = useWorkflowStore((state) => (
+    state.summaries.find((summary) => summary.workflow.id === workflowId)?.agent?.startedOverSessionId ?? null
+  ));
   const [toggling, setToggling] = useState(false);
+  // Re-renders the pane when a line is closed; `dismissedStartOvers` keeps it closed across remounts.
+  const [, setDismissedStartOver] = useState<string | null>(null);
 
   // Open the agent of the workflow on screen, once per workflow.
   useEffect(() => {
@@ -152,6 +167,16 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   const live = running || queued;
   const working = running && isActive(activity);
   const waiting = running && requiresUserInteraction(activity);
+  // Only for the session the pane shows, so a summary that has not caught up
+  // with a newer session never says it of that one.
+  const showStartedOver = startedOverSessionId !== null
+    && session?.id === startedOverSessionId
+    && !dismissedStartOvers.has(startedOverSessionId);
+  const dismissStartedOver = useCallback(() => {
+    if (!startedOverSessionId) return;
+    dismissedStartOvers.add(startedOverSessionId);
+    setDismissedStartOver(startedOverSessionId);
+  }, [startedOverSessionId]);
 
   const toggle = useCallback(() => {
     if (toggling) return;
@@ -204,7 +229,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
       data-floating={floating ? 'true' : 'false'}
       data-agent-state={unavailable ? 'unavailable' : working ? 'working' : waiting ? 'waiting' : session?.status ?? 'starting'}
     >
-      <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge px-3">
+      <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b border-edge bg-surface-raised px-3" data-testid="workflow-agent-pane-header">
         {canToggle && (
           <button
             type="button"
@@ -244,13 +269,38 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           type="button"
           onClick={() => setCollapsed(true)}
           className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-          title="Hide the workflow agent"
-          aria-label="Hide the workflow agent"
+          title="Collapse agent"
+          aria-label="Collapse agent"
           data-testid="workflow-agent-pane-collapse"
         >
           <PanelLeftClose size={16} />
         </button>
       </div>
+
+      {/* The agent's conversation could not be resumed, so main started a new
+          one (workflow-agent.ts). Said once, under the header, until closed. */}
+      {showStartedOver && (
+        <div
+          className="flex flex-shrink-0 items-center gap-2.5 border-b border-edge bg-accent-fg/10 px-3 py-2"
+          role="status"
+          data-testid="workflow-agent-started-over"
+        >
+          <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-[13px] text-fg-secondary">
+            The earlier conversation could not be resumed, so the agent started a new one.
+          </span>
+          <button
+            type="button"
+            onClick={dismissStartedOver}
+            className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-secondary"
+            title="Dismiss"
+            aria-label="Dismiss"
+            data-testid="workflow-agent-started-over-dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       <div className="relative min-h-0 flex-1">
         {unavailable ? (

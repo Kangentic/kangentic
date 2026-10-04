@@ -1,6 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Workflow, WorkflowDraft, WorkflowDraftLink, WorkflowDraftTask, WorkflowState } from '../../../shared/types';
+import type {
+  Workflow,
+  WorkflowDraft,
+  WorkflowDraftLink,
+  WorkflowDraftTask,
+  WorkflowState,
+  WorkflowSupersession,
+} from '../../../shared/types';
 
 /**
  * The `workflows` table: a set of linked tasks with its own agent, stored in
@@ -25,6 +32,7 @@ interface WorkflowRow {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  paused_at?: string | null;
   agent_name: string | null;
   agent_session_id: string | null;
   agent_cwd?: string | null;
@@ -35,6 +43,14 @@ interface WorkflowRow {
 export const WORKFLOW_COLOR_SLOTS = 6;
 
 export const UNTITLED_WORKFLOW = 'Untitled workflow';
+
+/**
+ * How the `task_moves` row Start writes for the task a workflow was made from
+ * begins (`supersedeSourceTask`), followed by the workflow's title at Start.
+ * `listSupersessions` matches on this prefix, never on the title, which a
+ * rename changes.
+ */
+export const SUPERSEDED_MOVE_REASON_PREFIX = 'Superseded by ';
 
 const WORKFLOW_STATES: ReadonlySet<string> = new Set<WorkflowState>(['draft', 'running', 'paused', 'done']);
 
@@ -66,6 +82,57 @@ export class WorkflowRepository {
       .prepare("SELECT * FROM workflows WHERE state != 'done' ORDER BY created_at DESC, rowid DESC")
       .all() as WorkflowRow[];
     return rows.map(mapRow);
+  }
+
+  /**
+   * Every task a workflow of this database replaced at Start, by its current
+   * title and color, finished workflows included.
+   *
+   * Read from the move history, not from `source_task_id` alone: Start leaves
+   * a source that had left To Do where it is, so a source completed by hand is
+   * not superseded. A source is superseded when its LATEST move into a Done
+   * column is the one Start wrote: origin `workflow`, the reason prefix, at or
+   * after the workflow's start (the two can share a millisecond). That move is
+   * credited to the workflow that started last at or before it, since two
+   * drafts can share one To Do source and only the first Start moves it. A
+   * source moved out of Done and finished again by hand has a newer row and
+   * reads as not superseded.
+   */
+  listSupersessions(): WorkflowSupersession[] {
+    const rows = this.db.prepare(`
+      SELECT w.id AS workflow_id, w.source_task_id AS source_task_id, w.title AS title, w.color_slot AS color_slot
+      FROM workflows w
+      JOIN task_moves moves ON moves.rowid = (
+        SELECT latest.rowid FROM task_moves latest
+        JOIN swimlanes lane ON lane.id = latest.to_swimlane_id
+        WHERE latest.task_id = w.source_task_id AND lane.role = 'done'
+        ORDER BY latest.at DESC, latest.rowid DESC
+        LIMIT 1
+      )
+      WHERE w.state != 'draft'
+        AND w.started_at IS NOT NULL
+        AND moves.origin = 'workflow'
+        AND substr(moves.reason, 1, ?) = ?
+        AND moves.at >= w.started_at
+      ORDER BY w.started_at DESC, w.rowid DESC
+    `).all(SUPERSEDED_MOVE_REASON_PREFIX.length, SUPERSEDED_MOVE_REASON_PREFIX) as Array<{
+      workflow_id: string;
+      source_task_id: string;
+      title: string;
+      color_slot: number;
+    }>;
+    const bySource = new Map<string, WorkflowSupersession>();
+    // Newest start first, so the first row for a source is its superseder.
+    for (const row of rows) {
+      if (bySource.has(row.source_task_id)) continue;
+      bySource.set(row.source_task_id, {
+        sourceTaskId: row.source_task_id,
+        workflowId: row.workflow_id,
+        title: row.title,
+        colorSlot: row.color_slot,
+      });
+    }
+    return [...bySource.values()];
   }
 
   /** The engine's fast path: one indexed probe, so a board with no running workflow pays nothing more. */
@@ -141,10 +208,13 @@ export class WorkflowRepository {
     ).run(new Date().toISOString(), id);
   }
 
+  /** Done stamps `finished_at`; paused stamps `paused_at`, which any other state clears. */
   setState(id: string, state: Exclude<WorkflowState, 'draft'>): void {
-    const finishedAt = state === 'done' ? new Date().toISOString() : null;
-    this.db.prepare('UPDATE workflows SET state = ?, finished_at = ?, revision = revision + 1 WHERE id = ?')
-      .run(state, finishedAt, id);
+    const now = new Date().toISOString();
+    const finishedAt = state === 'done' ? now : null;
+    const pausedAt = state === 'paused' ? now : null;
+    this.db.prepare('UPDATE workflows SET state = ?, finished_at = ?, paused_at = ?, revision = revision + 1 WHERE id = ?')
+      .run(state, finishedAt, pausedAt, id);
   }
 
   /** Any change to a started workflow's tasks, links or routes. */
@@ -236,6 +306,7 @@ function mapRow(row: WorkflowRow): Workflow {
     created_at: row.created_at,
     started_at: row.started_at,
     finished_at: row.finished_at,
+    paused_at: row.paused_at ?? null,
     agent_name: row.agent_name ?? null,
     agent_session_id: row.agent_session_id ?? null,
     agent_cwd: row.agent_cwd ?? null,

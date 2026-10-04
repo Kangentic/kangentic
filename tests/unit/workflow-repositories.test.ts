@@ -22,7 +22,12 @@ const describeWithSqlite = sqlite ? describe : describe.skip;
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
-const { WorkflowRepository, StaleWorkflowRevisionError, UNTITLED_WORKFLOW } = await import('../../src/main/db/repositories/workflow-repository');
+const {
+  WorkflowRepository,
+  StaleWorkflowRevisionError,
+  UNTITLED_WORKFLOW,
+  SUPERSEDED_MOVE_REASON_PREFIX,
+} = await import('../../src/main/db/repositories/workflow-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { TaskMoveRepository } = await import('../../src/main/db/repositories/task-move-repository');
 
@@ -198,6 +203,38 @@ describeWithSqlite('workflow tables', () => {
     expect(workflows.hasRunning()).toBe(false);
   });
 
+  describe('when a workflow was paused (`paused_at`)', () => {
+    it('has the column, nullable text, added once however often the migration runs', () => {
+      const { database } = freshDatabase();
+      runProjectMigrations(database);
+      const matching = (database.pragma('table_info(workflows)') as Array<{ name: string; type: string; notnull: number }>)
+        .filter((column) => column.name === 'paused_at');
+      expect(matching).toHaveLength(1);
+      expect(matching[0].type).toBe('TEXT');
+      expect(matching[0].notnull).toBe(0);
+    });
+
+    it('is stamped on Pause as a UTC ISO instant, and cleared by Resume and by Done', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({});
+      expect(workflow.paused_at).toBeNull();
+      workflows.markStarted(workflow.id);
+      expect(workflows.getById(workflow.id)!.paused_at).toBeNull();
+
+      workflows.setState(workflow.id, 'paused');
+      const pausedAt = workflows.getById(workflow.id)!.paused_at;
+      expect(pausedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+      workflows.setState(workflow.id, 'running');
+      expect(workflows.getById(workflow.id)!.paused_at).toBeNull();
+
+      workflows.setState(workflow.id, 'paused');
+      expect(workflows.getById(workflow.id)!.paused_at).not.toBeNull();
+      workflows.setState(workflow.id, 'done');
+      expect(workflows.getById(workflow.id)!.paused_at).toBeNull();
+    });
+  });
+
   it('records the workflow agent\'s conversation without changing the plan\'s revision', () => {
     const { workflows } = freshDatabase();
     const workflow = workflows.create({ title: 'Usage budgets' });
@@ -327,6 +364,113 @@ describeWithSqlite('workflow tables', () => {
     expect(lastTwo.visits.get(first.id)).toBe(1);
     expect(lastTwo.visits.get(second.id)).toBe(2);
     expect(moves.recentFinishedColumnVisits(done.id, 10).visits.get(first.id)).toBe(2);
+  });
+
+  describe('the tasks a workflow replaced at Start (`listSupersessions`)', () => {
+    /**
+     * A board with its To Do, Done and first working column, and moves and
+     * starts stamped at explicit instants, so the order the rule reads is the
+     * order the test says rather than the clock's.
+     */
+    function board() {
+      const fixture = freshDatabase();
+      const lanes = new SwimlaneRepository(fixture.database).list();
+      const done = lanes.find((lane) => lane.role === 'done')!;
+      const working = lanes.find((lane) => lane.role !== 'todo' && lane.role !== 'done')!;
+      const at = (minute: number) => new Date(Date.parse('2026-09-01T09:00:00.000Z') + minute * 60000).toISOString();
+      const move = (taskId: string, toLaneId: string, origin: 'workflow' | 'renderer' | 'unarchive', reason: string | null, minute: number) => {
+        fixture.tasks.move({ taskId, targetSwimlaneId: toLaneId, targetPosition: 0 }, { origin, reason });
+        fixture.database.prepare('UPDATE task_moves SET at = ? WHERE rowid = (SELECT MAX(rowid) FROM task_moves)').run(at(minute));
+      };
+      const start = (workflowId: string, minute: number) => {
+        fixture.workflows.markStarted(workflowId);
+        fixture.database.prepare('UPDATE workflows SET started_at = ? WHERE id = ?').run(at(minute), workflowId);
+      };
+      /** What Start's `supersedeSourceTask` writes: To Do to Done, as the workflow, with its title at Start. */
+      const supersede = (taskId: string, title: string, minute: number) =>
+        move(taskId, done.id, 'workflow', `${SUPERSEDED_MOVE_REASON_PREFIX}${title}`, minute);
+      const source = (title: string) => fixture.tasks.create({ title, description: '', swimlane_id: fixture.todo.id });
+      return { ...fixture, done, working, move, start, supersede, source };
+    }
+
+    it('lists a source Start moved to Done, by the workflow\'s current title and color', () => {
+      const { workflows, start, supersede, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const workflow = workflows.rename(workflows.create({ sourceTaskId: task.id }).id, 'Usage budgets');
+      start(workflow.id, 0);
+      supersede(task.id, 'Usage budgets', 0);
+      expect(workflows.listSupersessions()).toEqual([
+        { sourceTaskId: task.id, workflowId: workflow.id, title: 'Usage budgets', colorSlot: workflow.color_slot },
+      ]);
+
+      // Renamed after Start: the move still says the old title, and the line says the new one.
+      workflows.rename(workflow.id, 'Spend limits');
+      expect(workflows.listSupersessions().map((entry) => entry.title)).toEqual(['Spend limits']);
+    });
+
+    it('keeps a finished workflow\'s supersession', () => {
+      const { workflows, start, supersede, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const workflow = workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      start(workflow.id, 0);
+      supersede(task.id, 'Usage budgets', 1);
+      workflows.setState(workflow.id, 'done');
+      expect(workflows.listOpen()).toEqual([]);
+      expect(workflows.listSupersessions().map((entry) => entry.workflowId)).toEqual([workflow.id]);
+    });
+
+    it('leaves out a source that left To Do before Start and was completed by hand', () => {
+      const { workflows, done, working, move, start, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const workflow = workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      move(task.id, working.id, 'renderer', null, 0);
+      // Start found it working and left it where it was.
+      start(workflow.id, 1);
+      move(task.id, done.id, 'renderer', null, 2);
+      expect(workflows.listSupersessions()).toEqual([]);
+    });
+
+    it('leaves out a source the plan took in, which its own route brought to Done', () => {
+      const { workflows, tasks, done, working, move, start, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const workflow = workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      start(workflow.id, 0);
+      tasks.setWorkflowMembership(task.id, membership(workflow.id));
+      move(task.id, working.id, 'workflow', 'Started by Usage budgets', 1);
+      move(task.id, done.id, 'workflow', 'Step done', 2);
+      expect(workflows.listSupersessions()).toEqual([]);
+    });
+
+    it('leaves out a superseded source a person brought back and finished by hand', () => {
+      const { workflows, todo, done, move, start, supersede, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const workflow = workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      start(workflow.id, 0);
+      supersede(task.id, 'Usage budgets', 0);
+      move(task.id, todo.id, 'unarchive', null, 5);
+      move(task.id, done.id, 'renderer', null, 9);
+      expect(workflows.listSupersessions()).toEqual([]);
+    });
+
+    it('never lists a draft', () => {
+      const { workflows, supersede, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      supersede(task.id, 'Usage budgets', 0);
+      expect(workflows.listSupersessions()).toEqual([]);
+    });
+
+    it('credits a source two workflows share to the Start that moved it', () => {
+      const { workflows, start, supersede, source } = board();
+      const task = source('Usage budgets and a hard cap');
+      const first = workflows.create({ title: 'Usage budgets', sourceTaskId: task.id });
+      const second = workflows.create({ title: 'Spend alerts', sourceTaskId: task.id });
+      start(first.id, 0);
+      supersede(task.id, 'Usage budgets', 0);
+      // The second Start found the source in Done and moved nothing.
+      start(second.id, 3);
+      expect(workflows.listSupersessions().map((entry) => entry.workflowId)).toEqual([first.id]);
+    });
   });
 
   it('gives each unfinished workflow its own color until the palette runs out', () => {

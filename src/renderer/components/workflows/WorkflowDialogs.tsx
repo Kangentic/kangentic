@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ListTree } from 'lucide-react';
+import { ListTree, Play } from 'lucide-react';
 import type { Workflow, WorkflowSummary, WorkflowViewTask } from '../../../shared/types';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -47,6 +47,7 @@ export function StartWorkflowDialog({ summary, sourceTaskLabel, onConfirm, onCan
         </>
       )}
       confirmLabel="Start workflow"
+      confirmIcon={<Play size={12} className="shrink-0" data-testid="workflow-start-confirm-icon" />}
       testId="workflow-start-confirm"
       onConfirm={() => onConfirm()}
       onCancel={onCancel}
@@ -128,42 +129,60 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
     inputRef.current?.select();
   }, []);
   const trimmed = value.trim();
-  const canRename = trimmed.length > 0 && trimmed !== name;
+  const canRename = trimmed.length > 0;
+  // Rename is enabled from the start, as on board 12. The same name renames
+  // nothing: it closes without a write, which would bump the revision and turn
+  // the workflow agent's next save stale.
+  const submit = () => {
+    if (!canRename) return;
+    if (trimmed === name) onCancel();
+    else onRename(trimmed);
+  };
 
   return (
-    <BaseDialog title="Rename workflow" onClose={onCancel} testId="workflow-rename-dialog">
-      <div className="space-y-3">
-        <input
-          ref={inputRef}
-          type="text"
-          value={value}
-          maxLength={120}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && canRename) {
-              event.preventDefault();
-              onRename(trimmed);
-            }
-          }}
-          aria-label="Workflow name"
-          className="w-full px-3 py-2 bg-surface-control border border-edge-input rounded text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
-          data-testid="workflow-rename-input"
-        />
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg rounded hover:bg-surface-hover">
+    <BaseDialog
+      title="Rename workflow"
+      onClose={onCancel}
+      testId="workflow-rename-dialog"
+      footer={(
+        // The confirms' own footer pair (ConfirmDialog), so Rename reads as one of them.
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+            data-testid="workflow-rename-cancel"
+          >
             Cancel
           </button>
           <button
             type="button"
-            onClick={() => onRename(trimmed)}
+            onClick={submit}
             disabled={!canRename}
-            className="px-3 py-1.5 text-sm rounded bg-accent text-on-accent disabled:opacity-40 disabled:pointer-events-none"
+            className="px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis enabled:hover:bg-accent text-accent-on disabled:opacity-40 disabled:cursor-not-allowed"
             data-testid="workflow-rename-confirm"
           >
             Rename
           </button>
         </div>
-      </div>
+      )}
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        maxLength={120}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            submit();
+          }
+        }}
+        aria-label="Workflow name"
+        className="w-full px-3 py-2 bg-surface-control border border-edge-input rounded text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
+        data-testid="workflow-rename-input"
+      />
     </BaseDialog>
   );
 }

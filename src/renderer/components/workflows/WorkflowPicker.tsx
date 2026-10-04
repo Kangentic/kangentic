@@ -39,13 +39,15 @@ export function WorkflowStateChip({ state }: { state: WorkflowState }) {
       </span>
     );
   }
+  // Paused and Not started: the Running chip's tint and ring, in grey (board 11).
+  const grey = `${shape} text-fg-muted bg-fg-muted/10 ring-1 ring-inset ring-fg-muted/25`;
   if (state === 'paused') {
-    return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><Pause size={11} />Paused</span>;
+    return <span className={grey} data-testid="workflow-state-chip" data-state={state}><Pause size={11} />Paused</span>;
   }
   if (state === 'done') {
     return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleCheckBig size={11} />Complete</span>;
   }
-  return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleDashed size={11} />Not started</span>;
+  return <span className={grey} data-testid="workflow-state-chip" data-state={state}><CircleDashed size={11} />Not started</span>;
 }
 
 function StateChip({ summary }: { summary: WorkflowSummary }) {
@@ -53,9 +55,10 @@ function StateChip({ summary }: { summary: WorkflowSummary }) {
 }
 
 /**
- * The line under a row's name (board 11): what the workflow's own agent is
- * doing ("Agent idle, last message 10:44"), or, with no agent running, how many
- * of a running workflow's tasks wait for the user ("2 idle"). Nothing otherwise.
+ * The line under a row's name (board 11): when a paused workflow paused
+ * ("Paused yesterday 18:20"); else what the workflow's own agent is doing
+ * ("Agent idle, last message 10:44"), or, with no agent running, how many of a
+ * running workflow's tasks wait for the user ("2 idle"). Nothing otherwise.
  */
 function useAgentNote(summary: WorkflowSummary): string | null {
   const agent = summary.agent ?? null;
@@ -70,6 +73,9 @@ function useAgentNote(summary: WorkflowSummary): string | null {
     }
     return count;
   });
+  // A workflow paused before `paused_at` existed has no time, and falls through to its agent.
+  const pausedAt = summary.workflow.state === 'paused' ? summary.workflow.paused_at ?? null : null;
+  if (pausedAt) return `Paused ${formatClockTime(pausedAt)}`;
   if (agent?.state === 'active') return 'Agent active';
   if (agent?.state === 'paused') return 'Agent paused';
   // activity-state-ok: the workflow agent's own summary state, one label per state, not an idle-vs-active bucket.

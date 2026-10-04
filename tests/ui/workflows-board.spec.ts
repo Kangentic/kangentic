@@ -36,23 +36,43 @@ const LINKS: Array<[number, number]> = [[411, 413], [412, 414], [413, 415], [413
 const LOCKED = '#414 is locked while Usage budgets runs.';
 
 interface Options {
-  state?: 'running' | 'paused';
+  /** `done`: the workflow finished, so every one of its tasks is in Done and it leaves the picker. */
+  state?: 'running' | 'paused' | 'done';
   /** Lane indexes whose column starts no agent: a human gate. */
   gateLanes?: number[];
   /** Override where #414 sits. */
   lane414?: number;
+  /** The workflow was made from #409, which Start moved to Done (board 7's superseded row). */
+  supersededSource?: boolean;
+  /** Ordinary tasks completed after the workflow's, enough of them to push #411 and #412 out of Done's list. */
+  newerCompleted?: number;
+  /** #414 has a running session, so its window opens on the session view and its header pills. */
+  session414?: boolean;
+  viewport?: { width: number; height: number };
 }
 
 function seedScript(options: Options): string {
-  const workflow = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: options.state ?? 'running', draft: null, color_slot: 5 } };
+  const workflow = {
+    workflow: {
+      id: 'wf-usage', title: 'Usage budgets', state: options.state ?? 'running', draft: null, color_slot: 5,
+      source_task_id: options.supersededSource ? 't409' : null,
+    },
+  };
   const links = LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }));
-  const tasks = TASKS.map(([id, title, lane]) => [id, title, id === 414 && options.lane414 !== undefined ? options.lane414 : lane]);
+  const finished = options.state === 'done';
+  const tasks = TASKS.map(([id, title, lane]) => [
+    id,
+    title,
+    finished ? 6 : id === 414 && options.lane414 !== undefined ? options.lane414 : lane,
+  ]);
   return `
     window.__mockWorkflows = ${JSON.stringify([workflow])};
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
       var gates = ${JSON.stringify(options.gateLanes ?? [])};
+      var supersededSource = ${options.supersededSource ? 'true' : 'false'};
+      var newerCompleted = ${options.newerCompleted ?? 0};
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         var lane = Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts });
@@ -75,6 +95,20 @@ function seedScript(options: Options): string {
       });
       // An ordinary task beside them, in To Do.
       state.tasks.push(row(500, 'Split the settings search index', 0, null));
+      // The To Do task the workflow was made from, closed into Done at Start.
+      if (supersededSource) state.archivedTasks.push(row(409, 'Usage budgets and a hard cap', 6, null));
+      if (${options.session414 ? 'true' : 'false'}) {
+        state.tasks.find(function (task) { return task.id === 't414'; }).session_id = 'sess-414';
+        state.sessions.push({
+          id: 'sess-414', taskId: 't414', projectId: '${PROJECT_ID}',
+          pid: 9414, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: ts, exitCode: null,
+        });
+      }
+      for (var index = 0; index < newerCompleted; index += 1) {
+        var completed = row(600 + index, 'Completed later ' + index, 6, null);
+        completed.archived_at = new Date(Date.now() + (index + 1) * 60000).toISOString();
+        state.archivedTasks.push(completed);
+      }
       return { currentProjectId: '${PROJECT_ID}' };
     });
   `;
@@ -83,13 +117,18 @@ function seedScript(options: Options): string {
 async function launch(options: Options = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
-  const page = await (await browser.newContext({ viewport: { width: 1700, height: 950 } })).newPage();
+  const page = await (await browser.newContext({ viewport: options.viewport ?? { width: 1700, height: 950 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seedScript(options));
   await page.goto(VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-  // The strip appears once the workflow list has loaded.
-  await page.locator('[data-task-id="t414"] [data-testid="workflow-card-strip"]').waitFor({ state: 'visible', timeout: 10000 });
+  if (options.state === 'done') {
+    // A finished workflow leaves the list, so no card carries its strip: wait for Done's list instead.
+    await page.locator('[data-board-lanes] [data-task-id="t411"]').waitFor({ state: 'visible', timeout: 10000 });
+  } else {
+    // The strip appears once the workflow list has loaded.
+    await page.locator('[data-task-id="t414"] [data-testid="workflow-card-strip"]').waitFor({ state: 'visible', timeout: 10000 });
+  }
   return { browser, page };
 }
 
@@ -122,10 +161,13 @@ test.describe('Workflow tasks on the board', () => {
     try {
       const strip = boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]');
       await expect(strip).toContainText('Usage budgets');
+      // The workflow's icon, drawn at the board's stroke width.
+      await expect(strip.locator('svg').first()).toHaveAttribute('stroke-width', '2');
       // Planning done, Executing current, Code Review, Testing and Merge ahead.
       await expect(strip.locator('[data-step-state]')).toHaveCount(5);
       await expect(strip.locator('[data-step-state="current"]')).toHaveAttribute('title', 'Executing: now');
       await expect(strip.locator('[data-testid="workflow-card-lock"]')).toHaveAttribute('title', 'Moved by its workflow');
+      await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
       await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -154,15 +196,19 @@ test.describe('Workflow tasks on the board', () => {
       const moveRows = menu.locator('[data-testid="context-move-to"]');
       await expect(moveRows).toHaveCount(5);
       for (const row of await moveRows.all()) await expect(row).toHaveAttribute('aria-disabled', 'true');
-      // To Do is refused for any workflow task, in its own words; the rest by the lock.
-      await expect(moveRows.filter({ hasText: 'To Do' }))
-        .toHaveAttribute('title', '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
-      for (const name of ['Planning', 'Code Review', 'Testing', 'Merge']) {
+      // While it runs, every row says the lock, To Do included (boards 6 and 1d).
+      for (const name of ['To Do', 'Planning', 'Code Review', 'Testing', 'Merge']) {
         await expect(moveRows.filter({ hasText: name })).toHaveAttribute('title', LOCKED);
       }
       for (const testId of ['context-send-to-backlog', 'context-archive-task']) {
         await expect(menu.locator(`[data-testid="${testId}"]`)).toHaveAttribute('title', LOCKED);
       }
+      // A disabled row dims whole, with the not-allowed cursor; a live row does neither.
+      for (const disabledRow of [moveRows.filter({ hasText: 'Code Review' }), menu.locator('[data-testid="context-archive-task"]')]) {
+        await expect(disabledRow).toHaveCSS('opacity', '0.4');
+        await expect(disabledRow).toHaveCSS('cursor', 'not-allowed');
+      }
+      await expect(menu.locator('[data-testid="context-edit-task"]')).toHaveCSS('opacity', '1');
       await expect(menu.locator('[data-testid="context-edit-task"]')).not.toHaveAttribute('aria-disabled', 'true');
       await expect(menu.locator('[data-testid="context-new-workflow"]')).toHaveCount(0);
 
@@ -181,6 +227,8 @@ test.describe('Workflow tasks on the board', () => {
     try {
       await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
       await expect(boardCard(page, 't419').locator('[data-testid="workflow-status-bar"]')).toHaveText('Paused');
+      // The strip says so after the workflow's name (board 7).
+      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-strip"] [data-testid="workflow-card-paused"]')).toHaveCount(1);
       await openMenu(page, 't414');
       const menu = byTestId(page, 'task-context-menu');
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'To Do' }))
@@ -222,9 +270,17 @@ test.describe('Workflow tasks on the board', () => {
       // A card with no relation to #414 is dimmed; #417 is not.
       await expect.poll(() => boardCard(page, 't419').evaluate((element) => getComputedStyle(element).opacity)).toBe('0.3');
       await expect.poll(() => boardCard(page, 't417').evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+      // The Done column dims with the rest of the board: its drop zone and its Completed header.
+      await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '0.3');
+      await expect(page.locator('[data-board-lanes] [data-testid="expand-completed-btn"]')).toHaveCSS('opacity', '0.3');
+      // A dependent's line is drawn in the accent's foreground; the focused card's outline in the muted foreground.
+      await expect(overlay.locator('[data-link="out:t417"] path').nth(1)).toHaveAttribute('stroke', 'var(--color-accent-fg)');
+      await expect.poll(() => byTestId(page, 'workflow-links-style').evaluate((element) => element.textContent ?? ''))
+        .toContain('[data-task-id="t414"] { outline: 2px solid color-mix(in srgb, var(--color-fg-muted) 75%');
 
       await page.keyboard.press('Escape');
       await expect(overlay).toHaveCount(0);
+      await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '1');
     } finally {
       await browser.close();
     }
@@ -270,6 +326,84 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('a board drag clears the overlay as it starts', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openMenu(page, 't413');
+      await byTestId(page, 'context-show-workflow-links').click();
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
+
+      // Pick up the ordinary card in To Do; the overlay goes before the drop.
+      const card = boardCard(page, 't500');
+      await card.scrollIntoViewIfNeeded();
+      const box = await card.boundingBox();
+      if (!box) throw new Error('No box for #500');
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2, { steps: 3 });
+      await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+      await expect(overlay).toHaveCount(0);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+      await page.mouse.up();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a related card pushed out of the Done column\'s list draws no line', async () => {
+    // Fifteen tasks completed after #411 and #412 fill Done's list, so neither is rendered.
+    const { browser, page } = await launch({ newerCompleted: 15 });
+    try {
+      await expect(boardCard(page, 't411')).toHaveCount(0);
+      await openMenu(page, 't413');
+      await byTestId(page, 'context-show-workflow-links').click();
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
+      // #413 holds up #415 and #416, both on the board; it waits for #411, which is not drawn.
+      await expect(overlay.locator('[data-link="out:t415"]')).toHaveCount(1);
+      await expect(overlay.locator('[data-link="out:t416"]')).toHaveCount(1);
+      await expect(overlay.locator('[data-link="in:t411"]')).toHaveCount(0);
+      await expect(overlay.locator('[data-testid="workflow-link-line"]')).toHaveCount(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task the workflow replaced at Start says so under its Done row, in the workflow\'s color', async () => {
+    const { browser, page } = await launch({ supersededSource: true });
+    try {
+      const sourceRow = page.locator('[data-board-lanes] [data-task-id="t409"]').locator('..');
+      const line = sourceRow.locator('[data-testid="superseded-line"]');
+      await expect(line).toHaveText('Superseded by Usage budgets');
+      await expect(line.locator('svg')).toHaveAttribute('style', /--color-chart-5/);
+      // A completed task of the workflow itself is not superseded by it: #409's is the only line.
+      await expect(page.locator('[data-board-lanes] [data-task-id="t411"]').locator('..').locator('[data-testid="superseded-line"]')).toHaveCount(0);
+      await expect(page.locator('[data-board-lanes] [data-testid="superseded-line"]')).toHaveCount(1);
+
+      // A rename reaches the line through the workflow's change push.
+      await page.evaluate(() => window.electronAPI.workflows.rename('workflows-board-proj', 'wf-usage', 'Spend limits'));
+      await expect(line).toHaveText('Superseded by Spend limits');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the line stays once the workflow has finished and left the picker', async () => {
+    const { browser, page } = await launch({ supersededSource: true, state: 'done' });
+    try {
+      const line = page.locator('[data-board-lanes] [data-task-id="t409"]').locator('..').locator('[data-testid="superseded-line"]');
+      await expect(line).toHaveText('Superseded by Usage budgets');
+      await expect(line.locator('svg')).toHaveAttribute('style', /--color-chart-5/);
+      await expect(page.locator('[data-board-lanes] [data-testid="superseded-line"]')).toHaveCount(1);
+      // Finished: the summaries the board loads leave it out, so the Workflows segment counts none.
+      await expect.poll(() => page.evaluate(() => window.electronAPI.workflows.list('workflows-board-proj').then((summaries) => summaries.length))).toBe(0);
+      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Open workflow switches to the Workflows view on that task', async () => {
     const { browser, page } = await launch();
     try {
@@ -291,6 +425,7 @@ test.describe('Workflow tasks on the board', () => {
       await byTestId(page, 'task-detail-dialog').waitFor({ state: 'visible' });
       await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
       const panel = byTestId(page, 'task-workflow-panel');
+      await expect(panel.locator('[data-testid="task-workflow-panel-header"]')).toHaveCSS('font-weight', '600');
       await expect(panel.locator('[data-testid="workflow-panel-workflow"]')).toContainText('Usage budgets');
       await expect(panel.locator('[data-testid="workflow-state-chip"]')).toHaveAttribute('data-state', 'running');
       await expect(panel.locator('[data-testid="workflow-route-switch-lane-1"]')).toHaveAttribute('title', '#414 has reached Executing. Only the columns after it can change.');
@@ -309,11 +444,32 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('a running task\'s header puts the Workflow toggle last among its pills, after Conversation', async () => {
+    const { browser, page } = await launch({ session414: true });
+    try {
+      await boardCard(page, 't414').click();
+      const header = page.locator('[data-testid="task-detail-dialog"] [data-testid="task-detail-titlebar"]');
+      await header.locator('[data-pill-id="workflow"]').waitFor({ state: 'visible' });
+      const pillIds = await header.locator('[data-pill-id]').evaluateAll((pills) => pills.map((pill) => pill.getAttribute('data-pill-id')));
+      expect(pillIds.indexOf('conversation')).toBeGreaterThanOrEqual(0);
+      expect(pillIds.indexOf('workflow')).toBe(pillIds.indexOf('conversation') + 1);
+      // The session header keeps its own divider before the window controls; the form's is separate.
+      await expect(header.locator('[data-testid="edit-titlebar-divider"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a To Do task opens in the form, and its Workflow panel is there too', async () => {
     const { browser, page } = await launch();
     try {
       await boardCard(page, 't415').click();
       await byTestId(page, 'task-detail-edit-scroll').waitFor({ state: 'visible' });
+      // The form's title bar divides the Workflow toggle from the window controls,
+      // with the divider the session header draws before them.
+      const titleBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="task-detail-titlebar"]');
+      await expect(titleBar.locator('[data-testid="edit-titlebar-divider"]')).toBeVisible();
+      await expect(titleBar.locator('[data-testid="edit-titlebar-divider"]')).toHaveClass('w-px h-5 bg-surface-hover flex-shrink-0');
       await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
       const panel = byTestId(page, 'task-workflow-panel');
       // It waits for #413, which is not done, so the link is live and Add blocker is offered.
@@ -339,6 +495,48 @@ test.describe('Workflow tasks on the board', () => {
       await page.locator('[data-testid="view-toggle-board"]').click();
       await openMenu(page, 't414');
       await expect(byTestId(page, 'context-new-workflow')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a workflow card\'s menu opened low in a short window stays inside it, its last item showing', async () => {
+    const viewport = { width: 900, height: 600 };
+    const { browser, page } = await launch({ viewport });
+    try {
+      // The lowest point on screen that lands on a workflow card in To Do.
+      const press = await page.evaluate(() => {
+        const lane = document.querySelector('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="To Do"]');
+        let lowest: { x: number; y: number } | null = null;
+        for (const card of Array.from(lane?.querySelectorAll('[data-task-id]') ?? [])) {
+          if (!card.querySelector('[data-testid="workflow-card-strip"]')) continue;
+          const rect = card.getBoundingClientRect();
+          const x = rect.left + 24;
+          for (let y = Math.min(rect.bottom - 4, window.innerHeight - 4); y > rect.top; y -= 4) {
+            if (!card.contains(document.elementFromPoint(x, y))) continue;
+            if (!lowest || y > lowest.y) lowest = { x, y };
+            break;
+          }
+        }
+        return lowest;
+      });
+      if (!press) throw new Error('No workflow card on screen in To Do');
+      await page.mouse.click(press.x, press.y, { button: 'right' });
+      const menu = byTestId(page, 'task-context-menu');
+      await menu.waitFor({ state: 'visible' });
+      await expect(menu.locator('[data-testid="context-open-workflow"]')).toBeVisible();
+      // Its entrance scales it up from the corner; measure the settled menu.
+      await expect.poll(() => menu.evaluate((element) => element.getAnimations().every((animation) => animation.playState === 'finished'))).toBe(true);
+
+      const menuBox = await menu.boundingBox();
+      if (!menuBox) throw new Error('No box for the menu');
+      // The menu does not fit below the press, so it had to move up to stay inside.
+      expect(press.y + menuBox.height).toBeGreaterThan(viewport.height);
+      expect(menuBox.x).toBeGreaterThanOrEqual(0);
+      expect(menuBox.y).toBeGreaterThanOrEqual(0);
+      expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width);
+      expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height);
+      await expect(byTestId(page, 'context-delete-task')).toBeInViewport({ ratio: 1 });
     } finally {
       await browser.close();
     }

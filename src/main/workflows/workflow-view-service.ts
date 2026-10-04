@@ -9,6 +9,7 @@ import type {
   WorkflowDraftTask,
   WorkflowRouteStep,
   WorkflowSummary,
+  WorkflowSupersession,
   WorkflowTaskInput,
   WorkflowTaskPlace,
   WorkflowViewLink,
@@ -137,6 +138,15 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
 export function listWorkflowSummaries(context: IpcContext, homeProjectId: string): WorkflowSummary[] {
   const workflows = new WorkflowRepository(getProjectDb(homeProjectId)).listOpen();
   return workflows.map((workflow) => summarize(context, homeProjectId, workflow));
+}
+
+/**
+ * The tasks of the project a workflow replaced at Start, for the line under
+ * their Done rows. Unlike the summaries, a finished workflow stays: that is
+ * when most superseded tasks sit in Done.
+ */
+export function listWorkflowSupersessions(homeProjectId: string): WorkflowSupersession[] {
+  return new WorkflowRepository(getProjectDb(homeProjectId)).listSupersessions();
 }
 
 function summarize(context: IpcContext, homeProjectId: string, workflow: Workflow): WorkflowSummary {

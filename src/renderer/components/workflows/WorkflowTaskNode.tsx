@@ -17,12 +17,15 @@ import { findTask, linkRefusal, taskLabel } from './workflow-graph';
  * A port is drawn only where it can take a link: the outgoing port on a task
  * that is not done, the incoming one on a task that can still wait (planned,
  * or in To Do). The ports stay mounted either way, because a link is drawn
- * from them.
+ * from them. A link starts only at an outgoing port, so it always runs from
+ * the blocker to the task that waits.
  *
  * While a link is being drawn, the whole card is the drop target (React
  * Flow's Easy Connect pattern), and the card under the pointer says what a
- * release would do: "Release to make #417 wait for #419" with an accent ring,
- * or the refusal main would give.
+ * release would do: "Release to make #417 wait for #419" over a ring, a halo
+ * and its filled port, or the refusal main would give. Which incoming ports
+ * stay during the drag is one rule the canvas writes (index.css), so the
+ * ports change without a card re-rendering.
  *
  * The card-sized target is mounted with the card and measured once, and takes
  * the pointer only while the canvas root carries `data-linking` (index.css), so
@@ -45,32 +48,61 @@ export interface WorkflowNodeData extends Record<string, unknown> {
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, 'workflowTask'>;
 
-const PORT_CLASS = '!w-2.5 !h-2.5 !rounded-full !border-2 !border-edge-input !bg-surface-raised';
+// A port is a 10px dot ringed in the accent on the canvas's fill (boards 1, 10).
+// `workflow-port-in` / `workflow-port-out` are what index.css hides during a link drag.
+const PORT_CLASS = '!w-2.5 !h-2.5 !rounded-full !border-2 !border-accent-fg !bg-surface';
 const HIDDEN_PORT_CLASS = '!w-2.5 !h-2.5 !opacity-0 !pointer-events-none !border-0';
 const CARD_TARGET_CLASS = 'workflow-card-target !absolute !inset-0 !w-full !h-full !min-w-0 !min-h-0 !rounded-md !border-0 !bg-transparent !opacity-0 !transform-none';
 
+/**
+ * The box that says what a release does, over a card or beside the pointer:
+ * the app's menu surface, never the accent, so a refusal and an offer read
+ * alike (board 10b).
+ */
+export const LINK_HINT_CLASS = 'workflow-link-hint pointer-events-none whitespace-nowrap px-2.5 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-xs text-fg-tertiary';
+
+/** Where a card's ports sit: the middle of its title row, which the project row moves down. */
+export function nodePortTop(data: Pick<WorkflowNodeData, 'projectName'>): number {
+  return PORT_OFFSET_Y + (data.projectName !== null ? PROJECT_ROW_HEIGHT : 0);
+}
+
 /** What releasing the link being drawn over this card would do. */
-function LinkDropHint({ nodeId }: { nodeId: string }) {
+function LinkDropHint({ nodeId, portTop }: { nodeId: string; portTop: number }) {
   const detail = useContext(WorkflowDetailContext);
-  // A primitive, so the hint re-renders only when the hover changes, not on every pointer move.
+  // Only this card's hover, so the hint re-renders when the hover changes, not on every pointer move.
   const hover = useConnection((connection) => (
-    connection.inProgress && connection.toNode?.id === nodeId && connection.fromNode && connection.fromNode.id !== nodeId
-      ? `${connection.fromNode.id}|${connection.isValid ? 'valid' : 'refused'}`
+    connection.inProgress && connection.toNode?.id === nodeId && connection.fromNode.id !== nodeId
+      ? { blockerKey: connection.fromNode.id, valid: connection.isValid === true }
       : null
   ));
   if (!hover || !detail) return null;
-  const [blockerKey, verdict] = hover.split('|');
-  const blocker = findTask(detail, blockerKey);
+  const blocker = findTask(detail, hover.blockerKey);
   const blocked = findTask(detail, nodeId);
   if (!blocker || !blocked) return null;
-  const refusal = verdict === 'valid' ? null : linkRefusal(detail, blockerKey, nodeId);
+  const refusal = hover.valid ? null : linkRefusal(detail, hover.blockerKey, nodeId);
+  // Refused by the port under the pointer, not by the workflow (an outgoing
+  // port is no drop target): the hint beside the pointer speaks instead.
+  if (!hover.valid && refusal === null) return null;
   return (
     <>
-      {refusal === null && <div className="absolute inset-0 rounded-md ring-2 ring-accent pointer-events-none" aria-hidden="true" />}
-      <div className="absolute left-1/2 -top-9 -translate-x-1/2 pointer-events-none whitespace-nowrap" data-testid="workflow-link-hint">
-        <span className={`inline-block px-2.5 py-1 rounded-md border text-xs shadow-lg bg-surface-raised ${refusal === null ? 'border-accent/50 text-fg' : 'border-edge-input text-fg-muted'}`}>
-          {refusal ?? `Release to make ${taskLabel(blocked)} wait for ${taskLabel(blocker)}`}
-        </span>
+      {refusal === null && (
+        <>
+          <div className="workflow-link-target absolute inset-0 rounded-md pointer-events-none" aria-hidden="true" data-testid="workflow-link-target" />
+          <span
+            className="absolute left-0 w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent ring-4 ring-accent/30 pointer-events-none"
+            style={{ top: portTop }}
+            aria-hidden="true"
+            data-testid="workflow-link-target-port"
+          />
+        </>
+      )}
+      {/* Left-aligned with the card, 44px above it (board 10b). */}
+      <div
+        className={`${LINK_HINT_CLASS} absolute left-0 -top-11`}
+        data-testid="workflow-link-hint"
+        data-link-verdict={refusal === null ? 'valid' : 'refused'}
+      >
+        {refusal ?? `Release to make ${taskLabel(blocked)} wait for ${taskLabel(blocker)}`}
       </div>
     </>
   );
@@ -83,15 +115,16 @@ function sameCard(previous: NodeProps<WorkflowFlowNode>, next: NodeProps<Workflo
 export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data, selected }: NodeProps<WorkflowFlowNode>) {
   const showTarget = data.editable && data.canWait;
   const showSource = data.editable && data.canBlock;
-  // The ports stay on the title row, which the project row moves down.
-  const portTop = PORT_OFFSET_Y + (data.projectName !== null ? PROJECT_ROW_HEIGHT : 0);
+  const portTop = nodePortTop(data);
   return (
-    <div className="relative" style={{ width: 256 }}>
+    // `workflow-node` carries the lift while React Flow drags the card (index.css).
+    <div className="workflow-node relative rounded-md" style={{ width: 256 }}>
       <Handle
         type="target"
         position={Position.Left}
         isConnectable={showTarget}
-        className={showTarget ? PORT_CLASS : HIDDEN_PORT_CLASS}
+        isConnectableStart={false}
+        className={`workflow-port-in ${showTarget ? PORT_CLASS : HIDDEN_PORT_CLASS}`}
         style={{ top: portTop }}
       />
       <WorkflowCanvasCard
@@ -105,13 +138,13 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
         type="source"
         position={Position.Right}
         isConnectable={showSource}
-        className={showSource ? PORT_CLASS : HIDDEN_PORT_CLASS}
+        className={`workflow-port-out ${showSource ? PORT_CLASS : HIDDEN_PORT_CLASS}`}
         style={{ top: portTop }}
       />
       {data.editable && (
         <Handle id="card" type="target" position={Position.Left} isConnectable isConnectableStart={false} className={CARD_TARGET_CLASS} />
       )}
-      <LinkDropHint nodeId={id} />
+      <LinkDropHint nodeId={id} portTop={portTop} />
     </div>
   );
 }, sameCard);

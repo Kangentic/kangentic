@@ -5,12 +5,13 @@
  * cooldown buckets keyed `<trigger>:<sessionId>`, the focus/active-project
  * suppression gate (including a destroyed/missing window counting as
  * unfocused - the behavior this notifier exists to preserve), title/body
- * assembly (including the Command Terminal transient-session case), the
- * config gates, and synchronous dispose.
+ * assembly (including the Command Terminal transient-session case, and the
+ * workflow a workflow task's body names), the config gates, and synchronous
+ * dispose.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { DesktopNotifier, type DesktopNotifierOptions } from '../../src/main/notifications/desktop-notifier';
+import { DesktopNotifier, workflowLabel, type DesktopNotifierOptions } from '../../src/main/notifications/desktop-notifier';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../../src/shared/pty-host';
 import type { NotificationConfig, NotificationInput, Session } from '../../src/shared/types';
 
@@ -51,6 +52,7 @@ describe('DesktopNotifier', () => {
   let showNotification: ReturnType<typeof vi.fn>;
   let resolveTaskTitle: ReturnType<typeof vi.fn>;
   let resolveProjectName: ReturnType<typeof vi.fn>;
+  let resolveWorkflowTitle: ReturnType<typeof vi.fn>;
   let notifier: DesktopNotifier;
 
   function buildNotifier(overrides: Partial<DesktopNotifierOptions> = {}): void {
@@ -62,6 +64,7 @@ describe('DesktopNotifier', () => {
       flashFrame,
       resolveTaskTitle,
       resolveProjectName,
+      resolveWorkflowTitle,
       showNotification,
       ...overrides,
     });
@@ -82,6 +85,8 @@ describe('DesktopNotifier', () => {
     showNotification = vi.fn();
     resolveTaskTitle = vi.fn(() => 'Build the thing');
     resolveProjectName = vi.fn(() => 'My Project');
+    // An ordinary task by default: no workflow to name.
+    resolveWorkflowTitle = vi.fn((): string | undefined => undefined);
   });
 
   afterEach(() => {
@@ -142,6 +147,65 @@ describe('DesktopNotifier', () => {
     expect(shownInputs()[0].title).toBe('Command Terminal');
     expect(shownInputs()[0].taskId).toBe('__command_terminal__');
     expect(resolveTaskTitle).not.toHaveBeenCalled();
+    // No task, so no workflow to look up.
+    expect(resolveWorkflowTitle).not.toHaveBeenCalled();
+    expect(shownInputs()[0].body).toBe('My Project');
+  });
+
+  // #732 board 16: a workflow task's idle and crash bodies name the workflow.
+
+  it('an idle workflow task names its workflow after the project', () => {
+    resolveProjectName.mockReturnValue('kangentic');
+    resolveWorkflowTitle.mockReturnValue('Usage budgets');
+    sessionManager.getSession.mockReturnValue(makeSession());
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+    expect(shownInputs()[0]).toEqual({
+      title: 'Build the thing',
+      body: 'kangentic: Usage budgets workflow',
+      projectId: 'proj-1',
+      taskId: 'task-1',
+    });
+    expect(resolveWorkflowTitle).toHaveBeenCalledWith('proj-1', 'task-1');
+  });
+
+  it('a workflow task waiting on permission keeps the prefix before the same place', () => {
+    resolveProjectName.mockReturnValue('kangentic');
+    resolveWorkflowTitle.mockReturnValue('Usage budgets');
+    sessionManager.getSession.mockReturnValue(makeSession());
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    expect(shownInputs()[0].body).toBe('Needs permission: kangentic: Usage budgets workflow');
+  });
+
+  it('a crashed workflow task names its workflow too', () => {
+    resolveProjectName.mockReturnValue('kangentic');
+    resolveTaskTitle.mockReturnValue('Cost roll-up per task');
+    resolveWorkflowTitle.mockReturnValue('Usage budgets');
+    sessionManager.getSession.mockReturnValue(makeSession());
+    buildNotifier();
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(shownInputs()[0]).toMatchObject({
+      title: 'Session crashed: Cost roll-up per task',
+      body: 'kangentic: Usage budgets workflow',
+    });
+  });
+
+  it('a task outside a workflow keeps the bare project name on idle and crash', () => {
+    config = makeConfig({ cooldownSeconds: 0 });
+    sessionManager.getSession.mockReturnValue(makeSession());
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+    sessionManager.emit('exit', 'sess-1', 1, false);
+    expect(shownInputs().map((input) => input.body)).toEqual(['My Project', 'My Project']);
+  });
+
+  it('a workflow title that already ends in "workflow" is not given a second one', () => {
+    expect(workflowLabel('Usage budgets')).toBe('Usage budgets workflow');
+    expect(workflowLabel('Untitled workflow')).toBe('Untitled workflow');
+    expect(workflowLabel('Release Workflow')).toBe('Release Workflow');
+    // Only the whole word counts.
+    expect(workflowLabel('Reworkflow')).toBe('Reworkflow workflow');
   });
 
   it('does not notify when desktop.onAgentIdle is disabled', () => {

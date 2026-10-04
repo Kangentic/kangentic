@@ -13,6 +13,7 @@ import {
   addViewTask,
   createWorkflowForView,
   listWorkflowSummaries,
+  listWorkflowSupersessions,
   readWorkflowDetail,
   removeViewTask,
   setViewLink,
@@ -37,6 +38,8 @@ import {
  */
 export function registerWorkflowHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.WORKFLOW_LIST, (_, projectId: string) => listWorkflowSummaries(context, projectId));
+
+  ipcMain.handle(IPC.WORKFLOW_LIST_SUPERSESSIONS, (_, projectId: string) => listWorkflowSupersessions(projectId));
 
   ipcMain.handle(IPC.WORKFLOW_GET, (_, projectId: string, workflowId: string) => readWorkflowDetail(context, projectId, workflowId));
 

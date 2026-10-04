@@ -500,6 +500,7 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | agent_read_project_ids | TEXT | NOT NULL | '[]' |
 | agent_pty_cols | INTEGER | | NULL |
 | agent_pty_rows | INTEGER | | NULL |
+| paused_at | TEXT | | NULL |
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
 reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
@@ -526,6 +527,10 @@ so every later start and resume reads them; it changes no plan, so `revision` st
 desktop makes (`persistPtyGrid`), as a task session's are on `sessions.last_pty_cols/rows`. A start
 with no grid measured (after a restart) spawns at it, so the agent's first frame is drawn at the
 pane's size rather than the spawn default.
+
+`paused_at` is when a paused workflow was paused, stamped by `setState` on Pause and cleared by
+every other state, so it is set only while the workflow is paused. The Workflows picker reads it
+for the paused row's "Paused yesterday 18:20". A workflow paused before the column existed has none.
 
 Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
 
@@ -1159,6 +1164,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 77. **`agent_name` / `agent_session_id` on workflows** - the workflow agent's conversation (see the `workflows` table above), both `TEXT DEFAULT NULL`. Guarded `ALTER TABLE`s on one `table_info` read, inside `runWorkflowsMigration`.
 78. **`agent_cwd` and `agent_read_project_ids` on workflows** - `agent_cwd TEXT DEFAULT NULL`, the checkout the agent's conversation ran in (written at every start), where its CLI keeps the history, so the transcript readers can read the conversation; and `agent_read_project_ids TEXT NOT NULL DEFAULT '[]'`, the other registered projects the workflow agent asked to read (see the `workflows` table above). Guarded `ALTER TABLE`s on the same `table_info` read.
 79. **`agent_pty_cols` / `agent_pty_rows` on workflows** - both `INTEGER DEFAULT NULL`, the workflow agent's last PTY grid (see the `workflows` table above), so a start after a restart spawns at the pane's size. Guarded `ALTER TABLE`s on the same `table_info` read.
+80. **`paused_at` on workflows** - `TEXT DEFAULT NULL`, when a paused workflow was paused (see the `workflows` table above), for the picker's paused row. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
 
 ### Key Migrations (Global DB)
 
@@ -1289,6 +1295,7 @@ Operates on the workflow's home project DB.
 | `getById(id)` | One workflow, or undefined |
 | `listAll()` | Every workflow, newest first. MCP's `kangentic_list_workflows` with `includeFinished` |
 | `listOpen()` | Every workflow not finished, newest first: the picker's rows |
+| `listSupersessions()` | Every task a started workflow (running, paused or done) replaced at Start, as `{ sourceTaskId, workflowId, title, colorSlot }` with the workflow's current title. Read from `task_moves`: the source's latest move into a Done column must be Start's (origin `workflow`, reason beginning `SUPERSEDED_MOVE_REASON_PREFIX`, at or after `started_at`), credited to the workflow that started last at or before it. A source that left To Do before Start and was completed by hand is not listed |
 | `hasRunning()` / `hasActive()` | One indexed probe each (running; running or paused), the engine's fast path for a board with no workflow to read |
 | `listRunning()` | Running workflows, oldest start first |
 | `create({ title, brief, sourceTaskId })` | A new not-started workflow with an empty plan, "Untitled workflow" when no title, and the first free color slot |
@@ -1296,7 +1303,7 @@ Operates on the workflow's home project DB.
 | `writeDraftLayout(id, draft)` | Store where hands placed a not-started workflow's cards, leaving the revision alone: a card move changes no plan |
 | `rename(id, title)` | Rename, bumping the revision |
 | `markStarted(id)` | Running, the plan spent (its tasks now exist), `started_at` stamped |
-| `setState(id, state)` | Running, paused or done; done stamps `finished_at` |
+| `setState(id, state)` | Running, paused or done; done stamps `finished_at`, paused stamps `paused_at`, and any other state clears it |
 | `bumpRevision(id)` | Any change to a started workflow's tasks, links or routes |
 | `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |

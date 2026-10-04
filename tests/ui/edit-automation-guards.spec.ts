@@ -245,14 +245,20 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     const stepperValue = editDialog().locator('[data-testid="edit-automation-max-runs-value"]');
     const stepperMore = editDialog().locator('[data-testid="edit-automation-max-runs-increment"]');
 
+    // Off, the whole panel reads dimmed: the Maximum runs label as well as
+    // the stepper (board 15c), not the stepper alone.
+    const maxRunsLabel = editDialog().locator('[data-testid="edit-automation-max-runs-label"]');
+
     await expect(frequencySwitch).toHaveAttribute('aria-checked', 'false');
     await expect(stepperValue).toBeDisabled();
     await expect(stepperMore).toBeDisabled();
+    await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
 
     await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
     await expect(frequencySwitch).toHaveAttribute('aria-checked', 'true');
     await expect(stepperValue).toBeEnabled();
     await expect(stepperMore).toBeEnabled();
+    await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'false');
     await expect(stepperValue).toHaveValue('1');
     await stepperMore.click();
     await expect(stepperValue).toHaveValue('2');
@@ -261,6 +267,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(frequencySwitch).toHaveAttribute('aria-checked', 'false');
     await expect(stepperValue).toBeDisabled();
     await expect(stepperMore).toBeDisabled();
+    await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
   });
 
   test('the guards set in the dialog show on the row, and Save persists them', async () => {
@@ -302,9 +309,8 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     for (const blocked of [enter, exit]) {
       await expect(blocked).toBeDisabled();
       // The reason rides the option as its hover tip, so a disabled option
-      // says why instead of just refusing.
-      await expect(blocked).toHaveAttribute('title', /\S/);
-      await expect(blocked).toHaveAttribute('title', /turn end/i);
+      // says why instead of just refusing. One short line (board 15c).
+      await expect(blocked).toHaveAttribute('title', 'Move to column runs only at a turn end.');
     }
 
     // A click on a blocked option changes nothing.
@@ -394,7 +400,31 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     const setup = card('condition').locator('[data-testid="edit-automation-condition-setup"]');
     await expect(setup).toBeVisible();
     await expect(setup).toContainText('Set up an Automation agent');
-    await expect(setup.locator('[data-testid="edit-automation-open-settings"]')).toHaveText('Open Settings');
+    const openSettings = setup.locator('[data-testid="edit-automation-open-settings"]');
+    await expect(openSettings).toHaveText('Open Settings');
+
+    // Board 15c: the notice reads as the way forward. Its line is semibold in
+    // the body color, and Open Settings carries a gear and the accent, the same
+    // tone as the notice's own info icon. Compared to each other, not to a hex.
+    await expect(openSettings.locator('svg')).toHaveCount(1);
+    const tones = await setup.evaluate((node) => {
+      const text = node.querySelector('[data-testid="edit-automation-condition-setup-text"]');
+      const icon = node.querySelector(':scope > svg');
+      const button = node.querySelector('[data-testid="edit-automation-open-settings"]');
+      if (!text || !icon || !button) return null;
+      // The body text color, read off a probe so the theme decides it.
+      const probe = document.createElement('span');
+      probe.className = 'text-fg';
+      node.appendChild(probe);
+      const bodyColor = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        textWeight: getComputedStyle(text).fontWeight,
+        textIsBodyColor: getComputedStyle(text).color === bodyColor,
+        buttonMatchesIcon: getComputedStyle(button).color === getComputedStyle(icon).color,
+      };
+    });
+    expect(tones).toEqual({ textWeight: '600', textIsBodyColor: true, buttonMatchesIcon: true });
 
     // Nothing to write a condition into, and no variable to put in it.
     await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toHaveCount(0);
@@ -454,11 +484,179 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(columnLabelRow.getByText('Optional', { exact: true })).toHaveCount(0);
 
     const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
-    await expect(target.locator('option').first()).toHaveText('Next column');
-    await expect(target).toHaveValue('');
+    await expect(target).toHaveAttribute('data-value', '');
+    await expect(target).toHaveText('Next column');
+    await target.click();
+    const options = page.locator('[data-testid="automation-config-targetColumn-option"]');
+    await expect(options.first()).toHaveText('Next column');
+    await expect(options.first()).toHaveAttribute('data-value', '');
     // The board's other columns follow, and the column being edited is not offered.
-    await expect(target.locator('option', { hasText: 'Testing' })).toHaveCount(1);
-    await expect(target.locator('option', { hasText: 'Executing' })).toHaveCount(0);
+    await expect(options.filter({ hasText: 'Testing' })).toHaveCount(1);
+    await expect(options.filter({ hasText: 'Executing' })).toHaveCount(0);
+    // Closed again, since the open menu sits over the dialog's footer.
+    await page.keyboard.press('Escape');
+    await expect(options).toHaveCount(0);
+  });
+
+  // 5b - The Column picker carries each column's color ──────────────────────
+
+  test("the Column picker shows each column's color dot, and Next column has none", async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    await target.click();
+    const menu = page.locator('[data-testid="automation-config-targetColumn-menu"]');
+    await expect(menu).toBeVisible();
+    const options = menu.locator('[data-testid="automation-config-targetColumn-option"]');
+
+    // Next column is not one column, so it has no color of its own.
+    await expect(options.first().locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+
+    // Testing's dot is Testing's own color, read from the board, as the
+    // browser resolves it (so a hex and its rgb() compare equal).
+    const testingOption = options.filter({ hasText: 'Testing' });
+    const colors = await testingOption.locator('[data-testid="automation-column-dot"]').evaluate(async (dot) => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((swimlane) => swimlane.name === 'Testing');
+      const probe = document.createElement('span');
+      probe.style.backgroundColor = lane?.color ?? '';
+      document.body.appendChild(probe);
+      const expected = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { actual: getComputedStyle(dot).backgroundColor, expected };
+    });
+    expect(colors.actual).toBe(colors.expected);
+
+    // Choosing it closes the menu and the field shows the name with its dot.
+    await testingOption.click();
+    await expect(menu).toBeHidden();
+    await expect(target).toHaveAttribute('data-value', 'Testing');
+    await expect(target).toHaveText('Testing');
+    await expect(target.locator('[data-testid="automation-column-dot"]')).toHaveCount(1);
+
+    // Escape closes the menu, not the editor under it.
+    await target.click();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(editDialog()).toBeVisible();
+  });
+
+  test('a column renamed in the open Board Manager keeps its dot in the Column picker', async () => {
+    // The choices come from the Board Manager's drafts, not the saved board, so
+    // a rename that is not saved yet still carries the column's color.
+    await openColumn('Testing');
+    await dialog().locator('[data-testid="board-manager-name"]').fill('Verify');
+    await dialog().locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]').click();
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    await card('action').locator('[data-testid="automation-config-targetColumn"]').click();
+    const options = page.locator('[data-testid="automation-config-targetColumn-option"]');
+    await expect(options.filter({ hasText: 'Testing' })).toHaveCount(0);
+    const renamed = options.filter({ hasText: 'Verify' });
+    await expect(renamed).toHaveCount(1);
+    const colors = await renamed.locator('[data-testid="automation-column-dot"]').evaluate(async (dot) => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((swimlane) => swimlane.name === 'Testing');
+      const probe = document.createElement('span');
+      probe.style.backgroundColor = lane?.color ?? '';
+      document.body.appendChild(probe);
+      const expected = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return { actual: getComputedStyle(dot).backgroundColor, expected };
+    });
+    expect(colors.actual).toBe(colors.expected);
+    await page.keyboard.press('Escape');
+  });
+
+  test('the Column picker works from the keyboard alone, as the native select it replaced did', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'move_to_column');
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    await target.focus();
+    // ArrowDown opens the menu with focus on the current choice, Next column.
+    await page.keyboard.press('ArrowDown');
+    const menu = page.locator('[data-testid="automation-config-targetColumn-menu"]');
+    await expect(menu).toBeVisible();
+    const options = menu.locator('[data-testid="automation-config-targetColumn-option"]');
+    await expect(options.first()).toBeFocused();
+
+    // The options sit in a body portal, out of the Tab order: the arrows reach them.
+    await page.keyboard.press('ArrowDown');
+    await expect(options.nth(1)).toBeFocused();
+    const chosen = await options.nth(1).getAttribute('data-value');
+    expect(chosen).not.toBe('');
+
+    // Enter picks it, closes the menu, and hands focus back to the field.
+    await page.keyboard.press('Enter');
+    await expect(menu).toBeHidden();
+    await expect(target).toHaveAttribute('data-value', chosen ?? '');
+    await expect(target).toBeFocused();
+    await expect(editDialog()).toBeVisible();
+  });
+
+  test('a Column the board no longer has stays listed, marked, and without a dot', async () => {
+    await seedColumn('Executing', [
+      { name: 'Hand off', type: 'move_to_column', trigger: 'turn_end', config: { targetColumn: 'Gone' } },
+    ]);
+    await openColumn('Executing');
+    await row('Hand off').locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+
+    const target = card('action').locator('[data-testid="automation-config-targetColumn"]');
+    // Opening the dialog never re-points the row.
+    await expect(target).toHaveAttribute('data-value', 'Gone');
+    await expect(target).toHaveText('Gone (not on this board)');
+    await expect(target.locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+
+    await target.click();
+    const options = page.locator('[data-testid="automation-config-targetColumn-option"]');
+    const stale = options.last();
+    await expect(stale).toHaveAttribute('data-value', 'Gone');
+    await expect(stale).toHaveText('Gone (not on this board)');
+    await expect(stale).toHaveAttribute('aria-selected', 'true');
+    await expect(stale.locator('[data-testid="automation-column-dot"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(options).toHaveCount(0);
+  });
+
+  // 5c - The Action card follows Type ────────────────────────────────────────
+
+  test("Send message's Action card: its own icon, info on Type, Message and Delivery, Delivery on one row, a growing Message", async () => {
+    await openColumn('Executing');
+    await addThroughPicker('enter', 'send_message');
+
+    // The header icon is the chosen type's (a speech bubble), and follows Type.
+    const headerIcon = card('action').locator('svg[data-icon]');
+    await expect(headerIcon).toHaveAttribute('data-icon', 'message-square');
+
+    // Short notes behind info icons, the manifest's for Message and Delivery.
+    for (const label of ['Type', 'Message', 'Delivery']) {
+      await expect(card('action').getByRole('button', { name: new RegExp(`^About ${label}: \\S`) })).toBeVisible();
+    }
+
+    // Delivery is a choice row: its label and its control share one row.
+    const deliveryRow = card('action').locator('[data-testid="automation-config-mode-row"]');
+    await expect(deliveryRow.getByText('Delivery', { exact: true })).toBeVisible();
+    await expect(deliveryRow.locator('[data-testid="automation-config-mode"]')).toBeVisible();
+    expect(await deliveryRow.evaluate((node) => getComputedStyle(node).flexDirection)).toBe('row');
+
+    // The Message starts one row tall and grows with its text, as Condition does.
+    const message = card('action').locator('[data-testid="automation-config-message"]');
+    await expect(message).toHaveAttribute('rows', '1');
+    const before = await message.evaluate((node) => node.clientHeight);
+    await message.fill('First line\nSecond line\nThird line\nFourth line');
+    await expect.poll(() => message.evaluate((node) => node.clientHeight)).toBeGreaterThan(before);
+
+    // A script keeps its fixed rows: it has a shape of its own.
+    await pickType('run_script');
+    await expect(headerIcon).toHaveAttribute('data-icon', 'square-terminal');
+    await expect(card('action').locator('[data-testid="automation-config-script"]')).toHaveAttribute('rows', '3');
+
+    await pickType('move_to_column');
+    await expect(headerIcon).toHaveAttribute('data-icon', 'square-arrow-right');
   });
 
   test('a new automation opens with its generated name selected, so typing replaces it', async () => {

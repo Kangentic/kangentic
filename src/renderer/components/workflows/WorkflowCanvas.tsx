@@ -19,10 +19,10 @@ import {
 import type { WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { layoutWorkflow } from './workflow-layout';
-import { canBlock, canWait, linkRefusal, waitingOf } from './workflow-graph';
+import { canBlock, canWait, findTask, linkRefusal, taskLabel, waitingOf } from './workflow-graph';
 import { canvasCardHeight } from './WorkflowCanvasCard';
-import { WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
-import { WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
+import { LINK_HINT_CLASS, WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
+import { WorkflowConnectionLine, WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
 import { WorkflowDetailContext } from './workflow-canvas-context';
 
 /**
@@ -35,11 +35,13 @@ import { WorkflowDetailContext } from './workflow-canvas-context';
  *   the inspector's buttons and their confirms.
  * - One selected task (`selectionKeyCode`/`multiSelectionKeyCode` null), since
  *   the inspector shows one.
- * - Double-click opens the task, so it does not zoom.
+ * - Double-click selects the task and opens it, so it does not zoom.
  * - Links are dragged one way, from the blocker's port onto the task that
  *   waits (strict connection mode), never placed by clicking.
  * - No grid snap: a smooth drag matters more than alignment, which Auto layout
  *   gives back.
+ * - Arrow keys move the selected card (React Flow's keyboard access, 5px a
+ *   press, 20px with Shift), saved like a drag once the keys stop.
  * - Scroll pans; Ctrl (Cmd on macOS) with the wheel, or a pinch, zooms.
  * - No attribution: the library is MIT and the project attributes only where
  *   the law requires it.
@@ -50,6 +52,11 @@ const EDGE_TYPES = { workflowLink: WorkflowEdge };
 const PRO_OPTIONS = { hideAttribution: true };
 const FIT_VIEW_OPTIONS = { padding: 0.15, maxZoom: 1 };
 const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
+const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+/** How long the arrow keys rest before the card's new place is saved: one save per run of presses. */
+const KEY_MOVE_SAVE_DELAY_MS = 400;
+/** The empty-canvas hint's offset from the pointer, clear of the cursor (board 10). */
+const POINTER_HINT_OFFSET = { x: 22, y: 16 };
 
 function sameNodeData(previous: WorkflowNodeData, next: WorkflowNodeData): boolean {
   return previous.viewTask === next.viewTask
@@ -127,7 +134,8 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
-  const linking = useConnection((connection) => connection.inProgress);
+  // The blocker a link is being drawn from, or null. Changes at the two ends of the gesture only.
+  const linkingFrom = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
 
   // Once any task is on another board, every card names its board (board 17).
   const acrossBoards = useMemo(() => detail.tasks.some((task) => task.projectId !== detail.homeProjectId), [detail.tasks, detail.homeProjectId]);
@@ -173,6 +181,17 @@ export function WorkflowCanvas({
     if (applicable.length > 0) setNodes((current) => applyNodeChanges(applicable, current));
   }, []);
 
+  // The link a drag just made stays in the accent until the selection moves
+  // on. Linking itself selects the task that now waits once main accepts the
+  // link, which is not moving on, so only a selection of another task (or of
+  // none) clears it. Derived during render, as the node re-seed above is.
+  const [freshLink, setFreshLink] = useState<{ blockerKey: string; blockedKey: string } | null>(null);
+  const [selectionSeen, setSelectionSeen] = useState(selectedTaskKey);
+  if (selectionSeen !== selectedTaskKey) {
+    setSelectionSeen(selectedTaskKey);
+    if (freshLink !== null && selectedTaskKey !== freshLink.blockedKey) setFreshLink(null);
+  }
+
   const doneKeys = useMemo(() => new Set(detail.tasks.filter((task) => task.place === 'done').map((task) => task.key)), [detail.tasks]);
   const edges = useMemo<WorkflowFlowEdge[]>(() => layout.edges.map((edge) => ({
     id: edge.id,
@@ -189,8 +208,21 @@ export function WorkflowCanvas({
       targetOffset: edge.targetOffset,
       satisfied: doneKeys.has(edge.blockerKey),
       emphasized: selectedTaskKey !== null && (edge.blockerKey === selectedTaskKey || edge.blockedKey === selectedTaskKey),
+      fresh: freshLink !== null && edge.blockerKey === freshLink.blockerKey && edge.blockedKey === freshLink.blockedKey,
     },
-  })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys]);
+  })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys, freshLink]);
+
+  // While a link is drawn, only the tasks that can take it keep their
+  // incoming port (board 10b). index.css hides every port during the drag;
+  // this one rule shows the targets' again. A rule rather than a prop, so
+  // starting a link re-renders no card.
+  const linkTargetsRule = useMemo(() => {
+    if (linkingFrom === null) return null;
+    const selectors = detail.tasks
+      .filter((task) => task.key !== linkingFrom && linkRefusal(detail, linkingFrom, task.key) === null)
+      .map((task) => `.workflow-canvas[data-linking] .react-flow__node[data-id="${CSS.escape(task.key)}"] .workflow-port-in`);
+    return selectors.length > 0 ? `${selectors.join(',\n')} { visibility: visible; }` : null;
+  }, [detail, linkingFrom]);
 
   // Fit every card in view when a workflow opens, and when its card count
   // changes (Add task, the agent's first plan). Only once React Flow has
@@ -207,18 +239,53 @@ export function WorkflowCanvas({
   }, [nodesInitialized, fitSignature, reactFlow]);
 
   const handleNodeClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onSelectTask(node.id), [onSelectTask]);
-  const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onOpenTask(node.id), [onOpenTask]);
+  // A double-click's first click already selects; selecting here as well keeps
+  // the two together whatever reaches the handler first.
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => {
+    onSelectTask(node.id);
+    onOpenTask(node.id);
+  }, [onSelectTask, onOpenTask]);
   const handleNodeContextMenu = useCallback<NodeMouseHandler<WorkflowFlowNode>>((event, node) => {
     event.preventDefault();
     onSelectTask(node.id);
     onCardContextMenu?.(node.id, { x: event.clientX, y: event.clientY });
   }, [onSelectTask, onCardContextMenu]);
   const handlePaneClick = useCallback(() => onSelectTask(null), [onSelectTask]);
+
+  // A card moved with the arrow keys is saved the way a drag stop saves it,
+  // once the keys rest. Each waiting place is kept per card, with the workflow
+  // it was made on: another workflow on the canvas drops them, leaving the view
+  // saves them, and a drag or Auto layout supersedes them.
+  const pendingKeyMoves = useRef<{ workflowId: string; positions: Map<string, { x: number; y: number }>; timer: number } | null>(null);
+  const onMoveCardsRef = useRef(onMoveCards);
+  useEffect(() => { onMoveCardsRef.current = onMoveCards; }, [onMoveCards]);
+  const takeKeyMoves = useCallback((): Map<string, { x: number; y: number }> => {
+    const pending = pendingKeyMoves.current;
+    pendingKeyMoves.current = null;
+    if (!pending) return new Map();
+    window.clearTimeout(pending.timer);
+    return pending.positions;
+  }, []);
+  const saveKeyMoves = useCallback(() => {
+    const positions = takeKeyMoves();
+    if (positions.size > 0) onMoveCardsRef.current([...positions].map(([key, position]) => ({ key, ...position })));
+  }, [takeKeyMoves]);
+  const workflowId = detail.workflow.id;
+  useEffect(() => {
+    if (pendingKeyMoves.current !== null && pendingKeyMoves.current.workflowId !== workflowId) takeKeyMoves();
+  }, [workflowId, takeKeyMoves]);
+  useEffect(() => saveKeyMoves, [saveKeyMoves]);
+
   const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, _node, moved) => {
-    onMoveCards(moved.map((node) => ({ key: node.id, x: node.position.x, y: node.position.y })));
-  }, [onMoveCards]);
+    // One save: any arrow-key place still waiting, then the drag's own places over it.
+    const positions = takeKeyMoves();
+    for (const node of moved) positions.set(node.id, { x: node.position.x, y: node.position.y });
+    onMoveCards([...positions].map(([key, position]) => ({ key, ...position })));
+  }, [onMoveCards, takeKeyMoves]);
   const handleConnect = useCallback((connection: Connection) => {
-    if (connection.source && connection.target) onLink(connection.source, connection.target);
+    if (!connection.source || !connection.target) return;
+    setFreshLink({ blockerKey: connection.source, blockedKey: connection.target });
+    onLink(connection.source, connection.target);
   }, [onLink]);
   const isValidConnection = useCallback<IsValidConnection<WorkflowFlowEdge>>((connection) => (
     !planHeld && !!connection.source && !!connection.target && linkRefusal(detail, connection.source, connection.target) === null
@@ -229,8 +296,20 @@ export function WorkflowCanvas({
     if (event.key === 'Escape' && selectedTaskKey !== null) {
       event.stopPropagation();
       onSelectTask(null);
+      return;
     }
-  }, [onSelectTask, selectedTaskKey]);
+    // React Flow's node handler runs first and claims an arrow key only when
+    // it moved the selected card, so a claimed key is a move to keep.
+    const fromCard = event.target instanceof Element && event.target.closest('.react-flow__node') !== null;
+    if (!ARROW_KEYS.has(event.key) || !event.isDefaultPrevented() || !fromCard || selectedTaskKey === null) return;
+    const node = reactFlow.getInternalNode(selectedTaskKey);
+    if (!node) return;
+    const pending = pendingKeyMoves.current;
+    if (pending) window.clearTimeout(pending.timer);
+    const positions = pending?.positions ?? new Map<string, { x: number; y: number }>();
+    positions.set(selectedTaskKey, { x: node.position.x, y: node.position.y });
+    pendingKeyMoves.current = { workflowId, positions, timer: window.setTimeout(saveKeyMoves, KEY_MOVE_SAVE_DELAY_MS) };
+  }, [onSelectTask, selectedTaskKey, reactFlow, workflowId, saveKeyMoves]);
 
   return (
     // data-no-dismiss: the pane's grab cursor is an action, so a click on empty
@@ -239,18 +318,21 @@ export function WorkflowCanvas({
       className="relative h-full w-full workflow-canvas"
       data-no-dismiss
       // While a link is drawn the cards' full-size targets take the pointer
-      // (index.css). One attribute here, so no card re-renders at either end.
-      data-linking={linking ? '' : undefined}
+      // and the ports hide (index.css). One attribute here, so no card
+      // re-renders at either end.
+      data-linking={linkingFrom !== null ? '' : undefined}
       onKeyDown={handleKeyDown}
       data-testid="workflow-canvas"
     >
       {WORKFLOW_EDGE_MARKERS}
+      {linkTargetsRule !== null && <style>{linkTargetsRule}</style>}
       <WorkflowDetailContext.Provider value={detail}>
       <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
+        connectionLineComponent={WorkflowConnectionLine}
         onNodesChange={onNodesChange}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
@@ -287,6 +369,8 @@ export function WorkflowCanvas({
             onFitView={() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }}
             onAddTask={onAddTask}
             onAutoLayout={() => {
+              // Auto layout puts every card back, so an arrow-key place still waiting must not land after it.
+              takeKeyMoves();
               onAutoLayout();
               // The cards move on the next render; fit them once they have.
               requestAnimationFrame(() => requestAnimationFrame(() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }));
@@ -295,6 +379,44 @@ export function WorkflowCanvas({
         </Panel>
       </ReactFlow>
       </WorkflowDetailContext.Provider>
+      <LinkPointerHint detail={detail} />
+    </div>
+  );
+}
+
+/**
+ * Beside the pointer while a link is drawn over empty canvas (board 10): what
+ * a release on a task would do. Over a task the card itself says it, so this
+ * one shows only where no card speaks: on empty canvas, back over the blocker,
+ * or over a port that is no drop target. It follows the pointer, so it
+ * re-renders on every move; it is the only thing that does.
+ */
+function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
+  const drag = useConnection((connection) => (
+    connection.inProgress
+      ? {
+        blockerKey: connection.fromNode.id,
+        overKey: connection.toNode?.id ?? null,
+        valid: connection.isValid === true,
+        x: connection.pointer.x,
+        y: connection.pointer.y,
+      }
+      : null
+  ));
+  if (drag === null) return null;
+  const blocker = findTask(detail, drag.blockerKey);
+  if (!blocker) return null;
+  const cardSpeaks = drag.overKey !== null
+    && drag.overKey !== drag.blockerKey
+    && (drag.valid || linkRefusal(detail, drag.blockerKey, drag.overKey) !== null);
+  if (cardSpeaks) return null;
+  return (
+    <div
+      className={`${LINK_HINT_CLASS} absolute z-20`}
+      style={{ left: drag.x + POINTER_HINT_OFFSET.x, top: drag.y + POINTER_HINT_OFFSET.y }}
+      data-testid="workflow-link-canvas-hint"
+    >
+      Release on a task to make it wait for {taskLabel(blocker)}
     </div>
   );
 }

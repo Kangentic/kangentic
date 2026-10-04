@@ -68,12 +68,11 @@ describe('the footer of a card in To Do', () => {
 });
 
 describe('the lock on the board', () => {
-  it('refuses every move of a running workflow\'s card, To Do in its own words', () => {
+  it('refuses every move of a running workflow\'s card with the lock\'s sentence, To Do included', () => {
     const workflow = boardWorkflow();
     expect(isLockedOnBoard(workflow)).toBe(true);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBe('#414 is locked while Usage budgets runs.');
-    expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' }))
-      .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+    expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' })).toBe('#414 is locked while Usage budgets runs.');
     // Reordering in its own column is never refused.
     expect(boardMoveRefusal(workflow, TASK, { id: 'executing', role: null })).toBeNull();
   });
@@ -89,7 +88,8 @@ describe('the lock on the board', () => {
     const workflow = boardWorkflow({ state: 'paused' });
     expect(isLockedOnBoard(workflow)).toBe(false);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBeNull();
-    expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' })).not.toBeNull();
+    expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' }))
+      .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
   });
 
   it('keeps Backlog and Archive from taking a task out of its workflow', () => {

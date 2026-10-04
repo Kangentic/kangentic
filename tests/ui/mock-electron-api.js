@@ -274,12 +274,14 @@
         onAgentIdle: true,
         onAgentCrash: true,
         onPlanComplete: true,
+        onWorkflowComplete: true,
         onSpawnStalled: true,
       },
       toasts: {
         onAgentIdle: true,
         onAgentCrash: true,
         onPlanComplete: true,
+        onWorkflowComplete: true,
         onSpawnStalled: true,
         durationSeconds: 4,
         maxCount: 5,
@@ -4676,22 +4678,16 @@
       var links = [];
       var hydrated = false;
       var listeners = [];
+      // The session each workflow's agent started over in, by workflow id, as
+      // main's workflow-agent.ts keeps it. Set by __mockWorkflowAgentStartOver.
+      var startedOverSessions = {};
 
       function fireMockWorkflowAgentStatus(session) {
         if (window.__mockFireStatus) window.__mockFireStatus(session.id, JSON.parse(JSON.stringify(session)));
       }
 
-      function openMockWorkflowAgent(projectId, workflowId, resume) {
-        if (window.__mockWorkflowAgentUnavailable) {
-          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable) };
-        }
-        var existing = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
-        if (existing && resume && existing.status === 'suspended') {
-          existing.status = 'running';
-          fireMockWorkflowAgentStatus(existing);
-        }
-        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null };
-        var session = {
+      function makeMockWorkflowAgentSession(projectId, workflowId) {
+        return {
           id: crypto.randomUUID(),
           taskId: workflowId,
           projectId: projectId,
@@ -4710,6 +4706,21 @@
           isolatedSwimlaneId: null,
           agentSessionId: crypto.randomUUID(),
         };
+      }
+
+      function openMockWorkflowAgent(projectId, workflowId, resume) {
+        if (window.__mockWorkflowAgentUnavailable) {
+          return { session: null, unavailable: String(window.__mockWorkflowAgentUnavailable) };
+        }
+        var existing = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        if (existing && resume && existing.status === 'suspended') {
+          existing.status = 'running';
+          // A normal resume ends what the pane said about a start-over.
+          delete startedOverSessions[workflowId];
+          fireMockWorkflowAgentStatus(existing);
+        }
+        if (existing) return { session: JSON.parse(JSON.stringify(existing)), unavailable: null };
+        var session = makeMockWorkflowAgentSession(projectId, workflowId);
         sessions.push(session);
         // Main records the conversation on the workflow at every start.
         var owner = entries.find(function (entry) { return entry.workflow.id === workflowId; });
@@ -4731,7 +4742,7 @@
             projectId: seed.projectId || null,
             workflow: Object.assign({
               brief: null, source_task_id: null, state: 'draft', draft: null, color_slot: 1, revision: 1,
-              created_at: now(), started_at: null, finished_at: null, agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
+              created_at: now(), started_at: null, finished_at: null, paused_at: null, agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
             }, JSON.parse(JSON.stringify(row))),
           });
         });
@@ -4754,6 +4765,25 @@
       }
       window.__mockFireWorkflowChanged = function (event) {
         listeners.slice().forEach(function (fn) { fn(event); });
+      };
+      // A resume the agent CLI could not honour, as main's startOverIfResumeFailed
+      // handles it: the agent's session exits, a new one starts on a new
+      // conversation, the summary names it, and a change is pushed.
+      window.__mockWorkflowAgentStartOver = function (workflowId) {
+        var entry = requireEntry(null, workflowId);
+        var previous = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
+        if (previous) {
+          previous.status = 'exited';
+          previous.exitCode = 1;
+          fireMockWorkflowAgentStatus(previous);
+        }
+        var session = makeMockWorkflowAgentSession(homeOf(entry), workflowId);
+        sessions.push(session);
+        entry.workflow.agent_session_id = session.agentSessionId;
+        startedOverSessions[workflowId] = session.id;
+        fireMockWorkflowAgentStatus(session);
+        emit(homeOf(entry), workflowId, false);
+        return session.id;
       };
 
       // KEEP IN SYNC with src/shared/workflow-route.ts.
@@ -4866,7 +4896,11 @@
       function agentSummary(workflowId) {
         var agent = sessions.find(function (candidate) { return candidate.workflowId === workflowId && candidate.status !== 'exited'; });
         if (!agent) return null;
-        return { state: agent.status === 'suspended' ? 'paused' : 'idle', lastReplyAt: null };
+        return {
+          state: agent.status === 'suspended' ? 'paused' : 'idle',
+          lastReplyAt: null,
+          startedOverSessionId: startedOverSessions[workflowId] === agent.id ? agent.id : null,
+        };
       }
 
       function summary(entry) {
@@ -4961,6 +4995,30 @@
             .filter(function (entry) { return homeOf(entry) === projectId && entry.workflow.state !== 'done'; })
             .map(summary);
         },
+        // Main reads the move Start wrote; the mock has no move history, so a
+        // seeded started workflow whose source sits in Done stands for one
+        // whose Start moved it, and start() above records whether it did.
+        // Finished workflows stay, unlike list. A source two workflows share
+        // goes to the one that started last, as main credits it.
+        listSupersessions: async function (projectId) {
+          hydrate();
+          var everyTask = tasks.concat(archivedTasks);
+          var bySource = {};
+          entries
+            .filter(function (entry) {
+              return homeOf(entry) === projectId && entry.workflow.state !== 'draft' && entry.workflow.source_task_id && entry.supersededSource !== false;
+            })
+            .slice()
+            .sort(function (left, right) { return String(right.workflow.started_at || '').localeCompare(String(left.workflow.started_at || '')); })
+            .forEach(function (entry) {
+              var sourceId = entry.workflow.source_task_id;
+              if (bySource[sourceId]) return;
+              var source = everyTask.find(function (task) { return task.id === sourceId; });
+              if (!source || placeOf(source) !== 'done' || source.workflow_id === entry.workflow.id) return;
+              bySource[sourceId] = { sourceTaskId: sourceId, workflowId: entry.workflow.id, title: entry.workflow.title, colorSlot: entry.workflow.color_slot };
+            });
+          return Object.keys(bySource).map(function (sourceId) { return bySource[sourceId]; });
+        },
         get: async function (projectId, workflowId) {
           return detail(requireEntry(projectId, workflowId));
         },
@@ -4974,7 +5032,7 @@
             id: uuid(), title: 'Untitled workflow',
             brief: source ? [source.title, source.description].filter(Boolean).join('\n\n') : null,
             source_task_id: source ? source.id : null, state: 'draft', draft: { tasks: [], links: [] },
-            color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null,
+            color_slot: slot, revision: 1, created_at: now(), started_at: null, finished_at: null, paused_at: null,
             agent_name: null, agent_session_id: null, agent_cwd: null, agent_read_project_ids: [],
           };
           entries.unshift({ projectId: projectId, workflow: workflow });
@@ -5020,9 +5078,13 @@
             links.push({ workflow_id: workflowId, blocker_task_id: idByKey[link.blocker], blocked_task_id: idByKey[link.blocked] });
           });
           var source = entry.workflow.source_task_id ? tasks.find(function (task) { return task.id === entry.workflow.source_task_id; }) : null;
+          // Main's supersedeSourceTask: only a source still in To Do moves to
+          // Done, and only that move makes it superseded (listSupersessions).
+          entry.supersededSource = false;
           if (source && laneOf(source.swimlane_id) && laneOf(source.swimlane_id).role === 'todo' && doneLane()) {
             source.swimlane_id = doneLane().id;
             source.archived_at = now();
+            entry.supersededSource = true;
           }
           entry.workflow.state = 'running';
           entry.workflow.draft = null;
@@ -5034,6 +5096,8 @@
           var entry = requireEntry(projectId, workflowId);
           if (entry.workflow.state !== 'running') throw new Error('"' + entry.workflow.title + '" is not running.');
           entry.workflow.state = 'paused';
+          // Main's setState stamps it on Pause and clears it on every other state.
+          entry.workflow.paused_at = now();
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, false);
         },
@@ -5041,6 +5105,7 @@
           var entry = requireEntry(projectId, workflowId);
           if (entry.workflow.state !== 'paused') throw new Error('"' + entry.workflow.title + '" is not paused.');
           entry.workflow.state = 'running';
+          entry.workflow.paused_at = null;
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, false);
         },

@@ -6,6 +6,7 @@ import type {
   WorkflowChangedEvent,
   WorkflowDetail,
   WorkflowSummary,
+  WorkflowSupersession,
   WorkflowTaskInput,
 } from '../../shared/types';
 import { describeIpcError } from '../lib/ipc-error';
@@ -34,6 +35,16 @@ interface WorkflowStore {
   selectedTaskKey: string | null;
 
   loadWorkflows: () => Promise<void>;
+
+  /**
+   * The current project's tasks a workflow replaced at Start, by task id: what
+   * the Done row's "Superseded by" line reads. Finished workflows included,
+   * which `summaries` leaves out. Reloaded with the summaries, so every change
+   * push refreshes it too.
+   */
+  supersededBy: Record<string, WorkflowSupersession>;
+  loadSupersessions: () => Promise<void>;
+
   selectWorkflow: (workflowId: string | null, taskKey?: string | null) => void;
   selectTask: (taskKey: string | null) => void;
   loadDetail: () => Promise<void>;
@@ -119,6 +130,8 @@ let detailGeneration = 0; // hmr-safe: a reset generation only discards in-fligh
 let listGeneration = 0; // hmr-safe: as above.
 /** The same, for other projects' lists. */
 let homeGeneration = 0; // hmr-safe: as above.
+/** The same, for the supersessions. */
+let supersessionGeneration = 0; // hmr-safe: as above.
 
 function currentProjectId(): string | null {
   return useProjectStore.getState().currentProject?.id ?? null;
@@ -172,6 +185,32 @@ export function shareSummaries(previous: readonly WorkflowSummary[], next: Workf
     return { ...summary, workflow, boardTasks };
   });
 }
+
+/**
+ * The supersessions by source task id, keeping each entry a reload did not
+ * change. Every Done row subscribes to its own entry by reference, so a reload
+ * re-renders only the rows whose line changed.
+ */
+export function shareSupersessions(
+  previous: Readonly<Record<string, WorkflowSupersession>>,
+  next: readonly WorkflowSupersession[],
+): Record<string, WorkflowSupersession> {
+  const bySource: Record<string, WorkflowSupersession> = {};
+  for (const supersession of next) {
+    const old = previous[supersession.sourceTaskId];
+    const unchanged = old
+      && old.workflowId === supersession.workflowId
+      && old.title === supersession.title
+      && old.colorSlot === supersession.colorSlot;
+    bySource[supersession.sourceTaskId] = unchanged ? old : supersession;
+  }
+  const previousKeys = Object.keys(previous);
+  const same = previousKeys.length === next.length
+    && previousKeys.every((key) => bySource[key] === previous[key]);
+  return same ? previous : bySource;
+}
+
+const EMPTY_SUPERSESSIONS: Record<string, WorkflowSupersession> = {};
 
 const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   /**
@@ -234,6 +273,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   return {
     projectId: null,
     summaries: [],
+    supersededBy: EMPTY_SUPERSESSIONS,
     selectedWorkflowId: null,
     detail: null,
     selectedTaskKey: null,
@@ -284,6 +324,8 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     loadWorkflows: async () => {
       const projectId = currentProjectId();
       const generation = ++listGeneration;
+      // Alongside, not after: the Done rows' lines need no summary.
+      void get().loadSupersessions();
       if (!projectId) {
         set({ projectId: null, summaries: [], selectedWorkflowId: null, detail: null, selectedTaskKey: null });
         return;
@@ -320,6 +362,27 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         pendingOpen: previous.pendingOpen?.projectId === projectId ? null : previous.pendingOpen,
       });
       if (selectedWorkflowId && (!keepSelection || !get().detail)) await get().loadDetail();
+    },
+
+    loadSupersessions: async () => {
+      const projectId = currentProjectId();
+      const generation = ++supersessionGeneration;
+      if (!projectId) {
+        set({ supersededBy: EMPTY_SUPERSESSIONS });
+        return;
+      }
+      let supersessions: WorkflowSupersession[];
+      try {
+        supersessions = await window.electronAPI.workflows.listSupersessions(projectId);
+      } catch (error) {
+        console.error('[workflow-store] Failed to load superseded tasks:', describeIpcError(error));
+        return;
+      }
+      // A newer load, or a project switch while this one was in flight, wins.
+      if (generation !== supersessionGeneration || currentProjectId() !== projectId) return;
+      const previous = get().supersededBy;
+      const next = shareSupersessions(previous, supersessions);
+      if (next !== previous) set({ supersededBy: next });
     },
 
     loadHomeSummaries: async (homeProjectIds) => {

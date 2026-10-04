@@ -94,6 +94,70 @@ test('opening a workflow opens its agent in the pane, and Pause and Resume stop 
   }
 });
 
+/** A CSS color as the page computes it, so a token and an element's own color compare as one string. */
+async function computedColor(page: Page, cssColor: string): Promise<string> {
+  return page.evaluate((value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, cssColor);
+}
+
+test('the pane\'s header sits on the raised fill, and its collapse control is named Collapse agent', async () => {
+  const { browser, page } = await launch();
+  try {
+    const header = byTestId(page, 'workflow-agent-pane-header');
+    await expect(header).toContainText('Workflow agent');
+    expect(await header.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .toBe(await computedColor(page, 'var(--color-surface-raised)'));
+    const collapse = byTestId(page, 'workflow-agent-pane-collapse');
+    await expect(collapse).toHaveAttribute('title', 'Collapse agent');
+    await expect(collapse).toHaveAttribute('aria-label', 'Collapse agent');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an agent whose conversation could not be resumed says it started a new one, until closed or resumed', async () => {
+  const { browser, page } = await launch();
+  try {
+    const firstSessionId = await agentSessionId(page);
+    const line = byTestId(page, 'workflow-agent-started-over');
+    await expect(line).toHaveCount(0);
+
+    // Main starts the agent over while the pane is open, after its open has answered.
+    const restartedSessionId = await page.evaluate((workflowId) => window.__mockWorkflowAgentStartOver(workflowId), WORKFLOW_ID);
+    expect(restartedSessionId).not.toBe(firstSessionId);
+    await expect(line).toHaveText('The earlier conversation could not be resumed, so the agent started a new one.');
+    await expect(byTestId(page, 'workflow-agent-terminal-pane')).toHaveAttribute('data-session-id', restartedSessionId);
+
+    // Closed, it stays closed when the view is left and opened again.
+    await byTestId(page, 'workflow-agent-started-over-dismiss').click();
+    await expect(line).toHaveCount(0);
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await expect(line).toHaveCount(0);
+
+    // Another start-over says it again; pausing keeps it, and a normal resume ends it.
+    await page.evaluate((workflowId) => window.__mockWorkflowAgentStartOver(workflowId), WORKFLOW_ID);
+    await expect(line).toBeVisible();
+    await byTestId(page, 'workflow-agent-toggle').click();
+    await expect(byTestId(page, 'workflow-agent-resume')).toBeVisible();
+    await expect(line).toBeVisible();
+    await byTestId(page, 'workflow-agent-resume').click();
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    // Main pushes a change on each of the resumed agent's activity edges; the mock is told to.
+    await page.evaluate(([projectId, workflowId]) => window.__mockFireWorkflowChanged({ projectId, workflowId }), [PROJECT_ID, WORKFLOW_ID]);
+    await expect(line).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('the pane folds to a strip, which unmounts its terminal, and back', async () => {
   const { browser, page } = await launch();
   try {

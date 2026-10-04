@@ -846,9 +846,12 @@ These rules decide whether a row actually runs, and they are reported by
 - A `send_message` row on a column whose `autoSpawn` is off can never run: no agent starts there.
 - An On enter row on To Do or Done can never run: neither column runs automations on entry.
 - A `turn_end` row can never run on To Do or Done, on a column whose `autoSpawn` is off, or where
-  the column's agent does not report when its turn ends.
+  the column's agent can't report when it finishes a turn. The reasons read "Nothing runs at a turn
+  end in To Do." (or "in Done."), "Start an agent here is off, so no agent ends a turn here.", and
+  "This column's agent can't report when it finishes a turn."
 - A type written under a trigger it does not run on (`move_to_column` on `enter` or `exit`) is
-  refused by `kangentic_set_automations`, with the reason.
+  refused by `kangentic_set_automations`, with the reason ("Move to column runs only at a turn
+  end.").
 
 Every execution writes a row to the run log, whatever happens, which is what
 `kangentic_get_automation_runs` reads. A row left `running` was in flight when Kangentic quit; the

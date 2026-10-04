@@ -407,20 +407,6 @@ export function TaskDetailHeader({
             </div>
           )}
 
-          {/* Workflow panel toggle pill */}
-          {showPill('workflow') && canShowWorkflow && onToggleWorkflow && (
-            <div data-pill-id="workflow" className="flex-shrink-0">
-              <HeaderActionButton
-                icon={ListTree}
-                onClick={onToggleWorkflow}
-                active={workflowPanelOpen}
-                title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
-                ariaLabel="Toggle workflow"
-                testId="workflow-toggle"
-              />
-            </div>
-          )}
-
           {/* Changes toggle pill */}
           {showPill('changes') && canShowChanges && (
             <div data-pill-id="changes" className="flex-shrink-0">
@@ -484,6 +470,22 @@ export function TaskDetailHeader({
                 title={conversationAvailable ? 'View conversation' : 'No conversation history for this task yet'}
                 ariaLabel="View conversation"
                 testId="conversation-pill"
+              />
+            </div>
+          )}
+
+          {/* Workflow panel toggle pill, last of the built-in pills (board 9),
+              beside the window's own controls. Its fold priority stays above
+              Changes (pillSpecs), whatever its place in the row. */}
+          {showPill('workflow') && canShowWorkflow && onToggleWorkflow && (
+            <div data-pill-id="workflow" className="flex-shrink-0">
+              <HeaderActionButton
+                icon={ListTree}
+                onClick={onToggleWorkflow}
+                active={workflowPanelOpen}
+                title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+                ariaLabel="Toggle workflow"
+                testId="workflow-toggle"
               />
             </div>
           )}

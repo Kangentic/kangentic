@@ -21,6 +21,10 @@ import { WORKFLOW_REFUSALS } from './workflow-refusals';
  * - A paused workflow's cards move by hand, except into To Do.
  * - No workflow task moves into To Do by any path: that move kills the session
  *   and deletes the worktree and branch. Remove it from the workflow first.
+ *   A person moving a running workflow's card reads the lock's own sentence
+ *   for To Do as for every other column (boards 6 and 1d): the card is locked
+ *   outright, so the To Do row says nothing different. A paused card, and any
+ *   agent, read the To Do sentence, which says what to do instead.
  * - Reordering within a column is presentation and is never refused.
  */
 export type WorkflowMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move' | 'automation' | 'workflow';
@@ -46,11 +50,15 @@ export function workflowMoveRefusal(check: WorkflowMoveCheck): string | null {
   if (check.fromSwimlaneId === check.toSwimlaneId) return null;
   if (check.workflowState === 'draft' || check.workflowState === 'done') return null;
   const label = `#${check.displayId}`;
-  if (check.toRole === 'todo') return WORKFLOW_REFUSALS.toDoNeedsRemove(label, check.workflowTitle);
+  const byHand = check.origin === 'renderer' || check.origin === 'mobile';
+  if (check.toRole === 'todo') {
+    return byHand && check.workflowState === 'running'
+      ? WORKFLOW_REFUSALS.locked(label, check.workflowTitle)
+      : WORKFLOW_REFUSALS.toDoNeedsRemove(label, check.workflowTitle);
+  }
   if (check.origin === 'workflow' || check.origin === 'automation' || check.origin === 'auto-move') return null;
   if (check.origin === 'agent' && check.moverIsTaskAgent) return null;
 
-  const byHand = check.origin === 'renderer' || check.origin === 'mobile';
   if (check.workflowState === 'paused') {
     if (byHand) return null;
     return WORKFLOW_REFUSALS.pausedForAgents(label, check.workflowTitle);

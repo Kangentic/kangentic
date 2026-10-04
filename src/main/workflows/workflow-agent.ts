@@ -70,15 +70,23 @@ const lastReplyAt = new Map<string, string>();
 /** Each workflow agent session's last activity, so a turn's end is told from a resume settling idle. */
 const agentActivity = new Map<string, ActivityState>();
 
-/** The agent as the picker's note names it: active, idle (and since when), or paused. */
+/**
+ * The session each workflow's agent started over in, by workflow id, after its
+ * conversation could not be resumed. The pane says so while that session is the
+ * agent's; a normal resume forgets it.
+ */
+const startedOverSessions = new Map<string, string>();
+
+/** The agent as the picker's note names it: active, idle (and since when), or paused; and the session it started over in, if it did. */
 export function workflowAgentSummary(context: IpcContext, workflowId: string): WorkflowAgentSummary | null {
   const session = findWorkflowAgentSession(context, workflowId);
   if (!session) return null;
   const replied = lastReplyAt.get(workflowId) ?? null;
-  if (session.status === 'suspended') return { state: 'paused', lastReplyAt: replied };
+  const startedOverSessionId = startedOverSessions.get(workflowId) === session.id ? session.id : null;
+  if (session.status === 'suspended') return { state: 'paused', lastReplyAt: replied, startedOverSessionId };
   if (session.status !== 'running') return null;
   const active = isActive(context.sessionManager.getActivityCache()[session.id]);
-  return { state: active ? 'active' : 'idle', lastReplyAt: replied };
+  return { state: active ? 'active' : 'idle', lastReplyAt: replied, startedOverSessionId };
 }
 
 /** Another project's checkout the workflow agent reads. */
@@ -306,6 +314,7 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   pendingAccess.delete(workflowId);
   lastGrid.delete(workflowId);
   lastReplyAt.delete(workflowId);
+  startedOverSessions.delete(workflowId);
   const exits: Promise<void>[] = [];
   for (const session of sessions) {
     resumedSessions.delete(session.id);
@@ -463,7 +472,12 @@ async function startWorkflowAgent(
   // gains its checkout on its next resume.
   repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
   recordWorkflowAgentEffort(session.id, commandOptions.effort ?? null);
-  if (resume) resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
+  if (resume) {
+    resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
+    // A resume ends what the pane said about an earlier start-over. One that
+    // fails too starts over again, which says it again.
+    startedOverSessions.delete(workflow.id);
+  }
   grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
   lastGrid.set(workflow.id, grid);
   return { session, unavailable: null };
@@ -480,7 +494,8 @@ function readWorkflowAgentTemplate(context: IpcContext): string {
  * A resume whose conversation the CLI cannot find ends at once with the CLI
  * saying so (`describeStartupFailure`). The agent then starts over with the first
  * message, which the pane shows, rather than leaving a dead pane whose Resume
- * fails the same way every time.
+ * fails the same way every time, and the pane says it started over
+ * (`WorkflowAgentSummary.startedOverSessionId`).
  */
 export function registerWorkflowAgentLifecycle(context: IpcContext): void {
   const startOverIfResumeFailed = (sessionId: string, exitCode: number): void => {
@@ -500,6 +515,12 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
       }
       console.warn(`[WORKFLOW-AGENT] Resume of ${resumed.workflowId.slice(0, 8)} found no conversation; starting a new one.`);
       void startOnce(context, resumed.homeProjectId, resumed.workflowId, resumed.grid)
+        .then((status) => {
+          if (!status.session) return;
+          // The pane says the agent started over, from the summary this push reloads.
+          startedOverSessions.set(resumed.workflowId, status.session.id);
+          notifyWorkflowChanged(resumed.homeProjectId, resumed.workflowId);
+        })
         .catch((error: unknown) => console.error('[WORKFLOW-AGENT] Could not start over:', error));
     }).catch(() => {
       // The host is gone (a quit or a crash): there is nothing to read.

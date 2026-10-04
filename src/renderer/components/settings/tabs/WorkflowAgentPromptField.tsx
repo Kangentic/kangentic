@@ -116,6 +116,7 @@ export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => vo
       type="button"
       onClick={onClick}
       data-testid="workflow-agent-prompt-expand"
+      title="Expand the prompt"
       className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
     >
       <Maximize2 size={13} aria-hidden="true" />

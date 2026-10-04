@@ -1090,7 +1090,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         // No agent works in To Do or Done, so no turn ends there either; nor in
         // a column with no agent, or one whose agent reports no turn end.
         onTurnEnd: isTerminal
-          ? { label: '0', changed: false, applicable: false, reason: `No agent works in ${terminalName}, so nothing runs at a turn end there.` }
+          ? { label: '0', changed: false, applicable: false, reason: `Nothing runs at a turn end in ${terminalName}.` }
           : !turnEndGroup.ok
             ? { label: '0', changed: false, applicable: false, reason: turnEndGroup.reason }
             : { label: String(counts.turn_end), changed: counts.turn_end > 0, applicable: true, reason: nameRows('turn_end') },
@@ -2417,10 +2417,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           draft={editingRow}
           column={editingColumn}
           reportsTurnEnd={agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))?.reportsTurnEnd}
-          columnNames={laneOrder
+          columns={laneOrder
             .filter((id) => id !== editing.columnId)
-            .map((id) => drafts[id]?.name ?? '')
-            .filter((name) => name.trim() !== '')}
+            .flatMap((id) => {
+              const lane = drafts[id];
+              return lane && lane.name.trim() !== '' ? [{ name: lane.name, color: lane.color }] : [];
+            })}
           automationAgentReady={automationAgentReady(agentList, globalConfig.automation, true)}
           onOpenAutomationSettings={() => {
             const store = useConfigStore.getState();

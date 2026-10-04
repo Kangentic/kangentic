@@ -102,7 +102,10 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
       style={{ width: TASK_WORKFLOW_PANEL_WIDTH }}
       data-testid="task-workflow-panel"
     >
-      <div className="flex items-center gap-2 h-10 shrink-0 px-4 border-b border-edge text-[13px] text-fg-secondary">
+      <div
+        className="flex items-center gap-2 h-10 shrink-0 px-4 border-b border-edge text-[13px] font-semibold text-fg-secondary"
+        data-testid="task-workflow-panel-header"
+      >
         <ListTree size={15} className="text-fg-muted" />
         Workflow
         <button

@@ -23,6 +23,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
 import { useProjectStore } from '../stores/project-store';
 import { useConfigStore } from '../stores/config-store';
+import { useWorkflowStore } from '../stores/workflow-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
 import { refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
@@ -331,6 +332,9 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // apply; only a full reload re-measures a lane). Flushed in handleDragEnd/Cancel.
     beginBoardDrag();
     dragInFlightRef.current = true;
+    // A drag ends the workflow links overlay. A refused drop leaves it on, and
+    // left on it re-measures its cards on every scroll frame of this drag.
+    if (useWorkflowStore.getState().linkFocus) useWorkflowStore.getState().clearLinks();
     const id = event.active.id as string;
     if (!id.startsWith('column:')) {
       const swimlaneId = taskToSwimlane.get(id);

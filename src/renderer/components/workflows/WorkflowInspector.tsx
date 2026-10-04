@@ -204,20 +204,20 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
   onSelect: () => void;
   onRemove: () => void;
 }) {
-  const number = linked.displayId ? <span className="shrink-0 text-xs text-fg-muted tabular-nums">#{linked.displayId}</span> : null;
+  const number = linked.displayId ? <span className="shrink-0 font-mono text-xs text-fg-muted" data-testid="workflow-link-number">#{linked.displayId}</span> : null;
   return (
     <div className="flex items-stretch min-h-9 border border-edge/60 rounded-md bg-surface/35 overflow-hidden" data-testid="workflow-link-row" data-task-key={linked.key}>
       <button type="button" onClick={onSelect} className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 px-2.5 py-1.5 text-left hover:bg-surface-hover/30 transition-colors">
         {linked.place === 'done' ? (
           <span className="flex items-center gap-2 min-w-0">
             <CircleCheckBig size={14} strokeWidth={1.75} className="shrink-0" style={{ color: DONE_COLOR }} />
-            <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">{linked.title}</span>
+            <span className="flex-1 min-w-0 truncate text-[13px] font-medium text-fg" data-testid="workflow-link-title">{linked.title}</span>
             {number}
           </span>
         ) : (
           <>
             <span className="flex items-baseline gap-2 min-w-0">
-              <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">{linked.title}</span>
+              <span className="flex-1 min-w-0 truncate text-[13px] font-medium text-fg" data-testid="workflow-link-title">{linked.title}</span>
               {number}
             </span>
             <LinkColumn task={linked} projectName={projectName} />
@@ -477,7 +477,11 @@ function TaskPanel({
         <section className="px-4 py-3.5 border-b border-edge/60">
           <SectionHeading
             trailing={acrossBoards ? (
-              <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted" title={`The columns of ${detail.projectNames[task.projectId] ?? 'its'} board`}>
+              <span
+                className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted"
+                title={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}
+                data-testid="workflow-route-board"
+              >
                 <Folder size={12} />{detail.projectNames[task.projectId] ?? ''}
               </span>
             ) : undefined}
@@ -520,7 +524,7 @@ function TaskPanel({
           </section>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2 shrink-0 px-4 py-3.5 border-t border-edge/60 whitespace-nowrap">
+      <div className="grid grid-cols-2 gap-2 shrink-0 px-4 py-3.5 whitespace-nowrap" data-testid="workflow-inspector-footer">
         <button
           type="button"
           onClick={() => onRequestRemove(task.key)}

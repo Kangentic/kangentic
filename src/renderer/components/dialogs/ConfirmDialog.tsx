@@ -16,6 +16,8 @@ interface ConfirmDialogProps {
   /** Replaces the variant's warning triangle, for a confirmation that is not a warning (a
    *  restart). Color it the way the variant would, e.g. `text-accent-fg` for `default`. */
   icon?: React.ReactNode;
+  /** An icon before the confirm button's label, for an action that has one (Start workflow's Play). */
+  confirmIcon?: React.ReactNode;
   onConfirm: (dontAskAgain: boolean) => void;
   onCancel: () => void;
 }
@@ -30,6 +32,7 @@ export function ConfirmDialog({
   dontAskAgainLabel = "Don't ask again",
   testId,
   icon,
+  confirmIcon,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -92,8 +95,9 @@ export function ConfirmDialog({
             </button>
             <button
               onClick={() => onConfirm(dontAskAgainChecked)}
-              className={`px-4 py-1.5 text-xs rounded transition-colors ${confirmStyles[variant]}`}
+              className={`px-4 py-1.5 text-xs rounded transition-colors ${confirmIcon ? 'inline-flex items-center gap-1.5' : ''} ${confirmStyles[variant]}`}
             >
+              {confirmIcon}
               {confirmLabel}
             </button>
           </div>

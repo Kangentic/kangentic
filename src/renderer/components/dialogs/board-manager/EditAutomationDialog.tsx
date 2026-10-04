@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, Info, Repeat, Split, SquareArrowRight, Zap } from 'lucide-react';
+import { Clock, Info, Repeat, Settings, Split, Zap } from 'lucide-react';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -19,6 +19,8 @@ import { SegmentedControl, type SegmentedControlOption } from '../../SegmentedCo
 import { NumberStepper } from '../../NumberStepper';
 import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
+import { AutomationColumnPicker, type AutomationColumnChoice } from './AutomationColumnPicker';
+import { AutomationIcon } from './automation-icons';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
   TRIGGER_LABELS,
@@ -58,6 +60,8 @@ const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 const CONDITION_EXAMPLE = 'All tests pass';
 /** How tall a growing prose field may get before it scrolls. */
 const PROSE_MAX_ROWS = 8;
+/** The Type label's info tip. Type is the dialog's own field, not a manifest one, so its note lives here. */
+const TYPE_INFO = 'What runs. Each type brings its own fields.';
 
 /**
  * Module scope, not an inline literal: `SegmentedControl` keys its measuring
@@ -121,8 +125,12 @@ export interface EditAutomationDialogProps {
   column: Swimlane;
   /** Whether the column's agent reports a turn end. Undefined while unknown. */
   reportsTurnEnd?: boolean;
-  /** The board's other columns, by name in board order, for a Column field. */
-  columnNames: string[];
+  /**
+   * The board's other columns in board order, for a Column field: the Board
+   * Manager's drafts, so a column added or recolored in this unsaved session
+   * shows its own dot.
+   */
+  columns: AutomationColumnChoice[];
   /**
    * Whether the Automation agent is set up (Settings > Workflows). Until it
    * is, a Condition cannot be switched on: nothing could check it.
@@ -326,16 +334,21 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             // condition for until something can check it.
             <div
               data-testid="edit-automation-condition-setup"
-              className="flex items-center gap-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-fg-secondary"
+              className="flex items-center gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5"
             >
-              <Info size={14} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
-              <span className="flex-1">Set up an Automation agent</span>
+              <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
+              <span data-testid="edit-automation-condition-setup-text" className="min-w-0 flex-1 text-[13px] font-semibold text-fg">
+                Set up an Automation agent
+              </span>
+              {/* Accent outline and text: the one thing to do here, so it reads as
+                  the way forward rather than a neutral secondary button. */}
               <button
                 type="button"
                 data-testid="edit-automation-open-settings"
                 onClick={props.onOpenAutomationSettings}
-                className="cursor-pointer rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
+                className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/10"
               >
+                <Settings size={14} aria-hidden="true" />
                 Open Settings
               </button>
             </div>
@@ -352,7 +365,15 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           switchLabel="Frequency"
         >
           <div className="flex items-center gap-3">
-            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            {/* Off, the whole panel reads dimmed, its label included, not only
+                the stepper. The label dims here rather than the panel because
+                the stepper already dims itself when disabled, and a second
+                opacity on top of that left it at a quarter. */}
+            <span
+              data-testid="edit-automation-max-runs-label"
+              data-dimmed={!frequencyOn}
+              className={`flex min-w-0 flex-1 items-center gap-1.5 ${frequencyOn ? '' : 'opacity-50'}`}
+            >
               <span className={SETTING_LABEL_CLASS}>Maximum runs</span>
               <InfoTip label="Maximum runs" text="Counted for each task, across every visit. A run its Condition skipped does not count." />
             </span>
@@ -369,12 +390,23 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           </div>
         </RuleCard>
 
-        <RuleCard testId="edit-automation-card-action" icon={<SquareArrowRight size={16} />} title="Action" description="What it does.">
+        <RuleCard
+          testId="edit-automation-card-action"
+          // The chosen type's own icon (a speech bubble for Send message), so
+          // the card's header changes with Type below it. `data-icon` names it
+          // for the specs, which should not lean on lucide's class names.
+          icon={<AutomationIcon name={entry.icon} size={16} data-icon={entry.icon} />}
+          title="Action"
+          description="What it does."
+        >
           <div className={pairColumn ? 'grid grid-cols-2 gap-3' : 'flex flex-col'}>
             {/* A <div>, not a <label>: the control is a button, and a label
                 wrapping one steals its click. */}
             <div className="flex min-w-0 flex-col gap-1.5">
-              <span className={SETTING_LABEL_CLASS}>Type</span>
+              <span className="flex items-center gap-1.5">
+                <span className={SETTING_LABEL_CLASS}>Type</span>
+                <InfoTip label="Type" text={TYPE_INFO} />
+              </span>
               {/* Carries each type's icon, which a native <select> cannot: an
                   <option> holds text only. */}
               <AutomationTypePicker
@@ -393,7 +425,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                 value={(local.config as Record<string, unknown>)[pairColumn.key]}
                 onChange={(value) => setConfigValue(pairColumn.key, value)}
                 templatePicker={props.templatePicker}
-                columnNames={props.columnNames}
+                columns={props.columns}
               />
             )}
           </div>
@@ -407,7 +439,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               value={(local.config as Record<string, unknown>)[field.key]}
               onChange={(value) => setConfigValue(field.key, value)}
               templatePicker={props.templatePicker}
-              columnNames={props.columnNames}
+              columns={props.columns}
             />
           ))}
         </RuleCard>
@@ -495,12 +527,12 @@ function FieldLabel({ field }: { field: AutomationField }) {
 }
 
 /** One field, rendered from its manifest declaration. No type branching. */
-function ManifestField({ field, value, onChange, templatePicker: TemplatePicker, columnNames }: {
+function ManifestField({ field, value, onChange, templatePicker: TemplatePicker, columns }: {
   field: AutomationField;
   value: unknown;
   onChange: (value: unknown) => void;
   templatePicker: EditAutomationDialogProps['templatePicker'];
-  columnNames: string[];
+  columns: readonly AutomationColumnChoice[];
 }) {
   const text = typeof value === 'string' ? value : '';
   const testId = `automation-config-${field.key}`;
@@ -544,7 +576,33 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <FieldLabel field={field} />
+      {field.kind === 'segmented' ? (
+        // A short fixed choice reads as a settings card's choice row
+        // (`CardChoiceRow`): the label at the left, the control on the panel's
+        // right edge, sized to its options rather than stretched.
+        <div data-testid={`${testId}-row`} className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <FieldLabel field={field} />
+          </div>
+          <SegmentedControl
+            quiet
+            className="flex-shrink-0"
+            ariaLabel={field.label}
+            testId={testId}
+            // The mode options are module scope for the same ResizeObserver
+            // reason as the trigger options above.
+            options={field.key === 'mode' ? AUTO_COMMAND_MODE_OPTIONS : (field.options ?? []).map((option) => ({
+              value: option.value,
+              label: option.label,
+              testId: option.testId,
+            }))}
+            value={text || String(field.defaultValue ?? '')}
+            onChange={(next) => onChange(next)}
+          />
+        </div>
+      ) : (
+        <FieldLabel field={field} />
+      )}
 
       {field.kind === 'textarea' && highlighted && (
         <TemplateTextField
@@ -554,9 +612,10 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           // catalog that can actually resolve here. A spawn prompt passes 'spawn'.
           context="automation"
           testId={testId}
-          // An optional prose field starts one row tall and grows with its
-          // text; a required one keeps the rows its type asks for.
-          {...(field.optional ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows ?? 3 })}
+          // Prose (a message for an agent) declares no `rows`, so it starts one
+          // row tall and grows with its text, as Condition does. A script or a
+          // JSON body keeps the fixed rows its type asks for.
+          {...(field.rows === undefined ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows })}
           placeholder={field.placeholder}
           ariaLabel={field.label}
           insertRef={templateInsertRef}
@@ -618,40 +677,16 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
       )}
 
       {field.kind === 'column' && (
-        // The board's columns by NAME, Next column (empty) first. A name the
-        // board no longer has (the column was deleted) stays listed and marked,
-        // so opening the dialog never silently re-points the row.
-        <Select
-          data-testid={testId}
-          value={text}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          <option value="">Next column</option>
-          {columnNames.map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-          {text && !columnNames.includes(text) && (
-            <option value={text}>{`${text} (not on this board)`}</option>
-          )}
-        </Select>
-      )}
-
-      {field.kind === 'segmented' && (
-        <SegmentedControl
-          quiet
-          // Sizes to its options rather than stretching.
-          className="self-start"
-          ariaLabel={field.label}
+        // The board's columns by NAME, each with its color dot, Next column
+        // (empty) first. A name the board no longer has (the column was
+        // deleted) stays listed and marked, so opening the dialog never
+        // silently re-points the row.
+        <AutomationColumnPicker
           testId={testId}
-          // The mode options are module scope for the same ResizeObserver
-          // reason as the trigger options above.
-          options={field.key === 'mode' ? AUTO_COMMAND_MODE_OPTIONS : (field.options ?? []).map((option) => ({
-            value: option.value,
-            label: option.label,
-            testId: option.testId,
-          }))}
-          value={text || String(field.defaultValue ?? '')}
-          onChange={(next) => onChange(next)}
+          ariaLabel={field.label}
+          value={text}
+          columns={columns}
+          onChange={onChange}
         />
       )}
 

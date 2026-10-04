@@ -1929,4 +1929,11 @@ function runWorkflowsMigration(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocker ON task_links(blocker_task_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_task_links_blocked ON task_links(blocked_task_id)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_task_links_pair ON task_links(blocker_task_id, blocked_task_id)');
+
+  // When a paused workflow was paused, for the picker's "Paused yesterday
+  // 18:20". Written on Pause, cleared on Resume. A workflow paused before this
+  // column existed reads as paused with no time.
+  if (!workflowColumnNames.has('paused_at')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN paused_at TEXT DEFAULT NULL');
+  }
 }

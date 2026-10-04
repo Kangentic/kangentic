@@ -396,6 +396,7 @@ export const IPC = {
   // started). The MCP tools reach the same operations through
   // src/main/workflows/workflow-service.ts.
   WORKFLOW_LIST: 'workflow:list',
+  WORKFLOW_LIST_SUPERSESSIONS: 'workflow:listSupersessions',
   WORKFLOW_GET: 'workflow:get',
   WORKFLOW_CREATE: 'workflow:create',
   WORKFLOW_RENAME: 'workflow:rename',

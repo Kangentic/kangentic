@@ -234,6 +234,16 @@ describe('the move lock', () => {
     expect(workflowMoveRefusal(check({ origin: 'agent', moverIsTaskAgent: true, toSwimlaneId: 'todo', toRole: 'todo' }))).not.toBeNull();
   });
 
+  it('says the lock for a person moving a running card to To Do, and the To Do sentence to an agent', () => {
+    const toDo = { toSwimlaneId: 'todo', toRole: 'todo' as const };
+    expect(workflowMoveRefusal(check(toDo))).toBe('#414 is locked while Usage budgets runs.');
+    expect(workflowMoveRefusal(check({ ...toDo, origin: 'mobile' }))).toBe('#414 is locked while Usage budgets runs.');
+    expect(workflowMoveRefusal(check({ ...toDo, origin: 'agent', moverIsTaskAgent: true })))
+      .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+    expect(workflowMoveRefusal(check({ ...toDo, origin: 'workflow' })))
+      .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+  });
+
   it('never refuses a reorder, or a task in a finished workflow', () => {
     expect(workflowMoveRefusal(check({ toSwimlaneId: 'executing' }))).toBeNull();
     expect(workflowMoveRefusal(check({ workflowState: 'done' }))).toBeNull();

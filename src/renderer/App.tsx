@@ -1256,6 +1256,7 @@ if (import.meta.hot) {
     useBoardStore.getState().loadAutomations();
     useBacklogStore.getState().loadBacklog();
     useWorkflowStore.getState().loadWorkflows();
+    useWorkflowStore.getState().loadSupersessions();
     useWorkflowStore.getState().loadDetail();
     useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
     useMobileStore.getState().loadStatus();

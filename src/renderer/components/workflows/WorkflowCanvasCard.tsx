@@ -34,13 +34,14 @@ export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density:
  */
 function ProjectRow({ name }: { name: string }) {
   return (
+    // The strip's own faint fill, so the two rows read as the card's header.
     <div
-      className="flex items-center gap-1.5 px-2.5 border-b border-edge/50 text-[11px] text-fg-tertiary min-w-0"
+      className="flex items-center gap-1.5 px-2.5 border-b border-edge/50 bg-surface/30 text-xs text-fg-tertiary min-w-0"
       style={{ height: PROJECT_ROW_HEIGHT }}
       title={name}
       data-testid="workflow-card-project"
     >
-      <Folder size={12} className="shrink-0" />
+      <Folder size={12} className="shrink-0 text-fg-muted" />
       <span className="truncate">{name}</span>
     </div>
   );
@@ -155,14 +156,12 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
     />
   );
 
-  const selectionClass = selected
-    ? 'ring-2 ring-fg-faint/75'
-    : '';
-
   if (viewTask.place === 'done') {
+    // The Done card keeps its own selection ring: its border waits on a separate approval.
+    const doneSelectionClass = selected ? 'ring-2 ring-fg-faint/75' : '';
     return (
       <div
-        className={`flex flex-col overflow-hidden bg-surface-raised/60 border border-edge/50 rounded-md select-none hover:border-edge-input transition-colors ${selectionClass}`}
+        className={`flex flex-col overflow-hidden bg-surface-raised/60 border border-edge/50 rounded-md select-none hover:border-edge-input transition-colors ${doneSelectionClass}`}
         style={{ height }}
         data-workflow-task-key={viewTask.key}
         data-selected={selected}
@@ -179,15 +178,26 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
 
   const idleFooter = waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : undefined;
 
+  // Selected: a 2px border inside the card, solid even where a planned card's
+  // is dashed (boards 1, 10, 17). The padding and the header's inset give back
+  // the extra pixel, so nothing inside the card moves.
+  const comfortable = view.cardDensity === 'comfortable';
+  const borderClass = selected
+    ? `!border-2 !border-solid !border-fg-muted/75 ${comfortable ? '!p-[11px]' : '!p-[9px]'}`
+    : planned ? '!border-dashed !border-edge-input' : '';
+  const headerInset = selected
+    ? (comfortable ? '-mx-[11px] -mt-[11px]' : '-mx-[9px] -mt-[9px]')
+    : (comfortable ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5');
+
   return (
     <div
-      className={`flex flex-col overflow-hidden ${taskCardFrameClass(view, view.cardDensity)} select-none transition-colors ${planned ? '!border-dashed !border-edge-input' : ''} ${selectionClass}`}
+      className={`flex flex-col overflow-hidden ${taskCardFrameClass(view, view.cardDensity)} select-none transition-colors ${borderClass}`}
       style={{ height }}
       data-workflow-task-key={viewTask.key}
       data-selected={selected}
       data-testid="workflow-canvas-card"
     >
-      <div className={view.cardDensity === 'comfortable' ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2'}>{projectRow}{strip}</div>
+      <div className={`${headerInset} mb-2`}>{projectRow}{strip}</div>
       <TaskCardBody task={task} view={view} density={view.cardDensity} hideDisplayId={planned} idleFooter={idleFooter} fill />
     </div>
   );

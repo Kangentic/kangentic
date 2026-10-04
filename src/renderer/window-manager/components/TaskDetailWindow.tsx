@@ -819,16 +819,20 @@ export function TaskDetailWindow({
       </h3>
       <div className="flex-1" />
       {/* A To Do task opens here, in the form, and that is when its workflow
-          (what it waits for, its route) matters most. */}
+          (what it waits for, its route) matters most. The divider after it is
+          the one the session header draws before its window controls. */}
       {canShowWorkflow && (
-        <HeaderActionButton
-          icon={ListTree}
-          onClick={handleToggleWorkflow}
-          active={workflowPanelOpen}
-          title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
-          ariaLabel="Toggle workflow"
-          testId="workflow-toggle"
-        />
+        <>
+          <HeaderActionButton
+            icon={ListTree}
+            onClick={handleToggleWorkflow}
+            active={workflowPanelOpen}
+            title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+            ariaLabel="Toggle workflow"
+            testId="workflow-toggle"
+          />
+          <div className="w-px h-5 bg-surface-hover flex-shrink-0" data-testid="edit-titlebar-divider" />
+        </>
       )}
       <MaximizeToggleButton
         isMaximized={isMaximized}

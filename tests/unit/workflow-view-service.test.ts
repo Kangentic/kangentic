@@ -99,7 +99,7 @@ describeWithSqlite('the Workflows view operations', () => {
     expect(agentOf()).toBeNull();
     agentSessions.push({ id: 'agent-1', workflowId: workflow.id, status: 'running' });
     agentActivity['agent-1'] = 'thinking';
-    expect(agentOf()).toEqual({ state: 'active', lastReplyAt: null });
+    expect(agentOf()).toEqual({ state: 'active', lastReplyAt: null, startedOverSessionId: null });
     agentActivity['agent-1'] = 'idle';
     expect(agentOf()?.state).toBe('idle');
     agentSessions[0].status = 'suspended';

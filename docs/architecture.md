@@ -211,13 +211,14 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application. Same answer-or-timeout contract and file-manager fallback as `attachment:open` |
 
-### Workflows (18 channels)
+### Workflows (19 channels)
 
-The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
+The Workflows view. Every call names the workflow's home project; a task is addressed by its view key (its draft key before Start, its task id after). The handler routes reads and plan edits (list, supersessions, get, create, add, update and remove a task, link, route, positions) through `src/main/workflows/workflow-view-service.ts`, which shapes the read model and edits a planned workflow by key; every rule a started workflow has is enforced once, in `workflow-service.ts`, which the view service calls and the MCP tools reach directly (start, pause, resume, rename and delete go there straight).
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
+| `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
 | `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions |
 | `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
 | `workflow:rename` | invoke | Rename a workflow |

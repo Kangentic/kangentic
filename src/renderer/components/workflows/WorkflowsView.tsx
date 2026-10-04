@@ -249,6 +249,7 @@ export function WorkflowsView() {
       selected={selected}
       detail={detail}
       planHeld={planHeld}
+      doneColumnColor={doneColumnColor}
       onSelect={(workflowId) => selectWorkflow(workflowId)}
       onRename={() => setDialog({ kind: 'rename' })}
       onStart={() => setDialog({ kind: 'start' })}

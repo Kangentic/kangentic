@@ -200,6 +200,18 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       }
     },
     resolveProjectName: (projectId) => requireContext().projectRepo.getById(projectId)?.name,
+    // The workflow row lives in its HOME project's database
+    // (`Task.workflow_project_id`), which is not always the task's own.
+    resolveWorkflowTitle: (projectId, taskId) => {
+      try {
+        const task = getProjectRepos(requireContext(), projectId).tasks.getById(taskId);
+        if (!task?.workflow_id) return undefined;
+        const homeProjectId = task.workflow_project_id ?? projectId;
+        return getProjectRepos(requireContext(), homeProjectId).workflows.getById(task.workflow_id)?.title;
+      } catch {
+        return undefined;
+      }
+    },
     showNotification: (input) => showDesktopNotification(requireContext(), input),
   });
 
