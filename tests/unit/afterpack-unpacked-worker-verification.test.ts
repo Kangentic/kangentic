@@ -72,6 +72,8 @@ interface FakeAfterPackContext {
 function buildFakeContext(overrides: {
   platform: FakeAfterPackContext['electronPlatformName'];
   appOutDir: string;
+  /** electron-builder's Arch enum value: 1 is x64 (the default), 3 is arm64. */
+  arch?: number;
 }): FakeAfterPackContext {
   return {
     packager: { appInfo: { productFilename: 'Kangentic' }, executableName: 'kangentic' },
@@ -79,7 +81,7 @@ function buildFakeContext(overrides: {
     appOutDir: overrides.appOutDir,
     // 1 => 'x64' in afterPack.js's own archMap; a recognized arch keeps the
     // unrelated prebuild-stripping branch quiet (no "Unknown arch enum" warn).
-    arch: 1,
+    arch: overrides.arch ?? 1,
   };
 }
 
@@ -134,8 +136,15 @@ function installFakeElectronFuses(): {
  *  `installFakeElectronFuses` above. Records the `unpackedRoot` afterPack.js
  *  actually computed and passed in; `throwError`, when given, makes the fake
  *  throw it instead of returning, so a caller can prove afterPack.js
- *  propagates the verifier's failure rather than swallowing it. */
-function installFakeVerifyUnpackedWorker(throwError?: Error, loadProbeError?: Error): {
+ *  propagates the verifier's failure rather than swallowing it.
+ *  `onRetrievalLoadProbe`, when given, runs at the moment the retrieval load
+ *  probe is called, so a test can look at the unpacked tree as that probe would
+ *  see it. */
+function installFakeVerifyUnpackedWorker(
+  throwError?: Error,
+  loadProbeError?: Error,
+  onRetrievalLoadProbe?: () => void,
+): {
   calls: FakeVerifyUnpackedWorkerCall[];
   restore: () => void;
 } {
@@ -147,6 +156,7 @@ function installFakeVerifyUnpackedWorker(throwError?: Error, loadProbeError?: Er
     },
     verifyRetrievalWorkerLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
       calls.push({ unpackedRoot, loadProbeBinary: electronBinaryPath });
+      onRetrievalLoadProbe?.();
       if (loadProbeError) throw loadProbeError;
     },
     verifyPtyHostLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
@@ -392,19 +402,20 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
   });
 });
 
+// better-sqlite3 13 ships every platform's addon in one package.
+const ALL_PREBUILDS = [
+  'darwin-arm64.node',
+  'darwin-x64.node',
+  'linux-arm64.node',
+  'linux-x64.node',
+  'linuxmusl-arm64.node',
+  'linuxmusl-x64.node',
+  'win32-arm64.node',
+  'win32-x64.node',
+];
+
 describe('afterPack: stripping better-sqlite3 prebuilds to the target', () => {
-  // better-sqlite3 13 ships every platform's addon in one package. These run
-  // the real strip against a throwaway unpacked tree.
-  const ALL_PREBUILDS = [
-    'darwin-arm64.node',
-    'darwin-x64.node',
-    'linux-arm64.node',
-    'linux-x64.node',
-    'linuxmusl-arm64.node',
-    'linuxmusl-x64.node',
-    'win32-arm64.node',
-    'win32-x64.node',
-  ];
+  // These run the real strip against a throwaway unpacked tree.
   let unpackedRoot: string;
   let prebuildsDir: string;
 
@@ -441,4 +452,66 @@ describe('afterPack: stripping better-sqlite3 prebuilds to the target', () => {
       .toThrow(/no prebuild for linux-armv7l/);
     expect(fs.readdirSync(prebuildsDir).sort()).toEqual(ALL_PREBUILDS);
   });
+
+  it('does nothing, and says so, when the unpacked tree has no better-sqlite3 prebuilds directory', async () => {
+    fs.rmSync(path.join(unpackedRoot, 'node_modules'), { recursive: true, force: true });
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+
+    expect(() => afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'win32', targetArch: 'x64', log: (line) => lines.push(line) }))
+      .not.toThrow();
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/no prebuilds directory.*nothing to strip/);
+    expect(fs.existsSync(path.join(unpackedRoot, 'node_modules'))).toBe(false);
+  });
+});
+
+describe('afterPack: running the better-sqlite3 prebuild strip on the packed tree', () => {
+  // The describe above calls the strip directly. Every afterPack() test before it
+  // passes an appOutDir that does not exist, so the strip returns at "no prebuilds
+  // directory" there and a call that was deleted, or moved, would change nothing.
+  // These run afterPack() over a real tree holding every platform's prebuild.
+  let appOutDir: string;
+  let prebuildsDir: string;
+
+  beforeEach(() => {
+    appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-packed-tree-'));
+    // win32 and linux share this layout: a lowercase resources/ under appOutDir.
+    prebuildsDir = path.join(appOutDir, 'resources', 'app.asar.unpacked', 'node_modules', 'better-sqlite3', 'prebuilds');
+    fs.mkdirSync(prebuildsDir, { recursive: true });
+    for (const name of ALL_PREBUILDS) fs.writeFileSync(path.join(prebuildsDir, name), 'addon');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(appOutDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    { platform: 'win32', arch: 1, kept: 'win32-x64.node' },
+    { platform: 'linux', arch: 3, kept: 'linux-arm64.node' },
+  ] as const)(
+    'leaves only $kept, and has done so by the time the retrieval load probe runs, so the probe proves the addon that ships',
+    async ({ platform, arch, kept }) => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      let prebuildsSeenByLoadProbe: string[] = [];
+      const fakeFuses = installFakeElectronFuses();
+      const fakeVerify = installFakeVerifyUnpackedWorker(undefined, undefined, () => {
+        prebuildsSeenByLoadProbe = fs.readdirSync(prebuildsDir);
+      });
+      const fakeSpawnHelper = installFakeInstallSpawnHelper();
+      try {
+        const afterPack = await importAfterPack();
+        await afterPack(buildFakeContext({ platform, appOutDir, arch }));
+
+        expect(prebuildsSeenByLoadProbe).toEqual([kept]);
+        expect(fs.readdirSync(prebuildsDir)).toEqual([kept]);
+      } finally {
+        fakeFuses.restore();
+        fakeVerify.restore();
+        fakeSpawnHelper.restore();
+      }
+    },
+  );
 });
