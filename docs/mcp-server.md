@@ -836,7 +836,7 @@ Every text field takes the template variables listed in
 written rather than dropped. A script also receives each one as a `KANGENTIC_*` environment
 variable, which is the quoting-safe way to read one.
 
-Three rules decide whether a row actually runs, and they are reported by
+These rules decide whether a row actually runs, and they are reported by
 `kangentic_list_automations` rather than left to be discovered:
 
 - A row whose switch is off is skipped.
@@ -862,7 +862,8 @@ board do": a board-wide read answers it once instead of one call per column.
 | `column` | string | No | Column name (case-insensitive). Omit to read every column. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, and the type's own fields.
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `maxRuns`, and
+the type's own fields. `condition` and `maxRuns` are null when the row has none.
 A row that cannot run as things stand is flagged with the reason.
 
 ### kangentic_set_automations
@@ -929,7 +930,8 @@ automations that column holds now). Newest first.
 
 Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `interrupted`), the
 `detail` (the failure reason, the skip reason, or a one-line success such as `HTTP 204` or
-`exit 0`), the attempt count, and its timestamps. The log denormalizes the automation's name and
+`exit 0`), the attempt count, and its timestamps. A run whose row has a Condition also shows whether
+the Automation agent found it met or not met, and the agent's one-line reason. The log denormalizes the automation's name and
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
 

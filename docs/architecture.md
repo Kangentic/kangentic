@@ -123,7 +123,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (29 channels)
+### Tasks (30 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -149,7 +149,12 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:sessionResync` | on | Event: quiet (toast-free) board re-sync after a session restart or respawn that cleared `task.session_id`, so the board store's stale `task.session_id` reloads |
 | `task:prLinkChanged` | on | Event: quiet (toast-free) board re-sync after the APP reconciled a task's PR link or state - the refresh sweep, the session-idle auto-link, the `pr-candidate` resolve after an agent's PR command, the forced re-resolve that follows a link write, or the task-detail "Link / refresh PR" control. Distinct from `task:updatedByAgent` because no agent made the change: an agent's own `update_task` / `link_pr` still goes out on that channel and still toasts. Payload is the bare `projectId` |
 | `task:movedByMobile` | on | Event: quiet (toast-free) board reload after a task was moved from the paired mobile app. A third provenance, distinct from both siblings above: `task:updatedByAgent` would announce "Task updated by agent" for a card the user dragged on their own phone, and this is not the app reconciling itself either. Payload is the bare `projectId` |
+<<<<<<< HEAD
 | `task:spawnBlocked` | on | Event: the task's agent could not start. Fires for three steps, and the entry points differ per step. WORKTREE and CHECKOUT: only on create, promote, unarchive, MCP auto-spawn, or the phone's `start-session`, which deliberately keep the task (a move instead rejects the invoke, which the renderer already toasts). A phone Start reaches them through `autoSpawnForTask`; a phone Resume of a paused task reports its worktree and agent steps through `resumeTaskSession`'s `onFailed` hook, because the phone was answered at acceptance and no rejection reaches a toast (the desktop Resume button still rejects instead). Any git failure at those two steps fires this, not only the case where another task holds the checkout. AGENT (the spawn itself, most often a CLI that is not installed or not on PATH): every board-driven entry point including a drag move, because `spawnAgent`'s catch swallows that error and resolves the invoke, so this event is the only user-visible notice on that path. Without it the result is indistinguishable from a healthy spawn |
+=======
+| `task:movedByAutomation` | on | Event: quiet (toast-free) board reload after Kangentic moved a task on its own, as a Move to column automation does at a turn end (move origins `automation` and `workflow`). The run log records why, so nothing toasts. Renderer subscribes via `onMovedByAutomation`. Payload is the bare `projectId` |
+| `task:spawnBlocked` | on | Event: the task's agent could not start. Fires for three steps, and the entry points differ per step. WORKTREE and CHECKOUT: only on create, promote, unarchive, or MCP auto-spawn, which deliberately keep the task (a move instead rejects the invoke, which the renderer already toasts). Any git failure at those two steps fires this, not only the case where another task holds the checkout. AGENT (the spawn itself, most often a CLI that is not installed or not on PATH): every board-driven entry point including a drag move, because `spawnAgent`'s catch swallows that error and resolves the invoke, so this event is the only user-visible notice on that path. Without it the result is indistinguishable from a healthy spawn |
+>>>>>>> ea1553e99 (docs(automations): close the Phase A doc audit's gaps)
 | `task:spawnWarning` | on | Event: non-blocking spawn anomaly - the agent still started, but its base branch could not be freshened (network or credential fetch failure), so it may be running from a stale base. The message is composed in main and toasted verbatim, cooldown-guarded per project and reason class so a bulk unarchive while offline produces one toast, not one per task |
 | `task:autoCommandResult` | on | Event: the outcome of a task's auto_command injection (`AutoCommandResultNotice`: state, command, reason, discardedDraft, interruptedTurn, escalated). Rationed by `shouldNotify` so a routine delivery stays silent and only a failure, an escalation, or a discarded draft reaches the user |
 | `task:spawnProgress` | on | Event: spawn progress phase label during any board-driven spawn (move, create into a spawning column, backlog promote, MCP auto-spawn, restore from Done). A staleness note may trail the label, e.g. `Starting agent... (base 3 behind)` |
@@ -384,7 +389,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageNativeExtensions, pastedImageReferenceTemplate, supportsSummarize, reportsTurnEnd, supportsAnswerFromContext, answerCapabilities, capabilities, remoteExecution, launchOptions) |
 | `agent:probeExecutionServer` | invoke | Reachability probe for an agent's configured remote execution server ("Test connection" in the Agent settings tab, shown when the selected agent declares remote-execution support). Returns `RemoteServerStatus`. |
 
 ### Handoffs (1 channel)
@@ -613,8 +618,9 @@ Created on project open. Stored in the global config directory (not inside the p
 
 - **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [database.md](database.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at, description (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
 - **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, archived_at, created_at, updated_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
-- **column_automations** -- What runs when a task enters or leaves a column. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, plus the legacy `spawn_agent`), trigger (`enter`/`exit`), position, enabled, config_json, created_at, updated_at. One list per column, numbered per trigger, with names unique per column
-- **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at. Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept
+- **column_automations** -- What runs when a task enters a column, when its agent finishes a turn there, and when the task leaves. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus the legacy `spawn_agent`), trigger (`enter`/`turn_end`/`exit`), position, enabled, config_json, condition (the row's Condition in plain words, answered by the Automation agent; NULL runs always), max_runs (Frequency, the most runs per task; NULL is no limit), created_at, updated_at. One list per column, numbered per trigger, with names unique per column
+- **automation_runs** -- One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at, condition_met, condition_reason (the Automation agent's yes or no and its one-line reason, NULL for a row without a Condition). Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept, plus every counted run of an automation with a Frequency limit on a task that is not archived
+- **task_moves** - One row per column a task entered: id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at. Written by `TaskRepository` in the move's own transaction. It is the visit boundary turn-end automations count from, read through `TaskMoveRepository`. See [database.md](database.md)
 - **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [database.md](database.md)
 - **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count, last_pty_cols, last_pty_rows, result_tokens_read_at (the canonical column table lives in [database.md](database.md); this list is a pointer, not a second source of truth)
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
@@ -685,6 +691,11 @@ group is capped at 60 seconds in aggregate whatever the adapters declare, becaus
 short lock is what wedges that task's next move. Every row is isolated: a failure records its
 outcome in `automation_runs` and the next row still runs.
 
+The column's On agent turn end group is not part of a move: `automations/turn-end/turn-end-runner.ts`
+runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`),
+outside the task lock, one pass per task, and a Move to column row in it moves the task through
+`handleTaskMove` like any other mover. See [Transition Engine](transition-engine.md#on-agent-turn-end).
+
 ### Automation adapters
 
 Each type is an adapter under `src/main/automations/adapters/`, registered in
@@ -699,6 +710,7 @@ folder and one manifest entry. See `.claude/rules/automation-adapters.md` for th
 | `run_script` | Run script | none | 10 minutes by default, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
 | `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 408, 429 or 5xx with an idempotency key |
 | `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
+| `move_to_column` | Move to column | none | none (the move owns its deadlines) | Move the task to a named column, or the next one when none is named, and hand the agent there an optional message. Runs on `turn_end` only, and a row that runs ends its group |
 | `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
 
 The retired types are `kill_session`, `create_worktree` and `cleanup_worktree`
@@ -943,7 +955,11 @@ src/main/automations/
     run-script/             # child process in the task's worktree, awaits the exit
     webhook/                # request with retry, idempotency key, response.ok check
     notify/                 # one desktop notification
+    move-to-column/         # move the task at a turn end, then hand on the message
     legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
+  turn-end/                 # the On agent turn end runner, per-task pass tracking, message delivery
+  condition-check/          # the Automation agent's one call per group, its prompt and reply parser
+  move-target.ts            # resolveMoveTarget: a named column or the next one
   automation-registry.ts    # AutomationRegistry + automationRegistry singleton
   automation-runner.ts      # per-row isolation, timeouts, and the automation_runs record
   automation-run-outcome.ts # rationed failure push to the renderer

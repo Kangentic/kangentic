@@ -4,7 +4,7 @@
 
 The transition engine runs a column's automations when tasks move between swimlanes. It handles the logic that makes Kanban columns "active" -- spawning agents, sending messages, running scripts, calling webhooks, and raising notifications.
 
-Each column owns ONE ordered list, split into an On enter group and an On exit group. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration](configuration.md#column-automations) and the tables are [Database](database.md).
+Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration](configuration.md#column-automations) and the tables are [Database](database.md).
 
 ## Priority Rules on Task Move
 
@@ -173,8 +173,8 @@ variable" picker and its inline `{{` completion, and this table - see
 entry's `description`, that field is user-facing copy and should stay to one
 line.
 
-22 keywords, of which 18 resolve everywhere and 4 only in an automation (the
-move keywords, marked below).
+23 keywords, of which 18 resolve everywhere and 5 only in an automation (the
+move keywords and `{{agentReply}}`, marked below).
 
 **Two substitution rules, split by SOURCE rather than by destination.**
 

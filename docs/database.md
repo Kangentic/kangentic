@@ -445,7 +445,8 @@ Two indices, one per question the log is asked:
 
 **Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
 `markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
-`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table. The
+`pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table, plus
+every counted run of an automation with a Frequency limit on a task that is not archived. The
 sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
 `running` row at boot is a known orphan, and without this "these always run" is false on every
 restart.
@@ -1146,9 +1147,9 @@ Operates on a per-project DB. Takes over from `ActionRepository`, whose IPC hand
 | Method | Description |
 |--------|-------------|
 | `listAll()` | Every column's automations, which is what the renderer store holds |
-| `listForColumn(columnId)` | One column's rows, both groups, ordered by trigger then position |
+| `listForColumn(columnId)` | One column's rows, all three groups, ordered by trigger then position |
 | `getForTrigger(columnId, trigger)` | That trigger's ENABLED rows in run order. The read the engine does on a move. |
-| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the two groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
+| `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the three groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
 | `deleteForColumn(columnId)` | Drop a column's rows. `SwimlaneRepository.delete` calls it explicitly, even though the foreign key cascades too. |
 
 ### AutomationRunRepository
@@ -1161,10 +1162,23 @@ Operates on a per-project DB.
 | `finish(id, status, detail, attempts)` | Close it on every exit path |
 | `recordSkipped(run, reason)` | Write a row that opens and closes at once. A skip never ran, so it has no window to be interrupted in. |
 | `recordDeliveredByCaller(run, detail)` | Write a `succeeded` row for a message the move delivered itself, in its own keystroke burst, so the run log shows it like every other run. |
+| `hasRunSince(automationId, taskId, since)` | Whether the automation has run on the task since `since`, the task's entry into the column. Counts executed runs only (`running`, `succeeded`, `failed`, `interrupted`), never a skip. A null `since` (no recorded entry) counts every run. The turn-end group's once-per-visit check. |
+| `hasSkipSince(automationId, taskId, since, detail)` | Whether a `skipped` row with exactly this `detail` exists since `since`. A null `since` counts every such skip. Lets a turn-end group record "Set up an Automation agent" once per visit rather than at every turn end. |
+| `countRuns(automationId, taskId)` | How many executed runs the automation has on the task, across every visit. What Frequency (`max_runs`) checks. |
 | `listForTask(taskId, limit)` | Everything that ran for one card, newest first |
 | `listForAutomation(automationId, limit)` | Every run of one automation, newest first. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
-| `pruneTo(limit)` | Keep the newest N rows. Nothing else bounds the table. |
+| `pruneTo(limit)` | Keep the newest N rows, plus every counted run of an automation with a Frequency limit on a task that is not archived, so pruning never resets a limit. Nothing else bounds the table. |
+
+### TaskMoveRepository
+
+Operates on a per-project DB. Reads `task_moves` only: `TaskRepository` writes the rows inside the
+move's own transaction, so a move cannot land without its record.
+
+| Method | Description |
+|--------|-------------|
+| `visitStartedAt(taskId, swimlaneId)` | When the task last entered this column (the newest row, rowid breaking a same-millisecond tie), or null when no entry was recorded. The visit boundary `hasRunSince` and `hasSkipSince` count from. |
+| `listForTask(taskId)` | Every recorded move of one task, oldest first |
 
 ### ActionRepository (legacy, still present)
 
