@@ -416,6 +416,11 @@ export type StopProcessOutcome = 'stopped' | 'ended' | 'failed';
  * made; here only its identity is, and Kangentic's own tree and every held PTY
  * stay out of reach exactly as in a reap. A window or a tmux server is stopped
  * here, since the user chose it by name.
+ *
+ * It stops the tree the first scan saw, and adopts nothing later: a child
+ * started between that scan and the kill is left, since once its parent is
+ * gone a Linux scan cannot tell it from a stranger that reused the parent's
+ * pid. It keeps the task's tag, so the next terminal transition reaps it.
  */
 export async function stopProcessTree(
   request: StopProcessRequest,
