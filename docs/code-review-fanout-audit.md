@@ -1305,22 +1305,26 @@ fixes in place, saw its test go red, and restored it.
 The task 736 seventh pass kept that layout at 18,670 pack lines: ten area shards of 1,017 to 2,198
 lines, six gated auditors on their own ranges (cross-platform in two of 4,587 and 4,278 lines), and
 the integration finder on a 771-line delta. Three commits had landed since the sixth pass: its
-fixes, its audit row, and an E2E change that runs the reap spec with worktrees on. Before the
-fan-out the driver ran the 51 changed unit files and the 22 unchanged ones that import a file those
-commits touched, and all passed. Two Mediums survived, each raised by two finders. The sixth pass's
-UNC guard in `process-label.ts` let the long-path forms `\\?\UNC\host\share` and
-`//?/UNC/host/share` through to the stat it exists to skip. The reap E2E's new worktree poll sat
-between the reap and the toast assertion, and a report of stopped processes only is a toast that
-closes after the default 4 s, so a slow removal would fail the spec. The toast is now checked first,
-and the spec passed on Windows with worktrees on. Three finders confirmed that `comparable` in
-`task-directories.ts` matched `normalizeDirectory` character for character, so it now calls it. The
+fixes, its audit row, and a test commit that runs the reap E2E with worktrees on and pins the release
+build's upload flag. Before the fan-out the driver ran the 51 changed unit files, and alongside it
+the 22 unchanged ones that import a file those commits touched; all passed. Two Mediums survived.
+Three finders (Area D and both cross-platform halves) found that the sixth pass's UNC guard in
+`process-label.ts` let the long-path forms `\\?\UNC\host\share` and `//?/UNC/host/share` through to
+the stat it exists to skip. Two found that the reap E2E's new worktree poll sat between the reap
+and the toast assertion, and a report of stopped processes only is a toast that closes after the
+default 4 s, so a slow removal would fail the spec. The toast is now checked first. Four finders
+confirmed that `comparable` in `task-directories.ts` matched `normalizeDirectory` character for
+character, so it now calls it. The
 two refuted candidates were a listener singleton that only a second IPC registration could reach and
 the quit-only `flushAll` gap decided earlier. Nine Lows were skipped. Among them is a Windows scan
 that cannot learn its own session or user and so reports nothing, which two finders raised and the
 tests pin on purpose. A test-builder filled three holes with `src/` closed: the long-path UNC case in
 the plan, the worktree's real path in the reap request, and the WSL bounds, which had run only on a
-Windows host and now fake the platform so CI's Linux runs them. The driver reverted each fix in
-place and saw its test go red.
+Windows host and now fake the platform so CI's Linux runs them. The driver reverted the label
+guard, the UNC strip and the real-path lookup in place and saw each test go red. The toast reorder
+was only run green, once on Windows with worktrees on, since a timing race cannot cheaply be forced
+red. The WSL tests were checked off Windows only under a faked platform on this host, so their first
+real Linux run is CI.
 
 The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
 mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and
