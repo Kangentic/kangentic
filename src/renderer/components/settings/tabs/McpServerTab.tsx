@@ -18,13 +18,19 @@ import { ExternalLinkButton } from '../../ExternalLinkButton';
 const HOW_IT_WORKS = 'Each agent session gets a local MCP server and discovers these tools on its own. '
   + 'Tasks an agent creates appear on the board with a toast.';
 
+/** The groups every visit opens with closed: the ones the manifest marks `startsClosed`. */
+const GROUPS_CLOSED_ON_ARRIVAL: ReadonlySet<McpToolCategoryId> = new Set(
+  MCP_TOOL_CATEGORIES.filter((category) => category.startsClosed).map((category) => category.id),
+);
+
 /**
  * One card: the server's switch, then the docs and the tools it gives agents,
  * shown only while it is on. The docs row comes first, as a row of its own:
  * at the end of the list it read as one more tool. Each tool group is a tile
- * that collapses, and every group opens again on the next visit, so the full
- * list is what a reader meets. Each tool is a cell that opens its docs entry;
- * the tooltip says what the tool does.
+ * that collapses. A collapse is not remembered: every visit opens with every
+ * group open except the dev-leaning Diagnostics, so the everyday tools are
+ * what a reader meets. Each tool is a cell that opens its docs entry; the
+ * tooltip says what the tool does.
  *
  * The list renders from `MCP_TOOL_MANIFEST`, so a registered tool appears here
  * with no edit to this file (mcp-tool-list-parity.md).
@@ -32,8 +38,8 @@ const HOW_IT_WORKS = 'Each agent session gets a local MCP server and discovers t
 export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const enabled = globalConfig.mcpServer?.enabled ?? true;
-  // For this visit only: the tab remounts on every open, which opens every group again.
-  const [closedGroups, setClosedGroups] = useState<ReadonlySet<McpToolCategoryId>>(() => new Set());
+  // For this visit only: the tab remounts on every open, which restores these defaults.
+  const [closedGroups, setClosedGroups] = useState<ReadonlySet<McpToolCategoryId>>(GROUPS_CLOSED_ON_ARRIVAL);
   const toggleGroup = (categoryId: McpToolCategoryId) => {
     setClosedGroups((current) => {
       const next = new Set(current);

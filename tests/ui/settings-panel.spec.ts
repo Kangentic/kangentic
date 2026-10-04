@@ -1360,13 +1360,14 @@ test.describe('Settings Panel', () => {
     await expect(page.getByTestId('mcp-docs-row')).toContainText('Documentation');
 
     // The tools render from MCP_TOOL_MANIFEST, one collapsible tile per category,
-    // every one open on arrival. Each tile's header names the group and its count.
+    // each open on arrival unless the manifest marks it `startsClosed`
+    // (Diagnostics). Each tile's header names the group and its count.
     for (const category of MCP_TOOL_CATEGORIES) {
       const toolCount = MCP_TOOL_MANIFEST.filter((tool) => tool.category === category.id).length;
       const toggle = page.getByTestId(`mcp-tool-group-${category.id}-toggle`);
       await expect(toggle).toContainText(category.label);
       await expect(toggle).toContainText(String(toolCount));
-      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await expect(toggle).toHaveAttribute('aria-expanded', category.startsClosed ? 'false' : 'true');
     }
     // A representative tool from each group. Backlog tools and the unified Search
     // tool live under Board. Scoped to each group: short names like "Search" also
@@ -1380,6 +1381,9 @@ test.describe('Settings Panel', () => {
     await expect(group('board').getByText('Search', { exact: true })).toBeVisible();
     await expect(group('sessions').getByText('Session History')).toBeVisible();
     await expect(group('browser').getByText('Bounding Box')).toBeVisible();
+    // Diagnostics starts closed; opening it shows its tools.
+    await expect(page.getByTestId('mcp-tool-group-diagnostics-body')).toBeHidden();
+    await page.getByTestId('mcp-tool-group-diagnostics-toggle').click();
     await expect(group('diagnostics').getByText('Tail Logs', { exact: true })).toBeVisible();
     await expect(group('diagnostics').getByText('Query Database', { exact: true })).toBeVisible();
     await expect(group('diagnostics').getByText('List Worktrees', { exact: true })).toBeVisible();
@@ -1417,40 +1421,49 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('MCP Server tool groups collapse one at a time and all open again on the next visit', async () => {
+  test('MCP Server tool groups collapse one at a time and return to their defaults on the next visit', async () => {
     await openSettings();
     // By test id: Settings reopens to the last tab, and when that is MCP Server
     // the card's "About MCP server" info button also matches the tab's name.
     await page.getByTestId('settings-tab-mcpServer').click();
 
     // A closed group keeps its cells mounted (they animate shut) but hidden, so
-    // the counts read visible cells only.
+    // the counts read visible cells only. The groups the manifest marks
+    // `startsClosed` (Diagnostics) arrive closed.
     const visibleCells = page.locator('[data-testid="mcp-tool-cell"]:visible');
+    const startsClosedIds = new Set(MCP_TOOL_CATEGORIES.filter((category) => category.startsClosed).map((category) => category.id));
+    const openOnArrival = MCP_TOOL_MANIFEST.filter((tool) => !startsClosedIds.has(tool.category)).length;
     const boardToggle = page.getByTestId('mcp-tool-group-board-toggle');
     const boardBody = page.getByTestId('mcp-tool-group-board-body');
     const boardCount = MCP_TOOL_MANIFEST.filter((tool) => tool.category === 'board').length;
+    const diagnosticsToggle = page.getByTestId('mcp-tool-group-diagnostics-toggle');
     await expect(boardBody).toBeVisible();
-    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+    await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(visibleCells).toHaveCount(openOnArrival);
 
     // Closing Board hides only its tools.
     await boardToggle.click();
     await expect(boardToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(boardBody).toBeHidden();
-    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length - boardCount);
+    await expect(visibleCells).toHaveCount(openOnArrival - boardCount);
 
     await boardToggle.click();
     await expect(boardToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(boardBody).toBeVisible();
-    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+    await expect(visibleCells).toHaveCount(openOnArrival);
 
-    // Closed again, then the panel closes. Settings reopens to the MCP Server
-    // tab, and a collapse is not remembered, so every group is open.
+    // Board closed and Diagnostics opened, then the panel closes. Settings
+    // reopens to the MCP Server tab, and neither change is remembered: Board is
+    // open and Diagnostics closed again.
     await boardToggle.click();
     await expect(boardBody).toBeHidden();
+    await diagnosticsToggle.click();
+    await expect(diagnosticsToggle).toHaveAttribute('aria-expanded', 'true');
     await closeSettings();
     await openSettings();
     await expect(page.getByTestId('mcp-tool-group-board-toggle')).toHaveAttribute('aria-expanded', 'true');
-    await expect(visibleCells).toHaveCount(MCP_TOOL_MANIFEST.length);
+    await expect(page.getByTestId('mcp-tool-group-diagnostics-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(visibleCells).toHaveCount(openOnArrival);
 
     // Reset to General so later tests start from a known tab.
     await page.getByRole('button', { name: 'General', exact: true }).click();
