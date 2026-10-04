@@ -341,17 +341,19 @@ export async function reapTaggedOnce(
       const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
       const alive = new Set(lastScan.processes.map(identityOf));
-      const reportedRootPids = new Set(firstPlan.roots.map((root) => root.process.pid));
+      // By identity, not pid: a root that exited can have its pid reused by a
+      // new process, which must not be reported as that root failing.
+      const reportedRootPidByIdentity = new Map(firstPlan.roots.map((root) => [identityOf(root.process), root.process.pid]));
       for (const root of firstPlan.roots) if (alive.has(identityOf(root.process))) failedRootPids.add(root.process.pid);
       const secondByPid = new Map(secondScan.processes.map((scanned) => [scanned.pid, scanned]));
       for (const survivor of secondPlan.targets) {
         if (!alive.has(identityOf(survivor))) continue;
-        let owner: number | null = reportedRootPids.has(survivor.pid) ? survivor.pid : null;
+        let owner: number | null = reportedRootPidByIdentity.get(identityOf(survivor)) ?? null;
         let cursor = survivor;
         for (let depth = 0; owner === null && depth < 64; depth += 1) {
           const parent = secondByPid.get(cursor.ppid);
           if (!parent || parent.pid === cursor.pid) break;
-          if (reportedRootPids.has(parent.pid)) owner = parent.pid;
+          owner = reportedRootPidByIdentity.get(identityOf(parent)) ?? null;
           cursor = parent;
         }
         if (owner !== null) {

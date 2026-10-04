@@ -127,7 +127,8 @@ const sweptProjectPaths = new Set<string>();
  * starts during the script's own run (about a second) can lose its WSL agent.
  * Holding the lock of every archived and To Do task instead would block every
  * drag of them for as long as the reap took, which a slow host and a wedged
- * `wsl.exe` can stretch to 35 s.
+ * `wsl.exe` can stretch to 35 s, plus up to 3 s for a PTY still parked on its
+ * exit grace.
  */
 export async function sweepTerminalTaskLeftovers(
   projectPath: string,

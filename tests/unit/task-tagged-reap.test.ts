@@ -291,6 +291,32 @@ describe('reapTaggedOnce report', () => {
     expect(reader.described).not.toContain(2004);
   });
 
+  it('reports a new process that reused a stopped root\'s pid on its own, and the root as stopped, matching survivors by identity and not by pid', async () => {
+    const reader = new FakeReader([
+      [tagged(2001, TASK, 'start-A')],
+      // The root exited on the graceful kill, and a new tagged process took its pid.
+      [tagged(2001, TASK, 'start-B')],
+      // The force kill of the new process did not remove it.
+      [tagged(2001, TASK, 'start-B')],
+    ]);
+    const waits: number[] = [];
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader, waits));
+    // The scenario is the one claimed: the second plan targeted the new process, by its own start key.
+    expect(reader.kills).toEqual([
+      { pid: 2001, startKey: 'start-A', strength: 'graceful' },
+      { pid: 2001, startKey: 'start-B', strength: 'force' },
+    ]);
+    expect(reader.scanCount).toBe(3);
+    expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
+    expect(result.killedPids).toEqual([2001]);
+    // The old root is gone, so it is stopped. The new process is its own failed entry for the task,
+    // not folded into the old root. Matching by pid alone reports the root as failed and never names the new one.
+    expect(result.entries).toEqual([
+      { taskId: TASK, pid: 2001, startKey: 'start-A', label: 'process', outcome: 'stopped', reason: null, place: 'project' },
+      { taskId: TASK, pid: 2001, startKey: 'start-B', label: 'process', outcome: 'failed', reason: null, place: 'project' },
+    ]);
+  });
+
   it('names a process when its command line could not be read', async () => {
     const reader = new FakeReader([[tagged(2001, TASK)], []]);
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));

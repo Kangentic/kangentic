@@ -34,15 +34,29 @@ import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, type WslShellSpec } from './
 export type WslExec = (file: string, args: string[], options: { timeoutMs: number; env: Record<string, string> }) => Promise<string>;
 
 /**
- * Bounds for the three `wsl.exe` calls. Measured on Windows 11 with Ubuntu
- * running: each listing returns in about 40 ms and the script in about 1.06 s,
- * its 1 s grace included. The bounds leave nine times that or more, and cap a
- * wedged `wsl.exe` at 20 s in all. Every terminal transition awaits the reap
- * before it removes the worktree, and a bulk delete holds each task to 60 s
- * (`TASK_CLEANUP_TIMEOUT_MS`), so a longer bound would stall both.
+ * Bounds for the `wsl.exe` calls. Measured on Windows 11 with Ubuntu running:
+ * each listing returns in about 40 ms and the script in about 1.06 s, its 1 s
+ * grace included. A script with nothing to kill adds about 2 ms a task over a
+ * distro of 37 processes (300 tasks in 0.67 s); the grep part grows with the
+ * distro's process count. The two listings get 5 s each, and the script runs
+ * share 10 s between them, which caps a wedged `wsl.exe` at 20 s in all.
+ * Every terminal transition awaits the reap before it removes the worktree,
+ * and a bulk delete holds each task to 60 s (`TASK_CLEANUP_TIMEOUT_MS`), so a
+ * longer bound would stall both. When `execFile`'s timeout terminates
+ * `wsl.exe`, the script inside the distro ends with it (measured on WSL 2), so
+ * a reap past its bound kills nothing more.
  */
 export const WSL_LIST_TIMEOUT_MS = 5_000;
 export const WSL_SCRIPT_TIMEOUT_MS = 10_000;
+
+/**
+ * Most characters of task arguments one `wsl.exe` call carries. CreateProcess
+ * caps a command line at 32,767 characters, and the startup sweep passes every
+ * archived and To Do task: 210 tasks with a worktree each failed with
+ * `ENAMETOOLONG`. The rest of the budget holds the script, about 3,000
+ * characters once quoted.
+ */
+export const WSL_TASK_ARGUMENT_BUDGET = 24_000;
 
 /** One task to reap in the distro: its id and its Windows-side directories. */
 export interface WslReapTask {
@@ -121,6 +135,30 @@ export function buildWslReapInvocation(tasks: readonly WslReapTask[]): { script:
   return { script, args };
 }
 
+/**
+ * Split the tasks into batches whose arguments fit one `wsl.exe` command line
+ * (`WSL_TASK_ARGUMENT_BUDGET`). Each argument is counted with a separating
+ * space and the two quotes it may need. A task is never split across batches.
+ */
+export function batchWslReapTasks(tasks: readonly WslReapTask[], budget: number = WSL_TASK_ARGUMENT_BUDGET): WslReapTask[][] {
+  const batches: WslReapTask[][] = [];
+  let batch: WslReapTask[] = [];
+  let batchLength = 0;
+  for (const task of tasks) {
+    const taskLength = [task.taskId, String(task.directories.length), ...task.directories]
+      .reduce((sum, argument) => sum + argument.length + 3, 0);
+    if (batch.length > 0 && batchLength + taskLength > budget) {
+      batches.push(batch);
+      batch = [];
+      batchLength = 0;
+    }
+    batch.push(task);
+    batchLength += taskLength;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
 /** Distro names from `wsl.exe -l --running -q`, which older WSL prints as UTF-16. */
 export function parseRunningDistros(output: string): string[] {
   return output
@@ -146,11 +184,13 @@ export function parseDefaultDistro(output: string): string | null {
 
 /**
  * Run the reap inside the shell's distro. Returns the pids it killed. Never
- * throws: a failure (wsl.exe missing or refusing, a timeout) kills nothing and
- * is handed to `onFailure`, so the caller can log and report it.
+ * throws: a failure (wsl.exe missing or refusing, a timeout) is handed to
+ * `onFailure`, so the caller can log and report it, and no batch runs after
+ * it. The pids an earlier batch killed are still returned.
  *
- * `keepTask` is asked again just before the script runs, after the `wsl.exe`
- * listings, which can take seconds: a task it now refuses is left out.
+ * `keepTask` is asked again just before each batch's script runs, after the
+ * `wsl.exe` listings, which can take seconds: a task it now refuses is left
+ * out.
  */
 export async function reapTaggedProcessesInWsl(
   spec: WslShellSpec,
@@ -159,8 +199,10 @@ export async function reapTaggedProcessesInWsl(
   onFailure: (error: unknown) => void = () => {},
   keepTask: (taskId: string) => boolean = () => true,
 ): Promise<number[]> {
-  if (!buildWslReapInvocation(tasks)) return [];
+  const reapable = tasks.filter((task) => isValidTaskTagValue(task.taskId) && task.directories.length > 0);
+  if (reapable.length === 0) return [];
   const env = { WSL_UTF8: '1' };
+  const killed = new Set<number>();
   try {
     const running = parseRunningDistros(await exec('wsl.exe', ['-l', '--running', '-q'], { timeoutMs: WSL_LIST_TIMEOUT_MS, env }));
     if (running.length === 0) return [];
@@ -168,12 +210,19 @@ export async function reapTaggedProcessesInWsl(
     // while another one runs; naming it keeps the reap from booting it.
     const distro = spec.distro ?? parseDefaultDistro(await exec('wsl.exe', ['-l', '-v'], { timeoutMs: WSL_LIST_TIMEOUT_MS, env }));
     if (!distro || !running.some((name) => name.toLowerCase() === distro.toLowerCase())) return [];
-    const invocation = buildWslReapInvocation(tasks.filter((task) => keepTask(task.taskId)));
-    if (!invocation) return [];
-    const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_SCRIPT_TIMEOUT_MS, env });
-    return [...new Set(output.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number))];
+    let scriptBudgetMs = WSL_SCRIPT_TIMEOUT_MS;
+    for (const batch of batchWslReapTasks(reapable)) {
+      const invocation = buildWslReapInvocation(batch.filter((task) => keepTask(task.taskId)));
+      if (!invocation) continue;
+      if (scriptBudgetMs <= 0) throw new Error('the WSL reap ran out of time before its last batch');
+      const startedAt = Date.now();
+      const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: scriptBudgetMs, env });
+      scriptBudgetMs -= Date.now() - startedAt;
+      for (const token of output.split(/\s+/)) if (/^\d+$/.test(token)) killed.add(Number(token));
+    }
+    return [...killed];
   } catch (error) {
     onFailure(error);
-    return [];
+    return [...killed];
   }
 }

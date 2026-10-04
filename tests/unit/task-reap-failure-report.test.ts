@@ -26,6 +26,7 @@ import { reportTaskReapFailure, resetTaskReapFailureReports } from '../../src/ma
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 import { setOffMainExecutor } from '../../src/main/utility-process/off-main-exec';
+import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 
@@ -133,6 +134,35 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([{ source: 'task_reap', stage: 'reap', code: 'wsl_error' }]);
     expect(warn).toHaveBeenCalledWith('[TASK-REAP] WSL reap failed (non-fatal):', expect.any(Error));
     warn.mockRestore();
+  });
+
+  it.runIf(process.platform === 'win32')('hands wsl.exe its bound as the child timeout, 5 s for the running-distro listing and 10 s for the script, with WSL_UTF8 set', async () => {
+    const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] }) });
+    Object.assign(manager, { getShell: async () => 'wsl -d Ubuntu' });
+    const requests: HostExecRequest[] = [];
+    setOffMainExecutor(async (request) => {
+      requests.push(request);
+      const isRunningListing = request.kind === 'execFile' && request.args.includes('--running');
+      return { ok: true, stdout: isRunningListing ? 'Ubuntu\n' : '', stderr: '' };
+    });
+    try {
+      await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: true });
+    } finally {
+      setOffMainExecutor(null);
+    }
+
+    // With `-d Ubuntu` in the shell there is no `-l -v` lookup: the listing, then the script.
+    const wslRequests = requests.filter((request): request is Extract<HostExecRequest, { kind: 'execFile' }> => request.kind === 'execFile' && request.file === 'wsl.exe');
+    expect(wslRequests).toHaveLength(2);
+    const [listing, script] = wslRequests;
+    expect(listing.args).toEqual(['-l', '--running', '-q']);
+    expect(listing.options.timeout).toBe(5_000);
+    expect(listing.options.env).toMatchObject({ WSL_UTF8: '1' });
+    expect(script.args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '-e', 'sh', '-c']);
+    expect(script.options.timeout).toBe(10_000);
+    expect(script.options.env).toMatchObject({ WSL_UTF8: '1' });
+    expect(script.options.windowsHide).toBe(true);
+    expect(reportHandledError).not.toHaveBeenCalled();
   });
 
   it('asks the host nothing for a task with no usable directory: no scan can find anything to kill', async () => {

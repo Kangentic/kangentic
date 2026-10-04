@@ -133,6 +133,18 @@ describe('Linux reader', () => {
     expect(labels.get(20)).toBe('node (server.js)');
     expect(await reader.describe([{ ...target, startKey: '778' }])).toEqual(new Map());
   });
+
+  it('returns an empty scan, and does not throw, when its proc root cannot be read', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-'));
+    temporaryRoots.push(root);
+    // A child that is never created: readdir of it rejects with ENOENT on every OS.
+    const missingProcRoot = path.join(root, 'missing');
+    // Positive control: the empty result is the unreadable root, not a directory that happens to be empty.
+    expect(fs.existsSync(missingProcRoot)).toBe(false);
+    const reader = new LinuxTaggedProcessReader({ procRoot: missingProcRoot, uid: 1000 });
+    // Not a throw and not a listing: the reap turns the empty scan into an `empty_scan` failure, never "all gone".
+    await expect(reader.scan()).resolves.toEqual({ processes: [], unreadableCount: 0 });
+  });
 });
 
 describe('macOS reader', () => {
