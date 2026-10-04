@@ -732,19 +732,21 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('the Index shows task summaries the way Settings does, and names a missing agent', async () => {
-    const states: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; summaryState: 'idle' | 'writing'; expected: string }> = [
-      // Off: what switching them on would cover.
-      { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, summaryState: 'idle', expected: '412 tasks' },
-      // On with no agent: the tag, rather than a count that is not moving.
-      { summarySetting: 'on', answerAgentChosen: false, summariesWritten: 0, summaryState: 'idle', expected: 'Needs an agent' },
-      // On and writing: the share, no time left (the map's summary carries no rate).
-      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'writing', expected: '72%' },
-      // On, behind, and nothing writing: what is written of what could be, never
-      // a track that does not move (the All projects panel sat at 91% this way).
-      { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'idle', expected: '300 of 412, 1 skipped' },
-    ];
-    for (const { summarySetting, answerAgentChosen, summariesWritten, summaryState, expected } of states) {
+  // One test per state, so each launch gets its own timeout budget. Four launches
+  // in one test took about 20s on a loaded CI shard, past the 15s test timeout.
+  const taskSummaryIndexStates: Array<{ summarySetting: 'off' | 'on'; answerAgentChosen: boolean; summariesWritten: number; summaryState: 'idle' | 'writing'; expected: string }> = [
+    // Off: what switching them on would cover.
+    { summarySetting: 'off', answerAgentChosen: true, summariesWritten: 0, summaryState: 'idle', expected: '412 tasks' },
+    // On with no agent: the tag, rather than a count that is not moving.
+    { summarySetting: 'on', answerAgentChosen: false, summariesWritten: 0, summaryState: 'idle', expected: 'Needs an agent' },
+    // On and writing: the share, no time left (the map's summary carries no rate).
+    { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'writing', expected: '72%' },
+    // On, behind, and nothing writing: what is written of what could be, never
+    // a track that does not move (the All projects panel sat at 91% this way).
+    { summarySetting: 'on', answerAgentChosen: true, summariesWritten: 300, summaryState: 'idle', expected: '300 of 412, 1 skipped' },
+  ];
+  for (const { summarySetting, answerAgentChosen, summariesWritten, summaryState, expected } of taskSummaryIndexStates) {
+    test(`the Index shows task summaries the way Settings does, and names a missing agent (${expected})`, async () => {
       const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20), summarySetting, answerAgentChosen, summariesWritten, summaryState }));
       try {
         await openKnowledgeGraph(page);
@@ -755,8 +757,8 @@ test.describe('knowledge graph', () => {
       } finally {
         await browser.close();
       }
-    }
-  });
+    });
+  }
 
   // The map is drawn from the vectors, which outlive switching the Knowledge
   // Graph off. Nothing embeds while it is off, so the lines read as the
