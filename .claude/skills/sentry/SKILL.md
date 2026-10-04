@@ -12,8 +12,20 @@ gets captured and how.
 
 ## Auth (never print the token)
 
-Requests need a bearer token. Resolution order (Kangentic-scoped on purpose, so another
-repo's generic `SENTRY_AUTH_TOKEN` is never picked up by mistake):
+The `sentry` CLI (see Retrieval) signs in once through the browser: `sentry auth login --read-only`
+stores a refreshing OAuth login in `~/.config/sentry`, and you should not need to repeat it. That
+stored login wins over a `SENTRY_AUTH_TOKEN` in the environment, so the CI upload token a build
+machine has set is ignored; `sentry auth status` says which one is in use. Assigning or resolving
+an issue needs a login with write access. The default grant for that also covers admin on projects
+and teams, so use the narrow one, which handles triage and assigning (checked on a real issue) and
+replaces any earlier login:
+
+```
+sentry auth login --force --scope project:read,org:read,event:read,member:read,team:read,event:write
+```
+
+The raw API, the fallback below, needs a bearer token. Resolution order (Kangentic-scoped on
+purpose, so another repo's generic `SENTRY_AUTH_TOKEN` is never picked up by mistake):
 
 1. `KANGENTIC_SENTRY_TOKEN` environment variable, if set.
 2. On Windows, the User-level registry value for the same name (covers a process tree started
@@ -47,10 +59,76 @@ issues you could not mark and carry on, never let it block the triage itself.
 Parse the issue id from a pasted URL: `https://kangentic.sentry.io/issues/<ISSUE_ID>/?...`
 (the `project=` query param is the numeric project id, useful for list queries).
 
-PowerShell pattern (one call per request; substitute the endpoint):
+Use Sentry's own `sentry` CLI (npm package `sentry`, published by Sentry, pre-1.0). Install it once
+with `npm install -g sentry@0.46.0` (Node 20+). Run `sentry --version`: it must print `0.x`. A
+machine that also has the older upload tool (`sentry-cli`, from scoop or Homebrew) can resolve
+`sentry` to that one and print `sentry-cli 3.x`. Call the new one by its full path in npm's global
+bin directory, or as `npx -y sentry@0.46.0`. Every call prints a one-line notice about
+`.sentryclirc`, which is harmless.
+
+A project target is `kangentic/desktop` or `kangentic/mobile`. An issue target is
+`kangentic/DESKTOP-1N`: the shortId works for every command here, so no numeric id is needed. One
+command per call:
+
+```
+sentry issue list kangentic/desktop --query "is:unresolved is:unassigned environment:production" --json --fields shortId,title,level,count,userCount,firstSeen,lastSeen,assignedTo
+sentry issue view kangentic/DESKTOP-1N
+sentry issue view kangentic/DESKTOP-1N --json --fields event.contexts.native_crash,event.contexts.chromium_stability_report,event.contexts.crashpad,event.contexts.host_memory,event.contexts.utility_process
+sentry api organizations/kangentic/issues/DESKTOP-1N/tags/release/
+sentry api organizations/kangentic/issues/DESKTOP-1N/ -X PUT -f assignedTo=user:<id>
+```
+
+- **`issue list`** returns 25 rows from the last 30 days by default (`-n 100`, `--cursor next`,
+  `--period`). Run it for both projects. `--query` takes Sentry issue search syntax, and the
+  query above is the triage set. Retention is 30 days, so no `--period` reaches further back.
+- **`issue view`** without `--json` is the readable form: a header table (status, events, users,
+  first and last seen), tags, the user's install id and location, the breadcrumbs, and the stack
+  with the innermost frame first, each symbolicated frame followed by about ten lines of its source.
+  It does not print the crash contexts, instruction addresses, or stackwalker trust.
+- **Frame count.** The readable view prints one `at ` line per frame, which matched the JSON on four
+  events (39, 40, 13 and 50 frames). In PowerShell:
+  `(sentry issue view kangentic/DESKTOP-19 | Select-String '^at ').Count`. A chained exception
+  prints each stack in turn, so count per stack. Diagnosis says what 50 means.
+- **Crash contexts** come from `--json --fields`, about 1.5 KB for the line above where the
+  readable view is 26 KB. A context the event lacks is left out of the result. Do not request
+  `event.contexts.electron` or the app's own context: they carry the crashpad `gpu-url-chunk` URL,
+  a home path on an event stored before the scrubbing rule.
+- **Always give `--json` a `--fields` list.** Bare `--json` prints the whole raw event, 600 KB for
+  a native crash, with a home path in every frame's `package`.
+- **Release and environment breakdown** is one `sentry api` call per issue and key (`release`,
+  `environment`). It is what spots a recurrence on the newest release. Sentry allows about ten of
+  these per window, so a long list needs spacing.
+- **`sentry api` GET parameters** go in as `-f key=value`, for example
+  `sentry api organizations/kangentic/issues/ -f project=4511996066660352 -f query=release:Kangentic@0.43.2 -f limit=100`.
+  A query string written into the path was ignored in testing.
+- **Assigning** is the PUT above, with your user id from `sentry auth whoami --json --fields id`.
+  It needs a login with write access. A 403 means the login is read-only: report the issues you
+  could not mark and carry on.
+
+**What reaches the output unscrubbed.** Nothing in the repo rewrites the CLI's output. Sentry removes
+home paths from events as it stores them (a Data Scrubbing rule, `docs/analytics.md`, "Native crash
+fields"), and the app rewrites its own home directory in exception text from the first release that
+includes `src/main/analytics/redact-event-paths.ts`. An event stored before the rule (applied
+2026-10-03) still carries them, and they are gone only when the event ages out of the 30-day
+retention, by early November 2026. Known cases: DESKTOP-19's exception
+value and stored message (the readable view matched 66 paths from two users), the crashpad
+`gpu-url-chunk` URL in the `electron` context, and every frame's `package` in `--json`, which the
+rule cannot reach at all. So never paste the readable view's Message, an exception value, a
+breadcrumb, or a stack line into a task or a reply. Describe the error in your own words, cite
+frames by module and line, and search what you are about to paste for `C:\Users`, `/Users/` and
+`/home/`. The Sentry MCP's `get_sentry_resource` prints the contexts too, so the same applies.
+
+Fall back to the raw API for what the CLI leaves out: the `debugmeta` images the native
+symbolication steps need, the `threads` entry, and the issue `activity` array. In PowerShell, parse
+an EVENT payload with `ConvertFrom-Json -AsHashtable`, which needs PowerShell 7 (`pwsh`); Windows
+PowerShell 5.1 has no such parameter. Sentry's `_meta` annotation tree carries an empty-string key,
+which plain `ConvertFrom-Json` refuses, so `Invoke-RestMethod` hands back the raw string and every
+field reads empty as if the event had no data. Issue and list payloads parse either way.
+
+PowerShell 7 pattern (one call per request; substitute the endpoint):
 
 ```powershell
-$token = $env:KANGENTIC_SENTRY_TOKEN; if (-not $token) { $token = [Environment]::GetEnvironmentVariable('KANGENTIC_SENTRY_TOKEN','User') }; if (-not $token) { $token = ((Get-Content "$env:USERPROFILE\.sentryclirc") | Where-Object { $_ -match '^token\s*=' }) -replace '^token\s*=\s*','' }; Invoke-RestMethod -Uri 'https://sentry.io/api/0/organizations/kangentic/issues/<ISSUE_ID>/' -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Depth 8
+$token = $env:KANGENTIC_SENTRY_TOKEN; if (-not $token) { $token = [Environment]::GetEnvironmentVariable('KANGENTIC_SENTRY_TOKEN','User') }; if (-not $token) { $token = ((Get-Content "$env:USERPROFILE\.sentryclirc") | Where-Object { $_ -match '^token\s*=' }) -replace '^token\s*=\s*','' }; (Invoke-WebRequest -Uri 'https://sentry.io/api/0/organizations/kangentic/issues/<ISSUE_ID>/events/latest/' -Headers @{ Authorization = "Bearer $token" }).Content | ConvertFrom-Json -AsHashtable
 ```
 
 macOS/Linux (Bash, one command): `curl -s -H "Authorization: Bearer $KANGENTIC_SENTRY_TOKEN" <url>`.
@@ -110,14 +188,17 @@ handled forwards), release, environment, and the anonymous install id under `use
   release carrying `tagTruncatedStack` (`src/main/analytics/error-reporting.ts`) ships, a capped
   event carries a `stack_truncated: 'true'` tag; every event from before it must be counted by
   hand, and so must any event with no such tag, since its absence is ambiguous until that
-  release is the only one reporting. DESKTOP-19 cost a whole investigation round to this: six
-  events, fifty monaco frames each, and no in-app frame. Two different caps cut it. V8's own
-  50-frame limit cut the ORIGINAL error's outer frames when monaco's listener threw, and the SDK's
-  parser then cut the one frame of monaco's rethrow (see the `mechanism` bullet below).
+  release is the only one reporting. The tag is event-level and set when any one exception hits
+  50, so in a chained exception count each stack: a 3-frame cause on a tagged event is complete.
+  DESKTOP-19 cost a whole investigation round to this: six events, fifty monaco frames each, and
+  no in-app frame. Two different caps cut it. V8's own 50-frame limit cut the ORIGINAL error's
+  outer frames when monaco's listener threw, and the SDK's parser then cut the one frame of
+  monaco's rethrow (see the `mechanism` bullet below).
 - **Read the `context` lines rather than reasoning from function names.** When sourcemaps are
   uploaded every frame carries `context` (the source line plus surrounding lines). That is
-  authoritative and beats reading `node_modules` locally. Print it for the load-bearing frames:
-  `$event.entries | Where-Object type -eq 'exception'` then each frame's `.context`.
+  authoritative and beats reading `node_modules` locally. `sentry issue view` prints each
+  symbolicated frame followed by about ten lines of its source, with the frame's own line marked, so
+  read those before reasoning from names.
 - **Resolve library frames against the version the RELEASE shipped**, read from `package.json` at
   that git tag (`git show v0.41.0:package.json`), not from the current tree. A dependency bump
   between the first-seen release and today silently invalidates every line-number mapping and
@@ -213,12 +294,15 @@ Reading a native event, in order of what trips people up:
   thread interleaving, or an ASLR-shifted offset can move the same underlying bug into a fresh
   shortId. Verifying a fix held on a later release needs a `release:Kangentic@X` query, not
   `firstRelease:`, which misses a group born on an older release that still carries events on X.
-  Drop the `is:unresolved` and the `statsPeriod` that this skill's query examples carry. Both hide
-  events the release genuinely produced, which breaks the count. Sum every returned group and
-  check the total against that release's own event count from the releases endpoint. A match
-  means every event the release produced is accounted for by a named group; read each group's
-  title to confirm none is the crash class in question. A mismatch means the search was
-  incomplete, not that a recurrence is hiding. Widen it and count again. Task #669
+  Drop the `is:unresolved` that this skill's query examples carry, because it hides resolved
+  groups the release genuinely produced and breaks the count. `sentry issue list kangentic/desktop
+  --query "release:Kangentic@X" -n 100` does that, and so does `sentry api` with `-f` parameters
+  (see Retrieval). Sum every returned group and check the total against that release's own event
+  count from the releases endpoint. A match means every event the release produced is accounted for
+  by a named group; read each group's title to confirm none is the crash class in question. A
+  mismatch means the search was incomplete, not that a recurrence is hiding. Widen it and count
+  again. Search only sees the last 30 days: a group whose events have all aged out is missing from
+  the results although its issue remains, so for a release older than that the sum cannot close. Task #669
   (DESKTOP-Y/DESKTOP-Z) is where this mattered: 0.41.0's six new groups summed to its entire
   16-event volume, and none was a teardown crash.
 - **Breadcrumbs on a startup-found dump are not the crashed session's.** On an older event they
@@ -261,16 +345,20 @@ Reading a native event, in order of what trips people up:
 
 ## Typical requests
 
-**"Any new issues?" (triage scan).** Query each project (or the one named) for what needs
-eyes, newest first:
+**"Any new issues?" (triage scan).** Run the `issue list` line from Retrieval for
+`kangentic/desktop` and again for `kangentic/mobile`, unless the user scoped to one. The query
+keeps only unresolved, unassigned production issues, so the result is already most of the report's
+per-issue line: shortId, title, count, userCount (affected installs), first and last seen, and
+`assignedTo`. Add the link (`https://kangentic.sentry.io/issues/<id>/`), and the release breakdown
+(`sentry api` on `/tags/release/`) for any issue you will report. When the CLI is unavailable, this
+raw query is the fallback:
 
 ```
 GET /api/0/organizations/kangentic/issues/?project=4511996066660352&query=is:unresolved is:for_review&statsPeriod=14d&sort=date
 ```
 
-Run it for both project ids unless the user scoped to one. Report a compact per-issue line:
-shortId, title, count, userCount (affected installs), firstSeen, environment, and the link
-(`https://kangentic.sentry.io/issues/<id>/`). Two filters keep the report honest:
+Either way, assignment and the board search decide what counts as new. Two filters keep the
+report honest:
 
 - Treat `environment: development` events as dev/preview noise (the
   `Kangentic telemetry verification:` issues are the rig's own test errors) - list them
@@ -336,7 +424,8 @@ path and line (`viewModelImpl.js:145`).
 **Then assign every issue the task covers.** Creating a board task and leaving the Sentry issue
 unassigned means the next sweep re-derives the whole cross-reference from scratch, which is what
 assignment exists to prevent here. Assignment is a triage marker, not a claim of ownership: it
-says a human has looked at this and it has a home. Rules:
+says a human has looked at this and it has a home. Send the PUT from Retrieval once per issue; each
+call touches one issue. Rules:
 
 - Assign after the task is created, never before, so a failed create cannot leave a false marker.
 - One task can cover several issues (a cluster, or several issues that resolve in one file).
