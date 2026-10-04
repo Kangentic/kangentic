@@ -29,31 +29,15 @@ const cacheDir = path.join(repoRoot, 'node_modules', '.cache', 'kangentic-ts-bun
 const rootTag = createHash('sha256').update(repoRoot).digest('hex').slice(0, 8);
 
 /**
- * Modules a bundled main-process import graph loads through a deliberately dynamic
- * `require(variable)`, mapped to a replacement.
- *
- * esbuild cannot rewrite a dynamic require, and the OpenCode parser uses one ON PURPOSE so the
- * native binding stays lazy (see loadBetterSqlite3). So the substitution happens in the `require`
- * the banner installs, not through esbuild's `alias`. better-sqlite3 here is rebuilt against
- * Electron's ABI and will not load under plain Node, which is what capture tooling runs.
- */
-const DYNAMIC_REQUIRE_SHIMS = {
-  'better-sqlite3': path.join(here, 'better-sqlite3-node-shim.mjs'),
-};
-
-/**
  * Bundle `entryPoint` and return its module namespace.
  *
- * Native and Electron dependencies stay external: nothing here runs inside Electron, and the one
- * native dependency that is actually reached is shimmed above.
+ * Native and Electron dependencies stay external: nothing here runs inside Electron. better-sqlite3
+ * is the one native dependency the parsers reach, and it is a Node-API module that loads under the
+ * plain Node this tooling runs on.
  */
 export async function importTsModule(entryPoint) {
   fs.mkdirSync(cacheDir, { recursive: true });
   const outfile = path.join(cacheDir, `${path.basename(entryPoint, '.ts')}-${rootTag}.mjs`);
-  const shimImports = Object.entries(DYNAMIC_REQUIRE_SHIMS)
-    .map(([name, file], index) => `import __shim${index} from ${JSON.stringify(pathToFileURL(file).href)};`
-      + `\n__shims[${JSON.stringify(name)}] = __shim${index};`)
-    .join('\n');
   await build({
     entryPoints: [entryPoint],
     outfile,
@@ -62,16 +46,14 @@ export async function importTsModule(entryPoint) {
     format: 'esm',
     target: 'node24',
     external: ['better-sqlite3', 'electron', 'node-pty'],
-    // ESM has no `require` binding, so a lazy `require(...)` in the graph throws ReferenceError and
-    // the caller sees the dependency reported as merely unavailable. Install one, and let it answer
-    // the shimmed names itself.
+    // ESM has no `require` binding, so a lazy `require(...)` in the graph (the OpenCode parser's
+    // `loadBetterSqlite3` keeps the native binding lazy on purpose, and esbuild cannot rewrite a
+    // dynamic require) throws ReferenceError and the caller sees the dependency reported as merely
+    // unavailable. Install one.
     banner: {
       js: [
         "import { createRequire as __createRequire } from 'node:module';",
-        'const __shims = {};',
-        shimImports,
-        'const __nodeRequire = __createRequire(import.meta.url);',
-        'const require = (name) => (name in __shims ? __shims[name] : __nodeRequire(name));',
+        'const require = __createRequire(import.meta.url);',
       ].join('\n'),
     },
     logLevel: 'warning',

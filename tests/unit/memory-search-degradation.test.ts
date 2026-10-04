@@ -9,8 +9,8 @@ import type { Embedder } from '../../src/main/retrieval/types';
  *
  * The engine must NEVER throw for an empty/absent index and must ALWAYS degrade
  * to lexical-only when the semantic layer is missing, disabled, slow, or errors.
- * These tests script a fake per-project DB (better-sqlite3 cannot load under
- * vitest) so the FTS -> fusion -> hydrate pipeline runs end to end, and drive a
+ * These tests script a fake per-project DB (no real database is involved) so
+ * the FTS -> fusion -> hydrate pipeline runs end to end, and drive a
  * DeterministicFakeEmbedder through its unavailable / null / slow / throwing /
  * working modes.
  *
@@ -25,8 +25,8 @@ import type { Embedder } from '../../src/main/retrieval/types';
  * embedWaitMs budget.
  */
 
-// better-sqlite3 loads at value level inside db/database; stub it so importing
-// memory-search does not drag the native binding in. getDb is always injected,
+// db/database imports better-sqlite3 at value level; stub it so importing
+// memory-search does not pull the real driver in. getDb is always injected,
 // so this is never actually called.
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => {

@@ -18,39 +18,11 @@
  * fields compare at relative 1e-9 (SQLite sums floats in scan order and the
  * app-wide merge sums per-project subtotals, so last-ulp drift is expected).
  *
- * Real in-memory better-sqlite3 DBs bootstrapped via runProjectMigrations;
- * skips cleanly when better-sqlite3 cannot load under the runner's Node ABI.
+ * Real in-memory better-sqlite3 DBs bootstrapped via runProjectMigrations.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors usage-history-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { UsageHistoryRepository } from '../../src/main/db/repositories/usage-history-repository';
 import { ConversationUsageStore, type GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
@@ -92,7 +64,7 @@ import type {
  * vacuously.
  */
 function legacyTurnTokensForSession(
-  db: InstanceType<typeof DatabaseType>,
+  db: Database.Database,
   sessionRecordId: string,
   window: { sinceMs: number | null; untilMs: number | null },
 ): { totalInputTokens: number; totalOutputTokens: number } {
@@ -149,7 +121,7 @@ interface LegacyGroup {
   turnCount: number;
 }
 
-function legacyListRowsAfter(db: InstanceType<typeof DatabaseType>, since: string | null, until: string | null): LegacyUsageRow[] {
+function legacyListRowsAfter(db: Database.Database, since: string | null, until: string | null): LegacyUsageRow[] {
   const select = `
     SELECT
       session_record_id AS sessionRecordId,
@@ -183,7 +155,7 @@ function legacyListRowsAfter(db: InstanceType<typeof DatabaseType>, since: strin
   return db.prepare(`${select}${where} ORDER BY session_started_at ASC`).all(...params) as LegacyUsageRow[];
 }
 
-function legacyGetGroupedUsageSince(db: InstanceType<typeof DatabaseType>, sinceMs: number | null, groupMs: number, untilMs: number | null): LegacyGroup[] {
+function legacyGetGroupedUsageSince(db: Database.Database, sinceMs: number | null, groupMs: number, untilMs: number | null): LegacyGroup[] {
   const select = `
     SELECT
       CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
@@ -479,6 +451,38 @@ function expectNumericallyEqual(actual: unknown, expected: unknown, path: string
   expect(actual, path).toBe(expected);
 }
 
+/**
+ * KPI fields added after the refactor this oracle freezes: active time and the
+ * subagent rollup. The legacy fold never computed them, so there is nothing to
+ * compare them against. They are named here rather than skipped, so a KPI field
+ * added later fails the KPI test until someone classifies it.
+ */
+const KPI_FIELDS_NEWER_THAN_ORACLE = [
+  'activeMs',
+  'activeSessionsCovered',
+  'subagentCacheCreationTokens',
+  'subagentCacheReadTokens',
+  'subagentCount',
+  'subagentInputTokens',
+  'subagentNestedCount',
+  'subagentOutputTokens',
+  'subagentTurnCount',
+];
+
+/** Splits the production KPIs into the fields the oracle covers and the newer ones. */
+function splitKpisByOracleCoverage(kpis: UsageKpis): {
+  covered: Record<string, unknown>;
+  newerFieldNames: string[];
+} {
+  const covered: Record<string, unknown> = {};
+  const newerFieldNames: string[] = [];
+  for (const [key, value] of Object.entries(kpis)) {
+    if (KPI_FIELDS_NEWER_THAN_ORACLE.includes(key)) newerFieldNames.push(key);
+    else covered[key] = value;
+  }
+  return { covered, newerFieldNames: newerFieldNames.sort() };
+}
+
 // ---------------------------------------------------------------------------
 // Deterministic dataset (mulberry32, same PRNG the seed script uses).
 // ---------------------------------------------------------------------------
@@ -506,7 +510,7 @@ const MODELS: Array<{ id: string | null; display: string | null }> = [
 const AGENTS: Array<string | null> = ['claude', 'codex', 'gemini', null];
 const EFFORTS: Array<string | null> = ['low', 'medium', 'high', null, null];
 
-function seedProject(db: InstanceType<typeof DatabaseType>, prngSeed: number, sessionCount: number): void {
+function seedProject(db: Database.Database, prngSeed: number, sessionCount: number): void {
   const random = mulberry32(prngSeed);
   const insertUsage = db.prepare(`
     INSERT INTO usage_history (id, session_record_id, recorded_at,
@@ -577,11 +581,10 @@ function seedProject(db: InstanceType<typeof DatabaseType>, prngSeed: number, se
 // The equivalence suite.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('usage-stats SQL pushdown equivalence (new SQL vs legacy JS folds)', () => {
-  const databases: Array<InstanceType<typeof DatabaseType>> = [];
+describe('usage-stats SQL pushdown equivalence (new SQL vs legacy JS folds)', () => {
+  const databases: Array<Database.Database> = [];
 
   beforeAll(() => {
-    if (!Database) return;
     for (const [prngSeed, sessionCount] of [[42, 220], [1337, 180]] as const) {
       const db = new Database(':memory:');
       runProjectMigrations(db);
@@ -638,10 +641,25 @@ describe.runIf(CAN_RUN)('usage-stats SQL pushdown equivalence (new SQL vs legacy
 
       const newKpis = computeKpis(mergeUsageTotals(totalsList), newGroups, elapsedMs);
       const legacyKpis = legacyComputeKpis(legacyRows, legacyGroups, legacyCostMap, elapsedMs);
-      // burnRateTokensPerHour gates on groups.length > 0; the counts differ
-      // between the shapes (buckets vs session-groups), but the GATE (any
-      // turns at all) must agree, and every summed field must match.
-      expectNumericallyEqual(newKpis, legacyKpis, `kpis[${window.label}]`);
+      // Every summed field must match the oracle. The two burn rates are derived
+      // from those sums, and their DEFINITION changed after the refactor this
+      // oracle freezes (see computeKpis in bucketing.ts): the dollar rate divides
+      // the full ledger cost instead of the turn-allocated share, and both rates
+      // gate on any session in the window instead of on any turn group. So the
+      // expected rates are rebuilt from the oracle's own sums under the current
+      // definition; the empty window still pins the gate.
+      const elapsedHours = Math.max(elapsedMs, 60_000) / 3_600_000;
+      const hasWindowData = legacyKpis.sessionCount > 0;
+      const expectedKpis = {
+        ...legacyKpis,
+        burnRateTokensPerHour: hasWindowData
+          ? (legacyKpis.turnInputTokens + legacyKpis.turnOutputTokens) / elapsedHours
+          : null,
+        burnRateUsdPerHour: hasWindowData && legacyKpis.costKnown ? legacyKpis.totalCostUsd / elapsedHours : null,
+      };
+      const { covered, newerFieldNames } = splitKpisByOracleCoverage(newKpis);
+      expect(newerFieldNames, `kpis[${window.label}] fields newer than the oracle`).toEqual(KPI_FIELDS_NEWER_THAN_ORACLE);
+      expectNumericallyEqual(covered, expectedKpis, `kpis[${window.label}]`);
     }
   });
 
@@ -739,15 +757,5 @@ describe.runIf(CAN_RUN)('usage-stats SQL pushdown equivalence (new SQL vs legacy
       const legacyCount = candidateIds.filter((recordId) => legacyLedgerIds.has(recordId)).length;
       expect(repository.countSessionsRepresented(window.sinceIso, window.untilIso, candidateIds)).toBe(legacyCount);
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('usage-stats SQL equivalence tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

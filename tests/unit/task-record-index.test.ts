@@ -2,9 +2,9 @@
  * The `task` corpus: how a task's record is chunked, and how a sweep keeps the
  * index in step with the board (re-read on `updated_at`, removed when gone).
  *
- * better-sqlite3 cannot load under vitest's system Node, so the sweep runs
- * against a scripted `prepare()` that answers by SQL shape and records every
- * write, the way `retrieval-store-sql.test.ts` does.
+ * The sweep runs against a scripted `prepare()` that answers by SQL shape and
+ * records every write, the way `retrieval-store-sql.test.ts` does, so no
+ * database is involved.
  */
 
 import { passThroughTransaction } from './helpers/transaction-double';

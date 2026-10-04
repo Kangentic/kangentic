@@ -40,13 +40,14 @@ export default defineConfig({
     __KANGENTIC_DEV__: 'false',
   },
   test: {
-    // `node:sqlite` is the only way a migration test can run a REAL SQLite
-    // engine here: better-sqlite3 is built for Electron's Node ABI, so every
-    // suite gated on it skips everywhere, CI included. node:sqlite is unflagged
-    // from Node 23.4 but needs this flag on the Node 22 CI runner, without which
-    // those suites would silently skip there too - which is not coverage.
-    // Accepted as a no-op on newer Node, so it is safe on both.
-    execArgv: ['--experimental-sqlite'],
+    // A throwaway KANGENTIC_DATA_DIR per test file, so a suite that reaches the
+    // real getGlobalDb() never opens the developer's own global database. See
+    // isolate-data-dir.ts for why this became necessary with better-sqlite3 13;
+    // unit-data-root.ts owns the per-run parent and removes it afterwards.
+    // node-api-floor.ts goes first: below Node-API 10 better-sqlite3 13
+    // segfaults instead of failing, so the run stops there with a reason.
+    globalSetup: ['tests/unit/helpers/node-api-floor.ts', 'tests/unit/helpers/unit-data-root.ts'],
+    setupFiles: ['tests/unit/helpers/isolate-data-dir.ts'],
     // `tests/unit/**` runs by default via `npm run test:unit`.
     // `tests/integration/**` is opt-in - tests there hit real CLIs / file
     // system / network and only make sense to run on demand. They are

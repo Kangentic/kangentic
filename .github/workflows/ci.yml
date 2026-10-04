@@ -375,9 +375,11 @@ jobs:
   #
   # node_modules is restored from the shared lockfile-keyed cache (same key as
   # every tier); npm ci runs only on a cache miss. E2E relies on the cached tree
-  # carrying the native better-sqlite3 / node-pty build and the extracted Electron
-  # binary. No Playwright browser download (the electron project drives the
-  # bundled Electron). retries=1 on CI comes from playwright.config.ts.
+  # carrying the native prebuilds (better-sqlite3, node-pty) and the Electron
+  # binary, which the root package's postinstall (`install-electron`) downloads
+  # now that the electron package no longer does it itself. No Playwright browser
+  # download (the electron project drives the bundled Electron). retries=1 on CI
+  # comes from playwright.config.ts.
   e2e-shards:
     name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
@@ -394,13 +396,13 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Cache node_modules (native build + Electron binary)
+      - name: Cache node_modules (native prebuilds + Electron binary)
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
           key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
-      - name: Install dependencies (npm ci, full native build)
+      - name: Install dependencies (npm ci, with the Electron binary)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
       - name: Build (production bundle)

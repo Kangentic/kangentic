@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: 22
       # --ignore-scripts: the self-test needs node-pty's shipped prebuilds only,
-      # not the better-sqlite3 rebuild that postinstall runs for Electron.
+      # not the Electron binary that the root postinstall downloads.
       - name: Install dependencies (npm ci)
         run: npm ci --ignore-scripts
       - name: Compile and verify the spawn-helper

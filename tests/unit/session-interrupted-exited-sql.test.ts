@@ -1,31 +1,35 @@
 /**
  * EMPIRICAL validation of SessionRepository.getInterruptedExited() against a
- * REAL SQLite engine (node:sqlite), executing the actual production method.
+ * REAL SQLite database (better-sqlite3, the driver production uses), executing
+ * the actual production method.
  *
- * session-repository-interrupted-exited.test.ts only string-asserts the SQL
- * (better-sqlite3 cannot load in vitest). This suite proves the SQL SEMANTICS -
- * the cross-platform predicate, the latest-in-group MAX(started_at) subquery,
- * and the null-safe `IS` isolation match - by running the same SQLite dialect
- * over incident-shaped rows.
- *
- * node:sqlite is built-in on Node 22.5+ but may need --experimental-sqlite on
- * some builds; this suite skips where it is unavailable (e.g. the Node 22 CI
- * runner without the flag). The string-assertion test is the CI regression
- * guard; this is the dev-machine semantic check.
+ * session-repository-interrupted-exited.test.ts string-asserts the SQL. This
+ * suite proves the SQL SEMANTICS - the cross-platform predicate, the
+ * latest-in-group MAX(started_at) subquery, and the null-safe `IS` isolation
+ * match - by running the query over incident-shaped rows.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
+import { openTestDatabase } from './helpers/test-database';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
+const openDatabases: DatabaseType.Database[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function openSessionsDatabase(): DatabaseType.Database {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  database.exec(`CREATE TABLE sessions (
+    id TEXT PRIMARY KEY, task_id TEXT, session_type TEXT, isolated_swimlane_id TEXT,
+    agent_session_id TEXT, command TEXT, cwd TEXT, status TEXT, exit_code INTEGER,
+    started_at TEXT
+  )`);
+  return database;
 }
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
 
 // id, task_id, session_type, isolated_swimlane_id, agent_session_id, status, exit_code, started_at
 type SeedRow = [string, string, string, string | null, string | null, string, number | null, string];
@@ -57,21 +61,14 @@ const SEED_ROWS: SeedRow[] = [
 
 const EXPECTED_RETURNED = ['rA', 'rB', 'rC', 'rD', 'rK1', 'rK2', 'rL2'].sort();
 
-describeWithSqlite('getInterruptedExited (real SQLite via node:sqlite)', () => {
+describe('getInterruptedExited (real SQLite via better-sqlite3)', () => {
   function seededRepo(): SessionRepository {
-    const db = new sqlite!.DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE sessions (
-      id TEXT PRIMARY KEY, task_id TEXT, session_type TEXT, isolated_swimlane_id TEXT,
-      agent_session_id TEXT, command TEXT, cwd TEXT, status TEXT, exit_code INTEGER,
-      started_at TEXT
-    )`);
+    const db = openSessionsDatabase();
     const insert = db.prepare(`INSERT INTO sessions
       (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, status, exit_code, started_at)
       VALUES (?, ?, ?, ?, ?, 'c', '/p', ?, ?, ?)`);
     for (const row of SEED_ROWS) insert.run(...row);
-    // The constructor only stores the db; getInterruptedExited uses
-    // prepare(sql).all(), which node:sqlite supports identically.
-    return new SessionRepository(db as never);
+    return new SessionRepository(db);
   }
 
   it('returns exactly the abnormal, resumable, latest-in-group records', () => {
@@ -118,12 +115,7 @@ describeWithSqlite('getInterruptedExited (real SQLite via node:sqlite)', () => {
    * exists to prevent.
    */
   it('does not resurrect an agent-absence retirement, but WOULD at the raw force-kill code', () => {
-    const db = new sqlite!.DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE sessions (
-      id TEXT PRIMARY KEY, task_id TEXT, session_type TEXT, isolated_swimlane_id TEXT,
-      agent_session_id TEXT, command TEXT, cwd TEXT, status TEXT, exit_code INTEGER,
-      started_at TEXT
-    )`);
+    const db = openSessionsDatabase();
     const insert = db.prepare(`INSERT INTO sessions
       (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, status, exit_code, started_at)
       VALUES (?, ?, 'claude', NULL, ?, 'c', '/p', 'exited', ?, '2026-08-17T05:00:00Z')`);
@@ -132,7 +124,7 @@ describeWithSqlite('getInterruptedExited (real SQLite via node:sqlite)', () => {
     // The counterfactual: the same retirement reporting the OS force-kill code.
     insert.run('retired-without-override', 'TASK-B', 'agent-b', 1073807364);
 
-    const ids = new SessionRepository(db as never)
+    const ids = new SessionRepository(db)
       .getInterruptedExited()
       .map((record) => record.id);
 

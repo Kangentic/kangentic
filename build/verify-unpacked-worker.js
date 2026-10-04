@@ -60,14 +60,15 @@ const DICTATION_WORKER_PROBE_DEPENDENCIES = [];
 
 /**
  * The retrieval worker's esbuild external (src/main/retrieval/worker/retrieval-worker.ts).
- * better-sqlite3 loads its native addon through `bindings`, which requires
- * `file-uri-to-path`, so both are probed. Requiring better-sqlite3's entry does
+ * better-sqlite3 13 loads its Node-API addon from its own
+ * `prebuilds/<platform>-<arch>.node` (lib/binding.js), with no helper package
+ * to resolve, so there is nothing to probe beside it. Requiring its entry does
  * not load the addon (the Database constructor does), so this resolution probe
  * runs under plain Node; `verifyRetrievalWorkerLoads` below loads the addon
  * for real under the packaged Electron binary.
  */
 const RETRIEVAL_WORKER_EXTERNALS = ['better-sqlite3'];
-const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = ['bindings', 'file-uri-to-path'];
+const RETRIEVAL_WORKER_PROBE_DEPENDENCIES = [];
 
 /**
  * The pty host's esbuild externals (src/main/pty/host/pty-host-entry.ts): every
@@ -153,9 +154,10 @@ function verifyUnpackedWorkerModules({
 /**
  * The script the retrieval load probe runs under the packaged Electron binary.
  * Fenced to the unpacked root like `buildProbeScript`, then it does what the
- * worker does at startup: opens a database with the unpacked better-sqlite3
- * (Electron's ABI, which plain Node cannot load) and loads the unpacked
- * sqlite-vec binary into it.
+ * worker does at startup: opens a database with the unpacked better-sqlite3,
+ * whose prebuild afterPack has just narrowed to the target's, and loads the
+ * unpacked sqlite-vec binary into it. It runs under the packaged Electron so
+ * the addon is proven against the runtime that ships, not the build's Node.
  */
 function buildRetrievalLoadScript(unpackedRoot) {
   return [
@@ -201,7 +203,7 @@ function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = 
     throw new Error(
       `[afterPack] the retrieval worker's native modules do not load from ${unpackedRoot} under ${electronBinaryPath}. ` +
         'The packaged retrieval worker could not open a project database. ' +
-        'Check better-sqlite3, bindings, file-uri-to-path and sqlite-vec-* in `asarUnpack` in electron-builder.yml.\n' +
+        'Check better-sqlite3 (and its prebuilds/ for this platform) and sqlite-vec-* in `asarUnpack` in electron-builder.yml.\n' +
         (stderr || String(error)),
     );
   }

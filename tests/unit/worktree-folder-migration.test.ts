@@ -1,37 +1,30 @@
 /**
  * EMPIRICAL tests for the write-once `tasks.worktree_folder` column, its
  * migration backfill, the monotonic `display_id` allocator, and the legacy
- * folder recovery, run against a REAL SQLite engine (node:sqlite).
+ * folder recovery, run against a REAL SQLite engine (better-sqlite3, the
+ * driver production uses).
  *
- * node:sqlite rather than better-sqlite3 on purpose: better-sqlite3 is compiled
- * for Electron's Node ABI, so every suite gated on it currently SKIPS
- * everywhere, CI included (see the header of tasks-run-mode-migration.test.ts).
- * A skipped migration test is not coverage, and the invariant here is one that
- * silently corrupts data if it breaks: `worktree_folder` is written once and
- * never rewritten, so a wrong value is permanent.
- *
- * node:sqlite is built-in on Node 22.5+; this suite skips where unavailable.
+ * The invariant here is one that silently corrupts data if it breaks:
+ * `worktree_folder` is written once and never rewritten, so a wrong value is
+ * permanent.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import type DatabaseType from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
+import { openTestDatabase } from './helpers/test-database';
 
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 function migratedDatabase(): DatabaseType.Database {
-  const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+  const database = openTestDatabase();
+  openDatabases.push(database);
   runProjectMigrations(database);
   return database;
 }
@@ -45,7 +38,7 @@ function createTask(tasks: TaskRepository, database: DatabaseType.Database, titl
   return tasks.create({ title, description: '', swimlane_id: anyLaneId(database) });
 }
 
-describeWithSqlite('worktree_folder column and migration', () => {
+describe('worktree_folder column and migration', () => {
   it('adds the column and leaves it null for a task with no worktree', () => {
     const database = migratedDatabase();
     const tasks = new TaskRepository(database);
@@ -96,7 +89,7 @@ describeWithSqlite('worktree_folder column and migration', () => {
   });
 });
 
-describeWithSqlite('setWorktreeFolder is write-once', () => {
+describe('setWorktreeFolder is write-once', () => {
   it('ignores a second write with a different value', () => {
     const database = migratedDatabase();
     const tasks = new TaskRepository(database);
@@ -122,7 +115,7 @@ describeWithSqlite('setWorktreeFolder is write-once', () => {
   });
 });
 
-describeWithSqlite('display_id allocation is monotonic', () => {
+describe('display_id allocation is monotonic', () => {
   it('does not reuse the number of a deleted task', () => {
     const database = migratedDatabase();
     const tasks = new TaskRepository(database);
@@ -190,7 +183,7 @@ describeWithSqlite('display_id allocation is monotonic', () => {
   });
 });
 
-describeWithSqlite('recoverLegacyWorktreeFolder', () => {
+describe('recoverLegacyWorktreeFolder', () => {
   const worktreesRoot = '/project/.kangentic/worktrees';
 
   function seedSession(database: DatabaseType.Database, taskId: string, cwd: string, startedAt: string) {

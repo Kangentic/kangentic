@@ -9,14 +9,9 @@
  * no longer ships.
  *
  * The real side runs the actual runProjectMigrations (which seeds when the
- * swimlanes table is empty) against node:sqlite, so the INSERT itself is
- * exercised: a column added to the `defaults` array but missing from the
- * INSERT statement fails here loudly. node:sqlite rather than better-sqlite3
- * on purpose: better-sqlite3 is compiled for Electron's Node ABI and every
- * suite gated on it skips everywhere, CI included (see the header of
- * tasks-run-mode-migration.test.ts). This suite skips only where node:sqlite
- * itself is unavailable (built-in on Node 22.5+; CI passes
- * --experimental-sqlite via vitest execArgv).
+ * swimlanes table is empty) against real better-sqlite3, the driver production
+ * uses, so the INSERT itself is exercised: a column added to the `defaults`
+ * array but missing from the INSERT statement fails here loudly.
  *
  * The mock side is extracted from the browser IIFE by regex (the file
  * references `window` at module scope, so it cannot be imported here); the
@@ -29,22 +24,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ICON_REGISTRY } from '../../src/renderer/utils/swimlane-icons';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MOCK_FILE = path.join(REPO_ROOT, 'tests/ui/mock-electron-api.js');
 const SEED_FILE = 'src/main/db/migrations/default-data.ts';
-
-import { adaptDatabase } from './helpers/node-sqlite-database';
 
 interface SeededLaneRow {
   id: string;
@@ -91,11 +75,15 @@ interface MockLane {
 }
 
 function seededLanes(): SeededLaneRow[] {
-  const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
-  runProjectMigrations(database);
-  return database
-    .prepare('SELECT * FROM swimlanes ORDER BY position')
-    .all() as SeededLaneRow[];
+  const database = openTestDatabase();
+  try {
+    runProjectMigrations(database);
+    return database
+      .prepare('SELECT * FROM swimlanes ORDER BY position')
+      .all() as SeededLaneRow[];
+  } finally {
+    database.close();
+  }
 }
 
 function mockLanes(): MockLane[] {
@@ -106,7 +94,7 @@ function mockLanes(): MockLane[] {
   return new Function(`return ${match![1]};`)() as MockLane[];
 }
 
-describeWithSqlite('default swimlane seed parity (default-data.ts vs mock-electron-api.js)', () => {
+describe('default swimlane seed parity (default-data.ts vs mock-electron-api.js)', () => {
   it('seeds the same seven columns, in the same order, in both tiers', () => {
     const seeded = seededLanes();
     const mock = mockLanes();

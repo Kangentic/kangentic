@@ -15,11 +15,10 @@
  *   - the app's own write-backs are still suppressed by the two earlier
  *     filters (the isWritingBack window and the content-hash echo check).
  *
- * better-sqlite3 cannot load under vitest, so the DB + repositories that the
- * build/apply import graph pulls in are mocked. onFileChanged('team') never
- * touches the DB, so empty stubs suffice; the mocks exist only so the module
- * graph loads without the native module (same pattern as
- * board-config-parity.test.ts).
+ * The DB + repositories that the build/apply import graph pulls in are mocked.
+ * onFileChanged('team') never touches the DB, so empty stubs suffice; the mocks
+ * exist only to keep the real database modules out of the module graph (same
+ * pattern as board-config-parity.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

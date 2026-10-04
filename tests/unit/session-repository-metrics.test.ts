@@ -10,10 +10,10 @@
  *   - it avoids exposing implementation details in the public module surface
  *   - it gives the same branch coverage as direct tests
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
- * vitest's system Node. All tests use a queue-based mock DB that returns
- * pre-programmed values per `prepare()` call, matching the exact call order
- * inside `getSummaryForTask`.
+ * All tests use a queue-based mock DB that returns pre-programmed values per
+ * `prepare()` call, matching the exact call order inside `getSummaryForTask`.
+ * `tests/unit/helpers/test-database.ts` opens a real better-sqlite3 database
+ * if one is wanted.
  */
 
 import { passThroughTransaction } from './helpers/transaction-double';
@@ -340,7 +340,7 @@ describe('updateMetrics tool_breakdown round-trip', () => {
 // (cost / duration / compactions) and the latest-per-lineage token row onto the
 // summary, instead of taking cost/tokens/duration from the latest record.
 // (The SQL aggregation itself - SUM across rows, window-function token dedup -
-// runs only against real better-sqlite3, which can't load under vitest; it is
+// needs a real database, which this mock-based suite does not use; it is
 // validated empirically and by the transcript-usage test below. This locks the
 // field mapping so a future refactor can't silently revert to "latest record".)
 // ---------------------------------------------------------------------------

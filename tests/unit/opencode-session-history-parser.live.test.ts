@@ -11,7 +11,7 @@
  * without OpenCode installed will simply not run them.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,30 +23,6 @@ import {
 const DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 const HAS_DB = fs.existsSync(DB_PATH);
 
-// Lazy-load better-sqlite3 and probe-open the live DB once. Both the
-// `require()` and the first `new Database()` can fail with
-// NODE_MODULE_VERSION mismatch (system Node vs. the rebuild target),
-// because better-sqlite3 defers its native-binding load until
-// instantiation. We swallow both failures and degrade to a skip so a
-// developer running tests under raw Node still gets a clean report.
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = ((nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule) as typeof DatabaseType;
-    if (HAS_DB) {
-      const probeHandle = new databaseConstructor(DB_PATH, { readonly: true, fileMustExist: true });
-      probeHandle.close();
-    }
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = HAS_DB && Database !== null;
-
 interface SessionRow {
   id: string;
   directory: string;
@@ -56,7 +32,7 @@ interface SessionRow {
 }
 
 function readMostRecentSession(): SessionRow | null {
-  if (!CAN_RUN || !Database) return null;
+  if (!HAS_DB) return null;
   const database = new Database(DB_PATH, { readonly: true, fileMustExist: true });
   try {
     const row = database
@@ -70,7 +46,7 @@ function readMostRecentSession(): SessionRow | null {
   }
 }
 
-describe.runIf(CAN_RUN)('OpenCodeSessionHistoryParser - live DB', () => {
+describe.runIf(HAS_DB)('OpenCodeSessionHistoryParser - live DB', () => {
   const target = readMostRecentSession();
 
   it('precondition: at least one session row exists', () => {
@@ -161,14 +137,5 @@ describe.runIf(CAN_RUN)('OpenCodeSessionHistoryParser - live DB', () => {
       // version of the directory must NOT match.
       expect(captured).toBeNull();
     }
-  });
-});
-
-describe.runIf(!CAN_RUN)('OpenCodeSessionHistoryParser - live DB (skipped)', () => {
-  it('skipped because the OpenCode DB is missing or better-sqlite3 cannot load', () => {
-    // Either no install (HAS_DB=false) or native-module ABI mismatch
-    // (Database=null). Both are acceptable - we just want the suite
-    // to record a clean skip rather than a hard error.
-    expect(CAN_RUN).toBe(false);
   });
 });

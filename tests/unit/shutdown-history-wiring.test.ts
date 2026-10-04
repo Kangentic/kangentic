@@ -9,9 +9,9 @@
  * in-flight session metrics from the history on every clean app close.
  *
  * captureSessionMetrics is mocked so we can inspect its call arguments.
- * UsageHistoryRepository is also mocked (better-sqlite3 cannot load under
- * vitest); the mock records every constructed instance so the test can
- * assert the right one reached captureSessionMetrics as arg[2].
+ * UsageHistoryRepository is also mocked, so no database is opened; the mock
+ * records every constructed instance so the test can assert the right one
+ * reached captureSessionMetrics as arg[2].
  *
  * SessionRepository.getLatestForTask is configured via a module-level fn ref
  * so each test can control what record the shutdown loop sees for the session.

@@ -1,38 +1,36 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
-import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 /**
  * A session's raw terminal transcript, stored as ordered pieces (one row per
  * flush), with a legacy single-value row read as its oldest part until the
- * retrieval worker converts it. Run on the real project schema over
- * node:sqlite (better-sqlite3 cannot load under vitest's Node).
+ * retrieval worker converts it. Run on the real project schema over real
+ * better-sqlite3, the driver production uses.
  */
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
 
-function project(): { database: NodeDatabase; sessions: SessionRepository; transcripts: TranscriptRepository } {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
-  return { database, sessions: new SessionRepository(db), transcripts: new TranscriptRepository(db) };
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function project(): { database: DatabaseType.Database; sessions: SessionRepository; transcripts: TranscriptRepository } {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  return { database, sessions: new SessionRepository(database), transcripts: new TranscriptRepository(database) };
 }
 
-function insertLegacy(database: NodeDatabase, sessionId: string, transcript: string): void {
+function insertLegacy(database: DatabaseType.Database, sessionId: string, transcript: string): void {
   database.prepare(`INSERT INTO session_transcripts (session_id, transcript, size_bytes, created_at, updated_at)
     VALUES (?, ?, ?, '2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z')`).run(sessionId, transcript, transcript.length);
 }
 
-describeWithSqlite('TranscriptRepository', () => {
+describe('TranscriptRepository', () => {
   it('appends each flush as the next piece, one row each, and reads them back in order', () => {
     const { database, transcripts } = project();
     transcripts.appendChunk('session-1', 'first ');

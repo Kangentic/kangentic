@@ -15,40 +15,11 @@
  *   - cross-session merge into one bucket row, NULL-ts exclusion, and the
  *     UTC bucket grid.
  *
- * Uses a real in-memory better-sqlite3 DB bootstrapped via
- * runProjectMigrations. Skips cleanly when better-sqlite3 cannot load under
- * the test runner's Node ABI; mirrors usage-history-migration.test.ts.
+ * Uses a real in-memory better-sqlite3 DB bootstrapped via runProjectMigrations.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors usage-history-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ConversationUsageStore } from '../../src/main/retrieval/conversation/conversation-usage-store';
 import { TURN_GROUP_MS } from '../../src/main/usage-stats/bucketing';
@@ -57,8 +28,8 @@ const SINCE_ISO = '2026-01-02T00:00:00.000Z';
 const UNTIL_ISO = '2026-01-04T00:00:00.000Z';
 const T0 = Date.parse('2026-01-02T09:00:00.000Z');
 
-describe.runIf(CAN_RUN)('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('ConversationUsageStore.getGroupedUsageSince cost allocation (real DB)', () => {
+  let db: Database.Database;
   let store: ConversationUsageStore;
 
   function insertLedgerRow(sessionRecordId: string, sessionStartedAt: string, totalCostUsd: number): void {
@@ -78,7 +49,6 @@ describe.runIf(CAN_RUN)('ConversationUsageStore.getGroupedUsageSince cost alloca
   }
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     store = new ConversationUsageStore(db);
@@ -253,15 +223,5 @@ describe.runIf(CAN_RUN)('ConversationUsageStore.getGroupedUsageSince cost alloca
     const after = store.getGroupedUsageSince(T0, TURN_GROUP_MS, T0 + 4 * TURN_GROUP_MS, null, null);
 
     expect(after).toEqual(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('ConversationUsageStore cost allocation tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

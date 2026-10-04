@@ -40,9 +40,15 @@ import type { LinuxProcessSnapshot, ZygoteState } from './linux-gpu-zygote';
  * WHY A FALLBACK WRITES TOO (DESKTOP-W). Some GPU failures reach JS as no
  * death at all, so a whole incident can end in the fatal with nothing on disk:
  *
- *   - A launch failure. Electron overrides `BrowserChildProcessCrashed` and
- *     `...Killed` but not `BrowserChildProcessLaunchFailed`, so a GPU process
- *     that fails to START emits nothing, ever.
+ *   - A launch failure. Through Electron 41, Electron overrode
+ *     `BrowserChildProcessCrashed` and `...Killed` but not
+ *     `BrowserChildProcessLaunchFailed`, so a GPU process that failed to START
+ *     emitted nothing. Electron 44 overrides it and emits `child-process-gone`
+ *     with `launch-failed`, which `recordGpuProcessGone` counts as a fault, but
+ *     the launch failure that ends in the fatal still never reaches JS (the
+ *     ordering in point 1 above). Measured on Linux in Electron 44.5.1 with the
+ *     zygote killed: five of the six launch failures arrived and were written
+ *     before the fatal (the record is pinned in tests/unit/gpu-health.test.ts).
  *   - A death Chromium reads as a normal termination. On Linux the GPU process
  *     forks from the unsandboxed zygote, and when that zygote cannot answer,
  *     `GetTerminationStatus` defaults to NORMAL_TERMINATION, which

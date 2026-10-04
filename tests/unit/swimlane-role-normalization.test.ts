@@ -13,18 +13,15 @@
  * The crash itself is a rendered assertion and lives in
  * tests/ui/board-manager-legacy-role.spec.ts.
  *
- * node:sqlite rather than better-sqlite3 on purpose: better-sqlite3 is compiled for
- * Electron's Node ABI, so every suite gated on it skips everywhere, CI included. This
- * suite skips only where node:sqlite itself is unavailable (built-in on Node 22.5+; CI
- * passes --experimental-sqlite via vitest execArgv).
+ * The database layers run on real better-sqlite3, the driver production uses.
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 
 // Hand applyBoardConfigToDb the in-memory DB built per-test, so the real (unmocked)
-// SwimlaneRepository runs against it. Same shape as apply-config-column-delete.test.ts,
-// but backed by node:sqlite so it actually runs rather than skipping on the ABI probe.
-const hoisted = vi.hoisted(() => ({ currentDb: null as unknown }));
+// SwimlaneRepository runs against it. Same shape as apply-config-column-delete.test.ts.
+const hoisted = vi.hoisted(() => ({ currentDb: null as DatabaseType.Database | null }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => hoisted.currentDb }));
 
 import { SWIMLANE_ROLES, normalizeSwimlaneRole } from '../../src/shared/types';
@@ -35,17 +32,7 @@ import { applyBoardConfigToDb } from '../../src/main/config/board-config/apply-c
 import { buildBoardConfigFromDb } from '../../src/main/config/board-config/build-config';
 import type { BoardConfig, Swimlane, SwimlaneRole } from '../../src/shared/types';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 function makeSwimlane(overrides: Partial<Swimlane>): Swimlane {
   return {
@@ -124,12 +111,11 @@ describe('getUsedIcons', () => {
   });
 });
 
-describeWithSqlite('runProjectMigrations - legacy role repair', () => {
+describe('runProjectMigrations - legacy role repair', () => {
   function migrateWithRoles(roles: string[]): Array<string | null> {
-    const database = new sqlite!.DatabaseSync(':memory:');
+    const database = openTestDatabase();
     try {
-      const db = adaptDatabase(database);
-      runProjectMigrations(db);
+      runProjectMigrations(database);
 
       // Stamp the legacy roles the way a real install carries them: written by an
       // older build, or applied later from a teammate's kangentic.json.
@@ -142,7 +128,7 @@ describeWithSqlite('runProjectMigrations - legacy role repair', () => {
       });
 
       // Re-running is what a real app restart does, and is also the idempotency check.
-      runProjectMigrations(db);
+      runProjectMigrations(database);
 
       return roles.map(
         (_role, index) =>
@@ -171,12 +157,12 @@ describeWithSqlite('runProjectMigrations - legacy role repair', () => {
   });
 });
 
-describeWithSqlite('applyBoardConfigToDb - role arriving from kangentic.json', () => {
+describe('applyBoardConfigToDb - role arriving from kangentic.json', () => {
   /**
    * A config that mirrors every existing lane 1:1 (so the reconciler's ghost-or-delete
-   * branch never fires - that branch nests a transaction, which the node:sqlite shim
-   * cannot do) plus one brand-new column carrying the role under test. New id means the
-   * create branch runs, which is the only path that writes `role`.
+   * branch, which has nothing to do with the role, does not run) plus one brand-new
+   * column carrying the role under test. New id means the create branch runs, which is
+   * the only path that writes `role`.
    */
   function applyWithNewColumnRole(role: string | null): {
     warnings: string[];
@@ -190,12 +176,11 @@ describeWithSqlite('applyBoardConfigToDb - role arriving from kangentic.json', (
      */
     storedRole: string | null;
   } {
-    const database = new sqlite!.DatabaseSync(':memory:');
+    const database = openTestDatabase();
     try {
-      const db = adaptDatabase(database);
-      runProjectMigrations(db);
-      hoisted.currentDb = db;
-      const repository = new SwimlaneRepository(db);
+      runProjectMigrations(database);
+      hoisted.currentDb = database;
+      const repository = new SwimlaneRepository(database);
 
       const config: BoardConfig = {
         version: 1,
@@ -263,7 +248,7 @@ describeWithSqlite('applyBoardConfigToDb - role arriving from kangentic.json', (
   });
 });
 
-describeWithSqlite('buildBoardConfigFromDb - team propagation of a bad role', () => {
+describe('buildBoardConfigFromDb - team propagation of a bad role', () => {
   /**
    * The write-back is how one broken install infects a whole team: the DB serializes to a
    * COMMITTED kangentic.json, which every teammate then applies. This is the only tier that
@@ -271,11 +256,10 @@ describeWithSqlite('buildBoardConfigFromDb - team propagation of a bad role', ()
    * /preview never writes the file at all.
    */
   it('omits the role of a column whose stored role is outside the union', () => {
-    const database = new sqlite!.DatabaseSync(':memory:');
+    const database = openTestDatabase();
     try {
-      const db = adaptDatabase(database);
-      runProjectMigrations(db);
-      hoisted.currentDb = db;
+      runProjectMigrations(database);
+      hoisted.currentDb = database;
 
       // Write the bad role AFTER migrations, the way a stale kangentic.json or an older
       // build leaves one behind - running the migration again here would just repair it.

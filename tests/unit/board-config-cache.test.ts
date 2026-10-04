@@ -8,8 +8,9 @@
  * project's parsed files and is invalidated by every write path and by the
  * FileWatcher on external edits.
  *
- * better-sqlite3 cannot load under vitest, so the DB modules the import graph
- * pulls in are mocked (same pattern as board-config-onfilechange.test.ts).
+ * The DB modules the import graph pulls in are mocked, so this stays a pure
+ * unit test of the manager with no database involved (same pattern as
+ * board-config-onfilechange.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

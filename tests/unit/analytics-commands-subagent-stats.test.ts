@@ -9,8 +9,8 @@
  * printed with zeroes.
  *
  * Mocking the repositories mirrors board-profile-commands.test.ts / inventory-commands-list-
- * tasks.test.ts: no better-sqlite3 binary is needed (it is built for Electron's Node ABI and
- * will not load under vitest), and `ConversationUsageStore` is instantiated directly inside the
+ * tasks.test.ts: the handler runs with no database involved, so the test pins the handler's own
+ * branching rather than SQL. `ConversationUsageStore` is instantiated directly inside the
  * handler (not routed through `CommandContext`), so it is mocked the same way as the repository
  * classes.
  */

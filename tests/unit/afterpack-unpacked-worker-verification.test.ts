@@ -36,7 +36,9 @@
  *
  * Tier: Unit.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -157,7 +159,7 @@ function installFakeVerifyUnpackedWorker(throwError?: Error, loadProbeError?: Er
     DICTATION_WORKER_EXTERNALS: ['sherpa-onnx-node'],
     DICTATION_WORKER_PROBE_DEPENDENCIES: [],
     RETRIEVAL_WORKER_EXTERNALS: ['better-sqlite3'],
-    RETRIEVAL_WORKER_PROBE_DEPENDENCIES: ['bindings', 'file-uri-to-path'],
+    RETRIEVAL_WORKER_PROBE_DEPENDENCIES: [],
     PTY_HOST_EXTERNALS: ['node-pty'],
     PTY_HOST_PROBE_DEPENDENCIES: [],
   };
@@ -224,7 +226,14 @@ function installFakeInstallSpawnHelper(throwError?: Error): {
 }
 
 /** afterPack.js's own default export, typed to only what these tests call. */
-type AfterPackFunction = (context: FakeAfterPackContext) => Promise<void>;
+type AfterPackFunction = ((context: FakeAfterPackContext) => Promise<void>) & {
+  stripBetterSqlitePrebuilds: (options: {
+    unpackedRoot: string;
+    platform: string;
+    targetArch: string;
+    log?: (line: string) => void;
+  }) => void;
+};
 
 async function importAfterPack(): Promise<AfterPackFunction> {
   const imported = (await import('../../build/afterPack.js')) as unknown as {
@@ -380,5 +389,56 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       fakeVerify.restore();
       fakeSpawnHelper.restore();
     }
+  });
+});
+
+describe('afterPack: stripping better-sqlite3 prebuilds to the target', () => {
+  // better-sqlite3 13 ships every platform's addon in one package. These run
+  // the real strip against a throwaway unpacked tree.
+  const ALL_PREBUILDS = [
+    'darwin-arm64.node',
+    'darwin-x64.node',
+    'linux-arm64.node',
+    'linux-x64.node',
+    'linuxmusl-arm64.node',
+    'linuxmusl-x64.node',
+    'win32-arm64.node',
+    'win32-x64.node',
+  ];
+  let unpackedRoot: string;
+  let prebuildsDir: string;
+
+  beforeEach(() => {
+    unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-prebuilds-'));
+    prebuildsDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'prebuilds');
+    fs.mkdirSync(prebuildsDir, { recursive: true });
+    for (const name of ALL_PREBUILDS) fs.writeFileSync(path.join(prebuildsDir, name), 'addon');
+  });
+
+  afterEach(() => {
+    fs.rmSync(unpackedRoot, { recursive: true, force: true });
+  });
+
+  it('keeps only the target prebuild and says so', async () => {
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+    afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'win32', targetArch: 'x64', log: (line) => lines.push(line) });
+
+    expect(fs.readdirSync(prebuildsDir)).toEqual(['win32-x64.node']);
+    expect(lines).toEqual(['[afterPack] better-sqlite3: kept prebuilds/win32-x64.node, removed 7 other prebuild(s)']);
+  });
+
+  it('keeps the glibc build on Linux and drops the musl ones', async () => {
+    const afterPack = await importAfterPack();
+    afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'linux', targetArch: 'arm64', log: () => {} });
+
+    expect(fs.readdirSync(prebuildsDir)).toEqual(['linux-arm64.node']);
+  });
+
+  it('throws without deleting anything when the target has no prebuild', async () => {
+    const afterPack = await importAfterPack();
+    expect(() => afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'linux', targetArch: 'armv7l', log: () => {} }))
+      .toThrow(/no prebuild for linux-armv7l/);
+    expect(fs.readdirSync(prebuildsDir).sort()).toEqual(ALL_PREBUILDS);
   });
 });

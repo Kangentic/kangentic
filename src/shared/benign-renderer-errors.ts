@@ -23,7 +23,8 @@
  *   disposes a DiffEditor's two TextModels before the widget, so monaco throws a
  *   self-healing BugIndicatingError and resets its own model. Non-fatal and does
  *   not leak (both models are disposed regardless of order); no stable
- *   @monaco-editor/react (4.7.0) / monaco-editor (0.56.0) release fixes the order.
+ *   @monaco-editor/react (4.7.0) release fixes the order (checked with
+ *   monaco-editor 0.56.0; the disposal UI test still passes on 0.57.0).
  *   Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
  * - A Monarch grammar executing `@pop` on an empty state stack. Monaco tokenizes
  *   the VIEWPORT first, and for a diff revealed at its first hunk

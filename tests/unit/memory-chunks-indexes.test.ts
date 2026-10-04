@@ -12,47 +12,49 @@
  * replaces the old unconditional triggers with ones that skip the code corpus,
  * so an upgraded database must end with the new three only, and stay that way.
  *
- * node:sqlite rather than better-sqlite3 on purpose: better-sqlite3 is compiled
- * for Electron's Node ABI, so every suite gated on it skips everywhere.
+ * Real better-sqlite3, the driver production uses, so the query plans and trigger
+ * behavior asserted here are the ones that ship.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { CONVERSATION_VEC_COPY_IDS_SQL, RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { buildRetrievalIndex, missingRetrievalIndexes, RETRIEVAL_INDEXES } from '../../src/main/retrieval/index-builds';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
+import { openTestDatabase } from './helpers/test-database';
+
+type TestDatabase = DatabaseType.Database;
+
+const openDatabases: TestDatabase[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+/** An empty in-memory database that records the SQL of every statement prepared. */
+function openTracked(): { database: TestDatabase; prepared: string[] } {
+  const prepared: string[] = [];
+  const database = openTestDatabase(':memory:', { prepared });
+  openDatabases.push(database);
+  return { database, prepared };
 }
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
-type NodeDatabase = InstanceType<SqliteModule['DatabaseSync']>;
-
-import { adaptDatabase } from './helpers/node-sqlite-database';
 
 /** A database migrated by main and opened by the retrieval worker, which
  *  builds the index's own indexes (`index-builds.ts`). */
-function migrated(): { database: NodeDatabase; adapted: DatabaseType.Database; prepared: string[] } {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const prepared: string[] = [];
-  const adapted = adaptDatabase(database, prepared);
-  runProjectMigrations(adapted);
-  for (const index of missingRetrievalIndexes(adapted)) buildRetrievalIndex(adapted, index);
-  return { database, adapted, prepared };
+function migrated(): { database: TestDatabase; prepared: string[] } {
+  const { database, prepared } = openTracked();
+  runProjectMigrations(database);
+  for (const index of missingRetrievalIndexes(database)) buildRetrievalIndex(database, index);
+  return { database, prepared };
 }
 
-function indexNames(database: NodeDatabase): string[] {
+function indexNames(database: TestDatabase): string[] {
   return (database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'memory_chunks'").all() as Array<{ name: string }>)
     .map((row) => row.name);
 }
 
-function planOf(database: NodeDatabase, sql: string, params: Array<string | number>): string {
+function planOf(database: TestDatabase, sql: string, params: Array<string | number>): string {
   return (database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>)
     .map((row) => row.detail)
     .join(' | ');
@@ -64,16 +66,16 @@ function isFullTextTrigger(name: string): boolean {
   return !name.startsWith('trg_memory_chunks_doc_sums');
 }
 
-function triggerNames(database: NodeDatabase): string[] {
+function triggerNames(database: TestDatabase): string[] {
   return triggerSql(database).map((row) => row.name);
 }
 
-function triggerSql(database: NodeDatabase): Array<{ name: string; sql: string }> {
+function triggerSql(database: TestDatabase): Array<{ name: string; sql: string }> {
   return (database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'memory_chunks' ORDER BY name").all() as Array<{ name: string; sql: string }>)
     .filter((row) => isFullTextTrigger(row.name));
 }
 
-function insertChunk(database: NodeDatabase, corpus: string, docId: string, text: string): void {
+function insertChunk(database: TestDatabase, corpus: string, docId: string, text: string): void {
   database
     .prepare(
       `INSERT INTO memory_chunks (corpus, doc_id, seq, role, text, content_hash, token_estimate, created_at)
@@ -83,7 +85,7 @@ function insertChunk(database: NodeDatabase, corpus: string, docId: string, text
 }
 
 /** How many chunks the full-text index holds for one word. */
-function fullTextHits(database: NodeDatabase, word: string): number {
+function fullTextHits(database: TestDatabase, word: string): number {
   return (database.prepare('SELECT COUNT(*) AS count FROM memory_chunks_fts WHERE memory_chunks_fts MATCH ?').get(word) as { count: number }).count;
 }
 
@@ -115,7 +117,7 @@ function withOldTriggers(): ReturnType<typeof migrated> {
 
 const CURRENT_TRIGGERS = ['trg_memory_chunks_fts_ad', 'trg_memory_chunks_fts_ai', 'trg_memory_chunks_fts_au'];
 
-describeWithSqlite('memory_chunks full-text triggers', () => {
+describe('memory_chunks full-text triggers', () => {
   it('a new database has the three code-skipping triggers, once each', () => {
     const { database } = migrated();
 
@@ -123,7 +125,7 @@ describeWithSqlite('memory_chunks full-text triggers', () => {
   });
 
   it('an old database has its unconditional triggers replaced, not added to', () => {
-    const { database, adapted } = withOldTriggers();
+    const { database } = withOldTriggers();
     // The fixture really is the old state: it indexes a code chunk, and lets go of it.
     expect(triggerNames(database)).toEqual(['trg_memory_chunks_ad', 'trg_memory_chunks_ai', 'trg_memory_chunks_au']);
     insertChunk(database, 'code', 'src/old.ts', 'oldstateword');
@@ -131,14 +133,14 @@ describeWithSqlite('memory_chunks full-text triggers', () => {
     database.exec("DELETE FROM memory_chunks WHERE corpus = 'code'");
     expect(fullTextHits(database, 'oldstateword')).toBe(0);
 
-    runProjectMigrations(adapted);
+    runProjectMigrations(database);
 
     expect(triggerNames(database)).toEqual(CURRENT_TRIGGERS);
   });
 
   it('after the upgrade, conversations stay searchable through insert, edit and delete, and code never enters the index', () => {
-    const { database, adapted } = withOldTriggers();
-    runProjectMigrations(adapted);
+    const { database } = withOldTriggers();
+    runProjectMigrations(database);
 
     insertChunk(database, 'conversation', 'agent-1', 'alphaword gamma');
     insertChunk(database, 'code', 'src/pacer.ts', 'zetaword gamma');
@@ -162,12 +164,12 @@ describeWithSqlite('memory_chunks full-text triggers', () => {
   });
 
   it('migrating again changes nothing', () => {
-    const { database, adapted } = withOldTriggers();
-    runProjectMigrations(adapted);
+    const { database } = withOldTriggers();
+    runProjectMigrations(database);
     const once = triggerSql(database);
 
-    runProjectMigrations(adapted);
-    runProjectMigrations(adapted);
+    runProjectMigrations(database);
+    runProjectMigrations(database);
 
     expect(triggerSql(database)).toEqual(once);
     expect(once.map((trigger) => trigger.name)).toEqual(CURRENT_TRIGGERS);
@@ -177,20 +179,19 @@ describeWithSqlite('memory_chunks full-text triggers', () => {
   });
 });
 
-describeWithSqlite('memory_chunks indexes', () => {
+describe('memory_chunks indexes', () => {
   it('leaves the index\'s own indexes out of the migrations, and the worker builds each once', () => {
     // A migration runs on main, and building one of these over a full table
     // reads all of it inside a write transaction.
-    const database = new sqlite!.DatabaseSync(':memory:');
-    const adapted = adaptDatabase(database);
-    runProjectMigrations(adapted);
+    const { database } = openTracked();
+    runProjectMigrations(database);
     const names = RETRIEVAL_INDEXES.map((index) => index.name);
     for (const name of names) expect(indexNames(database), name).not.toContain(name);
 
-    expect(missingRetrievalIndexes(adapted).map((index) => index.name)).toEqual(names);
-    for (const index of missingRetrievalIndexes(adapted)) buildRetrievalIndex(adapted, index);
+    expect(missingRetrievalIndexes(database).map((index) => index.name)).toEqual(names);
+    for (const index of missingRetrievalIndexes(database)) buildRetrievalIndex(database, index);
     for (const name of names) expect(indexNames(database), name).toContain(name);
-    expect(missingRetrievalIndexes(adapted)).toEqual([]);
+    expect(missingRetrievalIndexes(database)).toEqual([]);
   });
 
   it('carries embedded_model in a per-document index and drops the duplicate of the unique index', () => {
@@ -204,18 +205,18 @@ describeWithSqlite('memory_chunks indexes', () => {
   });
 
   it('drops the old index from a database that still has it', () => {
-    const { database, adapted } = migrated();
+    const { database } = migrated();
     database.exec('CREATE INDEX idx_memory_chunks_doc ON memory_chunks(corpus, doc_id, seq)');
 
-    runProjectMigrations(adapted);
+    runProjectMigrations(database);
 
     expect(indexNames(database)).not.toContain('idx_memory_chunks_doc');
   });
 
   it('answers the coverage totals from the covering index, never the table', () => {
-    const { database, adapted, prepared } = migrated();
+    const { database, prepared } = migrated();
 
-    new RetrievalStore(adapted).documentChunkTotals(['conversation']);
+    new RetrievalStore(database).documentChunkTotals(['conversation']);
 
     const totalsSql = prepared.find((sql) => sql.includes('embeddedCount'));
     expect(totalsSql).toBeDefined();
@@ -226,10 +227,10 @@ describeWithSqlite('memory_chunks indexes', () => {
     // Ordered by doc_id alone, each page sorted every remaining group before its
     // LIMIT, so a page cost as much as the whole read (365 ms on 1,005 real
     // conversations). In the index's order a page streams and stops.
-    const { database, adapted, prepared } = migrated();
+    const { database, prepared } = migrated();
     for (const docId of ['agent-c', 'agent-a', 'agent-b']) insertChunk(database, 'conversation', docId, `text of ${docId}`);
     insertChunk(database, 'task', 'task-1', 'a task record, not drawn');
-    const store = new RetrievalStore(adapted);
+    const store = new RetrievalStore(database);
 
     const whole = store.documentMetadata().map((row) => row.docId);
     const paged: string[] = [];
@@ -249,9 +250,9 @@ describeWithSqlite('memory_chunks indexes', () => {
   });
 
   it('reads one task\'s chunk ids from an index, never the whole table', () => {
-    const { database, adapted, prepared } = migrated();
+    const { database, prepared } = migrated();
 
-    new RetrievalStore(adapted).getChunkIdsForTask('task-1');
+    new RetrievalStore(database).getChunkIdsForTask('task-1');
 
     const taskSql = prepared.find((sql) => sql.includes('WHERE task_id = ?'));
     expect(taskSql).toBeDefined();
@@ -264,8 +265,8 @@ describeWithSqlite('memory_chunks indexes', () => {
     // The copy runs before the indexes are built. Planned off the UNIQUE
     // (corpus, doc_id, seq) index instead, each batch of 16 sorted every
     // conversation chunk: 213 ms a batch on the upgrade dry run.
-    const before = new sqlite!.DatabaseSync(':memory:');
-    runProjectMigrations(adaptDatabase(before));
+    const { database: before } = openTracked();
+    runProjectMigrations(before);
     const { database: after } = migrated();
 
     for (const database of [before, after]) {
@@ -276,9 +277,9 @@ describeWithSqlite('memory_chunks indexes', () => {
   });
 
   it('still reads a document\'s chunks in seq order as an index seek, with no sort', () => {
-    const { database, adapted, prepared } = migrated();
+    const { database, prepared } = migrated();
 
-    new RetrievalStore(adapted).getChunksForDoc('conversation', 'doc-1');
+    new RetrievalStore(database).getChunksForDoc('conversation', 'doc-1');
 
     const documentSql = prepared.find((sql) => sql.includes('WHERE corpus = ? AND doc_id = ? ORDER BY seq'));
     expect(documentSql).toBeDefined();

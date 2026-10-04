@@ -21,11 +21,10 @@
  * handle, so this drives it through the public
  * `createOpenCodeCommandInjectionVerifier()` entry point with a mocked
  * `loadBetterSqlite3` that RECORDS every prepared query and its bound params,
- * rather than executing real SQLite. The real native binding cannot load
- * under this Node runtime (NODE_MODULE_VERSION mismatch - see the `CAN_RUN`
- * guard in `opencode-schema-canary.test.ts`), which is also why the OTHER
- * repository unit tests in this codebase (e.g. `task-repository.test.ts`)
- * mock the Database interface instead of running real queries.
+ * rather than executing real SQLite. That keeps the assertion on the query text
+ * and its bound params, the same approach `task-repository.test.ts` takes by
+ * mocking the Database interface. `tests/unit/helpers/test-database.ts` opens a
+ * real better-sqlite3 database if one is wanted.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';

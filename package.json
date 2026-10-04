@@ -12,14 +12,13 @@
   ],
   "scripts": {
     "start": "node scripts/dev.js",
-    "package": "npm run rebuild && npm run build && electron-builder --dir",
-    "make": "npm run rebuild && npm run build && electron-builder",
-    "make:win": "npm run rebuild && npm run build && electron-builder --win",
-    "make:mac": "npm run rebuild && npm run build && electron-builder --mac",
-    "make:linux": "npm run rebuild && npm run build && electron-builder --linux",
-    "publish": "npm run rebuild && npm run build && electron-builder --publish always",
-    "postinstall": "node scripts/rebuild-native.js",
-    "rebuild": "node scripts/rebuild-native.js",
+    "package": "npm run build && electron-builder --dir",
+    "make": "npm run build && electron-builder",
+    "make:win": "npm run build && electron-builder --win",
+    "make:mac": "npm run build && electron-builder --mac",
+    "make:linux": "npm run build && electron-builder --linux",
+    "publish": "npm run build && electron-builder --publish always",
+    "postinstall": "install-electron",
     "lint": "eslint src/ packages/protocol/src/ --max-warnings 0",
     "test": "npx playwright test --project=ui --project=electron",
     "test:headed": "HEADED=1 npx playwright test --project=ui --project=electron",
@@ -88,7 +87,7 @@
     "@xterm/headless": "6.0.0",
     "@xterm/xterm": "^6.0.0",
     "camera-controls": "^3.1.2",
-    "electron": "41.10.7",
+    "electron": "44.5.1",
     "electron-builder": "^26.8.1",
     "electron-updater": "^6.3.9",
     "esbuild": "^0.28.0",
@@ -99,7 +98,7 @@
     "globals": "^17.6.0",
     "husky": "^9.1.7",
     "lucide-react": "^1.17.0",
-    "monaco-editor": "^0.56.0",
+    "monaco-editor": "^0.57.0",
     "node-machine-id": "^1.1.12",
     "p-queue": "^9.3.0",
     "playwright": "^1.60.0",
@@ -139,9 +138,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
-    "better-sqlite3": "^12.11.1",
-    "bindings": "^1.5.0",
-    "file-uri-to-path": "^1.0.0",
+    "better-sqlite3": "^13.0.3",
     "font-list": "^2.1.0",
     "koffi": "3.3.2",
     "node-pty": "^1.1.0",
@@ -149,8 +146,6 @@
     "sqlite-vec": "^0.1.9"
   },
   "allowScripts": {
-    "electron": true,
-    "better-sqlite3": true,
     "node-pty": true,
     "esbuild": true,
     "electron-winstaller": true,
@@ -159,6 +154,12 @@
     "sharp": true,
     "fsevents": true,
     "@sentry/cli": true,
-    "koffi": true
+    "koffi": true,
+    "better-sqlite3": false
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.16"
+    }
   }
 }

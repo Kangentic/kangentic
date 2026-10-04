@@ -5,8 +5,9 @@
  * to 'suspended' without retire-and-recreate. This widens the allowed source
  * statuses from ['running', 'exited'] to ['running', 'exited', 'orphaned'].
  *
- * Uses a mock better-sqlite3 DB (the real binding is compiled against
- * Electron's Node ABI and can't load under vitest).
+ * Uses a mock better-sqlite3 DB that records the executed SQL, so the test
+ * pins the statements issued. `tests/unit/helpers/test-database.ts` opens a
+ * real database if one is wanted.
  */
 
 import { describe, it, expect, vi } from 'vitest';

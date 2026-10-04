@@ -2,8 +2,8 @@
  * Task summaries: the prompt a batch sends, reading the reply, the input each
  * finished task is summarized from, one pass over a board, and when passes run.
  *
- * better-sqlite3 cannot load under vitest's system Node, so the pass runs
- * against a scripted `prepare()` that answers by SQL shape and records writes.
+ * The pass runs against a scripted `prepare()` that answers by SQL shape and
+ * records writes, so no database is involved.
  */
 
 import { passThroughTransaction } from './helpers/transaction-double';

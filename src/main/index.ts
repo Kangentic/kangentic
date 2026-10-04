@@ -1,6 +1,6 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import type { Event as ElectronEvent } from 'electron';
 import type { GpuGraphicsStatus } from '../shared/types';
 import path from 'node:path';
@@ -84,6 +84,7 @@ import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
+import { writeClipboardImage } from './ipc/helpers/clipboard-image';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed, isEmbeddedBrowserPermissionAllowed } from './permission-policy';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
@@ -332,9 +333,10 @@ for (const arg of process.argv) {
  * the GpuDataManager, and it throws if called once the app is ready, which is
  * the other half of why this sits at module scope.
  *
- * Verified in Electron 41 on Windows and on Linux (Ubuntu 24.04 under WSLg,
- * whose GL is Mesa's d3d12 driver rather than a native one): with both set,
- * getAppMetrics() reports no GPU process at all, and the window still paints.
+ * Verified in Electron 41, and again in 44.5.1, on Windows and on Linux (Ubuntu
+ * 24.04 under WSLg, whose GL is Mesa's d3d12 driver rather than a native one):
+ * with both set, getAppMetrics() reports no GPU process at all, and the window
+ * still paints.
  * NOT verified on macOS, and no test tier reaches this branch on any platform
  * (see the NODE_ENV note below), so CI being green is not evidence about the
  * switches themselves.
@@ -1322,7 +1324,7 @@ const createWindow = () => {
           click: () => {
             try {
               const image = nativeImage.createFromDataURL(params.srcURL);
-              clipboard.writeImage(image);
+              void writeClipboardImage(image, clipboard, (payloads) => new ClipboardItem(payloads));
             } catch {
               // srcURL wasn't a valid data URL - silently ignore
             }

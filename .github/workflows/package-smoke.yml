@@ -40,7 +40,6 @@ on:
       - 'package-lock.json'
       - 'scripts/build.js'
       - 'scripts/copy-external-scripts.js'
-      - 'scripts/rebuild-native.js'
       - 'scripts/package-smoke.mjs'
       - 'src/main/pty/host/**'
       - 'src/main/pty/process-tag/**'

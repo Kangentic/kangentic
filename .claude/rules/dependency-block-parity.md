@@ -10,7 +10,7 @@ node_modules. So a package in `dependencies` that nothing needs at runtime is no
 it and its whole transitive closure are copied into every installer.
 
 Everything under `src/` is bundled. Vite bundles the renderer, esbuild bundles main, preload, and
-the three utilityProcess workers, and the only packages left out of those bundles are the
+the five utilityProcess workers, and the only packages left out of those bundles are the
 `external` list in `scripts/build.js`. So the set that genuinely has to exist as real
 node_modules directories is small and derivable.
 
@@ -44,8 +44,9 @@ Electron version from `devDependencies` first
 entry would also copy the whole `electron` npm package into the asar next to the runtime the
 packager already places there.
 
-A transitive dependency needs no root declaration. `bindings` and `file-uri-to-path` carry one
-anyway because `files:` names them, which is what the rule accepts them on.
+A transitive dependency needs no root declaration. `bindings` and `file-uri-to-path` used to carry
+one only because `files:` named them; both left the tree with better-sqlite3 13, which loads its
+own prebuilds, and their `files:` and `asarUnpack` globs went with them.
 
 ### Reading `npm audit` under this rule
 
@@ -66,10 +67,11 @@ was live in a shipped binary while `--omit=dev` said nothing.
 
 ### Deprecation warnings on install
 
-A clean `npm i` prints seven `npm warn deprecated` lines. Every one was traced on 2026-09-17,
+A clean `npm i` prints six `npm warn deprecated` lines. Every one was traced on 2026-09-17,
 none is a direct dependency, and none clears by bumping the direct dependency that pulls it in,
 so there are no `overrides` for them: an override would swap a package that is never executed
-for a warning that is cosmetic.
+for a warning that is cosmetic. A seventh, `prebuild-install@7.1.3`, cleared on 2026-10-04 when
+better-sqlite3 moved to 13 (a Node-API rewrite that ships its own prebuilds) alongside Electron 44.
 
 | Warning | Owner chain | Why it stays |
 |---|---|---|
@@ -77,10 +79,17 @@ for a warning that is cosmetic.
 | `rimraf@2.6.3` | `temp@0.9.4` under `electron-winstaller@5.4.0`, a peer of `app-builder-lib` via `electron-builder-squirrel-windows` | squirrel 26.16.1 still pins winstaller 5.4.0, though 5.4.4 exists. |
 | `boolean@3.2.0` | `global-agent@3.0.0`, optional under `@electron/get@3.1.0`, under `app-builder-lib` | 26.16.1 still has `@electron/get ^3.0.0`. |
 | `lodash.isequal@4.5.0` | `electron-updater@6.8.9`, the latest release | Bundled into main by esbuild; no fixed release. |
-| `prebuild-install@7.1.3` | `better-sqlite3@12.11.1`, its only consumer | Only `better-sqlite3@13` clears it (a Node-API rewrite that also drops `bindings` and publishes its own prebuilds). That is a native-module major touching `scripts/rebuild-native.js`, `electron-builder.yml`'s `files:`, `allowScripts`, and the Electron 41 pin, so it is its own change, not a warning fix. |
 
 `electron-builder` 26.15.3 to 26.16.1 clears none of these, which is why it was not bumped
 alongside. Re-trace with `npm ls <package>` before assuming any row above still holds.
+
+### The one override, and why it is allowed
+
+`overrides.monaco-editor.dompurify` lifts the DOMPurify that monaco-editor 0.57.0 pins exactly
+(3.4.15) to 3.4.16, the release that patches GHSA-p98j-92pf-mc4p. Unlike the warnings above, that
+is executed code: monaco is bundled into the renderer. An override is a pin, so
+`tests/unit/dompurify-override.test.ts` fails once monaco asks for a DOMPurify at or past it on its
+own, which is when the entry must go before it turns into a downgrade.
 
 ### `allowScripts` is live npm config. Do not delete it.
 
@@ -89,13 +98,19 @@ npm 12 blocks a dependency's `install` / `postinstall` script unless `allowScrip
 because they are not covered by allowScripts`. Nothing in this repo reads the key, so a grep for a
 consumer finds only its own definition and it reads as dead config from a tool nobody uses.
 
-Deleting it is quiet and expensive. `npm ci` still exits 0, but electron never downloads its
-binary, better-sqlite3 and node-pty are never compiled, esbuild never fetches its platform binary,
-and onnxruntime-node never fetches its native providers. The install looks clean and the tree is
-unusable. `npm install-scripts ls` is what shows the truth.
+Deleting it is quiet and expensive. `npm ci` still exits 0, but node-pty is never built, esbuild
+never fetches its platform binary, and onnxruntime-node never fetches its native providers. The
+install looks clean and the tree is unusable. `npm install-scripts ls` is what shows the truth.
 
 Every package the lockfile marks `hasInstallScript` needs an entry. A new native dependency
-therefore needs one too.
+therefore needs one too. So does a package that ships a `binding.gyp` and declares no install
+script: npm infers `node-gyp rebuild` for it and checks that against `allowScripts`, even under
+`gypfile: false` and with no `hasInstallScript` in the lockfile. better-sqlite3 13 is that case. Its
+prebuilds ship in the package, so its entry is `false` (`npm install-scripts deny`), because
+running `node-gyp rebuild` would demand Python and a C++ toolchain to configure a build with nothing
+to compile. electron 42+ has no install script at all and downloads its binary on first use; the
+root package's own `postinstall` runs `install-electron` so a fresh install still has it, and a root
+script is not something `allowScripts` governs.
 
 ### Changing a runtime dependency
 
@@ -119,7 +134,9 @@ config. See [[release-gates-fail-loudly]].
 - **Test:** `tests/unit/allow-scripts-coverage.test.ts` derives the required `allowScripts` set from
   the lockfile's own `hasInstallScript` flags and fails when the key is missing, when a package with
   an install script is not covered, or when an entry names a package the lockfile does not have. It
-  refuses to run against an empty derived set. Runs in CI via `npm run test:unit`.
+  also derives, from the installed tree, every package that ships a `binding.gyp` with no install
+  script and requires an entry (allow or deny) for each. It refuses to run against an empty derived
+  set. Runs in CI via `npm run test:unit`.
 - **Packaging (correctness):** the afterPack gate above, on `npm run package` / `make` / `publish`.
   It is the only check that proves a runtime dependency actually resolves in the packaged tree.
 - **Review:** `/code-review` flags a new `dependencies` entry whose package is bundled.

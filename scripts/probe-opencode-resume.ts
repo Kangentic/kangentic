@@ -9,10 +9,6 @@
  * title, prior message text, or any non-error first frame).
  *
  * Run: npx tsx scripts/probe-opencode-resume.ts
- *
- * Note: requires better-sqlite3 to be rebuilt for system Node first
- * (`npm rebuild better-sqlite3`). Restore via `node scripts/rebuild-native.js`
- * afterwards.
  */
 import * as pty from 'node-pty';
 import os from 'node:os';

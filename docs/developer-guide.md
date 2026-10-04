@@ -2,12 +2,12 @@
 
 ## Prerequisites
 
-- Node.js 22.12+ (vitest 5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`, so 22.0 through 22.11 cannot run the unit tier)
+- Node.js 22.14+ or 24+. better-sqlite3 13 is built against Node-API 10, which Node 22 gained in 22.14.0. On 22.13 or older the first `new Database()` segfaults with no message (WiseLibs/better-sqlite3#1514), so the unit tier's global setup refuses to start there. vitest 5 separately declares `^22.12.0 || ^24.0.0 || >=26.0.0`
 - Git 2.26+ (worktree support)
 - Platform-specific:
-  - **Windows:** Visual Studio Build Tools (for better-sqlite3 native compilation)
-  - **macOS:** Xcode Command Line Tools
-  - **Linux:** `build-essential`, `python3`
+  - **Windows:** no C/C++ toolchain. Every native module ships a Windows prebuild
+  - **macOS:** Xcode Command Line Tools (a macOS package build compiles node-pty's `spawn-helper`)
+  - **Linux:** `build-essential`, `python3` (node-pty ships no Linux prebuild, so it compiles on install)
 
 ## Quick Start
 
@@ -96,7 +96,7 @@ src/
         projects.ts        # PROJECT_* handlers, cleanupProject, openProjectByPath
         session-metrics.ts # Session summary and metrics aggregation
         sessions.ts        # SESSION_* handlers, PTY event listeners
-        system.ts          # Config, Claude, Shell, Git, Dialog, Window, Notifications
+        system.ts          # Config, Claude, Shell, Git, Dialog, Clipboard, Window, Notifications
         task-branch.ts     # TASK_SWITCH_BRANCH / TASK_UPDATE_FROM_BASE handlers
         task-crud.ts       # TASK_LIST, CREATE, UPDATE, DELETE, archive handlers
         task-move.ts       # TASK_MOVE handler with priority rules
@@ -200,7 +200,7 @@ Flags:
    absent is how two releases shipped with unreadable stacks.
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
-3. esbuild bundles main + preload + the three utility-process workers (embed, line-count, dictation), minified
+3. esbuild bundles main + preload + the five utility-process workers (embed, line-count, dictation, retrieval, pty-host), minified
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
@@ -294,6 +294,15 @@ npm run test:unit
 - **Speed:** Sub-second
 - **What to test here:** Pure logic -- parsers, filters, state machines, utility functions
 - **No build needed**, no browser, no Electron
+- **Real databases:** better-sqlite3 loads under the unit tier, so a suite that needs SQLite opens
+  the real driver with `openTestDatabase()` from `tests/unit/helpers/test-database.ts` (`vec: true`
+  loads sqlite-vec, `prepared` records each statement's SQL). Do not probe for the driver and skip:
+  `tests/unit/better-sqlite3-loads-in-vitest.test.ts` already fails if it stops loading, and
+  `tests/unit/helpers/node-api-floor.ts` stops the whole run on a Node without Node-API 10
+  rather than letting each worker segfault
+- **Isolated data directory:** every test file gets its own throwaway `KANGENTIC_DATA_DIR` (and
+  platform config base) from `tests/unit/helpers/isolate-data-dir.ts`, so a suite that reaches the
+  real `getGlobalDb()` can never open the developer's own database
 
 ### UI Tests (`tests/ui/`)
 
@@ -430,7 +439,7 @@ npm run test:unit                 # Unit (separate runner)
 - **Escape key** -- all dialogs use global `useEffect` listener
 - **IPC channels** -- `src/shared/ipc-channels.ts` is the single source of truth
 - **Dependency blocks** - `dependencies` is at most the esbuild externals (minus `electron`) plus whatever `electron-builder.yml`'s `files:` names directly. Every external except `electron` has to be there; the `files:` half is a permission, not a requirement, since most of what it names arrives transitively and carries no root declaration. Everything else is bundled and belongs in `devDependencies`. electron-builder copies the whole production closure into the asar, so a stray entry there ships its entire transitive tree for nothing. See `.claude/rules/dependency-block-parity.md`
-- **`allowScripts`** - the block at the bottom of `package.json` is live npm 12 config, not leftovers from a tool nobody uses. npm blocks a dependency's install script unless `allowScripts` covers it, so deleting the key leaves `npm ci` exiting 0 with no electron binary and an uncompiled better-sqlite3. `npm install-scripts ls` shows what npm is blocking; `tests/unit/allow-scripts-coverage.test.ts` fails when a package with an install script is not covered
+- **`allowScripts`** - the block at the bottom of `package.json` is live npm 12 config, not leftovers from a tool nobody uses. npm blocks a dependency's install script unless `allowScripts` covers it, so deleting the key leaves `npm ci` exiting 0 with an unbuilt node-pty and no esbuild binary. The Electron binary is the one exception: electron 42+ has no install script, and the root package's own `postinstall` (`install-electron`) downloads it, which `allowScripts` does not govern. An entry can also be `false`: better-sqlite3 ships a `binding.gyp`, so npm infers a `node-gyp rebuild` install script for it, which is denied because its prebuilds ship in the package. `npm install-scripts ls` shows what npm is blocking; `tests/unit/allow-scripts-coverage.test.ts` fails when a package with an install script is not covered
 - **Lockfile metadata** - never regenerate `package-lock.json` against a populated `node_modules`. npm writes every already-installed package with no `resolved` and no `integrity`, which drops `npm ci`'s supply-chain verification for most of the tree without failing anything. `npm install --package-lock-only` does not repair it; `node scripts/repair-lockfile-integrity.js` does, and `tests/unit/lockfile-integrity.test.ts` fails CI when an entry is missing either field
 
 ## Environment Variables
@@ -480,16 +489,15 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | Linux | Package | deb, rpm |
 
 Native modules:
-- `better-sqlite3` - rebuilt against Electron headers via `scripts/rebuild-native.js`
+- `better-sqlite3` - Node-API (13+), shipping every platform's addon in the package as `prebuilds/<platform>-<arch>.node`, no rebuild needed. The same binary loads under Electron and under plain Node, which is what lets the unit tier open real databases with it. `build/afterPack.js` deletes every prebuild but the target's before its load probes run
 - `node-pty` - uses prebuilt NAPI binaries, no rebuild needed. It loads only in the `kangentic-pty-host` utility process, which runs from the unpacked tree, so all of `node_modules/node-pty/**` is in `asarUnpack` (which also lets the ConPTY conout worker load from a real directory), and the afterPack gate spawns a real process with it under the packaged Electron binary. The one exception to no-rebuild is its macOS `spawn-helper`: `build/afterPack.js` compiles Kangentic's own (`build/spawn-helper/spawn-helper.c`, via `build/install-spawn-helper.js`) over the prebuilt one. It clears the inherited mach exception ports before exec, and the afterPack and afterSign gates prove that on the built binary. A macOS package build therefore needs Xcode or the Command Line Tools installed
 - `sherpa-onnx-node` - prebuilt platform-specific binaries, no rebuild needed (voice dictation, running in its own `kangentic-dictation` utilityProcess worker - see DESKTOP-X in `.claude/rules/dictation-out-of-process.md`; unpacked from asar via the `sherpa-onnx-*` glob in `asarUnpack`)
 - `font-list` - shells out to `fc-list` / a PowerShell script / a bundled macOS binary, no rebuild needed (Terminal Font Family picker; unpacked from asar via `asarUnpack` since the macOS binary is spawned via `child_process`)
 - `koffi` - a foreign function interface on Node-API, with its prebuilt binary in a per-platform `@koromix/koffi-*` package, no rebuild needed. The `kangentic-pty-host` utility process loads it on Windows and macOS to read another process's environment and, on macOS, the process list, for the task leftover reap (`src/main/pty/process-tag/`). Both packages are unpacked via `asarUnpack`, since a native addon cannot be dlopen'd from inside an asar, and the afterPack gate loads koffi from that tree and makes one native call on Windows and macOS
-- `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (Knowledge Graph retrieval; loaded only by the `kangentic-retrieval` worker, never by main; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar. The worker also needs `better-sqlite3`, `bindings` and `file-uri-to-path` unpacked, and the afterPack gate loads vec0 under the packaged Electron binary to prove it)
+- `sqlite-vec` - a loadable SQLite extension shipped as per-platform binary packages, no rebuild needed (Knowledge Graph retrieval; loaded only by the `kangentic-retrieval` worker, never by main; unpacked via the `sqlite-vec-*` glob in `asarUnpack`, since dlopen cannot read an extension inside asar. The worker also needs `better-sqlite3` unpacked, and the afterPack gate loads vec0 under the packaged Electron binary to prove it)
 - `onnxruntime-node` - prebuilt native binaries (`onnxruntime_binding.node`, plus `onnxruntime.dll` and `DirectML.dll` on Windows), no rebuild needed (the embed worker's execution provider; unpacked via `asarUnpack`)
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 - `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
-- `bindings` and `file-uri-to-path` - pure JavaScript, and better-sqlite3's own transitive closure rather than anything this app imports. They carry a root `dependencies` entry only because `electron-builder.yml`'s `files:` names them directly, which is what `.claude/rules/dependency-block-parity.md` keeps them in that block for
 
 Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
 

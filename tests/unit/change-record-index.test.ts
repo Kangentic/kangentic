@@ -3,8 +3,8 @@
  * own indexed text, and a sweep that re-derives a session only when its
  * conversation was re-indexed.
  *
- * better-sqlite3 cannot load under vitest's system Node, so the sweep runs
- * against a scripted `prepare()` that answers by SQL shape and records writes.
+ * The sweep runs against a scripted `prepare()` that answers by SQL shape and
+ * records writes, so no database is involved.
  */
 
 import { passThroughTransaction } from './helpers/transaction-double';

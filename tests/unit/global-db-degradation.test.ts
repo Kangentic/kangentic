@@ -17,9 +17,9 @@
  *      module, that one mocks it.)
  *   3. Nothing told the user anything.
  *
- * Every module here is the real one. `better-sqlite3` is mocked instead, because
- * it is an Electron ABI build that cannot load under plain Node at all (see
- * dev-port-ledger-unavailable.test.ts for the CI failure that documents this).
+ * Every module here is the real one. `better-sqlite3` is mocked instead, so a
+ * test can make the driver throw a chosen SqliteError at a chosen step (a real
+ * database cannot be told to fail `journal_mode = WAL` on demand).
  * Driving the failure from the driver rather than from a mocked `getGlobalDb`
  * is what makes assertion 1 meaningful: a mocked database module would have no
  * cache to get this wrong.
@@ -67,7 +67,7 @@ const {
 
 vi.mock('better-sqlite3', () => ({
   // Returning an object from a constructor overrides `this`, so this stands in
-  // for `new Database(file)` without needing a real native binding.
+  // for `new Database(file)` without opening a real database file.
   default: function MockDatabase(file: string) {
     return openDatabase(file);
   },

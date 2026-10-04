@@ -388,8 +388,9 @@ export function initErrorReporting(): void {
         // GPU death that Chromium survives still reaches Sentry as a real
         // backstop - the one case gpu-health.ts's own next-boot report cannot
         // be verified to cover (LOG(FATAL) kills the process before that
-        // report's async POST would complete, the same reason no
-        // 'launch-failed' GPU event has ever arrived here). 'abnormal-exit'
+        // report's async POST would complete). Through Electron 41 no
+        // 'launch-failed' GPU event could arrive here at all, because Electron
+        // did not forward launch failures; Electron 44 does. 'abnormal-exit'
         // alone is what DESKTOP-15 is: the reason Chromium's own recovery
         // (a lone crash it relaunches past) fires this integration at all.
         /'GPU' process exited with 'abnormal-exit'/,

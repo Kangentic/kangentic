@@ -152,7 +152,9 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     expect(run(onMain!.worktreePath, ['config', 'kangentic.baseBranch']).trim()).toBe('main');
     // And none of it leaked into the main checkout's config.
     expect(() => run(repo, ['config', '--local', 'kangentic.baseBranch'])).toThrow();
-  });
+    // Two full ensureWorktree calls, so the same 20s as the round-trip test below and
+    // for the same reason: it ran 5.4s in a full unit run under contention.
+  }, 20000);
 
   it('falls back to master when the repo only has master and defaultBaseBranch is the unconfigured "main" default', async () => {
     const repo = tempRepoPath('master-only');

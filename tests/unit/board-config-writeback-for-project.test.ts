@@ -5,9 +5,9 @@
  * DB state to its kangentic.json, so a tool call targeting a project other than
  * the one open in the UI still round-trips team-shared column fields.
  *
- * better-sqlite3 cannot load under vitest, so the DB + repositories the
- * build/apply import graph pulls in are mocked (same pattern as
- * board-config-onfilechange.test.ts). build-config and atomic-write are also
+ * The DB + repositories the build/apply import graph pulls in are mocked, so
+ * this stays a pure unit test of the manager with no database involved (same
+ * pattern as board-config-onfilechange.test.ts). build-config and atomic-write are also
  * mocked so the test asserts doWriteBack's control flow (which project, whether
  * it writes, active-state guarding) via spies rather than real fs.
  */

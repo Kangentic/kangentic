@@ -248,10 +248,13 @@ in one Sentry org, one triage surface.
     `'GPU' process exited with 'abnormal-exit'` only, not every reason. A lone GPU death Chromium
     recovers from on its own (DESKTOP-15) is the same un-attributable noise as a utility exit, and
     Kangentic's own GPU health tracker now reports a repeated one (see "A GPU health escalation is
-    reported once" below). `'launch-failed'` is left unfiltered, but it is not a backstop: the
-    integration rides `child-process-gone`, which Electron 41 never emits for a launch failure
-    (it overrides no `BrowserChildProcessLaunchFailed`). DESKTOP-W's launch-failure ladder is caught
-    by the GPU health tracker's fallback record instead - see below.
+    reported once" below). `'launch-failed'` is left unfiltered. Through Electron 41 it never
+    fired: the integration rides `child-process-gone`, and Electron 41 overrode no
+    `BrowserChildProcessLaunchFailed`. Electron 44 does override it, so a GPU launch failure that
+    Chromium survives now reaches this integration (measured on Linux, see `docs/cross-platform.md`).
+    The launch failure that ends in the fatal still does not, so DESKTOP-W's ladder is caught by the
+    GPU health tracker, which on 44 records the survived failures as fault deaths as well as the
+    fallback - see below.
   - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
@@ -481,7 +484,8 @@ in one Sentry org, one triage surface.
   for can end in Chromium calling `LOG(FATAL)` (`IntentionallyCrashBrowserForUnusableGpuProcess`),
   which kills the whole process before an async Sentry POST queued at that moment would ever
   transmit. (A search of everything Sentry retained never turned up a `'GPU' process exited with 'launch-failed'` event
-  for a different reason: Electron never emits `child-process-gone` for a launch failure at all.)
+  for a different reason: through Electron 41, Electron never emitted `child-process-gone` for a
+  launch failure at all. Electron 44 does, for the ones Chromium survives.)
   EVERY death writes the durable record at `<configDir>/gpu-health.json`, from the first - not
   just a threshold breach.
   The ordering is why: Chromium calls `GpuProcessHost::RecordProcessCrash` (and the `LOG(FATAL)`

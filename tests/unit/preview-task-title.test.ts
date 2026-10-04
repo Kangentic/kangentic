@@ -4,10 +4,10 @@
  * project DB (the preview clones never contain it). The number comes from the DB
  * row, not the folder name, so a legacy `<slug>-<shortId>` worktree gets one too.
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
- * vitest's system Node (same constraint as task-repository.test.ts), so the
- * DB is mocked and serves canned rows. The valuable logic under test is the
- * real resolver's path handling: worktrees-marker detection, the
+ * The DB is mocked and serves canned rows (the same approach as
+ * task-repository.test.ts), so the test needs no database file. The valuable
+ * logic under test is the real resolver's path handling: worktrees-marker
+ * detection, the
  * `<slug>-<shortId>` task-id-prefix extraction, project-root matching, and the
  * id-prefix vs worktree_path fallback. getPlatformConfigDir() is redirected to
  * a temp dir whose placeholder DB files make fs.existsSync() pass.

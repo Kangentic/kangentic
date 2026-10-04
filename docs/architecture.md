@@ -425,7 +425,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Dialog (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `dialog:selectFolder` | invoke | OS folder picker |
+| `dialog:selectFolder` | invoke | OS folder picker. With options (Add project) it offers New folder and starts at `options.defaultPath`, else home. Without (relocate, locate) it starts at the parent of the last folder it returned, else home, because Electron 43 otherwise opens in Downloads. Returns the path, or null on cancel |
 
 ### Window (5 channels)
 | Channel | Pattern | Purpose |
@@ -461,7 +461,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 ### Clipboard (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `clipboard:readImage` | invoke | Read the native clipboard image, cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path or null |
+| `clipboard:readImage` | invoke | Read the native clipboard image through the async `clipboard.read()` (Electron 44 removed `readImage()`), cap its long edge at `IMAGE_LONG_EDGE_CAP`, prune stale `pasted-image-*` files from the temp directory (24h age limit, 40-file cap), save it to a temp file, returns file path, or null when the clipboard holds no image or the read fails |
 | `clipboard:saveImage` | invoke | Save PNG bytes the renderer decoded from a dropped image (a format the agent CLI cannot attach from a path, such as bmp) into the same temp directory under the same cap and prune; returns the file path, or null when the bytes are not a decodable image or the write failed |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 

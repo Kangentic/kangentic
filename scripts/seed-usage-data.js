@@ -15,7 +15,7 @@
  * removes exactly what this script created and nothing else.
  *
  * Usage (Node 24+, uses the built-in node:sqlite so it runs on the system
- * Node without touching the Electron-ABI better-sqlite3 build):
+ * Node with no native module):
  *   node scripts/seed-usage-data.js --project <name-or-id>   seed one project
  *   node scripts/seed-usage-data.js --all                    seed every registered project
  *   node scripts/seed-usage-data.js --project <name> --days 30

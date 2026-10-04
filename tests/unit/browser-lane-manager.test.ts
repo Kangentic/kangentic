@@ -78,6 +78,11 @@ vi.mock('electron', () => ({
       return win;
     }
   },
+  // Not 1, so a lane that ignored the display and took Electron 42+'s fixed
+  // 1.0 offscreen default cannot pass the scale-factor test.
+  screen: {
+    getPrimaryDisplay: () => ({ scaleFactor: 1.5 }),
+  },
   // openLane now syncs the task jar with the project identity jar before creating
   // the window; a minimal session stub lets that run without erroring.
   session: {
@@ -253,7 +258,16 @@ describe('openLane', () => {
     await openLane(input());
     const options = created[0].options as { show: boolean; webPreferences: Record<string, unknown> };
     expect(options.show).toBe(false);
-    expect(options.webPreferences.offscreen).toBe(true);
+    expect(options.webPreferences.offscreen).toBeTruthy();
+  });
+
+  it('renders at the primary display\'s scale factor, not the fixed 1.0 offscreen default', async () => {
+    // Electron 42 made an offscreen window render at 1.0 unless told otherwise.
+    // The visible pane renders at the display's factor, so without this a page
+    // would see its devicePixelRatio change when its surface moved offscreen.
+    await openLane(input());
+    const options = created[0].options as { webPreferences: { offscreen: { deviceScaleFactor?: number } } };
+    expect(options.webPreferences.offscreen.deviceScaleFactor).toBe(1.5);
   });
 
   it('throttles the frame rate so an unwatched animating page cannot burn CPU', async () => {

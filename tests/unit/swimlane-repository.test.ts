@@ -25,48 +25,11 @@
  *
  * Uses a real in-memory better-sqlite3 DB (':memory:') so the actual SQLite
  * engine validates INSERT/UPDATE column counts and argument alignment. No
- * disk writes. Skips cleanly when better-sqlite3 cannot load under the test
- * runner's Node ABI (NODE_MODULE_VERSION mismatch under plain system Node;
- * CI resolves the correct ABI at build time).
+ * disk writes.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors opencode-project-relocation.test.ts and
-// opencode-schema-canary.test.ts patterns.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Use a variable for the module name to avoid the static-require lint rule
-    // (which targets string-literal bare requires in bundled main/preload code;
-    // this is a test helper for a native probe, not a bundled require).
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    // Force the native binding to load now - the NODE_MODULE_VERSION mismatch
-    // only surfaces on instantiation, not on require.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
-// ---------------------------------------------------------------------------
-// Imports (always resolved - they use 'import type' for better-sqlite3 so
-// no native binding is touched at module load time).
-// ---------------------------------------------------------------------------
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 
@@ -74,12 +37,11 @@ import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repo
 // Round-trip tests against a real in-memory SQLite DB.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('SwimlaneRepository - description column round-trip', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('SwimlaneRepository - description column round-trip', () => {
+  let db: Database.Database;
   let repository: SwimlaneRepository;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new SwimlaneRepository(db);
@@ -163,12 +125,11 @@ describe.runIf(CAN_RUN)('SwimlaneRepository - description column round-trip', ()
 // correct), not the delete ordering inside deleteSwimlaneRowWithReferences.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('SwimlaneRepository.deleteEmptyGhosts', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('SwimlaneRepository.deleteEmptyGhosts', () => {
+  let db: Database.Database;
   let repository: SwimlaneRepository;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new SwimlaneRepository(db);
@@ -234,9 +195,8 @@ describe.runIf(CAN_RUN)('SwimlaneRepository.deleteEmptyGhosts', () => {
 // Migration idempotency test.
 // ---------------------------------------------------------------------------
 
-describe.runIf(CAN_RUN)('runProjectMigrations - description column idempotency', () => {
+describe('runProjectMigrations - description column idempotency', () => {
   it('running migrations twice leaves exactly one description column and does not throw', () => {
-    if (!Database) return;
     const freshDb = new Database(':memory:');
     try {
       // First run - creates the swimlanes table, applies all ALTER TABLE
@@ -266,15 +226,5 @@ describe.runIf(CAN_RUN)('runProjectMigrations - description column idempotency',
     } finally {
       freshDb.close();
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Skip-notice for environments where better-sqlite3 cannot load.
-// ---------------------------------------------------------------------------
-
-describe.runIf(!CAN_RUN)('SwimlaneRepository description tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

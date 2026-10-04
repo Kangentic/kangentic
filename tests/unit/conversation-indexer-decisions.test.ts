@@ -17,7 +17,7 @@ import type { SessionRecord, TranscriptEntry } from '../../src/shared/types';
  *   1. `needsIndex` is a pure decision - an exhaustive truth table over prior
  *      state x current signature.
  *   2. `ConversationIndexer.indexSession` is exercised against a hand-rolled
- *      fake `Database` (better-sqlite3 cannot load under vitest). The fake
+ *      fake `Database` (no real database is involved). The fake
  *      answers the SessionRepository lookup, the RetrievalStore index-state
  *      read/write, and the upsert transaction, so the adapter-capability
  *      branches and the indexed/skipped outcomes are covered without a real DB.

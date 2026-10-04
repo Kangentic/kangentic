@@ -1,10 +1,10 @@
 /**
  * Unit tests for TaskRepository SQL contracts.
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
- * vitest's system Node. Tests use a mock-database that records the SQL
- * prepared by each method and verifies the WHERE-clause contracts without
- * executing real SQLite queries.
+ * Tests use a mock-database that records the SQL prepared by each method and
+ * verifies the WHERE-clause contracts without executing real SQLite queries.
+ * `tests/unit/helpers/test-database.ts` opens a real better-sqlite3 database if
+ * one is wanted.
  *
  * Covered here:
  *   - listAllInSwimlane: must NOT filter by archived_at (returns ALL tasks in
@@ -347,8 +347,7 @@ describe('TaskRepository SQL contracts', () => {
     // original creation time instead of always being stamped "now". These
     // isolate that parameter's two branches independent of the higher-level
     // move-to-project test (mcp-move-task-to-project.test.ts), which only
-    // exercises the override path indirectly and is skipped locally when
-    // better-sqlite3 cannot load under the vitest Node ABI.
+    // exercises the override path indirectly, through a real database.
 
     it('defaults created_at to now (equal to updated_at) when createdAt is omitted', () => {
       const before = new Date().toISOString();

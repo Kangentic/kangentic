@@ -21,12 +21,12 @@ import type { DevPortLease } from '../../../shared/types';
  * bearing - a task delete cannot fail because a ledger of advisory rows was
  * unreachable, and a spawn cannot fail because a port lookup threw.
  *
- * It shipped throwing, and CI caught it: `better-sqlite3` is an Electron ABI
- * build, so under plain Node `getGlobalDb()` throws NODE_MODULE_VERSION on the
- * first call. Fourteen tests across five files that had nothing to do with dev
- * ports went red, because touching a task now reached this table. A read that
- * degrades to "no reservations" is the correct answer for an advisory ledger;
- * a throw that takes the caller down with it never was.
+ * It shipped throwing, and CI caught it: `better-sqlite3` was then an Electron
+ * ABI build, so under plain Node `getGlobalDb()` threw NODE_MODULE_VERSION on
+ * the first call. Fourteen tests across five files that had nothing to do with
+ * dev ports went red, because touching a task now reached this table. A read
+ * that degrades to "no reservations" is the correct answer for an advisory
+ * ledger; a throw that takes the caller down with it never was.
  */
 
 /**
@@ -37,9 +37,10 @@ import type { DevPortLease } from '../../../shared/types';
  * process, which still avoids the line-per-task-serialization flood this
  * comment originally objected to.
  *
- * Never `notify`. This ledger degrading is EXPECTED - it is what every
- * unit-tier CI run does - so a dialog here would be wrong, and would burn the
- * once-per-process notification that the project list genuinely needs.
+ * Never `notify`. This ledger degrading is EXPECTED - it is advisory, and
+ * nothing the user asked for fails with it - so a dialog here would be wrong,
+ * and would burn the once-per-process notification that the project list
+ * genuinely needs.
  */
 function softly<T>(operation: string, fallback: T, run: () => T): T {
   return softDbAccess(operation, fallback, run, {

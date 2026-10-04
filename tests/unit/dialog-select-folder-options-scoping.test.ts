@@ -5,14 +5,15 @@
  * The handler scopes two behaviors to callers that actually pass `options`
  * (today: only the Add Project flow):
  *   - `properties` includes 'createDirectory' ONLY when options is supplied.
- *   - `defaultPath` falls back to `app.getPath('home')` ONLY when options is
- *     supplied; a no-argument caller gets `undefined`, preserving whatever
- *     location the OS dialog itself remembers.
+ *   - `defaultPath` is the caller's, else `app.getPath('home')`, when options
+ *     is supplied. A no-argument caller starts at the parent of the last
+ *     folder the dialog returned, else home.
  * The no-argument callers (relocate a project, locate one whose folder
- * moved) point at a folder that already exists, so unconditionally jumping
- * to $HOME would discard the location the OS remembered, and offering "New
- * folder" there invites creating an empty directory that cannot be the thing
- * they were asked to find.
+ * moved) point at a folder that already exists, so they should start where
+ * the user last was, and offering "New folder" there invites creating an
+ * empty directory that cannot be the thing they were asked to find. Electron
+ * 43 stopped the OS remembering that location: with no defaultPath the dialog
+ * now opens in Downloads, so the handler remembers it instead.
  *
  * Strategy mirrors agent-list-handler.test.ts / shell-open-external-handler.test.ts:
  * mock electron's dialog and ipcMain, capture the registered handler, invoke
@@ -24,6 +25,7 @@
  * Tier: Unit (vitest, no browser, no Electron).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 import type { SelectFolderOptions } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -49,7 +51,7 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: (...args: unknown[]) => showOpenDialogMock(...args) },
   shell: { openPath: vi.fn(), openExternal: vi.fn(), showItemInFolder: vi.fn() },
   globalShortcut: { isRegistered: vi.fn(() => false), register: vi.fn(() => true), unregister: vi.fn() },
-  clipboard: { writeText: vi.fn(), readImage: vi.fn() },
+  clipboard: { writeText: vi.fn(), read: vi.fn() },
 }));
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -149,14 +151,36 @@ describe('DIALOG_SELECT_FOLDER IPC handler', () => {
     registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
   });
 
-  it('omits createDirectory and defaultPath entirely with no options (relocate / locate-moved-folder callers)', async () => {
+  it('omits createDirectory and starts at home with no options before any pick (relocate / locate-moved-folder callers)', async () => {
     await invokeSelectFolder();
 
     expect(showOpenDialogMock).toHaveBeenCalledTimes(1);
     const dialogOptions = showOpenDialogMock.mock.calls[0][1] as Record<string, unknown>;
     expect(dialogOptions.properties).toEqual(['openDirectory']);
-    expect(dialogOptions.defaultPath).toBeUndefined();
-    expect(getPathMock).not.toHaveBeenCalled();
+    // Never undefined: since Electron 43 that opens the dialog in Downloads.
+    expect(dialogOptions.defaultPath).toBe('/mock/home');
+    expect(getPathMock).toHaveBeenCalledWith('home');
+  });
+
+  it('starts a no-options dialog at the parent of the last folder picked', async () => {
+    showOpenDialogMock.mockResolvedValueOnce({ canceled: false, filePaths: [path.join('/mock', 'projects', 'kanban')] });
+    await invokeSelectFolder({ title: 'Pick a folder' });
+
+    await invokeSelectFolder();
+
+    const dialogOptions = showOpenDialogMock.mock.calls[1][1] as Record<string, unknown>;
+    expect(dialogOptions.defaultPath).toBe(path.join('/mock', 'projects'));
+  });
+
+  it('keeps the remembered location when a later dialog is canceled', async () => {
+    showOpenDialogMock.mockResolvedValueOnce({ canceled: false, filePaths: [path.join('/mock', 'projects', 'kanban')] });
+    await invokeSelectFolder();
+    await invokeSelectFolder(); // canceled (the default mock)
+
+    await invokeSelectFolder();
+
+    const dialogOptions = showOpenDialogMock.mock.calls[2][1] as Record<string, unknown>;
+    expect(dialogOptions.defaultPath).toBe(path.join('/mock', 'projects'));
   });
 
   it('includes createDirectory and falls back to home when options are passed with no defaultPath (Add project)', async () => {

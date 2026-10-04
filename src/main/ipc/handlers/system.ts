@@ -18,7 +18,7 @@ import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found'
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
-import { writePastedImage } from '../helpers/clipboard-image';
+import { readClipboardImage, writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import type {
@@ -627,20 +627,27 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Dialog ===
+  // The parent of the last folder this dialog returned. Electron 43 stopped letting the OS
+  // remember where a folder dialog was last left: with no defaultPath it now opens in
+  // Downloads. This puts the remembering back for the session.
+  let lastPickedFolderParent: string | null = null;
   ipcMain.handle(IPC.DIALOG_SELECT_FOLDER, async (_event, options?: SelectFolderOptions) => {
     // Both additions are scoped to callers that actually pass options (today: Add project).
     // The no-argument callers - relocating a project, locating one whose folder moved - are
-    // pointing at a folder that already exists, so starting them at $HOME every time discards
-    // the location the OS remembered, and offering "New folder" there invites creating an empty
-    // directory that cannot be the thing they were asked to find.
+    // pointing at a folder that already exists, so they start where the user last picked a
+    // folder (home before the first pick, never Downloads), and offering "New folder" there
+    // invites creating an empty directory that cannot be the thing they were asked to find.
     const result = await dialog.showOpenDialog(context.mainWindow, {
       properties: options ? ['openDirectory', 'createDirectory'] : ['openDirectory'],
       title: options?.title,
       buttonLabel: options?.buttonLabel,
       message: options?.message,
-      defaultPath: options ? (options.defaultPath ?? app.getPath('home')) : undefined,
+      defaultPath: options
+        ? (options.defaultPath ?? app.getPath('home'))
+        : (lastPickedFolderParent ?? app.getPath('home')),
     });
     if (result.canceled || result.filePaths.length === 0) return null;
+    lastPickedFolderParent = path.dirname(result.filePaths[0]);
     return result.filePaths[0];
   });
 
@@ -684,9 +691,9 @@ export function registerSystemHandlers(context: IpcContext): void {
   // costs no fidelity and saves no tokens: the cap sits at the knee where the
   // chain normalizes anyway, so the dropped pixels are ones the model would
   // never have seen. See `src/shared/image-fidelity.ts` for what was measured.
-  ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, (): string | null => {
-    const image = clipboard.readImage();
-    if (image.isEmpty()) return null;
+  ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, async (): Promise<string | null> => {
+    const image = await readClipboardImage(clipboard, (bytes) => nativeImage.createFromBuffer(bytes));
+    if (!image) return null;
     // A write failure degrades to the same null an empty clipboard returns
     // rather than rejecting the renderer's invoke (see writePastedImage).
     return writePastedImage(image);
@@ -712,14 +719,15 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // Write text to the clipboard natively in the main process rather than via the web
-  // `navigator.clipboard.writeText()`. Electron's clipboard module is synchronous and
-  // focus- and permission-independent, whereas the web API rejects with NotAllowedError
-  // when the document does not hold focus - exactly the state during a native context-menu
-  // click (Menu.popup steals focus) and the case a TUI app's OSC 52 copy sequence hits.
-  // Same rationale as CLIPBOARD_READ_IMAGE above.
-  ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, (_event, text: string): void => {
+  // `navigator.clipboard.writeText()`. Electron's clipboard module is focus- and
+  // permission-independent, whereas the web API rejects with NotAllowedError when the
+  // document does not hold focus - exactly the state during a native context-menu click
+  // (Menu.popup steals focus) and the case a TUI app's OSC 52 copy sequence hits. Since
+  // Electron 44 the write is a promise; awaiting it lets a failed write reach the
+  // renderer's own catch. Same rationale as CLIPBOARD_READ_IMAGE above.
+  ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, async (_event, text: string): Promise<void> => {
     if (typeof text !== 'string' || text.length === 0) return;
-    clipboard.writeText(text);
+    await clipboard.writeText(text);
   });
 
   // === Handoffs ===

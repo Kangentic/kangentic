@@ -11,9 +11,8 @@ import { writeTransaction } from '../transaction';
  * automations.
  *
  * Split into a pure planner and a thin DB runner, the same way
- * `spawn-agent-config-migration.ts` is: the native `better-sqlite3` binding is
- * rebuilt for Electron, so DB-level tests skip under plain Node vitest, and the
- * decisions worth testing are all in the planner.
+ * `spawn-agent-config-migration.ts` is: the decisions worth testing are all in
+ * the planner.
  *
  * Three things happen, and the second is the one worth reading:
  *

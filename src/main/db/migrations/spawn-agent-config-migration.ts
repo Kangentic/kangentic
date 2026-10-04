@@ -3,10 +3,8 @@ import type { ActionConfig } from '../../../shared/types';
 /**
  * Pure data migration applied to every `spawn_agent` action row's parsed
  * config. Extracted from `runProjectMigrations` so the per-row logic can be
- * unit-tested without spinning up a real `better-sqlite3` handle (the
- * native binding is rebuilt for Electron, so DB-level tests skip under
- * plain Node vitest). The SQL caller iterates rows; this function only
- * transforms a single config object.
+ * unit-tested on plain config objects, with no database. The SQL caller
+ * iterates rows; this function only transforms a single config object.
  *
  * Steps applied in order:
  *  1. Append `{{attachments}}` to prompt templates that lack it.

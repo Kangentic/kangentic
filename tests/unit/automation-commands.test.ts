@@ -8,24 +8,13 @@
  * reads. A mock would assert that the statements were issued, not that they did
  * anything, which is the exact class of failure this subsystem was built to end.
  *
- * node:sqlite rather than better-sqlite3, which is compiled for Electron's Node
- * ABI so a suite gated on it skips on a developer's machine and only ever runs
- * in CI. Follows the harness automation-repository.test.ts established.
+ * Real better-sqlite3, the driver production uses. Follows the harness
+ * automation-repository.test.ts established.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
@@ -41,7 +30,7 @@ import { resolveColumnMessage } from '../../src/main/transition-engine/column-st
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { AutomationRunAgainResult, BoardProfile } from '../../src/shared/types';
 
-describeWithSqlite('automation MCP commands', () => {
+describe('automation MCP commands', () => {
   let db: DatabaseType.Database;
   let automations: AutomationRepository;
   let swimlanes: SwimlaneRepository;
@@ -85,13 +74,17 @@ describeWithSqlite('automation MCP commands', () => {
   }
 
   beforeEach(() => {
-    db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     automations = new AutomationRepository(db);
     swimlanes = new SwimlaneRepository(db);
     profiles = [];
     context = makeContext();
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   // ---------------------------------------------------------------------------

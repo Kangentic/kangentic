@@ -26,33 +26,10 @@
  * dropping the swimlane row before its transitions) would still pass here
  * even though it would violate an FK in production. These tests pin the
  * OUTCOME (rows and references end up correct), not the delete ordering.
- *
- * Skips cleanly when better-sqlite3 cannot load under the runner's Node ABI
- * (NODE_MODULE_VERSION mismatch under plain system Node); CI resolves the
- * correct ABI at build time. Mirrors swimlane-repository.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
+import Database from 'better-sqlite3';
 
 // ---------------------------------------------------------------------------
 // Mock getProjectDb to hand back the real in-memory DB built per-test, so
@@ -73,12 +50,11 @@ import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repo
 import { applyBoardConfigToDb } from '../../src/main/config/board-config/apply-config';
 import type { BoardConfig, Swimlane } from '../../src/shared/types';
 
-describe.runIf(CAN_RUN)('applyBoardConfigToDb - column delete branch (real SQLite)', () => {
-  let db: InstanceType<typeof DatabaseType>;
+describe('applyBoardConfigToDb - column delete branch (real SQLite)', () => {
+  let db: Database.Database;
   let repository: SwimlaneRepository;
 
   beforeEach(() => {
-    if (!Database) return;
     db = new Database(':memory:');
     runProjectMigrations(db);
     repository = new SwimlaneRepository(db);
@@ -184,11 +160,5 @@ describe.runIf(CAN_RUN)('applyBoardConfigToDb - column delete branch (real SQLit
       .prepare('SELECT COUNT(*) as count FROM swimlane_transitions WHERE from_swimlane_id = ? OR to_swimlane_id = ?')
       .get(legacy.id, legacy.id) as { count: number };
     expect(remainingTransitions.count).toBe(1);
-  });
-});
-
-describe.runIf(!CAN_RUN)('applyBoardConfigToDb column-delete tests (skipped)', () => {
-  it('skipped - better-sqlite3 cannot load under this Node runtime (NODE_MODULE_VERSION mismatch)', () => {
-    expect(CAN_RUN).toBe(false);
   });
 });

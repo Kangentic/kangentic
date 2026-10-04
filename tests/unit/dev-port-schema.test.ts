@@ -1,5 +1,6 @@
 /**
- * The `dev_ports` schema, run against a REAL SQLite engine (node:sqlite).
+ * The `dev_ports` schema, run against a REAL SQLite engine (better-sqlite3, the
+ * driver production uses).
  *
  * dev-port-allocator.test.ts drives an in-memory stand-in for the repository,
  * so it would stay green if the schema disagreed with it - and that is not a
@@ -13,55 +14,22 @@
  * DROP INDEX` only fires on a database that already carries the old unique
  * index, which no fresh install has. So the second suite builds that older
  * shape by hand and replays the migration over it.
- *
- * node:sqlite is built-in on Node 22.5+ but may need --experimental-sqlite on
- * some builds; this skips where it is unavailable (the same gate as
- * session-interrupted-exited-sql.test.ts). A "pass" on a runner without it is a
- * SKIP - check the reported counts before reading this file as coverage.
  */
 
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { runGlobalMigrations } from '../../src/main/db/migrations/global-schema';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 interface IndexRow {
   name: string;
   unique: number;
 }
 
-/**
- * The slice of better-sqlite3's surface `runGlobalMigrations` actually uses,
- * backed by node:sqlite. Deliberately minimal: a fuller shim would be more code
- * to keep honest than the migration it exercises.
- */
+/** A fresh in-memory database, with no schema yet, and the way to close it. */
 function openMigratedDb(): { db: Database.Database; close: () => void } {
-  const { DatabaseSync } = sqlite!;
-  const handle = new DatabaseSync(':memory:');
-
-  const shim = {
-    exec: (sql: string) => handle.exec(sql),
-    pragma: (statement: string) => handle.prepare(`PRAGMA ${statement}`).all(),
-    prepare: (sql: string) => {
-      const statement = handle.prepare(sql);
-      return {
-        get: (...params: unknown[]) => statement.get(...(params as never[])),
-        all: (...params: unknown[]) => statement.all(...(params as never[])),
-        run: (...params: unknown[]) => statement.run(...(params as never[])),
-      };
-    },
-  } as unknown as Database.Database;
-
-  return { db: shim, close: () => handle.close() };
+  const db = openTestDatabase();
+  return { db, close: () => db.close() };
 }
 
 /**
@@ -85,7 +53,7 @@ function claim(db: Database.Database, port: number, taskId: string): boolean {
   }
 }
 
-describeWithSqlite('dev_ports schema (fresh database)', () => {
+describe('dev_ports schema (fresh database)', () => {
   it('lets ONE task hold several ports', () => {
     // The whole reason the unique index had to go. If this ever fails, the
     // reservation tool silently returns one port for every count it is given.
@@ -166,7 +134,7 @@ describeWithSqlite('dev_ports schema (fresh database)', () => {
   });
 });
 
-describeWithSqlite('dev_ports schema (upgrade from the unique-index shape)', () => {
+describe('dev_ports schema (upgrade from the unique-index shape)', () => {
   /** The pre-multi-port table, exactly as the earlier migration created it. */
   function seedLegacySchema(db: Database.Database): void {
     db.exec(`

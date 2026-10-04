@@ -8,17 +8,18 @@
  *   - Reading only what changed must end with the sums a pass from scratch
  *     finds, whatever re-indexed a document in between.
  *
- * The pass runs against the REAL store, schema and triggers on node:sqlite, so
- * `memory_doc_sums`, the triggers that empty a prefix and the store's write
- * guard are the shipped SQL. Two reads are stubbed: vectors, since vec0 does
- * not load under node:sqlite (each embedded chunk's vector is derived from its
- * text and the model it was embedded under, so changed text or a new model
- * means a new vector), and the node metadata, which joins tables these tests
- * have no reason to fill.
+ * The pass runs against the REAL store, schema and triggers on real
+ * better-sqlite3, so `memory_doc_sums`, the triggers that empty a prefix and the
+ * store's write guard are the shipped SQL. Two reads are stubbed: vectors (each
+ * embedded chunk's vector is derived from its text and the model it was embedded
+ * under, so changed text or a new model means a new vector, with no embedding
+ * model and no vec0 table needed), and the node metadata, which joins tables
+ * these tests have no reason to fill.
  */
 
 import crypto from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { KNOWLEDGE_GRAPH_GRANULARITIES } from '../../src/shared/types';
 import type { TranscriptEntry } from '../../src/shared/types';
 import {
@@ -35,16 +36,13 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { chunkTranscript } from '../../src/main/retrieval/conversation/transcript-chunker';
 import type { ChunkInput } from '../../src/main/retrieval/types';
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 const MODEL_TAG = 'bge-base@q8-cls';
 const OTHER_MODEL_TAG = 'bge-large@q8-cls';
@@ -100,10 +98,10 @@ interface StoredSumRow {
  * the drain does.
  */
 function testIndex() {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
-  const store = new RetrievalStore(db);
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  const store = new RetrievalStore(database);
   let vectorReads = 0;
   let chunkPages = 0;
   let metadataPages = 0;
@@ -394,7 +392,7 @@ function retitle(index: TestIndex, titleFor: (row: number) => string): void {
   });
 }
 
-describeWithSqlite('projection pass', () => {
+describe('projection pass', () => {
   it('pools chunks per document and lays out one node each', async () => {
     const index = corpus(12, 4);
     const result = await pass(index);

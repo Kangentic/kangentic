@@ -5,15 +5,13 @@
  * Covers `readTaskKnowledge` (summary, linked commits, changed files),
  * `RetrievalStore.commitsForTask` / `commitsByShaPrefix`, `searchCommits`, and
  * that `readSummaryCandidates` still reads the changed files the way it did.
- * The real project migrations and the real RetrievalStore run against
- * node:sqlite, so the SQL, the full-text index and the `doc_id` range are the
- * shipped ones. node:sqlite rather than better-sqlite3 on purpose:
- * better-sqlite3 is compiled for Electron's Node ABI, so a suite gated on it
- * skips under vitest. The adapter is the shared one in
- * `helpers/node-sqlite-database.ts`.
+ * The real project migrations and the real RetrievalStore run against real
+ * better-sqlite3, the driver production uses, so the SQL, the full-text index
+ * and the `doc_id` range are the shipped ones.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 import { SummaryStore } from '../../src/main/retrieval/summary/summary-store';
@@ -26,16 +24,13 @@ import {
   TASK_KNOWLEDGE_FILES,
 } from '../../src/main/retrieval/task-knowledge';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+const openDatabases: DatabaseType.Database[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 const DAY = 24 * 60 * 60 * 1000;
 const BASE_MS = Date.UTC(2026, 8, 1);
@@ -48,10 +43,10 @@ function shaStartingWith(prefix: string, ending = ''): string {
 
 /** A project database with a Done lane and an In Progress lane, and helpers to fill it. */
 function project() {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
-  const store = new RetrievalStore(db);
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
+  const store = new RetrievalStore(database);
   const now = '2026-09-01T00:00:00.000Z';
   let sessionCount = 0;
 
@@ -85,7 +80,7 @@ function project() {
       commitChunks({ sha, committedMs, subject, body }),
     );
   };
-  return { database, db, store, addTask, addSession, addChangeDocument, addCommit };
+  return { database, store, addTask, addSession, addChangeDocument, addCommit };
 }
 
 describe('subjectForAgents', () => {
@@ -100,7 +95,7 @@ describe('subjectForAgents', () => {
   });
 });
 
-describeWithSqlite('commit lookups in the retrieval store', () => {
+describe('commit lookups in the retrieval store', () => {
   it('lists a task\'s linked commits newest first, and never an unlinked one or another task\'s', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'feat: oldest linked commit', BASE_MS, 'task-a');
@@ -173,14 +168,14 @@ describeWithSqlite('commit lookups in the retrieval store', () => {
   });
 });
 
-describeWithSqlite('searchCommits', () => {
+describe('searchCommits', () => {
   it('finds a commit by a word in its subject, with the task it came from', () => {
     const fixture = project();
     fixture.addTask('task-a', 561, 'Relay config');
     fixture.addCommit(shaStartingWith('a1'), 'fix(relay): back off on reconnect', BASE_MS, 'task-a');
     fixture.addCommit(shaStartingWith('b1'), 'feat(terminal): repaint after resize', BASE_MS + DAY, null);
 
-    const hits = searchCommits(fixture.db, 'reconnect');
+    const hits = searchCommits(fixture.database, 'reconnect');
 
     expect(hits).toEqual([{
       sha: shaStartingWith('a1'),
@@ -195,25 +190,25 @@ describeWithSqlite('searchCommits', () => {
   it('finds a commit by a word in its body', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'fix: quiet the noise', BASE_MS, null, 'The watchdog fired twice when the router restarted.');
-    expect(searchCommits(fixture.db, 'watchdog').map((hit) => hit.sha)).toEqual([shaStartingWith('a1')]);
+    expect(searchCommits(fixture.database, 'watchdog').map((hit) => hit.sha)).toEqual([shaStartingWith('a1')]);
   });
 
   it('shows a squash-merge\'s pull request as PR, not as a task mark', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'fix(relay): back off on reconnect (#812)', BASE_MS, null);
-    expect(searchCommits(fixture.db, 'reconnect')[0].subject).toBe('fix(relay): back off on reconnect (PR 812)');
+    expect(searchCommits(fixture.database, 'reconnect')[0].subject).toBe('fix(relay): back off on reconnect (PR 812)');
   });
 
   it('reports an unlinked commit with no task', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'chore: tidy the release notes wording', BASE_MS, null);
-    expect(searchCommits(fixture.db, 'tidy')[0]).toMatchObject({ taskId: null, displayId: null, taskTitle: null });
+    expect(searchCommits(fixture.database, 'tidy')[0]).toMatchObject({ taskId: null, displayId: null, taskTitle: null });
   });
 
   it('reports a commit linked to a task that no longer exists as unlinked', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'chore: tidy the release notes wording', BASE_MS, 'task-deleted');
-    expect(searchCommits(fixture.db, 'tidy')[0]).toMatchObject({ taskId: null, displayId: null, taskTitle: null });
+    expect(searchCommits(fixture.database, 'tidy')[0]).toMatchObject({ taskId: null, displayId: null, taskTitle: null });
   });
 
   it('keeps only one task\'s commits when given its id', () => {
@@ -224,8 +219,8 @@ describeWithSqlite('searchCommits', () => {
     fixture.addCommit(shaStartingWith('b1'), 'fix(relay): reconnect for two', BASE_MS + DAY, 'task-b');
     fixture.addCommit(shaStartingWith('c1'), 'fix(relay): reconnect for nobody', BASE_MS + 2 * DAY, null);
 
-    expect(searchCommits(fixture.db, 'reconnect', { taskId: 'task-a' }).map((hit) => hit.sha)).toEqual([shaStartingWith('a1')]);
-    expect(searchCommits(fixture.db, 'reconnect').map((hit) => hit.sha).sort()).toEqual(
+    expect(searchCommits(fixture.database, 'reconnect', { taskId: 'task-a' }).map((hit) => hit.sha)).toEqual([shaStartingWith('a1')]);
+    expect(searchCommits(fixture.database, 'reconnect').map((hit) => hit.sha).sort()).toEqual(
       [shaStartingWith('a1'), shaStartingWith('b1'), shaStartingWith('c1')].sort(),
     );
   });
@@ -237,16 +232,16 @@ describeWithSqlite('searchCommits', () => {
     fixture.addCommit(shaStartingWith('abcdef02'), 'feat: second of the pair', BASE_MS + DAY, null);
     fixture.addCommit(shaStartingWith('abcdf003'), 'feat: outside the prefix', BASE_MS + 2 * DAY, null);
 
-    expect(searchCommits(fixture.db, 'abcdef0').map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef02'), shaStartingWith('abcdef01')]);
-    expect(searchCommits(fixture.db, ' ABCDEF01 ').map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef01')]);
-    expect(searchCommits(fixture.db, 'abcdef0', { taskId: 'task-a' }).map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef01')]);
-    expect(searchCommits(fixture.db, 'fffffff')).toEqual([]);
+    expect(searchCommits(fixture.database, 'abcdef0').map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef02'), shaStartingWith('abcdef01')]);
+    expect(searchCommits(fixture.database, ' ABCDEF01 ').map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef01')]);
+    expect(searchCommits(fixture.database, 'abcdef0', { taskId: 'task-a' }).map((hit) => hit.sha)).toEqual([shaStartingWith('abcdef01')]);
+    expect(searchCommits(fixture.database, 'fffffff')).toEqual([]);
   });
 
   it('does not take a prefix shorter than seven digits for a sha', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('abcdef01'), 'feat: first of the pair', BASE_MS, null);
-    expect(searchCommits(fixture.db, 'abcdef')).toEqual([]);
+    expect(searchCommits(fixture.database, 'abcdef')).toEqual([]);
   });
 
   it('keeps a bare number\'s keyword matches beside the commits whose sha starts with it', () => {
@@ -256,7 +251,7 @@ describeWithSqlite('searchCommits', () => {
     fixture.addCommit(shaStartingWith('ffffffff'), 'fix(relay): give up after 1234567 ms', BASE_MS + DAY, null);
     fixture.addCommit(shaStartingWith('1234567', '2'), 'perf: cache 1234567 rows', BASE_MS + 2 * DAY, null);
 
-    const shas = searchCommits(fixture.db, '1234567').map((hit) => hit.sha);
+    const shas = searchCommits(fixture.database, '1234567').map((hit) => hit.sha);
 
     expect(shas).toEqual([shaStartingWith('1234567', '2'), shaStartingWith('1234567', '1'), shaStartingWith('ffffffff')]);
     // The commit that is both is one hit, not two.
@@ -268,28 +263,28 @@ describeWithSqlite('searchCommits', () => {
     for (let index = 0; index < COMMIT_HITS + 2; index += 1) {
       fixture.addCommit(shaStartingWith('d', index.toString(16)), `fix(relay): reconnect attempt number ${index}`, BASE_MS + index * DAY, null);
     }
-    expect(searchCommits(fixture.db, 'reconnect')).toHaveLength(COMMIT_HITS);
-    expect(searchCommits(fixture.db, 'reconnect', { limit: 3 })).toHaveLength(3);
+    expect(searchCommits(fixture.database, 'reconnect')).toHaveLength(COMMIT_HITS);
+    expect(searchCommits(fixture.database, 'reconnect', { limit: 3 })).toHaveLength(3);
   });
 
   it('returns nothing for a blank query, and does not choke on full-text syntax', () => {
     const fixture = project();
     fixture.addCommit(shaStartingWith('a1'), 'fix(relay): back off on reconnect', BASE_MS, null);
-    expect(searchCommits(fixture.db, '   ')).toEqual([]);
-    expect(() => searchCommits(fixture.db, '"reconnect" OR (NEAR')).not.toThrow();
-    expect(searchCommits(fixture.db, 'nothingwritesthisword')).toEqual([]);
+    expect(searchCommits(fixture.database, '   ')).toEqual([]);
+    expect(() => searchCommits(fixture.database, '"reconnect" OR (NEAR')).not.toThrow();
+    expect(searchCommits(fixture.database, 'nothingwritesthisword')).toEqual([]);
   });
 });
 
-describeWithSqlite('readTaskKnowledge', () => {
+describe('readTaskKnowledge', () => {
   it('reads nothing for no tasks', () => {
-    expect(readTaskKnowledge(project().db, []).size).toBe(0);
+    expect(readTaskKnowledge(project().database, []).size).toBe(0);
   });
 
   it('knows nothing about a task the index has nothing for', () => {
     const fixture = project();
     fixture.addTask('task-a', 1, 'One');
-    expect(readTaskKnowledge(fixture.db, ['task-a']).get('task-a')).toEqual({
+    expect(readTaskKnowledge(fixture.database, ['task-a']).get('task-a')).toEqual({
       summary: null,
       commits: [],
       commitCount: 0,
@@ -302,12 +297,12 @@ describeWithSqlite('readTaskKnowledge', () => {
     const fixture = project();
     fixture.addTask('task-a', 1, 'One', 'lane-done');
     fixture.addTask('task-b', 2, 'Two', 'lane-done');
-    new SummaryStore(fixture.db).write({
+    new SummaryStore(fixture.database).write({
       taskId: 'task-a', summary: 'Made the relay reconnect after a router restart.', inputHash: 'hash',
       agent: 'claude', model: null, effort: null, createdAt: LATER_ISO,
     });
 
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a', 'task-b']);
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a', 'task-b']);
 
     expect(knowledge.get('task-a')?.summary).toEqual({ text: 'Made the relay reconnect after a router restart.', writtenAt: LATER_ISO });
     expect(knowledge.get('task-b')?.summary).toBeNull();
@@ -322,7 +317,7 @@ describeWithSqlite('readTaskKnowledge', () => {
     fixture.addCommit(shaStartingWith('b'), 'feat: an unlinked commit', BASE_MS + 9 * DAY, null);
     fixture.addCommit(shaStartingWith('c'), 'feat: another task commit', BASE_MS + 9 * DAY, 'task-b');
 
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a']).get('task-a');
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a']).get('task-a');
 
     expect(TASK_KNOWLEDGE_COMMITS).toBe(3);
     expect(knowledge?.commitCount).toBe(5);
@@ -346,7 +341,7 @@ describeWithSqlite('readTaskKnowledge', () => {
     fixture.addChangeDocument('agent-second', 'task-a', ['src/b.ts', 'src/d.ts']);
     fixture.addChangeDocument('agent-third', 'task-a', ['src/b.ts']);
 
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a']).get('task-a');
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a']).get('task-a');
 
     // src/b.ts was changed by two sessions, every other file by one.
     expect(knowledge?.changedFiles[0]).toBe('src/b.ts');
@@ -360,7 +355,7 @@ describeWithSqlite('readTaskKnowledge', () => {
     fixture.addSession('task-a', 'agent-first');
     fixture.addChangeDocument('agent-first', 'task-a', Array.from({ length: 11 }, (_unused, index) => `src/file-${index}.ts`));
 
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a']).get('task-a');
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a']).get('task-a');
 
     expect(TASK_KNOWLEDGE_FILES).toBe(8);
     expect(knowledge?.changedFiles).toHaveLength(8);
@@ -377,7 +372,7 @@ describeWithSqlite('readTaskKnowledge', () => {
     fixture.addChangeDocument('agent-b', 'task-b', ['src/only-b.ts']);
     fixture.addCommit(shaStartingWith('a1'), 'feat: commit for the first task', BASE_MS, 'task-a');
 
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a', 'task-b']);
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a', 'task-b']);
 
     expect(knowledge.get('task-a')?.changedFiles).toEqual(['src/only-a.ts']);
     expect(knowledge.get('task-b')?.changedFiles).toEqual(['src/only-b.ts']);
@@ -397,8 +392,8 @@ describeWithSqlite('readTaskKnowledge', () => {
     fixture.addChangeDocument('agent-third', 'task-a', ['src/three.ts']);
     fixture.addCommit(shaStartingWith('a1'), 'fix(relay): back off on reconnect (#812)', BASE_MS, 'task-a');
 
-    const [candidate] = await readSummaryCandidates(fixture.db, async () => undefined);
-    const knowledge = readTaskKnowledge(fixture.db, ['task-a']).get('task-a');
+    const [candidate] = await readSummaryCandidates(fixture.database, async () => undefined);
+    const knowledge = readTaskKnowledge(fixture.database, ['task-a']).get('task-a');
 
     expect(candidate.input.changedFiles).toEqual(['src/three.ts', 'src/two.ts', 'src/one.ts']);
     expect(knowledge?.changedFiles).toEqual(candidate.input.changedFiles);

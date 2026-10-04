@@ -16,55 +16,10 @@
  * again. `ALTER TABLE ... DROP COLUMN` requires SQLite 3.35 or newer (bundled
  * better-sqlite3 is well past that); if this file ever fails on a
  * "near DROP: syntax error", that floor is why.
- *
- * Skips cleanly when better-sqlite3 cannot load under the test runner's Node
- * ABI (NODE_MODULE_VERSION mismatch); mirrors the probe pattern in
- * sent-session-message-migration.test.ts.
- *
- * IMPORTANT - this currently skips EVERYWHERE, CI included. That sibling file's
- * header claims it runs on CI; as of the run for this file's PR that is not
- * true of any better-sqlite3-gated suite (sent-session-message 13/13 skipped,
- * activity-interval 6/7, usage-history 3/4, and this file 8/8). So a green
- * unit tier is NOT evidence these assertions ran, and this suite is currently
- * documentation plus a latent guard rather than live coverage.
- *
- * Until the CI ABI issue is fixed, verify a change to this migration by
- * replaying `runProjectMigrations` against `node:sqlite` with a small shim
- * (`exec` / `pragma` / `prepare` / `transaction`), which is how the backfill
- * matrix below was actually confirmed.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
-
-// ---------------------------------------------------------------------------
-// ABI probe - mirrors sent-session-message-migration.test.ts.
-// ---------------------------------------------------------------------------
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    // Variable module name avoids the static-require lint rule, which targets
-    // string-literal bare requires in bundled main/preload code; this is a test
-    // helper for a native probe, not a bundled require.
-    const moduleName = 'better-sqlite3';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = (
-      (nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule
-    ) as typeof DatabaseType;
-    // Force the native binding to load now - the NODE_MODULE_VERSION mismatch
-    // only surfaces on instantiation, not on require.
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
-
+import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 
 interface TableColumnInfo {
@@ -73,11 +28,11 @@ interface TableColumnInfo {
   dflt_value: string | null;
 }
 
-describe.skipIf(!CAN_RUN)('tasks.run_mode migration', () => {
-  let database: DatabaseType.Database;
+describe('tasks.run_mode migration', () => {
+  let database: Database.Database;
 
   beforeEach(() => {
-    database = new Database!(':memory:');
+    database = new Database(':memory:');
     database.pragma('foreign_keys = ON');
     runProjectMigrations(database);
   });

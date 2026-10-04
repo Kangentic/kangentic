@@ -10,8 +10,8 @@
  * The context is module-private in `retrieval-worker.ts`, so this drives the
  * entry the way main does: it stands in for `process.parentPort`, imports the
  * module so it registers its message listener, and sends real request messages.
- * `db/database` is mocked (better-sqlite3 cannot load under vitest's Node), so
- * what is observed is which project ids the worker asks it to open.
+ * `db/database` is mocked, so no database is opened and what is observed is
+ * which project ids the worker asks it to open.
  *
  * Tier: Unit.
  */

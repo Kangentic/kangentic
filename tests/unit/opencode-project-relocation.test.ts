@@ -7,32 +7,15 @@
  * Relocation rewrites the path prefix in those columns in one transaction,
  * defensively skipping tables/columns that do not exist and rows that collide.
  *
- * Skips cleanly when better-sqlite3 cannot load (NODE_MODULE_VERSION mismatch
- * under raw Node), mirroring the schema-canary test's probe pattern.
+ * Builds its fixture databases with the real better-sqlite3 driver.
  *
  * Generic fixture paths only - never personal or machine-specific ones.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type DatabaseType from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
-function probeBetterSqlite3(): typeof DatabaseType | null {
-  try {
-    const moduleName = 'better-sqlite3';
-    const nativeModule = require(moduleName) as unknown;
-    const databaseConstructor = ((nativeModule as { default?: typeof DatabaseType }).default ?? nativeModule) as typeof DatabaseType;
-    const probeHandle = new databaseConstructor(':memory:');
-    probeHandle.close();
-    return databaseConstructor;
-  } catch {
-    return null;
-  }
-}
-
-const Database = probeBetterSqlite3();
-const CAN_RUN = Database !== null;
 
 let tmpHome: string;
 vi.mock('node:os', async () => {
@@ -67,16 +50,14 @@ function dbPath(): string {
   return path.join(tmpHome, '.local', 'share', 'opencode', 'opencode.db');
 }
 
-function createDb(setup: (db: import('better-sqlite3').Database) => void): void {
-  if (!Database) throw new Error('better-sqlite3 not available');
+function createDb(setup: (db: Database.Database) => void): void {
   fs.mkdirSync(path.dirname(dbPath()), { recursive: true });
   const db = new Database(dbPath());
   setup(db);
   db.close();
 }
 
-function queryDb<T>(read: (db: import('better-sqlite3').Database) => T): T {
-  if (!Database) throw new Error('better-sqlite3 not available');
+function queryDb<T>(read: (db: Database.Database) => T): T {
   const db = new Database(dbPath(), { readonly: true });
   try {
     return read(db);
@@ -85,7 +66,7 @@ function queryDb<T>(read: (db: import('better-sqlite3').Database) => T): T {
   }
 }
 
-describe.runIf(CAN_RUN)('migrateOpenCodeProjectData', () => {
+describe('migrateOpenCodeProjectData', () => {
   it('rewrites session, project, and project_directory path columns (root + worktree), leaving siblings alone', async () => {
     const oldWorktree = path.join(OLD_PATH, '.kangentic', 'worktrees', 'feat-x');
     const newWorktree = path.join(NEW_PATH, '.kangentic', 'worktrees', 'feat-x');

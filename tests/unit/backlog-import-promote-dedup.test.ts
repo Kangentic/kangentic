@@ -12,9 +12,10 @@
  *   3. createFromTask (the demote path) must carry the external origin back onto
  *      the new backlog item so a demote -> reimport round-trip stays deduped.
  *
- * better-sqlite3 cannot load under vitest (it is compiled for Electron's Node
- * ABI), so the repository guards run against a SQL-tracking mock / spies rather
- * than a real in-memory database, mirroring tests/unit/task-repository.test.ts.
+ * The repository guards run against a SQL-tracking mock / spies rather than a
+ * real in-memory database, mirroring tests/unit/task-repository.test.ts.
+ * `tests/unit/helpers/test-database.ts` opens a real better-sqlite3 database if
+ * one is wanted.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

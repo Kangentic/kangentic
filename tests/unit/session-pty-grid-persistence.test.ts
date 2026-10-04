@@ -7,9 +7,9 @@
  * Covers the write path (the repository UPDATE and the `pty-resize` listener's
  * persistPtyGrid) and the read path (recordedPtyGrid and the spawn intent).
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load under
- * vitest's system Node, so the repository runs over a capturing mock DB, as in
- * session-repository-applied-settings.test.ts.
+ * The repository runs over a capturing mock DB, as in
+ * session-repository-applied-settings.test.ts, so the tests pin the statements
+ * issued rather than a database's contents.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

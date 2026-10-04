@@ -82,7 +82,7 @@ opaquely.
 **At startup.** `ensureGlobalDbReadable()` (`src/main/db/global-db-dialog.ts`) opens the database
 early in the `app.whenReady()` body, before the MCP server starts and before any window exists. A
 failure shows a modal naming the resolved file path, the SQLite code (or the plain error message
-when the failure carries no `SQLITE_*` code, such as a `NODE_MODULE_VERSION` mismatch), and the
+when the failure carries no `SQLITE_*` code, such as a native addon that will not load), and the
 likely causes, with Retry and Quit. Retry drops the cached connection and reopens; a lock is usually over within
 seconds, so this recovers without a relaunch. Quit counts an `app_error` and calls `app.exit(0)`,
 which is correct rather than `app.quit()` because `registerAllIpc` has not run yet and

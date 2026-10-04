@@ -1263,6 +1263,36 @@ describe('shouldReportEscalation / gpuEndedPreviousRun', () => {
     expect(shouldReportEscalation(dyingRun, context)).toBe(true);
   });
 
+  it('blames the GPU for the dead-zygote launch-failure ladder Electron 44 now reports (DESKTOP-W shape, measured)', () => {
+    // Recorded 2026-10-04 by the real recordGpuProcessGone under Electron 44.5.1
+    // on Ubuntu 24.04 (WSLg): unsandboxed zygote killed, then the GPU process.
+    // Chromium logged six launch failures and the fatal; the first five reached
+    // JS as `launch-failed`, which Electron 41 never forwarded (its record stayed
+    // empty and the next launch could not tell the GPU had killed the run).
+    const measured = {
+      reason: 'launch-failed',
+      exitCode: 1002,
+      count: 5,
+      firstAt: '2026-10-04T21:58:04.676Z',
+      lastAt: '2026-10-04T21:58:04.723Z',
+      appVersion: 'rig',
+      featureStatus: { gpu_compositing: 'disabled_software', webgl: 'disabled_off' },
+      deaths: [
+        { reason: 'launch-failed', exitCode: 1002, at: '2026-10-04T21:58:04.676Z', compositing: 'enabled', webgl: 'enabled' },
+        { reason: 'launch-failed', exitCode: 1002, at: '2026-10-04T21:58:04.685Z', compositing: 'enabled', webgl: 'enabled' },
+        { reason: 'launch-failed', exitCode: 1002, at: '2026-10-04T21:58:04.694Z', compositing: 'disabled_software', webgl: 'disabled_off' },
+        { reason: 'launch-failed', exitCode: 1002, at: '2026-10-04T21:58:04.714Z', compositing: 'disabled_software', webgl: 'disabled_off' },
+        { reason: 'launch-failed', exitCode: 1002, at: '2026-10-04T21:58:04.723Z', compositing: 'disabled_software', webgl: 'disabled_off' },
+      ],
+      modeChanges: [{ at: '2026-10-04T21:58:04.707Z', compositing: 'disabled_software', webgl: 'disabled_off' }],
+    };
+    // The run had been up for about eight seconds and never wrote a clean exit.
+    const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-10-04T21:57:56.700Z' };
+    expect(summarizeGpuFaults(measured).faultCount).toBe(5);
+    expect(gpuEndedPreviousRun(measured, context)).toBe(true);
+    expect(shouldReportEscalation(measured, context)).toBe(true);
+  });
+
   it('does not blame a lone GPU crash at the end of an abrupt run, since the fatal needs Chromium to have fallen back first', () => {
     const context = { previousRunExit: 'abrupt', lastKnownAliveAt: '2026-09-18T02:35:36.705Z' };
     const oneLateDeath = record(1, '2026-09-18T02:35:44.000Z');

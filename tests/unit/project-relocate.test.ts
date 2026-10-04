@@ -1,9 +1,8 @@
 /**
  * Unit tests for project relocation (src/main/ipc/handlers/project-relocate.ts).
  *
- * better-sqlite3 cannot load under vitest's system Node, so the repositories
- * and filesystem are mocked; the tests exercise relocateProject's
- * orchestration contracts:
+ * The repositories and filesystem are mocked, so no database or real directory
+ * is touched; the tests exercise relocateProject's orchestration contracts:
  *
  *   - replacePathPrefix: prefix matching via path.relative (no naive string
  *     prefixing - sibling folders sharing a name prefix must NOT match).
@@ -101,8 +100,8 @@ vi.mock('../../src/main/fs/directory-move', () => ({
   removeDirectoryTree: removeDirectoryTreeMock,
 }));
 // The handler statically imports agentRegistry; mock it so vitest does not load
-// every real adapter (better-sqlite3 / node-pty transitive deps cannot load
-// here). One adapter implements the hook, one does not - exercising the skip.
+// every real adapter and its transitive dependencies. One adapter implements
+// the hook, one does not - exercising the skip.
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: {
     list: () => ['claude', 'aider'],

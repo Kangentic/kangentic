@@ -17,10 +17,9 @@ function inProcessSearch(db: Database.Database) {
 /**
  * Tests for the unified search core (`runSearchEverything`).
  *
- * better-sqlite3 is compiled for Electron's Node ABI and cannot load
- * under vitest's system Node, so the DB is mocked via a hand-rolled
- * `prepare(sql).all()` shim that recognises the exact SQL strings the
- * search core emits. The events.jsonl scan path uses real fs+readline
+ * The DB is mocked via a hand-rolled `prepare(sql).all()` shim that
+ * recognises the exact SQL strings the search core emits, so no database is
+ * involved. The events.jsonl scan path uses real fs+readline
  * so the test writes a real temp file at the layout the core expects:
  * `<projectPath>/.kangentic/sessions/<sessionId>/events.jsonl`.
  */

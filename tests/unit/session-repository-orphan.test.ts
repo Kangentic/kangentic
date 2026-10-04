@@ -5,8 +5,9 @@
  * session records as 'orphaned', since queued sessions (like running ones)
  * represent in-memory state that is lost on crash.
  *
- * Uses a mock database because better-sqlite3 is compiled for Electron's
- * Node version and cannot be loaded in vitest's system Node.
+ * Uses a mock database that tracks the executed SQL, so the tests pin the
+ * statements issued. `tests/unit/helpers/test-database.ts` opens a real
+ * database if one is wanted.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';

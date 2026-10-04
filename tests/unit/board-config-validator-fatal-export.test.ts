@@ -8,8 +8,9 @@
  * the export ran and rewrote the file from the database: the hand edit was gone
  * while the banner said the board loaded from the local database.
  *
- * better-sqlite3 cannot load under vitest, so the DB modules the import graph
- * pulls in are mocked (same pattern as board-config-malformed-lists.test.ts).
+ * The DB modules the import graph pulls in are mocked, so this stays a pure
+ * unit test of the manager with no database involved (same pattern as
+ * board-config-malformed-lists.test.ts).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

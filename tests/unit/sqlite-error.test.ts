@@ -58,8 +58,9 @@ describe('describeSqliteFailure', () => {
   });
 
   it('falls back to the message for a plain Error', () => {
-    // The documented real case: a NODE_MODULE_VERSION ABI mismatch throws a
-    // plain Error, not a SqliteError, and the user still needs a line.
+    // The documented real case: a failure to load the native binding (an old
+    // NODE_MODULE_VERSION ABI mismatch, for one) throws a plain Error, not a
+    // SqliteError, and the user still needs a line.
     const error = new Error(
       "The module 'better_sqlite3.node' was compiled against a different Node.js version",
     );

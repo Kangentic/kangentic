@@ -14,6 +14,38 @@ const {
 } = require('./verify-unpacked-worker');
 const { installSpawnHelper } = require('./install-spawn-helper');
 
+/**
+ * better-sqlite3 13 ships every platform's Node-API addon in one package
+ * (`prebuilds/<platform>-<arch>.node`, plus `linuxmusl-*` for Alpine) and loads
+ * the one matching the running process (`lib/binding.js`). Keep only the
+ * target's: the rest are about 14 MB of binaries no installed copy can load.
+ * Linux keeps the glibc build, since the deb and rpm targets are glibc systems.
+ *
+ * Throws when the target's prebuild is not there, rather than deleting every
+ * prebuild and leaving the load probe to report a confusing failure later.
+ * Logs which branch it took either way.
+ */
+function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = console.log }) {
+  const prebuildsDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'prebuilds');
+  if (!fs.existsSync(prebuildsDir)) {
+    log(`[afterPack] better-sqlite3: no prebuilds directory at ${prebuildsDir}, nothing to strip`);
+    return;
+  }
+  const keep = `${platform}-${targetArch}.node`;
+  const entries = fs.readdirSync(prebuildsDir);
+  if (!entries.includes(keep)) {
+    throw new Error(
+      `[afterPack] better-sqlite3 has no prebuild for ${platform}-${targetArch} in ${prebuildsDir} ` +
+        `(found: ${entries.join(', ') || 'none'}). The packaged app could not open a database.`,
+    );
+  }
+  const removed = entries.filter((entry) => entry !== keep);
+  for (const entry of removed) {
+    fs.rmSync(path.join(prebuildsDir, entry), { recursive: true, force: true });
+  }
+  log(`[afterPack] better-sqlite3: kept prebuilds/${keep}, removed ${removed.length} other prebuild(s)`);
+}
+
 module.exports = async function afterPack(context) {
   const productFilename = context.packager.appInfo.productFilename;
   const platform = context.electronPlatformName;
@@ -63,6 +95,12 @@ module.exports = async function afterPack(context) {
         }
       }
     }
+  }
+
+  // Before the retrieval and pty-host load probes below, so they load the
+  // prebuild that was kept.
+  if (targetArch) {
+    stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch });
   }
 
   // Replace node-pty's macOS spawn-helper with Kangentic's build, which clears
@@ -118,3 +156,5 @@ module.exports = async function afterPack(context) {
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
   });
 };
+
+module.exports.stripBetterSqlitePrebuilds = stripBetterSqlitePrebuilds;

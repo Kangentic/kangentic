@@ -1,29 +1,34 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { TranscriptRepository } from '../../src/main/db/repositories/transcript-repository';
 import { indexHandlers } from '../../src/main/retrieval/worker/index-methods';
 import type { WorkerContext } from '../../src/main/retrieval/worker/methods';
-import { adaptDatabase, type NodeDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 /**
  * The retrieval worker's conversion of legacy raw transcripts (one growing
- * value per session) into pieces, on two real-schema projects over
- * node:sqlite. One writer used to follow the focused project, so a session's
- * transcript could land in another project's database, or partly in each.
+ * value per session) into pieces, on two real-schema projects over real
+ * better-sqlite3, the driver the worker uses. One writer used to follow the
+ * focused project, so a session's transcript could land in another project's
+ * database, or partly in each.
  */
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
 
-function project(sessionIds: string[]): NodeDatabase {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  runProjectMigrations(adaptDatabase(database));
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function openTracked(): DatabaseType.Database {
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  return database;
+}
+
+function project(sessionIds: string[]): DatabaseType.Database {
+  const database = openTracked();
+  runProjectMigrations(database);
   database.exec(`INSERT INTO swimlanes (id, name, position, created_at) VALUES ('lane-1', 'To Do', 0, '2026-09-30T00:00:00.000Z')`);
   database.exec(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
     VALUES ('task-1', 1, 'task-1', '', 'lane-1', 0, '2026-09-30T00:00:00.000Z', '2026-09-30T00:00:00.000Z')`);
@@ -35,7 +40,7 @@ function project(sessionIds: string[]): NodeDatabase {
 }
 
 function insertLegacy(
-  database: NodeDatabase,
+  database: DatabaseType.Database,
   sessionId: string,
   transcript: string,
   writtenAt: { createdAt: string; updatedAt: string } = { createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z' },
@@ -44,12 +49,12 @@ function insertLegacy(
     VALUES (?, ?, ?, ?, ?)`).run(sessionId, transcript, transcript.length, writtenAt.createdAt, writtenAt.updatedAt);
 }
 
-function contextFor(databases: Map<string, NodeDatabase>): WorkerContext {
+function contextFor(databases: Map<string, DatabaseType.Database>): WorkerContext {
   return {
     getDb: (projectId) => {
       const database = databases.get(projectId);
       if (!database) throw new Error(`unable to open database file for ${projectId}`);
-      return adaptDatabase(database);
+      return database;
     },
     closeDb: () => undefined,
     vecLoadError: () => null,
@@ -57,17 +62,17 @@ function contextFor(databases: Map<string, NodeDatabase>): WorkerContext {
   };
 }
 
-const legacyCount = (database: NodeDatabase): number =>
+const legacyCount = (database: DatabaseType.Database): number =>
   (database.prepare('SELECT COUNT(*) AS count FROM session_transcripts').get() as { count: number }).count;
-const textOf = (database: NodeDatabase, sessionId: string): string | null =>
-  new TranscriptRepository(adaptDatabase(database)).getTranscriptText(sessionId);
-const seqsOf = (database: NodeDatabase, sessionId: string): number[] =>
+const textOf = (database: DatabaseType.Database, sessionId: string): string | null =>
+  new TranscriptRepository(database).getTranscriptText(sessionId);
+const seqsOf = (database: DatabaseType.Database, sessionId: string): number[] =>
   (database.prepare('SELECT seq FROM session_transcript_chunks WHERE session_id = ? ORDER BY seq').all(sessionId) as Array<{ seq: number }>)
     .map((row) => row.seq);
-const tableCount = (database: NodeDatabase, tableName: string): number =>
+const tableCount = (database: DatabaseType.Database, tableName: string): number =>
   (database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName) as { count: number }).count;
 
-describeWithSqlite('legacy transcript conversion', () => {
+describe('legacy transcript conversion', () => {
   it('converts in place, moves a misfiled transcript to its own project, and keeps one found nowhere', async () => {
     const projectA = project(['session-a']);
     const projectB = project(['session-b']);
@@ -76,7 +81,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     insertLegacy(projectA, 'session-x', 'in no project');
     // Session b's own part, and what it wrote since the switch.
     insertLegacy(projectB, 'session-b', 'b own part ');
-    new TranscriptRepository(adaptDatabase(projectB)).appendChunk('session-b', 'live');
+    new TranscriptRepository(projectB).appendChunk('session-b', 'live');
     const context = contextFor(new Map([['a', projectA], ['b', projectB]]));
 
     const fromA = await indexHandlers['transcripts.convertLegacy']({ projectId: 'a', otherProjectIds: ['b'] }, context);
@@ -130,7 +135,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     expect(textOf(projectA, 'session-a')).toBe(text);
     expect(legacyCount(projectA)).toBe(0);
     // The row's first and last write times survive as the pieces' range.
-    const tail = new TranscriptRepository(adaptDatabase(projectA)).getTranscriptTail('session-a', 10);
+    const tail = new TranscriptRepository(projectA).getTranscriptTail('session-a', 10);
     expect(tail).toMatchObject({ createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z' });
   });
 
@@ -141,7 +146,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     // each, and waits a write turn after every one.
     const text = 'A'.repeat(piece) + 'B'.repeat(10);
     insertLegacy(projectA, 'session-a', text);
-    const transcripts = new TranscriptRepository(adaptDatabase(projectA));
+    const transcripts = new TranscriptRepository(projectA);
 
     // Not awaited: the handler runs synchronously up to its first write turn,
     // so exactly its first piece is written when this call returns.
@@ -168,7 +173,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     const piece = 64 * 1024;
     const text = 'A'.repeat(piece) + 'B'.repeat(10);
     insertLegacy(projectA, 'session-a', text);
-    const transcripts = new TranscriptRepository(adaptDatabase(projectA));
+    const transcripts = new TranscriptRepository(projectA);
     const reads = () => ({
       text: transcripts.getTranscriptText('session-a'),
       tail: transcripts.getTranscriptTail('session-a', text.length + 100),
@@ -205,7 +210,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     // Project b's own row goes below the moved piece, one piece written so far.
     const conversion = indexHandlers['transcripts.convertLegacy']({ projectId: 'b', otherProjectIds: ['a'] }, context);
     expect(seqsOf(projectB, 'session-b')).toEqual([-3, -1]);
-    const transcripts = new TranscriptRepository(adaptDatabase(projectB));
+    const transcripts = new TranscriptRepository(projectB);
     const expected = `${own}misfiled from b `;
     expect(transcripts.getTranscriptText('session-b')).toBe(expected);
     expect(transcripts.getSizeBytes('session-b')).toBe(expected.length);
@@ -220,7 +225,7 @@ describeWithSqlite('legacy transcript conversion', () => {
     insertLegacy(projectA, 'session-b', 'misfiled but unmovable');
     // A project main has not opened since the upgrade: the worker opens with
     // migrations off, so it has its sessions but neither table a move writes to.
-    const unmigrated = new sqlite!.DatabaseSync(':memory:');
+    const unmigrated = openTracked();
     unmigrated.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
     unmigrated.prepare('INSERT INTO sessions (id) VALUES (?)').run('session-b');
     expect(tableCount(unmigrated, 'session_transcript_chunks')).toBe(0);
