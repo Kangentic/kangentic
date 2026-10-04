@@ -1132,6 +1132,7 @@ Operates on a per-project DB.
 | `getUserPausedTaskIds()` | Get task IDs whose latest session was user-paused (`suspended_by = 'user'`) |
 | `listAllSessionIds()` | Get all distinct session record IDs (for stale session directory cleanup) |
 | `updateGitStats(id, stats)` | Update `lines_added`, `lines_removed`, `files_changed` for a single session record, unconditionally. |
+| `updatePtyGrid(id, grid)` | Write `last_pty_cols` / `last_pty_rows` for one record. Called from the `pty-resize` listener (`ipc/handlers/session-grid-persistence.ts`). Matches no row for a spawn announced before its insert, or for a Command Terminal session; both are harmless no-ops. |
 | `setTaskGitStats(recordIds, canonicalRecordId, stats)` | Mirrors `UsageHistoryRepository.setTaskGitStats`: writes churn to `canonicalRecordId` only and zeros every other id in `recordIds`, so `getSummaryForTask` / `listAllSummaries`'s `SUM(lines_added)` reflects the branch's actual churn instead of double-counting it across `--resume` records. |
 
 ### AttachmentRepository
