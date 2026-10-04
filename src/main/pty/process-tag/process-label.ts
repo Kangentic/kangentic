@@ -28,8 +28,12 @@ const INLINE_CODE_FLAGS = new Set(['-e', '--eval', '-p', '--print', '-c']);
 const MODULE_FLAG = '-m';
 const MODULE_NAME_PATTERN = /^[A-Za-z_][\w.]{0,80}$/;
 const TITLE_WORD_PATTERN = /^[\w.@-]{1,40}$/;
-/** A UNC path, `\\host\share` or `//host/share`. Not the `\\?\` and `\\.\` local device prefixes. */
-const NETWORK_PATH_PATTERN = /^[\\/]{2}[^\\/?.]/;
+/**
+ * A UNC path, `\\host\share` or `//host/share`, or its device form,
+ * `\\?\UNC\host\share` or `\\.\UNC\host\share`. A drive behind a device prefix
+ * (`\\?\C:\`) is local.
+ */
+const NETWORK_PATH_PATTERN = /^[\\/]{2}(?:[^\\/?.]|[?.][\\/]UNC[\\/])/i;
 /** How many arguments after the program are searched for the script. */
 const SCRIPT_SEARCH_LIMIT = 4;
 const FALLBACK_LABEL = 'process';
@@ -85,7 +89,9 @@ export async function isFileFrom(workingDirectory: string | null, candidate: str
   // A network path (`\\host\share\app.js`, or a relative script under a
   // working directory on a share) makes Windows contact the share, and an
   // unreachable one holds the stat, and the report waiting on it, until the
-  // SMB timeout. The label drops the script name instead.
+  // SMB timeout. The label drops the script name instead. On Linux and macOS a
+  // leading `//` is an ordinary path, so such a script loses its name too; the
+  // label is all that costs.
   if (NETWORK_PATH_PATTERN.test(path.isAbsolute(candidate) ? candidate : workingDirectory ?? '')) return false;
   const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(workingDirectory ?? '', candidate);
   try {

@@ -151,6 +151,23 @@ describe('isFileFrom', () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
+  it('answers false for a UNC path behind a device prefix without asking the filesystem', async () => {
+    const stat = failingStat();
+    // `//?/UNC/host/share` is `\\host\share` in its long-path form, and absolute on every OS.
+    expect(await isFileFrom(null, '//?/UNC/host/share/app.js')).toBe(false);
+    expect(await isFileFrom(null, '//?/unc/host/share/app.js')).toBe(false);
+    expect(await isFileFrom(null, '//./UNC/host/share/app.js')).toBe(false);
+    expect(await isFileFrom('//?/UNC/host/share/work', 'app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it.runIf(process.platform === 'win32')('answers false for a backslash UNC path behind a device prefix without asking the filesystem', async () => {
+    const stat = failingStat();
+    expect(await isFileFrom(null, '\\\\?\\UNC\\host\\share\\app.js')).toBe(false);
+    expect(await isFileFrom('\\\\?\\UNC\\host\\share\\work', 'app.js')).toBe(false);
+    expect(stat).not.toHaveBeenCalled();
+  });
+
   it('does not take a local device path for a share, and still asks the filesystem about it', async () => {
     const stat = failingStat();
     expect(await isFileFrom(null, '//?/C:/work/app.js')).toBe(false);

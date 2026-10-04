@@ -13,7 +13,8 @@ const { removeWorktree, taskRows, updates } = vi.hoisted(() => ({
   updates: [] as Array<Record<string, unknown>>,
 }));
 
-vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
     tasks: {

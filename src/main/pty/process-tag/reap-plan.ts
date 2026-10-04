@@ -87,9 +87,10 @@ export interface ReapPlanInput {
 
 /**
  * Forward slashes, no long-path prefix, no trailing separator, and lowercase
- * where the file system ignores case.
+ * where the file system ignores case. `task-directories.ts` refuses roots in
+ * this same form, so a root check and a containment check cannot disagree.
  */
-function normalizeDirectory(directory: string, caseInsensitive: boolean): string {
+export function normalizeDirectory(directory: string, caseInsensitive: boolean): string {
   const normalized = directory
     .replace(/\\/g, '/')
     .replace(/^\/\/\?\/UNC\//i, '//')

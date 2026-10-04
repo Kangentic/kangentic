@@ -82,12 +82,16 @@ Any step in the release path that exists to guarantee something must fail when i
   `NODE_ENV` guard rejects unset and non-production values, and `resolveSentryReleaseName` throws
   on a missing or empty `version`. It also pins `isSentryUploadAuthorized`: a token uploads only
   in CI or with `KANGENTIC_SENTRY_UPLOAD=1`, and a local build that holds a token says it skipped
-  and why, rather than uploading an unreleased tree.
+  and why, rather than uploading an unreleased tree. `tests/unit/release-workflow-gates.test.ts`
+  pins that the release build step sets `KANGENTIC_SENTRY_UPLOAD: '1'` beside the token, so the
+  upload never rests on the runner's own `CI`.
 - **Test (mechanical, CI):** `tests/unit/vite-config-sentry-guards.test.ts` pins the mirrored
   renderer half in `vite.config.mts`: `resolveSentryVitePlugins` throws unless `NODE_ENV` is
   `production`, and `resolveSentryReleaseName` throws on a missing or empty `version` - both
   reached by calling the config module's default export directly (`defineConfig` returns it
-  unchanged), since neither function is otherwise exported.
+  unchanged), since neither function is otherwise exported. It also pins the same upload
+  authorization as the build side: a local build with a token reaches neither guard, and one with
+  `KANGENTIC_SENTRY_UPLOAD=1` reaches both.
 - **Test (mechanical, CI):** `tests/unit/verify-unpacked-worker.test.ts` pins the packaged
   embed-worker gate in `build/verify-unpacked-worker.js` (run from `build/afterPack.js`): it
   throws with the child's stderr when the worker's externals do not load from the

@@ -1842,6 +1842,8 @@ export class SessionManager extends EventEmitter {
     // before, where suspend() has no PTY left to wait for.
     // A mature session's kill() parks nothing, so this does not cover one
     // killed without its exit awaited; every terminal transition awaits it.
+    // A Done move's suspend() waits for the exit only up to its grace plus
+    // 1.5 s, so a PTY slower than that to report its exit is still held here.
     const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(validTasks.map((task) => task.id)));
     if (parkedSessionIds.length > 0) {
       const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));

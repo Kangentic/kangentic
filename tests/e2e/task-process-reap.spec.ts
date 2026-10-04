@@ -356,21 +356,11 @@ test.describe('Task process reap', () => {
     }
     survivorKnownDead = true;
 
-    // The reap runs before the worktree removal, so nothing the agent left holds
-    // the directory when Done removes it.
-    await expect
-      .poll(
-        async () => {
-          const task = await taskRow(taskId);
-          return { worktreePathCleared: task?.worktree_path === null, worktreeDirGone: !fs.existsSync(worktreePath!) };
-        },
-        { timeout: 15_000, message: `the Done move should remove the worktree at ${worktreePath}` },
-      )
-      .toEqual({ worktreePathCleared: true, worktreeDirGone: true });
-
     // 5. The user is told: one toast for the move, counts only, and Review lists
     // the survivor by pid as stopped. This is the whole report path for real:
     // the host's plan and label, main's burst collector, the push, the toast.
+    // Checked before the worktree poll below: a report of stopped processes only
+    // is a timed toast, and the removal can outlast its default 4 s.
     const toast = page.locator('[data-testid="toast"]', { hasText: new RegExp(`leftover process(es)? from "${title}"`) });
     await expect(toast).toBeVisible({ timeout: 10_000 });
     await expect(toast).toContainText(/Stopped \d+ leftover process(es)? from/);
@@ -381,5 +371,19 @@ test.describe('Task process reap', () => {
     await expect(survivorRow).toBeVisible({ timeout: 5_000 });
     await expect(survivorRow).toHaveAttribute('data-state', 'stopped');
     await page.locator('[data-testid="leftover-processes-close"]').click();
+
+    // 6. The Done move removes the worktree the survivor held as its cwd. The reap
+    // runs first, so on Windows nothing the agent left locks the directory. Linux
+    // removes a directory that is a live process's cwd, so there this pins the
+    // removal, not the order; session-leftover-reap-wiring.test.ts pins the order.
+    await expect
+      .poll(
+        async () => {
+          const task = await taskRow(taskId);
+          return { worktreePathCleared: task?.worktree_path === null, worktreeDirGone: !fs.existsSync(worktreePath!) };
+        },
+        { timeout: 15_000, message: `the Done move should remove the worktree at ${worktreePath}` },
+      )
+      .toEqual({ worktreePathCleared: true, worktreeDirGone: true });
   });
 });

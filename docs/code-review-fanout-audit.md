@@ -823,6 +823,7 @@ with the hunk-section count is the signal that `HUNK_CONTEXT_LINES` (3) is too n
 | task 736, whole branch, fourth pass | 159f +12196 -1727 | 977KB, 17163 lines | 7 (0) | 152 | 0 | 15, sharded by area: 8 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 14 pack-carrying, most of them rule files, greps and callers | 34 raised, 30 distinct / 18 applied, 3 refuted, 9 skipped; 6 coverage holes filled |
 | task 736, whole branch, fifth pass | 159f +12596 -1743 | 1007KB, 17608 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 16 pack-carrying, most of them the WSL sources the focus questions named; the integration finder read no body | 36 raised, 18 distinct / 4 applied, 6 refuted (2 by measurement), 6 skipped; 2 coverage holes filled |
 | task 736, whole branch, sixth pass | 159f +12958 -1743 | 1029KB, 17970 lines | 7 (0) | 152 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 70 of 16 pack-carrying, most of them rule files, callers and greps; the integration finder read 4 bodies | 43 raised, 42 distinct / 9 applied, 4 refuted, 22 skipped; 7 coverage holes filled |
+| task 736, whole branch, seventh pass | 164f +13570 -1747 | 1076KB, 18670 lines | 6 (0) | 158 | 0 | 17, sharded by area: 10 area shards, 6 gated auditors on their own ranges (cross-platform in two, migration on `types.ts`), integration on the delta | about 80 of 16 pack-carrying, most of them rule files, callers and greps; the integration finder read no body | 30 raised, 22 distinct / 8 applied, 2 refuted, 9 skipped; 3 coverage holes filled |
 | task 743, pre-PR | 18f +687 -54 after the pass, 1 new file | 108KB, 2151 lines | 10 (6) | 9 | 0 | 9 | 15 of 8 pack-carrying; 3 finders re-read the pack in windows because a 2000-line read hit the token cap | 24 raised, 21 distinct / 7 applied; 9 coverage holes filled |
 | task 741, pre-PR | 5f +94 -31 plus 5 new files | 57KB, 1084 lines | 9 (4) | 1 | 0 | 9 | 17 of 8 pack-carrying | 12 / 5 applied, 5 skipped, 2 dropped; 3 coverage holes filled, 1 already covered |
 | task 741, second pass | 11f +232 -57 plus 5 new files | 97KB, 1721 lines | 13 (7) | 3 | 0 | 9 | 15 of 8 pack-carrying | 12 / 4 applied, 4 refuted, 4 skipped, plus 3 found in verification (2 applied, 1 skipped); 4 tests added, 1 hole skipped as unreachable |
@@ -1300,6 +1301,26 @@ to strings. Among the Lows were that parser's title and argv tolerances and a Li
 whose refusal leaves a process unprotected. Two test-builders worked with `src/` closed and
 showed red-green on scratch copies or test-side stand-ins; the driver then reverted each of the five
 fixes in place, saw its test go red, and restored it.
+
+The task 736 seventh pass kept that layout at 18,670 pack lines: ten area shards of 1,017 to 2,198
+lines, six gated auditors on their own ranges (cross-platform in two of 4,587 and 4,278 lines), and
+the integration finder on a 771-line delta. Three commits had landed since the sixth pass: its
+fixes, its audit row, and an E2E change that runs the reap spec with worktrees on. Before the
+fan-out the driver ran the 51 changed unit files and the 22 unchanged ones that import a file those
+commits touched, and all passed. Two Mediums survived, each raised by two finders. The sixth pass's
+UNC guard in `process-label.ts` let the long-path forms `\\?\UNC\host\share` and
+`//?/UNC/host/share` through to the stat it exists to skip. The reap E2E's new worktree poll sat
+between the reap and the toast assertion, and a report of stopped processes only is a toast that
+closes after the default 4 s, so a slow removal would fail the spec. The toast is now checked first,
+and the spec passed on Windows with worktrees on. Three finders confirmed that `comparable` in
+`task-directories.ts` matched `normalizeDirectory` character for character, so it now calls it. The
+two refuted candidates were a listener singleton that only a second IPC registration could reach and
+the quit-only `flushAll` gap decided earlier. Nine Lows were skipped. Among them is a Windows scan
+that cannot learn its own session or user and so reports nothing, which two finders raised and the
+tests pin on purpose. A test-builder filled three holes with `src/` closed: the long-path UNC case in
+the plan, the worktree's real path in the reap request, and the WSL bounds, which had run only on a
+Windows host and now fake the platform so CI's Linux runs them. The driver reverted each fix in
+place and saw its test go red.
 
 The task 741 pre-PR pass is small and mostly body tier. Its one hunk section is the 5,315-line UI
 mock. Of the 17 file reads beyond the pack, 12 were outside the changed set: the main handler and

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildProtectedPids, isInsideDirectory, planReap, planReapDetailed, type ReapTaskScope } from '../../src/main/pty/process-tag/reap-plan';
+import { buildProtectedPids, isInsideDirectory, normalizeDirectory, planReap, planReapDetailed, type ReapTaskScope } from '../../src/main/pty/process-tag/reap-plan';
 import type { ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
@@ -116,6 +116,39 @@ describe('planReap: two signals, the tag and the directory', () => {
       scanned(2003, 1, { tag: TASK, workingDirectory: 'C:\\' }),
     ];
     expect(plannedPids(processes, { reaped, caseInsensitive: true })).toEqual([2001, 2002]);
+  });
+
+  it('reads a long-path UNC working directory, in either case of the prefix, as the share it names', () => {
+    // `\\?\UNC\srv\share\proj` is `\\srv\share\proj`. Stripping only `\\?\` would leave
+    // `UNC\srv\share\proj`, which is inside no task directory, so the task's process would survive.
+    const reaped = tasks([[TASK, { directories: ['\\\\srv\\share\\proj'], worktreePath: null }]]);
+    const processes = [
+      main,
+      // Positive control: the plain UNC form of the same directory.
+      scanned(2001, 1, { tag: TASK, workingDirectory: '\\\\srv\\share\\proj\\src' }),
+      scanned(2002, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\srv\\share\\proj\\src' }),
+      // The prefix is matched without regard to case, whatever `caseInsensitivePaths` says.
+      scanned(2003, 1, { tag: TASK, workingDirectory: '\\\\?\\unc\\srv\\share\\proj\\src' }),
+      // The project's own directory, written with the prefix and a trailing separator.
+      scanned(2004, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\srv\\share\\proj\\' }),
+      // Negative controls: a prefix sibling, another server, and the bare share.
+      scanned(2005, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\srv\\share\\proj2\\src' }),
+      scanned(2006, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\other\\share\\proj\\src' }),
+      scanned(2007, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\srv\\share' }),
+    ];
+    expect(plannedPids(processes, { reaped, caseInsensitive: true })).toEqual([2001, 2002, 2003, 2004]);
+  });
+
+  it('matches the long-path UNC prefix without regard to case even when the paths themselves are case-sensitive', () => {
+    const reaped = tasks([[TASK, { directories: ['\\\\srv\\share\\proj'], worktreePath: null }]]);
+    const processes = [
+      main,
+      scanned(2001, 1, { tag: TASK, workingDirectory: '\\\\?\\unc\\srv\\share\\proj\\src' }),
+      scanned(2002, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\srv\\share\\proj\\src' }),
+      // Positive control that the names after the prefix are still compared by case here.
+      scanned(2003, 1, { tag: TASK, workingDirectory: '\\\\?\\UNC\\SRV\\share\\proj\\src' }),
+    ];
+    expect(plannedPids(processes, { reaped, caseInsensitive: false })).toEqual([2001, 2002]);
   });
 });
 
@@ -275,6 +308,23 @@ describe('planReap, macOS withheld-environment orphans in the worktree', () => {
 
   it('trusts a readable environment over the directory: untagged and cleared-tag orphans in the worktree survive', () => {
     expect(plannedPids([main, scanned(2001, 1, { tag: null }), scanned(2002, 1, { tag: '' })])).toEqual([]);
+  });
+});
+
+describe('normalizeDirectory', () => {
+  it('turns a long-path UNC prefix into the share it names, and a long-path drive prefix into the bare drive path', () => {
+    expect(normalizeDirectory('\\\\?\\UNC\\srv\\share\\proj', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('\\\\?\\unc\\srv\\share\\proj', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('//?/UNC/srv/share/proj/', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('\\\\?\\C:\\Users\\dev\\project\\', false)).toBe('C:/Users/dev/project');
+    // The plain forms are left as they are, apart from the separators and the trailing one.
+    expect(normalizeDirectory('\\\\srv\\share\\proj', false)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('/home/dev/project/', false)).toBe('/home/dev/project');
+  });
+
+  it('lowercases only when the file system ignores case', () => {
+    expect(normalizeDirectory('\\\\?\\UNC\\SRV\\Share\\Proj', true)).toBe('//srv/share/proj');
+    expect(normalizeDirectory('\\\\?\\UNC\\SRV\\Share\\Proj', false)).toBe('//SRV/Share/Proj');
   });
 });
 

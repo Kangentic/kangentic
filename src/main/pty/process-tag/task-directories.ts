@@ -15,16 +15,11 @@
 import { promises as fsPromises } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { normalizeDirectory } from './reap-plan';
 
+/** A root as the plan compares it, so a `\\?\UNC\server\share` root reads as the share root it is and is refused. */
 function comparable(directory: string): string {
-  // The same prefix handling as reap-plan.ts's normalizeDirectory, so a
-  // `\\?\UNC\server\share` root reads as the share root it is and is refused.
-  const normalized = directory
-    .replace(/\\/g, '/')
-    .replace(/^\/\/\?\/UNC\//i, '//')
-    .replace(/^\/\/\?\//, '')
-    .replace(/\/+$/, '');
-  return process.platform === 'linux' ? normalized : normalized.toLowerCase();
+  return normalizeDirectory(directory, process.platform !== 'linux');
 }
 
 /** Whether a directory may be a reap root (see the module comment). */
