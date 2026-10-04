@@ -536,6 +536,9 @@ export class TransitionEngine {
       agentSessionId,
       isolatedSwimlaneId,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
+      // The grid recorded on the record this spawn retires. Only used when no
+      // in-memory predecessor speaks for it (a resume after a desktop restart).
+      ...(intent.restoredGrid ? { restoredGrid: intent.restoredGrid } : {}),
     });
 
     console.log(`[spawnAgent] PTY session created: id=${session.id.slice(0, 8)} status=${session.status}`);

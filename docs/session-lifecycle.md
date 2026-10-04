@@ -571,6 +571,7 @@ On project open (`src/main/transition-engine/session-startup/`):
    - Suspended/orphaned/interrupted-exited with `agent_session_id` -- use `--resume` (attempts to restore conversation; the id is first reconciled against the record's own `status.json`, see [Resume](#resume))
    - No session ID -- fresh `--session-id` with prompt from matching `spawn_agent` action
    - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. Retiring it used to let step 8 start a fresh agent over it. A record with no conversation to resume (no agent session id yet) is still retired, so step 8 starts the task fresh, which is all a resume of it could have done.
+   - The spawn starts at the grid recorded on the record it replaces (`last_pty_cols` / `last_pty_rows`, passed as `SpawnSessionInput.restoredGrid`). The registry is empty after a restart, so the in-memory respawn grid (see Repaint-settled scrollback sampling) cannot apply here, and every resume used to come up at 120x30, making a phone that opened the task pay a park mid-boot. A grid under 20 rows (the bottom panel's strip) is not restored. The same holds for a Resume or a move after a restart: `resolveSpawnIntent` carries the retired record's grid into `executeSpawnAgent`.
 8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
@@ -1129,10 +1130,17 @@ phone needs and reads the rest by request.
   phone's, which the size guard owns and an exit disarms without restoring). Before
   this, a respawn spawned at 120x30 and whatever showed the old session reshaped it mid-boot: the
   surface's mount fit, or a streaming phone's resting-grid park. Each one was a resize plus two
-  boot-time geometry re-asserts. Only a running or suspended predecessor hands its grid on; a
-  killed or crashed one does not. A sub-floor grid (the bottom panel's strip) carries over only
+  boot-time geometry re-asserts. Only a running or suspended in-memory predecessor hands its grid
+  on; a killed or crashed row does not (though a resume of its conversation can still take its
+  grid from the record, below). A sub-floor grid (the bottom panel's strip) carries over only
   while a surface still holds the old session, so a successor nothing shows never starts in that
-  letterbox. A caller-supplied grid (`input.cols/rows`) and a same-id stash both win over it.
+  letterbox. A caller-supplied grid (`input.cols/rows`) and a same-id stash both win over it. Below
+  it sits one more source, the grid recorded on the replaced session record
+  (`SpawnSessionInput.restoredGrid`, see Crash Recovery step 7). It covers the resumes no in-memory
+  row can speak for: after a desktop restart the registry is empty, and after a pty host crash the
+  lost row is exited, which `successorGridFor` refuses. The record is written at every grid change
+  by the `pty-resize` listener (`session-grid-persistence.ts`); the spawn's own announcement fires
+  before the caller inserts the record, so that one write waits for `setImmediate`.
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint

@@ -485,6 +485,8 @@ automations migration, and nothing reads either table now.
 | files_changed | INTEGER | | NULL |
 | tool_breakdown | TEXT | | NULL |
 | compaction_count | INTEGER | NOT NULL | 0 |
+| last_pty_cols | INTEGER | | NULL |
+| last_pty_rows | INTEGER | | NULL |
 
 Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `goose_agent`, `run_script`.
 
@@ -497,6 +499,8 @@ Valid suspended_by values: `user` (explicit pause button), `system` (shutdown, t
 Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` (see `PermissionMode` type in `src/shared/types.ts`).
 
 `tool_breakdown` is JSON-encoded `PerToolStat[]` (see `src/shared/types.ts`). One entry per distinct tool name with `callCount`, `totalDurationMs`, `interruptedCount`, and optional `costUsd` / `inputTokens` / `outputTokens` when the adapter emits per-tool telemetry on `tool_end` events. NULL on records captured before the column existed and on records whose session produced no tool events. Written by `captureSessionMetrics` from `UsageAccumulator` (`src/main/activity-engine/usage-accumulator.ts`), which pairs `tool_start` / `tool_end` timestamps in a per-session aggregator and is tracked independently of the bounded event cache so totals are not truncated for long sessions. A second, fire-and-forget writer, `SessionRepository.updateTranscriptToolCounts` (invoked via `refineTranscriptToolCounts` in `session-metrics.ts`, mirroring the token refinement below), backfills `tool_call_count` / `tool_breakdown` from the agent's own transcript when the live `UsageAccumulator` count is NULL or 0 (e.g. a parked/suspended session whose `tool_start` / `tool_end` hook events never reached the accumulator) - it never overwrites a nonzero live count, since the live count carries real durations and an interrupted tally the transcript-derived callCount-only breakdown cannot.
+
+`last_pty_cols` / `last_pty_rows`: the PTY grid the session last had, its spawn grid and then every applied resize except a phone's (a phone-held grid is the size guard's to give back). Written by `SessionRepository.updatePtyGrid` from the session manager's `pty-resize` event (`ipc/handlers/session-grid-persistence.ts`), at each change rather than at suspend, so an OS kill keeps it too and the synchronous quit path writes nothing. Read back as `SpawnSessionInput.restoredGrid` when the session is resumed with no in-memory predecessor to take a grid from: startup recovery after a desktop restart, a pty host crash, or a Resume or move after a restart (through the spawn intent of the record it retires). A grid under 20 rows is not restored. NULL = never recorded.
 
 Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_sessions_task_type_isolation_started` on (task_id, session_type, isolated_swimlane_id, started_at DESC) (the resume-decision hot path for per-column isolated sessions), `idx_sessions_status` on (status), `idx_sessions_agent_session_id` on (agent_session_id).
 
@@ -996,6 +1000,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 70. **`resume_point` column on `memory_index_state`** - adds `resume_point TEXT`, where the next walk of a growing conversation transcript starts (JSON, `ResumePoint` in `conversation-indexer.ts`), so an agent turn walks only the newest window instead of the whole transcript. Guarded `ALTER TABLE ... ADD COLUMN`, which changes only the schema whatever the table holds.
 71. **`memory_doc_sums` and its two triggers** - creates the per-document vector sums the Knowledge Graph's projection pass reads (see the `memory_doc_sums` section above), replacing the `graph_projection_sums_v1` blob in `memory_meta`, which was 19 MB rewritten whole on every rebuild. `trg_memory_chunks_doc_sums_ad` and `trg_memory_chunks_doc_sums_au` clear a document's `full_sum`, and empty its prefix when the chunk is in it, on any chunk delete or vector change. Idempotent `CREATE ... IF NOT EXISTS`.
 72. **`memory_task_summaries` and its `effort` column** - creates the task summaries table (see the section above) and adds `effort TEXT DEFAULT NULL` to one made before it, recording the effort each summary was written at so Rebuild rewrites only those written some other way. Idempotent `CREATE TABLE IF NOT EXISTS` plus a guarded `ALTER TABLE`.
+73. **`last_pty_cols` / `last_pty_rows` columns on sessions** - adds both as `INTEGER DEFAULT NULL`, the PTY grid a session last had, so a resume after a desktop restart or a pty host crash spawns at it instead of the 120x30 default (see the `sessions` table notes above). In memory a respawn already starts at its predecessor's grid; this is the copy that outlives the session registry. No backfill: NULL correctly means "never recorded", and the next grid change fills it. Idempotent guarded `ALTER TABLE`s sharing one `table_info` read.
 
 ### Key Migrations (Global DB)
 

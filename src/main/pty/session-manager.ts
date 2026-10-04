@@ -1363,6 +1363,7 @@ export class SessionManager extends EventEmitter {
         this.cancelRestingGridRestore(sessionId);
       },
       inheritedGrid: (predecessor) => this.successorGridFor(predecessor),
+      restoredGrid: (grid) => this.vetRestoredGrid(grid),
       emit: (event, ...args) => this.emit(event, ...args),
       isSpawnCancelled: (sessionId) => this.spawnsInFlight.get(sessionId)?.cancelled === true,
       onSpawnAbandoned: (sessionId, ptyExited) => {
@@ -1383,8 +1384,11 @@ export class SessionManager extends EventEmitter {
    * Only a predecessor that was live or suspended hands its grid on. A killed
    * one (`intentionalExit`, which only kill() sets, even on a row that was
    * already suspended) or a crashed one is an end, not a respawn, and kill
-   * clears its stash for the same reason. A resize stashed while it was
-   * suspended is newer than its last live grid, so it wins. A sub-floor grid is the bottom panel's strip: it
+   * clears its stash for the same reason. That exclusion is in memory only: a
+   * later resume of the same conversation can still restore the grid from its
+   * session record (vetRestoredGrid), which is harmless and not worth chasing
+   * through the database. A resize stashed while it was suspended is newer than
+   * its last live grid, so it wins. A sub-floor grid is the bottom panel's strip: it
    * carries over only while a surface still holds the predecessor (and will
    * fit the successor to the same box), so a successor nothing shows never
    * starts in that letterbox.
@@ -1396,6 +1400,21 @@ export class SessionManager extends EventEmitter {
     if (!grid) return undefined;
     if (grid.rows < MOBILE_USABLE_MIN_ROWS && !this.isSessionHeld(predecessor.id)) return undefined;
     return { cols: grid.cols, rows: grid.rows };
+  }
+
+  /**
+   * Vet a grid read back from a session record for a resume no in-memory row
+   * speaks for (see SpawnSessionInput.restoredGrid). It comes off disk, so it
+   * must be a real grid; and since the old session is gone, nothing can still
+   * be holding a strip-shaped one, so a sub-floor grid (the bottom panel's
+   * strip) is dropped rather than starting the agent in that letterbox.
+   */
+  private vetRestoredGrid(grid: { cols: number; rows: number }): { cols: number; rows: number } | undefined {
+    if (!Number.isFinite(grid.cols) || !Number.isFinite(grid.rows)) return undefined;
+    const cols = Math.floor(grid.cols);
+    const rows = Math.floor(grid.rows);
+    if (cols < 2 || rows < MOBILE_USABLE_MIN_ROWS) return undefined;
+    return { cols, rows };
   }
 
   /**

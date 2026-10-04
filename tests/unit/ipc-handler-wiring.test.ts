@@ -29,9 +29,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // referenced inside a factory must be created with vi.hoisted().
 // ---------------------------------------------------------------------------
 
-const { mockHandle, mockOn } = vi.hoisted(() => ({
+const { mockHandle, mockOn, mockPersistPtyGrid } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockOn: vi.fn(),
+  mockPersistPtyGrid: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,9 @@ vi.mock('../../src/main/shutdown-state', () => ({
 }));
 vi.mock('../../src/main/diagnostics/debug-dump-resolver', () => ({
   resolveDebugDumpDir: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/session-grid-persistence', () => ({
+  persistPtyGrid: mockPersistPtyGrid,
 }));
 
 // ---------------------------------------------------------------------------
@@ -399,5 +403,24 @@ describe('IPC handler wiring: the reason-only activity refresh', () => {
     const events = context.sessionManager.on.mock.calls.map((candidate) => candidate[0]);
     expect(events).toContain('activity');
     expect(events).toContain('activity-reason');
+  });
+});
+
+describe('IPC handler wiring: the pty-resize grid write', () => {
+  // The listener is the only writer of the sessions grid columns, which a
+  // resume after a desktop restart reads back. persistPtyGrid has its own tests
+  // (session-pty-grid-persistence.test.ts); this pins that sessions.ts calls it.
+  it('hands every grid change to persistPtyGrid with its origin', () => {
+    mockPersistPtyGrid.mockClear();
+    const context = makeContext();
+    registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+
+    const listeners = context.sessionManager.on.mock.calls
+      .filter((candidate): candidate is [string, (...args: unknown[]) => void] => candidate[0] === 'pty-resize')
+      .map((candidate) => candidate[1]);
+    for (const listener of listeners) listener('sess-1', 210, 48, 'park');
+
+    expect(mockPersistPtyGrid).toHaveBeenCalledTimes(1);
+    expect(mockPersistPtyGrid).toHaveBeenCalledWith(context, 'sess-1', { cols: 210, rows: 48 }, 'park');
   });
 });

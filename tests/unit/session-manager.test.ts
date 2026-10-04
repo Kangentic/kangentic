@@ -492,7 +492,10 @@ describe('Respawn grid', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  async function spawnFor(taskId: string, extra: { resuming?: boolean } = {}) {
+  async function spawnFor(
+    taskId: string,
+    extra: { resuming?: boolean; restoredGrid?: { cols: number; rows: number } } = {},
+  ) {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
     const session = await manager.spawn({ taskId, command: '', cwd: tmpDir, ...extra });
@@ -572,6 +575,49 @@ describe('Respawn grid', () => {
     await spawnFor('task-respawn-phone-hold', { resuming: true });
 
     expect(lastSpawnGrid()).toEqual([190, 50]);
+  });
+
+  /**
+   * After a desktop restart the registry is empty, so no in-memory row speaks
+   * for the session being resumed: the grid recorded on its session record does.
+   */
+  it('starts a resume with no in-memory predecessor at the recorded grid', async () => {
+    await spawnFor('task-restored', { resuming: true, restoredGrid: { cols: 210, rows: 48 } });
+
+    expect(lastSpawnGrid()).toEqual([210, 48]);
+  });
+
+  it('drops a recorded strip-shaped grid, and one that is not a real grid', async () => {
+    // Nothing can still hold the old session, so the panel strip never carries.
+    await spawnFor('task-restored-strip', { restoredGrid: { cols: 306, rows: 14 } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+
+    await spawnFor('task-restored-garbage', { restoredGrid: { cols: Number.NaN, rows: 48 } });
+    expect(lastSpawnGrid()).toEqual([120, 30]);
+  });
+
+  it('lets an in-memory predecessor win over the recorded grid', async () => {
+    const { session } = await spawnFor('task-restored-inherit');
+    manager.resize(session.id, 190, 50);
+    await manager.suspend(session.id);
+
+    await spawnFor('task-restored-inherit', { resuming: true, restoredGrid: { cols: 210, rows: 48 } });
+
+    expect(lastSpawnGrid()).toEqual([190, 50]);
+  });
+
+  /**
+   * A pty host crash leaves the lost row exited, which hands no grid on in
+   * memory, so its recovery resume relies on the recorded grid too.
+   */
+  it('falls back to the recorded grid when the predecessor exited', async () => {
+    const { session, triggerExit } = await spawnFor('task-restored-crashed');
+    manager.resize(session.id, 150, 40);
+    triggerExit(1);
+
+    await spawnFor('task-restored-crashed', { resuming: true, restoredGrid: { cols: 210, rows: 48 } });
+
+    expect(lastSpawnGrid()).toEqual([210, 48]);
   });
 
   it('a killed predecessor hands nothing on', async () => {
