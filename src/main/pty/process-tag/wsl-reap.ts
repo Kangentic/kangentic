@@ -33,7 +33,16 @@ import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, type WslShellSpec } from './
 
 export type WslExec = (file: string, args: string[], options: { timeoutMs: number; env: Record<string, string> }) => Promise<string>;
 
-const WSL_TIMEOUT_MS = 15_000;
+/**
+ * Bounds for the three `wsl.exe` calls. Measured on Windows 11 with Ubuntu
+ * running: each listing returns in about 40 ms and the script in about 1.06 s,
+ * its 1 s grace included. The bounds leave nine times that or more, and cap a
+ * wedged `wsl.exe` at 20 s in all. Every terminal transition awaits the reap
+ * before it removes the worktree, and a bulk delete holds each task to 60 s
+ * (`TASK_CLEANUP_TIMEOUT_MS`), so a longer bound would stall both.
+ */
+export const WSL_LIST_TIMEOUT_MS = 5_000;
+export const WSL_SCRIPT_TIMEOUT_MS = 10_000;
 
 /** One task to reap in the distro: its id and its Windows-side directories. */
 export interface WslReapTask {
@@ -153,15 +162,15 @@ export async function reapTaggedProcessesInWsl(
   if (!buildWslReapInvocation(tasks)) return [];
   const env = { WSL_UTF8: '1' };
   try {
-    const running = parseRunningDistros(await exec('wsl.exe', ['-l', '--running', '-q'], { timeoutMs: WSL_TIMEOUT_MS, env }));
+    const running = parseRunningDistros(await exec('wsl.exe', ['-l', '--running', '-q'], { timeoutMs: WSL_LIST_TIMEOUT_MS, env }));
     if (running.length === 0) return [];
     // A shell with no `-d` runs in the default distro, which can be stopped
     // while another one runs; naming it keeps the reap from booting it.
-    const distro = spec.distro ?? parseDefaultDistro(await exec('wsl.exe', ['-l', '-v'], { timeoutMs: WSL_TIMEOUT_MS, env }));
+    const distro = spec.distro ?? parseDefaultDistro(await exec('wsl.exe', ['-l', '-v'], { timeoutMs: WSL_LIST_TIMEOUT_MS, env }));
     if (!distro || !running.some((name) => name.toLowerCase() === distro.toLowerCase())) return [];
     const invocation = buildWslReapInvocation(tasks.filter((task) => keepTask(task.taskId)));
     if (!invocation) return [];
-    const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_TIMEOUT_MS * 2, env });
+    const output = await exec('wsl.exe', ['-d', distro, '-e', 'sh', '-c', invocation.script, 'sh', ...invocation.args], { timeoutMs: WSL_SCRIPT_TIMEOUT_MS, env });
     return [...new Set(output.split(/\s+/).filter((token) => /^\d+$/.test(token)).map(Number))];
   } catch (error) {
     onFailure(error);

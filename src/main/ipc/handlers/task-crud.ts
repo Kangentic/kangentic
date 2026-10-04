@@ -59,9 +59,12 @@ const PROGRESS_THROTTLE_MS = 100;
  * (3 sequential `runGitWithTimeout` ops at 15s each) plus the fs-rm fallback,
  * so even a fully-pathological git stall surfaces as the inner timeout. The
  * leftover reap runs first inside the same budget: up to 3 s waiting for a
- * parked PTY and 15 s for the pty host's reap, and on a WSL shell up to 60 s
- * more for the in-distro reap. A reap that hits those bounds leaves git less
- * room, so this deadline can then fire before git's own timeout.
+ * parked PTY and 15 s for the pty host's reap, and on a WSL shell up to 20 s
+ * more for the in-distro reap (`WSL_LIST_TIMEOUT_MS`, `WSL_SCRIPT_TIMEOUT_MS`).
+ * It normally takes well under 2 s. Only when the reap AND git both stall to
+ * their bounds does this deadline fire first, reporting a cleanup failure
+ * while the removal finishes in the background; the startup retry takes what
+ * it leaves.
  */
 const TASK_CLEANUP_TIMEOUT_MS = 60_000;
 

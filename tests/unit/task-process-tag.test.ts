@@ -109,6 +109,22 @@ describe('WSL reap', () => {
     expect(calls[1].slice(6)).toEqual(['sh', TASK, '1', PROJECT]);
   });
 
+  it('bounds a wedged wsl.exe at 5 s per listing and 10 s for the script, 20 s in all', async () => {
+    const timeouts: Array<{ args: string[]; timeoutMs: number }> = [];
+    const exec = async (_file: string, args: string[], options: { timeoutMs: number }) => {
+      timeouts.push({ args, timeoutMs: options.timeoutMs });
+      if (args.includes('--running')) return 'Ubuntu\n';
+      if (args.includes('-v')) return '  NAME      STATE      VERSION\n* Ubuntu    Running    2\n';
+      return '';
+    };
+    await reapTaggedProcessesInWsl({ distro: null }, REAP_TASKS, exec);
+    expect(timeouts.map((call) => call.timeoutMs)).toEqual([5_000, 5_000, 10_000]);
+    expect(timeouts[2].args[0]).toBe('-d');
+    // A Done move awaits this reap before removing the worktree, and a bulk
+    // delete holds each task's whole cleanup to 60 s.
+    expect(timeouts.reduce((sum, call) => sum + call.timeoutMs, 0)).toBeLessThanOrEqual(20_000);
+  });
+
   it('reads the default distro from the starred row of wsl -l -v', () => {
     const table = '  NAME              STATE           VERSION\r\n* Ubuntu            Stopped         2\r\n  docker-desktop    Running         2\r\n';
     expect(parseDefaultDistro(table)).toBe('Ubuntu');
