@@ -723,16 +723,17 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task',
     {
-      description: 'Move a task to a different column, optionally placing it at a chosen slot in that column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. Naming the task\'s CURRENT column together with `position` repositions it in place, which changes nothing but its order - no session, worktree, or lifecycle effects. To re-sequence several tasks at once, use kangentic_reorder_tasks. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
+      description: 'Move a task to a different column, optionally placing it at a chosen slot in that column, and optionally handing the agent there a message. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running the columns\' automations. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. `column: "next"` moves to the column after the task\'s current one. `message` reaches the agent in the destination column once it is ready, after that column\'s own automations: use it to hand off context with the move ("back from review, fix these findings: ..."), since a separate send cannot reach a session the move is suspending or starting. Naming the task\'s CURRENT column together with `position` repositions it in place, which changes nothing but its order - no session, worktree, or lifecycle effects. To re-sequence several tasks at once, use kangentic_reorder_tasks. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
-        column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
+        column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done"), or "next" for the column after the task\'s current one.'),
+        message: z.string().max(20_000).optional().describe('Optional message for the agent in the destination column, delivered once it is ready (after that column\'s own On task enter automations). Kept whole, line breaks included.'),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the column\'s tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Repositioning within the task\'s current column counts slots among the OTHER tasks there, so 0 is the top. Omit to append to the end of the column, which is the default. Has no useful effect when moving into Done, which archives the task.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, column, position, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null }, ctx, 'Failed to move task')),
+    async ({ taskId, column, position, message, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null, message: message ?? null }, ctx, 'Failed to move task')),
   );
 
   // --- kangentic_reorder_tasks ---

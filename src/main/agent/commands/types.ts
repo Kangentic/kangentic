@@ -90,7 +90,17 @@ export interface CommandContext {
    */
   onTaskSettingsChanged?: (task: Task, changed: { model: boolean; effort: boolean }) => void;
   onTaskDeleted: (task: Task) => void;
-  onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
+  /**
+   * Move a task across columns through the one move path. `message`, when
+   * given, reaches the agent where the task lands once its turn ends, after the
+   * destination column's own On task enter rows (`deliverMessageAfterMove`):
+   * the move and its hand-off are one call, because a separate send cannot
+   * reach a session that is being suspended or spawned by the move itself.
+   */
+  onTaskMove: (
+    input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
+    options?: { message?: string | null },
+  ) => Promise<void>;
   /**
    * Tasks were re-sequenced WITHIN one column. Distinct from `onTaskMove`
    * because a reorder is presentation only: no column change, no session

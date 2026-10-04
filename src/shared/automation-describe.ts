@@ -41,7 +41,7 @@ export function describeAutomation(type: AutomationType, config: AutomationConfi
     }
 
     case 'move_to_column': {
-      const column = typeof config.column === 'string' ? config.column.trim() : '';
+      const column = typeof config.targetColumn === 'string' ? config.targetColumn.trim() : '';
       const where = column ? `to ${firstLine(column, 40)}` : 'to the next column';
       const message = typeof config.message === 'string' ? config.message.trim() : '';
       return message ? `Moves the task ${where} with "${firstLine(message, 40)}"` : `Moves the task ${where}.`;

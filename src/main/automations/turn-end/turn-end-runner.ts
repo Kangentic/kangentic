@@ -18,8 +18,8 @@ import { frequencyLimitReason, hasCondition } from '../automation-runner';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget } from '../move-target';
 import type { RunConditionAnswer } from '../../db/repositories/automation-run-repository';
-import { deliverMessageToSession } from './deliver-message';
-import { trackTurnEndFollowUp, trackTurnEndGroup } from './turn-end-passes';
+import { deliverMessageAfterMove, deliverMessageToSession } from './deliver-message';
+import { trackTurnEndGroup } from './turn-end-passes';
 
 /**
  * A column's On agent turn end automations: what runs when the agent working a
@@ -55,10 +55,6 @@ interface TaskPassState {
 
 const passes = new Map<string, TaskPassState>();
 
-/** How long a Move to column message waits for the agent where the task lands. */
-const FOLLOW_UP_WAIT_MS = 60 * 60_000;
-/** A beat for the destination's own enter message to start its turn first. */
-const FOLLOW_UP_SETTLE_MS = 3_000;
 /** How long a final-reply read may take before `{{agentReply}}` resolves empty. */
 const AGENT_REPLY_TIMEOUT_MS = 15_000;
 
@@ -209,7 +205,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
         verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
         signal: runSignal,
       }),
-      moveTask: (input) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, input, runnable),
+      moveTask: (input) => moveFromTurnEnd(context, payload.projectId, projectPath, current.task, column, input),
       showNotification: (notification) => showDesktopNotification(context, notification),
       onProgress: createProgressCallback(context.mainWindow, task.id),
     });
@@ -261,21 +257,19 @@ async function moveFromTurnEnd(
   projectPath: string | null,
   task: Task,
   fromColumn: Swimlane,
-  input: { column: string | null; message: string | null },
-  runnable: ReadonlyArray<ColumnAutomation>,
+  input: { column: string | null; message: string | null; reason: string },
 ): Promise<{ columnName: string }> {
   const repos = getProjectRepos(context, projectId);
   const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, input.column);
   if (!target.ok) throw new Error(target.reason);
 
-  const moveRow = runnable.find((row) => row.type === 'move_to_column');
   await handleTaskMove(
     context,
     { taskId: task.id, targetSwimlaneId: target.column.id, targetPosition: repos.tasks.list(target.column.id).length },
     'automation',
     projectId,
     projectPath,
-    { moveReason: moveRow?.name ?? 'Move to column', fromTurnEndGroup: true },
+    { moveReason: input.reason, fromTurnEndGroup: true },
   );
 
   const moved = repos.tasks.getById(task.id);
@@ -284,47 +278,6 @@ async function moveFromTurnEnd(
   }
 
   const message = input.message?.trim() ?? '';
-  if (message) void deliverAfterMove(context, projectId, task.id, target.column.name, message);
+  if (message) void deliverMessageAfterMove(context, projectId, task.id, target.column.name, message);
   return { columnName: target.column.name };
-}
-
-/** Hand a Move to column message to the agent where the task landed. */
-async function deliverAfterMove(
-  context: IpcContext,
-  projectId: string,
-  taskId: string,
-  columnName: string,
-  message: string,
-): Promise<void> {
-  const controller = new AbortController();
-  const release = trackTurnEndFollowUp(taskId, controller);
-  try {
-    await new Promise((resolve) => setTimeout(resolve, FOLLOW_UP_SETTLE_MS));
-    if (controller.signal.aborted) return;
-    const repos = getProjectRepos(context, projectId);
-    const task = repos.tasks.getById(taskId);
-    if (!task?.session_id) {
-      console.log(`[turn-end] No agent in ${columnName} to receive the moved task's message (task ${taskId.slice(0, 8)}).`);
-      return;
-    }
-    const sessionId = task.session_id;
-    const settled = await waitForTurnCompletion(context.sessionManager, sessionId, {
-      signal: controller.signal,
-      timeoutMs: FOLLOW_UP_WAIT_MS,
-    });
-    if (settled !== 'completed') return;
-    const sessionRepo = new SessionRepository(getProjectDb(projectId));
-    await deliverMessageToSession(context, {
-      taskId,
-      sessionId,
-      message,
-      mode: 'immediate',
-      verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    console.error(`[turn-end] The message for ${columnName} was not delivered (task ${taskId.slice(0, 8)}):`, error);
-  } finally {
-    release();
-  }
 }

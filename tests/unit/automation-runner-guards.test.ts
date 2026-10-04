@@ -244,7 +244,7 @@ describe('a row that ends its group', () => {
     const summary = await runAutomations({
       automations: [
         automation({ id: 'notify-first', type: 'notify' }),
-        automation({ id: 'move', type: 'move_to_column', config: { column: 'Executing' } }),
+        automation({ id: 'move', type: 'move_to_column', config: { targetColumn: 'Executing' } }),
         automation({ id: 'after', type: 'webhook' }),
       ],
       column: COLUMN,

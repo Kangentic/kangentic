@@ -353,7 +353,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
 
       try {
         const config = interpolateAutomationConfig(automation.config, adapter.manifest.fields, context.templateVars);
-        const outcome = await adapter.execute(config, { ...context, runId, signal: combined });
+        const outcome = await adapter.execute(config, { ...context, runId, signal: combined, automationName: automation.name });
         runs.finish(runId, 'succeeded', outcome.detail, attempt);
         record('succeeded', outcome.detail);
         lastError = null;

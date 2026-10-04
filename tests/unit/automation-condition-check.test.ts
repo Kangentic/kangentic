@@ -84,6 +84,12 @@ describe('parseConditionReply', () => {
     expect(plain.get(0)).toEqual({ met: false, reason: null });
   });
 
+  it('keeps a quote that ends a reason, and unwraps one quoted whole', () => {
+    const answers = parseConditionReply('C1: no - the last line is "REVISE recieve", not "CLEAN"\nC2: yes - "all good"', 2);
+    expect(answers.get(0)?.reason).toBe('the last line is "REVISE recieve", not "CLEAN"');
+    expect(answers.get(1)?.reason).toBe('all good');
+  });
+
   it('leaves out a label the reply skipped, and one out of range', () => {
     const answers = parseConditionReply('C2: yes - fine\nC9: yes - stray', 2);
     expect(answers.has(0)).toBe(false);

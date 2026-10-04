@@ -349,7 +349,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     endsGroup: true,
     fields: [
       {
-        key: 'column',
+        key: 'targetColumn',
         label: 'Column',
         kind: 'column',
         escape: 'none',

@@ -149,7 +149,11 @@ export function parseConditionReply(reply: string, count: number): Map<number, C
       continue;
     }
     seen.add(position);
-    const reason = collapse(match[3].replace(/^["']|["']$/g, ''), REASON_CHARS);
+    // Unwrap a reason the model quoted whole, and only then: a reason that
+    // merely ends on a quote ("the last line is "CLEAN"") keeps it.
+    const raw = match[3].trim();
+    const unwrapped = /^(["'])(.*)\1$/.exec(raw)?.[2] ?? raw;
+    const reason = collapse(unwrapped, REASON_CHARS);
     answers.set(position, { met: match[2].toLowerCase() === 'yes', reason: reason || null });
   }
   for (const position of writtenTwice) answers.delete(position);

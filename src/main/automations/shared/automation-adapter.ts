@@ -103,11 +103,13 @@ export interface AutomationContext {
    * move is committed, with the destination's name; rejects with a reason the
    * run log shows when the move cannot be made.
    */
-  moveTask?(input: { column: string | null; message: string | null }): Promise<{ columnName: string }>;
+  moveTask?(input: { column: string | null; message: string | null; reason: string }): Promise<{ columnName: string }>;
   /** The move's signal, combined with this run's own timeout. */
   signal: AbortSignal;
   /** The `automation_runs` row id. The webhook sends it as its idempotency key. */
   runId: string;
+  /** The running automation's own name, for a record it writes (the reason on a move it makes). */
+  automationName?: string;
   onProgress?: (phase: string) => void;
 }
 

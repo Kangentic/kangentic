@@ -7,6 +7,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import { resolveMoveTarget } from '../../automations/move-target';
 import {
   clampSlot,
   computeIdsWithTaskAtSlot,
@@ -795,6 +796,17 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: parsedSlot.error };
   }
 
+  // Validated here, not only in zod: the phone's board-tool path calls this
+  // handler with no schema in front of it.
+  const rawMessage = params.message;
+  if (rawMessage !== undefined && rawMessage !== null && typeof rawMessage !== 'string') {
+    return { success: false, error: 'message must be a string.' };
+  }
+  const message = typeof rawMessage === 'string' && rawMessage.trim() ? rawMessage : null;
+  if (message && message.length > MOVE_MESSAGE_MAX_CHARS) {
+    return { success: false, error: `message is ${message.length} characters; the limit is ${MOVE_MESSAGE_MAX_CHARS}.` };
+  }
+
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
   const task = resolveTask(taskRepo, taskIdParam);
@@ -802,11 +814,26 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: `Task "${taskIdParam}" not found` };
   }
 
-  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
+  // A column named exactly "next" wins; otherwise "next" means the next column
+  // after the task's own, the same answer a Move to column row gets.
+  let resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
+  if ('error' in resolution && columnName.trim().toLowerCase() === 'next') {
+    const allSwimlanes = new SwimlaneRepository(db).list();
+    const next = resolveMoveTarget(allSwimlanes, task.swimlane_id, null);
+    if (!next.ok) return { success: false, error: next.reason };
+    resolution = { swimlane: next.column, allSwimlanes };
+  }
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
   const { swimlane: targetSwimlane } = resolution;
+
+  if (message && task.swimlane_id === targetSwimlane.id) {
+    return {
+      success: false,
+      error: `Task "${task.title}" is already in ${targetSwimlane.name}, so there is no agent to hand the message to on arrival. To message the agent working on it, use kangentic_send_session_message.`,
+    };
+  }
 
   if (task.swimlane_id === targetSwimlane.id) {
     // Already here, and no slot named: the long-standing no-op.
@@ -868,21 +895,22 @@ export const handleMoveTask: CommandHandler = (
 
   // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
   // The MCP response confirms intent; the LLM should re-query to verify state if needed.
-  void context.onTaskMove({
-    taskId: task.id,
-    targetSwimlaneId: targetSwimlane.id,
-    targetPosition,
-  }).catch((error) => {
+  const moveInput = { taskId: task.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
+  void (message ? context.onTaskMove(moveInput, { message }) : context.onTaskMove(moveInput)).catch((error) => {
     console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
   });
 
   const placement = parsedSlot ? ` at position ${slot}` : '';
+  const handOff = message ? ' Its agent there gets your message once it is ready.' : '';
   return {
     success: true,
-    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.`,
+    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}`,
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
   };
 };
+
+/** The longest message a move hands on: a whole review verdict fits with room to spare. */
+const MOVE_MESSAGE_MAX_CHARS = 20_000;
 
 /** Cap on how many tasks a reorder echoes back before truncating. */
 const REORDER_ECHO_LIMIT = 25;

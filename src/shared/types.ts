@@ -942,7 +942,7 @@ export interface AutomationConfig {
    * one. Empty or absent means the next column (on the task's route in a
    * workflow, else on the board). Renaming a column renames it here too.
    */
-  column?: string;
+  targetColumn?: string;
 
   // legacy spawn_agent
   agent?: string;

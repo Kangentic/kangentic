@@ -32,9 +32,9 @@ export const moveToColumnAdapter: AutomationAdapter = {
       // from wherever it is now.
       throw new Error('Move to column runs only when the agent finishes a turn.');
     }
-    const column = typeof config.column === 'string' && config.column.trim() ? config.column.trim() : null;
+    const column = typeof config.targetColumn === 'string' && config.targetColumn.trim() ? config.targetColumn.trim() : null;
     const message = typeof config.message === 'string' && config.message.trim() ? config.message : null;
-    const { columnName } = await context.moveTask({ column, message });
+    const { columnName } = await context.moveTask({ column, message, reason: context.automationName ?? 'Move to column' });
     return { detail: message ? `Moved to ${columnName}, with a message.` : `Moved to ${columnName}.` };
   },
 };
