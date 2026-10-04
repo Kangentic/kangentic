@@ -899,14 +899,16 @@ phone needs and reads the rest by request.
   boxes are drawn for a wide frame) after `RESTING_GRID_DELAY_MS` (1s). The park is a MOBILE
   feature and is gated on mobile interest: it fires only for a session a paired phone is actually
   streaming (`MobileTerminalProbe.hasStreamSubscriber`, answered from the bridge's per-device
-  subscription registries), and a phone subscribing to a session that went unheld earlier gets an
+  subscription registries), and a phone subscribing to a session that went unheld earlier, or
+  whose only hold is a focus claim with no xterm mounted or a grid under the 20-row floor, gets an
   immediate park instead (`parkRestingGridForMobileSubscriber`, called by the read-stream
   subscribe handler BEFORE it serializes the seed, so the one snapshot already carries the
   resting grid). A desktop that never pairs never parks at all - no probe, no bridge registries,
-  byte-for-byte the pre-park behavior. Three further guards make a firing park safe: it fires
-  only when NOTHING holds the session - unfocused AND no renderer has an xterm mounted for it
-  (`session:setMounted`, published by `terminal-mount-registry` from each terminal's own mount
-  effect); it never touches a grid a phone is holding (the armed size guard consulted through
+  byte-for-byte the pre-park behavior. Three further guards make a firing park safe: the
+  background park fires only when NOTHING holds the session - unfocused AND no renderer has an
+  xterm mounted for it (`session:setMounted`, published by `terminal-mount-registry` from each
+  terminal's own mount effect; the subscribe-time park overrides two holds, see path 3 below and
+  the row floor in the next bullet); it never touches a grid a phone is holding (the armed size guard consulted through
   `MobileTerminalProbe.isSizeHeld` - the guard registry, never a last-writer origin, which a
   desktop resize overwrites while the hold stays armed); and it no-ops when the PTY is already at
   the resting grid. The park resizes with origin `'park'`, which deliberately does NOT update
@@ -921,8 +923,9 @@ phone needs and reads the rest by request.
   fire: the next open of that session pays the marker settle (~20-40ms) because the grid changed
   while it was away, which is what any surface switch already pays.
 
-  The park also reaches a session nothing has laid out. A PTY spawns at the 120x30 default
-  (`DEFAULT_PTY_COLS/ROWS`), and only a focus or mount change used to re-run the park decision,
+  The park also reaches a session nothing has laid out. A PTY with no grid to inherit or restore
+  spawns at the 120x30 default (`DEFAULT_PTY_COLS/ROWS`), and only a focus or mount change used to
+  re-run the park decision,
   so a phone could open an Executing task and mirror 120x30. Three paths close that:
   1. `doSpawn` re-runs the decision when a PTY comes up (`reconsiderRestingGrid`), so a PTY born
      unheld while a phone streams its id parks after the usual delay.
@@ -976,7 +979,8 @@ phone needs and reads the rest by request.
      `bufferManager.onResize`, so the headless parser never diverges from the real PTY; the
      refused grid still records `lastDesktopDimensions` as the restore target), and
      `parkRestingGridForMobileSubscriber` overrides a desktop HOLD below the floor, rescuing a
-     phone that subscribes to a session the strip captured before the phone arrived.
+     phone that subscribes to a session the strip captured before the phone arrived (and a focus
+     claim with no xterm mounted, path 3 above).
   A desktop with no terminal-streaming phone never hits any layer: the panel renders and owns
   grids exactly as before the park existed. Gated by the floor tests in the `Resting grid
   restore` block of `tests/unit/session-manager.test.ts`, the terminal-marker tests in
@@ -1041,16 +1045,16 @@ phone needs and reads the rest by request.
   `kangentic_devtools_terminal_state`'s merged trace
   names the trigger if a divergence ever recurs. A resize for a queued or suspended session
   stashes (including suspend's marked-but-alive teardown window, where the PTY is still
-  non-null but must not be reshaped or re-echoed); one for a missing or exited session is
-  ignored. Gated by `tests/unit/pty-resize-echo-reassert.test.ts` (the guard
+  non-null but must not be reshaped or re-echoed; never a phone's grid, see the respawn
+  paragraph below); one for a missing or exited session is ignored. Gated by `tests/unit/pty-resize-echo-reassert.test.ts` (the guard
   matrix), the emit/refusal pins in `tests/unit/session-manager.test.ts`,
   `tests/ui/terminal-resize-echo-reassert.spec.ts` (real xterm wiring: re-assert, repair,
   self-echo no-op, budget bound), and `tests/e2e/terminal-width-drift-selfheal.spec.ts` (a real
   PTY driven to the incident by a rogue `sessions.resize`, healed back to the owner grid).
 - **Post-boot geometry re-assert (the spawn-window race).** ConPTY only delivers a
   resize to a connected client, so a resize applied while the agent is still booting (the fit
-  lands ~140ms after `pty.spawn`) can be lost, leaving the child composing at the 120-column
-  spawn width inside the fitted grid while `ptyMatchesGrid`/`colsDrift` read healthy. `resize()`
+  lands ~140ms after `pty.spawn`) can be lost, leaving the child composing at the spawn width
+  inside the fitted grid while `ptyMatchesGrid`/`colsDrift` read healthy. `resize()`
   arms `ManagedSession.resizeAppliedBeforeTuiReady` when it applies a resize while the stream is
   not in the alt buffer - NOT keyed on the first-output latch, which a shell preamble can
   trip seconds before the agent exists (pwsh 7.6's preamble carries the cursor-hide escape the
@@ -1072,8 +1076,10 @@ phone needs and reads the rest by request.
   block in `tests/unit/session-manager.test.ts` and the respawn latch-cleanup tests in
   `tests/unit/session-spawn-flow.test.ts`; the diagnostic is exercised by
   `tests/unit/composed-width.test.ts` and `tests/unit/devtools-terminal-state.test.ts`.
-- **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
-  an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
+- **Repaint-settled scrollback sampling.** A session with no better grid spawns at a default
+  120x30 (a respawn takes its predecessor's grid and a resume takes its recorded one, see below).
+  A PTY that does start at the default, such as an auto-resume whose record carries no grid, sits
+  at that size on a cold launch until a card opens and the renderer fits it wider. When a
   geometry-changing resize fires (cols OR rows), a full-screen agent TUI repaints its frame
   asynchronously in response to SIGWINCH. So `getScrollback` waits for that repaint to land and
   quiesce before sampling (`PtyBufferManager.waitForResizeRepaint`), so a terminal restored right
@@ -1147,7 +1153,10 @@ phone needs and reads the rest by request.
   lost row is exited, which `successorGridFor` refuses. The record is written at every grid change
   by the `pty-resize` listener (`session-grid-persistence.ts`); the spawn's own announcement fires
   before the caller inserts the record, so that one write waits for `setImmediate`, and a desktop
-  or park write that lands first cancels it.
+  or park write that lands first cancels it. Gated by the `Respawn grid` block in
+  `tests/unit/session-manager.test.ts`, the inherited and restored precedence cases in
+  `tests/unit/session-spawn-flow.test.ts`, `tests/unit/session-pty-grid-persistence.test.ts`, and
+  `tests/unit/session-pty-grid-migration.test.ts` (real SQLite, CI only).
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint

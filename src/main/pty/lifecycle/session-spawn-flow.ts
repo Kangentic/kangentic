@@ -23,7 +23,9 @@ import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/pa
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
  * resize, when there is no better grid (a respawn starts at its predecessor's,
- * see SpawnFlowContext.inheritedGrid). A background (never-opened) session
+ * see SpawnFlowContext.inheritedGrid, and a resume with no in-memory
+ * predecessor at its record's, see SpawnSessionInput.restoredGrid). A
+ * background (never-opened) session
  * keeps this size until something shows it or a phone's resting-grid park
  * reshapes it; the terminal mount resizes to the real viewport when a card is
  * opened.
@@ -423,8 +425,9 @@ export async function performSpawn(
 
   // The host seeded the ring at the ACTUAL spawn cols, so the first renderer
   // resize reports colsChanged truthfully: an unchanged width (PTY spawned at
-  // the fitted size) reports false and skips the repaint-settle, while the
-  // cold-launch 120-to-fitted change reports true and arms it. Main keeps the
+  // the fitted size) reports false and skips the repaint-settle, while a
+  // change from the spawn grid to the fitted one (a cold launch at the 120x30
+  // default, say) reports true and arms it. Main keeps the
   // same number for that report. See PtyBufferManager.onResize.
   context.setBufferCols(id, spawnCols);
   context.sessionFiles.register({

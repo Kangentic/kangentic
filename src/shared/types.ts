@@ -5316,8 +5316,10 @@ export interface SpawnSessionInput {
   /**
    * Caller-known PTY grid to spawn at, when available (e.g. a Command
    * Terminal branch respawn reusing the still-mounted xterm's current size).
-   * Falls back to `takePendingResize` (a resize that beat the spawn), then to
-   * DEFAULT_PTY_COLS/ROWS - see session-spawn-flow.ts.
+   * A stash under the same id (`takePendingResize`, a resize that beat the
+   * spawn) wins over it. Without either, the spawn takes the replaced row's
+   * grid, then `restoredGrid`, then DEFAULT_PTY_COLS/ROWS - see
+   * session-spawn-flow.ts.
    */
   cols?: number;
   rows?: number;
