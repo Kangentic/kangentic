@@ -8,8 +8,10 @@
  * it green while every write failed. This file runs the REAL migration against
  * a REAL in-memory better-sqlite3 database and reads the row back through the
  * REAL repository. It skips cleanly when better-sqlite3 cannot load under the
- * test runner's Node ABI (expected on a developer's Windows machine, built for
- * Electron's ABI) and RUNS on CI (built for plain Node).
+ * test runner's Node ABI, which is the case both locally and on CI: postinstall
+ * builds it for Electron's ABI. Until that changes, the migration runs against
+ * real SQLite only in the E2E tier, which boots the app and migrates its
+ * project database on open (session-resume.spec.ts relaunches on one).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

@@ -1156,7 +1156,8 @@ phone needs and reads the rest by request.
   or park write that lands first cancels it. Gated by the `Respawn grid` block in
   `tests/unit/session-manager.test.ts`, the inherited and restored precedence cases in
   `tests/unit/session-spawn-flow.test.ts`, `tests/unit/session-pty-grid-persistence.test.ts`, and
-  `tests/unit/session-pty-grid-migration.test.ts` (real SQLite, CI only).
+  `tests/unit/session-pty-grid-migration.test.ts` (real SQLite; it skips wherever better-sqlite3
+  is built for Electron, CI included, so the E2E tier's app boots are what run the migration).
   One reader deliberately OPTS OUT of this settle: `SessionManager.getOutputPeek`, which backs the
   Agent Monitor's live output peek. The settle exists so a captured frame becomes the terminal the
   user then looks at; a peek is a few throwaway lines resampled twice a second, so a mid-repaint
