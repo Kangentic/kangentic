@@ -16,7 +16,7 @@ import {
   type LegacyActionRow,
 } from '../../src/main/db/migrations/automations-migration';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../src/shared/task-template-vars';
+const SEEDED_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{attachments}}';
 import type DatabaseType from 'better-sqlite3';
 
 import { openTestDatabase } from './helpers/test-database';
@@ -71,7 +71,9 @@ describe('retired action types', () => {
 describe('the legacy spawn_agent', () => {
   it('skips the seeded default-prompt row, because the fallback spawn already does it', () => {
     const plan = planAutomationsMigration(input({
-      actions: [action('a1', 'Start Planning Agent', 'spawn_agent', { promptTemplate: DEFAULT_SPAWN_PROMPT_TEMPLATE })],
+      // What the seed wrote, frozen: the live default has since gained
+      // {{workflow_xml}}, and the migration must match what old rows hold.
+      actions: [action('a1', 'Start Planning Agent', 'spawn_agent', { promptTemplate: SEEDED_SPAWN_PROMPT_TEMPLATE })],
       transitions: [{ from_swimlane_id: '*', to_swimlane_id: PLANNING, action_id: 'a1', execution_order: 0 }],
     }));
 

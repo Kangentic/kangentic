@@ -1,7 +1,7 @@
 import type { AutomationTrigger, Task } from '../../../shared/types';
 import { sanitizeForPty } from '../../../shared/paths';
 import { TASK_TEMPLATE_VAR_NAMES, type TaskTemplateVarName } from '../../../shared/task-template-vars';
-import { buildTaskXml } from './prompt-xml';
+import { buildTaskXml, buildWorkflowXml, type WorkflowXmlInput } from './prompt-xml';
 
 /**
  * Everything a task-template resolver needs. `defaultBaseBranch` is the
@@ -70,6 +70,12 @@ export interface TaskTemplateContext {
    * `{{agentReply}}` empty.
    */
   agentReply?: string | null;
+  /**
+   * A workflow task's workflow facts, read by the caller
+   * (`readWorkflowPromptFacts`). Absent or null for an ordinary task, which
+   * resolves `{{workflow_xml}}` empty.
+   */
+  workflow?: WorkflowXmlInput | null;
 }
 
 type TaskTemplateResolver = (ctx: TaskTemplateContext) => string;
@@ -84,6 +90,9 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // through shell delivery. The legacy {{description}} prose var stays
   // sanitized so user-customized single-line templates don't break.
   task_xml: ({ task }) => buildTaskXml({ title: sanitizeForPty(task.title), description: task.description }),
+  // A leading newline so it sits on its own line after `{{task_xml}}` in the
+  // default prompt; empty (and dropped) for a task outside a workflow.
+  workflow_xml: ({ workflow }) => (workflow ? `\n${buildWorkflowXml(workflow)}` : ''),
   title: ({ task }) => sanitizeForPty(task.title),
   description: ({ task }) => {
     const clean = sanitizeForPty(task.description);

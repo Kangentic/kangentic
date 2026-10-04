@@ -67,6 +67,58 @@ export function buildTaskXml(input: TaskXmlInput): string {
   return lines.join('\n');
 }
 
+/** What a workflow task's agent is told about its workflow (`{{workflow_xml}}`). */
+export interface WorkflowXmlInput {
+  title: string;
+  /** This task's route: the columns it visits, in order, ending with the board's Done column. */
+  route: string[];
+  /** What this task waited for, each already in Done when it starts. */
+  waitsFor: Array<{ number: number; title: string; column: string; branch: string | null; prUrl: string | null }>;
+  /** What waits for this task, so the agent keeps what they depend on stable. */
+  blocks: Array<{ number: number; title: string; column: string }>;
+}
+
+/**
+ * The `<workflow>` block a workflow task's agent gets after its `<task>`.
+ *
+ * The facts (its route, its neighbours) are data and escaped. The mechanics are
+ * instructions, and they are why the block exists: a workflow task runs with
+ * nobody watching, and the END of its turn is what the Automation agent judges.
+ * A turn that ends on a progress note reads as "not done" and the task waits
+ * at Needs you, so the agent is told to end a turn only with the column's work
+ * done or with a question, and to put progress notes beside its next tool call.
+ */
+export function buildWorkflowXml(input: WorkflowXmlInput): string {
+  const lines: string[] = ['<workflow>'];
+  lines.push(`  <name>${escapeXml(input.title)}</name>`);
+  if (input.route.length > 0) lines.push(`  <route>${escapeXml(input.route.join(', '))}</route>`);
+  if (input.waitsFor.length > 0) {
+    lines.push('  <built_on>');
+    for (const blocker of input.waitsFor) {
+      const extras = [blocker.branch ? `branch ${blocker.branch}` : null, blocker.prUrl ? `PR ${blocker.prUrl}` : null].filter(Boolean);
+      lines.push(`    <task number="${blocker.number}" column="${escapeXml(blocker.column)}">${escapeXml(blocker.title)}${extras.length > 0 ? ` (${escapeXml(extras.join(', '))})` : ''}</task>`);
+    }
+    lines.push('  </built_on>');
+  }
+  if (input.blocks.length > 0) {
+    lines.push('  <waiting_on_this>');
+    for (const dependent of input.blocks) {
+      lines.push(`    <task number="${dependent.number}" column="${escapeXml(dependent.column)}">${escapeXml(dependent.title)}</task>`);
+    }
+    lines.push('  </waiting_on_this>');
+  }
+  lines.push('  <how_this_runs>');
+  lines.push('This task is one step of a workflow that runs without anyone watching. When your turn ends, an agent reads your final message to judge whether this column\'s work is done; if it is, the task moves on to the next column of its route by itself.');
+  lines.push('- End your turn only when this column\'s work is done (say what you did in your final message), or when you need the user (ask your question in it). A turn that ends on a progress note stops the workflow until someone notices.');
+  lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
+  lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
+  lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
+  lines.push('- Start anything meant to keep running (a dev server, a watcher) with --kangentic-no-activity-hold in its command, or the task looks busy forever. A trailing shell comment is enough.');
+  lines.push('  </how_this_runs>');
+  lines.push('</workflow>');
+  return lines.join('\n');
+}
+
 export interface HandoffXmlInput {
   sourceDisplayName: string;
   sessionFilePath: string | null;

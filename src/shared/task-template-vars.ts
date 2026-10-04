@@ -18,8 +18,11 @@
  * declaration, so the engine's implicit default and the seed cannot drift. The
  * legacy-rewrite migration keeps its own frozen literal on purpose: a migration
  * must not retroactively rewrite old rows if this default ever changes.
+ *
+ * `{{workflow_xml}}` resolves empty for a task outside a workflow, and
+ * drop-and-collapse removes it, so an ordinary task's prompt is unchanged.
  */
-export const DEFAULT_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{attachments}}';
+export const DEFAULT_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{workflow_xml}}{{attachments}}';
 
 /**
  * The ONE definition of what a template variable looks like in text.
@@ -39,6 +42,7 @@ export const TEMPLATE_VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
 
 export const TASK_TEMPLATE_VAR_NAMES = [
   'task_xml',
+  'workflow_xml',
   'title',
   'description',
   'taskId',
@@ -101,8 +105,15 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'task_xml',
     chip: '{{task_xml}}',
-    description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{attachments}}.',
+    description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{workflow_xml}}{{attachments}}.',
     contexts: EVERYWHERE,
+  },
+  {
+    name: 'workflow_xml',
+    chip: '{{workflow_xml}}',
+    description: 'A workflow task\'s <workflow> block: its route, its neighbours, and how its turns are judged.',
+    contexts: EVERYWHERE,
+    availability: 'Empty for a task outside a workflow.',
   },
   {
     name: 'title',

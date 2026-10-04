@@ -1518,7 +1518,7 @@ Actions of type `spawn_agent` can define a `promptTemplate` with `{{placeholder}
 - `{{task_xml}}` is the preferred default: a `<task><title>...</title><description>...</description></task>` envelope (escaped).
 - `{{title}}` / `{{description}}` remain for backward compatibility with custom prose templates.
 
-Default template: `{{task_xml}}{{attachments}}`
+Default template: `{{task_xml}}{{workflow_xml}}{{attachments}}` (`{{workflow_xml}}` is empty, and dropped, for a task outside a workflow)
 
 The `<task>` envelope follows Anthropic + OpenAI guidance: wrap user-authored input in XML tags so the model has a clear data/instruction boundary. Non-XML-aware agents (Aider, Codex) treat the markup as harmless prose. Attachment `@-mention` paths stay outside the envelope so Claude Code / Gemini bare-token parsers reliably auto-inject them.
 

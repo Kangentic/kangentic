@@ -1,10 +1,17 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../../shared/task-template-vars';
 import { isRetiredActionType } from '../../../shared/automation-manifest';
 import type { AutomationConfig, AutomationTrigger, AutomationType, AutoCommandMode } from '../../../shared/types';
 import { migrateSpawnAgentConfig } from './spawn-agent-config-migration';
 import { writeTransaction } from '../transaction';
+
+/**
+ * The prompt the seeded "Start Planning Agent" action carried, frozen here: a
+ * migration compares old rows against what was seeded THEN, so it must not
+ * follow `DEFAULT_SPAWN_PROMPT_TEMPLATE` when that default grows (it gained
+ * `{{workflow_xml}}` in #732).
+ */
+const SEEDED_SPAWN_PROMPT_TEMPLATE = '{{task_xml}}{{attachments}}';
 
 /**
  * One-way migration from named actions plus transitions to per-column
@@ -224,7 +231,7 @@ function convertAction(action: LegacyActionRow): { type: AutomationType; config:
       // exact template, so keeping it would spawn the agent twice as loudly and
       // teach a new user that starting an agent is an automation, which it is
       // not. Any OTHER prompt is a real customization with no other home.
-      if (prompt === DEFAULT_SPAWN_PROMPT_TEMPLATE && migrated.nonInteractive !== true) return null;
+      if (prompt === SEEDED_SPAWN_PROMPT_TEMPLATE && migrated.nonInteractive !== true) return null;
       return {
         type: 'spawn_agent',
         config: { agent: migrated.agent, promptTemplate: migrated.promptTemplate, nonInteractive: migrated.nonInteractive },

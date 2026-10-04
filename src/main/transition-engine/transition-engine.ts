@@ -21,6 +21,7 @@ import type { AutomationRepository } from '../db/repositories/automation-reposit
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { interpolateTaskTemplate } from '../agent/shared/template-utils';
 import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
+import { readWorkflowPromptFacts } from '../workflows/workflow-prompt-facts';
 import { SessionManager } from '../pty/session-manager';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { resolveTaskTemplateVars } from '../agent/shared';
@@ -164,6 +165,8 @@ export class TransitionEngine {
       // A spawn prompt is not a move, so the four move keywords resolve empty
       // here and the picker does not offer them in this context.
       move: null,
+      // A workflow task's <workflow> block; null for every other task.
+      workflow: readWorkflowPromptFacts(task, this.getConfig().projectId),
     });
     await this.executeSpawnAgent({
       promptTemplate: skipPromptTemplate ? undefined : DEFAULT_SPAWN_PROMPT_TEMPLATE,
@@ -281,6 +284,7 @@ export class TransitionEngine {
         trigger,
       },
       agentReply: options.agentReply ?? null,
+      workflow: readWorkflowPromptFacts(task, config.projectId),
     });
   }
 
@@ -408,6 +412,7 @@ export class TransitionEngine {
       projectPath: engineConfig.projectPath,
       projectName: engineConfig.projectName ?? null,
       move: null,
+      workflow: readWorkflowPromptFacts(task, engineConfig.projectId),
     });
     await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }

@@ -111,7 +111,7 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 
 A move out of To Do is the only kind of move that sends the task itself to the agent: the title,
 description, and any attachment paths become the opening prompt (the seeded template
-`{{task_xml}}{{attachments}}`). A move between two active columns resumes the same
+`{{task_xml}}{{workflow_xml}}{{attachments}}`, where `{{workflow_xml}}` is empty outside a workflow). A move between two active columns resumes the same
 conversation - the description is not sent again, and the destination column's **Send message to
 agent** automation, if it has one, is the only new instruction the agent receives.
 Moving a task back to To Do kills its session, so moving it out again starts a fresh
