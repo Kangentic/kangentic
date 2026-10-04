@@ -11,6 +11,7 @@ import {
   type NativeCrashContext,
 } from './native-crash-event';
 import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
+import { redactEventHomeDirectory } from './redact-event-paths';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -249,8 +250,9 @@ export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
 }
 
 /**
- * The actual `beforeSend`. Tags a frame-capped stack, then runs the native
- * crash split. Neither ever drops an event.
+ * The actual `beforeSend`. Tags a frame-capped stack, runs the native crash
+ * split, then rewrites this machine's home directory to `~` in whatever event
+ * is left (`redactEventHomeDirectory`). None of them ever drops an event.
  *
  * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
  * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
@@ -262,7 +264,7 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
   } catch {
     // Tagging is diagnostic only; never let it cost us the event.
   }
-  return filterNativeCrashEvent(event, hint);
+  return redactEventHomeDirectory(filterNativeCrashEvent(event, hint));
 }
 
 /**
@@ -270,12 +272,17 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * next to initAnalytics() (the SDK wires its renderer IPC/protocol transport
  * during init).
  *
- * SCRUBBING is deliberately Sentry's job, not ours: the SDK's default
+ * SCRUBBING is mostly Sentry's job, not ours: the SDK's default
  * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
  * the app root (so the user's home directory never reaches Sentry through an
  * app stack frame), sendDefaultPii stays false, and Sentry's server-side data
- * scrubbing is on by default. Any further scrubbing rule belongs in the Sentry
- * UI (Advanced Data Scrubbing), not in a custom beforeSend here.
+ * scrubbing is on by default. Further rules belong in the Sentry UI (Advanced
+ * Data Scrubbing), with one exception here: `beforeSendEvent` rewrites this
+ * machine's home directory to `~` in every event string
+ * (src/main/analytics/redact-event-paths.ts). An exception message is free
+ * text, normalizePathsIntegration never touches it, and an OS username is often
+ * a real name. The native crash fields (module paths, crashpad annotations) are
+ * built on Sentry's servers from the dump, so they stay a Sentry-side rule.
  *
  * BREADCRUMBS are an exception to that stance, filtered on the machine by
  * `beforeBreadcrumb` (src/shared/sentry-breadcrumbs.ts). normalizePathsIntegration never touches
@@ -287,7 +294,8 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * an issue is a product judgement about our own code, not a data-privacy rule.
  * See the annotated entries below.
  *
- * NATIVE CRASH EVENTS are the one exception to the no-beforeSend stance above.
+ * NATIVE CRASH EVENTS are an exception to the no-beforeSend stance above, next to the
+ * home-directory rewrite.
  * `ignoreErrors` is the `eventFiltersIntegration`, which matches only an event's
  * message and its exception type and value. A minidump event has none of those,
  * so the matcher sees an empty candidate list and the filter is a no-op on it.
@@ -301,8 +309,10 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * becoming `~`: the dump is another program's memory, and no Sentry-side rule
  * can scrub a file it has already received.
  *
- * `beforeSend` does one other thing: beforeSendEvent also TAGS a frame-capped
- * stack (tagTruncatedStack, above). That is annotation on an event we keep.
+ * `beforeSend` also does two other things. beforeSendEvent TAGS a frame-capped
+ * stack (tagTruncatedStack, above), which is annotation on an event we keep. And
+ * it rewrites this machine's home directory in the event that is left, last, so
+ * a foreign-crash rewrite is covered too.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -329,9 +339,10 @@ export function initErrorReporting(): void {
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
         ),
-      // Tags a frame-capped stack, then splits native crash events into ours
-      // and foreign ones; see the NATIVE CRASH EVENTS note above for why that
-      // one class cannot go in ignoreErrors below.
+      // Tags a frame-capped stack, splits native crash events into ours and
+      // foreign ones, then rewrites the home directory in what is left; see the
+      // NATIVE CRASH EVENTS note above for why that one class cannot go in
+      // ignoreErrors below.
       beforeSend: beforeSendEvent,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data

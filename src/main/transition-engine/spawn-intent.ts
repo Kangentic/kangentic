@@ -17,6 +17,7 @@
 import { interpolateTaskTemplate } from '../agent/shared';
 import type { SessionRecord } from '../../shared/types';
 import type { SessionRepository } from '../db/repositories/session-repository';
+import { recordedPtyGrid } from '../db/recorded-pty-grid';
 
 export interface SpawnIntent {
   mode: 'resume' | 'fresh';
@@ -31,6 +32,12 @@ export interface SpawnIntent {
    * the transcript (see `resume-cwd-migration.ts`).
    */
   resumeFromCwd: string | null;
+  /**
+   * The PTY grid recorded on the record this spawn retires (`retireRecordId`),
+   * when it has one: what a resume after a desktop restart starts at
+   * (SpawnSessionInput.restoredGrid). Absent when nothing is retired.
+   */
+  restoredGrid?: { cols: number; rows: number };
 }
 
 export interface SpawnIntentOptions {
@@ -97,6 +104,9 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
   // record exists, but still retires that prior record so it does not linger or
   // get resumed later.
   const canResume = !forceFresh && isResumeEligible(match);
+  // Rides along with the retired record, on a resume and on a forced-fresh
+  // entry alike: either way the new session replaces that one.
+  const matchGrid = recordedPtyGrid(match);
 
   if (canResume) {
     return {
@@ -105,6 +115,7 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
       prompt: resumePrompt,
       retireRecordId: match!.id,
       resumeFromCwd: match!.cwd ?? null,
+      ...(matchGrid ? { restoredGrid: matchGrid } : {}),
     };
   }
 
@@ -125,5 +136,6 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
     // it does not linger or get resumed later. (retireRecord no-ops on records
     // not in a retireable state, so passing a non-eligible match.id is safe.)
     retireRecordId: forceFresh ? (match?.id ?? null) : null,
+    ...(forceFresh && matchGrid ? { restoredGrid: matchGrid } : {}),
   };
 }

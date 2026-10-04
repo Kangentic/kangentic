@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const mocks = vi.hoisted(() => {
@@ -618,6 +619,82 @@ describe('error reporting runtime behavior (module-state gated)', () => {
 
       expect(tags?.stack_truncated).toBe('true');
     });
+
+    it('rewrites this machine\'s home directory through the REAL Sentry.init() wiring, not only via a direct import of beforeSendEvent', async () => {
+      // The direct-import cases at the end of this file stay green if
+      // initErrorReporting() were pointed at a hand-rolled chain that tags and
+      // splits but forgets the redaction. Only the function Sentry.init actually
+      // received can catch that. The path comes from the real os.homedir(), which
+      // is exactly what the rewrite matches, so no personal path is hardcoded.
+      const beforeSend = await initAndGetBeforeSend();
+      const homePath = path.join(os.homedir(), 'project', 'file.js');
+
+      const result = beforeSend(
+        {
+          exception: { values: [{ type: 'Error', value: `Illegal value in ${homePath}` }] },
+          tags: { source: 'diff_viewer' },
+        },
+        {}
+      ) as ErrorEvent | null;
+
+      const exceptionValue = result?.exception?.values?.[0].value;
+      expect(exceptionValue).not.toContain(os.homedir());
+      expect(exceptionValue).toContain('~');
+      expect(result?.tags?.source).toBe('diff_viewer');
+    });
+
+    it('scrubs a home path in a field the foreign-crash rewrite KEEPS, and still removes the dump', async () => {
+      // toForeignCrashWarning keeps the tags (minus event.process and exit.reason)
+      // and the non-crashpad contexts. A home path in either survives the split
+      // and must be rewritten after it. Removing the dump stays the split's job:
+      // the redaction pass must not disturb the hint.
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(FFPROBE_MODULES);
+      const homePath = path.join(os.homedir(), 'project');
+
+      const result = beforeSend(
+        {
+          level: 'fatal',
+          platform: 'native',
+          release: 'Kangentic@0.39.0',
+          tags: { working_directory: homePath },
+          contexts: { app: { app_path: homePath } },
+        },
+        hint
+      ) as ErrorEvent | null;
+
+      expect(result).toMatchObject({
+        level: 'warning',
+        fingerprint: ['foreign-process-crash'],
+        tags: { module: 'ffprobe' },
+      });
+      expect(result?.tags?.working_directory).not.toContain(os.homedir());
+      expect(result?.tags?.working_directory).toContain('~');
+      expect((result?.contexts?.app as { app_path: string }).app_path).not.toContain(os.homedir());
+      expect(minidumpCount(hint)).toBe(0);
+    });
+
+    it('still returns the event when a value inside it throws on read, with the fields before it already scrubbed', async () => {
+      // A throwing beforeSend makes the SDK drop the event, so the redaction
+      // pass failing must surface as a half-scrubbed event, never as a lost one.
+      const beforeSend = await initAndGetBeforeSend();
+      const hostile = {};
+      Object.defineProperty(hostile, 'boom', {
+        enumerable: true,
+        get() {
+          throw new Error('getter exploded');
+        },
+      });
+      const event = { message: `failed in ${os.homedir()}`, extra: hostile };
+
+      let result: Record<string, unknown> | null = null;
+      expect(() => {
+        result = beforeSend(event, {});
+      }).not.toThrow();
+
+      expect(result).toBe(event);
+      expect(event.message).toBe('failed in ~');
+    });
   });
 });
 
@@ -776,5 +853,32 @@ describe('tagTruncatedStack', () => {
     const returned = beforeSendEvent(eventWithFrameCount(3), {});
     expect(returned).not.toBeNull();
     expect(returned?.tags?.stack_truncated).toBeUndefined();
+  });
+});
+
+/**
+ * An OS username is often a real name, and an exception message is free text that the SDK's path
+ * normalization never rewrites. DESKTOP-19's Monaco rethrow put about 48 home paths in the exception
+ * value. `beforeSendEvent` is the one hook every main and renderer event passes, so the rewrite
+ * lives there. The path is built from this machine's real home directory at run time, which is
+ * exactly what the rewrite matches, so the case holds on every platform without a hardcoded path.
+ */
+describe('beforeSendEvent: home directory in an event', () => {
+  it('rewrites this machine\'s home directory in the exception value and still returns the event', () => {
+    const homePath = path.join(os.homedir(), 'AppData', 'x.js');
+    const event: ErrorEvent = {
+      exception: { values: [{ type: 'Error', value: `Illegal value in ${homePath}` }] },
+      tags: { source: 'diff_viewer' },
+    };
+    const returned = beforeSendEvent(event, {});
+    expect(returned).not.toBeNull();
+    expect(returned?.exception?.values?.[0].value).not.toContain(os.homedir());
+    expect(returned?.exception?.values?.[0].value).toContain('~');
+    expect(returned?.tags?.source).toBe('diff_viewer');
+  });
+
+  it('rewrites after the native crash split, so a foreign-crash rewrite is scrubbed too', () => {
+    const event: ErrorEvent = { message: `crashed under ${os.homedir()}` };
+    expect(beforeSendEvent(event, {})?.message).toBe('crashed under ~');
   });
 });

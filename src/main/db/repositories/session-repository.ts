@@ -5,11 +5,12 @@ import { writeTransaction } from '../transaction';
 /**
  * Fields accepted by insert(). Caller must provide `id` (the PTY session ID)
  * to unify the DB record key with the SessionManager/TranscriptWriter key.
- * Excludes metric columns (set via updateMetrics) and the applied model/effort
- * (set via updateAppliedSettings, mirroring how metrics are maintained).
+ * Excludes metric columns (set via updateMetrics), the applied model/effort
+ * (set via updateAppliedSettings, mirroring how metrics are maintained), and
+ * the PTY grid (set via updatePtyGrid from the session manager's grid events).
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows'
 >;
 
 export interface SessionMetricsInput {
@@ -103,6 +104,8 @@ export class SessionRepository {
       files_changed: null,
       tool_breakdown: null,
       compaction_count: 0,
+      last_pty_cols: null,
+      last_pty_rows: null,
     };
   }
 
@@ -360,6 +363,17 @@ export class SessionRepository {
     if (sets.length === 0) return;
     params.push(id);
     this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  /**
+   * Record the PTY grid the session now has, keyed by record id (which is the
+   * PTY session id). Written from the session manager's grid events, so it
+   * matches no row for a spawn announced before its record is inserted, and for
+   * a Command Terminal session, which has no record; both are harmless no-ops.
+   */
+  updatePtyGrid(id: string, grid: { cols: number; rows: number }): void {
+    this.db.prepare('UPDATE sessions SET last_pty_cols = ?, last_pty_rows = ? WHERE id = ?')
+      .run(grid.cols, grid.rows, id);
   }
 
   /**

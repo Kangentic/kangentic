@@ -23,8 +23,13 @@ import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/pa
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
- * resize. A background (never-opened) session keeps this size for its whole
- * life; the terminal mount resizes to the real viewport when a card is opened.
+ * resize, when there is no better grid (a respawn starts at its predecessor's,
+ * see SpawnFlowContext.inheritedGrid, and a resume with no in-memory
+ * predecessor at its record's, see SpawnSessionInput.restoredGrid). A
+ * background (never-opened) session
+ * keeps this size until something shows it or a phone's resting-grid park
+ * reshapes it; the terminal mount resizes to the real viewport when a card is
+ * opened.
  * Exported so SessionManager.getDimensions can report the same grid for a
  * queued/suspended session with no PTY and no stashed resize.
  */
@@ -62,6 +67,32 @@ export interface SpawnFlowContext {
    * entry, or undefined if none. Lets the spawn use the real fitted size.
    */
   takePendingResize: (sessionId: string) => { cols: number; rows: number } | undefined;
+  /**
+   * Drop every grid kept for a row this spawn replaces under a different id
+   * (a stashed resize, the desktop restore target, a pending park), once
+   * `inheritedGrid` has read what it needs. Nothing reads them again: the
+   * successor has its own id. A context built without this keeps them.
+   */
+  forgetSessionGrid?: (sessionId: string) => void;
+  /**
+   * Drop a resize stashed under this spawn's own id after `takePendingResize`
+   * read it: one that reached a promotion's placeholder during the host round
+   * trip. A context built without this keeps it.
+   */
+  discardPendingResize?: (sessionId: string) => void;
+  /**
+   * The grid a successor spawned under a new id should start at, from the row
+   * it replaces (the scrollback carry-over source), or undefined for the
+   * default. The policy (which predecessors qualify, the strip-grid guard)
+   * lives with the caller. A context built without this never inherits.
+   */
+  inheritedGrid?: (predecessor: ManagedSession) => { cols: number; rows: number } | undefined;
+  /**
+   * Vet a grid read from the replaced session record (`input.restoredGrid`):
+   * the grid to spawn at, or undefined to fall through to the default. A
+   * context built without this never restores.
+   */
+  restoredGrid?: (grid: { cols: number; rows: number }) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
   /**
    * True once a teardown aimed at this session or its task (a kill, remove or
@@ -265,16 +296,22 @@ export async function performSpawn(
   });
 
   // Spawn at the real fitted dimensions if a resize arrived before the PTY
-  // existed (auto-resume / queued / suspended-resume race) - takePendingResize
-  // wins even when the caller also passed input.cols/rows, since it reflects a
-  // resize that happened AFTER the caller computed its own grid. Next,
+  // existed under THIS id (a queue promotion: a renderer fit, or the resting-grid
+  // park, stashed while the placeholder waited) - takePendingResize wins even
+  // when the caller also passed input.cols/rows, since it reflects a resize
+  // that happened AFTER the caller computed its own grid. Next,
   // input.cols/rows: a caller-known grid (e.g. a Command Terminal branch
-  // respawn reusing its still-mounted xterm's current size). Otherwise the
+  // respawn reusing its still-mounted xterm's current size). Next, the grid of
+  // the row this spawn replaces: every board respawn (a column move, a model
+  // switch, a resume) mints a new id, so the predecessor's last grid is the
+  // best guess at what the successor will be shown at - the surface that
+  // showed the old session, or the phone's resting grid. Otherwise the
   // default: a background session that is never opened keeps this size, and an
   // opened one is resized to its container on mount. Spawning at the fitted
   // size means that mount-time resize is a no-op, avoiding the stale-width
-  // repaint window entirely. takePendingResize is called unconditionally so
-  // its entry is always consumed, even when input.cols/rows also apply.
+  // repaint window and the boot-time geometry re-asserts entirely.
+  // takePendingResize is called unconditionally so its entry is always
+  // consumed, even when input.cols/rows also apply.
   const pendingResize = context.takePendingResize(id);
   // A caller-supplied grid is clamped here exactly the way SessionManager.resize
   // clamps before it stashes a pendingResize: node-pty throws on 0 or negative,
@@ -287,8 +324,18 @@ export async function performSpawn(
   const requestedRows = input.rows !== undefined && Number.isFinite(input.rows)
     ? Math.max(1, Math.floor(input.rows))
     : undefined;
-  const spawnCols = pendingResize?.cols ?? requestedCols ?? DEFAULT_PTY_COLS;
-  const spawnRows = pendingResize?.rows ?? requestedRows ?? DEFAULT_PTY_ROWS;
+  // A queue promotion's fallback carry-over source is its own placeholder,
+  // which has no grid of its own to hand on.
+  const inheritedGrid = carryoverSource && carryoverSource.id !== id
+    ? context.inheritedGrid?.(carryoverSource)
+    : undefined;
+  // Last before the default: the grid recorded on the session record this
+  // spawn replaces, for the resumes no in-memory row can speak for (after a
+  // desktop restart the registry is empty; after a pty host crash the lost row
+  // is exited, which inheritedGrid refuses).
+  const restoredGrid = input.restoredGrid ? context.restoredGrid?.(input.restoredGrid) : undefined;
+  const spawnCols = pendingResize?.cols ?? requestedCols ?? inheritedGrid?.cols ?? restoredGrid?.cols ?? DEFAULT_PTY_COLS;
+  const spawnRows = pendingResize?.rows ?? requestedRows ?? inheritedGrid?.rows ?? restoredGrid?.rows ?? DEFAULT_PTY_ROWS;
 
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
@@ -333,7 +380,10 @@ export async function performSpawn(
     context.registry.delete(sibling.id);
     context.telemetry.removeSession(sibling.id);
     context.sessionFiles.removeSession(sibling.id);
-    if (sibling.id !== id) context.host.post({ type: 'removeSession', sessionId: sibling.id });
+    if (sibling.id !== id) {
+      context.host.post({ type: 'removeSession', sessionId: sibling.id });
+      context.forgetSessionGrid?.(sibling.id);
+    }
   }
 
   if (!spawnOutcome.ok) {
@@ -372,14 +422,25 @@ export async function performSpawn(
     exitSequence: input.exitSequence ?? ['\x03'],
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
+    lastPtyGrid: { cols: spawnCols, rows: spawnRows },
   };
 
   context.registry.set(id, session);
+  // A queue promotion keeps its id, and its row stayed 'queued' through the
+  // host round trip, so a resize that reached it meanwhile (a renderer fit, or
+  // a phone's subscribe-time park) was stashed for a spawn that had already
+  // read its stash. Drop it. Left in place it would outlive this PTY and,
+  // after a later suspend, outrank the grid the PTY really had
+  // (successorGridFor). Neither intent is lost: the 'spawn' pty-resize below
+  // lets a mounted xterm re-assert its fit, and SessionManager reconsiders the
+  // park once this spawn resolves.
+  context.discardPendingResize?.(id);
 
   // The host seeded the ring at the ACTUAL spawn cols, so the first renderer
   // resize reports colsChanged truthfully: an unchanged width (PTY spawned at
-  // the fitted size) reports false and skips the repaint-settle, while the
-  // cold-launch 120-to-fitted change reports true and arms it. Main keeps the
+  // the fitted size) reports false and skips the repaint-settle, while a
+  // change from the spawn grid to the fitted one (a cold launch at the 120x30
+  // default, say) reports true and arms it. Main keeps the
   // same number for that report. See PtyBufferManager.onResize.
   context.setBufferCols(id, spawnCols);
   context.sessionFiles.register({
@@ -603,8 +664,10 @@ export async function performSpawn(
   context.emit('session-changed', id, toSession(session));
   // Announce the grid the PTY actually spawned at. A mobile-bridge
   // subscriber that snapshotted this session while it was still queued
-  // reported the pending/default dims; this closes that gap the same way
-  // a live resize does (read-stream forwards it as a terminal-resize event).
+  // reported the pending/default dims (its subscribe parked the placeholder,
+  // so normally the stashed resting grid this spawn just used); this closes
+  // any gap the same way a live resize does (read-stream forwards it as a
+  // terminal-resize event).
   // The 'spawn' origin lets a mounted xterm treat a respawn under it like any
   // desktop reshape: re-assertable if the spawn grid disagrees with its fit.
   context.emit('pty-resize', id, spawnCols, spawnRows, 'spawn');

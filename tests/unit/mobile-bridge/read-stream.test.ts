@@ -634,6 +634,23 @@ describe('handleReadStream', () => {
     }
   });
 
+  // A phone that subscribed while the session was queued keeps its
+  // subscription into the promotion (same id), and the PTY may spawn straight
+  // at the stashed resting grid with no resize after it. The spawn's own grid
+  // announcement is then the only grid event, so it must reach the phone.
+  it('forwards the spawn-origin grid announcement as a terminal-resize', async () => {
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+    sessionManager.emit('pty-resize', 'sess-1', 210, 48, 'spawn');
+
+    expect(session.sendMessage).toHaveBeenCalledWith({
+      type: 'event',
+      event: { kind: 'terminal-resize', sessionId: 'sess-1', taskId: 'task-1', payload: { cols: 210, rows: 48 } },
+    });
+  });
+
   const userEntry = { kind: 'user', uuid: 'entry-user-1', ts: 100, text: 'hello agent' };
   const assistantEntry = { kind: 'assistant', uuid: 'entry-assistant-1', ts: 200, blocks: [{ type: 'text', text: 'hi there' }] };
 

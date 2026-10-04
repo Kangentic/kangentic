@@ -279,8 +279,14 @@ export class SessionManager extends EventEmitter {
    * performSpawn consumes this so the PTY spawns at the real fitted size
    * instead of the 120x30 default, so no post-spawn corrective resize (and its
    * stale-geometry repaint window) is needed. Keyed by session id, independent of
-   * the registry so it survives the registry.delete during a respawn. Consumed
-   * at spawn (takePendingResize) or dropped on kill.
+   * the registry so it survives the registry.delete of a same-id spawn: a queue
+   * promotion, which is also where the resting-grid park stashes for a queued
+   * placeholder. A board respawn mints a NEW id, so it reads the replaced row's
+   * stash as that row's grid (successorGridFor) and then drops it
+   * (forgetSessionGrid). Otherwise consumed at spawn (takePendingResize), with
+   * anything a promotion's placeholder stashed during the host round trip
+   * dropped once the new row is registered, or dropped on kill. A phone's
+   * grid is never stashed.
    */
   private pendingResizes = new Map<string, { cols: number; rows: number }>();
   /**
@@ -1002,22 +1008,37 @@ export class SessionManager extends EventEmitter {
 
   private parkRestingGrid(
     sessionId: string,
-    options: { requireStreamSubscriber: boolean; overrideHoldBelowFloor?: boolean },
+    options: { requireStreamSubscriber: boolean; forSubscribingPhone?: boolean },
   ): void {
     // Re-check everything at fire time: a session can be shown again, gone,
     // or handed to a phone during the wait.
     const session = this.registry.get(sessionId);
-    if (!session?.pty) return;
+    if (!session) return;
+    // A queued placeholder has no PTY yet, but its promotion keeps this id and
+    // spawns at the grid stashed for it (takePendingResize), so the park below
+    // stashes the resting grid and the PTY is born there, with no reflow
+    // mid-boot. Every other row without a running PTY is left alone: a
+    // suspended or exited row's successor spawns under a NEW id, so a stash
+    // there would never be read.
+    const awaitingPromotion = session.status === 'queued' && !session.pty;
+    if (!awaitingPromotion && (!session.pty || session.status !== 'running')) return;
     // A desktop surface holding the grid normally blocks the park outright.
-    // The subscribe-time caller overrides that for a grid below the phone
-    // floor: the only surface that holds a sub-floor grid is the bottom
-    // panel's strip, and a phone subscribing to it would otherwise be stuck
-    // in a sliver view it cannot escape from away from the desk. The panel
-    // then renders the resting grid clipped - the same state it is in
-    // whenever a task detail owns the grid.
+    // The subscribe-time caller overrides two holds that would otherwise
+    // strand the phone:
+    // - A grid below the phone floor. The only surface that holds one is the
+    //   bottom panel's strip, and a phone subscribing to it would be stuck in
+    //   a sliver view it cannot escape from away from the desk. The panel then
+    //   renders the resting grid clipped - the same state it is in whenever a
+    //   task detail owns the grid.
+    // - A focus claim with no xterm mounted anywhere (a minimized pop-out
+    //   monitor, a detail window whose Changes view unmounted its terminal).
+    //   It holds no grid, so nothing can disagree with the reshape, and the
+    //   surface fits the PTY to itself when its terminal does mount.
     if (this.isSessionHeld(sessionId)) {
-      const belowFloor = session.pty.rows < MOBILE_USABLE_MIN_ROWS;
-      if (!(options.overrideHoldBelowFloor === true && belowFloor)) return;
+      if (options.forSubscribingPhone !== true) return;
+      const belowFloor = session.pty !== null && session.pty.rows < MOBILE_USABLE_MIN_ROWS;
+      const holdsNoGrid = !this.mountedSessionIds.has(sessionId);
+      if (!belowFloor && !holdsNoGrid) return;
     }
     // No probe means no bridge attached, which means no paired phone exists:
     // the park never fires and an unpaired desktop behaves exactly as it did
@@ -1030,7 +1051,8 @@ export class SessionManager extends EventEmitter {
     // PTY out from under the still-holding phone.
     if (probe.isSizeHeld(sessionId)) return;
     if (options.requireStreamSubscriber && !probe.hasStreamSubscriber(sessionId)) return;
-    if (session.pty.cols === RESTING_GRID_COLS && session.pty.rows === RESTING_GRID_ROWS) return;
+    if (session.pty && session.pty.cols === RESTING_GRID_COLS && session.pty.rows === RESTING_GRID_ROWS) return;
+    // For a queued placeholder this stashes rather than reshapes (see resize).
     this.resize(sessionId, RESTING_GRID_COLS, RESTING_GRID_ROWS, 'park');
   }
 
@@ -1039,12 +1061,12 @@ export class SessionManager extends EventEmitter {
    * served RIGHT NOW: the subscription is not registered yet (the snapshot is
    * built first), so the caller vouches for the interest the probe cannot see
    * and skips the debounce so the one seed already carries the resting grid.
-   * Every other fire-time check still applies - held sessions and phone-held
-   * grids are never touched.
+   * Every other fire-time check still applies - a mounted terminal at a
+   * usable grid and a phone-held grid are never touched.
    */
   parkRestingGridForMobileSubscriber(sessionId: string): void {
     this.cancelRestingGridRestore(sessionId);
-    this.parkRestingGrid(sessionId, { requireStreamSubscriber: false, overrideHoldBelowFloor: true });
+    this.parkRestingGrid(sessionId, { requireStreamSubscriber: false, forSubscribingPhone: true });
   }
 
   /**
@@ -1313,7 +1335,14 @@ export class SessionManager extends EventEmitter {
       markSettled();
     };
     try {
-      return await this.performTrackedSpawn({ ...input, id });
+      const session = await this.performTrackedSpawn({ ...input, id });
+      // A new PTY is a grid nothing has laid out yet, and only a focus or
+      // mount change ever re-ran the park decision. Run it now, so a PTY that
+      // comes up unheld while a phone streams its id is parked after the usual
+      // debounce (a surface that opens the session inside it cancels the
+      // park, as on any switch).
+      if (session.status === 'running') this.reconsiderRestingGrid(id);
+      return session;
     } finally {
       // An abandoned spawn settles once the PTY the host started has exited;
       // until then it is still in flight for a teardown waiting on it.
@@ -1343,6 +1372,16 @@ export class SessionManager extends EventEmitter {
         this.pendingResizes.delete(sessionId);
         return dims;
       },
+      forgetSessionGrid: (sessionId) => {
+        this.pendingResizes.delete(sessionId);
+        this.lastDesktopDimensions.delete(sessionId);
+        this.cancelRestingGridRestore(sessionId);
+      },
+      discardPendingResize: (sessionId) => {
+        this.pendingResizes.delete(sessionId);
+      },
+      inheritedGrid: (predecessor) => this.successorGridFor(predecessor),
+      restoredGrid: (grid) => this.vetRestoredGrid(grid),
       emit: (event, ...args) => this.emit(event, ...args),
       isSpawnCancelled: (sessionId) => this.spawnsInFlight.get(sessionId)?.cancelled === true,
       onSpawnAbandoned: (sessionId, ptyExited) => {
@@ -1350,6 +1389,50 @@ export class SessionManager extends EventEmitter {
         if (inFlight) inFlight.abandonedPtyExit = ptyExited;
       },
     });
+  }
+
+  /**
+   * The grid a respawn's successor starts at, from the row it replaces. Every
+   * board respawn mints a new id, so without this the successor spawned at
+   * 120x30 and whatever showed the old session reshaped it mid-boot: the
+   * surface's mount fit, or a streaming phone's resting-grid park, each a
+   * resize plus two boot-time geometry re-asserts. Starting at the old grid
+   * makes those a no-op.
+   *
+   * Only a predecessor that was live or suspended hands its grid on. A killed
+   * one (`intentionalExit`, which only kill() sets, even on a row that was
+   * already suspended) or a crashed one is an end, not a respawn, and kill
+   * clears its stash for the same reason. That exclusion is in memory only: a
+   * later resume of the same conversation can still restore the grid from its
+   * session record (vetRestoredGrid), which is harmless and not worth chasing
+   * through the database. A resize stashed while it was suspended is newer than
+   * its last live grid, so it wins. A sub-floor grid is the bottom panel's strip: it
+   * carries over only while a surface still holds the predecessor (and will
+   * fit the successor to the same box), so a successor nothing shows never
+   * starts in that letterbox.
+   */
+  private successorGridFor(predecessor: ManagedSession): { cols: number; rows: number } | undefined {
+    if (predecessor.status !== 'running' && predecessor.status !== 'suspended') return undefined;
+    if (predecessor.intentionalExit === true) return undefined;
+    const grid = this.pendingResizes.get(predecessor.id) ?? predecessor.lastPtyGrid;
+    if (!grid) return undefined;
+    if (grid.rows < MOBILE_USABLE_MIN_ROWS && !this.isSessionHeld(predecessor.id)) return undefined;
+    return { cols: grid.cols, rows: grid.rows };
+  }
+
+  /**
+   * Vet a grid read back from a session record for a resume no in-memory row
+   * speaks for (see SpawnSessionInput.restoredGrid). It comes off disk, so it
+   * must be a real grid; and since the old session is gone, nothing can still
+   * be holding a strip-shaped one, so a sub-floor grid (the bottom panel's
+   * strip) is dropped rather than starting the agent in that letterbox.
+   */
+  private vetRestoredGrid(grid: { cols: number; rows: number }): { cols: number; rows: number } | undefined {
+    if (!Number.isFinite(grid.cols) || !Number.isFinite(grid.rows)) return undefined;
+    const cols = Math.floor(grid.cols);
+    const rows = Math.floor(grid.rows);
+    if (cols < 2 || rows < MOBILE_USABLE_MIN_ROWS) return undefined;
+    return { cols, rows };
   }
 
   /**
@@ -1479,7 +1562,13 @@ export class SessionManager extends EventEmitter {
         origin === 'desktop' &&
         clampedRows < MOBILE_USABLE_MIN_ROWS &&
         this.mobileTerminalProbe?.hasStreamSubscriber(sessionId) === true;
-      if (!subFloorForStreamingPhone) {
+      // A phone's grid is never stashed. The one row a phone can resize here
+      // is a suspended one still tearing down (a queued row has no PTY, so the
+      // interactive-terminal verb refuses it), and its successor starts at
+      // this stash (successorGridFor). An exit disarms the size guard without
+      // restoring, so nothing would give that grid back.
+      const stashed = origin !== 'mobile' && !subFloorForStreamingPhone;
+      if (stashed) {
         this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
       }
       if (origin === 'desktop') {
@@ -1490,7 +1579,7 @@ export class SessionManager extends EventEmitter {
         cols: clampedCols,
         rows: clampedRows,
         status: session.status,
-        stashed: !subFloorForStreamingPhone,
+        stashed,
       });
       return { colsChanged: false };
     }
@@ -1518,7 +1607,7 @@ export class SessionManager extends EventEmitter {
       // Only a REAL desktop resize may set the restore target. The park
       // resizes through this same method (it must - the buffer settle, the
       // activity suppression, and the pty-resize emit below all matter), and
-      // recording ITS 120x30 here is exactly the clobber that made a later
+      // recording ITS resting grid here is exactly the clobber that made a later
       // release-size "restore" a phone to the park instead of the desktop.
       this.lastDesktopDimensions.set(sessionId, { cols: clampedCols, rows: clampedRows });
     } else if (!this.lastDesktopDimensions.has(sessionId)) {
@@ -1607,6 +1696,11 @@ export class SessionManager extends EventEmitter {
       });
       return { colsChanged };
     }
+    // What a respawn's successor will start at (successorGridFor). Not a
+    // phone's grid: the size guard gives that back on release, but an exit
+    // disarms the guard without restoring, so a successor that inherited a
+    // phone-shaped grid would keep it with nothing to undo it.
+    if (origin !== 'mobile') session.lastPtyGrid = { cols: clampedCols, rows: clampedRows };
     // A resize applied while the agent is still booting can be lost: ConPTY
     // only delivers a resize to a connected client, and in the spawn window
     // the child is still starting behind the shell (and, under WSL, two

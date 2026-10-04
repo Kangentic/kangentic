@@ -21,6 +21,7 @@ import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
+import { persistPtyGrid } from './session-grid-persistence';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -448,6 +449,17 @@ export function registerSessionHandlers(context: IpcContext): void {
     (sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin = 'desktop') => {
       if (context.mainWindow.isDestroyed()) return;
       broadcast(context.mainWindow, IPC.SESSION_PTY_RESIZED, sessionId, cols, rows, origin);
+    },
+  );
+
+  // Persist every grid change to the session record, so a resume after a
+  // desktop restart or a pty host crash spawns at the grid the session last had
+  // (SpawnSessionInput.restoredGrid). Writing at each change, not at suspend,
+  // also covers an OS kill and keeps the synchronous quit path untouched.
+  context.sessionManager.on(
+    'pty-resize',
+    (sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin = 'desktop') => {
+      persistPtyGrid(context, sessionId, { cols, rows }, origin);
     },
   );
 

@@ -8,8 +8,11 @@
  * lifecycle plumbing.
  *
  * The guard disarms WITHOUT restoring when the session exits: a respawn
- * gets a new session id and spawns at desktop dims anyway, and resizing a
- * dead registry entry would just stash a stale pendingResize.
+ * gets a new session id, so nothing restored under the old one would reach
+ * it, and resizing a dead registry entry would just stash a stale
+ * pendingResize. The successor starts at the old session's last non-phone
+ * grid instead (SessionManager.successorGridFor ignores mobile-origin
+ * resizes), which is the grid this guard's restore would have targeted.
  */
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SubscriptionRegistry } from '../session/subscription-registry';

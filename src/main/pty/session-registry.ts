@@ -155,6 +155,16 @@ export interface ManagedSession {
    * set; dies with the registry entry.
    */
   altScreenEnteredAt?: number;
+  /**
+   * The grid this session's PTY last had: its spawn grid, then every resize
+   * actually applied to it except a phone's (a mobile-origin hold is the size
+   * guard's to give back, and an exit disarms the guard without restoring).
+   * Kept after `pty` is nulled (a suspend or kill)
+   * because a respawn spawns its successor under a NEW id, and the spawn flow
+   * starts that successor at this grid (SpawnFlowContext.inheritedGrid)
+   * instead of the 120x30 default. Dies with the registry entry.
+   */
+  lastPtyGrid?: { cols: number; rows: number };
 }
 
 /**

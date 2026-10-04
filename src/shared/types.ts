@@ -1165,6 +1165,15 @@ export interface SessionRecord {
   tool_breakdown: string | null;
   /** Context compactions during this record's CLI run (PreCompact hooks). Per-run; lifetime = SUM across the task's records. Defaults to 0. */
   compaction_count: number;
+  /**
+   * The PTY grid this session last had: its spawn grid, then every applied
+   * resize except a phone's. Read when the session is resumed after a desktop
+   * restart or a pty host crash, so the successor spawns at it rather than at
+   * the 120x30 default (see `SpawnSessionInput.restoredGrid`). NULL until
+   * recorded, and for rows from before the column existed.
+   */
+  last_pty_cols: number | null;
+  last_pty_rows: number | null;
 }
 
 /**
@@ -5347,11 +5356,23 @@ export interface SpawnSessionInput {
   /**
    * Caller-known PTY grid to spawn at, when available (e.g. a Command
    * Terminal branch respawn reusing the still-mounted xterm's current size).
-   * Falls back to `takePendingResize` (a resize that beat the spawn), then to
-   * DEFAULT_PTY_COLS/ROWS - see session-spawn-flow.ts.
+   * A stash under the same id (`takePendingResize`, a resize that beat the
+   * spawn) wins over it. Without either, the spawn takes the replaced row's
+   * grid, then `restoredGrid`, then DEFAULT_PTY_COLS/ROWS - see
+   * session-spawn-flow.ts.
    */
   cols?: number;
   rows?: number;
+  /**
+   * The grid recorded on the session record this spawn replaces
+   * (`SessionRecord.last_pty_cols/rows`). The lowest-priority source before the
+   * default: a same-id stash, `cols`/`rows`, and the in-memory predecessor's
+   * grid all win over it. It matters where no in-memory predecessor qualifies,
+   * which is a resume after a desktop restart (empty registry) or a pty host
+   * crash (the lost row is exited). A grid under the phone's row floor is
+   * ignored, so nothing starts in the bottom panel's strip.
+   */
+  restoredGrid?: { cols: number; rows: number };
 }
 
 export interface SpawnTransientSessionInput {

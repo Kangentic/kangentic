@@ -1,6 +1,6 @@
 /**
  * The renderer half of the "is this grid held" signal. Main parks an unheld
- * PTY back at the spawn grid (SessionManager.scheduleRestingGridRestore), and
+ * PTY at the resting grid (SessionManager.scheduleRestingGridRestore), and
  * this registry is what stops it doing that under a terminal that is merely
  * PARKED - unfocused, still mounted, still holding a grid xterm will never
  * re-send. Two behaviours matter: the published set is refcounted (two panes
