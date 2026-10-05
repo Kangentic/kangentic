@@ -85,11 +85,18 @@ alongside. Re-trace with `npm ls <package>` before assuming any row above still 
 
 ### The one override, and why it is allowed
 
-`overrides.monaco-editor.dompurify` lifts the DOMPurify that monaco-editor 0.57.0 pins exactly
-(3.4.15) to 3.4.16, the release that patches GHSA-p98j-92pf-mc4p. Unlike the warnings above, that
-is executed code: monaco is bundled into the renderer. An override is a pin, so
-`tests/unit/dompurify-override.test.ts` fails once monaco asks for a DOMPurify at or past it on its
-own, which is when the entry must go before it turns into a downgrade.
+`overrides.monaco-editor.dompurify` lifts the `dompurify` dependency monaco-editor 0.57.0 declares
+exactly (3.4.15) to 3.4.16, the release that patches GHSA-p98j-92pf-mc4p. It does NOT patch shipped
+code. monaco vendors its own DOMPurify at `esm/vs/base/browser/dompurify/dompurify.js` and
+`domSanitize.js` imports it by relative path, so the renderer bundle carries 3.4.15 whatever the
+override says. The npm copy it changes is dev-scoped and imported by nothing. What the entry buys is
+a clean lockfile for Dependabot's alerts, which scan it. The shipped exposure is low: the advisory
+needs `IN_PLACE` plus a node-removing hook, and monaco calls DOMPurify with `RETURN_DOM_FRAGMENT` or
+`RETURN_TRUSTED_TYPE` only (`domSanitize.js`).
+
+An override is a pin, so `tests/unit/dompurify-override.test.ts` fails once monaco asks for a
+DOMPurify at or past it on its own, and once monaco vendors a copy at or past it. Either is when the
+entry must go, before it turns into a downgrade or outlives its reason.
 
 ### `allowScripts` is live npm config. Do not delete it.
 
