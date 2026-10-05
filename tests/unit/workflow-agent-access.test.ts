@@ -13,15 +13,6 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
@@ -39,7 +30,7 @@ const { WorkflowRepository } = await import('../../src/main/db/repositories/work
 const service = await import('../../src/main/workflows/workflow-service');
 const agent = await import('../../src/main/workflows/workflow-agent');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 interface FakeSession {
@@ -48,7 +39,7 @@ interface FakeSession {
   status: string;
 }
 
-describeWithSqlite('the workflow agent\'s reads across projects', () => {
+describe('the workflow agent\'s reads across projects', () => {
   let root: string;
   let context: IpcContext;
   let sessions: FakeSession[];
@@ -67,7 +58,7 @@ describeWithSqlite('the workflow agent\'s reads across projects', () => {
     paths.gone = path.join(root, 'gone');
     harness.dbs.clear();
     for (const projectId of ['home', 'mobile', 'relay', 'gone']) {
-      const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+      const db = openTestDatabase();
       db.exec('PRAGMA foreign_keys = ON');
       runProjectMigrations(db);
       harness.dbs.set(projectId, db);

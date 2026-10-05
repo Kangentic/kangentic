@@ -11,15 +11,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
@@ -39,14 +30,14 @@ const { TaskLinkRepository } = await import('../../src/main/db/repositories/task
 const service = await import('../../src/main/workflows/workflow-service');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-describeWithSqlite('workflow operations', () => {
+describe('workflow operations', () => {
   let context: IpcContext;
 
   function database(projectId: string): Database.Database {
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set(projectId, db);

@@ -8,7 +8,7 @@
  * happens after the pane's open has answered; a workflow change push is what
  * brings the summary back to the pane, so the start-over sends one.
  *
- * Real, migrated SQLite (node:sqlite) behind a fake session manager, as in
+ * Real, migrated SQLite (better-sqlite3) behind a fake session manager, as in
  * `workflow-agent-spend.test.ts`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -17,15 +17,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
 
 const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
@@ -56,7 +47,7 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const agent = await import('../../src/main/workflows/workflow-agent');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 interface FakeSession {
@@ -157,7 +148,7 @@ class FakeSessionManager extends EventEmitter {
   }
 }
 
-describeWithSqlite('a workflow\'s own agent starting over', () => {
+describe('a workflow\'s own agent starting over', () => {
   let root: string;
   let manager: FakeSessionManager;
   let context: IpcContext;
@@ -169,7 +160,7 @@ describeWithSqlite('a workflow\'s own agent starting over', () => {
     const home = path.join(root, 'home');
     fs.mkdirSync(home);
     harness.dbs.clear();
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set('home', db);

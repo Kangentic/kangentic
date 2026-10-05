@@ -6,15 +6,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', isPackaged: false } }));
 vi.mock('../../src/main/db/database', () => ({
@@ -30,14 +21,14 @@ const { TaskRepository } = await import('../../src/main/db/repositories/task-rep
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { describeColumnsForPlanning } = await import('../../src/main/workflows/workflow-agent-prompt');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
-describeWithSqlite('{{columns}}', () => {
+describe('{{columns}}', () => {
   let db: Database.Database;
 
   beforeEach(() => {
     harness.dbs.clear();
-    db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set('home', db);

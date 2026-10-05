@@ -78,7 +78,7 @@ describe('retrieval worker methods', () => {
     const context: WorkerContext = {
       getDb: () => {
         opened = true;
-        return adaptDatabase(project);
+        return project;
       },
       closeDb: () => undefined,
       // The worker's loader sets this on a connection's open, not before.

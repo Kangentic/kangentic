@@ -10,19 +10,10 @@
  * because of it: a throwing remover is logged, the task is gone, and the
  * dev-server ports are still returned to the pool.
  *
- * Real, migrated SQLite (node:sqlite). The remover here is a spy; the one the
+ * Real, migrated SQLite (better-sqlite3). The remover here is a spy; the one the
  * engine installs is covered with the host in workflow-engine-host-start-backoff.test.ts.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
 
 const globalPorts = vi.hoisted(() => ({ releaseByTaskId: vi.fn() }));
 vi.mock('../../src/main/db/repositories/dev-port-repository', () => ({
@@ -36,14 +27,14 @@ const { WorkflowRepository } = await import('../../src/main/db/repositories/work
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { setHomeLinkRemover, removeLinksInWorkflowHome } = await import('../../src/main/db/repositories/workflow-home-links');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { Task } from '../../src/shared/types';
 
-describeWithSqlite('a deleted workflow task and its links in the workflow\'s home', () => {
+describe('a deleted workflow task and its links in the workflow\'s home', () => {
   const remover = vi.fn<(task: Task) => void>();
 
   function freshProject() {
-    const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const database = openTestDatabase();
     database.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(database);
     const todo = new SwimlaneRepository(database).list().find((lane) => lane.role === 'todo')!;

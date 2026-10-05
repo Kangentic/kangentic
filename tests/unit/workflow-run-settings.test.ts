@@ -12,15 +12,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), agents: [] as unknown[] }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
@@ -44,18 +35,18 @@ const { setWorkflowRuntimeContext } = await import('../../src/main/workflows/wor
 const { commandHandlers } = await import('../../src/main/agent/commands');
 const { DEFAULT_RUN_SETTINGS } = await import('../../src/shared/workflow-run-settings');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { WorkflowDraftTask } from '../../src/shared/types';
 
 const HEAVY_PROFILE = { id: 'profile-heavy', name: 'Heavy', columns: {} };
 
-describeWithSqlite('a planned task\'s run settings', () => {
+describe('a planned task\'s run settings', () => {
   let context: IpcContext;
 
   function database(projectId: string): Database.Database {
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set(projectId, db);

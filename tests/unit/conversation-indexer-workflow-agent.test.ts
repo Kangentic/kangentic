@@ -10,7 +10,7 @@
  * no search document is written (no memory_chunks, no memory_index_state row).
  *
  * Real pieces, as in conversation-indexer-resume.test.ts: a Claude-format JSONL
- * on disk, the real window parser, and the real ledger on migrated node:sqlite.
+ * on disk, the real window parser, and the real ledger on migrated better-sqlite3.
  * The workflow-agent project keeps foreign keys ON, as the app's connections do,
  * so a PTY session id that no `sessions` row carries is proven to be accepted.
  */
@@ -18,26 +18,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
 import { parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
-import { adaptDatabase } from './helpers/node-sqlite-database';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+import { openTestDatabase } from './helpers/test-database';
 
 const AGENT_SESSION_ID = 'workflow-conversation-1';
 const OWNER = { sessionId: 'pty-workflow-agent-1', agentSessionId: AGENT_SESSION_ID, sessionType: 'claude_agent', cwd: '/work' };
 const temporaryDirectories: string[] = [];
+const openDatabases: DatabaseType.Database[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  for (const database of openDatabases.splice(0)) database.close();
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
@@ -77,7 +71,7 @@ function writeTranscript(filePath: string, turns: number): void {
   fs.writeFileSync(filePath, turns === 0 ? '' : `${transcriptLines(turns).join('\n')}\n`);
 }
 
-type TestDatabase = InstanceType<SqliteModule['DatabaseSync']>;
+type TestDatabase = DatabaseType.Database;
 
 interface Harness {
   database: TestDatabase;
@@ -86,12 +80,12 @@ interface Harness {
 
 /** A migrated project and an indexer whose adapter is `adapter`. */
 function harness(adapter: unknown, options: { foreignKeys?: boolean } = {}): Harness {
-  const database = new sqlite!.DatabaseSync(':memory:');
-  const db = adaptDatabase(database);
-  runProjectMigrations(db);
+  const database = openTestDatabase();
+  openDatabases.push(database);
+  runProjectMigrations(database);
   if (options.foreignKeys === false) database.exec('PRAGMA foreign_keys = OFF');
   const indexer = new ConversationIndexer({
-    getDb: () => db,
+    getDb: () => database,
     getAdapter: () => adapter as never,
     windowBytes: 2000,
   });
@@ -131,7 +125,7 @@ function count(database: TestDatabase, table: string): number {
   return (database.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get() as { total: number }).total;
 }
 
-describeWithSqlite('ConversationIndexer.recordWorkflowAgentTurns', () => {
+describe('ConversationIndexer.recordWorkflowAgentTurns', () => {
   it('writes each turn to the ledger under the given session id and conversation, with no task', async () => {
     const transcriptPath = temporaryFile('conversation.jsonl');
     writeTranscript(transcriptPath, 12);

@@ -4,20 +4,10 @@
  * `updated_at`, a deleted task's links go with it, and a draft save refuses a
  * stale revision.
  *
- * node:sqlite rather than better-sqlite3, whose native binding is built for
- * Electron's ABI so a suite gated on it skips everywhere, CI included.
+ * Real better-sqlite3, the driver production uses.
  */
 import { describe, it, expect } from 'vitest';
 import type { TaskWorkflowMembership } from '../../src/shared/types';
-
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
@@ -31,11 +21,11 @@ const {
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { TaskMoveRepository } = await import('../../src/main/db/repositories/task-move-repository');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
-describeWithSqlite('workflow tables', () => {
+describe('workflow tables', () => {
   function freshDatabase() {
-    const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const database = openTestDatabase();
     database.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(database);
     const lanes = new SwimlaneRepository(database).list();

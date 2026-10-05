@@ -453,7 +453,9 @@ describe('resolveWorktreeBase - candidate order', () => {
       baseBranch: 'master',
       startPoint: 'origin/master',
     });
-  });
+    // A clone plus two live fetches: 1.5s alone, but 6.6s in a full unit run under
+    // contention, past the default 5s. The same 20s as the real-git tests above.
+  }, 20000);
 });
 
 describe('resolveWorktreeBase - listBranches truncation (MAX_LISTED_BRANCHES)', () => {

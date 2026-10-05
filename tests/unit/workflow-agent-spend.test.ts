@@ -29,15 +29,6 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>(), adapter: null as unknown, retrievalCall: vi.fn() }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
@@ -63,7 +54,7 @@ const { WorkflowRepository } = await import('../../src/main/db/repositories/work
 const agent = await import('../../src/main/workflows/workflow-agent');
 const { workflowAgentEffort, forgetWorkflowAgentEffort } = await import('../../src/main/workflows/workflow-agent-effort');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 interface FakeSession {
@@ -185,7 +176,7 @@ class FakeSessionManager extends EventEmitter {
   }
 }
 
-describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
+describe('a workflow\'s own agent: spend and conversation', () => {
   let root: string;
   let paths: Record<string, string>;
   let manager: FakeSessionManager;
@@ -199,7 +190,7 @@ describeWithSqlite('a workflow\'s own agent: spend and conversation', () => {
     for (const checkout of Object.values(paths)) fs.mkdirSync(checkout);
     harness.dbs.clear();
     for (const projectId of ['home', 'mobile']) {
-      const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+      const db = openTestDatabase();
       db.exec('PRAGMA foreign_keys = ON');
       runProjectMigrations(db);
       harness.dbs.set(projectId, db);

@@ -22,15 +22,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type Database from 'better-sqlite3';
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
-
 interface MoveInput {
   taskId: string;
   targetSwimlaneId: string;
@@ -75,19 +66,19 @@ const { registerWorkflowEngine, getWorkflowEngine } = await import('../../src/ma
 const { setWorkflowWake, wakeWorkflowEngine } = await import('../../src/main/workflows/workflow-wake');
 const { BranchCheckoutBlockedError } = await import('../../src/main/ipc/helpers/task-git');
 
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const DEBOUNCE_MS = 150;
 
-describeWithSqlite('the workflow engine host', () => {
+describe('the workflow engine host', () => {
   let context: IpcContext;
   let engine: ReturnType<typeof registerWorkflowEngine>;
   /** The simulated time of each start the mocked move was asked for. */
   let startTimes: number[];
 
   function database(projectId: string): Database.Database {
-    const db = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+    const db = openTestDatabase();
     db.exec('PRAGMA foreign_keys = ON');
     runProjectMigrations(db);
     harness.dbs.set(projectId, db);
