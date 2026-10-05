@@ -49,6 +49,26 @@ describe('redactEventHomeDirectory: where it looks', () => {
     expect((event.breadcrumbs ?? [])[0].data).toEqual({ cwd: '~' });
   });
 
+  // Electron 44.5's install-folder ACL check (electron/electron#54484) aborts with a FATAL that
+  // names the per-user install folder, which sits under the home directory, and the icacls
+  // command to fix it. A LOG(FATAL) reaches the dump as a Crashpad annotation, and the SDK copies
+  // those into contexts.electron on THIS machine, before beforeSend, so this pass covers it.
+  it('rewrites the install folder in a Crashpad LOG_FATAL annotation', () => {
+    const installFolder = 'C:\\Users\\dev\\AppData\\Local\\Programs\\Kangentic';
+    const event = {
+      contexts: {
+        electron: {
+          'crashpad.LOG_FATAL':
+            `The sandbox cannot read ${installFolder}\\icudtl.dat. Run: icacls "${installFolder}" /grant *S-1-15-2-1:(OI)(CI)(RX)`,
+        },
+      },
+    } as unknown as ErrorEvent;
+    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    const annotation = (event.contexts?.electron as Record<string, string>)['crashpad.LOG_FATAL'];
+    expect(annotation).not.toMatch(/Users[\\/]+dev/i);
+    expect(annotation).toContain('~\\AppData\\Local\\Programs\\Kangentic\\icudtl.dat');
+  });
+
   it('rewrites a POSIX home directory', () => {
     const event: ErrorEvent = { message: 'EACCES: open /home/dev/.config/kangentic/config.json' };
     redactEventHomeDirectory(event, POSIX_HOME, false);

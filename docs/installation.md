@@ -41,18 +41,18 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 1. Download the `.exe` installer.
 2. Run it -- the NSIS installer handles installation and creates a Start Menu shortcut.
-3. If Windows SmartScreen warns about an unrecognized app, click **More info** then **Run anyway**. This happens because the app is not yet code-signed.
+3. If Windows SmartScreen warns about an unrecognized app, click **More info** then **Run anyway**. Releases are code-signed, but SmartScreen can still warn about a new release until enough people have downloaded it.
 4. Auto-updates are built in. New versions install silently on restart.
 
 ### macOS
 
 1. Download the `.dmg` file.
 2. Open it and drag Kangentic to your Applications folder.
-3. On first launch, macOS Gatekeeper may block the app. See [Gatekeeper bypass](#macos-gatekeeper) below.
+3. Releases are signed and notarized, so macOS opens them normally. If Gatekeeper blocks the app anyway, see [Gatekeeper bypass](#macos-gatekeeper) below.
 
 #### macOS Gatekeeper
 
-Since the app is not yet notarized, macOS will block it on first launch:
+A build you made yourself is not notarized, and macOS blocks it on first launch:
 
 1. Open **System Settings > Privacy & Security**.
 2. Scroll to the bottom -- you'll see a message about Kangentic being blocked.
@@ -122,7 +122,20 @@ Pre-built arm64 Linux binaries are not available in v1. arm64 Linux users should
 
 ### Windows SmartScreen warning
 
-The app is not yet code-signed. Click **More info** then **Run anyway** to proceed. Once code signing certificates are configured, this warning will no longer appear.
+Releases are code-signed, but SmartScreen can still warn about a new release until enough people
+have downloaded it. Click **More info** then **Run anyway** to proceed.
+
+### Windows: Kangentic closes right after it starts
+
+Since 0.44, Kangentic checks at startup that its sandboxed processes can read the install folder.
+On a few machines the per-user install folder carries an access entry left by a packaged app but no
+read grant for packaged apps, and Kangentic exits before its window opens. The installer adds that
+grant on every install and update. If an install still closes at once, run this in PowerShell and
+start Kangentic again:
+
+```powershell
+icacls "$env:LOCALAPPDATA\Programs\Kangentic" /grant "*S-1-15-2-1:(OI)(CI)(RX)"
+```
 
 ### macOS "app is damaged" error
 
@@ -145,7 +158,7 @@ If `npm install` fails on native modules:
 
 1. Open **Settings > Apps > Installed apps**.
 2. Find "Kangentic" and click **Uninstall**.
-3. Or run from command line: `%LOCALAPPDATA%\Kangentic\Update.exe --uninstall`
+3. Or run the uninstaller directly: `"%LOCALAPPDATA%\Programs\Kangentic\Uninstall Kangentic.exe"`
 4. To remove all data: delete `%APPDATA%\kangentic\`
 
 ### macOS

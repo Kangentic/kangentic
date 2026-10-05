@@ -299,6 +299,12 @@ in one Sentry org, one triage surface.
   `contexts` (`gpu-url-chunk` carried a `file://` URL under the home directory), tags and
   `extra`. `$string` alone is not enough, because frame, image and tag fields need their own
   selectors, and `$image.*` is not a valid selector (images take a path).
+  - **Crashpad annotations also pass through the app.** For a dump it uploads, the SDK copies the
+    dump's Crashpad annotations into `contexts.electron` as `crashpad.<key>` on this machine,
+    before `beforeSend`, so `redact-event-paths.ts` rewrites the home directory in them as well.
+    A `LOG(FATAL)` message lands there as `crashpad.LOG_FATAL`, including Electron 44.5's
+    install-folder access check, whose message names the per-user install folder under the home
+    directory (`tests/unit/redact-event-paths.test.ts` pins that case).
   - **What the rule cannot reach.** Frame `package` (the app's own install path under the user's
     home directory, 133 occurrences in one real Windows event) survived every selector tried:
     `$frame.*`, `$frame.package`, the full path, `$stacktrace.**` and `$exception.**`. The
