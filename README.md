@@ -94,6 +94,7 @@ Bring your own backlog. Pull tasks in from the tools your team already uses, inc
 
 - [Node.js](https://nodejs.org/) 20+ (for npx)
 - [Git 2.26+](https://git-scm.com/)
+- On a Mac, macOS 13 or later
 - At least one supported agent CLI (see [Supported Agents](#supported-agents))
 
 ## Setup
