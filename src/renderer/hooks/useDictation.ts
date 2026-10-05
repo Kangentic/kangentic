@@ -135,6 +135,10 @@ export function useDictation(): void {
   // `stop` as the drain target so finalize waits for the tail to be ingested
   // before decoding (the audio frames race the stop invoke over IPC).
   const framesSentRef = useRef(0);
+  // Whether this utterance's committed text is an all-caps live model's own
+  // (`DictationStartResult.sentenceCaseFinal`). Only then is the final recased;
+  // a final another model cased itself ("GPU", "OK") is typed as written.
+  const sentenceCaseFinalRef = useRef(false);
   /** Terminal sessions with an auto-submit paste in flight in the main process.
    *
    *  A SET of session ids, not a boolean. What the paste has to be protected from
@@ -226,6 +230,7 @@ export function useDictation(): void {
     }
     activeRef.current = true;
     framesSentRef.current = 0;
+    sentenceCaseFinalRef.current = false;
     // Before the sink is built: `cleanupSubscriptions` releases the sink too, so
     // building first would hand the fresh one straight back.
     cleanupSubscriptions();
@@ -256,7 +261,7 @@ export function useDictation(): void {
       }
     });
     finalUnsubscribeRef.current = window.electronAPI.dictation.onFinal((_dictationSessionId, text) => {
-      useDictationStore.setState({ finalText: toPreviewCase(text) });
+      useDictationStore.setState({ finalText: sentenceCaseFinalRef.current ? toPreviewCase(text) : text });
     });
 
     // The dictation session id once `start` returns, so the catch can cancel a
@@ -290,6 +295,7 @@ export function useDictation(): void {
         language: optionsRef.current.language,
       });
       startedSessionId = result.dictationSessionId;
+      sentenceCaseFinalRef.current = result.sentenceCaseFinal === true;
       // Released during the start await: abandon the freshly-created session.
       if (!activeRef.current) {
         await window.electronAPI.dictation.cancel(result.dictationSessionId);
@@ -461,8 +467,10 @@ export function useDictation(): void {
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
       // With no refinement pass the committed text is the live model's: the
-      // Zipformer's is all caps, so it gets the preview's casing too.
-      finalText = toPreviewCase(await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current));
+      // Zipformer's is all caps, so main asks for the preview's casing. Every
+      // other final is typed as written.
+      const stoppedText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
+      finalText = sentenceCaseFinalRef.current ? toPreviewCase(stoppedText) : stoppedText;
     } catch (error) {
       // The dictation engine runs in its own process (DESKTOP-X), so a
       // native fault there no longer takes the whole app down with it - but

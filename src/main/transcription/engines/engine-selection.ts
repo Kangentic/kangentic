@@ -128,6 +128,18 @@ export function selectEngine(
 }
 
 /**
+ * True when the text a session commits is the live model's own and that model
+ * writes all caps (the Zipformer): no on-device refinement runs and the cloud
+ * does not write the final. The renderer sentence-cases only that text, so a
+ * final another model cased itself ("GPU", "OK") is typed as written.
+ */
+export function finalNeedsSentenceCase(selected: EngineSelection): boolean {
+  if (selected.isRemote || selected.finalModelId !== null) return false;
+  const live = selected.models.find((model) => model.id === selected.liveModelId);
+  return live?.writesAllCaps === true;
+}
+
+/**
  * A stable cache key for the resolved engine + model + remote selection,
  * shared by main (to name a warm request to the worker) and the worker
  * (to key its own warm-engine LRU) so the two sides can never compute it

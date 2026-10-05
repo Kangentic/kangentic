@@ -15,30 +15,46 @@
  */
 import { test, expect, type Browser, type Page } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
+import { emitModelProgress, waitForProgressListener } from './helpers/dictation-model-progress';
 import { buildDictationInfo } from '../../src/main/transcription/dictation-info';
+import { PRESET_MODEL_IDS } from '../../src/shared/dictation-presets';
+import type { DictationHardwareProfile, DictationModelOption } from '../../src/shared/types';
 
 test.describe.configure({ mode: 'parallel' });
 
-const NEMOTRON_STREAMING = {
-  id: 'nemotron-streaming-0.6b-en',
-  displayName: 'Nemotron streaming',
-  sizeMb: 631,
-  engineKind: 'online-transducer',
-  languages: ['en'],
-  accuracyRank: 5,
-  accuracyLabel: 'High accuracy',
-  license: 'NVIDIA-Open-Model-License',
+/** Any machine: the catalogue lists every registry model whatever the hardware,
+ *  so the profile only has to be well formed. */
+const CATALOGUE_HARDWARE: DictationHardwareProfile = {
+  cpuModel: 'Test CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: false, gpu: 'none', platform: 'linux', arch: 'x64',
 };
-const PARAKEET_V3 = {
-  id: 'parakeet-tdt-0.6b-v3',
-  displayName: 'Parakeet v3 (multilingual)',
-  sizeMb: 639,
-  engineKind: 'offline-nemo-transducer',
-  languages: ['en', 'pt', 'es', 'it', 'fr', 'de', 'nl', 'ru', 'pl', 'uk'],
-  accuracyRank: 6,
-  accuracyLabel: 'High accuracy',
-  license: 'CC-BY-4.0',
-};
+
+/** The catalogue main builds for the Dictation tab (`buildDictationInfo`). The
+ *  model fixtures below are read out of it, so their size, license, languages and
+ *  accuracy are the registry's own and cannot drift from it. */
+const REGISTRY_CATALOGUE = buildDictationInfo(CATALOGUE_HARDWARE, { mode: 'custom' }, []);
+
+function registryModel(modelId: string): DictationModelOption {
+  const model = [...REGISTRY_CATALOGUE.liveModels, ...REGISTRY_CATALOGUE.finalModels]
+    .find((option) => option.id === modelId);
+  if (!model) throw new Error(`${modelId} is not in the registry's model catalogue`);
+  return model;
+}
+
+const NEMOTRON_STREAMING = registryModel(PRESET_MODEL_IDS.nemotronEnglish);
+const PARAKEET_V3 = registryModel(PRESET_MODEL_IDS.parakeetV3);
+
+/** How a model's line reads in each state. The name, size and download share
+ *  come from the fixture, so a registry edit moves the fixture and these
+ *  together; what the specs pin is the format around them. */
+function readyText(model: DictationModelOption): string {
+  return `${model.displayName}, ${model.sizeMb} MB`;
+}
+function downloadingText(model: DictationModelOption, percent: number): string {
+  return `${model.displayName}, ${percent}%`;
+}
+function failedText(model: DictationModelOption): string {
+  return `Download failed, ${model.displayName}`;
+}
 
 /** The Best preset on a capable machine: Nemotron live, Parakeet v3 to refine. */
 const BEST_SELECTION = {
@@ -99,28 +115,22 @@ test('each line names its model: ready with its size, queued muted, downloading 
   const { browser, page } = await launchWithInfo({ ...BEST_SELECTION, installedModels: [NEMOTRON_STREAMING.id] });
   try {
     await openDictationTab(page);
-    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText('Nemotron streaming, 631 MB');
+    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText(readyText(NEMOTRON_STREAMING));
     // Not on disk and no download reported yet: queued, its size shown muted.
-    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText('Parakeet v3 (multilingual), 639 MB');
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText(readyText(PARAKEET_V3));
     await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveClass(/text-fg-muted/);
 
     // The always-mounted dictation hook subscribes once dictation is on.
-    await page.waitForFunction(() => {
-      const listeners = (window as unknown as { __mockDictationModelProgressListeners?: unknown[] })
-        .__mockDictationModelProgressListeners;
-      return (listeners?.length ?? 0) > 0;
-    }, undefined, { timeout: 5000 });
-    await page.evaluate((modelId) => {
-      (window as unknown as { __emitDictationModelProgress?: (event: unknown) => void }).__emitDictationModelProgress?.({
-        modelId,
-        status: 'downloading',
-        downloadedBytes: 0,
-        totalBytes: 0,
-        modelDownloadedBytes: 42,
-        modelTotalBytes: 100,
-      });
-    }, PARAKEET_V3.id);
-    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText('Parakeet v3 (multilingual), 42%');
+    await waitForProgressListener(page);
+    await emitModelProgress(page, {
+      modelId: PARAKEET_V3.id,
+      status: 'downloading',
+      downloadedBytes: 0,
+      totalBytes: 0,
+      modelDownloadedBytes: 42,
+      modelTotalBytes: 100,
+    });
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText(downloadingText(PARAKEET_V3, 42));
     await expect(page.getByTestId('dictation-refinement-model-line').getByRole('progressbar')).toHaveAttribute('aria-valuenow', '42');
     // The live line is already on disk and keeps its check.
     await expect(page.getByTestId('dictation-live-model-line').getByRole('progressbar')).toHaveCount(0);
@@ -135,19 +145,13 @@ test('a model that finished downloading reads ready while the next one downloads
   const { browser, page } = await launchWithInfo({ ...BEST_SELECTION, installedModels: [] });
   try {
     await openDictationTab(page);
-    await page.waitForFunction(() => {
-      const listeners = (window as unknown as { __mockDictationModelProgressListeners?: unknown[] })
-        .__mockDictationModelProgressListeners;
-      return (listeners?.length ?? 0) > 0;
-    }, undefined, { timeout: 5000 });
-    const emitDownloading = (modelId: string, share: number) => page.evaluate(({ id, downloaded }) => {
-      (window as unknown as { __emitDictationModelProgress?: (event: unknown) => void }).__emitDictationModelProgress?.({
-        modelId: id, status: 'downloading', downloadedBytes: 0, totalBytes: 0, modelDownloadedBytes: downloaded, modelTotalBytes: 100,
-      });
-    }, { id: modelId, downloaded: share });
+    await waitForProgressListener(page);
+    const emitDownloading = (modelId: string, share: number) => emitModelProgress(page, {
+      modelId, status: 'downloading', downloadedBytes: 0, totalBytes: 0, modelDownloadedBytes: share, modelTotalBytes: 100,
+    });
 
     await emitDownloading(NEMOTRON_STREAMING.id, 50);
-    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText('Nemotron streaming, 50%');
+    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText(downloadingText(NEMOTRON_STREAMING, 50));
 
     // Nemotron is now on disk, which the next getInfo reports; the download
     // moves on to Parakeet v3.
@@ -157,30 +161,13 @@ test('a model that finished downloading reads ready while the next one downloads
     }, { ...BEST_SELECTION, installedModels: [NEMOTRON_STREAMING.id] });
     await emitDownloading(PARAKEET_V3.id, 10);
 
-    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText('Parakeet v3 (multilingual), 10%');
-    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText('Nemotron streaming, 631 MB');
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText(downloadingText(PARAKEET_V3, 10));
+    await expect(page.getByTestId('dictation-live-model-line-value')).toHaveText(readyText(NEMOTRON_STREAMING));
     await expect(page.getByTestId('dictation-live-model-line-value').locator('svg')).toHaveCount(1);
   } finally {
     await browser.close();
   }
 });
-
-/** Wait for the always-mounted dictation hook to subscribe to model progress
- *  (it does once dictation is on), so an emitted event reaches the store. */
-async function waitForProgressListener(page: Page): Promise<void> {
-  await page.waitForFunction(() => {
-    const listeners = (window as unknown as { __mockDictationModelProgressListeners?: unknown[] })
-      .__mockDictationModelProgressListeners;
-    return (listeners?.length ?? 0) > 0;
-  }, undefined, { timeout: 5000 });
-}
-
-/** Push one model-progress event through the mock's bridge, as main does. */
-async function emitModelProgress(page: Page, event: Record<string, unknown>): Promise<void> {
-  await page.evaluate((payload) => {
-    (window as unknown as { __emitDictationModelProgress?: (event: unknown) => void }).__emitDictationModelProgress?.(payload);
-  }, event);
-}
 
 // A download error names the model that failed (`progress.modelId`). Best
 // downloads its two models one after the other, so the one still waiting its
@@ -207,13 +194,13 @@ test('a download error names one model: only that line reads Download failed, th
 
     // The refinement model failed: the warning word before its name, and the
     // reason in the line's info tip (a line holds one short value).
-    await expect(refinementValue).toHaveText('Download failed, Parakeet v3 (multilingual)');
+    await expect(refinementValue).toHaveText(failedText(PARAKEET_V3));
     await expect(refinementValue.locator('.text-warning')).toHaveText('Download failed');
     await expect(refinementLine.getByRole('button', { name: 'About Refinement model: No space left on device' }))
       .toHaveAttribute('title', 'No space left on device');
 
     // The live model did not: still queued, its name and size muted, no warning.
-    await expect(liveValue).toHaveText('Nemotron streaming, 631 MB');
+    await expect(liveValue).toHaveText(readyText(NEMOTRON_STREAMING));
     await expect(liveValue).toHaveClass(/text-fg-muted/);
     await expect(liveLine).not.toContainText('Download failed');
     await expect(liveLine.locator('svg.text-warning')).toHaveCount(0);
@@ -240,12 +227,12 @@ test('an error naming the live model leaves the refinement line queued', async (
       error: 'Network unreachable',
     });
 
-    await expect(liveValue).toHaveText('Download failed, Nemotron streaming');
+    await expect(liveValue).toHaveText(failedText(NEMOTRON_STREAMING));
     await expect(liveValue.locator('.text-warning')).toHaveText('Download failed');
     await expect(liveLine.getByRole('button', { name: 'About Live model: Network unreachable' }))
       .toHaveAttribute('title', 'Network unreachable');
 
-    await expect(refinementValue).toHaveText('Parakeet v3 (multilingual), 639 MB');
+    await expect(refinementValue).toHaveText(readyText(PARAKEET_V3));
     await expect(refinementValue).toHaveClass(/text-fg-muted/);
     await expect(refinementLine).not.toContainText('Download failed');
     await expect(refinementLine.locator('svg.text-warning')).toHaveCount(0);
@@ -305,18 +292,10 @@ test('Balanced then Custom opens Custom on the models Balanced was running', asy
   }
 });
 
-/** An English-only refinement model, so a Custom config can name a refinement
- *  model that does not cover German. */
-const PARAKEET_ENGLISH = {
-  id: 'parakeet-tdt-0.6b-en',
-  displayName: 'Parakeet (English)',
-  sizeMb: 640,
-  engineKind: 'offline-nemo-transducer',
-  languages: ['en'],
-  accuracyRank: 5,
-  accuracyLabel: 'High accuracy',
-  license: 'CC-BY-4.0',
-};
+/** An English-only refinement model (Parakeet v2), so a Custom config can name a
+ *  refinement model that does not cover German. Read from the registry like the
+ *  two above. */
+const PARAKEET_ENGLISH = registryModel('parakeet-tdt-0.6b-en');
 
 /** Two live models (one English only, one multilingual) and two refinement
  *  models (one English only, one multilingual), so every Custom case below can
@@ -527,16 +506,11 @@ test('changing the saved Mode warms the engine again with the new Mode', async (
  * case. Measured with the field's own font, against its width less its padding.
  */
 test('every model option fits inside its closed dropdown at the 900x600 window floor', async () => {
-  const catalogue = buildDictationInfo(
-    { cpuModel: 'Test CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: false, gpu: 'none', platform: 'linux', arch: 'x64' },
-    { mode: 'custom' },
-    [],
-  );
   const { browser, page } = await launchWithInfo({
-    liveModels: catalogue.liveModels,
-    finalModels: catalogue.finalModels,
-    selectedLiveModelId: catalogue.selectedLiveModelId,
-    selectedFinalModelId: catalogue.selectedFinalModelId,
+    liveModels: REGISTRY_CATALOGUE.liveModels,
+    finalModels: REGISTRY_CATALOGUE.finalModels,
+    selectedLiveModelId: REGISTRY_CATALOGUE.selectedLiveModelId,
+    selectedFinalModelId: REGISTRY_CATALOGUE.selectedFinalModelId,
   });
   try {
     await page.setViewportSize({ width: 900, height: 600 });

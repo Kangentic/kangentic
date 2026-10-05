@@ -2803,6 +2803,10 @@ export interface DictationStartResult {
   engineId: DictationEngineId;
   modelId: string | null;
   needsDownload: boolean;
+  /** True when the committed text is an all-caps live model's own (the
+   *  Zipformer with no refinement), so the renderer sentence-cases it. Any
+   *  other final is typed as written. */
+  sentenceCaseFinal: boolean;
 }
 
 /** The native engine shape a dictation model drives. The one definition: the

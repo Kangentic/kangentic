@@ -7,6 +7,7 @@ import {
   liveCapableModels,
   finalCapableModels,
   MODELS,
+  type ModelAccuracy,
   type ModelDef,
   type ModelEngineKind,
 } from '../../src/main/transcription/models/model-registry';
@@ -110,6 +111,50 @@ describe('every registered model', () => {
     for (const model of MODELS) {
       for (const code of modelLanguages(model)) expect(offered).toContain(code);
     }
+  });
+
+  // Each model sets its `accuracy.rank` and `accuracy.label` by hand, and nothing
+  // else ties them together: the dropdowns sort on the rank and show the label, so a
+  // rank moved without its label reads wrong ("Fair accuracy" above "Good accuracy").
+  // Several ranks can share a label (4 to 6 are all High), so this does not ask for
+  // one label per rank, only that a more accurate model never reads lower.
+  describe('accuracy label and rank', () => {
+    const LABEL_LEVEL: Record<ModelAccuracy['label'], number> = {
+      'Basic accuracy': 1,
+      'Fair accuracy': 2,
+      'Good accuracy': 3,
+      'High accuracy': 4,
+      'Best accuracy': 5,
+    };
+    const levelOf = (model: ModelDef): number | undefined =>
+      Object.hasOwn(LABEL_LEVEL, model.accuracy.label) ? LABEL_LEVEL[model.accuracy.label] : undefined;
+
+    it('uses only labels this check can order', () => {
+      // A label missing from LABEL_LEVEL would compare as undefined, which never
+      // counts as out of order, so the check below would pass without checking it.
+      const unordered = MODELS.filter((model) => levelOf(model) === undefined).map(
+        (model) => `${model.id}: "${model.accuracy.label}"`,
+      );
+      expect(unordered).toEqual([]);
+      // And the registry spans the scale, so there is something to compare.
+      expect(new Set(MODELS.map((model) => model.accuracy.label)).size).toBeGreaterThan(1);
+    });
+
+    it('never gives a model a lower-reading label than a less accurate model', () => {
+      const outOfOrder: string[] = [];
+      for (const lessAccurate of MODELS) {
+        for (const moreAccurate of MODELS) {
+          if (lessAccurate.accuracy.rank >= moreAccurate.accuracy.rank) continue;
+          if (levelOf(lessAccurate)! > levelOf(moreAccurate)!) {
+            outOfOrder.push(
+              `${moreAccurate.id} (rank ${moreAccurate.accuracy.rank}, "${moreAccurate.accuracy.label}") reads lower than ` +
+                `${lessAccurate.id} (rank ${lessAccurate.accuracy.rank}, "${lessAccurate.accuracy.label}")`,
+            );
+          }
+        }
+      }
+      expect(outOfOrder).toEqual([]);
+    });
   });
 });
 
