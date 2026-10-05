@@ -1,12 +1,18 @@
 /**
- * The `overrides` entry that lifts monaco-editor's DOMPurify must only ever lift it.
+ * What the `overrides.monaco-editor.dompurify` entry does, and what it does not.
  *
- * monaco-editor 0.57.0 pins `dompurify` at exactly 3.4.15, which GHSA-p98j-92pf-mc4p
- * (patched in 3.4.16) covers, and monaco ships inside the renderer bundle. So
- * package.json overrides monaco's copy to the patched release. An override is a
- * pin: once a later monaco asks for a newer DOMPurify on its own, this entry would
- * silently force the older one back. This fails at that point so the override is
- * removed instead of turning into a downgrade.
+ * monaco-editor 0.57.0 declares `dompurify` at exactly 3.4.15, which GHSA-p98j-92pf-mc4p (patched
+ * in 3.4.16) covers, so package.json overrides that dependency to 3.4.16. That changes only
+ * `node_modules/dompurify`, a dev-scoped copy nothing imports. The DOMPurify that ships is the copy
+ * monaco VENDORS at `esm/vs/base/browser/dompurify/dompurify.js` and imports by relative path from
+ * `domSanitize.js`, so the renderer bundle carries 3.4.15 whatever the override says. The override
+ * keeps the lockfile out of Dependabot's alerts; it is not a fix for shipped code. The exposure in
+ * the shipped copy is low: the advisory needs `IN_PLACE` plus a node-removing hook, and monaco calls
+ * DOMPurify with `RETURN_DOM_FRAGMENT` / `RETURN_TRUSTED_TYPE` only.
+ *
+ * An override is a pin: once a later monaco asks for a newer DOMPurify on its own, this entry would
+ * silently force the older one back. The tests fail at that point, and when monaco vendors a
+ * patched copy, so the entry is removed rather than outliving its reason.
  *
  * Tier: Unit.
  */
@@ -16,9 +22,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const VENDORED_DOMPURIFY = 'node_modules/monaco-editor/esm/vs/base/browser/dompurify/dompurify.js';
+const MONACO_SANITIZER = 'node_modules/monaco-editor/esm/vs/base/browser/domSanitize.js';
 
 function readJson<T>(relativePath: string): T {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8')) as T;
+}
+
+function readText(relativePath: string): string {
+  return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
 /** Compares two exact `major.minor.patch` versions; a range such as `^3.4.15` reads as its floor. */
@@ -52,10 +64,30 @@ describe('the monaco-editor DOMPurify override', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('is what actually installs', () => {
+  it('is what installs into node_modules/dompurify', () => {
     if (overridden === undefined) return;
     const installed = readJson<{ version: string }>('node_modules/dompurify/package.json').version;
     expect(installed).toBe(overridden);
+  });
+
+  // The claim this test once made was that the override fixes the shipped copy. It does not, and
+  // these two pin why, so the claim cannot quietly come back.
+  it('does not reach shipped code: monaco imports its own vendored copy by relative path', () => {
+    const sanitizer = readText(MONACO_SANITIZER);
+    expect(sanitizer).toMatch(/import\s+\w+\s+from\s+'\.\/dompurify\/dompurify\.js'/);
+    expect(sanitizer).not.toMatch(/from\s+'dompurify'/);
+  });
+
+  it('leaves the vendored copy below the override; when monaco vendors a patched copy, remove the entry', () => {
+    if (overridden === undefined) return;
+    const vendoredVersion = readText(VENDORED_DOMPURIFY).match(/DOMPurify\.version\s*=\s*'([\d.]+)'/)?.[1];
+    expect(vendoredVersion, `no DOMPurify.version found in ${VENDORED_DOMPURIFY}`).toBeTypeOf('string');
+    expect(
+      compareVersions(vendoredVersion as string, overridden),
+      `monaco-editor ${monacoManifest.version} now vendors DOMPurify ${vendoredVersion}, at or past the `
+      + `override's ${overridden}, so the advisory is fixed in shipped code. Remove `
+      + '"overrides.monaco-editor.dompurify" and its section in .claude/rules/dependency-block-parity.md.',
+    ).toBeLessThan(0);
   });
 
   it('compares versions numerically, not as text', () => {
