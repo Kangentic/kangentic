@@ -54,8 +54,14 @@ function indexNames(database: TestDatabase): string[] {
     .map((row) => row.name);
 }
 
-function planOf(database: TestDatabase, sql: string, params: Array<string | number>): string {
-  return (database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{ detail: string }>)
+/** better-sqlite3 13's `explain`, which @types/better-sqlite3 7.6.13 does not declare yet. */
+type ExplainingDatabase = TestDatabase & { explain(source: string): Array<{ detail: string }> };
+
+/** The query plan, through better-sqlite3's own `explain`: placeholders stay unbound, and the
+ *  EXPLAIN statement is not recorded among the store's prepared SQL. */
+function planOf(database: TestDatabase, sql: string): string {
+  return (database as ExplainingDatabase)
+    .explain(`QUERY PLAN ${sql}`)
     .map((row) => row.detail)
     .join(' | ');
 }
@@ -220,7 +226,7 @@ describe('memory_chunks indexes', () => {
 
     const totalsSql = prepared.find((sql) => sql.includes('embeddedCount'));
     expect(totalsSql).toBeDefined();
-    expect(planOf(database, totalsSql!, ['conversation'])).toContain('COVERING INDEX idx_memory_chunks_doc_embedded');
+    expect(planOf(database, totalsSql!)).toContain('COVERING INDEX idx_memory_chunks_doc_embedded');
   });
 
   it('pages the graph\'s document metadata in index order, with no sort, and loses no document', () => {
@@ -244,7 +250,7 @@ describe('memory_chunks indexes', () => {
     expect(paged).toEqual(whole);
     const metadataSql = prepared.find((sql) => sql.includes('AS outcome'));
     expect(metadataSql).toBeDefined();
-    const plan = planOf(database, metadataSql!, ['', 1]);
+    const plan = planOf(database, metadataSql!);
     expect(plan).toContain('sqlite_autoindex_memory_chunks_1');
     expect(plan).not.toContain('TEMP B-TREE');
   });
@@ -256,7 +262,7 @@ describe('memory_chunks indexes', () => {
 
     const taskSql = prepared.find((sql) => sql.includes('WHERE task_id = ?'));
     expect(taskSql).toBeDefined();
-    const plan = planOf(database, taskSql!, ['task-1']);
+    const plan = planOf(database, taskSql!);
     expect(plan).toContain('idx_memory_chunks_task');
     expect(plan).not.toMatch(/SCAN memory_chunks\b(?! USING)/);
   });
@@ -270,7 +276,7 @@ describe('memory_chunks indexes', () => {
     const { database: after } = migrated();
 
     for (const database of [before, after]) {
-      const plan = planOf(database, CONVERSATION_VEC_COPY_IDS_SQL, [0, 16]);
+      const plan = planOf(database, CONVERSATION_VEC_COPY_IDS_SQL);
       expect(plan).toContain('INTEGER PRIMARY KEY (rowid>?)');
       expect(plan).not.toContain('TEMP B-TREE');
     }
@@ -283,7 +289,7 @@ describe('memory_chunks indexes', () => {
 
     const documentSql = prepared.find((sql) => sql.includes('WHERE corpus = ? AND doc_id = ? ORDER BY seq'));
     expect(documentSql).toBeDefined();
-    const plan = planOf(database, documentSql!, ['conversation', 'doc-1']);
+    const plan = planOf(database, documentSql!);
     expect(plan).toMatch(/SEARCH memory_chunks USING INDEX \S+ \(corpus=\? AND doc_id=\?\)/);
     expect(plan).not.toContain('TEMP B-TREE');
   });

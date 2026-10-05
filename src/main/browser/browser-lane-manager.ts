@@ -47,8 +47,8 @@ import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
  * visibility methods at all, so `show: false` never marks the WebContents
  * hidden and it keeps its own `ui::Compositor`.
  *
- * Measured on this build (Electron 41.1.1 / Chromium 146.0.7680.166) before
- * committing to it, because every one of these silently kills the design:
+ * Measured on Electron 41.1.1 (Chromium 146.0.7680.166), the build the design
+ * was committed on, because every one of these silently kills the design:
  *   - `isMinimized()` on a never-shown offscreen window is FALSE, so
  *     `withGuest`'s compositing precondition does not refuse every lane drive.
  *     (It resolves the lane window itself, since a lane guest has no
@@ -80,7 +80,8 @@ import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
  * CPU at 60fps for no one.
  *
  * 10 rather than a lower floor, and the difference is measured, not guessed.
- * Wheel-driven scroll takes this long to land on Electron 41.1.1:
+ * Wheel-driven scroll took this long to land on Electron 41.1.1 (not
+ * re-measured since):
  *
  *   unthrottled  100ms
  *   10fps        100ms   <- no penalty at all
