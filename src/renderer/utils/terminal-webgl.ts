@@ -88,7 +88,8 @@ interface AttachWebglOptions {
  * against the GPU process relaunch (which takes about a second).
  *
  * Chromium (content/browser/gpu/gpu_data_manager_impl_private.cc, read at
- * 146.0.7680.166, the Chromium inside Electron 41.1.1) records one block entry
+ * 146.0.7680.166 for Electron 41.1.1 and unchanged at 152.0.7977.130, the
+ * Chromium inside Electron 44.5.1) records one block entry
  * for the page's domain every time a live WebGL context is lost to a GPU
  * process crash or a driver reset, and answers `getContext('webgl2')` with null
  * while TWO or more entries are younger than `kBlockedDomainExpirationPeriod`

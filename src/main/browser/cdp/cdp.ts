@@ -300,8 +300,9 @@ export function attachDebugger(webContents: WebContents): boolean {
   // Enable the domains we use. Each `sendCommand` is fire-and-forget;
   // failures during enable are non-fatal and the corresponding endpoint
   // returns 5xx if its capability is missing. Console.* is technically
-  // deprecated in modern CDP in favor of Runtime.consoleAPICalled, but
-  // it still works on Chromium 120+ which is what current Electron ships.
+  // deprecated in modern CDP in favor of Runtime.consoleAPICalled, but the
+  // Chromium the pinned Electron ships still serves it, and a release that
+  // dropped it would only fail this one fire-and-forget enable.
   void webContents.debugger.sendCommand('Console.enable').catch(() => {});
   void webContents.debugger.sendCommand('DOM.enable').catch(() => {});
   void webContents.debugger.sendCommand('Runtime.enable').catch(() => {});
