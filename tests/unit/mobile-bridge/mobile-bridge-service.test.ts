@@ -33,39 +33,30 @@ import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 // floor auth.ts keeps.
 const mockSafeStorageState = vi.hoisted(() => ({ asyncEncryptionAvailable: true, syncEncryptionAvailable: true }));
 
-vi.mock('electron', () => ({
-  app: {
-    isReady: () => true,
-    whenReady: () => Promise.resolve(),
-  },
-  safeStorage: {
-    isEncryptionAvailable: () => mockSafeStorageState.syncEncryptionAvailable,
-    encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
-      throw new Error('safeStorage.decryptString: invalid ciphertext');
+vi.mock('electron', async () => {
+  const { createFakeSafeStorage } = await import('../helpers/fake-safe-storage');
+  return {
+    app: {
+      isReady: () => true,
+      whenReady: () => Promise.resolve(),
     },
-    isAsyncEncryptionAvailable: async () => mockSafeStorageState.asyncEncryptionAvailable,
-    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptStringAsync: async (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return { result: raw.slice('encrypted:'.length), shouldReEncrypt: false };
-      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
+    // Availability is read per call, so the tests below can flip it mid-suite.
+    safeStorage: createFakeSafeStorage({
+      isEncryptionAvailable: () => mockSafeStorageState.syncEncryptionAvailable,
+      isAsyncEncryptionAvailable: () => mockSafeStorageState.asyncEncryptionAvailable,
+    }),
+    // Phase 2's capability handlers reach real src/main/ipc/handlers and
+    // src/main/agent modules at import time (attachContext() wires them into
+    // the router), so their module-scope `import { ipcMain } from 'electron'`
+    // statements need this to exist even though nothing in this test suite
+    // ever calls ipcMain.handle/.on.
+    ipcMain: {
+      handle: vi.fn(),
+      on: vi.fn(),
+      removeHandler: vi.fn(),
     },
-    getSelectedStorageBackend: () => 'keychain',
-  },
-  // Phase 2's capability handlers reach real src/main/ipc/handlers and
-  // src/main/agent modules at import time (attachContext() wires them into
-  // the router), so their module-scope `import { ipcMain } from 'electron'`
-  // statements need this to exist even though nothing in this test suite
-  // ever calls ipcMain.handle/.on.
-  ipcMain: {
-    handle: vi.fn(),
-    on: vi.fn(),
-    removeHandler: vi.fn(),
-  },
-}));
+  };
+});
 
 // Reached transitively via handlers/mcp-tool.ts -> mcp-project-context.ts ->
 // task-move.ts, which imports the real analytics module (pulls in the

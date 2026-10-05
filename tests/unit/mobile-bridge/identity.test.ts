@@ -10,7 +10,8 @@
  * key, or safeStorage disabled entirely), rather than silently writing an
  * unprotected key to disk. Also pins the safeStorage migration: an identity
  * decryptSecret flags for a rewrite is saved again, but ONLY under genuine
- * encryption, the same bar creating one has to clear.
+ * encryption, the same bar creating one has to clear, and never over a
+ * clear or a different identity that lands while the rewrite is encrypting.
  *
  * Mirrors the mocking pattern from tests/unit/asana-credential-store.test.ts
  * and tests/unit/boards-auth.test.ts: the electron module is mocked so
@@ -35,6 +36,9 @@ const mockElectronState = {
   shouldReEncrypt: false,
   asyncDecryptThrows: false,
   storageBackend: 'keychain' as string,
+  // Runs inside encryptStringAsync, i.e. inside the await a rewrite spends encrypting, so a
+  // case can land a clear or a new save in exactly the window the rewrite's guard covers.
+  onEncryptStringAsync: null as (() => void) | null,
 };
 
 function parseMockCiphertext(buffer: Buffer): string | null {
@@ -58,7 +62,10 @@ vi.mock('electron', () => ({
       throw new Error('safeStorage.decryptString: invalid ciphertext');
     },
     isAsyncEncryptionAvailable: async () => mockElectronState.isAsyncEncryptionAvailable,
-    encryptStringAsync: async (plaintext: string) => Buffer.from(`${mockElectronState.asyncTag}:${plaintext}`, 'utf8'),
+    encryptStringAsync: async (plaintext: string) => {
+      mockElectronState.onEncryptStringAsync?.();
+      return Buffer.from(`${mockElectronState.asyncTag}:${plaintext}`, 'utf8');
+    },
     decryptStringAsync: async (buffer: Buffer) => {
       if (mockElectronState.asyncDecryptThrows) {
         throw new Error('safeStorage.decryptStringAsync: the key that encrypted this data is not available');
@@ -146,6 +153,7 @@ beforeEach(() => {
   mockElectronState.shouldReEncrypt = false;
   mockElectronState.asyncDecryptThrows = false;
   mockElectronState.storageBackend = 'keychain';
+  mockElectronState.onEncryptStringAsync = null;
   resetSecureStorageProbeForTests();
   // Pinned so a Linux CI runner does not take the Linux probe path in the
   // platform-agnostic cases; the Linux cases set it themselves.
@@ -251,6 +259,41 @@ describe('loadBridgeIdentity migration', () => {
     const identity = await loadBridgeIdentity();
 
     expect(identity).not.toBeNull();
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  // The rewrite awaits encryptSecret after the identity was read and decrypted. Unplugging the
+  // phone (clearBridgeIdentity) or pairing again can land in that window, and the identity in hand
+  // is then stale: writing it back would resurrect a key the user just removed or replaced. Each
+  // case lands the change inside the encrypt await. The load still returns what it read.
+  it('does not recreate the identity file when it is cleared while the rewrite encrypts', async () => {
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+    mockElectronState.shouldReEncrypt = true;
+    mockElectronState.onEncryptStringAsync = () => {
+      // clearBridgeIdentity has removed the file while the load awaits.
+      existsSyncSpy.mockReturnValue(false);
+    };
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a different identity saved while the rewrite encrypts', async () => {
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+    mockElectronState.shouldReEncrypt = true;
+    mockElectronState.onEncryptStringAsync = () => {
+      // A new identity was saved here, so the file holds a different ciphertext than the load read.
+      readFileSyncSpy.mockReturnValue(legacyEnvelopeFor({ ...VALID_STORED_IDENTITY, staticSecretKeyHex: '55'.repeat(32) }));
+    };
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(Buffer.from(identity!.staticKeyPair.secretKey).toString('hex')).toBe(VALID_STORED_IDENTITY.staticSecretKeyHex);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
   });
 });

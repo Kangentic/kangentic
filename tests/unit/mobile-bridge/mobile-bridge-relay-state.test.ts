@@ -30,22 +30,14 @@ import { EventEmitter } from 'node:events';
 import type { RosterDeviceEntry, TransportState } from '@kangentic/protocol';
 import type { MobileDeviceConnectionState } from '../../../src/shared/types';
 
-vi.mock('electron', () => ({
-  app: { isReady: () => true, whenReady: () => Promise.resolve() },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => buffer.toString('utf8').replace(/^encrypted:/, ''),
-    isAsyncEncryptionAvailable: async () => true,
-    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptStringAsync: async (buffer: Buffer) => ({
-      result: buffer.toString('utf8').replace(/^encrypted:/, ''),
-      shouldReEncrypt: false,
-    }),
-    getSelectedStorageBackend: () => 'keychain',
-  },
-  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
-}));
+vi.mock('electron', async () => {
+  const { createFakeSafeStorage } = await import('../helpers/fake-safe-storage');
+  return {
+    app: { isReady: () => true, whenReady: () => Promise.resolve() },
+    safeStorage: createFakeSafeStorage(),
+    ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
+  };
+});
 
 vi.mock('../../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),

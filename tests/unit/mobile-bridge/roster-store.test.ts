@@ -28,29 +28,16 @@ import {
 } from '@kangentic/protocol';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 
-vi.mock('electron', () => ({
-  app: {
-    isReady: () => true,
-    whenReady: () => Promise.resolve(),
-  },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
-      throw new Error('safeStorage.decryptString: invalid ciphertext');
+vi.mock('electron', async () => {
+  const { createFakeSafeStorage } = await import('../helpers/fake-safe-storage');
+  return {
+    app: {
+      isReady: () => true,
+      whenReady: () => Promise.resolve(),
     },
-    isAsyncEncryptionAvailable: async () => true,
-    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptStringAsync: async (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return { result: raw.slice('encrypted:'.length), shouldReEncrypt: false };
-      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
-    },
-    getSelectedStorageBackend: () => 'keychain',
-  },
-}));
+    safeStorage: createFakeSafeStorage(),
+  };
+});
 
 const existsSyncSpy = vi.hoisted(() => vi.fn<(filePath: string) => boolean>());
 const readFileSyncSpy = vi.hoisted(() => vi.fn<(filePath: string, encoding: BufferEncoding) => string>());
