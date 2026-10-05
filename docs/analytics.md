@@ -79,8 +79,11 @@ JS never hears about: Chromium calls `RecordProcessCrash`, and the `LOG(FATAL)` 
 delegate rather than from the observer notification Electron emits `child-process-gone` from. Live
 reporting is impossible here for the same reason - the browser process is gone before an async
 Sentry POST queued at that moment could transmit. A GPU fallback that the tracker records from
-`gpu-info-update` ticks no Aptabase event, because it is not a death. So a launch-failure ladder,
-which produces no `child-process-gone` at all, leaves this count at zero.
+`gpu-info-update` ticks no Aptabase event, because it is not a death. Through Electron 41 a
+launch-failure ladder produced no `child-process-gone` at all and left this count at zero. On
+Electron 44 the launch failures Chromium survives arrive as `child-process-gone` with reason
+`launch-failed`, count as fault deaths, and tick `first` and then `latched`. The launch failure
+that ends in the fatal still never reaches JS.
 
 The curated `feature` vocabulary is `ANALYTICS_FEATURES` in `src/main/analytics/usage.ts`:
 `command_terminal`, `worktree_session`, `board_profile`, `popout_window`, `browser_pane`,
@@ -502,7 +505,8 @@ in one Sentry org, one triage surface.
   `gpu-info-update`: once this run has been seen compositing on the GPU, the moment
   `gpu_compositing` leaves it, and each later status change, appends to a bounded `modeChanges`
   list (8 entries) and moves the record's `lastAt`. That is DESKTOP-W's only trace. Its deaths
-  were launch failures, which Electron never forwards to JS, and on Linux the running GPU
+  were launch failures, which Electron 41 never forwarded to JS (Electron 44 forwards the ones
+  Chromium survives), and on Linux the running GPU
   process's death through a dead zygote reads as a normal exit that fires nothing either (see
   "When the GPU process is unusable" in [cross-platform.md](cross-platform.md)). A fallback-only
   record has `count: 0` and `reason: 'hardware-fallback'`. On Linux each fallback entry also
@@ -553,8 +557,10 @@ in one Sentry org, one triage surface.
   three counted failures. A fallback the run survived is not reported: VMs and broken-GL machines
   can fall back at every boot. When it does report, `src/main/index.ts` calls `reportHandledError` with
   the message `GPU process exited repeatedly (...)`, or `GPU left hardware acceleration with no GPU
-  process exit reported` for a fallback-only record, which groups the launch-failure shape as its
-  own issue. It carries tags
+  process exit reported` for a fallback-only record, which groups as its own issue. Through
+  Electron 41 that was the launch-failure shape. On Electron 44 the launch failures Chromium
+  survives count as fault deaths, so that shape reports as `GPU process exited repeatedly`, and
+  the fallback-only message is left for a fallback no reported death explains. It carries tags
   `source: gpu_process`, `reason`, `exitCode`, `crashCount`, and a `gpu_process` context carrying
   `reason`, `exitCode`, `count`, `faultDeathCount` (how many of `count` were fault deaths; the gap
   is kills and teardown exits), `firstAt`, `lastAt`, `escalatedInVersion` (the app version that
