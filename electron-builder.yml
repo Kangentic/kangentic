@@ -57,6 +57,9 @@ files:
   - "node_modules/semver/**"
   - "!node_modules/better-sqlite3/{src,deps}/**"
   - "!node_modules/better-sqlite3/binding.gyp"
+  # Build-time C++ headers only (node-addon-api). lib/ loads the prebuilt addon and never
+  # requires anything from here; the afterPack load probe proves the shipped tree still opens.
+  - "!node_modules/better-sqlite3/node_modules/**"
   - "!node_modules/node-pty/{src,scripts,deps,third_party}/**"
   - "!**/*.map"
 
