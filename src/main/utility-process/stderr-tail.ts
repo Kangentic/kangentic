@@ -61,11 +61,21 @@ export const DEFAULT_STDERR_TAIL_BYTES = 8 * 1024;
  *  fires, and the latch report comes two backoffs after the first crash. */
 export interface StderrSource {
   snapshot(): string;
+  /** Resolves once the pipe feeding this source has ended, or after
+   *  `timeoutMs`, whichever comes first; never rejects. Returns null when
+   *  nothing is still arriving, so the caller can read the snapshot at once
+   *  instead of waiting a microtask. Optional: a source with no pipe behind it
+   *  is always complete. */
+  whenDrained?(timeoutMs: number): Promise<void> | null;
 }
 
 export class StderrTail implements StderrSource {
   private readonly decoder = new StringDecoder('utf8');
   private text = '';
+  /** True from `captureWorkerStderr` attaching a stream until that stream
+   *  ends or closes. */
+  private streamOpen = false;
+  private drainWaiters: Array<() => void> = [];
 
   constructor(
     private readonly maxBytes: number = DEFAULT_STDERR_TAIL_BYTES,
@@ -78,6 +88,49 @@ export class StderrTail implements StderrSource {
     if (decoded.length === 0) return;
     this.text += decoded;
     this.trimToBudget();
+  }
+
+  /** Marks a stream as feeding this tail. Called by `captureWorkerStderr`. */
+  markStreamOpen(): void {
+    this.streamOpen = true;
+  }
+
+  /** Marks the feeding stream finished: flushes any multi-byte character the
+   *  decoder was still holding and releases every `whenDrained` waiter.
+   *  Idempotent, since a stream emits both `end` and `close`. */
+  markStreamEnded(): void {
+    if (!this.streamOpen) return;
+    this.streamOpen = false;
+    const remainder = this.decoder.end();
+    if (remainder.length > 0) {
+      this.text += remainder;
+      this.trimToBudget();
+    }
+    const waiters = this.drainWaiters;
+    this.drainWaiters = [];
+    for (const release of waiters) release();
+  }
+
+  /** See `StderrSource.whenDrained`. Electron 44.5.0 (electron/electron#54278)
+   *  drains a utility process's stdout and stderr after `exit`, so the dying
+   *  exception text can land a few milliseconds after the crash is recorded.
+   *  Measured on 44.5.1 on Windows and Linux: `end` follows `exit` by about
+   *  3 ms. The bound covers a pipe that never ends. */
+  whenDrained(timeoutMs: number): Promise<void> | null {
+    if (!this.streamOpen) return null;
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const release = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.drainWaiters = this.drainWaiters.filter((waiter) => waiter !== release);
+        resolve();
+      };
+      const timer = setTimeout(release, timeoutMs);
+      timer.unref?.();
+      this.drainWaiters.push(release);
+    });
   }
 
   /** The retained text, home directory redacted, trailing whitespace dropped. */
@@ -156,7 +209,9 @@ export function summarizeStderrTail(tail: string, maxLength = 160): string | nul
  *  next write. `passThrough` re-emits each chunk on this process's stderr so a
  *  dev terminal still shows the worker's output the way `inherit` did; it
  *  writes the raw stream rather than `console.error`, so the log mirror does
- *  not persist every worker line as an error entry. */
+ *  not persist every worker line as an error entry. The stream's end (or
+ *  close, or a broken pipe) marks the tail drained, which is what the restart
+ *  policy waits for before it logs a crash. */
 export function captureWorkerStderr(
   child: { stderr: NodeJS.ReadableStream | null },
   tail: StderrTail,
@@ -164,6 +219,7 @@ export function captureWorkerStderr(
 ): void {
   const stream = child.stderr;
   if (!stream) return;
+  tail.markStreamOpen();
   stream.on('data', (chunk: Buffer | string) => {
     tail.append(chunk);
     if (!passThrough) return;
@@ -173,7 +229,12 @@ export function captureWorkerStderr(
       // A dev terminal that has gone away is not the worker's problem.
     }
   });
+  const markEnded = (): void => tail.markStreamEnded();
+  stream.on('end', markEnded);
+  stream.on('close', markEnded);
   stream.on('error', () => {
     // A broken pipe from a dying child is expected; the exit handler owns it.
+    // Nothing more will arrive, so the tail is as complete as it will get.
+    markEnded();
   });
 }

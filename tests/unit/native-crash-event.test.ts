@@ -508,6 +508,7 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
         commitRemainingBytes: 2_256_896,
         physicalTotalBytes: 34_060_931_072,
         physicalFreeBytes: 5_005_045_760,
+        physicalAvailableBytes: null,
       },
     };
 
@@ -550,6 +551,7 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
       commitRemainingBytes: 50_000_000_000,
       physicalTotalBytes: 34_060_931_072,
       physicalFreeBytes: 5_005_045_760,
+      physicalAvailableBytes: null,
     };
     const event = nativeEvent({
       contexts: { app: { app_version: '0.39.0', app_start_time: '2026-09-08T08:12:26.709Z' } },

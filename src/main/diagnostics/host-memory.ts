@@ -21,6 +21,14 @@
  * swap through the same fields, a different resource with no equivalent hard
  * OOM cliff, so this module reports a commit reading on win32 only and stays
  * null everywhere else rather than asserting an unverified mapping.
+ *
+ * Linux gets its own reading instead: `available` (Electron 44+, Linux only) is
+ * the kernel's MemAvailable, its estimate of what can be allocated without
+ * swapping. `free` there is MemFree, which excludes page cache and other
+ * reclaimable memory and so reads near zero on a perfectly healthy machine,
+ * which made the recorded figure useless for judging a Linux crash. It is a
+ * reading only: no Linux pressure warning is raised from it, because no
+ * threshold has been measured there.
  */
 
 import type { HostMemorySample } from '../../shared/types';
@@ -46,6 +54,8 @@ export function sampleHostMemory(): HostMemorySample {
     commitRemainingBytes: commitReading && info.swapFree != null ? info.swapFree * BYTES_PER_KB : null,
     physicalTotalBytes: info.total * BYTES_PER_KB,
     physicalFreeBytes: info.free * BYTES_PER_KB,
+    physicalAvailableBytes:
+      process.platform === 'linux' && typeof info.available === 'number' ? info.available * BYTES_PER_KB : null,
   };
 }
 

@@ -47,6 +47,7 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
           commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
           physicalTotalBytes: 34_060_931_072,
           physicalFreeBytes: 5_005_045_760,
+          physicalAvailableBytes: null,
         },
         activeAgentCount: 2,
       };
@@ -84,6 +85,7 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
           commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
           physicalTotalBytes: 34_060_931_072,
           physicalFreeBytes: 5_005_045_760,
+          physicalAvailableBytes: null,
         },
         activeAgentCount: 2,
       };

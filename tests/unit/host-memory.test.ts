@@ -17,6 +17,7 @@ function sample(overrides: Partial<HostMemorySample> = {}): HostMemorySample {
     commitRemainingBytes: 50_000_000_000, // plenty of headroom by default
     physicalTotalBytes: 34_060_931_072,
     physicalFreeBytes: 5_005_045_760,
+    physicalAvailableBytes: null,
     ...overrides,
   };
 }
@@ -252,7 +253,13 @@ describe('sampleHostMemory', () => {
     Object.defineProperty(process, 'platform', { value: platform, configurable: true });
   }
 
-  function stubMemoryInfo(info: { total: number; free: number; swapTotal: number; swapFree: number }): void {
+  function stubMemoryInfo(info: {
+    total: number;
+    free: number;
+    swapTotal: number;
+    swapFree: number;
+    available?: number;
+  }): void {
     (process as unknown as { getSystemMemoryInfo: () => typeof info }).getSystemMemoryInfo = () => info;
   }
 
@@ -298,6 +305,36 @@ describe('sampleHostMemory', () => {
     expect(result.commitLimitBytes).toBeNull();
     expect(result.commitRemainingBytes).toBeNull();
   });
+
+  // Linux's `free` is MemFree, which excludes page cache and reads near zero on a healthy
+  // machine, so a recorded Linux sample said nothing about pressure. `available` is MemAvailable.
+  it('records MemAvailable on linux, from `available`, kept apart from MemFree', () => {
+    stubPlatform('linux');
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000, available: 555_000 });
+
+    const result = sampleHostMemory();
+
+    expect(result.platform).toBe('linux');
+    expect(result.physicalAvailableBytes).toBe(555_000 * 1024);
+    expect(result.physicalFreeBytes).toBe(222_000 * 1024);
+  });
+
+  it('reports no available reading on linux when the runtime does not supply one', () => {
+    stubPlatform('linux');
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000 });
+
+    expect(sampleHostMemory().physicalAvailableBytes).toBeNull();
+  });
+
+  it.each(['win32', 'darwin'] as const)('reports no available reading on %s, even if a value is present', (platform) => {
+    stubPlatform(platform);
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000, available: 555_000 });
+
+    const result = sampleHostMemory();
+
+    expect(result.platform).toBe(platform);
+    expect(result.physicalAvailableBytes).toBeNull();
+  });
 });
 
 /**
@@ -311,7 +348,13 @@ describe('startHostMemorySampler', () => {
     process as unknown as { getSystemMemoryInfo?: () => Record<string, number> }
   ).getSystemMemoryInfo;
 
-  function stubMemoryInfo(info: { total: number; free: number; swapTotal: number; swapFree: number }): void {
+  function stubMemoryInfo(info: {
+    total: number;
+    free: number;
+    swapTotal: number;
+    swapFree: number;
+    available?: number;
+  }): void {
     (process as unknown as { getSystemMemoryInfo: () => typeof info }).getSystemMemoryInfo = () => info;
   }
 

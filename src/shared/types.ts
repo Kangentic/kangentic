@@ -4082,7 +4082,12 @@ export interface HostMemorySample {
   /** Windows commit remaining; null on every other platform. */
   commitRemainingBytes: number | null;
   physicalTotalBytes: number;
+  /** The OS's free figure. On Linux this is MemFree, which excludes page cache and
+   *  reads near zero on a healthy machine; read `physicalAvailableBytes` there. */
   physicalFreeBytes: number;
+  /** Linux MemAvailable: the kernel's estimate of memory available without
+   *  swapping, the honest pressure figure there. Null on every other platform. */
+  physicalAvailableBytes: number | null;
 }
 
 /** Pushed when host commit headroom crosses below the warning threshold (an

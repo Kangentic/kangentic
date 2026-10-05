@@ -27,6 +27,7 @@ function makeSample(overrides: Partial<HostMemorySample> = {}): HostMemorySample
     commitRemainingBytes: 2_256_896,
     physicalTotalBytes: 34_060_931_072,
     physicalFreeBytes: 5_005_045_760,
+    physicalAvailableBytes: null,
     ...overrides,
   };
 }

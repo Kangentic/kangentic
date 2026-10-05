@@ -32,10 +32,13 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: mockReportHandledError,
 }));
 
+import { EventEmitter } from 'node:events';
 import {
+  STDERR_DRAIN_BOUND_MS,
   UtilityRestartPolicy,
   resetUtilityCrashTelemetryForTests,
 } from '../../src/main/utility-process/restart-policy';
+import { StderrTail, captureWorkerStderr } from '../../src/main/utility-process/stderr-tail';
 
 /** A controllable clock, so no test depends on wall time. */
 function makeClock(start = 1_000) {
@@ -450,6 +453,114 @@ describe('UtilityRestartPolicy', () => {
       const { policy } = makePolicy();
       policy.recordCrash(137);
       expect(policy.lastCrashDescription).toBe('exited with code 137');
+    });
+  });
+
+  // Electron 44.5.0 drains a utility process's stderr after `exit` (electron/electron#54278), so
+  // the dying exception can land a few milliseconds after recordCrash ran. Logging at once printed
+  // "(no stderr captured)" for exactly the crash whose text was on its way.
+  describe('waiting for the dying worker\'s stderr to drain', () => {
+    function attachedTail(): { tail: StderrTail; stream: EventEmitter } {
+      const stream = new EventEmitter();
+      const tail = new StderrTail(8 * 1024, '/home/dev', false);
+      captureWorkerStderr({ stderr: stream as unknown as NodeJS.ReadableStream }, tail, false);
+      return { tail, stream };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      for (let index = 0; index < 5; index++) await Promise.resolve();
+    }
+
+    it('logs the text that arrives after the exit, once the pipe ends', async () => {
+      const { policy } = makePolicy();
+      const { tail, stream } = attachedTail();
+
+      policy.recordCrash(1, tail);
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      stream.emit('data', "Error: Cannot find module 'sharp'\n");
+      stream.emit('end');
+      await flushMicrotasks();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('kangentic-test-worker exited with code 1 (crash 1 of 3)'),
+        expect.stringContaining("Cannot find module 'sharp'"),
+      );
+    });
+
+    it('keeps counting, backoff and telemetry synchronous while the log waits', async () => {
+      const { policy } = makePolicy();
+      const { tail, stream } = attachedTail();
+
+      policy.recordCrash(1, tail);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(policy.maySpawn()).toBe(false);
+      expect(policy.lastCrashDescription).toBe('exited with code 1');
+      expect(mockTrackEvent).toHaveBeenCalledWith('utility_worker_crashed', {
+        service: 'kangentic-test-worker',
+        exitCode: 1,
+        phase: 'first',
+      });
+
+      // End the pipe so the pending log does not outlive this test.
+      stream.emit('end');
+      await flushMicrotasks();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs at the bound when the pipe never ends', async () => {
+      vi.useFakeTimers();
+      try {
+        const { policy } = makePolicy();
+        const { tail } = attachedTail();
+
+        policy.recordCrash(1, tail);
+        await vi.advanceTimersByTimeAsync(STDERR_DRAIN_BOUND_MS - 1);
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(expect.any(String), '(no stderr captured)');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('decides the latch at once, and sends the report with the late text once the pipe ends', async () => {
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(1, makeStderrSource(''));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+      clock.advance(4_000);
+      const { tail, stream } = attachedTail();
+      policy.recordCrash(137, tail);
+
+      // The latch is decided now: the subsystem is exhausted and Aptabase already has it.
+      expect(policy.exhausted).toBe(true);
+      expect(mockTrackEvent).toHaveBeenLastCalledWith('utility_worker_crashed', {
+        service: 'kangentic-test-worker',
+        exitCode: 137,
+        phase: 'latched',
+      });
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+
+      stream.emit('data', 'Fatal: out of memory in onnxruntime\n');
+      stream.emit('end');
+      await flushMicrotasks();
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [, tags, contexts] = mockReportHandledError.mock.calls[0];
+      expect(tags.crashCount).toBe('3');
+      expect(contexts.utility_process.stderrTail).toBe('Fatal: out of memory in onnxruntime');
+
+      // A crash after the latch still waits, and still does not re-report.
+      const next = attachedTail();
+      policy.recordCrash(137, next.tail);
+      next.stream.emit('end');
+      await flushMicrotasks();
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
     });
   });
 });
