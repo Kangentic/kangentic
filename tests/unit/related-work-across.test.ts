@@ -24,6 +24,9 @@ interface MockIndex {
 let mockIndexes: Record<string, MockIndex> = {};
 /** The project of every code search the fake store served, in order. */
 let codeSearches: string[] = [];
+/** Every semantic search the fake store served, in order: the corpora it was
+ *  asked to search and the model tag the caller named. */
+let semanticSearches: Array<{ corpora: string[]; modelTag: string }> = [];
 /** The MATCH text of every keyword search the fake store served, in order. */
 let keywordQueries: string[] = [];
 
@@ -37,7 +40,8 @@ vi.mock('../../src/main/retrieval/retrieval-store', () => ({
       this.index = index;
       this.projectId = db.projectId;
     }
-    searchSemantic(_query: Float32Array, _limit: number, corpora: ReadonlyArray<string>): SemanticHit[] {
+    searchSemantic(_query: Float32Array, _limit: number, corpora: ReadonlyArray<string>, modelTag: string): SemanticHit[] {
+      semanticSearches.push({ corpora: [...corpora], modelTag });
       if (!corpora.includes('code')) return this.index.semantic;
       codeSearches.push(this.projectId);
       return this.index.code?.hits ?? [];
@@ -312,6 +316,61 @@ describe('source code passages', () => {
       ['a', 'code 102'],
       ['b', 'code 102'],
     ]);
+  });
+});
+
+describe('the model tag every semantic search names', () => {
+  // The store scores a query only against vectors from its own model and answers
+  // nothing for any other tag. A caller that dropped the tag would turn semantic
+  // search off in production while every stub that ignores the argument kept
+  // passing, so the stub records it and these assert what it was given.
+
+  /** The distinct model tags the searches over `corpus` named, in the order first seen. */
+  function tagsSearching(corpus: string): string[] {
+    const tags = semanticSearches.filter((search) => search.corpora.includes(corpus)).map((search) => search.modelTag);
+    return [...new Set(tags)];
+  }
+
+  it('names the embedder\'s model on the conversation, task and code searches of one project', async () => {
+    mockIndexes = { a: indexWithCode([{ id: 101, path: 'src/pacer.ts', cosine: 0.66 }]) };
+    semanticSearches = [];
+    await searchRelatedWork({
+      question: 'How does the embedding drain pace itself?',
+      projectId: 'a',
+      nodes: [node('a1', 'task-a1', 5)],
+      embedder: { ...embedder(), modelTag: 'drain-model@7' },
+      getDb,
+      code: true,
+    });
+
+    // Each list is exactly the embedder's tag: it is not empty (the corpus was
+    // searched) and it holds no other tag (no call fell back to an empty one).
+    expect(tagsSearching('conversation')).toEqual(['drain-model@7']);
+    expect(tagsSearching('task')).toEqual(['drain-model@7']);
+    expect(tagsSearching('code')).toEqual(['drain-model@7']);
+  });
+
+  it('names the same model on every project of a search across projects', async () => {
+    mockIndexes = {
+      a: indexWithCode([{ id: 101, path: 'src/shared.ts', cosine: 0.6 }]),
+      b: indexWithCode([{ id: 101, path: 'src/shared.ts', cosine: 0.7 }]),
+    };
+    semanticSearches = [];
+    await searchRelatedWorkAcross({
+      question: 'How is the shared state kept?',
+      projects: [
+        { projectId: 'a', nodes: [node('a1', 'task-a1', 5)] },
+        { projectId: 'b', nodes: [node('b1', 'task-b1', 5)] },
+      ],
+      embedder: { ...embedder(), modelTag: 'shared-model@3' },
+      getDb,
+      code: true,
+    });
+
+    expect(tagsSearching('conversation')).toEqual(['shared-model@3']);
+    expect(tagsSearching('code')).toEqual(['shared-model@3']);
+    // Both projects were searched, so the tag was named for each one's code pool.
+    expect(semanticSearches.filter((search) => search.corpora.includes('code'))).toHaveLength(2);
   });
 });
 

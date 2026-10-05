@@ -920,6 +920,11 @@ export class RetrievalStore {
       // The older conversation table too, and any copy into the new one.
       this.db.exec(`DROP TABLE IF EXISTS ${LEGACY_CONVERSATION_VEC_TABLE}`);
       this.db.prepare('DELETE FROM memory_meta WHERE key = ?').run(CONVERSATION_VEC_COPY_KEY);
+      // The new tables hold no model yet. With no `vec_model` and every chunk
+      // pending, `vecHoldsModel` accepts whichever model writes first, so a
+      // caller that resets without naming one (the dev seed) cannot leave the
+      // old tag behind to hide its vectors.
+      this.db.prepare('DELETE FROM memory_meta WHERE key = ?').run('vec_model');
       for (const corpus of INDEX_CORPORA) this.db.exec(`DROP TABLE IF EXISTS ${vecTableName(corpus)}`);
       for (const corpus of EMBEDDED_CORPORA) {
         this.db.exec(`CREATE VIRTUAL TABLE ${vecTableName(corpus)} ${vecTableDefinition(dimensions)}`);
@@ -1013,8 +1018,9 @@ export class RetrievalStore {
    * True when the vec tables hold `modelTag`'s vectors, so a query embedded with
    * that model can be scored against them. `vec_model` names the tables' model
    * once the drain has synced them (`embed-store-access.ts`); an index from
-   * before it was kept holds the model only when no stored vector came from
-   * another one.
+   * before it was kept, or one `resetVec` just emptied, holds the model only
+   * when no stored vector came from another one. The drain's reset decision is
+   * this check negated, so the search and the reset never disagree.
    */
   vecHoldsModel(modelTag: string): boolean {
     const storedModel = this.getMeta('vec_model');

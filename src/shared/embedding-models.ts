@@ -147,6 +147,8 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     id: 'bge-small',
     tier: 'light',
     hfId: 'Xenova/bge-small-en-v1.5',
+    // Not pinned: it predates the October 2026 refresh, as the dictation
+    // models on `main` do, and an installed copy already came from `main`.
     revision: 'main',
     tierLabel: 'Light',
     displayName: 'bge small',

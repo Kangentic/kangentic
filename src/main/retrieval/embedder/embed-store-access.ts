@@ -18,7 +18,7 @@ export interface EmbedStore {
   setMeta(key: string, value: string): void;
   resetVec(dimensions: number, awaitTurn: () => Promise<void>): Promise<void> | void;
   ensureVecTable(dimensions: number): void;
-  hasEmbeddingsFromOtherModel(modelTag: string): boolean;
+  vecHoldsModel(modelTag: string): boolean;
   readonly hasVec: boolean;
   chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[];
   writeEmbeddings(rows: EmbeddingRow[], modelTag: string): void;
@@ -58,14 +58,14 @@ export interface EmbedStoreAccess {
  * re-embed drain left one table scoring queries against two models' vectors.
  * `vec_model` records the tag the tables hold; an index from before it was
  * kept resets only when a stored vector comes from another model, so a user
- * whose model did not change never re-embeds for it.
+ * whose model did not change never re-embeds for it. That is the search's own
+ * check (`vecHoldsModel`), so a model the search would refuse is one the drain
+ * resets for.
  */
 async function syncVecTable(store: EmbedStore, model: EmbedModelRef, awaitTurn: () => Promise<void>): Promise<boolean> {
   const storedModel = store.getMeta('vec_model');
   const widthChanged = store.getMeta('vec_dims') !== String(model.dimensions);
-  const modelChanged = storedModel === undefined
-    ? store.hasEmbeddingsFromOtherModel(model.modelTag)
-    : storedModel !== model.modelTag;
+  const modelChanged = !store.vecHoldsModel(model.modelTag);
   if (widthChanged || modelChanged) {
     await store.resetVec(model.dimensions, awaitTurn);
     store.setMeta('vec_dims', String(model.dimensions));

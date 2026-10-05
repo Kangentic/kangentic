@@ -6,8 +6,9 @@
  * src/shared/dictation-presets.ts), so the mock's `dictation.getInfo` answers
  * with a fixed selection through `window.__mockDictationInfoOverrides`. That
  * keeps these tests on what the renderer owns: which preset reads as selected,
- * how each line reads in each state, which licenses show, and what a mode
- * change writes to config.
+ * how each line reads in each state, which licenses show, what a mode change
+ * writes to config, what a language change writes in each mode, and that the
+ * saved Mode reaches the warm-up request.
  *
  * Each test launches its own page, because a mode click persists to config and
  * a later test must not start from it.
@@ -299,6 +300,220 @@ test('Balanced then Custom opens Custom on the models Balanced was running', asy
       .toEqual({ mode: 'custom', liveModelId: PARAKEET_V3.id, modelId: 'none' });
     await expect(page.getByTestId('dictation-live-model-select')).toHaveValue(PARAKEET_V3.id);
     await expect(page.getByTestId('dictation-final-model-select')).toHaveValue('none');
+  } finally {
+    await browser.close();
+  }
+});
+
+/** An English-only refinement model, so a Custom config can name a refinement
+ *  model that does not cover German. */
+const PARAKEET_ENGLISH = {
+  id: 'parakeet-tdt-0.6b-en',
+  displayName: 'Parakeet (English)',
+  sizeMb: 640,
+  engineKind: 'offline-nemo-transducer',
+  languages: ['en'],
+  accuracyRank: 5,
+  accuracyLabel: 'High accuracy',
+  license: 'CC-BY-4.0',
+};
+
+/** Two live models (one English only, one multilingual) and two refinement
+ *  models (one English only, one multilingual), so every Custom case below can
+ *  seed a model that covers German and one that does not. */
+const LANGUAGE_SELECTION = {
+  liveModels: [NEMOTRON_STREAMING, PARAKEET_V3],
+  finalModels: [PARAKEET_V3, PARAKEET_ENGLISH],
+  selectedLiveModelId: NEMOTRON_STREAMING.id,
+  selectedFinalModelId: PARAKEET_V3.id,
+};
+
+/** Write the dictation block through the config store, the way the settings
+ *  panel persists it (config.set, then a refresh of the global and effective
+ *  config). Seeds a starting state the Mode and model controls then read. */
+async function seedDictation(page: Page, dictation: Record<string, unknown>): Promise<void> {
+  await page.evaluate(async (value) => {
+    const stores = (window as unknown as {
+      __zustandStores: { config: { getState: () => { updateConfig: (partial: Record<string, unknown>) => Promise<unknown> } } };
+    }).__zustandStores;
+    await stores.config.getState().updateConfig({ dictation: value });
+  }, dictation);
+}
+
+/** What the mock persisted for the dictation block (the saved GLOBAL config, read
+ *  back through the bridge, not the renderer's copy). An unset field reads null. */
+async function savedDictation(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(async () => {
+    const saved = await window.electronAPI.config.getGlobal();
+    const dictation = saved.dictation ?? {};
+    return {
+      language: dictation.language ?? null,
+      mode: dictation.mode ?? null,
+      engineMode: dictation.engineMode ?? null,
+      liveModelId: dictation.liveModelId ?? null,
+      modelId: dictation.modelId ?? null,
+    };
+  });
+}
+
+// Picking a language in a preset mode saves the language and NO model ids: main
+// resolves the preset for the new language each session. Before, the tab wrote
+// the preset's ids for that language, which pinned them into the config.
+const PRESET_LANGUAGE_CASES = [
+  { preset: 'accurate', label: 'Best' },
+  { preset: 'balanced', label: 'Balanced' },
+  { preset: 'fast', label: 'Light' },
+] as const;
+
+for (const { preset, label } of PRESET_LANGUAGE_CASES) {
+  test(`${label} mode: picking a language saves the language and no model ids`, async () => {
+    const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+    try {
+      // Starts as it would after a preset pick: the mode saved, no model ids.
+      await seedDictation(page, { enabled: true, mode: preset });
+      await openDictationTab(page);
+      await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
+
+      await page.getByTestId('dictation-language-select').selectOption('de');
+
+      await expect
+        .poll(() => savedDictation(page))
+        .toEqual({ language: 'de', mode: preset, engineMode: 'auto', liveModelId: null, modelId: null });
+      // The mode is untouched, so the preset still reads as selected.
+      await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+}
+
+// Custom keeps its models when they already cover the new language, so a language
+// change does not throw away a pick the user made on purpose.
+test('Custom mode: picking a language both models cover saves only the language and keeps the models', async () => {
+  const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+  try {
+    // Parakeet v3 covers German and an empty refinement slot covers everything.
+    await seedDictation(page, { enabled: true, mode: 'custom', liveModelId: PARAKEET_V3.id, modelId: 'none' });
+    await openDictationTab(page);
+    await expect(page.getByTestId('dictation-live-model-select')).toHaveValue(PARAKEET_V3.id);
+    await expect(page.getByTestId('dictation-final-model-select')).toHaveValue('none');
+
+    await page.getByTestId('dictation-language-select').selectOption('de');
+
+    // engineMode stays unset: only the language was written.
+    await expect
+      .poll(() => savedDictation(page))
+      .toEqual({ language: 'de', mode: 'custom', engineMode: null, liveModelId: PARAKEET_V3.id, modelId: 'none' });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Custom mode: a cloud refinement survives a language change the live model covers', async () => {
+  const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+  try {
+    await seedDictation(page, { enabled: true, mode: 'custom', engineMode: 'remote', liveModelId: PARAKEET_V3.id });
+    await openDictationTab(page);
+    await expect(page.getByTestId('dictation-live-model-select')).toHaveValue(PARAKEET_V3.id);
+    await expect(page.getByTestId('dictation-final-model-select')).toHaveValue('cloud');
+
+    await page.getByTestId('dictation-language-select').selectOption('de');
+
+    // A cloud refinement covers any language, so it is kept, not reset to auto.
+    await expect
+      .poll(() => savedDictation(page))
+      .toEqual({ language: 'de', mode: 'custom', engineMode: 'remote', liveModelId: PARAKEET_V3.id, modelId: null });
+  } finally {
+    await browser.close();
+  }
+});
+
+// A model that cannot transcribe the new language sends Custom to the Light
+// preset's models for that language (Whisper base multilingual, no refinement),
+// on the machine rather than the cloud, so the config never names a model that
+// cannot run the language.
+const LIGHT_GERMAN_FALLBACK = {
+  language: 'de',
+  mode: 'custom',
+  engineMode: 'auto',
+  liveModelId: 'whisper-base-multi',
+  modelId: 'none',
+};
+
+test('Custom mode: a live model that does not cover the language falls back to the Light models', async () => {
+  const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+  try {
+    // Nemotron streaming is English only. The cloud refinement is on, so the
+    // fallback also has to put the engine back on the machine.
+    await seedDictation(page, {
+      enabled: true, mode: 'custom', engineMode: 'remote', liveModelId: NEMOTRON_STREAMING.id, modelId: PARAKEET_V3.id,
+    });
+    await openDictationTab(page);
+    await expect(page.getByTestId('dictation-live-model-select')).toHaveValue(NEMOTRON_STREAMING.id);
+
+    await page.getByTestId('dictation-language-select').selectOption('de');
+
+    await expect.poll(() => savedDictation(page)).toEqual(LIGHT_GERMAN_FALLBACK);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Custom mode: a refinement model that does not cover the language falls back to the Light models', async () => {
+  const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+  try {
+    // The live model covers German; only the English-only refinement model does not.
+    await seedDictation(page, {
+      enabled: true, mode: 'custom', liveModelId: PARAKEET_V3.id, modelId: PARAKEET_ENGLISH.id,
+    });
+    await openDictationTab(page);
+    await expect(page.getByTestId('dictation-live-model-select')).toHaveValue(PARAKEET_V3.id);
+    await expect(page.getByTestId('dictation-final-model-select')).toHaveValue(PARAKEET_ENGLISH.id);
+
+    await page.getByTestId('dictation-language-select').selectOption('de');
+
+    await expect.poll(() => savedDictation(page)).toEqual(LIGHT_GERMAN_FALLBACK);
+  } finally {
+    await browser.close();
+  }
+});
+
+/** The last non-null payload `dictation.prewarm` received. The hook also calls
+ *  prewarm(null) while dictation is off, which is not a warm request. */
+async function lastWarmedConfig(page: Page): Promise<Record<string, unknown> | null> {
+  return page.evaluate(() => {
+    const calls = (window.electronAPI.dictation as unknown as {
+      __prewarmCalls: Array<Record<string, unknown> | null>;
+    }).__prewarmCalls;
+    const requests = calls.filter((call) => call !== null);
+    return requests.length > 0 ? requests[requests.length - 1] : null;
+  });
+}
+
+// Main resolves a Balanced or Light user's models from the saved Mode. If the
+// renderer stopped sending it, main would fall back to the machine's default
+// preset for them.
+test('the saved Mode rides the prewarm request once dictation is on', async () => {
+  const { browser, page } = await launchWithInfo(BEST_SELECTION);
+  try {
+    await seedDictation(page, { enabled: true, mode: 'balanced' });
+    // The warm-up is debounced, so it arrives a moment after the config lands.
+    await expect
+      .poll(() => lastWarmedConfig(page))
+      .toMatchObject({ mode: 'balanced', engineMode: 'auto', language: 'en' });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('changing the saved Mode warms the engine again with the new Mode', async () => {
+  const { browser, page } = await launchWithInfo(BEST_SELECTION);
+  try {
+    await seedDictation(page, { enabled: true, mode: 'balanced' });
+    await expect.poll(() => lastWarmedConfig(page)).toMatchObject({ mode: 'balanced' });
+
+    await seedDictation(page, { mode: 'fast' });
+    await expect.poll(() => lastWarmedConfig(page)).toMatchObject({ mode: 'fast' });
   } finally {
     await browser.close();
   }

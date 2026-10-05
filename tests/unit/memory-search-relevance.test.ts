@@ -89,6 +89,9 @@ interface FakeDbConfig {
   chunks: StoredChunkRow[];
   taskTitles: Record<string, string>;
   sessionTypes: Record<string, string>;
+  /** The model tag recorded as `vec_model`, as the embedding drain records it.
+   *  Absent means an index from before it was kept, which accepts any model. */
+  vecModel?: string;
 }
 
 function chunkRow(overrides: Partial<StoredChunkRow> & { id: number }): StoredChunkRow {
@@ -139,6 +142,11 @@ function makeFakeDb(config: FakeDbConfig): Database.Database {
           // its query instead of short-circuiting to [].
           if (sql.includes('sqlite_master')) {
             return { name: 'memory_vec_conversation' };
+          }
+          // The model the vec tables hold. `RetrievalStore.searchSemantic` answers
+          // nothing unless the tag it is given matches this one.
+          if (sql.includes('FROM memory_meta') && args[0] === 'vec_model') {
+            return config.vecModel === undefined ? undefined : { value: config.vecModel };
           }
           if (sql.includes('SELECT title FROM tasks')) {
             const taskId = args[0] as string;
@@ -293,5 +301,49 @@ describe('searchConversationMemory - calibrated semantic relevance', () => {
 
     expect(hits.map((hit) => hit.chunkId)).toEqual([101]);
     expect(hits[0].matchKind).toBe('semantic');
+  });
+});
+
+describe('searchConversationMemory - the model the vectors were embedded by', () => {
+  // `RetrievalStore.searchSemantic` scores a query only against vectors from its
+  // own model: given any other tag it answers nothing. The real store runs here
+  // over a fake that records which model the vec tables hold, so a caller that
+  // forgot to hand the embedder's tag to the store would lose every semantic hit.
+  // The other cases in this file leave `vecModel` unset, which accepts any tag.
+  function configHolding(vecModel: string): FakeDbConfig {
+    return {
+      semantic: [{ id: 101, distance: 0.3 }],
+      chunks: [chunkRow({ id: 101 })],
+      taskTitles: { t101: 'On topic' },
+      sessionTypes: { s101: 'claude_agent' },
+      vecModel,
+    };
+  }
+
+  it('finds the semantic hits when the vec tables hold the embedder\'s model', async () => {
+    const embedder = new FixedEmbedder(0);
+
+    const hits = await searchConversationMemory({
+      query: 'a question about the topic',
+      projects: [PROJECT_A],
+      embedder,
+      getDb: makeGetDb(configHolding(embedder.modelTag)),
+    });
+
+    expect(hits.map((hit) => hit.chunkId)).toEqual([101]);
+    expect(hits[0].matchKind).toBe('semantic');
+  });
+
+  it('finds no semantic hits when the vec tables hold another model\'s vectors', async () => {
+    const embedder = new FixedEmbedder(0);
+
+    const hits = await searchConversationMemory({
+      query: 'a question about the topic',
+      projects: [PROJECT_A],
+      embedder,
+      getDb: makeGetDb(configHolding('some-other-model@test')),
+    });
+
+    expect(hits).toEqual([]);
   });
 });

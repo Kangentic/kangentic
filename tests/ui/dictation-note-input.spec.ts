@@ -126,12 +126,14 @@ interface LaunchOptions {
    *  actually press; the guest-button tests bind `Mouse:Back` instead, because
    *  those presses arrive over IPC rather than as key events. */
   hotkey?: string;
+  /** The saved dictation Mode. Left out, the config saves none, as before. */
+  mode?: 'accurate' | 'balanced' | 'fast' | 'custom';
 }
 
 /** A fresh context and page on the shared browser. `autoSubmit` has to be
  *  per-context because it is seeded by an init script, which is why this returns
  *  a page rather than reusing one. */
-async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q' }: LaunchOptions): Promise<Page> {
+async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q', mode }: LaunchOptions): Promise<Page> {
   const context = await sharedBrowser.newContext({
     viewport: { width: 1600, height: 1000 },
     permissions: ['microphone'],
@@ -147,6 +149,7 @@ async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q' }: LaunchOptions): Pr
       // half-voiced last word is not clipped. There is no real speech here, so
       // it is only latency.
       releaseBufferMs: 0,
+      ...(mode ? { mode } : {}),
     },
     hotkeyOverrides: { 'dictation.pushToTalk': hotkey },
   });
@@ -763,6 +766,28 @@ test.describe('dictation into the Browser pane note input', () => {
       await expect(search).toHaveValue(FINAL_TRANSCRIPT);
       // Still nothing routed to a PTY, even with running sessions on the board.
       expect(await liveWritePayloads(page)).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('the saved Mode rides dictation.start with the press', async () => {
+    // Main resolves a Balanced or Light user's models from `mode`. If the press
+    // stopped sending it, main would resolve them to the machine's default preset.
+    const page = await launch({ autoSubmit: false, mode: 'balanced' });
+    try {
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      await expect
+        .poll(() => page.evaluate(() => window.electronAPI.dictation.__startCalls.length))
+        .toBe(1);
+      expect(await page.evaluate(() => window.electronAPI.dictation.__startCalls[0]))
+        .toMatchObject({ mode: 'balanced', engineMode: 'auto', language: 'en' });
+
+      await release(page);
+      await expect(search).toHaveValue(FINAL_TRANSCRIPT);
     } finally {
       await page.context().close();
     }
