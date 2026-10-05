@@ -241,6 +241,9 @@ describe('loadBridgeIdentity migration', () => {
   it('never rewrites without genuine encryption (Linux hardcoded fallback key), but still loads', async () => {
     setPlatform('linux');
     mockElectronState.asyncTag = 'v10';
+    // No keyring: the sync API sits on basic_text and refuses to encrypt too.
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
     existsSyncSpy.mockReturnValue(true);
     readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
     mockElectronState.shouldReEncrypt = true;
@@ -296,18 +299,34 @@ describe('loadOrCreateBridgeIdentity', () => {
     expect(loaded.createdAt).toBe(created.createdAt);
   });
 
-  it('throws and does not call writeFileSync when async encryption is unavailable', async () => {
+  it('throws and does not call writeFileSync when neither safeStorage API can encrypt', async () => {
     existsSyncSpy.mockReturnValue(false);
     mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = false;
 
     await expect(loadOrCreateBridgeIdentity()).rejects.toThrow(/secure storage is unavailable/);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  // The floor in auth.ts: where only the sync API works, the identity is created (and protected)
+  // exactly as 0.43 would have, rather than pairing being refused.
+  it('creates the identity through the sync API when the async API is unavailable but the sync one works', async () => {
+    existsSyncSpy.mockReturnValue(false);
+    mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = true;
+
+    const identity = await loadOrCreateBridgeIdentity();
+
+    expect(identity.staticKeyPair.secretKey).toHaveLength(32);
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
   });
 
   it('throws and does not call writeFileSync on Linux when only the hardcoded fallback key (v10) exists', async () => {
     existsSyncSpy.mockReturnValue(false);
     setPlatform('linux');
     mockElectronState.asyncTag = 'v10';
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
 
     await expect(loadOrCreateBridgeIdentity()).rejects.toThrow(/secure storage is unavailable/);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();

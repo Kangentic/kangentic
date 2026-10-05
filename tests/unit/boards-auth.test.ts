@@ -147,8 +147,9 @@ describe('encryptSecret', () => {
     expect(await decryptSecret(encrypted)).toEqual({ plaintext: original, shouldRewrite: false });
   });
 
-  it('falls back to a p-sentinel base64 blob when async encryption is NOT available', async () => {
+  it('falls back to a p-sentinel base64 blob when NEITHER API can encrypt', async () => {
     mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = false;
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await encryptSecret('fallback-secret');
     expect(result[0]).toBe('p');
@@ -161,11 +162,41 @@ describe('encryptSecret', () => {
   it('warns, but still encrypts, under the Linux hardcoded fallback key', async () => {
     setPlatform('linux');
     mockElectronState.asyncTag = 'v10';
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await encryptSecret('token');
     expect(result[0]).toBe('e');
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('hardcoded fallback key'));
     warnSpy.mockRestore();
+  });
+
+  // The floor: a machine where the async API reports itself unavailable but the sync one works
+  // must keep writing what 0.43 wrote, never a plaintext token. Reading it back asks for no
+  // rewrite, since a rewrite would land in the same place and repeat on every load.
+  it('writes through the sync API, as 0.43 did, when only the sync API can encrypt', async () => {
+    mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = true;
+    const result = await encryptSecret('only-sync-works');
+    expect(result[0]).toBe('e');
+    expect(Buffer.from(result.slice(1), 'base64').toString('utf8')).toBe(`${SYNC_PREFIX}only-sync-works`);
+    expect(asyncEncryptCalls).toEqual([]);
+    expect(await decryptSecret(result)).toEqual({ plaintext: 'only-sync-works', shouldRewrite: false });
+  });
+
+  // KDE with KWallet: the sync API reaches a real key, the async providers only the hardcoded
+  // fallback. The token must stay under the real key, not move to the one that protects nothing.
+  it('prefers the sync API over the Linux hardcoded fallback key when only the sync API has a keyring', async () => {
+    setPlatform('linux');
+    mockElectronState.asyncTag = 'v10';
+    mockElectronState.storageBackend = 'kwallet6';
+    mockElectronState.isEncryptionAvailable = true;
+    const result = await encryptSecret('kwallet-token');
+    expect(Buffer.from(result.slice(1), 'base64').toString('utf8')).toBe(`${SYNC_PREFIX}kwallet-token`);
+    expect(asyncEncryptCalls).toEqual(['kangentic-secure-storage-probe']);
+
+    mockElectronState.asyncDecryptThrows = true;
+    expect(await decryptSecret(result)).toEqual({ plaintext: 'kwallet-token', shouldRewrite: false });
   });
 });
 
@@ -238,9 +269,12 @@ describe('decryptSecret', () => {
 
   it('decodes a p blob without asking for a rewrite on Linux with only the hardcoded fallback key (v10)', async () => {
     // Re-wrapping it under a key derived from a hardcoded password would protect
-    // nothing and only change the file.
+    // nothing and only change the file. No keyring means the sync API is on
+    // basic_text and refuses to encrypt too.
     setPlatform('linux');
     mockElectronState.asyncTag = 'v10';
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
     expect(await decryptSecret(plaintextBlob('hello-world'))).toEqual({
       plaintext: 'hello-world',
       shouldRewrite: false,
@@ -272,16 +306,35 @@ describe('isGenuineEncryptionAvailable', () => {
     expect(asyncEncryptCalls).toEqual([]);
   });
 
-  it('is false when async encryption is not available', async () => {
+  it('is false when neither API can encrypt', async () => {
     mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = false;
     expect(await isGenuineEncryptionAvailable()).toBe(false);
     setPlatform('linux');
     expect(await isGenuineEncryptionAvailable()).toBe(false);
   });
 
-  it('is false on Linux when the async key is the hardcoded fallback (v10)', async () => {
+  // The floor: with the async API unavailable, the sync verdict 0.43 used decides, so a paired
+  // phone is not dropped on a machine where only the sync API works.
+  it('falls back to the sync API verdict when the async API is unavailable', async () => {
+    mockElectronState.isAsyncEncryptionAvailable = false;
+    mockElectronState.isEncryptionAvailable = true;
+    for (const platform of ['win32', 'darwin'] as const) {
+      setPlatform(platform);
+      expect(await isGenuineEncryptionAvailable(), platform).toBe(true);
+    }
+    setPlatform('linux');
+    mockElectronState.storageBackend = 'gnome_libsecret';
+    expect(await isGenuineEncryptionAvailable(), 'linux with a keyring').toBe(true);
+    mockElectronState.storageBackend = 'basic_text';
+    expect(await isGenuineEncryptionAvailable(), 'linux basic_text').toBe(false);
+  });
+
+  it('is false on Linux when the async key is the hardcoded fallback (v10) and there is no keyring', async () => {
     setPlatform('linux');
     mockElectronState.asyncTag = 'v10';
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
     expect(await isGenuineEncryptionAvailable()).toBe(false);
   });
 
