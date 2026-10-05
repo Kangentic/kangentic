@@ -266,5 +266,44 @@ describe('loadAsanaCredential', () => {
       );
       warnSpy.mockRestore();
     });
+
+    // The rewrite awaits decryptSecret and encryptSecret. A Disconnect, a 401 clear, or a newly
+    // saved token can land in that window. The load must rewrite only the ciphertext it read, so
+    // the stale credential in hand never comes back over what the user just did. Each test lands
+    // the change inside the encryptSecret await, after the load has already read and decrypted.
+    it('does not recreate the file when the credential is cleared during the rewrite', async () => {
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ encrypted: 'e_legacy_sync_blob' }));
+      decryptSecretSpy.mockResolvedValue(decrypted(VALID_CREDENTIAL, true));
+      encryptSecretSpy.mockImplementation(async (plaintext: string) => {
+        // A Disconnect lands here: clearAsanaCredential has unlinked the file while the load awaits.
+        existsSyncSpy.mockReturnValue(false);
+        return `e-rewritten:${plaintext}`;
+      });
+
+      const result = await loadAsanaCredential();
+
+      expect(result).toEqual(VALID_CREDENTIAL);
+      expect(encryptSecretSpy).toHaveBeenCalledTimes(1);
+      expect(safeWriteJsonSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite a newer credential saved during the rewrite', async () => {
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(JSON.stringify({ encrypted: 'e_legacy_sync_blob' }));
+      decryptSecretSpy.mockResolvedValue(decrypted(VALID_CREDENTIAL, true));
+      encryptSecretSpy.mockImplementation(async (plaintext: string) => {
+        // A Connect with a new token lands here, so the file holds a different ciphertext than the load read.
+        readFileSyncSpy.mockReturnValue(JSON.stringify({ encrypted: 'e_new_token_blob' }));
+        return `e-rewritten:${plaintext}`;
+      });
+
+      const result = await loadAsanaCredential();
+
+      // The load still hands back the credential it read; it just must not persist it.
+      expect(result).toEqual(VALID_CREDENTIAL);
+      expect(encryptSecretSpy).toHaveBeenCalledTimes(1);
+      expect(safeWriteJsonSpy).not.toHaveBeenCalled();
+    });
   });
 });

@@ -18,8 +18,8 @@ import type { AsanaCredential } from '../../src/main/boards/adapters/asana/crede
 const downloadFileSpy = vi.hoisted(() =>
   vi.fn<(url: string, filename: string, options?: { headers?: Record<string, string> }) => Promise<unknown>>(),
 );
-const loadSpy = vi.hoisted(() => vi.fn<() => AsanaCredential | null>(() => null));
-const saveSpy = vi.hoisted(() => vi.fn<(credential: AsanaCredential) => void>());
+const loadSpy = vi.hoisted(() => vi.fn<() => Promise<AsanaCredential | null>>(async () => null));
+const saveSpy = vi.hoisted(() => vi.fn<(credential: AsanaCredential) => Promise<void>>(async () => {}));
 const clearSpy = vi.hoisted(() => vi.fn<() => void>());
 
 vi.mock('../../src/main/boards/adapters/asana/credential-store', () => ({
@@ -50,7 +50,7 @@ function makeCredential(overrides: Partial<AsanaCredential> = {}): AsanaCredenti
 
 beforeEach(() => {
   loadSpy.mockReset();
-  loadSpy.mockReturnValue(null);
+  loadSpy.mockResolvedValue(null);
   saveSpy.mockReset();
   clearSpy.mockReset();
   downloadFileSpy.mockReset();
@@ -100,7 +100,7 @@ describe('AsanaClient.downloadFileAttachments - auth header on Asana hosts', () 
   });
 
   it('still downloads (anonymously) when no credential is stored', async () => {
-    loadSpy.mockReturnValue(null);
+    loadSpy.mockResolvedValue(null);
     const client = new AsanaClient();
     await client.downloadFileAttachments([
       { url: 'https://app.asana.com/api/1.0/attachments/123/download', filename: 'pasted.png', sizeBytes: 0 },
@@ -140,7 +140,7 @@ describe('AsanaAdapter.fetch - file attachments and externalRef passthrough', ()
    */
   function makeStubClient(tasks: unknown[]): AdapterFacingClient {
     return {
-      hasCredential: () => true,
+      hasCredential: async () => true,
       getMe: async () => ({ gid: '1', email: 'u@x.com' }),
       getProject: async () => null,
       listTasks: async () => ({ tasks, hasNextPage: false }),

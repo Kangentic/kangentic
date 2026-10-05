@@ -125,7 +125,8 @@ async function saveBridgeIdentity(identity: BridgeIdentity): Promise<void> {
 /**
  * Loads the existing identity, or generates and persists a new one.
  * Throws rather than persisting unprotected private key material when
- * genuine encryption is unavailable (Linux basic_text backend) - callers
+ * genuine encryption is unavailable (no Linux secret store, or safeStorage
+ * disabled) - callers
  * should check isGenuineEncryptionAvailable() first and surface a clear
  * "secure storage unavailable" status instead of calling this blindly.
  */

@@ -83,7 +83,7 @@ const { PairingService } = await import('../../../src/main/mobile-bridge/pairing
 const { RelayClient } = await import('../../../src/main/mobile-bridge/transport/relay-client');
 const { generateEd25519KeyPair } = await import('@kangentic/protocol');
 type BridgeIdentityModule = typeof import('../../../src/main/mobile-bridge/identity');
-type BridgeIdentity = ReturnType<BridgeIdentityModule['loadOrCreateBridgeIdentity']>;
+type BridgeIdentity = Awaited<ReturnType<BridgeIdentityModule['loadOrCreateBridgeIdentity']>>;
 
 function testIdentity(): BridgeIdentity {
   return {
