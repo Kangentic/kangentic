@@ -64,7 +64,8 @@ const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
-import { destroyAllLanes } from './browser/browser-lane-manager';
+import { destroyAllLanes, isLaneWebContents } from './browser/browser-lane-manager';
+import { setLaneWebContentsPredicate } from './analytics/renderer-classification';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
@@ -86,7 +87,7 @@ import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/w
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
 import { writeClipboardImage } from './ipc/helpers/clipboard-image';
 import { restoreShellEnv } from './shell-env';
-import { isFirstPartyPermissionAllowed, isEmbeddedBrowserPermissionAllowed } from './permission-policy';
+import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 import { defaultDeveloperFlag, type DeveloperFlagKey } from '../shared/developer-flag-defaults';
@@ -97,7 +98,7 @@ import {
   MAX_LIVE_POPUPS_PER_PANE,
   type WebviewPopupPolicy,
 } from './window-open-policy';
-import { installWebviewDownloadPolicy } from './browser/webview-download-policy';
+import { installEmbeddedBrowserSessionPolicy } from './browser/guest-session-policy';
 import { applyBrowserUserAgent } from './browser/browser-user-agent';
 
 initStartupTimer(PROCESS_START);
@@ -285,6 +286,9 @@ initAnalytics();
 // console breadcrumb would silently drop. tests/unit/sentry-breadcrumbs.test.ts
 // pins the order.
 initErrorReporting();
+// Lets the SDK's getRendererName recognize an offscreen lane as a Browser pane
+// page (renderer-classification.ts); a <webview> guest identifies itself.
+setLaneWebContentsPredicate(isLaneWebContents);
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -679,23 +683,15 @@ app.on('web-contents-created', (_event, contents) => {
   });
 
   // Deny permission requests (camera, mic, geolocation, notifications, ...) on
-  // the embedded pane. The pane is for viewing dev servers, which need none of
-  // these, and agent-driven navigation could otherwise reach a page that
-  // auto-prompts. (embedded-browser.md decision log items 5 and 14.)
-  //
-  // BOTH handlers, reading one predicate. Only the request handler existed
-  // before, so a synchronous permission CHECK fell through to Electron's default
-  // instead of the pane's policy. Set on the SESSION, so the popups above - which
-  // share the guest's Session object - inherit both with no extra wiring.
-  contents.session.setPermissionRequestHandler((_requestingContents, permission, callback) =>
-    callback(isEmbeddedBrowserPermissionAllowed(permission)));
-  contents.session.setPermissionCheckHandler((_requestingContents, permission) =>
-    isEmbeddedBrowserPermissionAllowed(permission));
-
-  // Downloads: saved to the OS Downloads folder rather than denied or left to
-  // Chromium's native save dialog (which can block an agent-driven pane).
-  // Installed once per Session; see the module for why that guard is mandatory.
-  installWebviewDownloadPolicy(contents.session);
+  // the embedded pane, and save downloads to the OS Downloads folder rather than
+  // opening Chromium's native save dialog (which can block an agent-driven pane).
+  // The pane is for viewing dev servers, which need none of these permissions,
+  // and agent-driven navigation could otherwise reach a page that auto-prompts.
+  // (embedded-browser.md decision log items 5, 13 and 14.) Both handlers read one
+  // predicate, and both install on the SESSION, so the popups above - which share
+  // the guest's Session object - inherit them. The lane manager installs the
+  // same policy on an offscreen lane's Session, which never reaches this branch.
+  installEmbeddedBrowserSessionPolicy(contents.session);
 
   // The URL comes from the event's details: Electron 44 deprecates the
   // positional `url` argument.

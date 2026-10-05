@@ -1,5 +1,6 @@
 import type { ErrorEvent } from '@sentry/electron/main';
 import { moduleBasename, reportableModuleName } from './reportable-module-name';
+import { BROWSER_GUEST_RENDERER_NAME } from './renderer-classification';
 
 /**
  * Reads the two facts a native crash event needs but cannot carry, straight out
@@ -178,6 +179,12 @@ export const FOREIGN_CRASH_FINGERPRINT = ['foreign-process-crash'];
 
 /** The prefix the SDK gives the dump's own Crashpad annotation objects in `contexts.electron`. */
 const CRASHPAD_ANNOTATION_KEY_PREFIX = 'crashpad.';
+
+/** The title of the issue a Browser pane page's crash groups into. */
+export const BROWSER_GUEST_CRASH_MESSAGE = 'A Browser pane page crashed';
+
+/** Grouped by exit reason only, so an out-of-memory and a crash stay two issues and no page splits them. */
+export const BROWSER_GUEST_CRASH_FINGERPRINT_PREFIX = 'browser-guest-crash';
 
 function requireRange(totalBytes: number, offset: number, length: number, what: string): void {
   if (offset < 0 || length < 0 || offset + length > totalBytes) {
@@ -498,6 +505,50 @@ function toForeignCrashWarning(
       found_at_startup: foundAtStartup,
     },
   };
+  return event;
+}
+
+/**
+ * Whether the SDK attributed this native crash to a Browser pane page: its
+ * `getRendererName` returned BROWSER_GUEST_RENDERER_NAME for the crashed
+ * WebContents (renderer-classification.ts). Only the live `render-process-gone`
+ * path can stamp it; a guest dump found at the next startup has no WebContents
+ * to ask and stays an ordinary renderer crash.
+ */
+export function isBrowserGuestCrashEvent(event: ErrorEvent): boolean {
+  return event.tags?.['event.process'] === BROWSER_GUEST_RENDERER_NAME;
+}
+
+/**
+ * Rewrite a Browser pane page's crash, in place, into one grouped warning that
+ * keeps the counts and drops the page.
+ *
+ * The page is the user's dev app or whatever site they opened in the pane, not
+ * Kangentic, and its crash event carries it in three places: the page URL in
+ * `contexts.electron.crashed_url`, the page's JavaScript stack (Electron 42+ writes
+ * it into a Crashpad annotation as a guest nears its heap limit, and the SDK
+ * parses that into `exception` frames), and whatever else Chromium put in the
+ * dump's annotations. All three go, and so does the dump itself, which holds
+ * the page's memory; the caller strips that attachment. What stays is enough to
+ * see whether guests crash and why: the exit reason and code
+ * (`contexts.electron.details`), the versions, the OS, and our own scope.
+ * Breadcrumbs stay because the breadcrumb policy (src/shared/sentry-breadcrumbs.ts)
+ * already drops every guest URL from them.
+ */
+export function toBrowserGuestCrashWarning(event: ErrorEvent): ErrorEvent {
+  const exitReason = event.tags?.['exit.reason'];
+  event.level = 'warning';
+  event.message = BROWSER_GUEST_CRASH_MESSAGE;
+  event.fingerprint = [BROWSER_GUEST_CRASH_FINGERPRINT_PREFIX, typeof exitReason === 'string' ? exitReason : 'unknown'];
+  delete event.exception;
+
+  const electronContext = event.contexts?.electron;
+  if (electronContext) {
+    delete electronContext.crashed_url;
+    for (const key of Object.keys(electronContext)) {
+      if (key.startsWith(CRASHPAD_ANNOTATION_KEY_PREFIX)) delete electronContext[key];
+    }
+  }
   return event;
 }
 

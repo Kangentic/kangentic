@@ -4,6 +4,7 @@ import { browserPaneRegistry } from './browser-pane-registry';
 import { browserPartitionForTask } from '../../shared/browser-partition';
 import { syncJarFromIdentity } from './jar-seeder';
 import { applyBrowserUserAgent } from './browser-user-agent';
+import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
 
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
@@ -166,6 +167,20 @@ export function laneIdForTask(taskId: string): string | null {
 /** True when this task's one surface is currently offscreen. */
 export function hasLaneForTask(taskId: string): boolean {
   return laneIdForTask(taskId) !== null;
+}
+
+/**
+ * True when `webContentsId` is a live lane's page. Read by crash reporting
+ * (analytics/renderer-classification.ts): a lane renders the user's page in a
+ * plain BrowserWindow, so unlike a `<webview>` guest it cannot be recognized
+ * from `getType()`. `render-process-gone` fires before the window is torn down,
+ * so the lane is still in the map when the SDK asks.
+ */
+export function isLaneWebContents(webContentsId: number): boolean {
+  for (const lane of lanes.values()) {
+    if (!lane.window.isDestroyed() && lane.window.webContents.id === webContentsId) return true;
+  }
+  return false;
 }
 
 /**
@@ -362,6 +377,11 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   // this run. Without its own call it would present the `Electron/` token that
   // decision 41 removes from the pane.
   applyBrowserUserAgent(guest);
+  // Same reason: without this, a lane opened before any pane used this task's
+  // partition in this run ran with Electron's default, which GRANTS every
+  // permission request (camera, microphone, geolocation) and opens Chromium's
+  // native save dialog for a download.
+  installEmbeddedBrowserSessionPolicy(guest.session);
 
   const record: LaneRecord = {
     laneId,

@@ -317,6 +317,18 @@ in one Sentry org, one triage surface.
     older than that is gone (its issue keeps the counts but shows no latest event), and a search
     sees no further back. The rule was applied on 2026-10-03, so no stored event predating it
     survives past early November 2026.
+- **A Browser pane page's crash becomes a warning without the page.** A pane guest (and an
+  offscreen lane) runs as Kangentic.exe, so its dump reads as ours, but its content is the user's
+  page: the event's `contexts.electron.crashed_url` names it, and since Electron 42 a guest nearing
+  its heap limit writes its JavaScript stack into a Crashpad annotation, which the SDK parses into
+  exception frames. The SDK's `getRendererName` (`renderer-classification.ts`) names those
+  renderers `browser-guest`, and `beforeSend` (`toBrowserGuestCrashWarning` in
+  `native-crash-event.ts`) rewrites the event into a warning titled "A Browser pane page crashed",
+  grouped by exit reason, with the exception, `crashed_url`, every `crashpad.*` annotation and the
+  minidump removed. The exit reason and code, the versions and our own scope stay, so guest crash
+  rates are still visible. The SDK's `'browser-guest' process exited with ...` message for an
+  abnormal exit is dropped in `ignoreErrors`, like the Utility and GPU ones. A guest dump found
+  only at the next startup has no WebContents to classify and stays an ordinary renderer crash.
 - **Native crashes in processes that are not ours become one warning, and their dumps never
   upload.** This happens in `beforeSend` (`beforeSendEvent` -> `filterNativeCrashEvent`), the only
   hook that can see the minidump attachment. On macOS a task's mach exception ports are inherited
@@ -470,7 +482,16 @@ in one Sentry org, one triage surface.
   transaction for `setMeasurement` to hang on), so whatever event fires next - including a native
   crash - carries the freshest sample. `correctNativeCrashEvent` prunes `host_memory` under the
   same stale-dump condition as `app_memory`/`free_memory`, since a startup-found dump can otherwise
-  present the uploading launch's memory as the crash's.
+  present the uploading launch's memory as the crash's. The commit fields are Windows-only. On
+  Linux the sample carries `physicalAvailableBytes` instead, the kernel's MemAvailable
+  (`available`, Electron 44+), because `physicalFreeBytes` there is MemFree, which leaves out page
+  cache and reads near zero on a healthy machine. It is null on every other platform, and it is a
+  reading only: no Linux pressure warning is raised from it.
+- **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
+  process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
+  and latch report until the pipe ends, bounded at 500 ms (`STDERR_DRAIN_BOUND_MS`). Measured on
+  44.5.1, `end` follows `exit` by about 3 ms. The count, backoff, telemetry and the latch decision
+  stay synchronous.
 - **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
   early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
   missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship
