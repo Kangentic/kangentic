@@ -8,7 +8,7 @@ import type {
   DictationStartResult,
 } from '../../shared/types';
 import { detectHardware, selectTier } from './hardware/detect-hardware';
-import { computeEngineKey, selectEngine, type EngineSelection } from './engines/engine-selection';
+import { computeEngineKey, finalNeedsSentenceCase, selectEngine, type EngineSelection } from './engines/engine-selection';
 import { ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
 import type { ModelDef } from './models/model-registry';
 import { buildDictationInfo, primaryModel } from './dictation-info';
@@ -170,6 +170,7 @@ export class TranscriptionService extends EventEmitter {
       engineId: selected.id,
       modelId: primaryModel(selected.models)?.id ?? null,
       needsDownload: prepared.needsDownload,
+      sentenceCaseFinal: finalNeedsSentenceCase(selected),
     };
   }
 
@@ -268,10 +269,10 @@ export class TranscriptionService extends EventEmitter {
    * rather than re-derived there.
    *
    * Two stays right for 600 MB live models too. onnxruntime keeps a disposed
-   * engine's arena reserved in-process, so a cap of 1 frees nothing: measured
-   * on 2026-10-05, an English to French to English switch on Best went 716,
-   * 1,409, then 2,083 MB of commit with a cap of 1, where a cap of 2 serves
-   * the switch back from the warm engine.
+   * engine's arena reserved in-process, so a cap of 1 frees nothing: a switch
+   * away and back with a cap of 1 grew the worker by an engine at each step,
+   * where a cap of 2 serves the switch back from the warm engine (figures in
+   * DictationClient's IDLE_SHUTDOWN_MS note).
    */
   private warmCap(profile: DictationHardwareProfile): number {
     return selectTier(profile) === 'streaming-tiny' ? 1 : 2;

@@ -16,8 +16,8 @@
  */
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
+import { emitModelProgress, waitForProgressListener } from './helpers/dictation-model-progress';
 import type { Browser, Page } from '@playwright/test';
-import type { DictationModelProgress } from '../../src/shared/types';
 
 let browser: Browser;
 let page: Page;
@@ -154,15 +154,6 @@ test.describe('DictationTab: model list', () => {
   });
 });
 
-/** Push a model download event through the mock's `onModelProgress` fan-out, the
- *  way main's download progress arrives. */
-async function emitModelProgress(progress: DictationModelProgress): Promise<void> {
-  await page.evaluate((payload) => {
-    (window as unknown as { __emitDictationModelProgress?: (event: unknown) => void })
-      .__emitDictationModelProgress?.(payload);
-  }, progress);
-}
-
 /**
  * A failed download's raw error ("Download failed (404) for https://<long url>")
  * can be far wider than a line. The line names the failure and the model, and
@@ -178,7 +169,7 @@ test.describe('DictationTab: a long download error stays behind its line\'s info
   test.afterEach(async () => {
     await setDictationInfoOverride(null);
     // `done` clears the store's progress, so the error does not reach a sibling spec.
-    await emitModelProgress({ modelId: STREAMING_ZIPFORMER.id, status: 'done', downloadedBytes: 0, totalBytes: 0 });
+    await emitModelProgress(page, { modelId: STREAMING_ZIPFORMER.id, status: 'done', downloadedBytes: 0, totalBytes: 0 });
   });
 
   test('names the failure on its line, keeps the whole error on the info tip, and overflows neither the tile nor the scroller', async () => {
@@ -187,13 +178,9 @@ test.describe('DictationTab: a long download error stays behind its line\'s info
     await expect(page.getByTestId('dictation-model-lines')).toBeVisible();
     // The always-mounted dictation hook subscribes once dictation is on, so an
     // event pushed before that would reach no one.
-    await page.waitForFunction(() => {
-      const listeners = (window as unknown as { __mockDictationModelProgressListeners?: unknown[] })
-        .__mockDictationModelProgressListeners;
-      return (listeners?.length ?? 0) > 0;
-    }, undefined, { timeout: 5000 });
+    await waitForProgressListener(page);
 
-    await emitModelProgress({
+    await emitModelProgress(page, {
       modelId: STREAMING_ZIPFORMER.id,
       status: 'error',
       downloadedBytes: 0,

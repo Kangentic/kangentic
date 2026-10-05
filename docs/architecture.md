@@ -573,7 +573,7 @@ See the Knowledge Graph settings tab (id `knowledgeGraph`).
 By-session-id, not task-scoped (no `projectId`), in the same category as `session:write`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload }` |
+| `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload, sentenceCaseFinal }`; `sentenceCaseFinal` is true only when the committed text is an all-caps live model's own (the Zipformer with no refinement), so the renderer sentence-cases that final and types every other one as written |
 | `transcribe:stop` | invoke | Finalize and return the committed text. Passes the renderer's sent-frame count so the decode drains all in-flight audio first (the tail is never clipped) |
 | `transcribe:cancel` | invoke | Abort a session without committing |
 | `transcribe:commit` | invoke | Inject finalized text into the focused terminal WITHOUT submitting (no Enter) |

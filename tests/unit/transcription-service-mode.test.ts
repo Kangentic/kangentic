@@ -142,6 +142,32 @@ describe('TranscriptionService.start: the saved mode reaches the engine selectio
   });
 });
 
+describe('TranscriptionService.start: sentenceCaseFinal tells the renderer which finals to recase', () => {
+  // The renderer sentence-cases a committed final only when this is true. It used
+  // to recase every final with no lowercase letter, which typed a bare "GPU" from
+  // Nemotron as "Gpu". toBe(false), not toBeFalsy(): a result that leaves the
+  // field out must fail the Balanced case too.
+  it('is true for Light with no model ids: the Zipformer alone writes all caps', async () => {
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+
+    const result = await service.start(startOptionsFor('fast'));
+
+    expect(createSessionRequestOf(client).selection.liveModelId).toBe(ZIPFORMER_ID);
+    expect(result.sentenceCaseFinal).toBe(true);
+  });
+
+  it('is false for Balanced with no model ids: Parakeet v3 writes its own case', async () => {
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+
+    const result = await service.start(startOptionsFor('balanced'));
+
+    expect(createSessionRequestOf(client).selection.liveModelId).toBe(PARAKEET_V3_ID);
+    expect(result.sentenceCaseFinal).toBe(false);
+  });
+});
+
 describe('TranscriptionService: prewarm and start agree on the engine for the same saved mode', () => {
   // A warm engine is reused only when the press computes the same engine key the
   // prewarm warmed. `prewarm` takes the config as saved while `start` rebuilds it

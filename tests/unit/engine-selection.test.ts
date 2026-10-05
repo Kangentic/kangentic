@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
 // sherpa-onnx-node, so unlike its predecessor this test needs no native-addon
 // stub at all.
 
-import { computeEngineKey, listEngineInfos, selectEngine } from '../../src/main/transcription/engines/engine-selection';
+import { computeEngineKey, finalNeedsSentenceCase, listEngineInfos, selectEngine } from '../../src/main/transcription/engines/engine-selection';
 
 function makeProfile(overrides: Partial<DictationHardwareProfile> = {}): DictationHardwareProfile {
   return {
@@ -295,6 +295,81 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
       }),
     );
     expect(result.language).toBe('fr');
+  });
+});
+
+describe('finalNeedsSentenceCase - which committed finals the renderer recases', () => {
+  // The renderer used to recase every committed final that had no lowercase
+  // letter, so a bare "GPU" from Nemotron alone was typed "Gpu". Only text the
+  // Zipformer wrote by itself (all caps, no punctuation) needs it: no on-device
+  // refinement, no cloud final, and a live model that writes all caps. Each case
+  // asserts the slots it resolved first, so a preset change cannot turn a case
+  // green for a different reason than the one it names.
+  const capableProfile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
+
+  it('is true for Light English: the Zipformer alone writes the final', () => {
+    const selected = selectEngine(capableProfile, makeConfig({ mode: 'fast', language: 'en' }));
+
+    expect(selected.liveModelId).toBe('streaming-zipformer-en');
+    expect(selected.finalModelId).toBeNull();
+    expect(selected.isRemote).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(true);
+  });
+
+  it('is false for Best English: Parakeet v3 refines the live text and writes its own case', () => {
+    const selected = selectEngine(capableProfile, makeConfig({ mode: 'accurate', language: 'en' }));
+
+    expect(selected.liveModelId).toBe('nemotron-streaming-0.6b-en');
+    expect(selected.finalModelId).toBe('parakeet-tdt-0.6b-v3');
+    expect(selected.isRemote).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(false);
+  });
+
+  it('is false for Nemotron alone: it cases its own text, so "GPU" is typed as written', () => {
+    const selected = selectEngine(
+      capableProfile,
+      makeConfig({ mode: 'custom', language: 'en', liveModelId: 'nemotron-streaming-0.6b-en', modelId: 'none' }),
+    );
+
+    expect(selected.liveModelId).toBe('nemotron-streaming-0.6b-en');
+    expect(selected.finalModelId).toBeNull();
+    expect(selected.isRemote).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(false);
+  });
+
+  it('is false when the Zipformer is live but the cloud writes the final', () => {
+    const selected = selectEngine(
+      capableProfile,
+      makeConfig({
+        mode: 'custom',
+        language: 'en',
+        liveModelId: 'streaming-zipformer-en',
+        modelId: 'none',
+        engineMode: 'remote',
+      }),
+    );
+
+    expect(selected.liveModelId).toBe('streaming-zipformer-en');
+    expect(selected.finalModelId).toBeNull();
+    expect(selected.isRemote).toBe(true);
+    expect(finalNeedsSentenceCase(selected)).toBe(false);
+  });
+
+  it('is false when the Zipformer is live but a refinement model writes the final', () => {
+    const selected = selectEngine(
+      capableProfile,
+      makeConfig({
+        mode: 'custom',
+        language: 'en',
+        liveModelId: 'streaming-zipformer-en',
+        modelId: 'parakeet-tdt-0.6b-v3',
+      }),
+    );
+
+    expect(selected.liveModelId).toBe('streaming-zipformer-en');
+    expect(selected.finalModelId).toBe('parakeet-tdt-0.6b-v3');
+    expect(selected.isRemote).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(false);
   });
 });
 

@@ -34,11 +34,21 @@ const FINALIZE_TIMEOUT_MS = 30_000;
  *  in-process, so the recycle is a process exit: 3 GB of commit for an idle
  *  631 MB model was what fired the low-memory warning (#706). A worker that
  *  has only been pre-warmed holds the live model alone and is not
- *  recycled while under the ceiling - it IS the instant first press. Measured on 2026-10-05, that is
- *  160 MB of commit for the Zipformer (Light) and 780 MB for Nemotron or a
- *  chunked Parakeet v3 (Best, Balanced); Best with its refinement model
- *  loaded is 1.5 GB, at the commit ceiling. TranscriptionService re-warms a
- *  recycled worker straight back to that baseline.
+ *  recycled while under the ceiling - it IS the instant first press.
+ *  TranscriptionService re-warms a recycled worker straight back to that
+ *  baseline.
+ *
+ *  The worker's commit, measured on 2026-10-05. The other comments that reason
+ *  about dictation memory (armIdleShutdown, HybridEngine, TranscriptionService's
+ *  warmCap) point here rather than repeat the figures:
+ *    - the live model alone: 160 MB for the Zipformer (Light), 780 MB for
+ *      Nemotron or a chunked Parakeet v3 (Best, Balanced)
+ *    - Best with its refinement model loaded: 1.5 GB (Parakeet v3 adds
+ *      740 MB), at the commit ceiling
+ *    - Best switched English to French and back with a warm cap of 1: 716,
+ *      1,409, then 2,083 MB, since a disposed engine's arena stays reserved;
+ *      a cap of 2 serves the switch back from the warm engine
+ *    - that worker recycled: 716 MB, the one engine in use
  *
  *  The timer never runs while a session is open. A session's frames travel
  *  fire-and-forget and would not touch it, so `activeSessions` gates both the
@@ -356,9 +366,9 @@ export class DictationClient extends EventEmitter {
    *  one past the commit ceiling. A prewarm-only child under it is left
    *  resident on purpose. The second case is a settings switch: each language
    *  or preset change pre-warms another engine, and a disposed one's arena
-   *  stays reserved, so English to French and back on Best left an idle
-   *  worker at 2,083 MB (measured 2026-10-05). Recycled, it re-warms the one
-   *  engine in use, 716 MB. */
+   *  stays reserved, so a few switches leave an idle worker holding several
+   *  engines' commit. Recycled, it re-warms only the one in use (figures in
+   *  IDLE_SHUTDOWN_MS's note). */
   private armIdleShutdown(): void {
     if (this.disposed || !this.child || this.idleTimer) return;
     if (this.pending.size > 0 || this.activeSessions.size > 0) return;

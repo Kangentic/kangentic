@@ -14,22 +14,34 @@
 //   question marks   questions that end in one
 //   real-time factor decode seconds per audio second (lower is faster)
 //
-// Streaming models run as SherpaOnlineEngine does: 0.6 s of lead silence,
-// 100 ms pushes, 0.5 s of tail padding. Offline models decode the whole clip.
-// Weights download into the dictation smoke cache under the OS temp directory.
+// Streaming models run as a SherpaOnlineEngine session does (`streamDecode`).
+// Offline models decode the whole clip. Each model loads through the config
+// its engine builds (scripts/lib/dictation-engine-recipes.mjs). Weights
+// download into the dictation smoke cache under the OS temp directory.
 //
 // Run: node scripts/measure-dictation-models.mjs [model names...]
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import {
+  CACHE_FOLDERS,
+  COHERE_TRANSCRIBE_FILES,
+  COHERE_TRANSCRIBE_ROLES,
+  DICTATION_CACHE_ROOT,
+  TRANSDUCER_FILES,
+  TRANSDUCER_ROLES,
+  offlineRecognizerConfig,
+  onlineRecognizerConfig,
+  rolePaths,
+  streamDecode,
+} from './lib/dictation-engine-recipes.mjs';
 
 const require = createRequire(import.meta.url);
 const sherpa = require('sherpa-onnx-node');
-const root = path.join(os.tmpdir(), 'kangentic-dictation-smoke');
+const root = DICTATION_CACHE_ROOT;
 const hf = (repo, revision, file) => `https://huggingface.co/${repo}/resolve/${revision}/${file}`;
 
 const PROMPTS = [
@@ -52,31 +64,50 @@ const READ_SPEECH = [
   { repo: NEMOTRON_EN, file: 'test_wavs/1.wav', reference: 'god as a direct consequence of the sin which man thus punished had given her a lovely child whose place was on that same dishonoured bosom to connect her parent for ever with the race and descent of mortals and to be finally a blessed soul in heaven' },
 ];
 
-const transducer = (repo, revision) => ({
-  files: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
-  repo, revision,
-  config: (dir) => ({ transducer: { encoder: path.join(dir, 'encoder.int8.onnx'), decoder: path.join(dir, 'decoder.int8.onnx'), joiner: path.join(dir, 'joiner.int8.onnx') }, tokens: path.join(dir, 'tokens.txt') }),
-});
+const transducer = (repo, revision) => ({ repo, revision, files: TRANSDUCER_FILES });
+const offlineNemo = (directory) => offlineRecognizerConfig('offline-nemo-transducer', rolePaths(directory, TRANSDUCER_ROLES));
 
 const MODELS = {
-  'parakeet-v3': { kind: 'offline', ...transducer('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8', '2bda32ec70b097a55adaa07d9a7173915b43cc78'), nemo: true },
-  'parakeet-v2': { kind: 'offline', ...transducer('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8', 'main'), nemo: true },
-  'parakeet-unified': { kind: 'offline', ...transducer('csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming', '8c3a10fb13408c7a7054f6898958bf1c64a8d6c7'), nemo: true },
+  'parakeet-v3': {
+    kind: 'offline', cacheFolder: CACHE_FOLDERS.parakeetV3, recognizerConfig: offlineNemo,
+    ...transducer('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8', '2bda32ec70b097a55adaa07d9a7173915b43cc78'),
+  },
+  'parakeet-v2': {
+    kind: 'offline', cacheFolder: CACHE_FOLDERS.parakeetV2, recognizerConfig: offlineNemo,
+    ...transducer('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8', 'main'),
+  },
+  'parakeet-unified': {
+    kind: 'offline', cacheFolder: CACHE_FOLDERS.parakeetUnified, recognizerConfig: offlineNemo,
+    ...transducer('csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming', '8c3a10fb13408c7a7054f6898958bf1c64a8d6c7'),
+  },
   'cohere-transcribe': {
-    kind: 'offline',
+    kind: 'offline', cacheFolder: CACHE_FOLDERS.cohereTranscribe,
     repo: 'csukuangfj2/sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01', revision: '156a470cf08eefe706a0004f3c52d9ee567ca7a0',
-    files: ['encoder.int8.onnx', 'encoder.int8.onnx.data', 'decoder.int8.onnx', 'tokens.txt'],
-    config: (dir) => ({ cohereTranscribe: { encoder: path.join(dir, 'encoder.int8.onnx'), decoder: path.join(dir, 'decoder.int8.onnx'), usePunct: 1, useItn: 1 }, tokens: path.join(dir, 'tokens.txt') }),
+    files: COHERE_TRANSCRIBE_FILES,
+    recognizerConfig: (directory) => offlineRecognizerConfig('offline-cohere-transcribe', rolePaths(directory, COHERE_TRANSCRIBE_ROLES)),
   },
   'canary-180m-flash': {
     kind: 'offline',
     repo: 'csukuangfj/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8', revision: 'main',
     files: ['encoder.int8.onnx', 'decoder.int8.onnx', 'tokens.txt'],
-    config: (dir) => ({ canary: { encoder: path.join(dir, 'encoder.int8.onnx'), decoder: path.join(dir, 'decoder.int8.onnx'), srcLang: 'en', tgtLang: 'en', usePnc: 1 }, tokens: path.join(dir, 'tokens.txt') }),
+    // Measured and not offered, so no engine builds it: the shape of the other
+    // offline configs, with Canary's own block.
+    recognizerConfig: (directory) => ({
+      featConfig: { sampleRate: 16000, featureDim: 80 },
+      modelConfig: {
+        canary: { encoder: path.join(directory, 'encoder.int8.onnx'), decoder: path.join(directory, 'decoder.int8.onnx'), srcLang: 'en', tgtLang: 'en', usePnc: 1 },
+        tokens: path.join(directory, 'tokens.txt'), numThreads: 4, provider: 'cpu', debug: 0,
+      },
+      decodingMethod: 'greedy_search',
+    }),
   },
-  'nemotron-streaming': { kind: 'online', ...transducer(...NEMOTRON_EN) },
+  'nemotron-streaming': {
+    kind: 'online', cacheFolder: CACHE_FOLDERS.nemotronEnglish,
+    recognizerConfig: (directory) => onlineRecognizerConfig(rolePaths(directory, TRANSDUCER_ROLES)),
+    ...transducer(...NEMOTRON_EN),
+  },
   'zipformer': {
-    kind: 'online',
+    kind: 'online', cacheFolder: CACHE_FOLDERS.zipformer,
     repo: ZIPFORMER, revision: 'main',
     files: [
       ['encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx', 'encoder.int8.onnx'],
@@ -84,18 +115,10 @@ const MODELS = {
       ['joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx', 'joiner.int8.onnx'],
       ['tokens.txt', 'tokens.txt'],
     ],
-    config: (dir) => ({ transducer: { encoder: path.join(dir, 'encoder.int8.onnx'), decoder: path.join(dir, 'decoder.onnx'), joiner: path.join(dir, 'joiner.int8.onnx') }, tokens: path.join(dir, 'tokens.txt') }),
+    recognizerConfig: (directory) => onlineRecognizerConfig(rolePaths(directory, {
+      encoder: 'encoder.int8.onnx', decoder: 'decoder.onnx', joiner: 'joiner.int8.onnx', tokens: 'tokens.txt',
+    })),
   },
-};
-
-const CACHE_FOLDERS = {
-  'parakeet-v3': 'parakeet-v3',
-  'parakeet-v2': 'parakeet',
-  'parakeet-unified': 'parakeet-unified',
-  'cohere-transcribe': 'cohere-transcribe',
-  'canary-180m-flash': 'canary-180m-flash',
-  'nemotron-streaming': 'nemotron-streaming-en',
-  'zipformer': 'streaming-zipformer',
 };
 
 async function fetchTo(url, dest) {
@@ -130,12 +153,12 @@ async function renameWithRetry(fromPath, toPath) {
 
 async function modelDir(name, spec) {
   // The smoke test's folder names, so the two scripts share one download.
-  const dir = path.join(root, CACHE_FOLDERS[name] ?? name);
+  const directory = path.join(root, spec.cacheFolder ?? name);
   for (const entry of spec.files) {
     const [remote, local] = Array.isArray(entry) ? entry : [entry, entry];
-    await fetchTo(hf(spec.repo, spec.revision, remote), path.join(dir, local));
+    await fetchTo(hf(spec.repo, spec.revision, remote), path.join(directory, local));
   }
-  return dir;
+  return directory;
 }
 
 async function dictatedClips() {
@@ -148,7 +171,13 @@ async function dictatedClips() {
     await fetchTo('https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2', archive);
     // A relative archive name: GNU tar (Git Bash) reads `C:` in an absolute
     // Windows path as a remote host.
-    execFileSync('tar', ['-xjf', path.basename(archive)], { cwd: root });
+    try {
+      execFileSync('tar', ['-xjf', path.basename(archive)], { cwd: root });
+    } catch (error) {
+      // Windows 10 and later ship a bsdtar that reads bzip2; a minimal Linux
+      // image may have tar without bzip2, which fails with no hint.
+      throw new Error(`Extracting ${path.basename(archive)} needs tar with bzip2 support on PATH: ${error.message}`, { cause: error });
+    }
     fs.writeFileSync(extractedMarker, '');
   }
   const clipDir = path.join(root, 'measure-clips');
@@ -203,21 +232,6 @@ function decodeOffline(recognizer, wave) {
   return recognizer.getResult(stream).text.trim();
 }
 
-function decodeOnline(recognizer, wave) {
-  const stream = recognizer.createStream();
-  stream.setOption('language', 'en');
-  stream.acceptWaveform({ sampleRate: wave.sampleRate, samples: new Float32Array(Math.round(wave.sampleRate * 0.6)) });
-  const step = Math.round(wave.sampleRate / 10);
-  for (let index = 0; index < wave.samples.length; index += step) {
-    stream.acceptWaveform({ sampleRate: wave.sampleRate, samples: wave.samples.subarray(index, index + step) });
-    while (recognizer.isReady(stream)) recognizer.decode(stream);
-  }
-  stream.acceptWaveform({ sampleRate: wave.sampleRate, samples: new Float32Array(Math.round(wave.sampleRate * 0.5)) });
-  stream.inputFinished();
-  while (recognizer.isReady(stream)) recognizer.decode(stream);
-  return recognizer.getResult(stream).text.replace(/ {2,}/g, ' ').trim();
-}
-
 async function main() {
   const clips = await dictatedClips();
   for (const clip of READ_SPEECH) {
@@ -229,19 +243,17 @@ async function main() {
   const requested = process.argv.slice(2);
   for (const [name, spec] of Object.entries(MODELS)) {
     if (requested.length > 0 && !requested.includes(name)) continue;
-    const dir = await modelDir(name, spec);
-    const megabytes = fs.readdirSync(dir).reduce((sum, file) => sum + fs.statSync(path.join(dir, file)).size, 0) / (1024 * 1024);
-    const modelConfig = { ...spec.config(dir), numThreads: spec.kind === 'online' ? 2 : 4, provider: 'cpu', debug: 0, ...(spec.nemo ? { modelType: 'nemo_transducer' } : {}) };
-    const featConfig = { sampleRate: 16000, featureDim: 80 };
+    const directory = await modelDir(name, spec);
+    const megabytes = fs.readdirSync(directory).reduce((sum, file) => sum + fs.statSync(path.join(directory, file)).size, 0) / (1024 * 1024);
     const recognizer = spec.kind === 'online'
-      ? new sherpa.OnlineRecognizer({ featConfig, modelConfig, decodingMethod: 'greedy_search', enableEndpoint: false })
-      : new sherpa.OfflineRecognizer({ featConfig, modelConfig, decodingMethod: 'greedy_search' });
+      ? new sherpa.OnlineRecognizer(spec.recognizerConfig(directory))
+      : new sherpa.OfflineRecognizer(spec.recognizerConfig(directory));
 
     const totals = { wordErrors: 0, words: 0, typedErrors: 0, typed: 0, closed: 0, dictated: 0, questions: 0, questionsClosed: 0, decodeSeconds: 0, audioSeconds: 0 };
     for (const clip of clips) {
       const wave = sherpa.readWave(clip.file);
       const started = Date.now();
-      const text = spec.kind === 'online' ? decodeOnline(recognizer, wave) : decodeOffline(recognizer, wave);
+      const text = spec.kind === 'online' ? streamDecode(recognizer, wave, 'en').text : decodeOffline(recognizer, wave);
       totals.decodeSeconds += (Date.now() - started) / 1000;
       totals.audioSeconds += wave.samples.length / wave.sampleRate;
       const referenceWords = normalizeWords(clip.reference);

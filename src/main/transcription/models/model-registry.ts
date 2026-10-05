@@ -57,6 +57,10 @@ export interface ModelDef {
    *  (Parakeet unified and v2, Nemotron streaming, the `.en` Whisper builds,
    *  Moonshine, the Zipformer). */
   languages?: string[];
+  /** The model writes all caps with no punctuation (the Zipformer), so text it
+   *  commits on its own is sentence-cased before it is typed. Every other
+   *  model's text is typed as written, acronyms included. */
+  writesAllCaps?: boolean;
   files: ModelFileSpec[];
   /** Map of sherpa-onnx config role -> on-disk filename (a subset of `files`). */
   roles: Record<string, string>;
@@ -281,6 +285,7 @@ const STREAMING_ZIPFORMER_EN: ModelDef = {
   accuracy: { rank: 1, label: 'Basic accuracy' },
   approxSizeMb: 70,
   liveCapable: true,
+  writesAllCaps: true,
   files: [
     { url: `${STREAMING_BASE}/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx`, file: 'encoder.int8.onnx' },
     { url: `${STREAMING_BASE}/decoder-epoch-99-avg-1-chunk-16-left-128.onnx`, file: 'decoder.onnx' },

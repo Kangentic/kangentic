@@ -65,6 +65,12 @@ const FINAL_TRANSCRIPT = 'This is a test of dictation.';
  *  the final text. */
 const PARTIAL_RAW = 'FIX THE SPACING';
 const PARTIAL_SHOWN = 'Fix the spacing';
+/** A final in the all-caps shape the Zipformer commits on its own, and what the
+ *  hook types for it once main asks for sentence casing. */
+const ALL_CAPS_FINAL = 'FIX THE SPACING';
+const ALL_CAPS_FINAL_SENTENCE_CASED = 'Fix the spacing';
+/** A final a model cased itself. Recasing it would type "Gpu". */
+const ACRONYM_FINAL = 'GPU';
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
@@ -337,7 +343,7 @@ async function release(page: Page): Promise<void> {
 }
 
 interface DictationStoreHandle {
-  getState: () => { status: string; targetKind: string | null };
+  getState: () => { status: string; targetKind: string | null; finalText: string };
 }
 
 function dictationStatus(page: Page): Promise<string | null> {
@@ -354,11 +360,42 @@ function dictationTargetKind(page: Page): Promise<string | null> {
   });
 }
 
+function dictationFinalText(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as { __zustandStores?: { dictation: DictationStoreHandle } }).__zustandStores;
+    return stores?.dictation?.getState().finalText ?? null;
+  });
+}
+
 function emitPartial(page: Page, text: string): Promise<void> {
   return page.evaluate((value) => {
     (window as unknown as { __emitDictationPartial: (id: string, text: string) => void })
       .__emitDictationPartial('mock-dictation-1', value);
   }, text);
+}
+
+/** Push a committed final through the mock's `onFinal` fan-out, the way main
+ *  pushes the refined text to the renderer. */
+function emitFinal(page: Page, text: string): Promise<void> {
+  return page.evaluate((value) => {
+    (window as unknown as { __emitDictationFinal: (id: string, text: string) => void })
+      .__emitDictationFinal('mock-dictation-1', value);
+  }, text);
+}
+
+/** What the mock reports for the next utterance: whether `start` says the
+ *  committed text is an all-caps live model's own (`sentenceCaseFinal`), and what
+ *  `stop` resolves with. Set before the press, because the hook reads `start`'s
+ *  result at press time. Every page here is fresh, so nothing leaks between tests. */
+function setMockFinal(page: Page, options: { sentenceCaseFinal: boolean; stopText: string }): Promise<void> {
+  return page.evaluate((value) => {
+    const mockWindow = window as unknown as {
+      __mockDictationSentenceCaseFinal: boolean;
+      __mockDictationStopText: string;
+    };
+    mockWindow.__mockDictationSentenceCaseFinal = value.sentenceCaseFinal;
+    mockWindow.__mockDictationStopText = value.stopText;
+  }, options);
 }
 
 /** Every `dictation.liveWrite` payload sent to a PTY. Empty means nothing was
@@ -766,6 +803,95 @@ test.describe('dictation into the Browser pane note input', () => {
       await expect(search).toHaveValue(FINAL_TRANSCRIPT);
       // Still nothing routed to a PTY, even with running sessions on the board.
       expect(await liveWritePayloads(page)).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  /**
+   * Which committed finals are recased.
+   *
+   * `toPreviewCase` lowercases text that has no lowercase letter and no sentence
+   * punctuation, then capitalizes its first letter. That is right for the
+   * Zipformer, which writes all caps, and wrong for a model that cases its own
+   * text: a bare "GPU" from Nemotron was typed "Gpu". Main now says which case it
+   * is through `dictation.start`'s `sentenceCaseFinal`, and the hook recases a
+   * final only when it is true.
+   *
+   * The two release tests stream NO partial on purpose. A partial of the same
+   * words is recased for the preview whatever the flag says, so with one the
+   * field would already read "Fix the spacing" before release and the assertion
+   * could not tell a recased final from a final left alone.
+   */
+  test('a final from an all-caps live model is sentence-cased when main asks for it', async () => {
+    const page = await launch({ autoSubmit: false });
+    try {
+      await setMockFinal(page, { sentenceCaseFinal: true, stopText: ALL_CAPS_FINAL });
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      expect(await dictationTargetKind(page)).toBe('input');
+      await release(page);
+
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      await expect(search).toHaveValue(ALL_CAPS_FINAL_SENTENCE_CASED);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a final another model cased itself is typed as written, so an acronym stays one', async () => {
+    const page = await launch({ autoSubmit: false });
+    try {
+      await setMockFinal(page, { sentenceCaseFinal: false, stopText: ACRONYM_FINAL });
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      expect(await dictationTargetKind(page)).toBe('input');
+      await release(page);
+
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      await expect(search).toHaveValue(ACRONYM_FINAL);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a pushed final is recased only when main asks for it', async () => {
+    // The `onFinal` push is the second place a final is committed from. It lands
+    // in the store's `finalText`, which the popup's Send button commits, so the
+    // store is what is read here. Pushed mid-recording, so release has not yet
+    // replaced `finalText` with `stop`'s result.
+    const page = await launch({ autoSubmit: false });
+    try {
+      await setMockFinal(page, { sentenceCaseFinal: true, stopText: ALL_CAPS_FINAL });
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      await emitFinal(page, ALL_CAPS_FINAL);
+      await expect.poll(() => dictationFinalText(page), { timeout: 5000 }).toBe(ALL_CAPS_FINAL_SENTENCE_CASED);
+
+      await release(page);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a pushed final another model cased itself is stored as written', async () => {
+    const page = await launch({ autoSubmit: false });
+    try {
+      await setMockFinal(page, { sentenceCaseFinal: false, stopText: ACRONYM_FINAL });
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      await emitFinal(page, ACRONYM_FINAL);
+      await expect.poll(() => dictationFinalText(page), { timeout: 5000 }).toBe(ACRONYM_FINAL);
+
+      await release(page);
     } finally {
       await page.context().close();
     }

@@ -61,6 +61,7 @@ vi.mock('../../src/main/transcription/models/model-registry', () => ({
 vi.mock('../../src/main/transcription/engines/engine-selection', () => ({
   listEngineInfos: vi.fn(() => []),
   computeEngineKey: vi.fn(() => 'stub-key'),
+  finalNeedsSentenceCase: vi.fn(() => false),
   selectEngine: vi.fn(),
 }));
 

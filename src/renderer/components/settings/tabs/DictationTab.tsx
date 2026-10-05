@@ -66,14 +66,14 @@ function modelOption(info: DictationInfo, modelId: string | null): DictationMode
  * download (prewarm on enable), so a model not on disk yet is queued, never a
  * separate waiting state.
  */
-function modelLine(
-  label: string,
-  description: string,
-  modelId: string | null,
-  info: DictationInfo,
-  progress: DictationModelProgress | null,
-  testId: string,
-): CardSourceLineProps {
+function modelLine({ label, description, modelId, info, progress, testId }: {
+  label: string;
+  description: string;
+  modelId: string | null;
+  info: DictationInfo;
+  progress: DictationModelProgress | null;
+  testId: string;
+}): CardSourceLineProps {
   const base = { label, info: description, testId };
   if (modelId === CLOUD_REFINEMENT) return { ...base, value: 'Cloud endpoint' };
   const model = modelOption(info, modelId);
@@ -246,8 +246,22 @@ export function DictationTab({
   // The two slots main resolved for this config: what runs, whatever the mode.
   const modelLines: CardSourceLineProps[] = info
     ? [
-        modelLine('Live model', LIVE_MODEL_DESCRIPTION, info.selectedLiveModelId, info, modelProgress, 'dictation-live-model-line'),
-        modelLine('Refinement model', REFINEMENT_MODEL_DESCRIPTION, isCloud ? CLOUD_REFINEMENT : info.selectedFinalModelId, info, modelProgress, 'dictation-refinement-model-line'),
+        modelLine({
+          label: 'Live model',
+          description: LIVE_MODEL_DESCRIPTION,
+          modelId: info.selectedLiveModelId,
+          info,
+          progress: modelProgress,
+          testId: 'dictation-live-model-line',
+        }),
+        modelLine({
+          label: 'Refinement model',
+          description: REFINEMENT_MODEL_DESCRIPTION,
+          modelId: isCloud ? CLOUD_REFINEMENT : info.selectedFinalModelId,
+          info,
+          progress: modelProgress,
+          testId: 'dictation-refinement-model-line',
+        }),
       ]
     : [];
   // The licenses of the on-device models that run. A cloud refinement has none.

@@ -64,10 +64,10 @@ function forSlot(models: ResolvedModel[], modelId: string | null): ResolvedModel
  * sub-engines without inferring slots from model kind.
  *
  * The two slots load at different times, and that split is what keeps the
- * dictation worker small while it waits. `load()` loads the LIVE slot only (160 MB
- * of commit for the Zipformer, 780 MB for Nemotron). The FINAL slot (another
- * 740 MB for Parakeet v3) loads lazily, started by the first `createSession()` and overlapped with the
- * utterance it serves: the session streams partials from the live slot at
+ * dictation worker small while it waits (what each slot costs in commit:
+ * DictationClient's IDLE_SHUTDOWN_MS note). `load()` loads the LIVE slot only.
+ * The FINAL slot loads lazily, started by the first `createSession()` and
+ * overlapped with the utterance it serves: the session streams partials from the live slot at
  * once, buffers every frame for the final slot, and `finalize()` hands the
  * buffer to a final sub-session created only then. A press that releases
  * before the accurate model is ready (a short utterance on a cold disk) waits a

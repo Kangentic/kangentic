@@ -2667,7 +2667,12 @@
       __startCalls: [],
       start: async function (options) {
         window.electronAPI.dictation.__startCalls.push(options);
-        return { dictationSessionId: 'mock-dictation-1', engineId: 'stub', modelId: null, needsDownload: false };
+        // Test hook: window.__mockDictationSentenceCaseFinal, a boolean, is what
+        // main reports when the live model writes all caps and the committed text
+        // is its own (the Zipformer with no refinement). The hook recases a final
+        // only when this is true. Unset, it is false, as before.
+        var sentenceCaseFinal = typeof window !== 'undefined' && window.__mockDictationSentenceCaseFinal === true;
+        return { dictationSessionId: 'mock-dictation-1', engineId: 'stub', modelId: null, needsDownload: false, sentenceCaseFinal: sentenceCaseFinal };
       },
       __stopCalls: [],
       stop: async function (dictationSessionId, expectedFrames) {
@@ -2678,6 +2683,13 @@
         // decoding the utterance) without a real crash.
         if (typeof window !== 'undefined' && window.__mockDictationStopError) {
           throw new Error(window.__mockDictationStopError);
+        }
+        // Test hook: window.__mockDictationStopText, a string, is the transcript
+        // stop() resolves with, so a spec can feed the hook a final in the shape a
+        // given model writes (all caps, an acronym) and read back what is typed.
+        // Unset, the stock sentence below is returned, as before.
+        if (typeof window !== 'undefined' && typeof window.__mockDictationStopText === 'string') {
+          return window.__mockDictationStopText;
         }
         return 'This is a test of dictation.';
       },
