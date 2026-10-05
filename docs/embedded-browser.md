@@ -18,7 +18,7 @@ A side-pane in the modeless task-detail window (`TaskDetailWindow`) that hosts a
 The webview is hardened in `src/main/index.ts`:
 
 - `webviewTag: true` on the host `BrowserWindow`.
-- `app.on('web-contents-created', ...)` runs `will-attach-webview` to strip `preload`, force `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`. Non-`http(s):` `src` URLs are rewritten to `about:blank`.
+- `app.on('web-contents-created', ...)` runs `will-attach-webview` to strip `preload`, force `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`. Non-`http(s):` `src` URLs are rewritten to `about:blank`. It also sets `zoomMode: 'isolated'`, so a pane's zoom is its own: in Electron's default mode zoom is stored per origin within the partition, which let one pane's zoom (or an agent's viewport fit) reach every pane, pop-out and lane on the same dev server, and dropped the zoom on a cross-origin navigation while the toolbar still showed it.
 - The same handler also sets per-webview policies on the guest's webContents:
   - `applyBrowserUserAgent` drops the `Electron/<version>` token from the guest's user agent and
     its `Session`'s, keeping `Kangentic/<version>`, because some firewalls reject the token as a

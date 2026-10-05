@@ -656,6 +656,16 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
   // the call here, and what the shared function installs.
   const sessionPolicySource = fs.readFileSync(path.join(REPO_ROOT, 'src/main/browser/guest-session-policy.ts'), 'utf-8');
 
+  // Electron's default zoom mode keys zoom by ORIGIN within a partition, so one pane's zoom (or an
+  // agent's viewport fit) leaked into every pane, pop-out and lane on the same dev server, and a
+  // cross-origin navigation dropped the zoom the toolbar still showed. Measured on 44.5.1:
+  // 'isolated' keeps each guest's zoom its own and Ctrl+wheel still steps once.
+  it('runs every guest in the isolated zoom mode, set in will-attach-webview', () => {
+    const attachBlock = source.slice(source.indexOf("'will-attach-webview'"), source.indexOf('let allowed: boolean;'));
+    expect(attachBlock.length, 'could not find the will-attach-webview block in src/main/index.ts').toBeGreaterThan(0);
+    expect(attachBlock).toMatch(/webPreferences\.zoomMode\s*=\s*'isolated'/);
+  });
+
   it('installs the shared embedded-browser session policy on the guest session', () => {
     expect(
       source,
