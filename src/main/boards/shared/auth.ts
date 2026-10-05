@@ -45,6 +45,15 @@ import { app, safeStorage } from 'electron';
  * Service, `v12` for the Secret portal. So on Linux, genuine means a probe
  * encryption is NOT tagged `v10`.
  *
+ * The sync API stays as a FLOOR while it exists: where the async API does not
+ * genuinely encrypt but the sync one does, encryptSecret writes through the
+ * sync API and isGenuineEncryptionAvailable trusts it, so no machine ends up
+ * worse than 0.43 left it (a plaintext token, a token under the hardcoded key,
+ * a paired phone disposed). Nothing measured needed it on Windows or on Linux
+ * with gnome-keyring, where both APIs agreed. It covers macOS, not measured
+ * here; KDE with KWallet, which the sync API reaches and the async providers
+ * (Secret portal, Secret Service) may not; and a future provider failure.
+ *
  * All functions require app.whenReady(): the async encryptor initializes
  * lazily after `ready`.
  */
@@ -70,13 +79,8 @@ async function probeLinuxGenuineEncryption(): Promise<boolean> {
   return probe.subarray(0, ENCRYPTION_TAG_LENGTH).toString('latin1') !== LINUX_HARDCODED_KEY_TAG;
 }
 
-/**
- * Whether safeStorage genuinely encrypts here, rather than not at all or (on
- * Linux) with the hardcoded fallback key. The mobile bridge refuses to persist
- * its private key unless this is true.
- */
-export async function isGenuineEncryptionAvailable(): Promise<boolean> {
-  assertAppReady();
+/** Whether the ASYNC API genuinely encrypts (on Linux: not under the `v10` key). */
+async function isAsyncEncryptionGenuine(): Promise<boolean> {
   if (!(await safeStorage.isAsyncEncryptionAvailable())) return false;
   if (process.platform !== 'linux') return true;
   if (!linuxGenuineProbe) {
@@ -90,20 +94,50 @@ export async function isGenuineEncryptionAvailable(): Promise<boolean> {
 }
 
 /**
+ * The FLOOR: whether the sync API genuinely encrypts, exactly as 0.43 decided
+ * it. Consulted when the async API does not genuinely encrypt, so a machine
+ * where only the sync API reaches a real key keeps encrypting with it and keeps
+ * its paired phones. On Linux the sync API refuses to encrypt on `basic_text`
+ * (Electron 44), so "available" there already means a keyring, KWallet
+ * included, which the async API's providers do not ask.
+ */
+function isSyncEncryptionGenuine(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  if (process.platform !== 'linux') return true;
+  if (typeof safeStorage.getSelectedStorageBackend !== 'function') return false;
+  return safeStorage.getSelectedStorageBackend() !== 'basic_text';
+}
+
+/**
+ * Whether safeStorage genuinely encrypts here, through either API, rather than
+ * not at all or (on Linux) only with the hardcoded fallback key. The mobile
+ * bridge refuses to persist its private key unless this is true.
+ */
+export async function isGenuineEncryptionAvailable(): Promise<boolean> {
+  assertAppReady();
+  return (await isAsyncEncryptionGenuine()) || isSyncEncryptionGenuine();
+}
+
+/**
  * Encrypt a string for JSON storage: 'e' + base64 ciphertext, or 'p' + base64
- * plaintext when no encryption is available at all.
+ * plaintext when no encryption is available at all. Picks the strongest key
+ * that exists: the async API's real key, then the sync API's (the floor), then
+ * the async API's hardcoded fallback key, then plaintext.
  */
 export async function encryptSecret(plaintext: string): Promise<string> {
   assertAppReady();
-  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-    console.warn('[boards/auth] safeStorage encryption unavailable; persisting unencrypted');
-    return 'p' + Buffer.from(plaintext, 'utf8').toString('base64');
+  if (await isAsyncEncryptionGenuine()) {
+    return 'e' + (await safeStorage.encryptStringAsync(plaintext)).toString('base64');
   }
-  if (!(await isGenuineEncryptionAvailable())) {
+  if (isSyncEncryptionGenuine()) {
+    return 'e' + safeStorage.encryptString(plaintext).toString('base64');
+  }
+  if (await safeStorage.isAsyncEncryptionAvailable()) {
     console.warn('[boards/auth] Linux secret store unavailable; safeStorage will use its hardcoded fallback key');
+    return 'e' + (await safeStorage.encryptStringAsync(plaintext)).toString('base64');
   }
-  const buffer = await safeStorage.encryptStringAsync(plaintext);
-  return 'e' + buffer.toString('base64');
+  console.warn('[boards/auth] safeStorage encryption unavailable; persisting unencrypted');
+  return 'p' + Buffer.from(plaintext, 'utf8').toString('base64');
 }
 
 export interface DecryptedSecret {
@@ -145,10 +179,11 @@ export async function decryptSecret(ciphertext: string): Promise<DecryptedSecret
       }
     }
     // A blob the sync API wrote under a key the async provider does not hold.
-    // Read it the old way while that API exists, and have the caller rewrite it
-    // so the next read needs only the async API.
+    // Read it the old way while that API exists. Ask for a rewrite only when
+    // the async API genuinely encrypts, so the rewrite moves it there; where
+    // the floor would write it, a rewrite would only repeat on every load.
     if (safeStorage.isEncryptionAvailable()) {
-      return { plaintext: safeStorage.decryptString(encrypted), shouldRewrite: true };
+      return { plaintext: safeStorage.decryptString(encrypted), shouldRewrite: await isAsyncEncryptionGenuine() };
     }
     if (asyncError) throw asyncError;
     throw new Error('Stored credential is encrypted but safeStorage is unavailable in this session');

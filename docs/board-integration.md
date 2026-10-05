@@ -86,6 +86,11 @@ helpers return promises. The sync API is deprecated in Electron 45 and removed i
   describes only the sync API and cannot see this, so `isGenuineEncryptionAvailable()` reads
   Chromium's tag on a probe ciphertext instead: `v10` is the fallback key, `v11` the Secret
   Service, `v12` the portal.
+- The sync API stays as a floor while Electron ships it. Where the async API does not genuinely
+  encrypt but the sync one does (KDE with KWallet, which the async providers do not ask; macOS,
+  not measured), `encryptSecret` writes through the sync API and the bridge keeps its paired
+  phones. `encryptSecret` picks the async API's real key, then the sync API's, then the async
+  fallback key, then plaintext.
 - The stored format did not change: `'e'` + base64 for encrypted, `'p'` + base64 for plaintext (only
   when no encryption is available). Sync and async share one ciphertext format wherever both work,
   so credentials written before the migration still read. `decryptSecret` reports when a blob

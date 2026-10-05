@@ -28,9 +28,10 @@ import {
 } from '@kangentic/protocol';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 
-// The async API the auth helpers use. `asyncEncryptionAvailable` lets a test
-// put the service in the "secure storage unavailable" state.
-const mockSafeStorageState = vi.hoisted(() => ({ asyncEncryptionAvailable: true }));
+// The two safeStorage APIs the auth helpers use. Turning both off puts the
+// service in the "secure storage unavailable" state; the sync one alone is the
+// floor auth.ts keeps.
+const mockSafeStorageState = vi.hoisted(() => ({ asyncEncryptionAvailable: true, syncEncryptionAvailable: true }));
 
 vi.mock('electron', () => ({
   app: {
@@ -38,7 +39,7 @@ vi.mock('electron', () => ({
     whenReady: () => Promise.resolve(),
   },
   safeStorage: {
-    isEncryptionAvailable: () => true,
+    isEncryptionAvailable: () => mockSafeStorageState.syncEncryptionAvailable,
     encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
     decryptString: (buffer: Buffer) => {
       const raw = buffer.toString('utf8');
@@ -206,6 +207,7 @@ beforeEach(() => {
   unlinkSyncSpy.mockReset();
   existsSyncSpy.mockReturnValue(false); // no identity/roster file exists yet, by default
   mockSafeStorageState.asyncEncryptionAvailable = true;
+  mockSafeStorageState.syncEncryptionAvailable = true;
   fakeTransport.connect.mockClear();
   fakeTransport.send.mockClear();
   fakeTransport.close.mockClear();
@@ -575,11 +577,25 @@ describe('MobileBridgeService secure-storage warm-up', () => {
 
   it('reports secure storage unavailable after the warm-up when safeStorage cannot genuinely encrypt', async () => {
     mockSafeStorageState.asyncEncryptionAvailable = false;
+    mockSafeStorageState.syncEncryptionAvailable = false;
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
 
     await service.whenStorageReady();
 
     expect(service.getStatus().secureStorageAvailable).toBe(false);
+  });
+
+  // The floor in auth.ts: a machine where only the sync API works must keep its paired phones,
+  // as it did on 0.43, instead of the warm-up disposing every session.
+  it('keeps secure storage available when only the sync API can encrypt', async () => {
+    mockSafeStorageState.asyncEncryptionAvailable = false;
+    mockSafeStorageState.syncEncryptionAvailable = true;
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+
+    await service.whenStorageReady();
+
+    expect(service.getStatus().secureStorageAvailable).toBe(true);
+    service.dispose();
   });
 
   it('loads a persisted identity in the warm-up, so the synchronous readers see it', async () => {
