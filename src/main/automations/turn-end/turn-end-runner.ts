@@ -170,7 +170,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
       return replyRead;
     };
 
-    const rows = pending.length > 0
+    const rowsOutcome = pending.length > 0
       ? await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply })
       : { messagedAgent: false, newerTurn: false };
     // The workflow's own step comes after the column's rows: a row that moved
@@ -178,7 +178,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     // is now. A row that gave the agent a message started its next turn, so this
     // turn end gets no workflow decision; the turn that answers the message does.
     // A newer turn abandons the whole pass, the step's paid check included.
-    if (stepApplies && !controller.signal.aborted && !rows.messagedAgent && !rows.newerTurn) {
+    if (stepApplies && !controller.signal.aborted && !rowsOutcome.messagedAgent && !rowsOutcome.newerTurn) {
       await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
     }
   } finally {

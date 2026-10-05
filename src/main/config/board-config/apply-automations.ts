@@ -216,14 +216,25 @@ function readRow(
     return null;
   }
 
+  // A guard of the wrong type is read as off, and said so: a hand-edited
+  // `"maxRuns": "3"` would otherwise let a review loop run without its limit
+  // with nothing to tell anyone.
+  const rawCondition: unknown = entry.condition;
+  if (rawCondition !== undefined && rawCondition !== null && typeof rawCondition !== 'string') {
+    warnings.push(`Automation "${name}" on "${columnName}" has a condition that is not text. It runs without one.`);
+  }
+  const rawMaxRuns: unknown = entry.maxRuns;
+  if (rawMaxRuns !== undefined && rawMaxRuns !== null && typeof rawMaxRuns !== 'number') {
+    warnings.push(`Automation "${name}" on "${columnName}" has a maxRuns that is not a number. It runs without a limit.`);
+  }
   return {
     name,
     type: type as AutomationType,
     trigger,
     enabled: entry.enabled !== false,
     config: readConfig(entry, type as AutomationType),
-    condition: normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null),
-    max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
+    condition: normalizeCondition(typeof rawCondition === 'string' ? rawCondition : null),
+    max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
   };
 }
 

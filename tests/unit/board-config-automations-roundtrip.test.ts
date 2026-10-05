@@ -272,6 +272,24 @@ describe('kangentic.json automations round-trip', () => {
         ['Text limit', null, null],
         ['Fraction', null, 2],
       ]);
+      // A blank or a zero is a deliberate "off"; a guard of the wrong type is not.
+      expect(plan.warnings).toEqual([
+        'Automation "Text limit" on "Code Review" has a maxRuns that is not a number. It runs without a limit.',
+      ]);
+    });
+
+    it('warns about a condition that is not text, and keeps the row without one', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [{ name: 'Numbered', type: 'notify', condition: 5 as unknown as string }],
+        },
+      });
+
+      expect(plan.rows.map((row) => [row.name, row.condition])).toEqual([['Numbered', null]]);
+      expect(plan.warnings).toEqual([
+        'Automation "Numbered" on "Code Review" has a condition that is not text. It runs without one.',
+      ]);
     });
   });
 
