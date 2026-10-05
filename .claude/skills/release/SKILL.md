@@ -397,7 +397,9 @@ front of a human for the ten minutes when clicking it does the most damage.
 gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHub UI bypasses the
 only check that stands between a partial release and every user's auto-updater, which is exactly
 how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the
-workflow instead.
+workflow instead. The same job's first step, `scripts/patch-mac-update-info.js`, also leaves the
+release a draft when it cannot write `minimumSystemVersion` into `latest-mac.yml`; publishing past
+it would auto-update Macs below the macOS floor into a build that will not open.
 
 Publishing it EARLY, while the builds are still running, is the worse half and is how v0.39.0
 first shipped empty. electron-builder uploads only into a draft: handed a published release it

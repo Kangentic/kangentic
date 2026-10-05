@@ -282,6 +282,30 @@ describe('release.yml job graph', () => {
     expect(workflowSource).toContain('It is NOT in scripts/release-assets.js');
   });
 
+  // electron-updater skips an update only when latest-mac.yml carries minimumSystemVersion, and
+  // electron-builder never writes it there, so without this step a Mac below the floor installs a
+  // build macOS refuses to open. It belongs in publish-release, which runs after every platform
+  // leg, so a re-run of the mac leg alone cannot put the unpatched file back. It runs before the
+  // verify and the --draft=false, so a failure leaves the release a draft. The script itself
+  // (value, Darwin mapping, feed shape) is pinned in patch-mac-update-info.test.ts.
+  it('patches latest-mac.yml with the minimum system version before verifying and publishing', () => {
+    const patch = stepBody('publish-release', 'Block macOS updates below the minimum system version');
+    expect(patch).toContain(
+      'node scripts/patch-mac-update-info.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}'
+    );
+    expect(patch).toContain('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}');
+    expect(patch).not.toContain('--dry-run');
+
+    const body = jobs.find((job) => job.name === 'publish-release')?.body ?? '';
+    const patchAt = body.indexOf('      - name: Block macOS updates below the minimum system version');
+    const verifyAt = body.indexOf('      - name: Verify the release carries every expected asset');
+    const publishAt = body.indexOf('      - name: Publish release with notes (remove draft status)');
+    expect(patchAt).toBeGreaterThan(-1);
+    expect(patchAt).toBeLessThan(verifyAt);
+    expect(verifyAt).toBeLessThan(publishAt);
+    expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'patch-mac-update-info.js'))).toBe(true);
+  });
+
   // The landing page shows the posters with no live frame beside them, so the job installs a face
   // the app's own font stack names before it shoots. Two ways that goes quiet: the install
   // resolving to something else (fc-match answers with SOME font for any name), and a Tailwind

@@ -638,6 +638,20 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
+      # electron-updater skips an update only when latest-mac.yml carries
+      # minimumSystemVersion, and electron-builder never writes it there (only into
+      # Info.plist). Without this, a Mac below mac.minimumSystemVersion downloads
+      # the update and macOS refuses to open it. The value is the Darwin version
+      # the updater compares against os.release() (macOS 13 = 22.0.0), derived
+      # from electron-builder.yml so the two cannot drift. It runs here rather than
+      # in the mac leg because this job runs after every leg, so a re-run of the mac
+      # leg cannot put the unpatched file back before publishing. Before
+      # --draft=false, so a failure leaves the release a draft.
+      - name: Block macOS updates below the minimum system version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/patch-mac-update-info.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}
+
       # Must run BEFORE --draft=false: a failure here has to leave the release
       # unpublished rather than roll one back.
       - name: Verify the release carries every expected asset
