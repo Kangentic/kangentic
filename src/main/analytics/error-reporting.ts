@@ -9,6 +9,7 @@ import {
   correctNativeCrashEvent,
   isBrowserGuestCrashEvent,
   readMinidumpIdentity,
+  restoreOwnRendererProcessTag,
   toBrowserGuestCrashWarning,
   type NativeCrashContext,
 } from './native-crash-event';
@@ -204,6 +205,7 @@ export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): Erro
       );
       return toBrowserGuestCrashWarning(event);
     }
+    restoreOwnRendererProcessTag(event);
 
     const minidump = hint.attachments?.find(
       (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
@@ -359,10 +361,12 @@ export function initErrorReporting(): void {
       // NATIVE CRASH EVENTS note above for why that one class cannot go in
       // ignoreErrors below.
       beforeSend: beforeSendEvent,
-      // Names a Browser pane page's renderer 'browser-guest' (a <webview> guest
-      // or an offscreen lane), so beforeSend can reduce its crash to a warning
-      // without the page's URL, JavaScript stack, or memory. Our own windows
-      // return undefined and keep the SDK's 'renderer'.
+      // Names a Browser pane page's renderer 'browser-guest' (a <webview> guest,
+      // a popup it opened, or an offscreen lane), so beforeSend can reduce its
+      // crash to a warning without the page's URL, JavaScript stack, or memory.
+      // Our own windows return undefined. The SDK's live native-crash path turns
+      // that into 'unknown' rather than 'renderer', and beforeSend puts
+      // 'renderer' back (restoreOwnRendererProcessTag).
       getRendererName: rendererNameForReporting,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data

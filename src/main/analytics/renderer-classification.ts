@@ -13,16 +13,27 @@
  * grouped warning that keeps the counts and drops the page; this module is
  * what lets it find one.
  *
- * Two kinds of surface hold a user's page: a `<webview>` guest (the visible
- * Browser pane) and a lane, an offscreen BrowserWindow an agent drives when no
- * pane can mount. The first identifies itself through `getType()`. The second is
- * a plain 'window', so the lane manager answers for it through a predicate
- * registered from index.ts, which keeps this analytics module free of a
- * dependency on the browser layer.
+ * Three kinds of surface hold a user's page: a `<webview>` guest (the visible
+ * Browser pane), a popup the page opened with `window.open` (a chromed
+ * BrowserWindow, window-open-policy.ts), and a lane, an offscreen BrowserWindow
+ * an agent drives when no pane can mount. The code that creates each one marks
+ * its webContents here (`markBrowserGuestWebContents`) at creation, so this
+ * module depends on nothing in the browser layer.
  *
- * Kangentic's own windows (the main window, pop-outs) return undefined, which
- * the SDK turns into its default 'renderer', so their events and issue titles
- * are unchanged.
+ * The mark is never removed, because the SDK names a crashed renderer LATE. Its
+ * live crash path calls getRendererName only once the dump has been written and
+ * stopped changing, which its minidump loader polls for up to 5 s. A surface
+ * closed inside that window is gone from every live registry, and a destroyed
+ * guest throws on `getType()`, so a lookup of live surfaces would let exactly
+ * that crash ship its page. Electron documents a webContents id as unique among
+ * all WebContents of the app, so a kept mark cannot misname one of our own
+ * windows, and the set grows by one number per surface opened.
+ *
+ * Kangentic's own windows (the main window, pop-outs) return undefined. The
+ * SDK's breadcrumb and abnormal-exit paths turn that into their default
+ * ('window', 'renderer'), so those are unchanged. Its live native-crash path
+ * turns it into 'unknown' instead, and beforeSend puts 'renderer' back
+ * (restoreOwnRendererProcessTag in native-crash-event.ts).
  */
 
 import type { WebContents } from 'electron';
@@ -30,13 +41,11 @@ import type { WebContents } from 'electron';
 /** The `event.process` tag, and the name in `'<name>' process exited with ...`. */
 export const BROWSER_GUEST_RENDERER_NAME = 'browser-guest';
 
-type LaneWebContentsPredicate = (webContentsId: number) => boolean;
+const browserGuestWebContentsIds = new Set<number>();
 
-let isLaneWebContents: LaneWebContentsPredicate = () => false;
-
-/** Registered once from index.ts with the lane manager's lookup. */
-export function setLaneWebContentsPredicate(predicate: LaneWebContentsPredicate): void {
-  isLaneWebContents = predicate;
+/** Called by the code that creates a guest, a pane popup, or a lane, with its webContents id. */
+export function markBrowserGuestWebContents(webContentsId: number): void {
+  browserGuestWebContentsIds.add(webContentsId);
 }
 
 /**
@@ -46,14 +55,18 @@ export function setLaneWebContentsPredicate(predicate: LaneWebContentsPredicate)
 export function rendererNameForReporting(contents: Pick<WebContents, 'id' | 'getType'>): string | undefined {
   try {
     if (contents.getType() === 'webview') return BROWSER_GUEST_RENDERER_NAME;
-    if (isLaneWebContents(contents.id)) return BROWSER_GUEST_RENDERER_NAME;
   } catch {
-    // A destroyed WebContents can throw on getType(); report it as ours.
+    // A destroyed WebContents throws on getType(); the mark below still answers.
+  }
+  try {
+    if (browserGuestWebContentsIds.has(contents.id)) return BROWSER_GUEST_RENDERER_NAME;
+  } catch {
+    // An unreadable id leaves the renderer ours.
   }
   return undefined;
 }
 
-/** For tests: forget the registered lane predicate. */
+/** For tests: forget every mark. */
 export function resetRendererClassificationForTests(): void {
-  isLaneWebContents = () => false;
+  browserGuestWebContentsIds.clear();
 }

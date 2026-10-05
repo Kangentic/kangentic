@@ -4,6 +4,7 @@ import {
   isAllowedExternalUrl,
 } from '../shared/external-url';
 import { detectEmbeddedSignInRefusal, type EmbeddedSignInRefusal } from './browser/embedded-signin-refusal';
+import { markBrowserGuestWebContents } from './analytics/renderer-classification';
 
 /**
  * Builds the `setWindowOpenHandler` callback for non-webview WebContents (the
@@ -260,6 +261,11 @@ export function hardenWebviewPopupWindow(
   if (popupWindow.isDestroyed()) return;
   policy.onPopupOpened(popupWindow);
   const popupContents = popupWindow.webContents;
+
+  // It holds the user's page, and Electron reports it as a plain 'window', so
+  // mark it: its crash is then reduced like the pane page that opened it
+  // (renderer-classification.ts).
+  markBrowserGuestWebContents(popupContents.id);
 
   // The page must never control the title: it is the origin display.
   //
