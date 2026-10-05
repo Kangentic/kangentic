@@ -5,6 +5,7 @@ import {
   FOREIGN_CRASH_FINGERPRINT,
   FOREIGN_CRASH_MESSAGE,
   readMinidumpIdentity,
+  restoreOwnRendererProcessTag,
   type NativeCrashContext,
 } from '../../src/main/analytics/native-crash-event';
 import {
@@ -734,5 +735,133 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
     // The SDK merges the CURRENT scope's crumbs on top of the stored previous
     // run's, so the two runs cannot be told apart after the fact.
     expect(decision.event.breadcrumbs).toBeUndefined();
+  });
+});
+
+describe('restoreOwnRendererProcessTag', () => {
+  interface LiveRendererCrashShape {
+    environment: string;
+    processTag: string;
+    /** Left out of `contexts.electron` altogether when undefined. */
+    processType: string | undefined;
+  }
+
+  /**
+   * The event the SDK's live `render-process-gone` path builds for a crash of one of OUR OWN
+   * windows once `getRendererName` is set: its fallback for an unnamed renderer is 'unknown',
+   * and the dump's `process_type` annotation arrives in `contexts.electron` under `crashpad.`.
+   * Built here rather than through nativeEvent()'s overrides, which replace `contexts` wholesale.
+   * Every negative case below changes exactly ONE field of this, so each one can only stay
+   * unrestored for the reason it names.
+   */
+  function liveRendererCrash(shape: Partial<LiveRendererCrashShape> = {}): ErrorEvent {
+    const { environment, processTag, processType } = {
+      environment: 'native',
+      processTag: 'unknown',
+      processType: 'renderer',
+      ...shape,
+    };
+    return {
+      level: 'fatal',
+      platform: 'native',
+      tags: { 'event.environment': environment, 'event.process': processTag, 'exit.reason': 'crashed' },
+      contexts: {
+        electron: {
+          details: { reason: 'crashed', exitCode: 1 },
+          ...(processType === undefined ? {} : { 'crashpad.process_type': processType }),
+        },
+      },
+    } as ErrorEvent;
+  }
+
+  it('tags a native crash of our own window renderer again, when the SDK left it unknown but the dump says renderer', () => {
+    const event = liveRendererCrash();
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('renderer');
+    // Only the one tag moves.
+    expect(event.tags?.['event.environment']).toBe('native');
+    expect(event.tags?.['exit.reason']).toBe('crashed');
+    expect(event.contexts?.electron?.['crashpad.process_type']).toBe('renderer');
+  });
+
+  it('reads the annotation the way the SDK does, with a trailing -process stripped', () => {
+    const event = liveRendererCrash({ processType: 'renderer-process' });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('renderer');
+  });
+
+  it('leaves the tag unknown when the dump has no process_type, which is DESKTOP-E where the SDK could not read the annotations', () => {
+    const event = liveRendererCrash({ processType: undefined });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('unknown');
+  });
+
+  it('leaves the tag unknown when the dump says the crash was the GPU process', () => {
+    const event = liveRendererCrash({ processType: 'gpu-process' });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('unknown');
+  });
+
+  it('leaves a process_type that is not text alone', () => {
+    const event = liveRendererCrash();
+    event.contexts = { electron: { 'crashpad.process_type': { renderer: true } } };
+
+    expect(() => restoreOwnRendererProcessTag(event)).not.toThrow();
+    expect(event.tags?.['event.process']).toBe('unknown');
+  });
+
+  it('leaves an event that is not a native crash alone, whatever its process_type says', () => {
+    const event = liveRendererCrash({ environment: 'javascript' });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('unknown');
+  });
+
+  it('leaves a Browser pane page crash named browser-guest, which must never read as our own window', () => {
+    const event = liveRendererCrash({ processTag: 'browser-guest' });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('browser-guest');
+  });
+
+  it('leaves a tag that is already renderer as it is', () => {
+    const event = liveRendererCrash({ processTag: 'renderer' });
+
+    restoreOwnRendererProcessTag(event);
+
+    expect(event.tags?.['event.process']).toBe('renderer');
+  });
+
+  it('does not throw on an event with no tags, no contexts, or no electron context', () => {
+    const withoutTags = { level: 'fatal', platform: 'native' } as ErrorEvent;
+    const withoutContexts = {
+      level: 'fatal',
+      platform: 'native',
+      tags: { 'event.environment': 'native', 'event.process': 'unknown' },
+    } as ErrorEvent;
+    const withoutElectronContext = {
+      level: 'fatal',
+      platform: 'native',
+      tags: { 'event.environment': 'native', 'event.process': 'unknown' },
+      contexts: { app: { app_name: 'Kangentic' } },
+    } as ErrorEvent;
+
+    expect(() => restoreOwnRendererProcessTag(withoutTags)).not.toThrow();
+    expect(() => restoreOwnRendererProcessTag(withoutContexts)).not.toThrow();
+    expect(() => restoreOwnRendererProcessTag(withoutElectronContext)).not.toThrow();
+
+    expect(withoutTags.tags).toBeUndefined();
+    expect(withoutContexts.tags?.['event.process']).toBe('unknown');
+    expect(withoutElectronContext.tags?.['event.process']).toBe('unknown');
   });
 });

@@ -18,7 +18,7 @@
  * Tier: Unit (vitest, no browser, no real Electron - openExternal is injected
  * and the window/session objects are structural fakes).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
@@ -31,6 +31,11 @@ import {
   MAX_LIVE_POPUPS_PER_PANE,
   type WebviewPopupPolicy,
 } from '../../src/main/window-open-policy';
+import {
+  BROWSER_GUEST_RENDERER_NAME,
+  rendererNameForReporting,
+  resetRendererClassificationForTests,
+} from '../../src/main/analytics/renderer-classification';
 
 // Flushes the setImmediate the handler defers openExternal into.
 function flushImmediate(): Promise<void> {
@@ -413,8 +418,16 @@ describe('popupBoundsFromFeatures', () => {
  * re-assert and the sign-in-refusal check), so a last-write-wins fake silently
  * drops one of them and the test for it passes or fails on registration order
  * rather than on behavior.
+ *
+ * Each fake gets its OWN webContents id from one file-wide counter. Hardening a
+ * popup marks its id in renderer-classification.ts, a module-level Set that is
+ * never pruned, and most tests here harden a popup without clearing it, so a
+ * reused id would leak one test's mark into the next.
  */
+let nextFakeWebContentsId = 1000;
+
 function fakePopupWindow() {
+  const contentsId = nextFakeWebContentsId++;
   const windowListeners: Record<string, ((...args: never[]) => void)[]> = {};
   const contentsListeners: Record<string, ((...args: never[]) => void)[]> = {};
   const record = (
@@ -428,6 +441,7 @@ function fakePopupWindow() {
   const setTitle = vi.fn();
   const setWindowOpenHandler = vi.fn();
   return {
+    contentsId,
     setTitle,
     setWindowOpenHandler,
     navigateTo(url: string) { currentUrl = url; },
@@ -446,6 +460,7 @@ function fakePopupWindow() {
       setTitle,
       on: (event: string, handler: (...args: never[]) => void) => record(windowListeners, event, handler),
       webContents: {
+        id: contentsId,
         getURL: () => currentUrl,
         setWindowOpenHandler,
         on: (event: string, handler: (...args: never[]) => void) => record(contentsListeners, event, handler),
@@ -603,6 +618,106 @@ describe('hardenWebviewPopupWindow', () => {
   });
 });
 
+/**
+ * A popup is a plain 'window' to Electron, so crash reporting cannot tell it from
+ * Kangentic's own UI by type. `hardenWebviewPopupWindow` marks its webContents id
+ * in renderer-classification.ts, so a popup's crash is reduced like the pane page
+ * that opened it (no URL, stack or minidump).
+ *
+ * The mark must outlive the popup. The Sentry SDK names a crashed renderer LATE,
+ * after its minidump loader has polled up to 5 s for the dump to settle. A popup
+ * the user closes inside that window is a destroyed WebContents whose `getType()`
+ * throws and which no live registry holds, so only a mark that is never removed
+ * still names it.
+ */
+describe('hardenWebviewPopupWindow - crash classification', () => {
+  const OPENED_URL = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=abc';
+
+  afterEach(() => {
+    resetRendererClassificationForTests();
+  });
+
+  type FakePopup = ReturnType<typeof fakePopupWindow>;
+
+  /** What the SDK hands getRendererName for a live popup: a plain 'window'. */
+  function liveContentsOf(popup: FakePopup) {
+    return { id: popup.contentsId, getType: (): string => 'window' };
+  }
+
+  /** The same popup once closed: Electron throws on getType() for a destroyed WebContents. */
+  function destroyedContentsOf(popup: FakePopup) {
+    return {
+      id: popup.contentsId,
+      getType: (): string => {
+        throw new Error('Object has been destroyed');
+      },
+    };
+  }
+
+  it('names a popup a Browser pane page once it is hardened, and not before', () => {
+    const popup = fakePopupWindow();
+    expect(
+      rendererNameForReporting(liveContentsOf(popup)),
+      'a popup that was never hardened is a plain window and must not be named',
+    ).toBeUndefined();
+
+    hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
+
+    expect(
+      rendererNameForReporting(liveContentsOf(popup)),
+      "a hardened popup holds the user's page, so its crash must be reduced like the pane that opened it",
+    ).toBe(BROWSER_GUEST_RENDERER_NAME);
+  });
+
+  it('keeps naming it after its contents are destroyed, when getType() throws', () => {
+    const popup = fakePopupWindow();
+    hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
+
+    popup.emitContents('destroyed');
+
+    expect(
+      rendererNameForReporting(liveContentsOf(popup)),
+      "nothing may release the mark on 'destroyed': the SDK asks up to 5 s after the crash, and a popup closed in that window would ship its page",
+    ).toBe(BROWSER_GUEST_RENDERER_NAME);
+    expect(
+      rendererNameForReporting(destroyedContentsOf(popup)),
+      'a destroyed popup throws on getType(), and must still be named by its mark rather than read as Kangentic\'s own UI',
+    ).toBe(BROWSER_GUEST_RENDERER_NAME);
+  });
+
+  it("names a CHAINED popup too, through the popup's own did-create-window", () => {
+    const parentPopup = fakePopupWindow();
+    hardenWebviewPopupWindow(parentPopup.asWindow, OPENED_URL, popupPolicy());
+
+    const childPopup = fakePopupWindow();
+    expect(
+      rendererNameForReporting(liveContentsOf(childPopup)),
+      'a chained popup is not marked before it is created',
+    ).toBeUndefined();
+
+    parentPopup.emitContents('did-create-window', childPopup.asWindow, { url: 'https://idp.example.com/authorize' });
+
+    expect(
+      rendererNameForReporting(liveContentsOf(childPopup)),
+      'a popup opened by a popup holds a page too, and must be named like its parent',
+    ).toBe(BROWSER_GUEST_RENDERER_NAME);
+    expect(rendererNameForReporting(destroyedContentsOf(childPopup))).toBe(BROWSER_GUEST_RENDERER_NAME);
+    expect(rendererNameForReporting(liveContentsOf(parentPopup))).toBe(BROWSER_GUEST_RENDERER_NAME);
+  });
+
+  it('marks only the popups it hardens, not an unrelated window', () => {
+    // A second fake that is never hardened, rather than a magic number, so the id
+    // cannot collide with one a neighbouring test marked.
+    const hardened = fakePopupWindow();
+    const unrelated = fakePopupWindow();
+    hardenWebviewPopupWindow(hardened.asWindow, OPENED_URL, popupPolicy());
+
+    expect(rendererNameForReporting(liveContentsOf(hardened))).toBe(BROWSER_GUEST_RENDERER_NAME);
+    expect(rendererNameForReporting(liveContentsOf(unrelated))).toBeUndefined();
+    expect(rendererNameForReporting(destroyedContentsOf(unrelated))).toBeUndefined();
+  });
+});
+
 // createExternalWindowOpenHandler is fully covered above in isolation, but
 // nothing asserted it is actually WIRED into the main window's
 // web-contents-created handler in src/main/index.ts. Without this scan,
@@ -649,6 +764,112 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
       source,
       "src/main/index.ts must call hardenWebviewPopupWindow from the guest's did-create-window handler; without it the popup keeps the app-window policy, its title is page-controlled, and its origin is unverifiable",
     ).toMatch(/'did-create-window'[\s\S]{0,400}hardenWebviewPopupWindow\(/);
+  });
+
+  // Both pins below read the web-contents-created handler's statement order, so they find the
+  // handler and its `if (contents.getType() !== 'webview')` early return the same way.
+  function findWebContentsCreatedHandler(sourceFile: ts.SourceFile): (ts.ArrowFunction & { body: ts.Block }) | undefined {
+    let handler: (ts.ArrowFunction & { body: ts.Block }) | undefined;
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const calleeExpression = node.expression;
+        if (
+          ts.isPropertyAccessExpression(calleeExpression) &&
+          calleeExpression.expression.getText(sourceFile) === 'app' &&
+          calleeExpression.name.text === 'on' &&
+          node.arguments.length === 2
+        ) {
+          const [eventNameArgument, handlerArgument] = node.arguments;
+          if (
+            ts.isStringLiteral(eventNameArgument) &&
+            eventNameArgument.text === 'web-contents-created' &&
+            ts.isArrowFunction(handlerArgument) &&
+            ts.isBlock(handlerArgument.body)
+          ) {
+            handler = handlerArgument as ts.ArrowFunction & { body: ts.Block };
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+    return handler;
+  }
+
+  function findWebviewGuardStatementIndex(statements: readonly ts.Statement[], sourceFile: ts.SourceFile): number {
+    return statements.findIndex(
+      (statement) =>
+        ts.isIfStatement(statement) &&
+        statement.expression.getText(sourceFile).includes('getType()') &&
+        statement.expression.getText(sourceFile).includes('webview'),
+    );
+  }
+
+  // Crash reporting names a guest a Browser pane page from a mark made at creation
+  // (renderer-classification.ts), because the SDK asks up to 5 s after the crash and a guest closed
+  // by then throws on getType(). The call is a plain statement of the web-contents-created handler,
+  // which cannot run without Electron, so its placement is pinned on the AST. Dropping it still
+  // typechecks and nothing behavioral above would notice, and putting it in the wrong place fails
+  // silently in one of two opposite directions. Parsed rather than line-matched so a reformat or a
+  // renamed parameter cannot hide a regression or fake one.
+  it('marks every <webview> guest, and only a guest, as a Browser pane page for crash reporting', () => {
+    const sourceFile = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+
+    const handler = findWebContentsCreatedHandler(sourceFile);
+    expect(
+      handler,
+      "could not find app.on('web-contents-created', (event, contents) => { ... }) with a block body in src/main/index.ts",
+    ).toBeDefined();
+    const directStatements = handler!.body.statements;
+
+    const contentsParameter = handler!.parameters[1];
+    expect(
+      contentsParameter,
+      'the web-contents-created handler must take (event, contents); this pin reads the second parameter as the WebContents',
+    ).toBeDefined();
+    const contentsName = contentsParameter.name.getText(sourceFile);
+
+    const webviewGuardStatementIndex = findWebviewGuardStatementIndex(directStatements, sourceFile);
+    expect(
+      webviewGuardStatementIndex,
+      "could not find the if (contents.getType() !== 'webview') early return as a direct statement of the web-contents-created handler body",
+    ).toBeGreaterThanOrEqual(0);
+
+    function isMarkCall(node: ts.Node): node is ts.CallExpression {
+      return (
+        ts.isCallExpression(node) &&
+        node.expression.getText(sourceFile) === 'markBrowserGuestWebContents' &&
+        node.arguments.length === 1 &&
+        node.arguments[0].getText(sourceFile) === `${contentsName}.id`
+      );
+    }
+
+    const directMarkStatementIndices = directStatements
+      .map((statement, index) => (ts.isExpressionStatement(statement) && isMarkCall(statement.expression) ? index : -1))
+      .filter((index) => index >= 0);
+    expect(
+      directMarkStatementIndices.length,
+      `markBrowserGuestWebContents(${contentsName}.id) must be exactly one DIRECT statement of the web-contents-created handler body, not nested inside a ${contentsName}.on(...) listener and not missing. Without it a guest that closes before the Sentry SDK names its crash throws on getType() and is read as Kangentic's own UI, so its page URL, stack and minidump ship in the crash event.`,
+    ).toBe(1);
+
+    // Any mark call at all, nested or not, that begins before the early return ends would run for
+    // the main window and every pop-out as well.
+    const guardEnd = directStatements[webviewGuardStatementIndex].getEnd();
+    const markCallStarts: number[] = [];
+    function collectMarkCalls(node: ts.Node): void {
+      if (isMarkCall(node)) markCallStarts.push(node.getStart(sourceFile));
+      ts.forEachChild(node, collectMarkCalls);
+    }
+    collectMarkCalls(handler!.body);
+    expect(
+      markCallStarts.every((start) => start >= guardEnd),
+      `markBrowserGuestWebContents(${contentsName}.id) must run AFTER the if (${contentsName}.getType() !== 'webview') early return. Above it, the main window and every pop-out is marked too, and a crash of Kangentic's own UI would be reduced as if it were a user's page, losing its URL, stack and minidump.`,
+    ).toBe(true);
+
+    expect(
+      directMarkStatementIndices[0],
+      `markBrowserGuestWebContents(${contentsName}.id) must be the FIRST statement after the early return, ahead of the rest of the guest setup (applyBrowserUserAgent, the listeners). A throw in that setup would otherwise skip the mark, and the guest's crash would ship its page URL, stack and minidump.`,
+    ).toBe(webviewGuardStatementIndex + 1);
   });
 
   // The permission and download policy is shared with the offscreen lane, so it lives in
@@ -781,43 +1002,14 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
     // appear anywhere".
     const sourceFile = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
 
-    let webContentsCreatedHandlerBody: ts.Block | undefined;
-    function visit(node: ts.Node): void {
-      if (ts.isCallExpression(node)) {
-        const calleeExpression = node.expression;
-        if (
-          ts.isPropertyAccessExpression(calleeExpression) &&
-          calleeExpression.expression.getText(sourceFile) === 'app' &&
-          calleeExpression.name.text === 'on' &&
-          node.arguments.length === 2
-        ) {
-          const [eventNameArgument, handlerArgument] = node.arguments;
-          if (
-            ts.isStringLiteral(eventNameArgument) &&
-            eventNameArgument.text === 'web-contents-created' &&
-            ts.isArrowFunction(handlerArgument) &&
-            ts.isBlock(handlerArgument.body)
-          ) {
-            webContentsCreatedHandlerBody = handlerArgument.body;
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    }
-    visit(sourceFile);
-
+    const webContentsCreatedHandler = findWebContentsCreatedHandler(sourceFile);
     expect(
-      webContentsCreatedHandlerBody,
+      webContentsCreatedHandler,
       "could not find app.on('web-contents-created', (event, contents) => { ... }) with a block body in src/main/index.ts",
     ).toBeDefined();
-    const directStatements = webContentsCreatedHandlerBody!.statements;
+    const directStatements = webContentsCreatedHandler!.body.statements;
 
-    const webviewGuardStatementIndex = directStatements.findIndex(
-      (statement) =>
-        ts.isIfStatement(statement) &&
-        statement.expression.getText(sourceFile).includes('getType()') &&
-        statement.expression.getText(sourceFile).includes('webview'),
-    );
+    const webviewGuardStatementIndex = findWebviewGuardStatementIndex(directStatements, sourceFile);
     expect(
       webviewGuardStatementIndex,
       "could not find the if (contents.getType() !== 'webview') early return as a direct statement of the web-contents-created handler body",

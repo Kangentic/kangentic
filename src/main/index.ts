@@ -64,8 +64,8 @@ const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
-import { destroyAllLanes, isLaneWebContents } from './browser/browser-lane-manager';
-import { setLaneWebContentsPredicate } from './analytics/renderer-classification';
+import { destroyAllLanes } from './browser/browser-lane-manager';
+import { markBrowserGuestWebContents } from './analytics/renderer-classification';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
@@ -286,9 +286,6 @@ initAnalytics();
 // console breadcrumb would silently drop. tests/unit/sentry-breadcrumbs.test.ts
 // pins the order.
 initErrorReporting();
-// Lets the SDK's getRendererName recognize an offscreen lane as a Browser pane
-// page (renderer-classification.ts); a <webview> guest identifies itself.
-setLaneWebContentsPredicate(isLaneWebContents);
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -542,6 +539,10 @@ app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler(createExternalWindowOpenHandler((url) => shell.openExternal(url)));
     return;
   }
+
+  // A crash in this guest is the user's page, not our UI, even if the guest is
+  // destroyed by the time the SDK asks (renderer-classification.ts).
+  markBrowserGuestWebContents(contents.id);
 
   // Drop the `Electron/` token from the guest's user agent, which some web
   // application firewalls reject as a bot (decision 41). This runs at guest

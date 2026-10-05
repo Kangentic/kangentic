@@ -520,6 +520,27 @@ export function isBrowserGuestCrashEvent(event: ErrorEvent): boolean {
 }
 
 /**
+ * Put back the 'renderer' tag on a live renderer crash in one of our own windows.
+ *
+ * The SDK's live renderer-crash path tags `getRendererName(contents) || 'unknown'`
+ * (sendRendererCrash in its sentry-minidump integration), unlike its other paths,
+ * which fall back to 'renderer'. Once getRendererName is set
+ * (renderer-classification.ts), our own windows, which it leaves unnamed, arrive as
+ * 'unknown', the same tag a dump whose annotations the SDK could not read gets
+ * (DESKTOP-E above). The dump's own `process_type` annotation still says renderer,
+ * and the SDK copies it into `contexts.electron`, so this restores the tag the event
+ * carried before the option was set. tests/unit/sentry-guest-crash-contract.test.ts
+ * pins both halves of that against the installed SDK.
+ */
+export function restoreOwnRendererProcessTag(event: ErrorEvent): void {
+  const tags = event.tags;
+  if (!tags || tags['event.environment'] !== 'native' || tags['event.process'] !== 'unknown') return;
+  const processType = event.contexts?.electron?.[`${CRASHPAD_ANNOTATION_KEY_PREFIX}process_type`];
+  if (typeof processType !== 'string' || processType.replace('-process', '') !== 'renderer') return;
+  tags['event.process'] = 'renderer';
+}
+
+/**
  * Rewrite a Browser pane page's crash, in place, into one grouped warning that
  * keeps the counts and drops the page.
  *

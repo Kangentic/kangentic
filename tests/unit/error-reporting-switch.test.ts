@@ -575,6 +575,103 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(minidumpCount(hint)).toBe(1);
     });
 
+    // initErrorReporting sets getRendererName, which our own windows answer with undefined. The SDK's
+    // live renderer-crash path turns that into 'unknown' (not 'renderer'), so a crash of our own UI
+    // would otherwise land in the issue stream under event.process 'unknown', the tag a dump with
+    // unreadable annotations gets. The dump's process_type annotation (copied into contexts.electron
+    // under 'crashpad.') still says renderer, and beforeSend puts the tag back. This is the SDK's
+    // own event shape, not one derived from the code under test; sentry-guest-crash-contract.test.ts
+    // pins each SDK fact it rests on.
+    it('tags our own window renderer crash renderer again when the SDK stamped it unknown, and keeps the event and its dump', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.39.0' });
+      const ownWindowCrash = {
+        level: 'fatal',
+        platform: 'native',
+        release: 'Kangentic@0.39.0',
+        tags: { 'event.environment': 'native', 'event.process': 'unknown', 'exit.reason': 'crashed' },
+        contexts: {
+          electron: {
+            details: { reason: 'crashed', exitCode: -1073741819 },
+            'crashpad.process_type': 'renderer',
+          },
+        },
+      };
+
+      const result = beforeSend(ownWindowCrash, hint);
+
+      expect(result).toMatchObject({
+        level: 'fatal',
+        tags: { 'event.environment': 'native', 'event.process': 'renderer', 'exit.reason': 'crashed' },
+      });
+      expect(result?.message).toBeUndefined();
+      expect(minidumpCount(hint)).toBe(1);
+    });
+
+    it('tags it renderer again even when no dump rode along to read, since the tag does not depend on one', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const ownWindowCrash = {
+        level: 'fatal',
+        platform: 'native',
+        tags: { 'event.environment': 'native', 'event.process': 'unknown', 'exit.reason': 'crashed' },
+        contexts: { electron: { 'crashpad.process_type': 'renderer' } },
+      };
+
+      const result = beforeSend(ownWindowCrash, {});
+
+      expect((result?.tags as Record<string, string>)['event.process']).toBe('renderer');
+    });
+
+    it('leaves a crash tagged unknown alone when the dump does not say renderer, as for DESKTOP-E', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.39.0' });
+      const unreadableAnnotationsCrash = {
+        level: 'fatal',
+        platform: 'native',
+        release: 'Kangentic@0.39.0',
+        tags: { 'event.environment': 'native', 'event.process': 'unknown', 'exit.reason': 'crashed' },
+      };
+
+      const result = beforeSend(unreadableAnnotationsCrash, hint);
+
+      expect((result?.tags as Record<string, string>)['event.process']).toBe('unknown');
+      expect(minidumpCount(hint)).toBe(1);
+    });
+
+    // The same event shape as the own-window case above, down to the native environment tag and a
+    // renderer process_type annotation (a guest is a renderer too), changing only the name the SDK
+    // got from getRendererName. A guest is a user's page: it is reduced, never put back as our own.
+    it('still reduces a Browser pane page crash to its warning and never tags it renderer, though its dump says renderer', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.39.0' });
+      const guestCrash = {
+        level: 'fatal',
+        platform: 'native',
+        release: 'Kangentic@0.39.0',
+        tags: { 'event.environment': 'native', 'event.process': 'browser-guest', 'exit.reason': 'crashed' },
+        contexts: {
+          electron: {
+            crashed_url: 'https://intranet.example/private/report?id=42',
+            details: { reason: 'crashed', exitCode: -1073741819 },
+            'crashpad.process_type': 'renderer',
+          },
+        },
+      };
+
+      const result = beforeSend(guestCrash, hint);
+
+      expect(result).toMatchObject({
+        level: 'warning',
+        message: 'A Browser pane page crashed',
+        fingerprint: ['browser-guest-crash', 'crashed'],
+        tags: { 'event.process': 'browser-guest' },
+      });
+      expect(JSON.stringify(result)).not.toContain('intranet.example');
+      // The scrub took the annotation the restore would have read, along with the rest.
+      expect((result?.contexts as { electron: Record<string, unknown> }).electron['crashpad.process_type']).toBeUndefined();
+      expect(minidumpCount(hint)).toBe(0);
+    });
+
     it('names Browser pane renderers for the SDK, and drops their un-attributable exit messages', async () => {
       const errorReporting = await importFreshErrorReporting();
       errorReporting.initErrorReporting();

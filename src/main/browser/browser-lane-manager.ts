@@ -5,6 +5,7 @@ import { browserPartitionForTask } from '../../shared/browser-partition';
 import { syncJarFromIdentity } from './jar-seeder';
 import { applyBrowserUserAgent } from './browser-user-agent';
 import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
+import { markBrowserGuestWebContents } from '../analytics/renderer-classification';
 
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
@@ -168,20 +169,6 @@ export function laneIdForTask(taskId: string): string | null {
 /** True when this task's one surface is currently offscreen. */
 export function hasLaneForTask(taskId: string): boolean {
   return laneIdForTask(taskId) !== null;
-}
-
-/**
- * True when `webContentsId` is a live lane's page. Read by crash reporting
- * (analytics/renderer-classification.ts): a lane renders the user's page in a
- * plain BrowserWindow, so unlike a `<webview>` guest it cannot be recognized
- * from `getType()`. `render-process-gone` fires before the window is torn down,
- * so the lane is still in the map when the SDK asks.
- */
-export function isLaneWebContents(webContentsId: number): boolean {
-  for (const lane of lanes.values()) {
-    if (!lane.window.isDestroyed() && lane.window.webContents.id === webContentsId) return true;
-  }
-  return false;
 }
 
 /**
@@ -372,6 +359,11 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   });
 
   const guest = window.webContents;
+  // A lane renders the user's page in a plain BrowserWindow, so crash reporting
+  // cannot tell it from our UI by `getType()`. Marked at creation, so a crash is
+  // still the user's page when the SDK asks after the lane has closed
+  // (analytics/renderer-classification.ts).
+  markBrowserGuestWebContents(guest.id);
   guest.setFrameRate(LANE_FRAME_RATE);
   // A lane is not a `<webview>`, so the guest hook in `web-contents-created`
   // never sees it, and it can open before any pane has set this task's jar in

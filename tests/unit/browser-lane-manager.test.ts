@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { browserPartitionForTask } from '../../src/shared/browser-partition';
+import {
+  BROWSER_GUEST_RENDERER_NAME,
+  rendererNameForReporting,
+  resetRendererClassificationForTests,
+} from '../../src/main/analytics/renderer-classification';
 
 /**
  * Lane bookkeeping and lifetime.
@@ -135,7 +140,6 @@ const {
   laneTaskIds,
   setLaneChangeListener,
   isLaneId,
-  isLaneWebContents,
   resetLanesForTests,
   LANE_FRAME_RATE,
 } = await import('../../src/main/browser/browser-lane-manager');
@@ -165,6 +169,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetLanesForTests();
+  resetRendererClassificationForTests();
 });
 
 describe('openLane', () => {
@@ -336,15 +341,67 @@ describe('openLane', () => {
     expect(vi.mocked(guest.session.on)).toHaveBeenCalledWith('will-download', expect.any(Function));
   });
 
-  it('recognizes a live lane page by its webContents id, for crash reporting', async () => {
-    const lane = await openLane(input());
-    if (!lane.ok) throw new Error(lane.detail);
-    const laneWebContentsId = created[0].window.webContents.id;
-    expect(isLaneWebContents(laneWebContentsId)).toBe(true);
-    expect(isLaneWebContents(laneWebContentsId + 1000)).toBe(false);
+  // A lane is a plain BrowserWindow, so Electron reports its page as a 'window' and only the mark
+  // openLane makes names it a Browser pane page. The Sentry SDK asks for that name up to 5 s after
+  // the crash, by which time the lane may be destroyed and getType() throws.
+  describe('crash classification', () => {
+    /** What the SDK hands getRendererName for a live lane: a plain 'window'. */
+    const liveContentsOf = (webContentsId: number) => ({ id: webContentsId, getType: (): string => 'window' });
 
-    destroyLane(lane.laneId);
-    expect(isLaneWebContents(laneWebContentsId)).toBe(false);
+    /** The same lane once closed: Electron throws on getType() for a destroyed WebContents. */
+    const destroyedContentsOf = (webContentsId: number) => ({
+      id: webContentsId,
+      getType: (): string => {
+        throw new Error('Object has been destroyed');
+      },
+    });
+
+    it('names the lane page a Browser pane page for crash reporting, and no other window', async () => {
+      const lane = await openLane(input());
+      if (!lane.ok) throw new Error(lane.detail);
+      const laneWebContentsId = created[0].window.webContents.id;
+
+      expect(
+        rendererNameForReporting(liveContentsOf(laneWebContentsId)),
+        "a lane renders the user's page, so its crash must be reduced like a pane's, not read as Kangentic's own UI",
+      ).toBe(BROWSER_GUEST_RENDERER_NAME);
+      expect(
+        rendererNameForReporting(liveContentsOf(laneWebContentsId + 1000)),
+        'only the lane the manager created is marked, not an unrelated window',
+      ).toBeUndefined();
+    });
+
+    it('still names it after the lane is destroyed, even though getType() then throws', async () => {
+      const lane = await openLane(input());
+      if (!lane.ok) throw new Error(lane.detail);
+      const laneWebContentsId = created[0].window.webContents.id;
+
+      expect(destroyLane(lane.laneId)).toBe(true);
+      expect(created[0].window.destroyed, 'the lane really is gone before the SDK asks').toBe(true);
+
+      expect(
+        rendererNameForReporting(liveContentsOf(laneWebContentsId)),
+        'destroying a lane must not release its mark: the SDK names a crash up to 5 s late, and a lane closed in that window would ship its page',
+      ).toBe(BROWSER_GUEST_RENDERER_NAME);
+      expect(
+        rendererNameForReporting(destroyedContentsOf(laneWebContentsId)),
+        "a destroyed lane throws on getType(), and must still be named by its mark rather than read as Kangentic's own UI",
+      ).toBe(BROWSER_GUEST_RENDERER_NAME);
+    });
+
+    it('names a lane whose page failed to load, since a crash can land while it loads', async () => {
+      // The mark is made when the window is created, ahead of the load. A mark made only after a
+      // successful load would leave a page that crashes mid-load, or one the failed load then
+      // destroys, to be read as Kangentic's own UI.
+      loadShouldFail = true;
+      const result = await openLane(input());
+      expect(result).toMatchObject({ ok: false, kind: 'lane-load-failed' });
+      expect(created[0].window.destroyed).toBe(true);
+
+      expect(rendererNameForReporting(destroyedContentsOf(created[0].window.webContents.id))).toBe(
+        BROWSER_GUEST_RENDERER_NAME,
+      );
+    });
   });
 
   it('shares the task cookie jar (keyed by task identity) rather than minting a fresh one', async () => {

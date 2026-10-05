@@ -317,18 +317,24 @@ in one Sentry org, one triage surface.
     older than that is gone (its issue keeps the counts but shows no latest event), and a search
     sees no further back. The rule was applied on 2026-10-03, so no stored event predating it
     survives past early November 2026.
-- **A Browser pane page's crash becomes a warning without the page.** A pane guest (and an
-  offscreen lane) runs as Kangentic.exe, so its dump reads as ours, but its content is the user's
-  page: the event's `contexts.electron.crashed_url` names it, and since Electron 42 a guest nearing
+- **A Browser pane page's crash becomes a warning without the page.** A pane guest (and a popup
+  it opened, and an offscreen lane) runs as Kangentic.exe, so its dump reads as ours, but its
+  content is the user's page: the event's `contexts.electron.crashed_url` names it, and since
+  Electron 42 a guest nearing
   its heap limit writes its JavaScript stack into a Crashpad annotation, which the SDK parses into
   exception frames. The SDK's `getRendererName` (`renderer-classification.ts`) names those
-  renderers `browser-guest`, and `beforeSend` (`toBrowserGuestCrashWarning` in
+  renderers `browser-guest`. Each surface's webContents is marked when it is created and never
+  unmarked, because the SDK asks only after the dump has settled, up to 5 s after the crash, and
+  a surface closed by then would otherwise read as ours. `beforeSend` (`toBrowserGuestCrashWarning` in
   `native-crash-event.ts`) rewrites the event into a warning titled "A Browser pane page crashed",
   grouped by exit reason, with the exception, `crashed_url`, every `crashpad.*` annotation and the
   minidump removed. The exit reason and code, the versions and our own scope stay, so guest crash
   rates are still visible. The SDK's `'browser-guest' process exited with ...` message for an
   abnormal exit is dropped in `ignoreErrors`, like the Utility and GPU ones. A guest dump found
   only at the next startup has no WebContents to classify and stays an ordinary renderer crash.
+  Our own windows get no name, and the SDK's live native-crash path turns that into
+  `event.process: unknown` rather than `renderer`; `beforeSend` puts `renderer` back when the
+  dump's `crashpad.process_type` annotation says renderer (`restoreOwnRendererProcessTag`).
 - **Native crashes in processes that are not ours become one warning, and their dumps never
   upload.** This happens in `beforeSend` (`beforeSendEvent` -> `filterNativeCrashEvent`), the only
   hook that can see the minidump attachment. On macOS a task's mach exception ports are inherited

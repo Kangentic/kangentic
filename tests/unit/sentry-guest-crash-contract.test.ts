@@ -1,6 +1,7 @@
 /**
  * Pins the parts of the installed `@sentry/electron` that the Browser pane crash scrub
- * (src/main/analytics/native-crash-event.ts) silently depends on.
+ * and the own-window process tag restore (src/main/analytics/native-crash-event.ts) silently
+ * depend on.
  *
  * isBrowserGuestCrashEvent decides a native crash belongs to a Browser pane page by reading
  * `tags['event.process']`, which only works if the SDK stamps that tag from the
@@ -11,6 +12,14 @@
  * JavaScript stack and its minidump would ship, while every other test (all of which hand-build
  * their events) stayed green. Same trap as the "against the installed @sentry/electron source"
  * blocks in error-reporting-switch.test.ts and foreign-crash-real-client.test.ts.
+ *
+ * restoreOwnRendererProcessTag rests on a second set of SDK facts. Once getRendererName is set, the
+ * SDK's live renderer-crash path stamps a renderer that getRendererName leaves unnamed (every window
+ * of ours) as 'unknown' rather than 'renderer', and the restore turns that back into 'renderer' by
+ * reading the dump's `process_type` annotation out of `contexts.electron`. It only fires if the SDK
+ * still falls back to 'unknown' (a future SDK that falls back to 'renderer' makes the restore dead
+ * code to delete), still derives the crashed process's type from that annotation, and still copies
+ * annotations under the `crashpad.` prefix next to an `event.environment: 'native'` tag.
  *
  * The integration cannot be driven without Electron: it requires `electron` at load time,
  * starts the crash reporter in setup(), and loads its dumps from disk. So the installed source is
@@ -35,6 +44,7 @@ import {
 } from '../../src/main/analytics/renderer-classification';
 import {
   isBrowserGuestCrashEvent,
+  restoreOwnRendererProcessTag,
   toBrowserGuestCrashWarning,
 } from '../../src/main/analytics/native-crash-event';
 
@@ -156,6 +166,8 @@ function propertyNames(literal: ts.ObjectLiteralExpression): string[] {
 interface RendererCrashContract {
   /** The key the SDK stores the crashed process's name under, in the event's `tags`. */
   tagKey: string;
+  /** The tags on that same event whose value is a string literal in the SDK, such as `event.environment`. */
+  stringTags: Record<string, string>;
   /** The SDK's own expression for that tag, evaluated with the given inputs. */
   stampFor: (processType: string, getRendererName: RendererNameFunction, contents: unknown) => unknown;
   /** The keys of the `contexts.electron` object the SDK builds on that same renderer-crash event. */
@@ -241,8 +253,16 @@ function readRendererCrashContract(sourceText: string): RendererCrashContract {
       );
     }
 
+    const stringTags: Record<string, string> = {};
+    for (const property of tagsLiteral.properties) {
+      if (!ts.isPropertyAssignment(property) || !ts.isStringLiteralLike(property.initializer)) continue;
+      const name = propertyNameText(property.name);
+      if (name !== undefined) stringTags[name] = property.initializer.text;
+    }
+
     return {
       tagKey,
+      stringTags,
       stampFor: (processType, getRendererName, contents) =>
         evaluate(getRendererName, contents, ...processTypeNames.map(() => processType)),
       electronContextKeys: propertyNames(electronLiteral).sort(),
@@ -312,6 +332,62 @@ function readCrashpadAnnotationPrefix(sourceText: string): string {
   }
 
   return prefixes[0];
+}
+
+interface ProcessTypeDerivation {
+  /** The Crashpad annotation the SDK reads the crashed process's type from. */
+  annotationKey: string;
+  /** The SDK's own expression, run against a dump whose annotations hold the given value under that key. */
+  derive: (annotationValue: string) => unknown;
+}
+
+/**
+ * Finds the variable the SDK initialises from one of the dump's Crashpad annotations
+ * (`const minidumpProcess = <dump>.crashpadAnnotations?.process_type?.replace('-process', '')`), the
+ * crashed process's type that the renderer path then compares with 'renderer'. Found by shape: the
+ * nearest variable declaration, inside the same function, around a property read directly off a
+ * `.crashpadAnnotations` object. `Object.entries(<dump>.crashpadAnnotations)` and
+ * `crashpadAnnotations['key']` are not that shape, so the annotation re-keying above is not picked up.
+ */
+function readProcessTypeDerivation(sourceText: string): ProcessTypeDerivation {
+  const sourceFile = parseJavaScript(sourceText);
+
+  const candidates: Array<{ initializer: ts.Expression; annotationKey: string; dumpName: string }> = [];
+  visitAll(sourceFile, (node) => {
+    if (
+      !ts.isPropertyAccessExpression(node) ||
+      !ts.isPropertyAccessExpression(node.expression) ||
+      node.expression.name.text !== 'crashpadAnnotations'
+    ) {
+      return;
+    }
+    let dump: ts.Expression = node.expression.expression;
+    while (ts.isPropertyAccessExpression(dump)) dump = dump.expression;
+    if (!ts.isIdentifier(dump)) return;
+
+    let ancestor: ts.Node | undefined = node.parent;
+    while (ancestor && !ts.isVariableDeclaration(ancestor)) {
+      if (ts.isFunctionLike(ancestor)) return;
+      ancestor = ancestor.parent;
+    }
+    if (ancestor && ts.isVariableDeclaration(ancestor) && ancestor.initializer) {
+      candidates.push({ initializer: ancestor.initializer, annotationKey: node.name.text, dumpName: dump.text });
+    }
+  });
+
+  const candidate = candidates[0];
+  if (!candidate) {
+    throw new SdkContractDrift(
+      "@sentry/electron no longer derives the crashed process's type from a Crashpad annotation (no variable is initialised from `<dump>.crashpadAnnotations.<key>`). The renderer crash path only calls getRendererName for a 'renderer' type, and native-crash-event.ts's restoreOwnRendererProcessTag reads the same annotation back out of contexts.electron, so both would have to be re-derived against the new SDK.",
+    );
+  }
+  const evaluate = new Function(candidate.dumpName, `return (${candidate.initializer.getText(sourceFile)});`) as (
+    dump: unknown,
+  ) => unknown;
+  return {
+    annotationKey: candidate.annotationKey,
+    derive: (annotationValue) => evaluate({ crashpadAnnotations: { [candidate.annotationKey]: annotationValue } }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +506,99 @@ function checkScrubEndToEnd(sourceText: string): string[] {
   return [];
 }
 
+/**
+ * What the live renderer path stamps for a crash of one of OUR windows, which getRendererName leaves
+ * unnamed. restoreOwnRendererProcessTag exists because that is 'unknown'. If the SDK ever falls back
+ * to 'renderer' instead, the restore has nothing left to fix.
+ */
+function checkOwnWindowFallback(sourceText: string): string[] {
+  const outcome = attempt(() => readRendererCrashContract(sourceText));
+  if ('drift' in outcome) return [outcome.drift];
+
+  const stamped = outcome.value.stampFor('renderer', classifyForSdk, OWN_WINDOW_CONTENTS);
+  if (stamped === 'unknown') return [];
+  if (stamped === 'renderer') {
+    return [
+      "the SDK's live renderer crash path now stamps 'renderer' for a renderer that getRendererName leaves unnamed, so Kangentic's own window crashes already carry the tag restoreOwnRendererProcessTag exists to put back. The restore is now a no-op and can be removed: delete it from native-crash-event.ts and its call in filterNativeCrashEvent (error-reporting.ts), along with the tests that cover it and the checks for it in this file.",
+    ];
+  }
+  return [
+    `the SDK's live renderer crash path now stamps ${JSON.stringify(stamped)} for a renderer that getRendererName leaves unnamed. restoreOwnRendererProcessTag only repairs 'unknown', so Kangentic's own window crashes would reach Sentry tagged ${JSON.stringify(stamped)}. Decide what the tag should be before the restore is allowed to ignore it.`,
+  ];
+}
+
+/**
+ * restoreOwnRendererProcessTag takes the crash to be a renderer's from the dump's `process_type`
+ * annotation, so the SDK has to derive its own process type from that same annotation, and a
+ * renderer's has to come out as 'renderer' (the value that makes the SDK call getRendererName at all).
+ * The restore also strips a `-process` suffix before comparing, the way the SDK does, so the SDK is
+ * checked for the strip as well.
+ */
+function checkProcessTypeDerivation(sourceText: string): string[] {
+  const outcome = attempt(() => readProcessTypeDerivation(sourceText));
+  if ('drift' in outcome) return [outcome.drift];
+  const { annotationKey, derive } = outcome.value;
+
+  const problems: string[] = [];
+  const derivedForRenderer = derive('renderer');
+  if (derivedForRenderer !== 'renderer') {
+    problems.push(
+      `the SDK derives ${JSON.stringify(derivedForRenderer)} from a renderer dump's ${JSON.stringify(annotationKey)} annotation instead of 'renderer'. The renderer crash path only calls getRendererName for 'renderer', so no Browser pane page would be recognised, and restoreOwnRendererProcessTag would no longer see own windows as renderers.`,
+    );
+  }
+  const derivedForGpu = derive('gpu-process');
+  if (derivedForGpu !== 'gpu') {
+    problems.push(
+      `the SDK derives ${JSON.stringify(derivedForGpu)} from the annotation value 'gpu-process' instead of stripping the suffix to 'gpu'. restoreOwnRendererProcessTag strips '-process' before comparing, the way the SDK did, so its strip no longer mirrors the SDK. Review whether it should still strip.`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * An own-window renderer crash event built from the SDK's OWN names (the annotation key it derives
+ * the process type from, the prefix it copies annotations under, the `event.environment` value, the
+ * tag key it stamps, and the 'unknown' it stamps by its own fallback), run through our REAL restore.
+ * Only the annotation's value ('renderer') and the exit reason are typed in here. The prefix is
+ * checkCrashpadPrefix's to pin against native-crash-event.ts's constant. This is what catches the
+ * restore's own literals (`process_type`, `event.environment`, `native`, `event.process`) drifting
+ * away from what the SDK writes.
+ */
+function checkRestoreEndToEnd(sourceText: string): string[] {
+  const contractOutcome = attempt(() => readRendererCrashContract(sourceText));
+  if ('drift' in contractOutcome) return [contractOutcome.drift];
+  const contract = contractOutcome.value;
+  const prefixOutcome = attempt(() => readCrashpadAnnotationPrefix(sourceText));
+  if ('drift' in prefixOutcome) return [prefixOutcome.drift];
+  const derivationOutcome = attempt(() => readProcessTypeDerivation(sourceText));
+  if ('drift' in derivationOutcome) return [derivationOutcome.drift];
+  const derivation = derivationOutcome.value;
+
+  const environment = contract.stringTags['event.environment'];
+  if (environment === undefined) {
+    return [
+      "the SDK's renderer crash event no longer carries an `event.environment` tag with a literal value. restoreOwnRendererProcessTag only restores events tagged 'native', so it could no longer tell a native crash from any other event.",
+    ];
+  }
+
+  const stamped = contract.stampFor(String(derivation.derive('renderer')), classifyForSdk, OWN_WINDOW_CONTENTS);
+  const event = asErrorEvent({
+    level: 'fatal',
+    platform: 'native',
+    tags: { 'event.environment': environment, [contract.tagKey]: stamped, 'exit.reason': 'crashed' },
+    contexts: { electron: { [`${prefixOutcome.value}${derivation.annotationKey}`]: 'renderer' } },
+  });
+
+  restoreOwnRendererProcessTag(event);
+  const tagAfter = event.tags?.[contract.tagKey];
+  if (tagAfter !== 'renderer') {
+    return [
+      `an own-window renderer crash built from the SDK's own keys is tagged ${JSON.stringify(tagAfter)} after restoreOwnRendererProcessTag, not 'renderer'. It reads tags['event.environment'] === 'native', tags['event.process'] === 'unknown' and contexts.electron['${OUR_CRASHPAD_PREFIX}process_type'], and one of those no longer matches what the SDK writes (the SDK wrote tags[${JSON.stringify(contract.tagKey)}] = ${JSON.stringify(stamped)}, tags['event.environment'] = ${JSON.stringify(environment)}, contexts.electron[${JSON.stringify(`${prefixOutcome.value}${derivation.annotationKey}`)}] = 'renderer'). Own window crashes would stay tagged ${JSON.stringify(stamped)}.`,
+    ];
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // Real source.
 // ---------------------------------------------------------------------------
@@ -465,6 +634,18 @@ describe.each(INSTALLED_TWINS)('the installed @sentry/electron sentry-minidump i
   it("leaves only the exit details after our Browser pane scrub, for an event built from the SDK's own keys", () => {
     expect(checkScrubEndToEnd(sourceText)).toEqual([]);
   });
+
+  it("falls back to 'unknown' for a renderer getRendererName leaves unnamed, the tag restoreOwnRendererProcessTag puts right", () => {
+    expect(checkOwnWindowFallback(sourceText)).toEqual([]);
+  });
+
+  it("derives the crashed process's type from the dump's process_type annotation, which restoreOwnRendererProcessTag reads back", () => {
+    expect(checkProcessTypeDerivation(sourceText)).toEqual([]);
+  });
+
+  it("tags an own window renderer crash 'renderer' after our restore, for an event built from the SDK's own keys", () => {
+    expect(checkRestoreEndToEnd(sourceText)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -480,6 +661,10 @@ interface FakeSdkVariant {
   annotationPrefix: string;
   mergeAnnotations: boolean;
   crashedUrlKey: string;
+  /** How `minidumpProcess` is derived from the dump, in terms of the `minidumpResult` the loader hands over. */
+  processTypeExpression: string;
+  /** The expression the `event.environment` tag on the renderer crash event is set from. */
+  environmentTagExpression: string;
 }
 
 const FAITHFUL_SDK: FakeSdkVariant = {
@@ -490,6 +675,8 @@ const FAITHFUL_SDK: FakeSdkVariant = {
   annotationPrefix: 'crashpad.',
   mergeAnnotations: true,
   crashedUrlKey: 'crashed_url',
+  processTypeExpression: "minidumpResult.crashpadAnnotations?.process_type?.replace('-process', '')",
+  environmentTagExpression: "'native'",
 };
 
 /** The shape of the real integration's two relevant functions, with one knob per way it could drift. */
@@ -498,7 +685,7 @@ function fakeSdkSource(overrides: Partial<FakeSdkVariant> = {}): string {
   return [
     'async function sendNativeCrashes(client, getEvent) {',
     '  await minidumpLoader(false, async (minidumpResult, attachment) => {',
-    "    const minidumpProcess = minidumpResult.crashpadAnnotations?.process_type?.replace('-process', '');",
+    `    const minidumpProcess = ${variant.processTypeExpression};`,
     '    const event = await getEvent(minidumpProcess);',
     '    if (minidumpResult.crashpadAnnotations) {',
     `      const prependedAnnotations = Object.entries(minidumpResult.crashpadAnnotations).reduce((acc, [key, val]) => ((acc[\`${variant.annotationPrefix}\${key}\`] = val), acc), {});`,
@@ -519,7 +706,7 @@ function fakeSdkSource(overrides: Partial<FakeSdkVariant> = {}): string {
     '    return {',
     `      contexts: { electron: { ${variant.crashedUrlKey}: getRendererProperties(contents.id)?.url || 'unknown', details } },`,
     "      level: 'fatal',",
-    `      tags: { 'event.environment': 'native', '${variant.tagKey}': ${variant.tagValue}, 'exit.reason': details.reason },`,
+    `      tags: { 'event.environment': ${variant.environmentTagExpression}, '${variant.tagKey}': ${variant.tagValue}, 'exit.reason': details.reason },`,
     '    };',
     '  });',
     '}',
@@ -533,6 +720,9 @@ describe('the contract checks can fail', () => {
     expect(checkCrashpadPrefix(source)).toEqual([]);
     expect(checkRendererCrashElectronContext(source)).toEqual([]);
     expect(checkScrubEndToEnd(source)).toEqual([]);
+    expect(checkOwnWindowFallback(source)).toEqual([]);
+    expect(checkProcessTypeDerivation(source)).toEqual([]);
+    expect(checkRestoreEndToEnd(source)).toEqual([]);
   });
 
   it('flag an SDK that stamps event.process from something other than getRendererName', () => {
@@ -568,5 +758,73 @@ describe('the contract checks can fail', () => {
     const source = fakeSdkSource({ crashedUrlKey: 'crashedUrl' });
     expect(checkRendererCrashElectronContext(source).join('\n')).toMatch(/instead of \[crashed_url, details\]/);
     expect(checkScrubEndToEnd(source).join('\n')).toMatch(/still holds \[crashedUrl, details\]/);
+  });
+
+  it("flag an SDK that falls back to 'renderer' for an unnamed renderer, which leaves the restore nothing to fix", () => {
+    const source = fakeSdkSource({
+      rendererNameExpression:
+        "(minidumpProcess === 'renderer' && getRendererName ? getRendererName(contents) : minidumpProcess) || 'renderer'",
+    });
+    expect(checkOwnWindowFallback(source).join('\n')).toMatch(/is now a no-op and can be removed/);
+    // Only this pin cares what an own window falls back to. An own window stamped 'renderer' needs no
+    // restoring, so the end-to-end check is satisfied and so is the Browser pane check.
+    expect(checkProcessTag(source)).toEqual([]);
+    expect(checkRestoreEndToEnd(source)).toEqual([]);
+  });
+
+  it('flag an SDK that falls back to some other name for an unnamed renderer', () => {
+    const source = fakeSdkSource({
+      rendererNameExpression:
+        "(minidumpProcess === 'renderer' && getRendererName ? getRendererName(contents) : minidumpProcess) || 'window'",
+    });
+    expect(checkOwnWindowFallback(source).join('\n')).toMatch(/now stamps "window" for a renderer that getRendererName leaves unnamed/);
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/is tagged "window" after restoreOwnRendererProcessTag/);
+  });
+
+  it("flag an SDK that no longer derives its process type from a Crashpad annotation", () => {
+    const source = fakeSdkSource({ processTypeExpression: "'renderer'" });
+    expect(checkProcessTypeDerivation(source).join('\n')).toMatch(/no longer derives the crashed process's type/);
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/no longer derives the crashed process's type/);
+  });
+
+  it('flag an SDK that stops stripping -process from the annotation value', () => {
+    const source = fakeSdkSource({ processTypeExpression: 'minidumpResult.crashpadAnnotations?.process_type' });
+    expect(checkProcessTypeDerivation(source).join('\n')).toMatch(/instead of stripping the suffix to 'gpu'/);
+    // A renderer's annotation carries no suffix, so only the mirrored strip is stale, not the restore.
+    expect(checkRestoreEndToEnd(source)).toEqual([]);
+  });
+
+  it("flag an SDK that derives something other than 'renderer' for a renderer dump", () => {
+    const source = fakeSdkSource({
+      processTypeExpression: "minidumpResult.crashpadAnnotations?.process_type?.replace('renderer', 'window')",
+    });
+    expect(checkProcessTypeDerivation(source).join('\n')).toMatch(/derives "window" from a renderer dump's "process_type" annotation instead of 'renderer'/);
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/after restoreOwnRendererProcessTag/);
+  });
+
+  it('flag an SDK that reads the process type from a differently named annotation', () => {
+    const source = fakeSdkSource({
+      processTypeExpression: "minidumpResult.crashpadAnnotations?.ptype?.replace('-process', '')",
+    });
+    // The SDK's own derivation is still sound, so this is the restore's literal going stale.
+    expect(checkProcessTypeDerivation(source)).toEqual([]);
+    const problems = checkRestoreEndToEnd(source).join('\n');
+    expect(problems).toMatch(/is tagged "unknown" after restoreOwnRendererProcessTag/);
+    expect(problems).toMatch(/contexts\.electron\["crashpad\.ptype"\]/);
+  });
+
+  it('flag an SDK that stops copying annotations under the prefix the restore reads', () => {
+    const source = fakeSdkSource({ annotationPrefix: 'annotation.' });
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/is tagged "unknown" after restoreOwnRendererProcessTag/);
+  });
+
+  it("flag an SDK that changes the value of the environment tag the restore gates on", () => {
+    const source = fakeSdkSource({ environmentTagExpression: "'electron-native'" });
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/is tagged "unknown" after restoreOwnRendererProcessTag/);
+  });
+
+  it('flag an SDK that stops giving the environment tag a literal value', () => {
+    const source = fakeSdkSource({ environmentTagExpression: 'details.environment' });
+    expect(checkRestoreEndToEnd(source).join('\n')).toMatch(/no longer carries an `event\.environment` tag with a literal value/);
   });
 });
