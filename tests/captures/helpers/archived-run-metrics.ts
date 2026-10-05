@@ -106,7 +106,7 @@ export async function measureClaudeRun(historyPath: string): Promise<ArchivedRun
   const toolCounts = await parseClaudeTranscriptToolCounts(historyPath);
   if (!usage || !toolCounts) return null;
   const tools: Record<string, number> = {};
-  for (const stat of toolCounts.toolBreakdown) tools[stat.toolName] = stat.callCount;
+  for (const toolStat of toolCounts.toolBreakdown) tools[toolStat.toolName] = toolStat.callCount;
   const model = mainLoopModel(fs.readFileSync(historyPath, 'utf-8'));
   return { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, tools };
 }

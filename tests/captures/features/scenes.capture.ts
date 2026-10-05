@@ -88,7 +88,7 @@ test.describe('Scene captures', () => {
           await hideDevOnlyChrome(page);
           try {
             await openScene(page, scene, { baseUrl: server.url, theme });
-            // A surface that got no WebGL context shows its fallback card instead of its drawing.
+            // A 3D view that got no WebGL context shows its fallback card instead of its drawing.
             // A poster of that is a picture of the card, so none is written; the release's poster
             // job then fails loudly rather than shipping the card under the feature's caption.
             for (const fallback of NO_GPU_FALLBACKS) {

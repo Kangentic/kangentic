@@ -226,8 +226,7 @@ three things staying in step, and each is enforced rather than remembered.
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
-  element, that a scene naming `settle` settles, that the Knowledge Graph draws in a 3D context
-  (no no-GPU card, island labels placed by a drawn frame, named region pills), that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
+  element, that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
   carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
   rig) and null for a scene without one, the embed and theme
@@ -256,7 +255,9 @@ three things staying in step, and each is enforced rather than remembered.
   only when the app has nothing of its own to close. A dialog, a task window, and a focused text
   field each keep the first press. A task window whose terminal is under the pointer still closes
   on it. A parked window, a Command Terminal, and a terminal outside every task window keep no
-  press, so the first press posts. Runs as the `demo` job in `.github/workflows/ci.yml`
+  press, so the first press posts. A scene that names `settle` must settle. The Knowledge Graph
+  must draw in a 3D context: no no-GPU card, island labels placed by a drawn frame, and named
+  region pills. Runs as the `demo` job in `.github/workflows/ci.yml`
   and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.

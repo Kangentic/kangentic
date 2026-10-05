@@ -7,7 +7,21 @@
  * not stored in the run's record: the sanitizer rewrites anything that looks like the project's
  * scratch path to the sample install's, which is right for every other field and wrong for this one.
  */
+import os from 'node:os';
 import path from 'node:path';
+
+/**
+ * The scratch root both scripts take from `--root`, or the home directory. Shared so the graph
+ * capture looks for a run's history under the root the run was given. A `--root` with no
+ * directory after it is refused rather than read as the home directory.
+ */
+export function scratchRootFromArgv(argv) {
+  const flagIndex = argv.indexOf('--root');
+  if (flagIndex === -1) return os.homedir();
+  const root = argv[flagIndex + 1];
+  if (!root || root.startsWith('--')) throw new Error('--root needs a directory after it');
+  return root;
+}
 
 /**
  * The project's scratch clone relative to the home directory, as segments. `projectPath` is the

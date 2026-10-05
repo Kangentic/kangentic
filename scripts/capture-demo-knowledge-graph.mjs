@@ -47,7 +47,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
-import { archivedClonePath, scratchClonePath } from './lib/demo-archived-clone.mjs';
+import { archivedClonePath, scratchClonePath, scratchRootFromArgv } from './lib/demo-archived-clone.mjs';
 import { gitOutput } from './lib/git-output.mjs';
 
 const require = createRequire(import.meta.url);
@@ -58,9 +58,8 @@ const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo')
 const outPath = path.join(fixturesDir, 'graph', 'knowledge-graph.json');
 const argv = process.argv.slice(2);
 const checkOnly = argv.includes('--check');
-const rootFlagIndex = argv.indexOf('--root');
 /** Where the archived runs' clones were, as scripts/capture-demo-archived-runs.mjs was told. */
-const archivedRoot = rootFlagIndex === -1 ? os.homedir() : argv[rootFlagIndex + 1];
+const archivedRoot = scratchRootFromArgv(argv);
 
 const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8'));
 const archivedRuns = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'archived', 'runs.json'), 'utf-8'));
@@ -117,7 +116,8 @@ function captureCwd(project) {
 /** A fresh repository whose history is what the demo's History pane shows for the project. */
 function prepareProjectRepo(project) {
   const target = path.join(workRoot, project.name);
-  fs.rmSync(target, { recursive: true, force: true });
+  // Retried: a preview from an earlier run can still hold handles in the copy on Windows.
+  fs.rmSync(target, { recursive: true, force: true, maxRetries: 3 });
   fs.mkdirSync(workRoot, { recursive: true });
   const spec = manifest.repos[project.name];
   if (spec.scaffold) {
@@ -250,45 +250,51 @@ const output = {
   projects: {},
 };
 for (const entry of planned) {
-  const ids = seeded.projects.find((candidate) => candidate.key === entry.project.id);
+  const seededProject = seeded.projects.find((candidate) => candidate.key === entry.project.id);
+  if (!seededProject) throw new Error(`${entry.project.name}: the seed result has no project keyed ${entry.project.id}`);
   console.error(`[graph] ${entry.project.name}: opening`);
-  await call(port, `window.electronAPI.projects.open(${JSON.stringify(ids.projectId)})`);
-  const readSnapshot = async () => parseWire(await call(port, `window.electronAPI.knowledgeGraph.graphSnapshot(${JSON.stringify(ids.projectId)})`));
+  await call(port, `window.electronAPI.projects.open(${JSON.stringify(seededProject.projectId)})`);
+  // Null while the snapshot cannot be read (a worker restart, a close racing the read): not ready.
+  const readSnapshot = async () => parseWire(await call(port, `window.electronAPI.knowledgeGraph.graphSnapshot(${JSON.stringify(seededProject.projectId)})`));
 
   // A sweep indexes at most MAX_SESSIONS_PER_SWEEP conversations and leaves the rest to the next
   // project open, so a project holding more is opened again whenever the sweep has stopped moving
   // with conversations still unindexed: the same opens a user's later visits would make.
   let lastUnindexed = null;
   let quietPolls = 0;
-  await waitFor(`${entry.project.name} index`, async () => {
+  let snapshot = await waitFor(`${entry.project.name} index`, async () => {
     const snapshot = await readSnapshot();
     const unindexed = snapshot ? snapshot.coverage.notYetIndexed.documents : null;
     quietPolls = unindexed !== null && unindexed === lastUnindexed ? quietPolls + 1 : 0;
     lastUnindexed = unindexed;
     if (unindexed && quietPolls >= UNINDEXED_QUIET_POLLS) {
       console.error(`[graph] ${entry.project.name}: ${unindexed} conversation(s) left after a sweep; opening the project again`);
-      await call(port, `window.electronAPI.projects.open(${JSON.stringify(ids.projectId)})`);
+      await call(port, `window.electronAPI.projects.open(${JSON.stringify(seededProject.projectId)})`);
       quietPolls = 0;
     }
     return snapshot;
   }, (snapshot) => snapshot !== null && indexCaughtUp(snapshot, entry.expected));
   console.error(`[graph] ${entry.project.name}: indexed and embedded; building the map`);
-  let snapshot = await readSnapshot();
-  if (!snapshot.projection || snapshot.stale) await call(port, `window.electronAPI.knowledgeGraph.refreshGraph(${JSON.stringify(ids.projectId)})`);
-  snapshot = await waitFor(`${entry.project.name} map`, readSnapshot, (candidate) => candidate.projection !== null && !candidate.building && !candidate.stale);
+  if (!snapshot.projection || snapshot.stale) await call(port, `window.electronAPI.knowledgeGraph.refreshGraph(${JSON.stringify(seededProject.projectId)})`);
+  snapshot = await waitFor(`${entry.project.name} map`, readSnapshot, (candidate) => candidate !== null && candidate.projection !== null && !candidate.building && !candidate.stale);
 
   // The names are laid over the map on a read after the build: wait until the key holds.
   let stable = 0;
   let key = snapshot.projectionKey;
   while (stable < STABLE_READS) {
     await sleep(POLL_MS);
-    snapshot = await readSnapshot();
+    const next = await readSnapshot();
+    if (next === null) {
+      stable = 0;
+      continue;
+    }
+    snapshot = next;
     stable = snapshot.projectionKey === key && !snapshot.building && !snapshot.stale ? stable + 1 : 0;
     key = snapshot.projectionKey;
   }
 
-  const sessionKey = (previewId) => ids.sessionKeys[previewId] ?? null;
-  const taskKey = (previewId) => (previewId ? ids.taskKeys[previewId] ?? null : null);
+  const sessionKey = (previewId) => seededProject.sessionKeys[previewId] ?? null;
+  const taskKey = (previewId) => (previewId ? seededProject.taskKeys[previewId] ?? null : null);
   const projection = snapshot.projection;
   const nodes = projection.nodes.map((node) => {
     const demoSessionId = sessionKey(node.sessionId);
@@ -298,7 +304,7 @@ for (const entry of planned) {
     return { docKey: `conversation::${demoSessionId}`, sessionId: demoSessionId, taskId: taskKey(node.taskId), agent: node.agent, x: node.x, y: node.y, z: node.z, chunkCount: node.chunkCount, clusters: node.clusters };
   });
   const drawn = new Set(nodes.map((node) => node.sessionId));
-  const databasePath = path.join(repoRoot, '.kangentic', 'data', 'projects', `${ids.projectId}.db`);
+  const databasePath = path.join(repoRoot, '.kangentic', 'data', 'projects', `${seededProject.projectId}.db`);
   const withoutNode = [...entry.withoutNode];
   for (const session of entry.plan.sessions) {
     if (drawn.has(session.key) || !session.agentSessionId) continue;

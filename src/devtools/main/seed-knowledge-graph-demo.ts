@@ -36,16 +36,19 @@ import type { IpcContext } from '../../main/ipc/ipc-context';
 /**
  * Write every planned project's rows. The whole plan is checked before the first write, and a
  * plan that fails a check throws with nothing written: a project row already at a planned path (a
- * second seed would double every task, and the graph would carry each conversation twice), an
- * agent with no adapter, tickets not numbered 1 to n, or a session naming a task the plan lacks.
+ * second seed would double every task, and the graph would carry each conversation twice), two
+ * planned projects at one path (the same doubling, from one seed), an agent with no adapter,
+ * tickets not numbered 1 to n, or a session naming a task the plan lacks.
  * A throw after that (a new board with no To Do or Done column, the allocator numbering a task
  * other than the plan does) leaves the rows already written, so restart the preview to seed again.
  */
-export function seedKnowledgeGraphDemo(context: IpcContext, plan: DevSeedKnowledgeGraphDemoPlan): DevSeedKnowledgeGraphDemoResult {
-  for (const planned of plan.projects) {
+export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>, plan: DevSeedKnowledgeGraphDemoPlan): DevSeedKnowledgeGraphDemoResult {
+  for (const [index, planned] of plan.projects.entries()) {
     if (context.projectRepo.list().some((existing) => isSamePath(existing.path, planned.path))) {
       throw new Error(`A project is already registered at ${planned.path}; restart the preview to seed the demo graph again`);
     }
+    const sharedWith = plan.projects.slice(0, index).find((earlier) => isSamePath(earlier.path, planned.path));
+    if (sharedWith) throw new Error(`${planned.name}: the plan puts it at ${planned.path}, where it also puts ${sharedWith.name}`);
     const displayIds = planned.tasks.map((task) => task.displayId).sort((left, right) => left - right);
     const gapAt = displayIds.findIndex((displayId, index) => displayId !== index + 1);
     if (gapAt !== -1) throw new Error(`${planned.name}: the plan's tickets are not numbered 1 to ${displayIds.length} (found #${displayIds[gapAt]} at position ${gapAt + 1})`);
