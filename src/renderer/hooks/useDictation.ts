@@ -135,9 +135,10 @@ export function useDictation(): void {
   // `stop` as the drain target so finalize waits for the tail to be ingested
   // before decoding (the audio frames race the stop invoke over IPC).
   const framesSentRef = useRef(0);
-  // Whether this utterance's committed text is an all-caps live model's own
-  // (`DictationStartResult.sentenceCaseFinal`). Only then is the final recased;
-  // a final another model cased itself ("GPU", "OK") is typed as written.
+  // Whether this utterance's live model writes all caps
+  // (`DictationStartResult.sentenceCaseFinal`), so its committed text can be
+  // that model's own. Only then is a final recased, and only in the all-caps
+  // shape; with any other live model a cased "GPU" or "OK" is typed as written.
   const sentenceCaseFinalRef = useRef(false);
   /** Terminal sessions with an auto-submit paste in flight in the main process.
    *
@@ -466,9 +467,9 @@ export function useDictation(): void {
     let finalText: string;
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
-      // With no refinement pass the committed text is the live model's: the
-      // Zipformer's is all caps, so main asks for the preview's casing. Every
-      // other final is typed as written.
+      // With no refinement pass, or one that fell back, the committed text is
+      // the live model's. The Zipformer's is all caps, so main asks for the
+      // preview's casing; `toPreviewCase` leaves a refined final unchanged.
       const stoppedText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
       finalText = sentenceCaseFinalRef.current ? toPreviewCase(stoppedText) : stoppedText;
     } catch (error) {

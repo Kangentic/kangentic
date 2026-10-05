@@ -71,6 +71,9 @@ const ALL_CAPS_FINAL = 'FIX THE SPACING';
 const ALL_CAPS_FINAL_SENTENCE_CASED = 'Fix the spacing';
 /** A final a model cased itself. Recasing it would type "Gpu". */
 const ACRONYM_FINAL = 'GPU';
+/** A refined final from a session whose live model is the Zipformer: cased and
+ *  punctuated by the refinement model, so the shape guard leaves it as written. */
+const REFINED_ACRONYM_FINAL = 'Use the GPU.';
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
@@ -814,9 +817,12 @@ test.describe('dictation into the Browser pane note input', () => {
    * `toPreviewCase` lowercases text that has no lowercase letter and no sentence
    * punctuation, then capitalizes its first letter. That is right for the
    * Zipformer, which writes all caps, and wrong for a model that cases its own
-   * text: a bare "GPU" from Nemotron was typed "Gpu". Main now says which case it
-   * is through `dictation.start`'s `sentenceCaseFinal`, and the hook recases a
-   * final only when it is true.
+   * text: a bare "GPU" from Nemotron was typed "Gpu". Main now says through
+   * `dictation.start`'s `sentenceCaseFinal` whether the live model writes all
+   * caps, and the hook recases a final only when it is true. It stays true with
+   * a refinement model behind the Zipformer, because the engine falls back to
+   * the live text when the refinement is late, so a refined final has to pass
+   * the shape guard unchanged.
    *
    * The two release tests stream NO partial on purpose. A partial of the same
    * words is recased for the preview whatever the flag says, so with one the
@@ -854,6 +860,24 @@ test.describe('dictation into the Browser pane note input', () => {
 
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
       await expect(search).toHaveValue(ACRONYM_FINAL);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a refined final behind an all-caps live model is typed as written', async () => {
+    const page = await launch({ autoSubmit: false });
+    try {
+      await setMockFinal(page, { sentenceCaseFinal: true, stopText: REFINED_ACRONYM_FINAL });
+      const search = page.locator('input[placeholder="Search board..."]');
+      await search.click();
+
+      await pressAndHold(page);
+      expect(await dictationTargetKind(page)).toBe('input');
+      await release(page);
+
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      await expect(search).toHaveValue(REFINED_ACRONYM_FINAL);
     } finally {
       await page.context().close();
     }

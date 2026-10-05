@@ -128,13 +128,15 @@ export function selectEngine(
 }
 
 /**
- * True when the text a session commits is the live model's own and that model
- * writes all caps (the Zipformer): no on-device refinement runs and the cloud
- * does not write the final. The renderer sentence-cases only that text, so a
- * final another model cased itself ("GPU", "OK") is typed as written.
+ * True when the live model writes all caps (the Zipformer), so the text a
+ * session commits can be that model's own: with no refinement, and also with
+ * one, since `HybridEngine` commits the live text when the refinement model is
+ * not ready in time or its final (the cloud's included) fails. The renderer
+ * recases such a final only in the all-caps shape (`toPreviewCase`'s guard),
+ * so a refined, punctuated final still passes as written. With any other live
+ * model no final is recased, and a cased "GPU" or "OK" is typed as written.
  */
 export function finalNeedsSentenceCase(selected: EngineSelection): boolean {
-  if (selected.isRemote || selected.finalModelId !== null) return false;
   const live = selected.models.find((model) => model.id === selected.liveModelId);
   return live?.writesAllCaps === true;
 }

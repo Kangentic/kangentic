@@ -300,9 +300,11 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
 
 describe('finalNeedsSentenceCase - which committed finals the renderer recases', () => {
   // The renderer used to recase every committed final that had no lowercase
-  // letter, so a bare "GPU" from Nemotron alone was typed "Gpu". Only text the
-  // Zipformer wrote by itself (all caps, no punctuation) needs it: no on-device
-  // refinement, no cloud final, and a live model that writes all caps. Each case
+  // letter, so a bare "GPU" from Nemotron alone was typed "Gpu". Only a session
+  // whose live model writes all caps (the Zipformer) can commit that model's
+  // text, and it can with a refinement or cloud final too, because the hybrid
+  // engine falls back to the live text when the final is late or fails. The
+  // renderer's shape guard then leaves a refined final as written. Each case
   // asserts the slots it resolved first, so a preset change cannot turn a case
   // green for a different reason than the one it names.
   const capableProfile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
@@ -337,7 +339,7 @@ describe('finalNeedsSentenceCase - which committed finals the renderer recases',
     expect(finalNeedsSentenceCase(selected)).toBe(false);
   });
 
-  it('is false when the Zipformer is live but the cloud writes the final', () => {
+  it('is true when the Zipformer is live and the cloud writes the final, since a failed cloud final falls back to the live text', () => {
     const selected = selectEngine(
       capableProfile,
       makeConfig({
@@ -352,10 +354,10 @@ describe('finalNeedsSentenceCase - which committed finals the renderer recases',
     expect(selected.liveModelId).toBe('streaming-zipformer-en');
     expect(selected.finalModelId).toBeNull();
     expect(selected.isRemote).toBe(true);
-    expect(finalNeedsSentenceCase(selected)).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(true);
   });
 
-  it('is false when the Zipformer is live but a refinement model writes the final', () => {
+  it('is true when the Zipformer is live with a refinement model, since a late refinement falls back to the live text', () => {
     const selected = selectEngine(
       capableProfile,
       makeConfig({
@@ -369,7 +371,7 @@ describe('finalNeedsSentenceCase - which committed finals the renderer recases',
     expect(selected.liveModelId).toBe('streaming-zipformer-en');
     expect(selected.finalModelId).toBe('parakeet-tdt-0.6b-v3');
     expect(selected.isRemote).toBe(false);
-    expect(finalNeedsSentenceCase(selected)).toBe(false);
+    expect(finalNeedsSentenceCase(selected)).toBe(true);
   });
 });
 
