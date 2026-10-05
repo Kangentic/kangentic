@@ -5,7 +5,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
-import { AUTOMATION_TRIGGERS } from '../../../shared/automation-manifest';
+import { AUTOMATION_TRIGGER_LABELS, AUTOMATION_TRIGGERS } from '../../../shared/automation-manifest';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
@@ -664,7 +664,7 @@ export const handleGetColumnDetail: CommandHandler = (
   for (const trigger of AUTOMATION_TRIGGERS) {
     const group = automations.filter((row) => row.trigger === trigger).sort((left, right) => left.position - right.position);
     if (group.length === 0) continue;
-    lines.push(`  On ${trigger === 'turn_end' ? 'agent turn end' : `task ${trigger}`}:`);
+    lines.push(`  ${AUTOMATION_TRIGGER_LABELS[trigger]}:`);
     for (const row of group) {
       const guards = [
         row.condition ? `only if: ${row.condition}` : null,

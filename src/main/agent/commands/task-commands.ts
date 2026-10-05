@@ -929,7 +929,7 @@ export const handleMoveTask: CommandHandler = (
 };
 
 /** The longest message a move hands on: a whole review verdict fits with room to spare. */
-const MOVE_MESSAGE_MAX_CHARS = 20_000;
+export const MOVE_MESSAGE_MAX_CHARS = 20_000;
 
 /** Cap on how many tasks a reorder echoes back before truncating. */
 const REORDER_ECHO_LIMIT = 25;

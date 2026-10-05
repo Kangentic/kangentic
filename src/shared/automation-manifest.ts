@@ -35,6 +35,17 @@ export const AUTOMATION_TRIGGER_FILE_KEYS = {
   exit: 'onExit',
 } as const satisfies Record<AutomationTrigger, string>;
 
+/**
+ * Each trigger's name as a person reads it: the Automations pane's group
+ * headings, the edit dialog's Trigger, and the MCP listings. One table, so the
+ * pane and an agent's listing never word a group two ways.
+ */
+export const AUTOMATION_TRIGGER_LABELS: Record<AutomationTrigger, string> = {
+  enter: 'On task enter',
+  turn_end: 'On agent turn end',
+  exit: 'On task exit',
+};
+
 /** Narrow a stored or received trigger string; anything else is not a trigger this build knows. */
 export function isAutomationTrigger(value: unknown): value is AutomationTrigger {
   return typeof value === 'string' && (AUTOMATION_TRIGGERS as readonly string[]).includes(value);

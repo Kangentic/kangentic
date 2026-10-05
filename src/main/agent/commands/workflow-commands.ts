@@ -201,6 +201,27 @@ function runSettingsParams(record: Record<string, unknown>, label: string): RunS
   };
 }
 
+/**
+ * A planned task's field, refused on a wrong type rather than dropped, as the
+ * run settings are: `project: 5` dropped would put the task on the home board,
+ * and `skip: "Planning"` dropped would route it through Planning.
+ */
+function plannedText(record: Record<string, unknown>, field: string, label: string): string | null {
+  const raw = record[field];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') throw new WorkflowRequestError(`${label}: ${field} must be text.`);
+  return raw;
+}
+
+function plannedTextList(record: Record<string, unknown>, field: string, label: string): string[] | null {
+  const raw = record[field];
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string')) {
+    throw new WorkflowRequestError(`${label}: ${field} must be a list of names.`);
+  }
+  return raw as string[];
+}
+
 function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] {
   const value = params.tasks;
   if (!Array.isArray(value)) throw new WorkflowRequestError('tasks must be a list.');
@@ -208,17 +229,23 @@ function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] 
     if (typeof entry !== 'object' || entry === null) throw new WorkflowRequestError(`Task ${index + 1} must be an object.`);
     const record = entry as Record<string, unknown>;
     const label = `Task ${index + 1}${typeof record.key === 'string' ? ` ("${record.key}")` : ''}`;
+    const priority = record.priority;
+    if (priority !== undefined && priority !== null && typeof priority !== 'number') {
+      throw new WorkflowRequestError(`${label}: priority must be a number.`);
+    }
     return {
+      // A missing or wrong-typed key or title reads as missing, which the plan's
+      // own validation refuses with what to send instead.
       key: typeof record.key === 'string' ? record.key : '',
       title: typeof record.title === 'string' ? record.title : '',
-      description: typeof record.description === 'string' ? record.description : null,
-      project: typeof record.project === 'string' ? record.project : null,
-      existingTask: typeof record.existingTask === 'string' ? record.existingTask : null,
-      routeStart: typeof record.routeStart === 'string' ? record.routeStart : null,
-      routeLast: typeof record.routeLast === 'string' ? record.routeLast : null,
-      skip: Array.isArray(record.skip) ? record.skip.filter((name): name is string => typeof name === 'string') : null,
-      labels: Array.isArray(record.labels) ? record.labels.filter((label_): label_ is string => typeof label_ === 'string') : null,
-      priority: typeof record.priority === 'number' ? record.priority : null,
+      description: plannedText(record, 'description', label),
+      project: plannedText(record, 'project', label),
+      existingTask: plannedText(record, 'existingTask', label),
+      routeStart: plannedText(record, 'routeStart', label),
+      routeLast: plannedText(record, 'routeLast', label),
+      skip: plannedTextList(record, 'skip', label),
+      labels: plannedTextList(record, 'labels', label),
+      priority: typeof priority === 'number' ? priority : null,
       ...runSettingsParams(record, label),
     };
   });
@@ -227,8 +254,11 @@ function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] 
 function linksParam(params: Record<string, unknown>): Array<{ blocker: string; blocked: string }> {
   const value = params.links ?? [];
   if (!Array.isArray(value)) throw new WorkflowRequestError('links must be a list.');
-  return value.map((entry) => {
-    const record = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
+  return value.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) throw new WorkflowRequestError(`Link ${index + 1} must be an object with blocker and blocked.`);
+    const record = entry as Record<string, unknown>;
+    // A missing or wrong-typed end reads as an unknown key, which the plan's
+    // validation refuses by name.
     return {
       blocker: typeof record.blocker === 'string' ? record.blocker : '',
       blocked: typeof record.blocked === 'string' ? record.blocked : '',

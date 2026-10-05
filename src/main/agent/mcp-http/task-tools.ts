@@ -4,7 +4,7 @@ import { callHandler, runHandler, withProject, appendNoticeLine, detectCrossProj
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
-import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
+import { MOVE_MESSAGE_MAX_CHARS, TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
 import { resolveSpacedModelName, resolveEffortSelector } from '../../../shared/model-id';
 import { validateSpawnOverrides } from './spawn-override-validation';
 import { resolveColumn } from '../commands/column-resolver';
@@ -730,7 +730,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done"), or "next" for the column after the task\'s current one.'),
-        message: z.string().max(20_000).optional().describe('Optional message for the agent in the destination column, delivered once it is ready (after that column\'s own On task enter automations). Kept whole, line breaks included.'),
+        message: z.string().max(MOVE_MESSAGE_MAX_CHARS).optional().describe('Optional message for the agent in the destination column, delivered once it is ready (after that column\'s own On task enter automations). Kept whole, line breaks included.'),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the column\'s tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Repositioning within the task\'s current column counts slots among the OTHER tasks there, so 0 is the top. Omit to append to the end of the column, which is the default. Has no useful effect when moving into Done, which archives the task.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),

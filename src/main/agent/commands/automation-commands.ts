@@ -23,6 +23,7 @@ import { AutomationRunRepository } from '../../db/repositories/automation-run-re
 import { TaskRepository } from '../../db/repositories/task-repository';
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGER_LABELS,
   AUTOMATION_TRIGGERS,
   canColumnRun,
   isAutomationTrigger,
@@ -45,12 +46,8 @@ import type {
 /** How many run rows one read returns before the caller has to narrow. */
 const RUN_HISTORY_LIMIT = 50;
 
-/** The group headings the listing prints, matching the Automations pane's own words. */
-const TRIGGER_HEADINGS: Record<AutomationTrigger, string> = {
-  enter: 'On task enter',
-  turn_end: 'On agent turn end',
-  exit: 'On task exit',
-};
+/** The group headings the listing prints: the Automations pane's own words. */
+const TRIGGER_HEADINGS = AUTOMATION_TRIGGER_LABELS;
 
 export const handleListAutomations: CommandHandler = (
   params: Record<string, unknown>,

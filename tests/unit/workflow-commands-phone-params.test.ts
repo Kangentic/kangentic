@@ -7,9 +7,21 @@
 import { describe, it, expect, vi } from 'vitest';
 
 const resolveWorkflow = vi.fn();
+const savePlan = vi.fn();
+const createWorkflowWithPlan = vi.fn();
 vi.mock('../../src/main/workflows/workflow-service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-service')>();
-  return { ...actual, resolveWorkflow: (...args: unknown[]) => resolveWorkflow(...args) };
+  return {
+    ...actual,
+    resolveWorkflow: (...args: unknown[]) => resolveWorkflow(...args),
+    savePlan: (...args: unknown[]) => savePlan(...args),
+    createWorkflowWithPlan: (...args: unknown[]) => createWorkflowWithPlan(...args),
+  };
+});
+// kangentic_save_workflow asks for the runtime before it reads its params.
+vi.mock('../../src/main/workflows/workflow-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-runtime')>();
+  return { ...actual, requireWorkflowRuntimeContext: () => ({}) };
 });
 
 import { commandHandlers } from '../../src/main/agent/commands';
@@ -42,4 +54,41 @@ describe('workflow commands on the phone path', () => {
       expect(response).toEqual({ success: false, error: 'workflow is required.' });
     });
   }
+});
+
+/**
+ * kangentic_save_workflow is agent-only, but a command handler can be reached
+ * with no zod schema in front of it, so a planned task's fields are refused on
+ * a wrong type rather than dropped: a dropped `project` would put the task on
+ * the home board, a dropped `skip` would route it through every column.
+ */
+describe('kangentic_save_workflow refuses a wrong-typed planned task field', () => {
+  const cases: Array<{ field: string; value: unknown; error: string }> = [
+    { field: 'project', value: 5, error: 'Task 1 ("api"): project must be text.' },
+    { field: 'description', value: { text: 'x' }, error: 'Task 1 ("api"): description must be text.' },
+    { field: 'routeStart', value: 3, error: 'Task 1 ("api"): routeStart must be text.' },
+    { field: 'skip', value: 'Planning', error: 'Task 1 ("api"): skip must be a list of names.' },
+    { field: 'labels', value: ['ui', 7], error: 'Task 1 ("api"): labels must be a list of names.' },
+    { field: 'priority', value: 'high', error: 'Task 1 ("api"): priority must be a number.' },
+  ];
+  for (const testCase of cases) {
+    it(`${testCase.field}: ${JSON.stringify(testCase.value)}`, async () => {
+      const response = await commandHandlers.save_workflow(
+        { tasks: [{ key: 'api', title: 'Budgets API', [testCase.field]: testCase.value }] },
+        context,
+      );
+      expect(response).toEqual({ success: false, error: testCase.error });
+      expect(savePlan).not.toHaveBeenCalled();
+      expect(createWorkflowWithPlan).not.toHaveBeenCalled();
+    });
+  }
+
+  it('refuses a link that is not an object', async () => {
+    const response = await commandHandlers.save_workflow(
+      { tasks: [{ key: 'api', title: 'Budgets API' }], links: ['api->ui'] },
+      context,
+    );
+    expect(response).toEqual({ success: false, error: 'Link 1 must be an object with blocker and blocked.' });
+    expect(createWorkflowWithPlan).not.toHaveBeenCalled();
+  });
 });
