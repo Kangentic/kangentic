@@ -3,7 +3,7 @@ import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow a
 import type { Task, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
-import { RegistryIcon } from '../../utils/swimlane-icons';
+import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { ActivityMark } from '../ActivityMark';
 import { OverlayPopover } from '../OverlayPopover';
@@ -145,7 +145,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor }: {
               belowColor={index < reached ? RAIL_DONE : RAIL_AHEAD}
               node={<RailNode kind={kind} color={color} />}
             />
-            <RegistryIcon name={step.icon ?? 'square'} size={14} strokeWidth={1.75} style={{ color: on ? color : 'var(--color-fg-disabled)' }} />
+            <ColumnGlyph column={{ icon: step.icon, role: null }} size={14} color={on ? color : 'var(--color-fg-disabled)'} />
             <span className={`flex-1 min-w-0 truncate ${on ? 'text-fg-secondary' : 'text-fg-faint line-through decoration-fg-faint decoration-[1.5px]'}`}>{step.name}</span>
             {finished && (
               <span className="shrink-0 text-xs text-fg-faint whitespace-nowrap" title={formatDateTime(step.finishedAt!)}>
@@ -186,7 +186,7 @@ function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName
   if (task.place === 'working' && current) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
-        <RegistryIcon name={current.icon ?? 'square'} size={11} strokeWidth={1.75} style={{ color: current.color ?? undefined }} />
+        <ColumnGlyph column={{ icon: current.icon, role: null }} size={11} color={current.color} />
         {prefix}{current.name}
       </span>
     );

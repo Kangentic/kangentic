@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
 import { Folder } from 'lucide-react';
-import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
+import type { AppConfig, SwimlaneRole, Task, WorkflowViewTask } from '../../../shared/types';
 import { PROJECT_ROW_HEIGHT } from './workflow-layout';
-import { RegistryIcon } from '../../utils/swimlane-icons';
+import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
@@ -109,13 +109,13 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
 }
 
 /** The column the strip names: where the task is, or To Do until it starts. */
-function stripColumn(viewTask: WorkflowViewTask): { name: string; color: string | null; icon: string | null } {
-  if (viewTask.place === 'planned' || viewTask.place === 'todo') return { name: 'To Do', color: null, icon: 'layers' };
-  if (viewTask.place === 'done') return { name: 'Done', color: null, icon: 'circle-check-big' };
+function stripColumn(viewTask: WorkflowViewTask): { name: string; color: string | null; icon: string | null; role: SwimlaneRole | null } {
+  if (viewTask.place === 'planned' || viewTask.place === 'todo') return { name: 'To Do', color: null, icon: null, role: 'todo' };
+  if (viewTask.place === 'done') return { name: 'Done', color: null, icon: null, role: 'done' };
   const current = viewTask.steps.find((step) => step.state === 'current');
   return current
-    ? { name: current.name, color: current.color, icon: current.icon }
-    : { name: viewTask.task ? 'Another column' : 'To Do', color: null, icon: null };
+    ? { name: current.name, color: current.color, icon: current.icon, role: null }
+    : { name: viewTask.task ? 'Another column' : 'To Do', color: null, icon: null, role: null };
 }
 
 interface WorkflowCanvasCardProps {
@@ -159,7 +159,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
 
   const strip = (
     <WorkflowCardStrip
-      icon={<RegistryIcon name={column.icon ?? 'square'} size={12} strokeWidth={1.75} style={{ color: column.color ?? 'var(--color-fg-faint)' }} />}
+      icon={<ColumnGlyph column={column} size={12} color={column.color ?? 'var(--color-fg-faint)'} />}
       label={column.name}
       steps={viewTask.steps}
       lockedTitle={locked ? 'Moved by its workflow' : null}

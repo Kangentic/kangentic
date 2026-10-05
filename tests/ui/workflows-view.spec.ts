@@ -56,7 +56,7 @@ const OTHER_DONE_COLOR = '#a855f7';
  */
 type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards';
 
-function seedScript(seed: Seed, sidebarWidth: number): string {
+function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null): string {
   const draft = {
     workflow: {
       id: 'wf-draft', title: 'Theme tokens', state: 'draft', color_slot: 2,
@@ -107,6 +107,7 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts }));
       });
+      ${iconlessColumn ? `state.swimlanes.forEach(function (lane) { if (lane.name === ${JSON.stringify(iconlessColumn)}) lane.icon = null; });` : ''}
       ${JSON.stringify(tasks)}.forEach(function (row, index) {
         state.tasks.push({
           id: 't' + row[0], display_id: row[0], title: row[1], description: 'Planned by the workflow agent.',
@@ -123,12 +124,12 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
   `;
 }
 
-async function launch(seed: Seed, options: { width?: number; sidebarWidth?: number } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(seed: Seed, options: { width?: number; sidebarWidth?: number; iconlessColumn?: string } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: options.width ?? 1600, height: 950 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240));
+  await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240, options.iconlessColumn ?? null));
   await page.goto(VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('[data-testid="view-toggle-workflows"]').click();
@@ -660,6 +661,39 @@ test.describe('Workflows inspector', () => {
       await page.locator('[data-testid="workflow-add-blocker-option"][data-task-key="t414"]').click();
       await expect(page.locator('[data-testid="workflow-link-row"][data-task-key="t414"]')).toBeVisible();
       await expect(card(page, 't419')).toContainText('Blocked by #414...');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The board's column header resolves a column's glyph as icon, then its To Do
+  // or Done default, then a dot in its color, and the phone's strip does the
+  // same. So a column with no icon is a dot here too, never a stand-in square.
+  test('a column with no icon is a dot in its color on the card strip and the route rail; a column with one keeps it', async () => {
+    const { browser, page } = await launch('running', { iconlessColumn: 'Executing' });
+    try {
+      const executingColor = await computedColor(page, '#3b82f6');
+
+      // #414 works in Executing, which has no icon.
+      const executingStrip = card(page, 't414').locator('[data-testid="workflow-card-strip"]');
+      const stripDot = executingStrip.locator('[data-testid="column-glyph-dot"]');
+      await expect(stripDot).toHaveCount(1);
+      // The dot is 8px, centered in the strip's 12px glyph box, as the phone draws it.
+      await expect(stripDot).toHaveCSS('width', '12px');
+      await expect(stripDot.locator('span')).toHaveCSS('width', '8px');
+      await expect(stripDot.locator('span')).toHaveCSS('background-color', executingColor);
+
+      // #413 works in Merge, which has an icon: its strip keeps it.
+      const mergeStrip = card(page, 't413').locator('[data-testid="workflow-card-strip"]');
+      await expect(mergeStrip.locator('[data-testid="column-glyph-dot"]')).toHaveCount(0);
+      await expect(mergeStrip.locator('svg').first()).toBeVisible();
+
+      // The inspector's route rail draws Executing the same way.
+      await card(page, 't414').click();
+      const executingRow = page.locator('[data-testid="workflow-route-row"]').filter({ hasText: 'Executing' });
+      await expect(executingRow.locator('[data-testid="column-glyph-dot"]')).toHaveCount(1);
+      const mergeRow = page.locator('[data-testid="workflow-route-row"]').filter({ hasText: 'Merge' });
+      await expect(mergeRow.locator('[data-testid="column-glyph-dot"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
