@@ -1055,6 +1055,29 @@ describe('a model switch at the same width resets the vec tables (real database)
     expect(store.searchSemantic(vectorFor(1), 2, ['conversation'], modelB.modelTag)).toEqual([]);
     expect(store.searchSemantic(vectorFor(1), 1, ['conversation'], modelA.modelTag).map((hit) => hit.chunkId)).toEqual([embeddedChunkIds[0]]);
   });
+
+  // A caller that resets without naming a model (the dev seed's `vecTablesAt`)
+  // gets empty tables. If the old tag stayed in `vec_model`, `vecHoldsModel` would
+  // keep refusing the vectors the seed then writes for its own model.
+  it('forgets the model the emptied tables held, so the next model\'s vectors are accepted and found', async () => {
+    const { database } = await embeddedProject();
+    const store = new RetrievalStore(database);
+    expect(store.getMeta('vec_model')).toBe(modelA.modelTag);
+    expect(store.vecHoldsModel(modelB.modelTag)).toBe(false);
+
+    await store.resetVec(DIMENSIONS, async () => undefined);
+
+    expect(store.getMeta('vec_model')).toBeUndefined();
+    expect(store.vecHoldsModel(modelB.modelTag)).toBe(true);
+    // The seed's own write under model B lands and a query from model B finds it.
+    const pending = store.chunksNeedingEmbedding(modelB.modelTag, 10);
+    expect(pending).toHaveLength(2);
+    store.writeEmbeddings(
+      pending.map((stored, index) => ({ chunkId: stored.id, vector: vectorFor(index + 1), contentHash: stored.contentHash })),
+      modelB.modelTag,
+    );
+    expect(store.searchSemantic(vectorFor(1), 1, ['conversation'], modelB.modelTag).map((hit) => hit.chunkId)).toEqual([pending[0].id]);
+  });
 });
 
 describe('RetrievalStore.purgeCorpora (real database)', () => {

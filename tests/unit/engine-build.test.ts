@@ -135,6 +135,15 @@ describe('buildEngine - live slot routing', () => {
     expect(spies.chunkedOffline).not.toHaveBeenCalled();
   });
 
+  // 'de' and not the default 'en': a streaming engine built without the language
+  // still defaults to English, so only a non-English value shows the selection's
+  // language reached the constructor (a multilingual Nemotron reads it per stream).
+  it('liveModelKind online-transducer builds SherpaOnlineEngine with the selection language', () => {
+    buildEngine(makeSelection({ liveModelKind: 'online-transducer', language: 'de' }), undefined);
+    expect(spies.sherpaOnline).toHaveBeenCalledTimes(1);
+    expect(spies.sherpaOnline).toHaveBeenCalledWith('de');
+  });
+
   it('a non-transducer liveModelKind builds ChunkedOfflineEngine with the selection language', () => {
     buildEngine(makeSelection({ liveModelKind: 'offline-moonshine', language: 'fr' }), undefined);
     expect(spies.chunkedOffline).toHaveBeenCalledTimes(1);

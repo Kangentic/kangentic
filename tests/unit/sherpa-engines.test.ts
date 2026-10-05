@@ -153,6 +153,34 @@ function nemoModel(): ResolvedModel {
   };
 }
 
+function cohereModel(): ResolvedModel {
+  return {
+    id: 'cohere-transcribe',
+    engineId: 'whisper-cpp',
+    kind: 'offline-cohere-transcribe',
+    paths: {
+      encoder: '/models/cohere-encoder.onnx',
+      decoder: '/models/cohere-decoder.onnx',
+      tokens: '/models/cohere-tokens.txt',
+    },
+  };
+}
+
+/** The config a recognizer was built from must be Cohere Transcribe's, the one
+ *  offline model in a list that leads with a streaming model. Under the models[0]
+ *  fallback the streaming kind falls through to the Whisper branch of
+ *  buildOfflineConfig, which has `whisper` and no `cohereTranscribe`. */
+function expectBuiltFromCohere(config: Record<string, unknown>): void {
+  const modelConfig = config.modelConfig as Record<string, unknown>;
+  expect(modelConfig.cohereTranscribe).toMatchObject({
+    encoder: '/models/cohere-encoder.onnx',
+    decoder: '/models/cohere-decoder.onnx',
+  });
+  expect(modelConfig.tokens).toBe('/models/cohere-tokens.txt');
+  expect(modelConfig).not.toHaveProperty('whisper');
+  expect(modelConfig).not.toHaveProperty('transducer');
+}
+
 function sessionOptions(onPartial: (text: string) => void = () => {}) {
   return { sampleRate: 16000 as const, language: 'en', onPartial };
 }
@@ -260,6 +288,18 @@ describe('ChunkedOfflineEngine', () => {
     vi.useRealTimers();
   });
 
+  // The model list is whatever the selection resolved, and a streaming model can lead
+  // it. Every other load test passes one offline model, which the models[0] fallback
+  // alone would also pick, so this is the one that proves the offline model is chosen
+  // by kind and not by position.
+  it('builds its recognizer from the offline model of a mixed list, even when a streaming model comes first', async () => {
+    const engine = new ChunkedOfflineEngine('en');
+    await engine.load([transducerModel(), cohereModel()]);
+
+    expect(harness.offlineConfigs).toHaveLength(1);
+    expectBuiltFromCohere(harness.offlineConfigs[0]);
+  });
+
   it('copies each pushed frame, since PCM buffers are reused across IPC messages', async () => {
     const engine = new ChunkedOfflineEngine('en');
     await engine.load([nemoModel()]);
@@ -338,6 +378,16 @@ describe('ChunkedOfflineEngine', () => {
 });
 
 describe('SherpaWhisperEngine', () => {
+  // Same guard as the chunked engine's: the offline model is picked by kind, so a
+  // streaming model listed first is skipped.
+  it('builds its recognizer from the offline model of a mixed list, even when a streaming model comes first', async () => {
+    const engine = new SherpaWhisperEngine('en');
+    await engine.load([transducerModel(), cohereModel()]);
+
+    expect(harness.offlineConfigs).toHaveLength(1);
+    expectBuiltFromCohere(harness.offlineConfigs[0]);
+  });
+
   it('returns empty text without touching the recognizer when no audio arrived', async () => {
     const engine = new SherpaWhisperEngine('en');
     await engine.load([nemoModel()]);

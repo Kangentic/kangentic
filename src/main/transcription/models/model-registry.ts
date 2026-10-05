@@ -12,19 +12,21 @@ export interface ModelFileSpec {
 /** The native engine shape a model drives (`DictationModelEngineKind`). */
 export type ModelEngineKind = DictationModelEngineKind;
 
-/** Every kind an offline recognizer decodes: the refinement models, and the
- *  live models driven in chunks. The engines route on it, so a new kind is
- *  added here once. */
-const OFFLINE_ENGINE_KINDS: ReadonlySet<ModelEngineKind> = new Set([
-  'offline-whisper',
-  'offline-nemo-transducer',
-  'offline-moonshine',
-  'offline-cohere-transcribe',
-]);
+/** Whether an offline recognizer decodes each kind: the refinement models, and
+ *  the live models driven in chunks. The engines route on it. A Record, so a
+ *  kind added to `DictationModelEngineKind` does not compile until it is
+ *  classified here. */
+const OFFLINE_ENGINE_KIND: Readonly<Record<ModelEngineKind, boolean>> = {
+  'online-transducer': false,
+  'offline-whisper': true,
+  'offline-nemo-transducer': true,
+  'offline-moonshine': true,
+  'offline-cohere-transcribe': true,
+};
 
 /** True for a kind an offline recognizer decodes. */
 export function isOfflineKind(kind: ModelEngineKind): boolean {
-  return OFFLINE_ENGINE_KINDS.has(kind);
+  return OFFLINE_ENGINE_KIND[kind];
 }
 
 /** How accurate a model is next to the others. Speed depends mostly on the

@@ -140,6 +140,39 @@ describe('selectEngine - on-device (auto) mode', () => {
   });
 });
 
+describe('selectEngine - a Custom slot naming a model the registry no longer knows', () => {
+  // A saved Custom config keeps the ids the user picked. When a release removes one
+  // from the registry, the slot must not go empty (which would drop the live preview
+  // or the refinement pass without a word): it takes the machine default preset's
+  // model for that slot. A capable machine's default preset is Best, and the
+  // English language picks Best's English models.
+  const capableProfile = makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' });
+
+  it('a removed live model id falls back to the default preset\'s live model (Nemotron), keeping the empty refinement slot empty', () => {
+    const result = selectEngine(
+      capableProfile,
+      makeConfig({ mode: 'custom', language: 'en', liveModelId: 'model-that-was-removed', modelId: 'none' }),
+    );
+    expect(result.liveModelId).toBe('nemotron-streaming-0.6b-en');
+    expect(result.liveModelKind).toBe('online-transducer');
+    expect(result.finalModelId).toBeNull();
+    expect(result.models.map((model) => model.id)).toEqual(['nemotron-streaming-0.6b-en']);
+  });
+
+  // The live slot holds a real model here. With a live slot of 'none' the
+  // at-least-one-slot guard would fill the refinement slot with Parakeet v3 whether
+  // or not the fallback worked, so the case would prove nothing.
+  it('a removed refinement model id falls back to the default preset\'s refinement model (Parakeet v3)', () => {
+    const result = selectEngine(
+      capableProfile,
+      makeConfig({ mode: 'custom', language: 'en', liveModelId: 'streaming-zipformer-en', modelId: 'model-that-was-removed' }),
+    );
+    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
+    expect(result.models.map((model) => model.id)).toEqual(['streaming-zipformer-en', 'parakeet-tdt-0.6b-v3']);
+  });
+});
+
 describe('selectEngine - on-device slot guard (at least one slot always active)', () => {
   it('liveModelId none on streaming-tiny tier: guard populates final from accurateDefault', () => {
     // On a weak machine (2 cores -> streaming-tiny tier) the default preset is

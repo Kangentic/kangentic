@@ -75,8 +75,8 @@ class FakeStore implements EmbedStore {
   setMeta(): void {}
   resetVec(): void {}
   ensureVecTable(): void {}
-  hasEmbeddingsFromOtherModel(): boolean {
-    return false;
+  vecHoldsModel(): boolean {
+    return true;
   }
 
   chunksNeedingEmbedding(_modelTag: string, limit: number): StoredChunk[] {
