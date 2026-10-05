@@ -562,5 +562,136 @@ describe('UtilityRestartPolicy', () => {
       await flushMicrotasks();
       expect(mockReportHandledError).toHaveBeenCalledTimes(1);
     });
+
+    it('labels each deferred log line with the crash number from when it was recorded, not the count at emit time', async () => {
+      // Fake timers, deliberately: nothing may reach the 500 ms bound while two
+      // crashes are pending, or a slow run would release the first waiter early
+      // and let a regression pass. Promises are not faked, so the drain still
+      // resolves through the microtask queue.
+      vi.useFakeTimers();
+      try {
+        const { policy, clock } = makePolicy();
+        const first = attachedTail();
+        const second = attachedTail();
+
+        policy.recordCrash(1, first.tail);
+        clock.advance(1_000);
+        // The second crash lands while the first one's pipe is still open, so
+        // the policy's live count is 2 by the time the first line is printed.
+        policy.recordCrash(1, second.tail);
+        // Both crashes took the deferred path: nothing has been logged yet.
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        first.stream.emit('data', 'first crash text\n');
+        first.stream.emit('end');
+        await flushMicrotasks();
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [firstLine] = warnSpy.mock.calls[0] as [string, string];
+        expect(firstLine).toContain('(crash 1 of 3)');
+        expect(firstLine).not.toContain('(crash 2 of 3)');
+
+        second.stream.emit('data', 'second crash text\n');
+        second.stream.emit('end');
+        await flushMicrotasks();
+
+        expect(warnSpy).toHaveBeenCalledTimes(2);
+        const [secondLine] = warnSpy.mock.calls[1] as [string, string];
+        expect(secondLine).toContain('(crash 2 of 3)');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reports the latching crash as crash 3 even when a later crash is recorded before its pipe ends', async () => {
+      // Same fake-timer reasoning as above. recordCrash has no exhausted guard,
+      // so a crash after the latch is a real input (the test just before this
+      // one records one), and it moves the live count past the cap while the
+      // latching crash's report is still waiting.
+      vi.useFakeTimers();
+      try {
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(1, makeStderrSource(''));
+        clock.advance(4_000);
+        policy.recordCrash(1, makeStderrSource(''));
+        clock.advance(4_000);
+        const latching = attachedTail();
+        policy.recordCrash(137, latching.tail);
+        clock.advance(1_000);
+        const afterLatch = attachedTail();
+        policy.recordCrash(137, afterLatch.tail);
+
+        // The latch was decided at crash 3 and the report is held for its pipe.
+        expect(policy.exhausted).toBe(true);
+        expect(mockReportHandledError).not.toHaveBeenCalled();
+
+        latching.stream.emit('data', 'Fatal: out of memory in onnxruntime\n');
+        latching.stream.emit('end');
+        await flushMicrotasks();
+
+        expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+        const [, tags, contexts] = mockReportHandledError.mock.calls[0];
+        expect(tags.crashCount).toBe('3');
+        expect(contexts.utility_process.crashCount).toBe(3);
+
+        // The crash after the latch finishes draining and still does not re-report.
+        afterLatch.stream.emit('end');
+        await flushMicrotasks();
+        expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('logs to console.error, and leaks no unhandled rejection, when the deferred emit throws', async () => {
+      // Real timers are fine here: whether the pipe ends or the bound releases
+      // the waiter, the same emit runs and throws, so the outcome is identical.
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const unhandledReasons: unknown[] = [];
+      const recordUnhandled = (reason: unknown): void => {
+        unhandledReasons.push(reason);
+      };
+      process.on('unhandledRejection', recordUnhandled);
+      try {
+        const reportFailure = new Error('error reporting transport is down');
+        mockReportHandledError.mockImplementationOnce(() => {
+          throw reportFailure;
+        });
+
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(1, makeStderrSource(''));
+        clock.advance(4_000);
+        policy.recordCrash(1, makeStderrSource(''));
+        clock.advance(4_000);
+        const { tail, stream } = attachedTail();
+        policy.recordCrash(137, tail);
+
+        // The latch report is deferred behind the open pipe, so nothing threw yet.
+        expect(mockReportHandledError).not.toHaveBeenCalled();
+        expect(errorSpy).not.toHaveBeenCalled();
+
+        stream.emit('data', 'Fatal: out of memory in onnxruntime\n');
+        stream.emit('end');
+        await flushMicrotasks();
+
+        expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          '[utility-process] could not log a worker crash:',
+          reportFailure,
+        );
+
+        // Node raises 'unhandledRejection' only once the microtask queue has
+        // drained, which the awaits above never allow. A macrotask boundary
+        // makes the empty-list assertion below mean something.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(unhandledReasons).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', recordUnhandled);
+        errorSpy.mockRestore();
+        // clearAllMocks in beforeEach does not drop an unconsumed once-implementation.
+        mockReportHandledError.mockReset();
+      }
+    });
   });
 });

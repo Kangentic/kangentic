@@ -673,6 +673,80 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
     ).toMatch(/installEmbeddedBrowserSessionPolicy\(\s*contents\.session\s*\)/);
   });
 
+  // Electron 44 deprecates the positional `url` argument of `will-navigate`; the URL rides on the
+  // event's details. The popup's handler is covered behaviorally above. The guest's own handler is
+  // inline in the web-contents-created handler and cannot run without Electron, so it is pinned on
+  // the AST. A revert to `(event, url)` still typechecks (the deprecated overload is still
+  // declared) and no other test here would notice. Parsed rather than line-matched so a reformat,
+  // a renamed parameter, or a multi-line call cannot hide a regression or fake one.
+  it("reads the guest's will-navigate URL from the event details, not the deprecated positional argument", () => {
+    const sourceFile = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+
+    const willNavigateListeners: Array<ts.ArrowFunction | ts.FunctionExpression> = [];
+    function collectListeners(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'on' &&
+        node.arguments.length >= 2 &&
+        ts.isStringLiteralLike(node.arguments[0]) &&
+        node.arguments[0].text === 'will-navigate'
+      ) {
+        const listener = node.arguments[1];
+        if (ts.isArrowFunction(listener) || ts.isFunctionExpression(listener)) {
+          willNavigateListeners.push(listener);
+        }
+      }
+      ts.forEachChild(node, collectListeners);
+    }
+    collectListeners(sourceFile);
+
+    expect(
+      willNavigateListeners.length,
+      "could not find a contents.on('will-navigate', <function>) listener in src/main/index.ts; if the guest's navigation guard moved, move this pin with it",
+    ).toBeGreaterThanOrEqual(1);
+
+    for (const listener of willNavigateListeners) {
+      expect(
+        listener.parameters.length,
+        "a will-navigate listener in src/main/index.ts takes a second positional parameter. That is Electron's deprecated `(event, url)` form; read the URL from the event's details (`navigationEvent.url`) instead",
+      ).toBeLessThanOrEqual(1);
+    }
+
+    // At least one listener must build its URL from the first parameter's `.url`. Reading the
+    // parameter's own name from the AST keeps this tolerant of a rename.
+    function readsUrlFromFirstParameter(listener: ts.ArrowFunction | ts.FunctionExpression): boolean {
+      const [firstParameter] = listener.parameters;
+      if (!firstParameter || !ts.isIdentifier(firstParameter.name)) return false;
+      const eventName = firstParameter.name.text;
+      let found = false;
+      function scan(node: ts.Node): void {
+        if (
+          ts.isNewExpression(node) &&
+          node.expression.getText(sourceFile) === 'URL' &&
+          node.arguments?.length === 1
+        ) {
+          const urlArgument = node.arguments[0];
+          if (
+            ts.isPropertyAccessExpression(urlArgument) &&
+            urlArgument.name.text === 'url' &&
+            urlArgument.expression.getText(sourceFile) === eventName
+          ) {
+            found = true;
+          }
+        }
+        ts.forEachChild(node, scan);
+      }
+      scan(listener.body);
+      return found;
+    }
+
+    expect(
+      willNavigateListeners.some(readsUrlFromFirstParameter),
+      "the guest's will-navigate listener in src/main/index.ts must parse `new URL(<event>.url)` from its first parameter, the event's details. Without it a navigation to a non-http(s) scheme is judged on a URL the listener no longer receives, and the guard stops guarding",
+    ).toBe(true);
+  });
+
   it('sets a permission CHECK handler alongside the request handler on the guest session', () => {
     expect(
       sessionPolicySource,

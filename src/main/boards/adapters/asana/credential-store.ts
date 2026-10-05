@@ -36,11 +36,13 @@ export async function loadAsanaCredential(): Promise<AsanaCredential | null> {
   const filePath = storePath();
   if (!fs.existsSync(filePath)) return null;
   let credential: AsanaCredential;
+  let storedCiphertext: string;
   let shouldRewrite: boolean;
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(raw) as StoredShape;
     if (!parsed.encrypted) return null;
+    storedCiphertext = parsed.encrypted;
     const decrypted = await decryptSecret(parsed.encrypted);
     credential = JSON.parse(decrypted.plaintext) as AsanaCredential;
     shouldRewrite = decrypted.shouldRewrite;
@@ -60,7 +62,11 @@ export async function loadAsanaCredential(): Promise<AsanaCredential | null> {
   // failed rewrite only means the same migration runs on the next load.
   if (shouldRewrite) {
     try {
-      await saveAsanaCredential(credential);
+      const encrypted = await encryptSecret(JSON.stringify(credential));
+      // A Disconnect, a 401 clear, or a new token can delete or replace the
+      // file while this load awaits. Rewrite only the ciphertext this load
+      // read, so the stale credential never comes back over theirs.
+      if (readStoredCiphertext(filePath) === storedCiphertext) writeStoredCiphertext(encrypted);
     } catch (error) {
       console.warn('[asana/credential-store] could not rewrite the credential in the current format:', error);
     }
@@ -68,8 +74,17 @@ export async function loadAsanaCredential(): Promise<AsanaCredential | null> {
   return credential;
 }
 
-export async function saveAsanaCredential(credential: AsanaCredential): Promise<void> {
-  const encrypted = await encryptSecret(JSON.stringify(credential));
+function readStoredCiphertext(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as StoredShape;
+    return parsed.encrypted ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredCiphertext(encrypted: string): void {
   const payload: StoredShape = { encrypted };
   // mode 0o600 matches saveBridgeIdentity: the payload is already
   // safeStorage-encrypted, and this narrows who can read the ciphertext at
@@ -78,6 +93,10 @@ export async function saveAsanaCredential(credential: AsanaCredential): Promise<
   // reject "Connect Asana", and the shared write-failure-notice latch tells
   // the user once.
   safeWriteJson(storePath(), payload, 'asana_credential', { mode: 0o600 });
+}
+
+export async function saveAsanaCredential(credential: AsanaCredential): Promise<void> {
+  writeStoredCiphertext(await encryptSecret(JSON.stringify(credential)));
 }
 
 export function clearAsanaCredential(): void {

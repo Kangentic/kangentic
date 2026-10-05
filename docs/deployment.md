@@ -157,7 +157,7 @@ is left alone, which is what keeps an idempotent re-run of a finished release gr
 release that does not pass fails the run in seconds with `::error::` lines naming the recovery,
 instead of letting three platform builds run and skip every upload.
 
-### Macs Below the Minimum macOS Are Not Offered the Update
+### Macs below the minimum macOS are not offered the update
 
 `electron-updater` skips an update only when `latest-mac.yml` carries `minimumSystemVersion`, and
 electron-builder writes `mac.minimumSystemVersion` into `Info.plist` alone, never into the feed.

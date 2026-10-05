@@ -118,7 +118,7 @@ export interface PairedDeviceSummary {
  * Identity creation is deferred to the FIRST deliberate pairing attempt
  * (ensureIdentity(), called only from startPairing()), not the
  * constructor and not any read path (getStatus/listDevices/etc use
- * tryLoadIdentity(), which never creates one). Merely opening the
+ * loadedIdentity(), which never creates one). Merely opening the
  * settings tab or checking status must not have the side effect of
  * generating and persisting a device keypair. Constructing this service
  * never throws even when secure storage is unavailable - getStatus()
@@ -285,7 +285,7 @@ export class MobileBridgeService extends EventEmitter {
         return null;
       },
       getDeviceStaticPublicKey: (deviceId) => {
-        const identity = this.tryLoadIdentity();
+        const identity = this.loadedIdentity();
         if (!identity) return null;
         return loadRoster(identity).devices.find((device) => device.deviceId === deviceId)?.staticPublicKey ?? null;
       },
@@ -342,7 +342,7 @@ export class MobileBridgeService extends EventEmitter {
    * only rewrites the on-disk roster before syncSessions() reads it.
    */
   private migrateDevicesToFullCapabilityGrant(): void {
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) return;
     const fullGrant = new Set<CapabilityVerb>(CAPABILITY_VERBS);
     for (const device of loadRoster(identity).devices) {
@@ -470,11 +470,14 @@ export class MobileBridgeService extends EventEmitter {
   private async runSyncSessions(): Promise<void> {
     if (!this.ipcContext) return;
     await this.whenStorageReady();
+    // dispose() can run during the warm-up; a session opened after it would
+    // dial a relay transport that nothing will ever close.
+    if (this.disposed) return;
     if (!this.config.enabled || !this.secureStorageAvailable) {
       this.disposeAllSessions();
       return;
     }
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) {
       this.disposeAllSessions();
       return;
@@ -787,7 +790,7 @@ export class MobileBridgeService extends EventEmitter {
    * new device keypair - only startPairing() (a deliberate "Pair a device"
    * click) does that.
    */
-  private tryLoadIdentity(): BridgeIdentity | null {
+  private loadedIdentity(): BridgeIdentity | null {
     return this.identity;
   }
 
@@ -807,11 +810,14 @@ export class MobileBridgeService extends EventEmitter {
     }
     void (async () => {
       await this.whenStorageReady();
+      if (this.disposed) return;
       if (!this.config.enabled || !this.secureStorageAvailable) {
         devQuickPair.reconcile(false);
         return;
       }
       await this.ensureIdentity();
+      // dispose() stopped the quick pair; do not restart it.
+      if (this.disposed) return;
       devQuickPair.reconcile(true);
     })().catch((error: unknown) => {
       console.warn('[mobile-bridge] dev quick pair could not start:', error);
@@ -823,7 +829,7 @@ export class MobileBridgeService extends EventEmitter {
     let identityFingerprint: string | null = null;
     let pairedDeviceCount = 0;
     if (secureStorageAvailable) {
-      const identity = this.tryLoadIdentity();
+      const identity = this.loadedIdentity();
       if (identity) {
         identityFingerprint = bytesToHex(identity.staticKeyPair.publicKey);
         pairedDeviceCount = loadRoster(identity).devices.length;
@@ -843,7 +849,7 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   listDevices(): PairedDeviceSummary[] {
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) return [];
     return loadRoster(identity).devices.map((device) => ({
       deviceId: device.deviceId,
@@ -856,7 +862,7 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   renameDevice(deviceId: string, displayName: string): void {
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) throw new Error(`No such paired device: ${deviceId}`);
     // Same clamp and control-character filter the pairing path applies to the
     // phone-supplied name: a rename lands in the same signed roster entry and
@@ -885,7 +891,7 @@ export class MobileBridgeService extends EventEmitter {
     // before the identity guard, so a registration can never outlive its
     // device under any teardown ordering.
     this.pushRegistrations.remove(deviceId);
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) return; // No identity means no roster, so nothing to revoke.
     revokeDeviceInRoster(identity, deviceId);
     this.disposeSession(deviceId);
@@ -901,7 +907,7 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   setDeviceCapabilities(deviceId: string, capabilities: CapabilityVerb[]): void {
-    const identity = this.tryLoadIdentity();
+    const identity = this.loadedIdentity();
     if (!identity) throw new Error(`No such paired device: ${deviceId}`);
     setDeviceCapabilitiesInRoster(identity, deviceId, capabilities);
     const session = this.sessions.get(deviceId);
@@ -926,6 +932,11 @@ export class MobileBridgeService extends EventEmitter {
     if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${relayValidation.reason}`);
 
     const identity = await this.ensureIdentity();
+    // The bridge can be disabled or shut down during that await. The checks at
+    // the top ran before it, so repeat them, or a ceremony and its relay
+    // transport start for a bridge that is off.
+    if (this.disposed) throw new Error('Mobile bridge service is shutting down');
+    if (!this.config.enabled) throw new Error('Mobile bridge is not enabled');
     // ensureIdentity() awaits, so a second click can have started its own
     // ceremony in the gap. Supersede it here as above, or the first one's
     // transport would stay open with nothing left to close it.

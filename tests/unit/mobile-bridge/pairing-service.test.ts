@@ -92,7 +92,7 @@ const { PairingService, DEFAULT_PAIRING_CAPABILITIES, SAS_PENDING_TIMEOUT_MS, sa
 );
 const { generateEd25519KeyPair } = await import('@kangentic/protocol');
 type BridgeIdentityModule = typeof import('../../../src/main/mobile-bridge/identity');
-type BridgeIdentity = ReturnType<BridgeIdentityModule['loadOrCreateBridgeIdentity']>;
+type BridgeIdentity = Awaited<ReturnType<BridgeIdentityModule['loadOrCreateBridgeIdentity']>>;
 type PairingServiceInstance = InstanceType<typeof PairingService>;
 
 function testIdentity(): BridgeIdentity {

@@ -327,7 +327,7 @@ export class RelayClient implements RedialableTransport {
       // redacted in case a stack ever quotes the dial URL.
       const detail =
         this.pendingError?.message ??
-        (event.reason ? event.reason : null) ??
+        (event.reason || null) ??
         (this.pendingError ? `${this.pendingError.type} event with no message` : `close code ${event.code}`);
       console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms`);
       return;

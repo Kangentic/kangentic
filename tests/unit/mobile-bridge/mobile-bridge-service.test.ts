@@ -632,6 +632,57 @@ describe('MobileBridgeService secure-storage warm-up', () => {
   });
 });
 
+// runSyncSessions() awaits the warm-up before it diffs the roster and opens a session per paired
+// device. attachContext() starts the warm-up and reconcile() requests the sync on the next
+// synchronous line, so a dispose() right after lands inside that await, deterministically.
+describe('MobileBridgeService session sync across the secure-storage warm-up', () => {
+  const relayUrl = 'wss://relay.example.com';
+
+  /** Lets a continuation that must NOT have happened get its chance, since non-occurrence cannot be polled for. */
+  function flushPendingWork(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('opens a session transport for each roster device once the warm-up resolves', async () => {
+    const previousRunService = new MobileBridgeService({ enabled: true, relayUrl });
+    const { deviceId } = await seedServiceWithOnePairedDevice(previousRunService);
+    const service = new MobileBridgeService({ enabled: true, relayUrl });
+    attachMinimalContext(service);
+    const transportsBefore = vi.mocked(createTransport).mock.calls.length;
+
+    service.reconcile({ enabled: true, relayUrl });
+    await service.whenStorageReady();
+    await flushPendingWork();
+
+    // The control for the next test: with no dispose in the gap, the same setup does open one.
+    expect(vi.mocked(createTransport).mock.calls.length).toBe(transportsBefore + 1);
+    expect(vi.mocked(createTransport).mock.calls.at(-1)?.[0].logLabel).toBe(deviceId.slice(0, 8));
+
+    service.dispose();
+    previousRunService.dispose();
+  });
+
+  it('opens no session transport when the service is disposed during the warm-up', async () => {
+    const previousRunService = new MobileBridgeService({ enabled: true, relayUrl });
+    const { deviceId } = await seedServiceWithOnePairedDevice(previousRunService);
+    const service = new MobileBridgeService({ enabled: true, relayUrl });
+    attachMinimalContext(service);
+    // Snapshot after the seed: seeding calls startPairing(), which creates a pairing transport.
+    const transportsBefore = vi.mocked(createTransport).mock.calls.length;
+
+    service.reconcile({ enabled: true, relayUrl });
+    service.dispose();
+    await service.whenStorageReady();
+    // Intentional fixed wait: the assertion below is a non-occurrence, so there is no condition to poll.
+    await flushPendingWork();
+
+    expect(vi.mocked(createTransport).mock.calls.length).toBe(transportsBefore);
+    // The warm-up did load the seeded identity and roster, so "no transport" is not a broken seed.
+    expect(service.listDevices().map((device) => device.deviceId)).toEqual([deviceId]);
+    previousRunService.dispose();
+  });
+});
+
 describe('MobileBridgeService.startPairing() concurrent clicks', () => {
   it('leaves exactly one active ceremony and closes the first one\'s transport when two start together', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
@@ -707,6 +758,52 @@ describe('MobileBridgeService.startPairing() concurrent clicks', () => {
 
     service.cancelPairing();
     service.dispose();
+  });
+});
+
+function identityWriteCount(): number {
+  return writeFileSyncSpy.mock.calls.filter(([filePath]) => String(filePath).includes('mobile-bridge-identity.json')).length;
+}
+
+// startPairing() awaits ensureIdentity() (the secure-storage warm-up and, on a fresh install, the
+// identity creation) AFTER its enabled check. The bridge can be disabled or shut down during that
+// await, and the call used to carry on regardless: a pairing ceremony and a relay transport for a
+// bridge that was off. startPairing() runs synchronously up to that first await, so a reconcile()
+// or dispose() on the very next line always lands inside it, before any continuation runs. That
+// makes the interleaving deterministic without holding any mock pending.
+describe('MobileBridgeService.startPairing() re-checks the bridge state after the identity await', () => {
+  it('rejects without opening a relay transport when the bridge is disabled during the await', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    // createTransport's call history is not cleared between tests, so compare against a snapshot.
+    const transportsBefore = vi.mocked(createTransport).mock.calls.length;
+
+    const pairing = service.startPairing();
+    service.reconcile({ enabled: false, relayUrl: '' });
+
+    await expect(pairing).rejects.toThrow('Mobile bridge is not enabled');
+    // The check at the top of startPairing() throws this same message. The identity having been
+    // created proves the call got past that first gate and through the await, so the rejection
+    // came from the re-check.
+    expect(identityWriteCount()).toBe(1);
+    expect(vi.mocked(createTransport).mock.calls.length).toBe(transportsBefore);
+    expect(fakeTransport.connect).not.toHaveBeenCalled();
+    expect(service.getStatus().pairingInProgress).toBe(false);
+    service.dispose();
+  });
+
+  it('rejects without opening a relay transport when the service is disposed during the await', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const transportsBefore = vi.mocked(createTransport).mock.calls.length;
+
+    const pairing = service.startPairing();
+    service.dispose();
+
+    await expect(pairing).rejects.toThrow('Mobile bridge service is shutting down');
+    // Config is still enabled here, so only the disposed re-check can produce this rejection.
+    expect(identityWriteCount()).toBe(1);
+    expect(vi.mocked(createTransport).mock.calls.length).toBe(transportsBefore);
+    expect(fakeTransport.connect).not.toHaveBeenCalled();
+    expect(service.getStatus().pairingInProgress).toBe(false);
   });
 });
 

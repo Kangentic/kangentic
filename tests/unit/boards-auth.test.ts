@@ -25,6 +25,8 @@ const mockElectronState = {
   shouldReEncrypt: false,
   /** Make decryptStringAsync reject, as when the async provider lacks the key that wrote a blob. */
   asyncDecryptThrows: false,
+  /** Make the NEXT encryptStringAsync reject, then behave normally (a transient provider failure). */
+  asyncEncryptRejectsOnce: false,
   storageBackend: 'keychain' as string,
 };
 
@@ -60,6 +62,10 @@ vi.mock('electron', () => ({
     isAsyncEncryptionAvailable: async () => mockElectronState.isAsyncEncryptionAvailable,
     encryptStringAsync: async (plaintext: string) => {
       asyncEncryptCalls.push(plaintext);
+      if (mockElectronState.asyncEncryptRejectsOnce) {
+        mockElectronState.asyncEncryptRejectsOnce = false;
+        throw new Error('safeStorage.encryptStringAsync: the secret store is not reachable');
+      }
       return Buffer.from(`${mockElectronState.asyncTag}:${plaintext}`, 'utf8');
     },
     decryptStringAsync: async (buffer: Buffer) => {
@@ -103,6 +109,7 @@ beforeEach(() => {
   mockElectronState.asyncTag = 'v11';
   mockElectronState.shouldReEncrypt = false;
   mockElectronState.asyncDecryptThrows = false;
+  mockElectronState.asyncEncryptRejectsOnce = false;
   mockElectronState.storageBackend = 'keychain';
   asyncEncryptCalls.length = 0;
   resetSecureStorageProbeForTests();
@@ -362,5 +369,34 @@ describe('isGenuineEncryptionAvailable', () => {
     expect([first, second]).toEqual([true, true]);
     expect(await isGenuineEncryptionAvailable()).toBe(true);
     expect(asyncEncryptCalls).toHaveLength(1);
+  });
+
+  // A probe that throws (the secret store is briefly unreachable) must degrade to "not genuine",
+  // log why, and NOT stick: the cached promise is cleared so the next call probes again and can
+  // report the real key once the store is back. The sync floor is switched off so the false
+  // verdict can only come from the failed probe.
+  it('treats a failed Linux probe as unavailable, warns, and probes again on the next call', async () => {
+    setPlatform('linux');
+    mockElectronState.asyncTag = 'v11';
+    mockElectronState.isEncryptionAvailable = false;
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.asyncEncryptRejectsOnce = true;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await isGenuineEncryptionAvailable()).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('could not probe the Linux secret store'),
+      expect.objectContaining({ message: expect.stringContaining('not reachable') }),
+    );
+    expect(asyncEncryptCalls).toHaveLength(1);
+
+    // The failure was not cached: this call runs a second probe, which succeeds.
+    expect(await isGenuineEncryptionAvailable()).toBe(true);
+    expect(asyncEncryptCalls).toHaveLength(2);
+
+    // And the successful probe IS cached, so a third call does not probe again.
+    expect(await isGenuineEncryptionAvailable()).toBe(true);
+    expect(asyncEncryptCalls).toHaveLength(2);
+    warnSpy.mockRestore();
   });
 });

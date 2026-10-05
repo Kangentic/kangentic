@@ -4386,7 +4386,7 @@ export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 
 export interface MobileBridgeStatus {
   enabled: boolean;
-  /** False when Electron safeStorage can't genuinely encrypt (e.g. the Linux basic_text backend) -- the bridge refuses to create/use an identity in that state. */
+  /** False when Electron safeStorage can't genuinely encrypt (no Linux secret store, or safeStorage disabled). The bridge refuses to create or use an identity in that state. */
   secureStorageAvailable: boolean;
   /** Hex-encoded static public key, for display/verification. Never the private key. */
   identityFingerprint: string | null;
