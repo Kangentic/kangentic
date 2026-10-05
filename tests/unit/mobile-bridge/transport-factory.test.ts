@@ -62,6 +62,50 @@ describe('createTransport()', () => {
     }
   });
 
+  it('dials with an injected WebSocket constructor instead of the global one', () => {
+    // The app injects Electron's net.WebSocket (relay-websocket.ts) so the relay
+    // rides Chromium's network stack: system proxy, PAC and the OS trust store.
+    // The global must not be touched when a constructor is given.
+    const injectedUrls: string[] = [];
+    const globalUrls: string[] = [];
+    class InjectedWebSocket {
+      binaryType = 'nodebuffer';
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor(url: string) {
+        injectedUrls.push(url);
+      }
+      close(): void {
+        // no-op: this test only inspects which constructor dialed.
+      }
+    }
+    class GlobalWebSocket extends InjectedWebSocket {
+      constructor(url: string) {
+        super(url);
+        globalUrls.push(url);
+      }
+    }
+    const originalWebSocket = globalThis.WebSocket;
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = GlobalWebSocket;
+
+    try {
+      const transport = createTransport({
+        relayUrl: 'ws://relay.example.com',
+        slotId: 'my-slot-id',
+        webSocketConstructor: InjectedWebSocket as unknown as typeof WebSocket,
+      });
+      void transport.connect().catch(() => undefined);
+
+      expect(injectedUrls).toEqual(['ws://relay.example.com/?slot=my-slot-id&role=desktop']);
+      expect(globalUrls).toEqual([]);
+      transport.close();
+    } finally {
+      (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+    }
+  });
+
   it('each call constructs a fresh transport instance (no shared/singleton state across pairing attempts)', () => {
     const first = createTransport({ relayUrl: 'ws://127.0.0.1:1', slotId: 'slot-a' });
     const second = createTransport({ relayUrl: 'ws://127.0.0.1:1', slotId: 'slot-b' });

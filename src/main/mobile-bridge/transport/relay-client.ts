@@ -9,9 +9,15 @@ import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol
  * it is already Noise-encrypted (or, during pairing, is itself a Noise
  * handshake message).
  *
- * Node 24 exposes a global `WebSocket` (browser-compatible API), so this
- * has no runtime dependency beyond that - `ws` is a devDependency used
- * only by the in-repo relay test double (tests/unit/mobile-bridge/).
+ * It dials with whichever WHATWG WebSocket constructor it is given. In the app
+ * that is Electron's `net.WebSocket` (relay-websocket.ts), which runs on
+ * Chromium's network stack and so honours the system proxy, PAC/WPAD and the
+ * OS certificate store; Node's global `WebSocket` (undici) ignores all three,
+ * so behind a corporate proxy or a TLS-inspecting firewall it never reaches
+ * the relay. With none given (unit tests, or before the app is ready) it falls
+ * back to Node's global `WebSocket`, read at dial time. This file imports
+ * nothing from Electron - `ws` is a devDependency used only by the in-repo
+ * relay test double (tests/unit/mobile-bridge/).
  *
  * Wire contract with the relay (the relay SERVER lives in a separate repo):
  * connect to `${relayUrl}?slot=<hex-encoded-slot-id>&role=desktop`, where the
@@ -67,6 +73,13 @@ const DIAL_TIMEOUT_MS = 30_000;
  */
 const RELAY_CLOSE_CODE_PARK_TIMEOUT = 4408;
 
+/**
+ * A WHATWG WebSocket constructor: Node's global `WebSocket`, Electron's
+ * `net.WebSocket`, or a test double. The client uses only the standard surface
+ * (`binaryType`, the four `on*` handlers, `send`, `close`).
+ */
+export type RelayWebSocketConstructor = new (url: string) => WebSocket;
+
 export interface RelayClientOptions {
   relayUrl: string;
   slotId: string;
@@ -78,6 +91,12 @@ export interface RelayClientOptions {
    * logged part of a URL already and must not gain a second home.
    */
   logLabel?: string;
+  /**
+   * The WebSocket to dial with. Omitted, the client reads Node's global
+   * `WebSocket` at each dial (see the module comment for why the app passes
+   * Electron's `net.WebSocket` instead).
+   */
+  webSocketConstructor?: RelayWebSocketConstructor;
 }
 
 export interface RedialOptions {
@@ -114,6 +133,7 @@ export class RelayClient implements RedialableTransport {
   private readonly slotId: string;
   private readonly maxBytesPerSession: number;
   private readonly logPrefix: string;
+  private readonly webSocketConstructor: RelayWebSocketConstructor | undefined;
   private readonly emitter = new EventEmitter();
 
   private socket: WebSocket | null = null;
@@ -128,18 +148,22 @@ export class RelayClient implements RedialableTransport {
   /** When the current socket opened, for the "connected for N s" part of a close line. */
   private connectedAtMs = 0;
   /**
-   * The last `onerror` message on the current socket. `onerror` carries the
-   * dial error (ECONNREFUSED, a TLS failure) and `onclose` only ever carries
-   * 1006 for it, so the two are joined into one line at close time rather
-   * than logged as two.
+   * The last `onerror` on the current socket, joined with the close into one
+   * line at close time rather than logged as two. undici's error carries the
+   * dial error (ECONNREFUSED, a TLS failure) and its close only ever carries
+   * 1006; Chromium's `net.WebSocket` is the other way round, a bare `Event`
+   * followed by a close whose `reason` names the failure
+   * (`net::ERR_CONNECTION_REFUSED`). `message` is null when the event carried
+   * no text.
    */
-  private pendingErrorMessage: string | null = null;
+  private pendingError: { type: string; message: string | null } | null = null;
 
   constructor(options: RelayClientOptions) {
     this.relayUrl = options.relayUrl;
     this.slotId = options.slotId;
     this.maxBytesPerSession = options.maxBytesPerSession ?? 256 * 1024 * 1024;
     this.logPrefix = `[mobile-bridge/relay-client ${options.logLabel ?? 'relay'}]`;
+    this.webSocketConstructor = options.webSocketConstructor;
   }
 
   get state(): TransportState {
@@ -228,7 +252,8 @@ export class RelayClient implements RedialableTransport {
 
       let socket: WebSocket;
       try {
-        socket = new WebSocket(url.href);
+        const WebSocketImplementation = this.webSocketConstructor ?? globalThis.WebSocket;
+        socket = new WebSocketImplementation(url.href);
       } catch (error) {
         const delayMs = this.scheduleReconnect();
         // A constructor error is the one message that can quote the dial URL,
@@ -241,7 +266,7 @@ export class RelayClient implements RedialableTransport {
       }
       socket.binaryType = 'arraybuffer';
       this.socket = socket;
-      this.pendingErrorMessage = null;
+      this.pendingError = null;
       const dialStartedAtMs = Date.now();
       this.armDialWatchdog(socket);
 
@@ -264,7 +289,7 @@ export class RelayClient implements RedialableTransport {
         // The corresponding onclose fires right after in every browser-compatible
         // WebSocket implementation; reconnect logic lives there, not here. Only
         // the error's text is kept, for the close line.
-        this.pendingErrorMessage = describeErrorEvent(event);
+        this.pendingError = { type: event.type, message: describeErrorEvent(event) };
       };
 
       socket.onclose = (event: CloseEvent) => {
@@ -297,8 +322,14 @@ export class RelayClient implements RedialableTransport {
    */
   private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number): void {
     if (!wasConnected) {
-      const detail = this.pendingErrorMessage ?? `close code ${event.code}`;
-      console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms`);
+      // The error's own text first (undici), then the close reason (Chromium
+      // puts the net:: error there), then whatever is left. The slot is
+      // redacted in case a stack ever quotes the dial URL.
+      const detail =
+        this.pendingError?.message ??
+        (event.reason ? event.reason : null) ??
+        (this.pendingError ? `${this.pendingError.type} event with no message` : `close code ${event.code}`);
+      console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms`);
       return;
     }
     const connectedForSeconds = Math.round((Date.now() - this.connectedAtMs) / 1000);
@@ -455,12 +486,13 @@ function toUint8Array(data: unknown): Uint8Array | null {
 }
 
 /**
- * undici delivers an ErrorEvent carrying `message` and `error`; lib.dom types
- * the handler's argument as a bare Event, so both are read through `in`
- * narrowing rather than a cast.
+ * undici delivers an ErrorEvent carrying `message` and `error`; Chromium's
+ * `net.WebSocket` delivers a bare `Event` with neither (measured on Electron
+ * 44.5.1), and null says so. lib.dom types the handler's argument as a bare
+ * Event, so both fields are read through `in` narrowing rather than a cast.
  */
-function describeErrorEvent(event: Event): string {
+function describeErrorEvent(event: Event): string | null {
   if ('message' in event && typeof event.message === 'string' && event.message.length > 0) return event.message;
-  if ('error' in event && event.error instanceof Error) return event.error.message;
-  return `${event.type} event with no message`;
+  if ('error' in event && event.error instanceof Error && event.error.message.length > 0) return event.error.message;
+  return null;
 }
