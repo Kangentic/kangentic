@@ -503,8 +503,11 @@ describe('hardenWebviewPopupWindow', () => {
     const popup = fakePopupWindow();
     hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
 
+    // Shaped as Electron 44 emits it: the URL rides on the event's details, and the
+    // positional argument (deprecated) is still passed alongside.
     const preventDefault = vi.fn();
-    popup.emitContents('will-navigate', { preventDefault }, 'file:///etc/passwd');
+    const blockedUrl = 'file:///etc/passwd';
+    popup.emitContents('will-navigate', { preventDefault, url: blockedUrl }, blockedUrl);
 
     expect(preventDefault).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Blocked popup navigation'));
@@ -516,9 +519,20 @@ describe('hardenWebviewPopupWindow', () => {
     hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
 
     const preventDefault = vi.fn();
-    popup.emitContents('will-navigate', { preventDefault }, 'https://accounts.google.com/signin');
+    const signInUrl = 'https://accounts.google.com/signin';
+    popup.emitContents('will-navigate', { preventDefault, url: signInUrl }, signInUrl);
 
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('reads the URL from the event details, not the deprecated positional argument', () => {
+    const popup = fakePopupWindow();
+    hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
+
+    const preventDefault = vi.fn();
+    popup.emitContents('will-navigate', { preventDefault, url: 'file:///etc/passwd' }, 'https://example.com/');
+
+    expect(preventDefault).toHaveBeenCalled();
   });
 
   it('replaces the app-window open handler with the webview allow handler', () => {

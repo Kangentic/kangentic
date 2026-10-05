@@ -697,9 +697,11 @@ app.on('web-contents-created', (_event, contents) => {
   // Installed once per Session; see the module for why that guard is mandatory.
   installWebviewDownloadPolicy(contents.session);
 
-  contents.on('will-navigate', (navigationEvent, urlString) => {
+  // The URL comes from the event's details: Electron 44 deprecates the
+  // positional `url` argument.
+  contents.on('will-navigate', (navigationEvent) => {
     try {
-      const parsed = new URL(urlString);
+      const parsed = new URL(navigationEvent.url);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         navigationEvent.preventDefault();
       }
