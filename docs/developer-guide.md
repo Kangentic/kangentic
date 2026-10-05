@@ -300,8 +300,8 @@ npm run test:unit
   `tests/unit/better-sqlite3-loads-in-vitest.test.ts` already fails if it stops loading, and
   `tests/unit/helpers/node-api-floor.ts` stops the whole run on a Node without Node-API 10
   rather than letting each worker segfault
-- **Isolated data directory:** every test file gets its own throwaway `KANGENTIC_DATA_DIR` (and
-  platform config base) from `tests/unit/helpers/isolate-data-dir.ts`, so a suite that reaches the
+- **Isolated data directory:** every test file gets its own throwaway `KANGENTIC_DATA_DIR` (and,
+  on Windows and Linux, platform config base) from `tests/unit/helpers/isolate-data-dir.ts`, so a suite that reaches the
   real `getGlobalDb()` can never open the developer's own database
 
 ### UI Tests (`tests/ui/`)

@@ -350,8 +350,9 @@ What ships now, on every platform:
   `child-process-gone` from, so the death that kills the app is one JS is never told about.
   Whatever is going to be on disk has to already be there.
 - The same file records the fallback, from `gpu-info-update`: the moment `gpu_compositing` leaves
-  the GPU after this run was seen compositing on it, and each later status change. A launch-failure
-  ladder leaves nothing else (see above), so the next launch's near-end check reads the latest
+  the GPU after this run was seen compositing on it, and each later status change. Through
+  Electron 41 a launch-failure ladder left nothing else, and on 44 the launch failure that ends in
+  the fatal still leaves nothing else (see above), so the next launch's near-end check reads the latest
   FAULT, a fault death or a fallback, and counts it as what ended the run. A fallback does not
   count when a non-fault death (a kill, a session-teardown exit) came within 5 s before it, since
   that death is what Chromium was falling back from. A machine
