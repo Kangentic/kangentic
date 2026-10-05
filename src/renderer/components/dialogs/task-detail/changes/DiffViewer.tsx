@@ -79,6 +79,13 @@ const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }
   U: { label: 'Untracked', colorClass: 'text-green-300' },
 };
 
+/**
+ * The width at or below which Monaco renders a side-by-side diff inline (its
+ * `renderSideBySideInlineBreakpoint`, default 900). Set explicitly because
+ * `rearmSideBySide` moves it by one pixel and back.
+ */
+const DIFF_INLINE_BREAKPOINT_PX = 900;
+
 /** Last scroll position observed while the displayed content matched its file,
  *  tagged with the memory key it belongs to so a fast A->B->C switch never
  *  commits one file's scroll under another file's key. */
@@ -616,6 +623,28 @@ export function DiffViewer({
     diffEditorRef.current?.updateOptions({ useInlineViewWhenSpaceIsLimited: inlineWhenNarrow });
   }, [inlineWhenNarrow]);
 
+  // Monaco 0.57 (vscode commit cd2e918a) LATCHES a diff inline when a resize the
+  // pointer is driving (a splitter drag, an OS window-edge drag) widens it past
+  // the breakpoint, so the view does not flip mid-drag. The latch resets only when
+  // the width drops back to the breakpoint or below, when an option's VALUE
+  // changes, or when the diff gets new model objects. This viewer reuses its two
+  // models across files (setValue) and re-sends identical options on every
+  // render, so none of those ever happened: a widened diff stayed inline, the
+  // Side by side button stayed pressed and did nothing, and switching files kept
+  // it inline too. Moving the breakpoint by one pixel and back is a value change
+  // that resets the latch without flipping the render mode in between.
+  const rearmSideBySide = useCallback(() => {
+    const editor = diffEditorRef.current;
+    if (!editor) return;
+    editor.updateOptions({ renderSideBySideInlineBreakpoint: DIFF_INLINE_BREAKPOINT_PX + 1 });
+    editor.updateOptions({ renderSideBySideInlineBreakpoint: DIFF_INLINE_BREAKPOINT_PX });
+  }, []);
+
+  // A new file is where Monaco would reset on its own (new models), so do it here.
+  useEffect(() => {
+    rearmSideBySide();
+  }, [contentFilePath, rearmSideBySide]);
+
   // Re-apply the fold whenever collapse is toggled. The diff is already loaded
   // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
   useEffect(() => {
@@ -803,7 +832,13 @@ export function DiffViewer({
                   glyph (GitHub ships this exact toggle), and it is flipped
                   often enough to earn permanent space. */}
               <button
-                onClick={() => onViewModeChange('split')}
+                onClick={() => {
+                  // Already split but showing inline after a widening drag:
+                  // the click is the user asking for side by side, so clear
+                  // Monaco's latch (rearmSideBySide). A narrow pane stays inline.
+                  if (viewMode === 'split') rearmSideBySide();
+                  onViewModeChange('split');
+                }}
                 className={toolbarButtonClass(viewMode === 'split')}
                 title={inlineWhenNarrow ? 'Side by side (a narrow pane renders inline)' : 'Side by side'}
                 data-testid="diff-view-split"
@@ -896,7 +931,11 @@ export function DiffViewer({
                 minimap: { enabled: false },
                 renderWhitespace: 'boundary',
                 wordWrap: wrapLines ? 'on' : 'off',
+                // Marks where a wrapped line was cut (Monaco 0.57). Only draws
+                // while wrap is on, so it needs no toggle of its own.
+                wordWrapIndicator: true,
                 useInlineViewWhenSpaceIsLimited: inlineWhenNarrow,
+                renderSideBySideInlineBreakpoint: DIFF_INLINE_BREAKPOINT_PX,
                 // Pin the enclosing scope's header line while scrolling a long
                 // hunk (VS Code's editor.stickyScroll).
                 stickyScroll: { enabled: true },
