@@ -52,6 +52,16 @@ export interface WorkflowAgentGrid {
 /** One open at a time per workflow: a pane remount must not start a second agent. */
 const opening = new Map<string, Promise<WorkflowAgentStatus>>();
 
+/** The home project of each open in flight, so a project delete waits for it too. */
+const openingProjects = new Map<string, string>();
+
+/**
+ * Workflows whose agent the user paused, until they resume it. A restart for
+ * read access suspends the agent and starts it again; a Pause pressed in that
+ * window must win, not be undone by the restart.
+ */
+const userPaused = new Set<string>();
+
 /** Sessions spawned as a resume, until they end. A resume the CLI cannot honour ends here. */
 const resumedSessions = new Map<string, { homeProjectId: string; workflowId: string; grid: WorkflowAgentGrid }>();
 
@@ -189,10 +199,22 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
   pendingAccess.delete(workflowId);
   const session = findWorkflowAgentSession(context, workflowId);
   // A paused agent reads the grant when it is resumed, from the workflow row.
-  if (!session || session.status !== 'running') return;
+  if (!session || session.status !== 'running' || userPaused.has(workflowId)) return;
+  // The idle edge that scheduled this ran a tick ago: a prompt the user sent
+  // since has started a turn, and a restart now would cut it off. Owe it again
+  // for the next idle.
+  if (isActive(context.sessionManager.getActivityCache()[session.id])) {
+    pendingAccess.set(workflowId, pending);
+    return;
+  }
   try {
     captureSpend(context, session);
     await context.sessionManager.suspend(session.id);
+    // A Pause pressed while it stopped is the user's, and stands. The resume
+    // reads the grant from the workflow row; only this one line is not said.
+    if (userPaused.has(workflowId)) return;
+    // An open already in flight (the user's Resume) starts it with the grant,
+    // so this start joins that one, and the line is not said either.
     await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
   } catch (error) {
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
@@ -247,6 +269,7 @@ export function resumeWorkflowAgent(
   workflowId: string,
   grid: WorkflowAgentGrid,
 ): Promise<WorkflowAgentStatus> {
+  userPaused.delete(workflowId);
   const existing = findWorkflowAgentSession(context, workflowId);
   if (existing && existing.status !== 'suspended') return Promise.resolve({ session: existing, unavailable: null });
   return startOnce(context, homeProjectId, workflowId, grid);
@@ -254,6 +277,9 @@ export function resumeWorkflowAgent(
 
 /** The pane's Pause: the agent stops and frees its slot; its conversation is kept. */
 export async function pauseWorkflowAgent(context: IpcContext, workflowId: string): Promise<void> {
+  // Recorded even when the agent already reads suspended: a restart for read
+  // access suspends it on the way to starting it again, and must not.
+  userPaused.add(workflowId);
   const session = findWorkflowAgentSession(context, workflowId);
   if (!session || session.status === 'suspended') return;
   captureSpend(context, session);
@@ -309,7 +335,12 @@ function recordTurnTokens(context: IpcContext, session: Session): void {
  * process is gone.
  */
 export async function endWorkflowAgent(context: IpcContext, workflowId: string): Promise<void> {
+  // An open still on its way (detection, trust, the shim) spawns after this
+  // call would have looked, so wait for it and end what it started.
+  const inFlight = opening.get(workflowId);
+  if (inFlight) await inFlight.catch(() => undefined);
   const sessions = context.sessionManager.listSessions().filter((session) => session.workflowId === workflowId);
+  userPaused.delete(workflowId);
   grantedDirectories.delete(workflowId);
   pendingAccess.delete(workflowId);
   lastGrid.delete(workflowId);
@@ -340,6 +371,10 @@ export async function endWorkflowAgentsOfProject(context: IpcContext, projectId:
       .filter((session) => session.projectId === projectId && session.workflowId)
       .map((session) => session.workflowId as string),
   );
+  // An agent still opening has no session yet; it would start in a project being deleted.
+  for (const [workflowId, homeProjectId] of openingProjects) {
+    if (homeProjectId === projectId) workflowIds.add(workflowId);
+  }
   await Promise.all([...workflowIds].map((workflowId) => endWorkflowAgent(context, workflowId)));
 }
 
@@ -353,8 +388,12 @@ function startOnce(
   const pending = opening.get(workflowId);
   if (pending) return pending;
   const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation)
-    .finally(() => opening.delete(workflowId));
+    .finally(() => {
+      opening.delete(workflowId);
+      openingProjects.delete(workflowId);
+    });
   opening.set(workflowId, started);
+  openingProjects.set(workflowId, homeProjectId);
   return started;
 }
 
@@ -450,6 +489,15 @@ async function startWorkflowAgent(
   const command = adapter.buildCommand(commandOptions);
   const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
+  // Read again after the awaits above: the workflow may have finished, or been
+  // deleted with its project, while the CLI was being found.
+  if (!workflowStillOpen(context, homeProjectId, workflowId)) return unavailable('This workflow no longer exists.');
+  // The rows this start replaces leave the registry with no removal push (the
+  // spawn's sibling drain), so what is kept per session id goes with them here.
+  const replacedSessionIds = context.sessionManager.listSessions()
+    .filter((existing) => existing.workflowId === workflowId)
+    .map((existing) => existing.id);
+
   const session = await context.sessionManager.spawn({
     taskId: workflow.id,
     projectId: homeProjectId,
@@ -468,6 +516,12 @@ async function startWorkflowAgent(
     cols: grid.cols,
     rows: grid.rows,
   });
+  for (const replacedId of replacedSessionIds) {
+    if (replacedId === session.id) continue;
+    forgetWorkflowAgentEffort(replacedId);
+    agentActivity.delete(replacedId);
+    resumedSessions.delete(replacedId);
+  }
   // Recorded on every start, so a conversation from before `agent_cwd` existed
   // gains its checkout on its next resume.
   repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
@@ -481,6 +535,18 @@ async function startWorkflowAgent(
   grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
   lastGrid.set(workflow.id, grid);
   return { session, unavailable: null };
+}
+
+/** The workflow is still there, unfinished, in a project still in Kangentic. */
+function workflowStillOpen(context: IpcContext, homeProjectId: string, workflowId: string): boolean {
+  if (!context.projectRepo.getById(homeProjectId)) return false;
+  try {
+    const workflow = new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId);
+    return Boolean(workflow) && workflow?.state !== 'done';
+  } catch {
+    // Its project's database is closing under a delete.
+    return false;
+  }
 }
 
 /** The first-message template: the user's own from Settings, or the default. */
@@ -508,6 +574,10 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
     if (!describeStartupFailure) return;
     void context.sessionManager.getRawScrollback(sessionId).then((rawScrollback) => {
       if (!describeStartupFailure(rawScrollback, exitCode)) return;
+      // The user may have resumed it while the scrollback was read. Starting
+      // over then would replace a live, young agent with no exit grace.
+      const live = findWorkflowAgentSession(context, resumed.workflowId);
+      if (live && live.id !== sessionId) return;
       try {
         new WorkflowRepository(getProjectDb(resumed.homeProjectId)).setAgentConversation(resumed.workflowId, null);
       } catch {
@@ -558,6 +628,15 @@ export function registerWorkflowAgentLifecycle(context: IpcContext): void {
       return;
     }
     startOverIfResumeFailed(sessionId, exitCode);
+  });
+  // The idle auto-suspend applies to this agent as to any session. Its spend
+  // since the last snapshot is nothing (it sat idle for the whole timeout), so
+  // only its turns go to the ledger, and the pane hears it is paused.
+  context.sessionManager.on('idle-timeout', (sessionId: string) => {
+    const session = context.sessionManager.getSession(sessionId);
+    if (!session?.workflowId) return;
+    recordTurnTokens(context, session);
+    notifyWorkflowChanged(session.projectId, session.workflowId);
   });
   // Every capture of a session's spend happens while its row is registered.
   context.sessionManager.on('session-removed', (sessionId: string) => forgetWorkflowAgentEffort(sessionId));

@@ -69,6 +69,14 @@ export class WorkflowEngineHost {
   private evaluating = false;
   private dirtyAgain = false;
   private readonly inFlight = new Set<string>();
+  /**
+   * The in-flight starts that spend an agent slot. A start's session counts
+   * against the free slots only once its spawn registers, after the worktree is
+   * set up, so each one holds a slot back until its move settles. A start whose
+   * spawn has already registered is held back twice for that moment, which
+   * under-starts briefly; the wake after every start corrects it.
+   */
+  private readonly inFlightSlots = new Set<string>();
   private readonly failedStarts = new Map<string, FailedStart>();
   private readonly durationsMs: number[] = [];
 
@@ -219,7 +227,8 @@ export class WorkflowEngineHost {
     for (const [key, failure] of this.failedStarts) {
       if (now < failure.retryAt) blocked.add(key);
     }
-    return { intents: planPass(snapshots, this.context.sessionManager.getFreeAgentSlots(), blocked), titles, taskCounts };
+    const freeSlots = this.context.sessionManager.getFreeAgentSlots() - this.inFlightSlots.size;
+    return { intents: planPass(snapshots, freeSlots, blocked), titles, taskCounts };
   }
 
   private snapshot(homeProjectId: string, workflow: Workflow, projectIds: string[]): CoreWorkflow {
@@ -272,11 +281,13 @@ export class WorkflowEngineHost {
     }
     const key = inFlightKey(intent.projectId, intent.taskId);
     this.inFlight.add(key);
+    if (intent.takesSlot) this.inFlightSlots.add(key);
     void this.startTask(intent, titles.get(intent.workflowId) ?? 'its workflow')
       .then(() => this.forgetFailedStart(key))
       .catch((error: unknown) => this.recordFailedStart(key, intent, error))
       .finally(() => {
         this.inFlight.delete(key);
+        this.inFlightSlots.delete(key);
         this.wake();
       });
   }

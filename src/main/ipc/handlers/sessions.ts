@@ -541,6 +541,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
+    // A workflow's own agent is no task: there is no task row to write and no
+    // card to toast for. Its pane shows it paused, and its own lifecycle
+    // (`registerWorkflowAgentLifecycle`) records what it spent.
+    if (context.sessionManager.getSession(sessionId)?.workflowId) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!context.mainWindow.isDestroyed()) {
       broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);

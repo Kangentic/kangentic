@@ -97,9 +97,11 @@ export async function runWorkflowStep(
   if (!outcome.ok) return;
   if (input.signal.aborted) return;
 
-  // The check took a while. Act only if the turn it judged is still the latest.
+  // The check took a while. Act only if the turn it judged is still the latest,
+  // and the workflow is still running: a Pause pressed meanwhile stops the move.
   const after = current();
   if (!after || after.column.id !== column.id) return;
+  if (!workflowStepApplies(after.task, payload.projectId)) return;
   if (!sameTurnIdle()) return;
 
   const answer = outcome.answers.get(WORKFLOW_STEP_CHECK_ID) ?? { met: false, reason: 'No answer.' };

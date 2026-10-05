@@ -133,7 +133,7 @@ export function createTransitionEngine(
     attachments,
     automations,
     automationRuns,
-    { checkConditions: (input) => checkAutomationConditions(conditionCheckDeps(context), input) },
+    { checkConditions: (input, limits) => checkAutomationConditions(conditionCheckDeps(context), input, limits) },
   );
 }
 

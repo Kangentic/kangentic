@@ -55,7 +55,16 @@ export interface CoreWorkflow {
 }
 
 export type CoreIntent =
-  | { kind: 'start'; workflowId: string; homeProjectId: string; projectId: string; taskId: string; toSwimlaneId: string }
+  | {
+    kind: 'start';
+    workflowId: string;
+    homeProjectId: string;
+    projectId: string;
+    taskId: string;
+    toSwimlaneId: string;
+    /** Whether the start spends an agent slot, so the host can hold one back while it is in flight. */
+    takesSlot: boolean;
+  }
   | { kind: 'complete'; workflowId: string; homeProjectId: string };
 
 function taskKey(projectId: string, taskId: string): string {
@@ -95,7 +104,9 @@ export function isComplete(workflow: CoreWorkflow): boolean {
  * workflows are complete.
  *
  * `freeSlots` is the app-wide count of agent slots not in use; a start into a
- * column that starts no agent takes none. `inFlight` holds the keys
+ * column that starts no agent takes none. The host passes it net of the starts
+ * still in flight, since a start's session does not count against the slots
+ * until its spawn registers, seconds later. `inFlight` holds the keys
  * (`projectId\ntaskId`) of starts already issued and not yet committed, so a
  * pass that runs while a start is still moving never issues it twice.
  */
@@ -131,6 +142,7 @@ export function planPass(
         projectId: task.projectId,
         taskId: task.taskId,
         toSwimlaneId: task.startColumnId!,
+        takesSlot: task.startTakesSlot,
       });
     }
   }

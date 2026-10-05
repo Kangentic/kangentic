@@ -723,11 +723,17 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
 
   for (const projectId of byProject.keys()) announceBoardChange(context, projectId);
 
-  // The task it was made from is superseded, unless the plan took it in.
+  // The task it was made from is superseded, unless the plan took it in. The
+  // workflow has started by now, so a failed supersede leaves the source in To
+  // Do and never fails Start: the engine still has to wake for the new tasks.
   let supersededSource: number | null = null;
   const takenIn = new Set(draft.tasks.map((task) => task.existing_task_id).filter(Boolean));
   if (workflow.source_task_id && !takenIn.has(workflow.source_task_id)) {
-    supersededSource = await supersedeSourceTask(context, homeProjectId, workflow);
+    try {
+      supersededSource = await supersedeSourceTask(context, homeProjectId, workflow);
+    } catch (error) {
+      console.error(`[WORKFLOW] Started ${workflowId.slice(0, 8)}, but could not move its source task to Done:`, error);
+    }
   }
 
   wakeWorkflowEngine();

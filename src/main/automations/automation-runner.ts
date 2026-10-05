@@ -3,6 +3,7 @@ import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-mani
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
+import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
 import type { AutomationContext } from './shared/automation-adapter';
 import {
@@ -120,10 +121,17 @@ export interface RunAutomationsOptions {
    * not checked them itself (enter and exit). Absent, a row with a Condition is
    * skipped with `conditionUnavailableReason`.
    */
-  checkConditions?: (rows: ColumnAutomation[]) => Promise<ConditionCheckResult>;
+  checkConditions?: (rows: ColumnAutomation[], limits: ConditionCheckLimits) => Promise<ConditionCheckResult>;
   /** Why a Condition could not be checked, when neither of the above is given. */
   conditionUnavailableReason?: string;
 }
+
+/**
+ * The longest an enter or exit group waits for its Condition check when it has
+ * no tighter budget of its own. The group runs inside the move's task lock; a
+ * check that runs past this reads as not checked, and its rows skip.
+ */
+export const CONDITION_CHECK_WAIT_MS = 60_000;
 
 /** What a Condition check hands the runner: answers by automation id, or why there are none. */
 export type ConditionCheckResult =
@@ -188,7 +196,13 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     && canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger).ok
     && frequencyLimitReason(automation, runs, context.task.id) === null);
   if (unanswered.length > 0 && options.checkConditions) {
-    const checked = await options.checkConditions(unanswered);
+    // The check is bounded: enter and exit groups run inside the move's task
+    // lock, so the group's own budget, else `CONDITION_CHECK_WAIT_MS`, caps it.
+    const elapsedMs = Date.now() - groupStartedAt;
+    const timeoutMs = groupBudgetMs !== null
+      ? Math.max(0, Math.min(groupBudgetMs - elapsedMs, CONDITION_CHECK_WAIT_MS))
+      : CONDITION_CHECK_WAIT_MS;
+    const checked = await options.checkConditions(unanswered, { signal, timeoutMs });
     if (checked.ok) {
       for (const [automationId, answer] of checked.answers) conditionAnswers.set(automationId, answer);
     } else {

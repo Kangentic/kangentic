@@ -15,7 +15,7 @@ import type {
 } from '../../shared/types';
 import { runAutomations, type AutomationRunSummary } from '../automations/automation-runner';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
-import type { ConditionCheckOutcome } from '../automations/condition-check/condition-check';
+import type { ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
 import type { AutomationRepository } from '../db/repositories/automation-repository';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
@@ -97,7 +97,7 @@ export interface SpawnOverrides {
  * Condition is skipped with the reason.
  */
 export interface TransitionEngineServices {
-  checkConditions?: (input: ConditionPromptInput) => Promise<ConditionCheckOutcome>;
+  checkConditions?: (input: ConditionPromptInput, limits?: ConditionCheckLimits) => Promise<ConditionCheckOutcome>;
 }
 
 /** Options shared by every way into an automation group. */
@@ -323,11 +323,11 @@ export class TransitionEngine {
   }
 
   /** Answer Conditions on the Automation agent, or say why that cannot happen. */
-  async checkConditions(input: ConditionPromptInput): Promise<ConditionCheckOutcome> {
+  async checkConditions(input: ConditionPromptInput, limits?: ConditionCheckLimits): Promise<ConditionCheckOutcome> {
     if (!this.services.checkConditions) {
       return { ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.' };
     }
-    return this.services.checkConditions(input);
+    return this.services.checkConditions(input, limits);
   }
 
   /** The shared body: template variables, the adapter context, and the runner. */
@@ -359,9 +359,10 @@ export class TransitionEngine {
       // turn-end group checked before it ran anything and passes its answers.
       checkConditions: options.conditionAnswers
         ? undefined
-        : async (rows) => {
+        : async (rows, limits) => {
           const outcome = await this.checkConditions(
             this.conditionCheckInput(task, column, trigger, rows, templateVars, options),
+            limits,
           );
           return outcome.ok ? { ok: true, answers: outcome.answers } : outcome;
         },

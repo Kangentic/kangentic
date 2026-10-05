@@ -89,20 +89,28 @@ export class AutomationRepository {
     `);
 
     const tx = writeTransaction(this.db, () => {
-      // Read the created_at values first so a row that survives the replace
-      // keeps the date it was actually made on, not the date it was last saved.
-      const existing = new Map(
-        (this.db.prepare('SELECT id, created_at FROM column_automations WHERE swimlane_id = ?').all(swimlaneId) as Array<{
-          id: string;
-          created_at: string;
-        }>).map((row) => [row.id, row.created_at]),
-      );
+      // Read the rows first so a row that survives the replace keeps the date it
+      // was actually made on, not the date it was last saved.
+      const existingRows = this.db.prepare(
+        'SELECT id, name, type, trigger, created_at FROM column_automations WHERE swimlane_id = ?',
+      ).all(swimlaneId) as Array<{ id: string; name: string; type: string; trigger: string; created_at: string }>;
+      const existing = new Map(existingRows.map((row) => [row.id, row.created_at]));
+      // A writer that carries no ids (the `kangentic.json` apply on every project
+      // open, an agent's kangentic_set_automations) keeps the id of the row with
+      // the same name, type and trigger. Frequency and "once per visit" count
+      // runs by id, so a fresh id would hand every guarded row a clean slate.
+      const idByIdentity = new Map(existingRows.map((row) => [automationIdentity(row.name, row.type, row.trigger), row.id]));
+      const explicitIds = new Set(automations.flatMap((automation) => (automation.id ? [automation.id] : [])));
+      const usedIds = new Set<string>();
 
       this.db.prepare('DELETE FROM column_automations WHERE swimlane_id = ?').run(swimlaneId);
 
       const nextPosition: Record<AutomationTrigger, number> = { enter: 0, turn_end: 0, exit: 0 };
       for (const automation of automations) {
-        const id = automation.id ?? randomUUID();
+        const kept = idByIdentity.get(automationIdentity(automation.name, automation.type, automation.trigger));
+        const reusable = kept !== undefined && !explicitIds.has(kept) && !usedIds.has(kept) ? kept : undefined;
+        const id = automation.id ?? reusable ?? randomUUID();
+        usedIds.add(id);
         insert.run(
           id,
           swimlaneId,
@@ -160,6 +168,11 @@ export function normalizeCondition(condition: string | null | undefined): string
   if (typeof condition !== 'string') return null;
   const trimmed = condition.trim();
   return trimmed ? trimmed : null;
+}
+
+/** What makes a row in a column "the same automation" when a writer carries no id. Names are unique per column. */
+function automationIdentity(name: string, type: string, trigger: string): string {
+  return `${name}\n${type}\n${trigger}`;
 }
 
 /** A Frequency limit is a whole number of at least 1; anything else is no limit. */

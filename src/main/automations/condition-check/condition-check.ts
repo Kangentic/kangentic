@@ -49,13 +49,61 @@ const cliCache = new Map<string, CachedCli>();
 let runningChecks = 0;
 const waitingChecks: Array<() => void> = [];
 
-async function acquireCheckSlot(): Promise<void> {
+/**
+ * Take a check slot, or give up when `signal` aborts first. A waiter that gives
+ * up leaves the queue, so it never takes a slot nobody will release.
+ */
+function acquireCheckSlot(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
   if (runningChecks < MAX_CONCURRENT_CHECKS) {
     runningChecks += 1;
-    return;
+    return Promise.resolve(true);
   }
-  await new Promise<void>((resolve) => waitingChecks.push(resolve));
-  runningChecks += 1;
+  return new Promise<boolean>((resolve) => {
+    const onAbort = (): void => {
+      const index = waitingChecks.indexOf(waiter);
+      if (index >= 0) waitingChecks.splice(index, 1);
+      resolve(false);
+    };
+    const waiter = (): void => {
+      signal.removeEventListener('abort', onAbort);
+      runningChecks += 1;
+      resolve(true);
+    };
+    waitingChecks.push(waiter);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * How long a caller waits for a check. Enter and exit groups run inside the
+ * move's task lock, so their check is bounded: a queue of turn-end checks ahead
+ * of it, or a slow CLI, must not hold that task's lock for minutes.
+ */
+export interface ConditionCheckLimits {
+  /** The caller moved on (its move was superseded): stop waiting. */
+  signal?: AbortSignal;
+  /** The longest the caller waits, the slot queue included. */
+  timeoutMs?: number;
+}
+
+/** Settles with the work's result, or with null once `signal` aborts. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<{ value: T } | null> {
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => resolve(null);
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve({ value });
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function releaseCheckSlot(): void {
@@ -128,35 +176,72 @@ async function resolveCheckAgent(deps: ConditionCheckDeps): Promise<
  * did not answer comes back not met, with the reason saying so, never as a
  * guess. A check that could not run at all returns `ok: false` with why, and
  * the caller skips those rows (a skip is not a run, so the next trigger checks
- * them again).
+ * them again). So does one the caller stopped waiting for (`limits`); its CLI
+ * run finishes in the background and frees its slot then.
  */
 export async function checkAutomationConditions(
   deps: ConditionCheckDeps,
   input: ConditionPromptInput,
+  limits: ConditionCheckLimits = {},
 ): Promise<ConditionCheckOutcome> {
   if (input.rows.length === 0) return { ok: true, answers: new Map(), agentName: '' };
-  const resolved = await resolveCheckAgent(deps);
-  if (!resolved.ok) return resolved;
+  const stop = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = (): void => stop.abort();
+  if (limits.signal?.aborted) stop.abort();
+  limits.signal?.addEventListener('abort', onCallerAbort, { once: true });
+  const timer = limits.timeoutMs !== undefined
+    ? setTimeout(() => {
+      timedOut = true;
+      stop.abort();
+    }, Math.max(0, limits.timeoutMs))
+    : null;
+  const stoppedReason = (): string => (timedOut
+    ? 'The Automation agent did not answer in time, so the condition was not checked.'
+    : 'The condition check was stopped because the task moved on.');
 
-  const prompt = buildConditionPrompt(input);
-  await acquireCheckSlot();
-  let reply: string;
   try {
-    const answerHome = await ensureAnswerHomeDirectory();
-    reply = await withAnswerRunDirectory((runDirectory) => resolved.adapter.answerFromContext!(
-      prompt,
-      resolved.cliPath,
-      answerHome,
-      resolved.model,
-      { effort: resolved.effort, runDirectory },
-    ));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `The Automation agent could not check the condition: ${detail}` };
-  } finally {
-    releaseCheckSlot();
-  }
+    const resolved = await resolveCheckAgent(deps);
+    if (!resolved.ok) return resolved;
+    if (stop.signal.aborted) return { ok: false, reason: stoppedReason() };
 
+    const prompt = buildConditionPrompt(input);
+    if (!(await acquireCheckSlot(stop.signal))) return { ok: false, reason: stoppedReason() };
+    const answering = (async (): Promise<string> => {
+      try {
+        const answerHome = await ensureAnswerHomeDirectory();
+        return await withAnswerRunDirectory((runDirectory) => resolved.adapter.answerFromContext!(
+          prompt,
+          resolved.cliPath,
+          answerHome,
+          resolved.model,
+          { effort: resolved.effort, runDirectory },
+        ));
+      } finally {
+        releaseCheckSlot();
+      }
+    })();
+    // A caller that stopped waiting leaves this run to finish on its own.
+    answering.catch(() => undefined);
+
+    let reply: string;
+    try {
+      const settled = await untilAborted(answering, stop.signal);
+      if (!settled) return { ok: false, reason: stoppedReason() };
+      reply = settled.value;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, reason: `The Automation agent could not check the condition: ${detail}` };
+    }
+    return { ok: true, answers: answersFrom(reply, input), agentName: resolved.agentName };
+  } finally {
+    if (timer) clearTimeout(timer);
+    limits.signal?.removeEventListener('abort', onCallerAbort);
+  }
+}
+
+/** Every row's answer from the reply; a row the reply skipped is not met, and says so. */
+function answersFrom(reply: string, input: ConditionPromptInput): Map<string, ConditionAnswer> {
   const parsed = parseConditionReply(reply, input.rows.length);
   const answers = new Map<string, ConditionAnswer>();
   input.rows.forEach((row, index) => {
@@ -165,7 +250,7 @@ export async function checkAutomationConditions(
       reason: 'The Automation agent did not answer this condition.',
     });
   });
-  return { ok: true, answers, agentName: resolved.agentName };
+  return answers;
 }
 
 /** For tests: forget cached CLI detections. */

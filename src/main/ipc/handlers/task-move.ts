@@ -315,11 +315,9 @@ export async function handleTaskMove(
   // existing holder must see its abort and return so we can acquire the lock.
   taskMoveControllers.get(input.taskId)?.abort();
   abortBacklogPromotion(input.taskId);
-  // The same for turn-end work: a group running for the column the task is
-  // leaving, or a moved task's message still waiting for an agent it is about
-  // to leave. Outside the lock, like the aborts above, which the turn-end group
-  // never holds.
-  supersedeTurnEndWork(input.taskId, { exceptOwnGroup: options?.fromTurnEndGroup });
+  // Turn-end work is superseded inside Phase 1, once the move is known to
+  // change columns and the lock has let it through (see there): a reorder or a
+  // refused move must not cancel a step check the idle agent will not repeat.
   const moveController = new AbortController();
   taskMoveControllers.set(input.taskId, moveController);
   const { signal } = moveController;
@@ -444,6 +442,16 @@ export async function handleTaskMove(
 
       // The workflow lock, against the row as it is now (see the pre-check).
       workflowCheck(task, resolvedProjectId);
+
+      // A move out of the column supersedes the task's turn-end work: a group
+      // running for the column it is leaving, or a moved task's message still
+      // waiting for an agent it is about to leave. Never a reorder within the
+      // column, and never a refused move: the agent is idle, so no later turn
+      // end would repeat a cancelled step check, and the task would sit there.
+      // The turn-end group never holds this lock, so aborting it here is safe.
+      if (fromSwimlaneId !== input.targetSwimlaneId) {
+        supersedeTurnEndWork(input.taskId, { exceptOwnGroup: options?.fromTurnEndGroup });
+      }
 
       // Move the task in the database, recording who moved it (the visit
       // boundary turn-end automations count from).
