@@ -423,7 +423,11 @@ interface EarlierRunWindow {
  * run's own start to the next run's start on the track, or to the live run's
  * start (`liveRunStartMs`) for the newest. Runs on a track are sequential, so
  * the window holds that run's calls and no other's, even though Claude
- * appends every `--resume` to one transcript. A run qualifies when
+ * appends every `--resume` to one transcript. A middle window ends at the next
+ * record's `started_at`, which differs from that run's in-memory start (the
+ * bound its own reads used) by the spawn's latency or queue wait. No run on the
+ * track makes calls in that span, so the two bounds never split a call between
+ * records. A run qualifies when
  * {@link fillingAgentName} names an agent for it and its record has the agent
  * session id that locates the transcript.
  */
