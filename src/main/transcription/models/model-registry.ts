@@ -57,9 +57,10 @@ export interface ModelDef {
    *  (Parakeet unified and v2, Nemotron streaming, the `.en` Whisper builds,
    *  Moonshine, the Zipformer). */
   languages?: string[];
-  /** The model writes all caps with no punctuation (the Zipformer), so text it
-   *  commits on its own is sentence-cased before it is typed. Every other
-   *  model's text is typed as written, acronyms included. */
+  /** The model writes all caps with no punctuation (the Zipformer), so a final
+   *  in that shape from a session it is live in is sentence-cased before it is
+   *  typed. With any other live model the final is typed as written, acronyms
+   *  included. */
   writesAllCaps?: boolean;
   files: ModelFileSpec[];
   /** Map of sherpa-onnx config role -> on-disk filename (a subset of `files`). */

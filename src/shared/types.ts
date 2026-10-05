@@ -2803,9 +2803,10 @@ export interface DictationStartResult {
   engineId: DictationEngineId;
   modelId: string | null;
   needsDownload: boolean;
-  /** True when the committed text is an all-caps live model's own (the
-   *  Zipformer with no refinement), so the renderer sentence-cases it. Any
-   *  other final is typed as written. */
+  /** True when the live model writes all caps (the Zipformer), so the committed
+   *  text can be its own: with no refinement, or when a refinement falls back
+   *  to the live text. The renderer then sentence-cases a final in that
+   *  all-caps shape. With any other live model a final is typed as written. */
   sentenceCaseFinal: boolean;
 }
 
