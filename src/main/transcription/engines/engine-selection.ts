@@ -140,8 +140,8 @@ export function computeEngineKey(selected: EngineSelection, config: DictationCon
     selected.id,
     // Both slots, not the deduped model set: live=Parakeet/final=none and
     // live=none/final=Parakeet share one model id but are different engines.
-    selected.liveModelId ?? 'none',
-    selected.finalModelId ?? 'none',
+    selected.liveModelId ?? NO_MODEL,
+    selected.finalModelId ?? NO_MODEL,
     // Every engine fixes its language when it is built (Whisper in its config,
     // Nemotron 3.5 and Cohere on each stream), so each language is a distinct
     // warm engine (the model files are shared/cached on disk).

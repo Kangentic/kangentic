@@ -142,6 +142,38 @@ describe('SherpaOnlineEngine', () => {
     expect(onPartial).toHaveBeenCalledTimes(1);
   });
 
+  // Nemotron 3.5 can leave two spaces after a sentence's period. The hypothesis
+  // feeds both the live partial and the final text, so each must read with one.
+  it('collapses a double space in a partial', async () => {
+    const engine = await loadedEngine();
+    const session = engine.createSession(options);
+
+    state.resultText = 'Hello.  World';
+    session.push(audioFrame(100));
+
+    expect(onPartial).toHaveBeenCalledTimes(1);
+    expect(onPartial).toHaveBeenCalledWith('Hello. World');
+  });
+
+  it('collapses a double space in the final text', async () => {
+    const engine = await loadedEngine();
+    const session = engine.createSession(options);
+
+    state.resultText = 'Hello.  World';
+
+    await expect(session.finalize()).resolves.toBe('Hello. World');
+  });
+
+  it('collapses a longer run of spaces to one, not to a smaller run', async () => {
+    const engine = await loadedEngine();
+    const session = engine.createSession(options);
+
+    state.resultText = 'one     two';
+    session.push(audioFrame(100));
+
+    expect(onPartial).toHaveBeenCalledWith('one two');
+  });
+
   it('does not emit an empty hypothesis', async () => {
     const engine = await loadedEngine();
     const session = engine.createSession(options);

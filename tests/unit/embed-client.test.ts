@@ -27,7 +27,7 @@ const IDLE_SHUTDOWN_MS = 30 * 60_000;
 
 const TEST_MODEL: EmbeddingModelDef = {
   id: 'test-model',
-  tier: 'balanced',
+  tier: 'light',
   hfId: 'Xenova/test-model',
   displayName: 'Test',
   dimensions: 384,

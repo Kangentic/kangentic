@@ -59,13 +59,17 @@ function sanitizeInline(text: string): string {
  * change. Lowercase such a partial and capitalize its first letter so the
  * preview already reads like the final text (just without final punctuation).
  *
- * A partial that already holds a lowercase letter is left as written: Nemotron
- * and the chunked Whisper models case their own text, and lowercasing it would
- * erase "I", names and a sentence's capitals. Unicode classes, so a Cyrillic or
- * Greek partial is treated the same as a Latin one.
+ * Only text in the Zipformer's shape is recased. A partial that already holds a
+ * lowercase letter is left as written: Nemotron and the chunked Whisper models
+ * case their own text, and lowercasing it would erase "I", names and a
+ * sentence's capitals. Text with sentence punctuation came from a punctuating
+ * model, so a refined acronym ("API.") keeps its capitals. A script with no
+ * case (Chinese, Japanese, Korean, Arabic) is left alone too, or "GPU" inside it
+ * would read "gpu". Unicode classes, so a Cyrillic or Greek partial is treated
+ * the same as a Latin one.
  */
 export function toPreviewCase(text: string): string {
-  if (/\p{Ll}/u.test(text)) return text;
+  if (/[\p{Ll}\p{Lo}.,!?;:\u{3001}\u{3002}\u{FF01}\u{FF0C}\u{FF1A}\u{FF1B}\u{FF1F}]/u.test(text)) return text;
   return text.toLowerCase().replace(/\p{L}/u, (char) => char.toUpperCase());
 }
 
