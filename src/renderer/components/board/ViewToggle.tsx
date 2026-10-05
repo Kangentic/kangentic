@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Columns3, ListTodo, ListTree, Plus } from 'lucide-react';
+import { Columns3, ListTodo, Plus, Workflow as WorkflowIcon } from 'lucide-react';
 import { CountBadge } from '../CountBadge';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
@@ -180,7 +180,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             testId: 'view-toggle-workflows',
             title: 'Workflows',
             ariaLabel: workflowCount > 0 ? `Workflows, ${workflowCount} unfinished` : 'Workflows',
-            icon: <span className={collapse.viewSwitcherIcon}><ListTree size={16} /></span>,
+            icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
             // Unfinished workflows only: a finished one leaves the picker.
             trailing: workflowCount > 0
               ? <CountBadge count={workflowCount} variant={activeView === 'workflows' ? 'accent' : 'muted'} />

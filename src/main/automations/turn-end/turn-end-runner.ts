@@ -45,6 +45,13 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   run row is written, so two passes would both run the same row. A turn end
  *   that arrives during a pass (a background job restarting the agent while a
  *   check is out) runs once more after it.
+ * - **Nothing acts on a turn that is no longer the latest.** The pass judges
+ *   the turn its payload names (`workSerial`), and before the check and again
+ *   before the rows it asks whether that turn is still the session's latest
+ *   (`isLatestTurn`). Being idle is not enough: a turn the user started
+ *   meanwhile can fail (`turn_failed`) or be interrupted back to idle with no
+ *   turn end of its own, and acting then would act on the old turn's reply.
+ *   A newer turn abandons the pass and writes nothing.
  * - **Cheap when there is nothing to do.** Every hook agent's every turn ends
  *   here; a column with no turn-end rows costs one indexed query.
  */
@@ -151,6 +158,9 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     // The turn's bytes may still be landing: wait out the CLI's last paint.
     const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
     if (settled !== 'completed') return;
+    // Cheap, and ahead of the paid check: a turn begun since this turn end
+    // has left this one with nothing to judge.
+    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return;
 
     // One read of the agent's final reply, shared by the rows and the step.
     const sessionRepo = new SessionRepository(getProjectDb(payload.projectId));
@@ -162,12 +172,13 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
 
     const rows = pending.length > 0
       ? await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply })
-      : { messagedAgent: false };
+      : { messagedAgent: false, newerTurn: false };
     // The workflow's own step comes after the column's rows: a row that moved
     // the task leaves the step nothing to do, and the step reads where the task
     // is now. A row that gave the agent a message started its next turn, so this
     // turn end gets no workflow decision; the turn that answers the message does.
-    if (stepApplies && !controller.signal.aborted && !rows.messagedAgent) {
+    // A newer turn abandons the whole pass, the step's paid check included.
+    if (stepApplies && !controller.signal.aborted && !rows.messagedAgent && !rows.newerTurn) {
       await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
     }
   } finally {
@@ -190,9 +201,9 @@ async function runRows(
     controller: AbortController;
     readReply: () => Promise<string | null>;
   },
-): Promise<{ messagedAgent: boolean }> {
+): Promise<{ messagedAgent: boolean; newerTurn: boolean }> {
   const { task, column, repos, sessionRepo, pending, visitStartedAt, controller } = input;
-  const none = { messagedAgent: false };
+  const none = { messagedAgent: false, newerTurn: false };
   const runs = repos.automationRuns;
   const project = context.projectRepo.getById(payload.projectId);
   const projectPath = project?.path ?? null;
@@ -226,9 +237,14 @@ async function runRows(
   if (runnable.length === 0 || controller.signal.aborted) return none;
 
   // The check can take a while. Run nothing unless the turn it judged is
-  // still the latest: same session, same column, and the agent still idle.
+  // still the latest: same session, same column, no turn begun since, and the
+  // agent still idle. Idle alone passes a turn the user began meanwhile that
+  // failed or was interrupted back to idle, since neither emits a turn end.
   const current = resolveSubject(context, payload);
   if (!current || current.column.id !== column.id) return none;
+  if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) {
+    return { messagedAgent: false, newerTurn: true };
+  }
   // activity-state-ok: granular, a row must not land on a running turn or a
   // permission prompt.
   if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return none;
@@ -259,7 +275,7 @@ async function runRows(
     onProgress: createProgressCallback(context.mainWindow, task.id),
   });
   reportAutomationFailures(context, summary, current.task, payload.projectId);
-  return { messagedAgent };
+  return { messagedAgent, newerTurn: false };
 }
 
 function mentionsAgentReply(row: ColumnAutomation): boolean {

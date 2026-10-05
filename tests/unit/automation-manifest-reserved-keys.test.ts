@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { AUTOMATION_MANIFEST, RESERVED_AUTOMATION_KEYS } from '../../src/shared/automation-manifest';
+import {
+  AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGERS,
+  RESERVED_AUTOMATION_KEYS,
+  automationFieldUnavailableReason,
+  isTypeOfferedOnTrigger,
+} from '../../src/shared/automation-manifest';
+import type { AutomationType } from '../../src/shared/types';
 
 /**
  * Guard for the flat `kangentic.json` automation row.
@@ -68,5 +75,35 @@ describe('automation field keys', () => {
         }
       }
     }
+  });
+
+  it('declares a trigger it does nothing on only where the dialog can show it, with a one-line reason', () => {
+    // The Edit automation dialog shows `unavailableOn` by disabling the field's
+    // options, each carrying the reason as its tip, so only a segmented field
+    // can render it. A trigger the type is never offered on is not a row that
+    // can exist, and a reason is a hover tip, so it stays one short line.
+    for (const [type, entry] of Object.entries(AUTOMATION_MANIFEST)) {
+      for (const field of entry.fields) {
+        if (field.unavailableOn === undefined) continue;
+        const { trigger, reason } = field.unavailableOn;
+        expect(field.kind, `${type}.${field.key} declares unavailability it cannot render`).toBe('segmented');
+        expect(AUTOMATION_TRIGGERS as readonly string[], `${type}.${field.key} names no trigger`).toContain(trigger);
+        expect(
+          isTypeOfferedOnTrigger(type as AutomationType, trigger),
+          `${type}.${field.key} is unavailable on a trigger ${type} is never offered on`,
+        ).toBe(true);
+        expect(reason.trim(), `${type}.${field.key} gives no reason`).not.toBe('');
+        expect(reason, `${type}.${field.key}'s reason is not one line`).not.toMatch(/\n/);
+        expect(reason.length, `${type}.${field.key}'s reason is too long for a tip`).toBeLessThan(110);
+      }
+    }
+  });
+
+  it("declares Send message's Delivery unavailable at a turn end, where the turn is already over", () => {
+    const delivery = AUTOMATION_MANIFEST.send_message.fields.find((field) => field.key === 'mode');
+    if (!delivery) throw new Error('send_message has no Delivery field');
+    expect(automationFieldUnavailableReason(delivery, 'turn_end')).toBe('At a turn end the turn is over, so it sends at once.');
+    expect(automationFieldUnavailableReason(delivery, 'enter')).toBeNull();
+    expect(automationFieldUnavailableReason(delivery, 'exit')).toBeNull();
   });
 });

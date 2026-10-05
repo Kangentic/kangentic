@@ -197,7 +197,9 @@ const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
       { name: 'Notify me', type: 'notify', enabled: false, title: '{{title}}', body: 'moved to {{toColumn}}' },
     ],
     // Move to column runs at a turn end only. With a Condition and a
-    // Frequency, so the row shows its guard line too.
+    // Frequency, so the row shows both guard marks beside its name: the funnel
+    // ("Condition: only if ...") and Repeat with its count ("Frequency: at
+    // most 2 times for each task.").
     onTurnEnd: [
       { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: 'The plan needs revising', maxRuns: 2, targetColumn: 'Planning', message: '{{agentReply}}' },
     ],

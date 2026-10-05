@@ -30,6 +30,11 @@ import { describeStepRoute, workflowStepCondition } from './workflow-step-condit
  * - The answer goes to the run log either way (`recordWorkflowStep`).
  * - The check is told the route, and at the route's last column it asks only
  *   whether the agent still needs the user (`workflow-step-condition.ts`).
+ * - It judges the turn its payload names, and acts only while that turn is
+ *   still the session's latest (`isLatestTurn`), checked before the check and
+ *   again after it. A turn the user began meanwhile can fail or be interrupted
+ *   back to idle without a turn end, so idle alone would move the task on the
+ *   old turn's answer. A newer turn writes nothing.
  */
 export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
 
@@ -64,11 +69,17 @@ export async function runWorkflowStep(
     return column ? { task, column } : null;
   };
 
+  /** The turn this step judges is still the session's latest, and the agent is idle on it. */
+  const sameTurnIdle = (): boolean => {
+    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return false;
+    // activity-state-ok: granular, the step judges a finished turn, never a
+    // running one or a permission prompt.
+    return context.sessionManager.getActivityCache()[payload.sessionId] === 'idle';
+  };
+
   const subject = current();
   if (!subject || !workflowStepApplies(subject.task, payload.projectId)) return;
-  // activity-state-ok: granular, the step judges a finished turn, never a
-  // running one or a permission prompt.
-  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return;
+  if (!sameTurnIdle()) return;
 
   const agentReply = await input.readAgentReply();
   if (input.signal.aborted) return;
@@ -89,8 +100,7 @@ export async function runWorkflowStep(
   // The check took a while. Act only if the turn it judged is still the latest.
   const after = current();
   if (!after || after.column.id !== column.id) return;
-  // activity-state-ok: granular, as above.
-  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') return;
+  if (!sameTurnIdle()) return;
 
   const answer = outcome.answers.get(WORKFLOW_STEP_CHECK_ID) ?? { met: false, reason: 'No answer.' };
   const repos = getProjectRepos(context, payload.projectId);

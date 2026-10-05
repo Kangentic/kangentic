@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
+import { PERMISSION_MODES, RUN_MODES } from '../../../shared/workflow-run-settings';
 
 /**
  * The workflow tools (#732): a workflow is a set of linked tasks that run
@@ -20,6 +21,23 @@ const TASK_SELECTOR_DESCRIPTION = 'Task number (e.g. "42") or full id.';
 const TASK_PROJECT_DESCRIPTION = 'The project the task is on, when it is not this workflow\'s project (name or id).';
 const COLUMN_NAME_DESCRIPTION = 'A column name on that task\'s board, between To Do and Done.';
 
+/**
+ * A task's run settings, as a task on the board has them, for both
+ * kangentic_save_workflow's planned tasks and kangentic_add_workflow_task. The
+ * handlers check each again, since a command handler can be reached without
+ * these schemas.
+ */
+const RUN_SETTINGS_SHAPE = {
+  baseBranch: z.string().max(250).optional().describe('The branch its worktree is cut from, on its own board. Omit for the board\'s base branch.'),
+  useWorktree: z.boolean().optional().describe('true: its own worktree and branch. false: the project folder, on whatever branch is checked out there. Omit for the project\'s setting.'),
+  runMode: z.enum(RUN_MODES).optional().describe('"column_settings" (the default): each column the task moves through applies its own agent, model and effort. "agent_override": one agent, model, effort and permission for the whole task. A pin below implies "agent_override".'),
+  profile: z.string().optional().describe('A Board Profile on its board (name or id), an alternate set of per-column settings. Column Settings only, so not with the pins below. Omit for Default.'),
+  agentOverride: z.string().optional().describe('Pin an agent for the whole task (e.g. "claude", "codex"). An unknown one is refused with the valid names.'),
+  modelOverride: z.string().max(200).optional().describe('Pin a model (e.g. "opus", "claude-opus-4-8", or "Opus 4.8"), checked against what that agent offers.'),
+  effortOverride: z.string().max(50).optional().describe('Pin an effort level (e.g. "high"), checked against that agent\'s levels.'),
+  permissionMode: z.enum(PERMISSION_MODES).optional().describe('Pin a permission mode for the whole task.'),
+};
+
 const PLANNED_TASK_SCHEMA = z.object({
   key: z.string().max(60).describe('A short key for this task, unique in the plan, used by links ("api", "ui").'),
   title: z.string().max(300).describe('The task\'s title.'),
@@ -31,6 +49,7 @@ const PLANNED_TASK_SCHEMA = z.object({
   skip: z.array(z.string()).optional().describe('Columns inside its route it skips, such as one that only plans the work, for a small, well-understood task. Never skip a column the user\'s process depends on without asking.'),
   labels: z.array(z.string()).optional(),
   priority: z.number().int().min(0).max(4).optional(),
+  ...RUN_SETTINGS_SHAPE,
 });
 
 export function registerWorkflowTools(server: McpServer, resolver: RequestResolver): void {
@@ -50,7 +69,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_get_workflow',
     {
-      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, route and what it waits for.',
+      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, route, what it waits for, and, before Start, any settings that are not the default (base branch, worktree, profile or agent override) in kangentic_save_workflow\'s own names.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -63,7 +82,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_save_workflow',
     {
-      description: 'Save the plan of a workflow that has not started: its title, every planned task, and the links between them. Replaces the whole plan, so read it first with kangentic_get_workflow and send it back with your change, passing the revision you read; a save over a newer revision is refused so the user\'s own edits win. Omit `workflow` to create a new one. Nothing appears on any board until the user starts it. Plan as few tasks as the work allows (one capable agent finishing a larger task costs less than several sharing it); link a task to another only when it needs that task\'s code merged first, and let everything else run side by side.',
+      description: 'Save the plan of a workflow that has not started: its title, every planned task, and the links between them. Replaces the whole plan, so read it first with kangentic_get_workflow and send it back with your change, passing the revision you read; a save over a newer revision is refused so the user\'s own edits win. Omit `workflow` to create a new one. Nothing appears on any board until the user starts it. Each task can carry the settings a task on the board has: baseBranch, useWorktree, and Column Settings (optionally a profile) or an agent override; left out, it runs on Column Settings from the board\'s base branch, and the user can change any of them until Start. Since a save replaces the plan, send back every setting kangentic_get_workflow listed for a task you keep. Plan as few tasks as the work allows (one capable agent finishing a larger task costs less than several sharing it); link a task to another only when it needs that task\'s code merged first, and let everything else run side by side.',
       inputSchema: z.object({
         workflow: z.string().optional().describe(`${WORKFLOW_DESCRIPTION} Omit to create a new workflow.`),
         title: z.string().max(200).optional().describe('The workflow\'s name. Give a new workflow one when you first save it.'),
@@ -128,7 +147,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_add_workflow_task',
     {
-      description: 'Add a task to a started workflow. It lands in To Do and starts once nothing it waits for is left and an agent slot is free.',
+      description: 'Add a task to a started workflow. It lands in To Do and starts once nothing it waits for is left and an agent slot is free. It can carry the settings kangentic_save_workflow\'s tasks take, checked the same way: baseBranch, useWorktree, and Column Settings (optionally a profile on its board) or an agent override; left out, it runs on Column Settings from its board\'s base branch.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         title: z.string().max(300),
@@ -138,13 +157,19 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
         routeLast: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         skip: z.array(z.string()).optional().describe('Columns inside its route it skips.'),
         waitsFor: z.array(z.string()).optional().describe('Task numbers or ids in this workflow it waits for.'),
+        ...RUN_SETTINGS_SHAPE,
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ workflow, title, description, taskProject, routeStart, routeLast, skip, waitsFor, project }) => withProject(resolver, project, (ctx) => callHandler(
+    async ({ workflow, title, description, taskProject, routeStart, routeLast, skip, waitsFor, project, ...runSettings }) => withProject(resolver, project, (ctx) => callHandler(
       'add_workflow_task',
-      { workflow, title, description: description ?? null, taskProject: taskProject ?? null, routeStart: routeStart ?? null, routeLast: routeLast ?? null, skip: skip ?? null, waitsFor: waitsFor ?? null },
+      {
+        workflow, title, description: description ?? null, taskProject: taskProject ?? null, routeStart: routeStart ?? null,
+        routeLast: routeLast ?? null, skip: skip ?? null, waitsFor: waitsFor ?? null,
+        // The run settings as given; an absent one stays absent, which the handler reads as its default.
+        ...runSettings,
+      },
       ctx,
       'Failed to add the task',
     )),

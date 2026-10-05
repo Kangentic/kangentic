@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
-import { ListTree, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import type { Task, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { useWorkflowStore } from '../../stores/workflow-store';
@@ -20,7 +20,8 @@ import { WorkflowInspector } from './WorkflowInspector';
 import { DeleteWorkflowDialog, RemoveTaskDialog, RenameWorkflowDialog, StartWorkflowDialog } from './WorkflowDialogs';
 import { WorkflowCardMenu } from './WorkflowCardMenu';
 import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
-import { findTask } from './workflow-graph';
+import { findTask, firstInRunOrder } from './workflow-graph';
+import { NoWorkflowsIllustration } from './NoWorkflowsIllustration';
 import {
   useWorkflowAgentWorking,
   workflowAgentPaneDockedMin,
@@ -51,6 +52,43 @@ type ViewDialog =
 
 function refuse(message: string): void {
   useToastStore.getState().addToast({ message, variant: 'warning' });
+}
+
+/** What an empty workflow's canvas walks through, in order (sign-off 10). */
+const WELCOME_STEPS = [
+  'Tell the workflow agent what to build, and it plans the tasks.',
+  'Review the plan, and click a task to change its route or blockers.',
+  'Press Start and the tasks run automatically in order until complete.',
+] as const;
+
+/**
+ * An empty workflow's canvas (sign-off 10): the No workflows drawing, a title,
+ * and the three steps from a plan to a run, one line each. No button: Add task
+ * stays in the canvas tools. It goes when the first card lands, the same
+ * moment that card is selected. It takes no pointer, so a click on the canvas
+ * under it still reaches the pane. Static, like the No workflows state.
+ */
+function EmptyWorkflowWelcome() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="workflow-canvas-welcome">
+      {/* A touch above center, as drawn, so the canvas tools below keep their room. */}
+      <div className="absolute left-1/2 top-[47%] flex w-max max-w-full -translate-x-1/2 -translate-y-1/2 flex-col items-center px-4">
+        <NoWorkflowsIllustration />
+        <div className="mt-[18px] text-lg font-semibold text-fg" data-testid="workflow-canvas-welcome-title">Nothing planned yet</div>
+        <ol className="mt-3 flex flex-col gap-2">
+          {WELCOME_STEPS.map((step, index) => (
+            <li key={step} className="flex items-start gap-2.5" data-testid="workflow-canvas-welcome-step">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-fg-faint/20 text-[11px] font-semibold text-fg-muted">
+                {index + 1}
+              </span>
+              {/* text-sm, ui-conventions.md's floor for an empty state's text. */}
+              <span className="text-sm leading-5 text-fg-muted">{step}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
 }
 
 /** Delete a workflow task from its canvas menu: as the board card does on its own board, by id elsewhere. */
@@ -167,6 +205,53 @@ export function WorkflowsView() {
     return keys;
   }, [detail, taskFilter, boardTasks]);
 
+  // What the inspector shows on arrival (Final 4). Opening the view, or another
+  // workflow, selects the first task in its run order, so the inspector shows a
+  // task instead of asking for one. So does losing the selected task to a
+  // Remove or a delete, and an empty workflow's first cards landing (the
+  // workflow agent's first draft arriving while the user watches, or an Add
+  // task). Escape and a click on empty canvas still clear the selection, and
+  // nothing selects again until one of those moments comes round. Layout
+  // effects, so the run order never paints for a frame first.
+  const openedWorkflowId = useRef<string | null>(null);
+  // How many tasks the open workflow had when the effect last ran, so the
+  // moment it goes from none to some is seen.
+  const seenTaskCount = useRef<{ workflowId: string; count: number } | null>(null);
+  // The task last selected, until a hand clears the selection: the one to
+  // replace if it leaves the workflow.
+  const lastSelectedKey = useRef<string | null>(null);
+  const selectTaskByHand = useCallback((key: string | null) => {
+    if (key === null) lastSelectedKey.current = null;
+    selectTask(key);
+  }, [selectTask]);
+  useLayoutEffect(() => {
+    if (selectedTaskKey !== null) lastSelectedKey.current = selectedTaskKey;
+  }, [selectedTaskKey]);
+  useLayoutEffect(() => {
+    if (!detail || detail.workflow.id !== selectedWorkflowId) return;
+    // Recorded even while the workflow is empty, so its first cards landing
+    // later is not taken for an opening: that moment is its own, below.
+    const opening = openedWorkflowId.current !== detail.workflow.id;
+    openedWorkflowId.current = detail.workflow.id;
+    // Counted before the early returns, so every reload is seen. Only the step
+    // from none to some selects: with tasks present, a selection the user
+    // cleared stays cleared.
+    const seen = seenTaskCount.current;
+    const firstCardsLanded = !opening && seen !== null && seen.workflowId === detail.workflow.id
+      && seen.count === 0 && detail.tasks.length > 0;
+    seenTaskCount.current = { workflowId: detail.workflow.id, count: detail.tasks.length };
+    if (selectedTaskKey !== null) return;
+    // A Remove clears the selection before the workflow reloads, so this waits
+    // until the reloaded workflow no longer holds the task. Picking sooner
+    // could pick the task on its way out.
+    const lostKey = lastSelectedKey.current;
+    const vanished = lostKey !== null && !detail.tasks.some((task) => task.key === lostKey);
+    if (!opening && !vanished && !firstCardsLanded) return;
+    lastSelectedKey.current = null;
+    const first = firstInRunOrder(detail, visibleKeys);
+    if (first !== null) selectTask(first);
+  }, [detail, selectedWorkflowId, selectedTaskKey, visibleKeys, selectTask]);
+
   const openTask = useCallback((key: string) => {
     const viewTask = useWorkflowStore.getState().detail?.tasks.find((task) => task.key === key);
     if (!viewTask) return;
@@ -264,21 +349,26 @@ export function WorkflowsView() {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="workflows-view">
         {header}
-        <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-4 px-8 text-fg-faint" data-testid="workflows-empty">
-          <ListTree size={48} strokeWidth={1} />
-          <div className="text-center">
-            <div className="text-lg font-medium text-fg-muted">No workflows</div>
-            <div className="mt-1 text-sm">Plan linked tasks with an agent, or start from a To Do task on the board</div>
+        {/* A small drawing of what a workflow is, one plain line, the button,
+            and the other way in (Final 7). Static: nothing here moves. */}
+        <div className="flex flex-1 min-h-0 flex-col items-center justify-center px-8 text-center" data-testid="workflows-empty">
+          <NoWorkflowsIllustration />
+          <div className="mt-[18px] text-lg font-semibold text-fg">No workflows</div>
+          <div className="mt-1.5 max-w-[460px] text-sm text-fg-muted" data-testid="workflows-empty-line">
+            Linked tasks that run through your board on their own.
           </div>
           <button
             type="button"
             onClick={() => { void createWorkflow(null); }}
-            className="mt-2 inline-flex items-center gap-1.5 rounded px-4 py-1.5 text-sm font-medium bg-accent-emphasis text-accent-on hover:bg-accent"
+            className="mt-[18px] inline-flex h-9 items-center gap-1.5 rounded px-4 text-sm font-medium bg-accent-emphasis text-accent-on hover:bg-accent"
             data-testid="workflows-create-first"
           >
-            <Plus size={14} />
+            <Plus size={15} />
             Create your first workflow
           </button>
+          <div className="mt-3 text-sm text-fg-faint" data-testid="workflows-empty-hint">
+            Or right-click a task and choose New workflow.
+          </div>
         </div>
       </div>
     );
@@ -323,7 +413,7 @@ export function WorkflowsView() {
                 selectedTaskKey={selectedTaskKey}
                 editable
                 planHeld={planHeld}
-                onSelectTask={selectTask}
+                onSelectTask={selectTaskByHand}
                 onOpenTask={openTask}
                 onMoveCards={moveCards}
                 onLink={link}
@@ -332,9 +422,11 @@ export function WorkflowsView() {
                 onAddTask={() => setDialog({ kind: 'addTask' })}
                 onAutoLayout={() => { void setPositions(null); }}
                 onCardContextMenu={handleCardContextMenu}
+                doneColumnColor={doneColumnColor}
               />
             </ReactFlowProvider>
           )}
+          {detail && detail.tasks.length === 0 && <EmptyWorkflowWelcome />}
         </div>
         {detail && (
           <WorkflowInspector
@@ -343,7 +435,7 @@ export function WorkflowsView() {
             planHeld={planHeld}
             doneColumnColor={doneColumnColor}
             visibleKeys={visibleKeys}
-            onSelectTask={selectTask}
+            onSelectTask={selectTaskByHand}
             onOpenTask={openTask}
             onRequestRemove={(key) => setDialog({ kind: 'remove', key })}
             onSetRoute={setRouteFromInspector}
@@ -422,12 +514,8 @@ export function WorkflowsView() {
           workflow={{
             title: 'Edit Task',
             submitLabel: 'Save',
-            initial: {
-              title: editing.planned.title,
-              description: editing.planned.description,
-              labels: editing.planned.labels,
-              priority: editing.planned.priority,
-            },
+            // The planned row itself: its board and run settings open as stored.
+            initial: editing.planned,
             onSubmit: (input) => updateTask(editing.key, input),
           }}
         />

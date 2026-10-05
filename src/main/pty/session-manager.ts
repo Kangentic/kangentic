@@ -144,6 +144,12 @@ export interface TurnEndedPayload {
    * that started before a move is never judged by the new column.
    */
   turnStartedAt: number | null;
+  /**
+   * The turn's identity: how much work the agent had reported when the turn
+   * ended (`SessionEngineState.workSerial`). A consumer that acts on the turn
+   * later asks `SessionManager.isLatestTurn` with it.
+   */
+  workSerial: number;
 }
 
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
@@ -519,7 +525,7 @@ export class SessionManager extends EventEmitter {
       // listeners here (column automations, workflow steps) act only on a turn
       // the agent finished. A listener that throws must not unwind the engine's
       // commit, so the emit is guarded.
-      onTurnEnded: (sessionId, turnStartedAt) => {
+      onTurnEnded: (sessionId, turnStartedAt, workSerial) => {
         const session = this.registry.get(sessionId);
         if (!session || session.transient) return;
         const payload: TurnEndedPayload = {
@@ -529,6 +535,7 @@ export class SessionManager extends EventEmitter {
           agentSessionId: session.agentSessionId ?? null,
           isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
           turnStartedAt,
+          workSerial,
         };
         try {
           this.emit('turn-ended', payload);
@@ -3019,6 +3026,20 @@ export class SessionManager extends EventEmitter {
   /** Return the latest ActivityReason for a session, or null if unknown. */
   getActivityReason(sessionId: string): ActivityReason | null {
     return this.telemetry.getActivityReason(sessionId);
+  }
+
+  /**
+   * Is the turn that ended at `workSerial` (a `TurnEndedPayload`'s) still the
+   * session's latest? Any work the agent reports after it (a prompt, a tool, a
+   * subagent) moves the serial, so a turn the user began after that turn end
+   * makes this false even once it has failed or been interrupted back to idle,
+   * which emits no turn end of its own. PTY output does not move it, so an
+   * agent's trailing paint never does. An unknown session is never the same
+   * turn.
+   */
+  isLatestTurn(sessionId: string, workSerial: number): boolean {
+    const current = this.telemetry.getWorkSerial(sessionId);
+    return current !== undefined && current === workSerial;
   }
 
   /**

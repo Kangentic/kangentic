@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, CircleCheckBig, Folder, Layers, ListTree, MousePointerClick, Plus, SquareTerminal, X } from 'lucide-react';
+import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { Task, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
@@ -13,6 +13,7 @@ import {
   addBlockerRefusal,
   blockerCandidates,
   findTask,
+  otherBoardDoneColor,
   removeRefusal,
   runOrder,
   stepRefusal,
@@ -23,12 +24,13 @@ import {
 import { WorkflowStateChip } from './WorkflowPicker';
 
 /**
- * The Workflows inspector, always open so the canvas never shifts. With no
- * task selected it shows the run order (every task, grouped by when it can
- * start; each row selects its card) over a prompt in the slot a selected
- * task's footer uses, so the panel keeps one shape. With a task selected: its
- * route as a rail of steps, what it waits for, what waits for it, and its two
- * actions in the footer.
+ * The Workflows inspector, always open so the canvas never shifts. A workflow
+ * opens with its first task selected (the view picks it), so the panel usually
+ * shows a task: its route as a rail of steps, what it waits for, what waits
+ * for it, and its two actions in the footer. With no task selected (Escape, a
+ * click on empty canvas, or a workflow with no tasks yet) it shows the run
+ * order: every task, grouped by when it can start, each row selecting its
+ * card. There is no "Select a task" prompt (Final 4).
  *
  * Every control is always drawn. One that cannot act is disabled with the
  * reason main would refuse it with (`WORKFLOW_REFUSALS`, through
@@ -163,7 +165,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor }: {
           </div>
         );
       })}
-      <div className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]">
+      <div className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]" data-testid="workflow-route-done">
         <Rail above below={false} aboveColor={task.place === 'done' ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind="end" color={doneColumnColor} />} />
         <CircleCheckBig size={14} strokeWidth={1.75} style={{ color: doneColumnColor }} />
         <span className="flex-1 text-fg-secondary">Done</span>
@@ -330,7 +332,10 @@ export interface WorkflowInspectorProps {
   selectedTaskKey: string | null;
   /** The workflow agent's turn is running: what would change its plan waits. */
   planHeld: boolean;
-  /** The Done column's color on the task's board, for the rail's last row. */
+  /**
+   * The Done column's color on the workflow's home board, for the rail's last
+   * row. A task on another board wears that board's (`otherBoardDoneColor`).
+   */
   doneColumnColor: string;
   /** Tasks the board's search and filter leave showing; null shows all. */
   visibleKeys: ReadonlySet<string> | null;
@@ -408,14 +413,6 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
           </div>
         ))}
       </div>
-      <div className="shrink-0 mx-4 mb-3.5 flex items-center gap-3.5 px-4 py-3.5 rounded-lg bg-accent/5 ring-1 ring-inset ring-accent/20" data-testid="workflow-inspector-prompt">
-        <span className="inline-flex shrink-0 p-2.5 rounded-full bg-accent/10 text-accent-fg"><MousePointerClick size={18} /></span>
-        <div className="text-[13px] leading-[19px]">
-          <div className="font-semibold text-fg">Select a task</div>
-          <div className="text-fg-muted">See its route and what it waits for.</div>
-          <div className="text-fg-muted">Double-click to open it.</div>
-        </div>
-      </div>
     </>
   );
 }
@@ -468,7 +465,7 @@ function TaskPanel({
       )}
       {variant === 'taskDetail' && (
         <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60" data-testid="workflow-panel-workflow">
-          <ListTree size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />
+          <WorkflowIcon size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />
           <span className="flex-1 min-w-0 truncate text-sm font-semibold text-fg" title={detail.workflow.title}>{detail.workflow.title}</span>
           <WorkflowStateChip state={detail.workflow.state} />
         </div>
@@ -488,7 +485,7 @@ function TaskPanel({
           >
             Route
           </SectionHeading>
-          <RouteRows task={task} held={held} onToggle={toggleStep} doneColumnColor={doneColumnColor} />
+          <RouteRows task={task} held={held} onToggle={toggleStep} doneColumnColor={otherBoardDoneColor(detail, task) ?? doneColumnColor} />
         </section>
         <section className={`px-4 py-3.5 ${blocking.length > 0 ? 'border-b border-edge/60' : ''}`}>
           <SectionHeading count={blockedBy.length}>Blocked by</SectionHeading>
@@ -543,7 +540,7 @@ function TaskPanel({
           className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded bg-accent-emphasis enabled:hover:bg-accent text-accent-on text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-open-task"
         >
-          {variant === 'taskDetail' ? <ListTree size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}
+          {variant === 'taskDetail' ? <WorkflowIcon size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}
           <span className="truncate">{openLabel}</span>
         </button>
       </div>

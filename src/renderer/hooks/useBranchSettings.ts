@@ -29,6 +29,12 @@ export interface UseBranchSettingsOptions {
   active: boolean;
   /** The HOSTING project's path, never assumed to be the open board's. */
   projectPath: string | null;
+  /**
+   * The hosting project's id, whose branches the exists check reads. Omitted,
+   * the open project's (every host but a workflow's planned task on another
+   * board, whose form names it).
+   */
+  projectId?: string | null;
   /** The resolved agent runs against a remote server directory. */
   remoteAgent: boolean;
 }
@@ -42,7 +48,7 @@ export interface UseBranchSettingsOptions {
  * board, so every project-scoped input arrives as an argument.
  */
 export function useBranchSettings(options: UseBranchSettingsOptions) {
-  const { title, initial, worktreesEnabled, defaultBaseBranch, active, projectPath, remoteAgent } = options;
+  const { title, initial, worktreesEnabled, defaultBaseBranch, active, projectPath, remoteAgent, projectId = null } = options;
 
   const [baseBranch, setBaseBranch] = useState(initial.baseBranch);
   const [customBranchName, setCustomBranchName] = useState(initial.customBranchName);
@@ -57,10 +63,12 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
 
   useEffect(() => {
     if (!active) return;
-    fetchGitBranches()
-      .then((branches) => setKnownBranches(new Set(branches)))
-      .catch(() => setKnownBranches(new Set()));
-  }, [active]);
+    let cancelled = false;
+    fetchGitBranches(projectId)
+      .then((branches) => { if (!cancelled) setKnownBranches(new Set(branches)); })
+      .catch(() => { if (!cancelled) setKnownBranches(new Set()); });
+    return () => { cancelled = true; };
+  }, [active, projectId]);
 
   useEffect(() => {
     if (!active || !projectPath) return;

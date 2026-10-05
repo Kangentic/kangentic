@@ -1,24 +1,34 @@
 import type Database from 'better-sqlite3';
 import type {
+  BoardProfile,
+  PermissionMode,
   Swimlane,
   Task,
+  TaskCreateInput,
   TaskLink,
+  TaskRunMode,
   Workflow,
   WorkflowDraft,
   WorkflowDraftLink,
   WorkflowDraftTask,
+  WorkflowTaskRunSettings,
 } from '../../shared/types';
 import { IPC } from '../../shared/ipc-channels';
 import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { DEFAULT_RUN_SETTINGS, PERMISSION_MODES, RUN_MODES, hasRunSettings, isPermissionMode, isRunMode } from '../../shared/workflow-run-settings';
+import { isValidGitBranchName } from '../../shared/git-utils';
 import { getProjectDb } from '../db/database';
 import { writeTransaction } from '../db/transaction';
-import { TaskRepository } from '../db/repositories/task-repository';
+import { TaskRepository, applyProfileExclusivity } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SUPERSEDED_MOVE_REASON_PREFIX, WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { resolveTask } from '../agent/commands/task-resolver';
+import { findProfile } from '../agent/commands/profile-commands';
+import { agentRegistry } from '../agent/agent-registry';
+import { validateSpawnOverrides } from '../agent/mcp-http/spawn-override-validation';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { resumeTaskSession } from '../ipc/handlers/session-resume';
@@ -73,6 +83,10 @@ export interface WorkflowTaskView {
   route: string[];
   /** Keys of the tasks it waits for. */
   waitsFor: string[];
+  /** How it runs: the planned task's settings before Start, the task row's after. */
+  runSettings: WorkflowTaskRunSettings;
+  /** The name of its Board Profile on its board, when it rides one that still exists. */
+  profileName: string | null;
 }
 
 export interface WorkflowView {
@@ -111,6 +125,8 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         place: 'planned',
         route: routeColumns(lanes, routeOfDraft(planned)).map((lane) => lane.name),
         waitsFor: draft.links.filter((link) => link.blocked === planned.key).map((link) => link.blocker),
+        runSettings: runSettingsOf(planned),
+        profileName: profileNameOn(context, projectId, planned.profile_id),
       };
     });
     return { workflow, homeProjectId, tasks };
@@ -136,9 +152,40 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       place,
       route: routeColumns(lanes, task).map((candidate) => candidate.name),
       waitsFor: links.filter((link) => link.blocked_task_id === task.id).map((link) => keyOf(link.blocker_task_id)),
+      runSettings: runSettingsOf(task),
+      profileName: profileNameOn(context, projectId, task.profile_id),
     };
   });
   return { workflow, homeProjectId, tasks };
+}
+
+/** The run settings of a planned task or a task row, and nothing else of it. */
+export function runSettingsOf(source: WorkflowTaskRunSettings): WorkflowTaskRunSettings {
+  return {
+    base_branch: source.base_branch,
+    use_worktree: source.use_worktree,
+    run_mode: source.run_mode,
+    profile_id: source.profile_id,
+    agent_override: source.agent_override,
+    model_override: source.model_override,
+    effort_override: source.effort_override,
+    permission_mode: source.permission_mode,
+  };
+}
+
+/** A board's Board Profiles, or none when its project or config cannot be read. */
+function boardProfilesOf(context: IpcContext, projectId: string): BoardProfile[] {
+  try {
+    const projectPath = context.projectRepo.getById(projectId)?.path;
+    return projectPath ? context.boardConfigManager.getBoardProfiles(projectPath) : [];
+  } catch {
+    return [];
+  }
+}
+
+function profileNameOn(context: IpcContext, projectId: string, profileId: string | null): string | null {
+  if (!profileId) return null;
+  return boardProfilesOf(context, projectId).find((profile) => profile.id === profileId)?.name ?? null;
 }
 
 export function safeLanes(projectId: string): Swimlane[] {
@@ -187,6 +234,18 @@ export interface PlannedTaskInput {
   skip?: string[] | null;
   labels?: string[] | null;
   priority?: number | null;
+  /** The branch its worktree is cut from; omitted is the board's base branch. */
+  baseBranch?: string | null;
+  /** Worktree (true) or the project folder (false); omitted is the project's setting. */
+  useWorktree?: boolean | null;
+  /** Column Settings (the default) or Agent Override. A pin below implies Agent Override. */
+  runMode?: TaskRunMode | null;
+  /** A Board Profile on its board, by name or id; Column Settings only. */
+  profile?: string | null;
+  agentOverride?: string | null;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
+  permissionMode?: PermissionMode | null;
 }
 
 export interface PlanInput {
@@ -224,6 +283,198 @@ function routeColumnId(lanes: Swimlane[], name: string | null | undefined, field
   return lane.id;
 }
 
+// ---------------------------------------------------------------------------
+// A planned task's run settings
+// ---------------------------------------------------------------------------
+
+/**
+ * Lay requested run settings over current ones by the task row's own rule
+ * (`applyProfileExclusivity`): a profile clears the four pins and means Column
+ * Settings, a pin or Agent Override clears the profile, and Column Settings
+ * clears the pins. `requested` holds only what the caller set.
+ */
+export function mergeRunSettings(current: WorkflowTaskRunSettings, requested: Partial<WorkflowTaskRunSettings>): WorkflowTaskRunSettings {
+  const next: WorkflowTaskRunSettings = { ...current, ...requested };
+  return { ...next, ...applyProfileExclusivity(next, requested) };
+}
+
+/** Run settings as `TaskRepository.create` takes them, so a created task carries exactly what was planned. */
+export function runSettingsCreateInput(
+  settings: WorkflowTaskRunSettings,
+): Pick<TaskCreateInput, 'baseBranch' | 'useWorktree' | 'run_mode' | 'profile_id' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> {
+  return {
+    // Absent, not empty: no base branch is the board's, which the task row stores as null.
+    ...(settings.base_branch ? { baseBranch: settings.base_branch } : {}),
+    useWorktree: settings.use_worktree === null ? null : settings.use_worktree === 1,
+    run_mode: settings.run_mode,
+    profile_id: settings.profile_id,
+    agent_override: settings.agent_override,
+    model_override: settings.model_override,
+    effort_override: settings.effort_override,
+    permission_mode: settings.permission_mode,
+  };
+}
+
+/** A text setting as stored: trimmed, and blank is unset. */
+function settingText(value: string | null | undefined): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function requireRegisteredAgent(agent: string | null, prefix: string): void {
+  if (agent && !agentRegistry.has(agent)) {
+    throw new WorkflowRequestError(`${prefix}agentOverride "${agent}" is not a registered agent. Valid values: ${agentRegistry.list().join(', ')}.`);
+  }
+}
+
+function requireBranchName(branch: string | null, prefix: string): void {
+  if (branch && !isValidGitBranchName(branch)) {
+    throw new WorkflowRequestError(`${prefix}baseBranch "${branch}" is not a valid git branch name.`);
+  }
+}
+
+/** A Board Profile on the task's own board, by name or id, else a refusal that names that board's profiles. */
+function resolvePlannedProfile(context: IpcContext, projectId: string, selector: string, prefix: string): string {
+  const profiles = boardProfilesOf(context, projectId);
+  const match = findProfile(profiles, selector);
+  if (match) return match.id;
+  const names = profiles.map((profile) => profile.name).join(', ') || '(none defined)';
+  throw new WorkflowRequestError(
+    `${prefix}no Board Profile matches "${selector}" on that task's board. Its profiles: ${names}. Omit profile to use Default (every column uses its own settings).`,
+  );
+}
+
+/**
+ * A planned task's run settings from an agent's save: checked, its profile
+ * found on the task's own board, and laid over the defaults, so what was left
+ * out is Column Settings on the board's base branch. Model and effort are
+ * checked against the agent's CLI by the command handler, which can wait for it.
+ */
+function resolvePlannedRunSettings(context: IpcContext, projectId: string, entry: PlannedTaskInput, prefix: string): WorkflowTaskRunSettings {
+  const agentOverride = settingText(entry.agentOverride);
+  const modelOverride = settingText(entry.modelOverride);
+  const effortOverride = settingText(entry.effortOverride);
+  const permissionMode = entry.permissionMode ?? null;
+  const profileSelector = settingText(entry.profile);
+  const runMode = entry.runMode ?? null;
+  if (runMode !== null && !isRunMode(runMode)) {
+    throw new WorkflowRequestError(`${prefix}runMode "${String(runMode)}" is not valid. Valid values: ${RUN_MODES.join(', ')}.`);
+  }
+  if (permissionMode !== null && !isPermissionMode(permissionMode)) {
+    throw new WorkflowRequestError(`${prefix}permissionMode "${String(permissionMode)}" is not valid. Valid values: ${PERMISSION_MODES.join(', ')}.`);
+  }
+  const pinned = agentOverride !== null || modelOverride !== null || effortOverride !== null || permissionMode !== null;
+  // Refused rather than resolved, as kangentic_create_task refuses them: the
+  // exclusivity rule would quietly keep one half of what was asked for.
+  if (profileSelector && (pinned || runMode === 'agent_override')) {
+    throw new WorkflowRequestError(
+      `${prefix}pass either profile (Column Settings, which change per column as the task moves) or the agentOverride, modelOverride, effortOverride and permissionMode pins (Agent Override, one set for the whole task), not both.`,
+    );
+  }
+  if (runMode === 'column_settings' && pinned) {
+    throw new WorkflowRequestError(
+      `${prefix}the agentOverride, modelOverride, effortOverride and permissionMode pins mean runMode "agent_override". Drop runMode "column_settings", or drop the pins.`,
+    );
+  }
+  requireRegisteredAgent(agentOverride, prefix);
+  const baseBranch = settingText(entry.baseBranch);
+  requireBranchName(baseBranch, prefix);
+  const requested: Partial<WorkflowTaskRunSettings> = {
+    base_branch: baseBranch,
+    use_worktree: entry.useWorktree === true ? 1 : entry.useWorktree === false ? 0 : null,
+    profile_id: profileSelector ? resolvePlannedProfile(context, projectId, profileSelector, prefix) : null,
+    agent_override: agentOverride,
+    model_override: modelOverride,
+    effort_override: effortOverride,
+    permission_mode: permissionMode,
+  };
+  if (runMode !== null) requested.run_mode = runMode;
+  return mergeRunSettings(DEFAULT_RUN_SETTINGS, requested);
+}
+
+type RunSettingsTextField = 'base_branch' | 'profile_id' | 'agent_override' | 'model_override' | 'effort_override';
+const RUN_SETTINGS_TEXT_FIELDS: readonly RunSettingsTextField[] = ['base_branch', 'profile_id', 'agent_override', 'model_override', 'effort_override'];
+
+/**
+ * The run settings a Workflows view edit sets (`WorkflowTaskInput`), checked,
+ * since a type is not a guarantee over IPC. Only the fields present come back,
+ * so an edit that leaves one out leaves it as it is.
+ */
+export function parseRunSettingsInput(input: Readonly<Partial<Record<keyof WorkflowTaskRunSettings, unknown>>>): Partial<WorkflowTaskRunSettings> {
+  const parsed: Partial<WorkflowTaskRunSettings> = {};
+  for (const field of RUN_SETTINGS_TEXT_FIELDS) {
+    const value = input[field];
+    if (value === undefined) continue;
+    if (value !== null && typeof value !== 'string') throw new WorkflowRequestError(`${field} must be text.`);
+    parsed[field] = settingText(value);
+  }
+  const useWorktree = input.use_worktree;
+  if (useWorktree !== undefined) {
+    if (useWorktree !== null && useWorktree !== 0 && useWorktree !== 1) throw new WorkflowRequestError('use_worktree must be 1, 0 or null.');
+    parsed.use_worktree = useWorktree === 1 ? 1 : useWorktree === 0 ? 0 : null;
+  }
+  if (input.run_mode !== undefined) {
+    if (!isRunMode(input.run_mode)) throw new WorkflowRequestError(`run_mode must be one of: ${RUN_MODES.join(', ')}.`);
+    parsed.run_mode = input.run_mode;
+  }
+  if (input.permission_mode !== undefined) {
+    if (input.permission_mode !== null && !isPermissionMode(input.permission_mode)) {
+      throw new WorkflowRequestError(`permission_mode must be one of: ${PERMISSION_MODES.join(', ')}.`);
+    }
+    parsed.permission_mode = isPermissionMode(input.permission_mode) ? input.permission_mode : null;
+  }
+  requireRegisteredAgent(parsed.agent_override ?? null, '');
+  requireBranchName(parsed.base_branch ?? null, '');
+  return parsed;
+}
+
+/**
+ * Check each planned task's model and effort against what its agent's CLI
+ * offers, as `kangentic_create_task` does, so a typo is refused at the save
+ * rather than failing when the task first runs. The agent is the task's
+ * override, else its To Do column's, else its project's default. An agent that
+ * lists nothing, or a probe that does not answer in time, accepts the value.
+ */
+export async function checkPlannedModels(context: IpcContext, homeProjectId: string, tasks: readonly PlannedTaskInput[]): Promise<void> {
+  for (const [index, entry] of tasks.entries()) {
+    await checkPlannedModel(context, homeProjectId, entry, `Task ${index + 1}${entry.key ? ` ("${entry.key}")` : ''}`);
+  }
+}
+
+/** One task's model and effort, checked as `checkPlannedModels` checks each; a refusal starts with `label`. */
+export async function checkPlannedModel(context: IpcContext, homeProjectId: string, entry: PlannedTaskInput, label: string): Promise<void> {
+  const modelOverride = settingText(entry.modelOverride);
+  const effortOverride = settingText(entry.effortOverride);
+  if (!modelOverride && !effortOverride) return;
+  const projectId = resolveProjectId(context, homeProjectId, entry.project);
+  let cliPathOverrides: Record<string, string | null | undefined> = {};
+  let discoveredModelsByAgent: Record<string, string[]> = {};
+  try {
+    const config = context.configManager.load();
+    cliPathOverrides = config.agent?.cliPaths ?? {};
+    discoveredModelsByAgent = config.discoveredModelsByAgent ?? {};
+  } catch {
+    // An unreadable config checks against the default CLI paths.
+  }
+  const rejection = await validateSpawnOverrides({
+    agentOverride: settingText(entry.agentOverride),
+    modelOverride,
+    effortOverride,
+    laneAgentOverride: todoColumn(safeLanes(projectId))?.agent_override ?? null,
+    projectDefaultAgent: context.projectRepo.getById(projectId)?.default_agent ?? null,
+    cliPathOverrides,
+    discoveredModelsByAgent,
+  });
+  if (rejection) throw new WorkflowRequestError(`${label}: ${rejection}`);
+}
+
+/** A profile the view set must be on the task's own board: one from another board would silently run Default. */
+export function requireProfileOnBoard(context: IpcContext, projectId: string, profileId: string | null | undefined): void {
+  if (!profileId) return;
+  if (boardProfilesOf(context, projectId).some((profile) => profile.id === profileId)) return;
+  const name = context.projectRepo.getById(projectId)?.name ?? 'that';
+  throw new WorkflowRequestError(`That profile is not on the ${name} board. Choose one of its profiles, or Default.`);
+}
+
 /**
  * Validate and store a not-started workflow's plan, replacing what it held.
  * Every problem is found before anything is written.
@@ -240,6 +491,44 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
       `"${workflow.title}" changed since you read it (revision ${workflow.revision}, you sent ${input.revision}). Read it again with kangentic_get_workflow and apply your change to what is there now.`,
     );
   }
+  const draft = validatePlan(context, homeProjectId, workflow.draft, input);
+  const saved = new WorkflowRepository(getProjectDb(homeProjectId)).saveDraft(workflowId, draft, {
+    title: input.title ?? null,
+    expectedRevision: input.revision ?? null,
+  });
+  notifyWorkflowChanged(homeProjectId, workflowId);
+  return saved;
+}
+
+/**
+ * A new workflow and its first plan, for `kangentic_save_workflow` without a
+ * `workflow`. The plan is checked before the workflow exists, and the two are
+ * written in one transaction, so a refused save leaves no empty workflow
+ * behind for the user to find in the picker.
+ */
+export function createWorkflowWithPlan(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowInput: { brief?: string | null },
+  input: PlanInput,
+): Workflow {
+  const draft = validatePlan(context, homeProjectId, null, input);
+  const db = getProjectDb(homeProjectId);
+  const repository = new WorkflowRepository(db);
+  const saved = writeTransaction(db, () => {
+    const created = repository.create({ title: input.title ?? null, brief: workflowInput.brief ?? null });
+    return repository.saveDraft(created.id, draft, { title: input.title ?? null });
+  })();
+  notifyWorkflowChanged(homeProjectId, saved.id);
+  return saved;
+}
+
+/**
+ * A plan as a draft, checked: the planned tasks with their boards, routes and
+ * run settings resolved, and the links. Writes nothing. `previous` is the
+ * draft it replaces, whose hand-placed card positions carry over.
+ */
+function validatePlan(context: IpcContext, homeProjectId: string, previous: WorkflowDraft | null, input: PlanInput): WorkflowDraft {
   if (!Array.isArray(input.tasks)) throw new WorkflowRequestError('tasks must be a list.');
   if (input.tasks.length > MAX_WORKFLOW_TASKS) {
     throw new WorkflowRequestError(`A workflow plans at most ${MAX_WORKFLOW_TASKS} tasks; this one has ${input.tasks.length}.`);
@@ -280,6 +569,14 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
       throw new WorkflowRequestError(`${label}: routeStart comes after routeLast on this board.`);
     }
 
+    const runSettings = resolvePlannedRunSettings(context, projectId, entry, `${label}: `);
+    // A task taken in keeps the settings it has on its board; Start only adds it to the workflow.
+    if (existingTaskId && hasRunSettings(runSettings)) {
+      throw new WorkflowRequestError(
+        `${label}: a task taken in with existingTask keeps its own base branch, worktree and agent settings. Drop baseBranch, useWorktree, runMode, profile and the overrides from it.`,
+      );
+    }
+
     return {
       key,
       title: entry.title.trim(),
@@ -293,13 +590,14 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
       priority: typeof entry.priority === 'number' ? entry.priority : 0,
       canvas_x: null,
       canvas_y: null,
+      ...runSettings,
     };
   });
 
   // Keep where a hand placed each card when the agent saves again.
-  const previous = new Map((workflow.draft?.tasks ?? []).map((task) => [task.key, task]));
+  const previousByKey = new Map((previous?.tasks ?? []).map((task) => [task.key, task]));
   for (const task of planned) {
-    const before = previous.get(task.key);
+    const before = previousByKey.get(task.key);
     if (before) {
       task.canvas_x = before.canvas_x;
       task.canvas_y = before.canvas_y;
@@ -322,13 +620,7 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
     links.push({ blocker: link.blocker, blocked: link.blocked });
   }
 
-  const draft: WorkflowDraft = { tasks: planned, links };
-  const saved = new WorkflowRepository(getProjectDb(homeProjectId)).saveDraft(workflowId, draft, {
-    title: input.title ?? null,
-    expectedRevision: input.revision ?? null,
-  });
-  notifyWorkflowChanged(homeProjectId, workflowId);
-  return saved;
+  return { tasks: planned, links };
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +692,8 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
             swimlane_id: todo.id,
             labels: planned.labels,
             priority: planned.priority,
+            // Base branch, Worktree or Project, and Column Settings or Agent Override, as planned.
+            ...runSettingsCreateInput(planned),
             workflow: membership,
           });
           idByKey.set(planned.key, { projectId, taskId: created.id });
@@ -713,12 +1007,17 @@ function applyTaskRoute(
   return tasks.getById(resolved.task.id)!;
 }
 
-/** Add a task to a started workflow. It lands in To Do, and starts when nothing it waits for is left. */
+/**
+ * Add a task to a started workflow. It lands in To Do, on its own board, and
+ * starts when nothing it waits for is left. `runSettings` is what the
+ * Workflows view's Add task already checked; without it the settings are read
+ * from the input's agent-facing fields.
+ */
 export function addWorkflowTask(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
-  input: PlannedTaskInput & { waitsFor?: string[] | null },
+  input: PlannedTaskInput & { waitsFor?: string[] | null; runSettings?: WorkflowTaskRunSettings },
 ): Task {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   requireStarted(workflow, 'adding a task');
@@ -737,6 +1036,7 @@ export function addWorkflowTask(
     canvas_x: null,
     canvas_y: null,
   };
+  const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
   // Resolve the blockers before anything is written.
   const blockers = (input.waitsFor ?? []).map((selector) => resolveWorkflowTask(context, homeProjectId, workflow, selector));
   const created = writeTransaction(db, () => tasks.create({
@@ -745,6 +1045,7 @@ export function addWorkflowTask(
     swimlane_id: todo.id,
     labels: Array.isArray(input.labels) ? input.labels : [],
     priority: typeof input.priority === 'number' ? input.priority : 0,
+    ...runSettingsCreateInput(runSettings),
     workflow: membership,
   }))();
   const linkRepository = new TaskLinkRepository(getProjectDb(homeProjectId));

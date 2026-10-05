@@ -7,9 +7,10 @@ import { useProjectStore } from '../stores/project-store';
  * Task Detail dialog fires TWO concurrent `git:listBranches` calls: the dialog's
  * own branch-existence check and the embedded `BranchPicker`'s list fetch. This
  * module collapses concurrent calls into one round-trip and serves a fresh
- * result from a brief cache, keyed by the CURRENT project id (the main handler
- * routes by the ambient project, so a cross-project cache hit would return the
- * wrong repo's branches).
+ * result from a brief cache, keyed by the project whose branches were listed:
+ * the one asked for, or the CURRENT project when none is (the main handler
+ * routes an unnamed read by the ambient project, so a cross-project cache hit
+ * would return the wrong repo's branches).
  */
 const BRANCHES_CACHE_TTL_MS = 15_000;
 
@@ -19,18 +20,23 @@ let inFlightRequest: { projectId: string | null; promise: Promise<string[]> } | 
 let cachedResult: { projectId: string | null; branches: string[]; fetchedAtMs: number } | null = null;
 
 /**
- * Fetch the repo's branch list, sharing an in-flight request and a fresh cache
- * across concurrent callers for the current project. Rejections are never
- * cached, so a failed fetch is retried on the next call.
+ * Fetch a repo's branch list, sharing an in-flight request and a fresh cache
+ * across concurrent callers for the same project. `projectId` names another
+ * project (a workflow's planned task on its board); omitted, the current one.
+ * Rejections are never cached, so a failed fetch is retried on the next call.
  */
-export function fetchGitBranches(): Promise<string[]> {
-  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+export function fetchGitBranches(projectId?: string | null): Promise<string[]> {
+  const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+  const targetProjectId = projectId ?? currentProjectId;
+  // The open project is asked for by omission, so main keeps routing it by
+  // the ambient project exactly as before.
+  const requestProjectId = targetProjectId !== currentProjectId ? targetProjectId : null;
   const now = Date.now();
 
   // Fresh same-project cache: serve it without touching IPC.
   if (
     cachedResult
-    && cachedResult.projectId === projectId
+    && cachedResult.projectId === targetProjectId
     && now - cachedResult.fetchedAtMs < BRANCHES_CACHE_TTL_MS
   ) {
     return Promise.resolve(cachedResult.branches);
@@ -38,13 +44,16 @@ export function fetchGitBranches(): Promise<string[]> {
 
   // Same-project request already in flight: join it (this is what collapses the
   // dialog + BranchPicker double-fire into one ~900ms shell-out).
-  if (inFlightRequest && inFlightRequest.projectId === projectId) {
+  if (inFlightRequest && inFlightRequest.projectId === targetProjectId) {
     return inFlightRequest.promise;
   }
 
-  const promise = window.electronAPI.git.listBranches()
+  const listing = requestProjectId !== null
+    ? window.electronAPI.git.listBranches(requestProjectId)
+    : window.electronAPI.git.listBranches();
+  const promise = listing
     .then((branches) => {
-      cachedResult = { projectId, branches, fetchedAtMs: Date.now() };
+      cachedResult = { projectId: targetProjectId, branches, fetchedAtMs: Date.now() };
       return branches;
     })
     .finally(() => {
@@ -53,7 +62,7 @@ export function fetchGitBranches(): Promise<string[]> {
       if (inFlightRequest?.promise === promise) inFlightRequest = null;
     });
 
-  inFlightRequest = { projectId, promise };
+  inFlightRequest = { projectId: targetProjectId, promise };
   return promise;
 }
 

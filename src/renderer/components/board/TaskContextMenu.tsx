@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, ListTree } from 'lucide-react';
+import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 
@@ -222,7 +222,7 @@ export function TaskContextMenu({
           className={LIVE_ROW_CLASS}
           data-testid="context-new-workflow"
         >
-          <ListTree size={14} className="text-fg-faint" />
+          <WorkflowIcon size={14} className="text-fg-faint" />
           New workflow
         </button>
       )}

@@ -504,8 +504,11 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 
 `state` is `draft` (not started), `running`, `paused` or `done`; a value this build does not know
 reads as paused, so the engine leaves it alone. A draft keeps its planned tasks and links in
-`draft_json` (`WorkflowDraft`: tasks by local key, with their project, route and an optional board
-task to take in) rather than as rows on any board, so no board read has to filter planned work out;
+`draft_json` (`WorkflowDraft`: tasks by local key, with their project, route, an optional board
+task to take in, and their run settings in the task row's own columns: `base_branch`,
+`use_worktree`, `run_mode`, `profile_id` and the four override pins, which Start copies onto the
+task it creates; a draft saved before those existed reads them as the defaults) rather than as
+rows on any board, so no board read has to filter planned work out;
 Start creates the tasks and clears it. `revision` goes up on every save and edit, and
 `kangentic_save_workflow` refuses a save that carries an older one. `color_slot` is the
 `--kng-chart-N` slot of the workflow's icon, the first no unfinished workflow holds.

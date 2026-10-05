@@ -190,12 +190,6 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     [swimlanes],
   );
 
-  /** O(1) swimlaneId → hex color lookup for drop highlight styling. */
-  const swimlaneColorMap = useMemo(
-    () => new Map(swimlanes.map((swimlane) => [swimlane.id, swimlane.color])),
-    [swimlanes],
-  );
-
   /** O(1) taskId → swimlaneId lookup covering both active and archived tasks. */
   const taskToSwimlane = useMemo(() => {
     const map = new Map<string, string>();
@@ -276,29 +270,22 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     return closestCenter({ ...args, droppableContainers: otherSwimlaneContainers });
   }, [findSwimlane, doneLaneId, swimlaneIds]);
 
-  /** Toggle .drop-highlight class on swimlane DOM elements without React re-render. */
+  /**
+   * Toggle .drop-highlight class on swimlane DOM elements without React re-render.
+   * Only the class: the lane carries its `--drop-color` from render (Swimlane),
+   * because writing that inherited property here restyled the whole lane.
+   */
   const updateDropHighlight = useCallback((targetId: string | null) => {
     const previousId = hoveringSwimlaneIdRef.current;
     if (previousId === targetId) return;
     if (previousId) {
-      const previousElement = document.querySelector(`[data-swimlane-id="${previousId}"]`) as HTMLElement | null;
-      if (previousElement) {
-        previousElement.classList.remove('drop-highlight');
-        previousElement.style.removeProperty('--drop-color');
-      }
+      document.querySelector(`[data-swimlane-id="${previousId}"]`)?.classList.remove('drop-highlight');
     }
     if (targetId) {
-      const targetElement = document.querySelector(`[data-swimlane-id="${targetId}"]`) as HTMLElement | null;
-      if (targetElement) {
-        const color = swimlaneColorMap.get(targetId);
-        if (color) {
-          targetElement.style.setProperty('--drop-color', color);
-        }
-        targetElement.classList.add('drop-highlight');
-      }
+      document.querySelector(`[data-swimlane-id="${targetId}"]`)?.classList.add('drop-highlight');
     }
     hoveringSwimlaneIdRef.current = targetId;
-  }, [swimlaneColorMap]);
+  }, []);
 
   // Clean up stale drop highlights on unmount (e.g. HMR replaces this component
   // mid-drag, so handleDragEnd/handleDragCancel never fire).

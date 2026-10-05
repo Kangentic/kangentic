@@ -136,10 +136,32 @@ test.describe('Workflows canvas', () => {
     const { browser, page } = await launch(false);
     try {
       await page.locator('[data-testid="view-toggle-workflows"]').click();
-      await expect(page.locator('[data-testid="workflows-empty"]')).toBeVisible();
+      const empty = page.locator('[data-testid="workflows-empty"]');
+      await expect(empty).toBeVisible();
+      await expect(empty).toContainText('No workflows');
+      await expect(page.locator('[data-testid="workflows-empty-line"]')).toHaveText('Linked tasks that run through your board on their own.');
       await expect(page.locator('[data-testid="workflows-create-first"]')).toHaveText('Create your first workflow');
+      await expect(page.locator('[data-testid="workflows-empty-hint"]')).toHaveText('Or right-click a task and choose New workflow.');
       // The Workflows segment carries no count with nothing unfinished.
       await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows');
+
+      // The drawing (Final 7): four linked cards, the first done, two running,
+      // one waiting, the links from the done one in the done green and the
+      // rest in the waiting grey, all in theme tokens.
+      const illustration = page.locator('[data-testid="workflows-empty-illustration"]');
+      await expect(illustration).toBeVisible();
+      await expect(illustration).toHaveAttribute('aria-hidden', 'true');
+      const states = await illustration.locator('[data-illustration-card]').evaluateAll((groups) => groups.map((group) => group.getAttribute('data-illustration-card')));
+      expect(states).toEqual(['done', 'running', 'running', 'waiting']);
+      await expect(illustration.locator('[data-illustration-link="satisfied"]')).toHaveCount(2);
+      await expect(illustration.locator('[data-illustration-link="pending"]')).toHaveCount(2);
+      const active = await tokenColor(page, '--color-active');
+      await expect(illustration.locator('[data-illustration-card="done"] [data-illustration-frame]')).toHaveCSS('stroke', active);
+      await expect(illustration.locator('[data-illustration-link="satisfied"]').first()).toHaveCSS('stroke', active);
+      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('stroke', await tokenColor(page, '--color-edge'));
+      await expect(illustration.locator('[data-illustration-card="waiting"] [data-illustration-frame]')).toHaveCSS('fill', await tokenColor(page, '--color-surface-raised'));
+      // Static: nothing in the empty state animates.
+      expect(await empty.evaluate((element) => element.getAnimations({ subtree: true }).length)).toBe(0);
     } finally {
       await browser.close();
     }
@@ -206,27 +228,38 @@ test.describe('Workflows canvas', () => {
     const { browser, page } = await launch(true);
     try {
       await page.locator('[data-testid="view-toggle-workflows"]').click();
-      await expect(card(page, 'task-1')).toBeVisible();
+      // The workflow opens on the first task in its run order (Final 4).
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'true');
+      await expect(page.locator('[data-testid="workflow-inspector-title"]')).toContainText('Budget table and repository');
 
       await card(page, 'task-2').click();
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
       await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'false');
-      // Selected: a 2px border inside the card, solid on a planned card, with
-      // no ring outside it. An unselected planned card keeps its 1px dash.
+      // Selected: a 2px border inside the card, with no ring outside it. An
+      // unselected planned card draws like any To Do card: a solid 1px edge,
+      // no dash (Final 3).
+      const edge = await tokenColor(page, '--color-edge');
       await expect(card(page, 'task-2')).toHaveCSS('border-top-width', '2px');
       await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'solid');
       await expect(card(page, 'task-2')).toHaveCSS('box-shadow', 'none');
       await expect(card(page, 'task-1')).toHaveCSS('border-top-width', '1px');
-      await expect(card(page, 'task-1')).toHaveCSS('border-top-style', 'dashed');
+      await expect(card(page, 'task-1')).toHaveCSS('border-top-style', 'solid');
+      await expect(card(page, 'task-1')).toHaveCSS('border-top-color', edge);
+      await expect(card(page, 'task-3')).toHaveCSS('border-top-style', 'solid');
 
       await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'false');
-      await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'dashed');
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'solid');
+      // Cleared, it stays cleared: the inspector shows the run order, with no prompt.
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(3);
+      await expect(page.locator('[data-testid="workflow-inspector-prompt"]')).toHaveCount(0);
 
       await card(page, 'task-3').click();
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
       await page.keyboard.press('Escape');
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

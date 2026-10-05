@@ -31,7 +31,7 @@ import {
   isTypeOfferedOnTrigger,
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
-import { describeAutomation } from '../../../shared/automation-describe';
+import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -95,13 +95,14 @@ export const handleListAutomations: CommandHandler = (
           row.enabled ? null : 'switched off',
           runnable.ok ? null : `cannot run: ${runnable.reason}`,
         ].filter((flag): flag is string => flag !== null);
-        const guards = [
-          row.condition ? `only if: ${row.condition}` : null,
-          row.max_runs !== null ? `at most ${row.max_runs} time(s) per task` : null,
-        ].filter((guard): guard is string => guard !== null);
+        // The sentence names only the verb and its one required value, as the
+        // row's second line does. Everything the panel shows as a mark (the
+        // send timing, Move to column's message, the Condition, the Frequency)
+        // follows in words, since an agent reads this text and not `data`.
+        const marks = describeAutomationMarksInWords(row);
         lines.push(
           `    ${row.position + 1}. ${row.name} (${row.type}) ${describeAutomation(row.type, row.config)}`
-          + (guards.length > 0 ? ` (${guards.join('; ')})` : '')
+          + (marks !== null ? ` (${marks})` : '')
           + (flags.length > 0 ? ` [${flags.join('; ')}]` : ''),
         );
       }

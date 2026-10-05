@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
-import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, ListTree, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
@@ -78,7 +78,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   behavior: SlidersHorizontal,
   performance: Gauge,
   // The Workflows view's own glyph, so the tab and the view read as one feature.
-  workflows: ListTree,
+  workflows: WorkflowIcon,
   dictation: Mic,
   // The title bar's Knowledge Graph icon, so the two read as one feature.
   knowledgeGraph: Brain,

@@ -124,19 +124,6 @@ async function cancelManager(): Promise<void> {
   await dialog().waitFor({ state: 'detached', timeout: 3000 });
 }
 
-/** Every persisted automation, straight from the IPC surface. */
-function readRows(): Promise<Array<{
-  id: string;
-  swimlane_id: string;
-  name: string;
-  type: string;
-  trigger: string;
-  position: number;
-  enabled: boolean;
-  config: Record<string, unknown>;
-}>> {
-  return page.evaluate(() => window.electronAPI.automations.list());
-}
 
 /** The persisted automations of one column, by column NAME. */
 async function readColumnRows(columnName: string): ReturnType<typeof readRows> {
@@ -378,9 +365,11 @@ test.describe('Column automations', () => {
 
     const target = row('Review');
     await expect(target).toBeVisible();
-    // The row's sentence carries the delivery mode, which is what the pill used
-    // to do in the old Session card.
-    await expect(target).toContainText('after the current turn');
+    // The row marks the delivery mode beside its name, which is what the pill
+    // used to do in the old Session card. The sentence is the message alone.
+    const deliveryMark = target.locator('[data-testid="column-automation-delivery-mark"]');
+    await expect(deliveryMark).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(target.locator('[data-testid="column-automation-row-sentence"]')).toHaveText('Sends "/code-review"');
 
     // The field it replaced is gone from the settings pane entirely.
     await expect(dialog().locator('[data-testid="auto-command-input"]')).toHaveCount(0);
@@ -538,6 +527,28 @@ test.describe('Column automations', () => {
     const original = await readColumnRows('Code Review');
     expect(original.map((entry) => entry.name)).toEqual(['Shared step']);
     expect(original[0].config.script).toBe('echo shared');
+  });
+
+  test('a copy row carries the same marks as the row in its own column', async () => {
+    await seedColumn('Code Review', [
+      { name: 'Waits', type: 'send_message', trigger: 'enter', config: { message: '/code-review', mode: 'deferred' } },
+      { name: 'Right away', type: 'send_message', trigger: 'enter', config: { message: '/code-review', mode: 'immediate' } },
+    ]);
+    await openColumn('Executing');
+
+    await dialog().locator('[data-testid="column-automation-add"][data-trigger="enter"]').click();
+    const picker = page.locator('[data-testid="column-automation-picker"]');
+    const copyRow = (name: string) => picker.locator(`[data-testid="column-automation-picker-copy"][data-name="${name}"]`);
+
+    // The sentence says only what is sent, so without the mark a copied Send
+    // message that waits for the turn to end would read as one that does not.
+    const waits = copyRow('Waits').locator('[data-testid="column-automation-picker-copy-title"] [data-testid="column-automation-delivery-mark"]');
+    await expect(waits).toHaveAttribute('title', 'Delivery: waits for the current turn to end.');
+    await expect(waits).toHaveAttribute('aria-label', 'Delivery: waits for the current turn to end.');
+    await expect(copyRow('Right away').locator('[data-testid="column-automation-delivery-mark"]')).toHaveCount(0);
+
+    await picker.locator('[data-testid="column-automation-picker-filter"]').press('Escape');
+    await expect(picker).toHaveCount(0);
   });
 
   // 10 ─ Names are unique within a column ────────────────────────────────────
@@ -752,7 +763,12 @@ test.describe('Column automations', () => {
     ]);
     await refreshAutomationStore('Merge');
 
-    await expect(page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]')).toHaveText('1');
+    const boardGlyph = page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]');
+    await expect(boardGlyph).toHaveText('1');
+    // Automations draw the column-with-a-cog mark. The bolt belongs to the Edit
+    // automation dialog's Trigger card, and no two concepts share a glyph.
+    await expect(boardGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
+    await expect(boardGlyph.locator('svg.lucide-zap')).toHaveCount(0);
 
     await openColumn('Merge');
     // The rail shows PRESENCE only: a glyph, no digit. The number the two other
@@ -762,6 +778,7 @@ test.describe('Column automations', () => {
     await expect(mergeGlyph).toBeVisible();
     await expect(mergeGlyph).toHaveText('');
     await expect(mergeGlyph).toHaveAttribute('title', '1 automation runs here');
+    await expect(mergeGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
     await expect(railRow('Testing').locator('[data-testid="board-manager-tab-automation"]')).toHaveCount(0);
 
     await openOverview();

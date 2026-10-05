@@ -63,7 +63,10 @@ registry, one folder per type, and a manifest the renderer reads.
   until someone adds it to the allowlist deliberately.
 - **Test:** `tests/unit/automation-manifest-reserved-keys.test.ts` fails a field key that collides
   with a reserved row key, repeats within its type, is not a plain identifier, or declares options
-  a field of that kind cannot render.
+  a field of that kind cannot render. It also checks each field's `unavailableOn` (a trigger where
+  the field does nothing, such as Send message's Delivery at a turn end): only on a segmented
+  field, on a trigger the type runs on, with a one-line reason. The dialog and the row marks read it
+  through `automationFieldUnavailableReason`, never by the field's key.
 - Both run in CI via `npm run test:unit`.
 - **Review:** `/code-review`'s always-on conventions finder flags type-name branching outside
   `adapters/`, the same criterion it already applies to agent, board and PR adapters (see

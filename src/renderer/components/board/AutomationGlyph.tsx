@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Zap } from 'lucide-react';
+import { Columns3Cog } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -7,7 +7,8 @@ import { selectAutomationCounts } from '../../stores/board-store/automations-sli
 import { DEFAULT_AGENT } from '../../../shared/types';
 
 /**
- * The column header's automation mark: a `Zap` and the number of automations
+ * The column header's automation mark: `Columns3Cog`, a column with a cog, and
+ * the number of automations
  * that will RUN when a task enters this column, when its agent finishes a turn
  * here, or when the task leaves.
  *
@@ -58,7 +59,7 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
       title={`${total} automation${total > 1 ? 's run' : ' runs'} here: ${parts.join(', ')}`}
       className="flex flex-shrink-0 items-center gap-0.5 text-fg-disabled"
     >
-      <Zap size={12} />
+      <Columns3Cog size={12} />
       <span className="text-[11px] tabular-nums">{total}</span>
     </span>
   );

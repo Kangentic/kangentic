@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ListTree, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
@@ -824,7 +824,7 @@ export function TaskDetailWindow({
       {canShowWorkflow && (
         <>
           <HeaderActionButton
-            icon={ListTree}
+            icon={WorkflowIcon}
             onClick={handleToggleWorkflow}
             active={workflowPanelOpen}
             title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}

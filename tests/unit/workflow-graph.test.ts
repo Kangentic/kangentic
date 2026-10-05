@@ -6,11 +6,14 @@ import { describe, it, expect } from 'vitest';
 import type { WorkflowDetail, WorkflowViewTask, WorkflowTaskPlace } from '../../src/shared/types';
 import type { WorkflowRouteStep } from '../../src/shared/types';
 import {
+  DONE_COLOR_FALLBACK,
   addBlockerRefusal,
   blockerCandidates,
   canBlock,
   canWait,
+  firstInRunOrder,
   linkRefusal,
+  otherBoardDoneColor,
   removeRefusal,
   runOrder,
   stepRefusal,
@@ -41,8 +44,23 @@ function detail(state: WorkflowDetail['workflow']['state'], tasks: WorkflowViewT
     tasks,
     links: links.map(([blockerKey, blockedKey]) => ({ blockerKey, blockedKey })),
     projectNames: { p: 'kangentic' },
+    doneColors: { p: '#10b981' },
   };
 }
+
+describe('otherBoardDoneColor', () => {
+  const home = { homeProjectId: 'p', doneColors: { p: '#10b981', mobile: '#a855f7', bare: null } };
+
+  it('leaves a home-board card on the canvas\'s live color, and gives another board\'s card its own Done color', () => {
+    expect(otherBoardDoneColor(home, { projectId: 'p' })).toBeNull();
+    expect(otherBoardDoneColor(home, { projectId: 'mobile' })).toBe('#a855f7');
+  });
+
+  it('draws a board with no Done color in the board\'s own fallback, never in the home board\'s', () => {
+    expect(otherBoardDoneColor(home, { projectId: 'bare' })).toBe(DONE_COLOR_FALLBACK);
+    expect(otherBoardDoneColor(home, { projectId: 'unknown' })).toBe(DONE_COLOR_FALLBACK);
+  });
+});
 
 describe('workflow rules in the view', () => {
   const tasks = [viewTask('a', 411, 'done'), viewTask('b', 413, 'working'), viewTask('c', 414, 'todo'), viewTask('d', 415, 'todo')];
@@ -122,5 +140,16 @@ describe('workflow rules in the view', () => {
     expect(blockerCandidates(current, 'c').map((task) => task.key)).toEqual(['b']);
     expect(blockerCandidates(current, 'd').map((task) => task.key)).toEqual([]);
     expect(runOrder(current).map((group) => group.map((task) => task.key))).toEqual([['a', 'b', 'c'], ['d']]);
+  });
+
+  it('opens a workflow on its run order\'s first row, among the tasks the search leaves', () => {
+    // `d` comes first in the plan but waits for `c`, so the first stop is a, b, c.
+    const reordered = detail('draft', [tasks[3], tasks[0], tasks[1], tasks[2]], [['c', 'd']]);
+    expect(firstInRunOrder(reordered)).toBe('a');
+    expect(firstInRunOrder(reordered, new Set(['b', 'd']))).toBe('b');
+    // A search that leaves only a later stop opens on that stop's first row.
+    expect(firstInRunOrder(reordered, new Set(['d']))).toBe('d');
+    expect(firstInRunOrder(reordered, new Set())).toBeNull();
+    expect(firstInRunOrder(detail('draft', [], []))).toBeNull();
   });
 });

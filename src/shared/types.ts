@@ -4885,8 +4885,20 @@ export interface TaskMoveProvenance {
  */
 export type WorkflowState = 'draft' | 'running' | 'paused' | 'done';
 
+/**
+ * How a planned task will run, in the task row's own shape, so Start copies
+ * them onto the task it creates: the base branch (null is the board's), the
+ * Worktree or Project choice (null is the project's setting), and Column
+ * Settings with a profile or an agent override. The profile and the four pins
+ * exclude each other exactly as on a task (`applyProfileExclusivity`).
+ */
+export type WorkflowTaskRunSettings = Pick<
+  Task,
+  'base_branch' | 'use_worktree' | 'run_mode' | 'profile_id' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'
+>;
+
 /** One planned task in a workflow that has not started. `key` is local to the draft. */
-export interface WorkflowDraftTask {
+export interface WorkflowDraftTask extends WorkflowTaskRunSettings {
   key: string;
   title: string;
   description: string;
@@ -4894,7 +4906,8 @@ export interface WorkflowDraftTask {
   project_id: string | null;
   /**
    * A task already on the board that the workflow takes in at Start, instead
-   * of creating one. It must still be in To Do then.
+   * of creating one. It must still be in To Do then, and it keeps its own run
+   * settings: this entry's stay at their defaults.
    */
   existing_task_id: string | null;
   route_start_swimlane_id: string | null;
@@ -5013,6 +5026,12 @@ export interface WorkflowDetail {
   links: WorkflowViewLink[];
   /** Each project a task is on, by id; more than one is a workflow across boards. */
   projectNames: Record<string, string>;
+  /**
+   * The Done column color of each of those projects' boards, by id; null
+   * where the board has no Done column. A Done card on another board wears
+   * its own board's, not the open board's.
+   */
+  doneColors: Record<string, string | null>;
 }
 
 /** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */
@@ -5071,13 +5090,23 @@ export interface WorkflowBoardTask {
   humanGateTargetId: string | null;
 }
 
-/** A task the Workflows view adds (Add task) or edits before Start (the Edit Task window). */
-export interface WorkflowTaskInput {
+/**
+ * A task the Workflows view adds (Add task) or edits before Start (the Edit
+ * Task window). The run settings are optional: omitted on an add is the
+ * default (Column Settings, the board's base branch), omitted on an edit is
+ * left as it is.
+ */
+export interface WorkflowTaskInput extends Partial<WorkflowTaskRunSettings> {
   title: string;
   description?: string;
   labels?: string[];
   priority?: number;
-  /** The board it goes on; omitted is the workflow's home project. Fixed once the task exists. */
+  /**
+   * The board it goes on; omitted is the workflow's home project. Fixed once
+   * the task exists. Changing it on a planned task resets its route to every
+   * column of the new board, and its base branch and profile, which belong to
+   * the old one, unless the same edit sets them.
+   */
   projectId?: string | null;
 }
 
@@ -6570,7 +6599,11 @@ export interface ElectronAPI {
 
   // Swimlanes
   swimlanes: {
-    list: () => Promise<Swimlane[]>;
+    /**
+     * The board's columns. `projectId` reads another project's board (a
+     * workflow's planned task on it); omitted, the open project's.
+     */
+    list: (projectId?: string | null) => Promise<Swimlane[]>;
     create: (input: SwimlaneCreateInput) => Promise<Swimlane>;
     update: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
     delete: (id: string) => Promise<void>;
@@ -6815,7 +6848,12 @@ export interface ElectronAPI {
 
   // Config
   config: {
-    get: () => Promise<AppConfig>;
+    /**
+     * The effective config: global, that project's overrides, and its board's
+     * team-shared default base branch. `projectId` reads another project's
+     * (a workflow's planned task on it); omitted, the open project's.
+     */
+    get: (projectId?: string | null) => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
     set: (config: DeepPartial<AppConfig>) => Promise<ConfigSetResult>;
     /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
@@ -6898,7 +6936,8 @@ export interface ElectronAPI {
   // Git
   git: {
     detect: (forceRefresh?: boolean) => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
-    listBranches: () => Promise<string[]>;
+    /** The repository's branches. `projectId` lists another project's; omitted, the open project's. */
+    listBranches: (projectId?: string | null) => Promise<string[]>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
     fileImage: (input: GitFileImageInput) => Promise<GitImageContentResult>;
@@ -7239,8 +7278,12 @@ export interface ElectronAPI {
     /** The warnings of the project's last apply, for a renderer that missed the `onWarnings` push. */
     getLastWarnings: (projectId: string) => Promise<string[]>;
     onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
-    /** The board's named Board Profiles (see `BoardProfile`). Empty when the board has none. */
-    getBoardProfiles: () => Promise<BoardProfile[]>;
+    /**
+     * The board's named Board Profiles (see `BoardProfile`). Empty when the
+     * board has none. `projectId` reads another project's board; omitted, the
+     * open project's.
+     */
+    getBoardProfiles: (projectId?: string | null) => Promise<BoardProfile[]>;
     /** Replace the board's Board Profiles. Team-scoped: `tasks.profile_id` is resolved on every machine that opens the board. */
     setBoardProfiles: (profiles: BoardProfile[]) => Promise<void>;
     /** An agent (MCP) rewrote this project's Board Profiles; re-read them. */

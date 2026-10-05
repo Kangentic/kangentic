@@ -1,11 +1,15 @@
-import type { Workflow } from '../../../shared/types';
+import type { PermissionMode, TaskRunMode, Workflow } from '../../../shared/types';
+import { resolveEffortSelector, resolveSpacedModelName } from '../../../shared/model-id';
+import { PERMISSION_MODES, RUN_MODES, isPermissionMode, isRunMode } from '../../../shared/workflow-run-settings';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
 import {
   WorkflowRequestError,
   addWorkflowTask,
-  createWorkflow,
+  checkPlannedModel,
+  checkPlannedModels,
+  createWorkflowWithPlan,
   deleteWorkflow,
   linkTasks,
   pauseWorkflow,
@@ -19,6 +23,7 @@ import {
   startWorkflow,
   unlinkTasks,
   type PlannedTaskInput,
+  type WorkflowTaskView,
   type WorkflowView,
 } from '../../workflows/workflow-service';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -89,10 +94,30 @@ export function formatWorkflow(view: WorkflowView): string {
       const label = workflow.state === 'draft' ? `[${task.key}]` : task.key;
       const waits = task.waitsFor.length > 0 ? ` Waits for ${task.waitsFor.join(', ')}.` : '';
       const route = task.route.length > 0 ? task.route.join(' > ') : '(no columns: straight to Done)';
-      lines.push(`- ${label} ${task.title}. In ${task.column}. Route: ${route}.${waits}`);
+      const settings = workflow.state === 'draft' ? describeRunSettings(task) : '';
+      lines.push(`- ${label} ${task.title}. In ${task.column}. Route: ${route}.${waits}${settings}`);
     }
   }
   return lines.join('\n');
+}
+
+/**
+ * A planned task's run settings in kangentic_save_workflow's own parameter
+ * names, so a plan read and sent back keeps them (a save replaces the whole
+ * plan). Empty for the defaults: Column Settings on the board's base branch.
+ */
+function describeRunSettings(task: WorkflowTaskView): string {
+  const settings = task.runSettings;
+  const parts: string[] = [];
+  if (settings.base_branch) parts.push(`baseBranch "${settings.base_branch}"`);
+  if (settings.use_worktree !== null) parts.push(`useWorktree ${settings.use_worktree === 1}`);
+  if (task.profileName) parts.push(`profile "${task.profileName}"`);
+  if (settings.run_mode === 'agent_override') parts.push('runMode "agent_override"');
+  if (settings.agent_override) parts.push(`agentOverride "${settings.agent_override}"`);
+  if (settings.model_override) parts.push(`modelOverride "${settings.model_override}"`);
+  if (settings.effort_override) parts.push(`effortOverride "${settings.effort_override}"`);
+  if (settings.permission_mode) parts.push(`permissionMode "${settings.permission_mode}"`);
+  return parts.length > 0 ? ` Settings: ${parts.join(', ')}.` : '';
 }
 
 export const handleListWorkflows: CommandHandler = (params, context) => {
@@ -126,12 +151,63 @@ export const handleGetWorkflow: CommandHandler = (params, context) => {
   }
 };
 
+/** An enum-valued run setting: absent is null, anything outside the set is refused with the set. */
+function enumSetting<T extends string>(
+  raw: string | null,
+  isMember: (value: unknown) => value is T,
+  valid: readonly T[],
+  field: string,
+  label: string,
+): T | null {
+  if (raw === null) return null;
+  if (!isMember(raw)) throw new WorkflowRequestError(`${label}: ${field} "${raw}" is not valid. Valid values: ${valid.join(', ')}.`);
+  return raw;
+}
+
+type RunSettingsParams = Pick<
+  PlannedTaskInput,
+  'baseBranch' | 'useWorktree' | 'runMode' | 'profile' | 'agentOverride' | 'modelOverride' | 'effortOverride' | 'permissionMode'
+>;
+
+/**
+ * One task's run settings, as kangentic_save_workflow and
+ * kangentic_add_workflow_task both take them. Refused on a wrong type rather
+ * than dropped: a dropped one would make a task that runs differently from
+ * what was asked. Each refusal starts with `label`.
+ */
+function runSettingsParams(record: Record<string, unknown>, label: string): RunSettingsParams {
+  const setting = (field: string): string | null => {
+    const raw = record[field];
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw !== 'string') throw new WorkflowRequestError(`${label}: ${field} must be text.`);
+    return raw;
+  };
+  const useWorktree = record.useWorktree;
+  if (useWorktree !== undefined && useWorktree !== null && typeof useWorktree !== 'boolean') {
+    throw new WorkflowRequestError(`${label}: useWorktree must be true (its own worktree) or false (the project folder).`);
+  }
+  // A friendly versioned name ("Opus 4.8") converts to the CLI id, as kangentic_create_task's does.
+  const modelOverride = setting('modelOverride');
+  const effortOverride = setting('effortOverride');
+  return {
+    baseBranch: setting('baseBranch'),
+    useWorktree: typeof useWorktree === 'boolean' ? useWorktree : null,
+    runMode: enumSetting<TaskRunMode>(setting('runMode'), isRunMode, RUN_MODES, 'runMode', label),
+    profile: setting('profile'),
+    agentOverride: setting('agentOverride'),
+    modelOverride: modelOverride ? resolveSpacedModelName(modelOverride) : null,
+    effortOverride: effortOverride ? resolveEffortSelector(effortOverride) : null,
+    permissionMode: enumSetting<PermissionMode>(setting('permissionMode'), isPermissionMode, PERMISSION_MODES, 'permissionMode', label),
+  };
+}
+
 function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] {
   const value = params.tasks;
   if (!Array.isArray(value)) throw new WorkflowRequestError('tasks must be a list.');
   return value.map((entry, index) => {
     if (typeof entry !== 'object' || entry === null) throw new WorkflowRequestError(`Task ${index + 1} must be an object.`);
     const record = entry as Record<string, unknown>;
+    const label = `Task ${index + 1}${typeof record.key === 'string' ? ` ("${record.key}")` : ''}`;
     return {
       key: typeof record.key === 'string' ? record.key : '',
       title: typeof record.title === 'string' ? record.title : '',
@@ -141,8 +217,9 @@ function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] 
       routeStart: typeof record.routeStart === 'string' ? record.routeStart : null,
       routeLast: typeof record.routeLast === 'string' ? record.routeLast : null,
       skip: Array.isArray(record.skip) ? record.skip.filter((name): name is string => typeof name === 'string') : null,
-      labels: Array.isArray(record.labels) ? record.labels.filter((label): label is string => typeof label === 'string') : null,
+      labels: Array.isArray(record.labels) ? record.labels.filter((label_): label_ is string => typeof label_ === 'string') : null,
       priority: typeof record.priority === 'number' ? record.priority : null,
+      ...runSettingsParams(record, label),
     };
   });
 }
@@ -159,7 +236,7 @@ function linksParam(params: Record<string, unknown>): Array<{ blocker: string; b
   });
 }
 
-export const handleSaveWorkflow: CommandHandler = (params, context) => {
+export const handleSaveWorkflow: CommandHandler = async (params, context) => {
   try {
     const runtime = requireWorkflowRuntimeContext();
     const selector = stringParam(params, 'workflow');
@@ -170,15 +247,20 @@ export const handleSaveWorkflow: CommandHandler = (params, context) => {
     const tasks = plannedTasksParam(params);
     const links = linksParam(params);
     const title = stringParam(params, 'title');
-    const workflow = selector
-      ? resolveWorkflow(context.projectId, selector)
-      : createWorkflow(context.projectId, { title, brief: stringParam(params, 'brief') });
-    const saved = savePlan(runtime, context.projectId, workflow.id, {
-      title,
-      tasks,
-      links,
-      revision: selector ? (revisionValue as number | null | undefined) ?? null : null,
-    });
+    const brief = stringParam(params, 'brief');
+    // Models and efforts are checked against each agent's CLI first, which can
+    // take a moment; everything else is checked before anything is written. A
+    // new workflow is created only with a plan that passed, in the same write,
+    // so a refused save leaves no empty workflow behind.
+    await checkPlannedModels(runtime, context.projectId, tasks);
+    const saved = selector
+      ? savePlan(runtime, context.projectId, resolveWorkflow(context.projectId, selector).id, {
+        title,
+        tasks,
+        links,
+        revision: (revisionValue as number | null | undefined) ?? null,
+      })
+      : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null });
     const taskCount = saved.draft?.tasks.length ?? 0;
     const linkCount = saved.draft?.links.length ?? 0;
     return {
@@ -228,19 +310,29 @@ export const handleResumeWorkflow: CommandHandler = async (params, context) => {
   }
 };
 
-export const handleAddWorkflowTask: CommandHandler = (params, context) => {
+export const handleAddWorkflowTask: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
-    const created = addWorkflowTask(requireWorkflowRuntimeContext(), context.projectId, workflow.id, {
+    const runtime = requireWorkflowRuntimeContext();
+    const title = stringParam(params, 'title', true);
+    // The run settings kangentic_save_workflow takes, through the same checks
+    // and refusals, labelled as addWorkflowTask labels its own.
+    const label = `"${title.trim()}"`;
+    const input: PlannedTaskInput & { waitsFor: string[] | null } = {
       key: '',
-      title: stringParam(params, 'title', true),
+      title,
       description: stringParam(params, 'description'),
       project: stringParam(params, 'taskProject'),
       routeStart: stringParam(params, 'routeStart'),
       routeLast: stringParam(params, 'routeLast'),
       skip: stringListParam(params, 'skip'),
       waitsFor: stringListParam(params, 'waitsFor'),
-    });
+      ...runSettingsParams(params, label),
+    };
+    // Its model and effort against its agent's CLI, which can take a moment;
+    // everything else is checked by addWorkflowTask, before it writes.
+    await checkPlannedModel(runtime, context.projectId, input, label);
+    const created = addWorkflowTask(runtime, context.projectId, workflow.id, input);
     return {
       success: true,
       message: `Added #${created.display_id} "${created.title}" to "${workflow.title}" in To Do. It starts when nothing it waits for is left and an agent slot is free.`,

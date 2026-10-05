@@ -20,7 +20,7 @@
  * Tier: Unit.
  */
 import { describe, it, expect } from 'vitest';
-import { Bell, Zap } from 'lucide-react';
+import { Bell, Columns3Cog } from 'lucide-react';
 import {
   RegistryIcon,
   getSwimlaneIconName,
@@ -94,9 +94,14 @@ describe('AutomationIcon', () => {
     expect(output.type).toBe(Bell);
   });
 
-  it('falls back to Zap for an unknown name', () => {
+  it('falls back to the automations mark, Columns3Cog, for an unknown name', () => {
     const output = AutomationIcon({ name: 'not-a-real-automation-type' });
-    expect(output.type).toBe(Zap);
+    expect(output.type).toBe(Columns3Cog);
+  });
+
+  it('no longer resolves the bolt, which is the Trigger card mark and not an automation type', () => {
+    const output = AutomationIcon({ name: 'zap' });
+    expect(output.type).toBe(Columns3Cog);
   });
 
   it('does not leak name onto the rendered element props', () => {

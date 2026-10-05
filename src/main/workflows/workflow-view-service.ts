@@ -15,8 +15,9 @@ import type {
   WorkflowViewLink,
   WorkflowViewTask,
 } from '../../shared/types';
-import { nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
+import { doneColumn, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
 import { getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -33,9 +34,13 @@ import {
   addWorkflowTask,
   createWorkflow,
   linkTasks,
+  mergeRunSettings,
+  parseRunSettingsInput,
   removeFromWorkflow,
+  requireProfileOnBoard,
   requireWorkflow,
   resolveProjectId,
+  runSettingsOf,
   safeLanes,
   setTaskRouteByIds,
   unlinkTasks,
@@ -79,15 +84,25 @@ function projectNameOf(context: IpcContext, projectId: string): string {
   return context.projectRepo.getById(projectId)?.name ?? 'Another project';
 }
 
+/** A board's Done column color, which a Done card of that board wears; null when it has no Done column. */
+function doneColorOf(projectId: string): string | null {
+  return doneColumn(safeLanes(projectId))?.color ?? null;
+}
+
 export function readWorkflowDetail(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowDetail {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   const projectNames: Record<string, string> = { [homeProjectId]: projectNameOf(context, homeProjectId) };
+  const doneColors: Record<string, string | null> = { [homeProjectId]: doneColorOf(homeProjectId) };
+  const noteProject = (projectId: string): void => {
+    projectNames[projectId] ??= projectNameOf(context, projectId);
+    if (!(projectId in doneColors)) doneColors[projectId] = doneColorOf(projectId);
+  };
 
   if (workflow.state === 'draft') {
     const draft = workflow.draft ?? { tasks: [], links: [] };
     const tasks = draft.tasks.map((planned): WorkflowViewTask => {
       const projectId = planned.project_id ?? homeProjectId;
-      projectNames[projectId] ??= projectNameOf(context, projectId);
+      noteProject(projectId);
       return {
         key: planned.key,
         projectId,
@@ -103,12 +118,12 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
-    return { workflow, homeProjectId, tasks, links, projectNames };
+    return { workflow, homeProjectId, tasks, links, projectNames, doneColors };
   }
 
   const created = workflowTasks(context, homeProjectId, workflowId);
   const tasks = created.map(({ projectId, task }): WorkflowViewTask => {
-    projectNames[projectId] ??= projectNameOf(context, projectId);
+    noteProject(projectId);
     const lanes = safeLanes(projectId);
     const place = taskPlace(lanes, task);
     return {
@@ -131,7 +146,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId)
     .filter((link) => present.has(link.blocker_task_id) && present.has(link.blocked_task_id))
     .map((link): WorkflowViewLink => ({ blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }));
-  return { workflow, homeProjectId, tasks, links, projectNames };
+  return { workflow, homeProjectId, tasks, links, projectNames, doneColors };
 }
 
 /** The picker's rows: every workflow of the project that has not finished, newest first. */
@@ -281,8 +296,13 @@ export function addViewTask(context: IpcContext, homeProjectId: string, workflow
   const projectId = resolveProjectId(context, homeProjectId, input.projectId ?? null);
   const workflow = requireWorkflow(homeProjectId, workflowId);
   requireViewMayChange(workflow);
+  // What the form left out is the default: Column Settings on the board's base branch.
+  const requestedSettings = parseRunSettingsInput(input);
+  requireProfileOnBoard(context, projectId, requestedSettings.profile_id);
+  const runSettings = mergeRunSettings(DEFAULT_RUN_SETTINGS, requestedSettings);
 
   if (workflow.state !== 'draft') {
+    // A real task in To Do, on its own board, with the settings the form chose.
     const created = addWorkflowTask(context, homeProjectId, workflowId, {
       key: '',
       title,
@@ -290,6 +310,7 @@ export function addViewTask(context: IpcContext, homeProjectId: string, workflow
       labels: input.labels ?? [],
       priority: input.priority ?? 0,
       project: projectId,
+      runSettings,
     });
     return created.id;
   }
@@ -313,14 +334,20 @@ export function addViewTask(context: IpcContext, homeProjectId: string, workflow
       priority: input.priority ?? 0,
       canvas_x: null,
       canvas_y: null,
+      ...runSettings,
     });
   });
   return key;
 }
 
-/** Edit a planned task (the Edit Task window before Start). A changed board resets its route to every column there. */
+/**
+ * Edit a planned task (the Edit Task window before Start). A changed board
+ * resets its route to every column there, and its base branch and profile,
+ * which name the old board's, unless the same edit sets them.
+ */
 export function updatePlannedTask(context: IpcContext, homeProjectId: string, workflowId: string, key: string, input: Partial<WorkflowTaskInput>): void {
   const nextProjectId = input.projectId === undefined ? undefined : resolveProjectId(context, homeProjectId, input.projectId);
+  const requestedSettings = parseRunSettingsInput(input);
   editDraft(homeProjectId, workflowId, (draft) => {
     const planned = requirePlanned(draft, key);
     if (input.title !== undefined) {
@@ -331,6 +358,7 @@ export function updatePlannedTask(context: IpcContext, homeProjectId: string, wo
     if (input.description !== undefined) planned.description = input.description;
     if (input.labels !== undefined) planned.labels = input.labels.filter((label) => typeof label === 'string');
     if (input.priority !== undefined) planned.priority = input.priority;
+    let current = runSettingsOf(planned);
     if (nextProjectId !== undefined) {
       const stored = nextProjectId === homeProjectId ? null : nextProjectId;
       if (stored !== planned.project_id) {
@@ -339,8 +367,15 @@ export function updatePlannedTask(context: IpcContext, homeProjectId: string, wo
         planned.route_start_swimlane_id = null;
         planned.route_last_swimlane_id = null;
         planned.skipped_swimlane_ids = [];
+        current = { ...current, base_branch: null, profile_id: null };
       }
     }
+    const next = mergeRunSettings(current, requestedSettings);
+    if (planned.existing_task_id && hasRunSettings(next)) {
+      throw new WorkflowRequestError('A task taken in from its board keeps its own base branch, worktree and agent settings.');
+    }
+    requireProfileOnBoard(context, planned.project_id ?? homeProjectId, requestedSettings.profile_id);
+    Object.assign(planned, next);
   });
 }
 

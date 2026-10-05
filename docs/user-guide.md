@@ -472,15 +472,28 @@ review found work the implementer can do"). An agent checks it before the row ru
 the row did not run: it is checked again next time. The agent that checks is the **Automation
 agent**, chosen in Settings > Workflows; until one is set up, Condition stays off. **Frequency**
 caps how many times a row runs on one task, across every visit, which is what keeps a review loop
-from bouncing a task forever. Both start off, and a row with either shows them on a line under its
-sentence ("Only if the review is clean. At most 3 times for each task.").
+from bouncing a task forever. Both start off.
+
+**Reading a row.** Every row has the same two lines. The second says what the row does, and to
+what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
+task to Executing`, or `Runs npm run lint` (a script is set in code type). A long value ends where
+the row ends, and a message or script with several lines shows its first line; hover the line to
+read all of it, every line. Any option you switched on is a mark after the name,
+in the editor's card order: a funnel for a Condition, a repeat icon with the run limit for a
+Frequency, a clock on a Send message row that waits for the current turn, and a speech bubble on a
+Move to column row that carries a Message. Hover a mark to read its card and value ("Condition:
+only if the review is clean.", "Frequency: at most 3 times for each task."); a Message or a
+Condition reads in full there. A webhook's body and headers and a notification's body are not
+marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
+the same marks.
 
 **On agent turn end.** Runs when the column's agent finishes a turn on its own, not when you stop
 it or a request fails. Each row runs at most once per visit to the column, top to bottom, and a
 **Move to column** row that runs ends the list. `{{agentReply}}` is the agent's final message of
 the turn, whole, so a review's findings can ride a Move to column message back to the column that
 fixes them. A column whose agent cannot report a finished turn (agents that only go quiet) shows the
-reason instead of Add automation.
+reason instead of Add automation. A Send message row here sends at once, since the turn is already
+over, so its **Delivery** is shown disabled and keeps whatever it was set to.
 
 **Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
 sits, never when it runs. To change when it runs, open the row and set its Trigger.
@@ -499,8 +512,8 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
-they are shared with your team through git. The board header shows a lightning glyph with the
-count of automations that will actually run there, and **All columns** in the Column Manager shows
+they are shared with your team through git. The column header shows the automations mark, a
+column with a cog, with the count of automations that will actually run there, and **All columns** in the Column Manager shows
 every column's counts side by side.
 
 ### Reorder Columns
@@ -534,10 +547,17 @@ layout, which puts moved cards back in the automatic layout. Right-click a start
 the board's own menu, with Open on board at the top.
 
 **Planning one.** Click New workflow, or right-click a To Do card on the board and pick New
-workflow (its title and description become the brief). Add tasks with Add task on the canvas, or
-ask an agent: "plan the usage budgets work as a workflow", which saves the plan with
-`kangentic_save_workflow`. Nothing reaches the board until you press Start. Until then each card
-is dashed, and double-clicking one opens it in the task form. Start creates the tasks in To Do
+workflow (its title and description become the brief). A workflow with no tasks yet shows the
+three steps on its canvas: tell the workflow agent what to build, review its plan, and press Start.
+When the first cards land, the first task in the run order is selected. Add tasks with Add task on
+the canvas, or ask an agent: "plan the usage budgets work as a workflow", which saves the plan with
+`kangentic_save_workflow`. Nothing reaches the board until you press Start. Until then a card has
+no #id, and double-clicking one opens it in the task form: the board's own New Task form, led
+by the project the task goes on, with Base branch, Worktree or Project, and Column Settings or
+Agent Override, as a task on the board has them. Each of those reads the chosen project: its
+branches and default base branch, its Worktrees setting, its default agent, and its Board
+Profiles. Choosing another project resets the task's route to every column of that board, and its
+base branch and profile. Start creates the tasks, with those settings, in To Do
 (the ones with nothing to wait for start at once) and moves the To Do task the workflow was made
 from, if any, to Done. A task can go on another project's board; the inspector then names each
 task's board. Delete removes a workflow that has not started, with its planned tasks; once
@@ -578,7 +598,7 @@ column with no agent, you drag the card on yourself.
 (one segment per column it visits) and a lock while the workflow runs, and a card in To Do says
 what it waits for ("Blocked by #413..."). Its right-click menu leads with Open workflow and Show
 workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
-a click on empty board space clears them. Task detail has a Workflow panel (the list-tree button
+a click on empty board space clears them. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector.
 

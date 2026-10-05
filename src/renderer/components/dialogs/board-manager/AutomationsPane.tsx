@@ -1,27 +1,35 @@
 import React, { useCallback, useMemo, useRef } from 'react';
-import { GripVertical, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { Columns3Cog, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, canTriggerRun } from '../../../../shared/automation-manifest';
-import { describeAutomationGuards } from '../../../../shared/automation-describe';
+import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
-import { SETTING_DESCRIPTION_CLASS, SETTING_LABEL_CLASS } from '../../SettingText';
+import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { ToggleSwitch } from '../../settings/shared';
-import { AutomationIcon } from './automation-icons';
+import { AutomationIcon, AutomationMarks } from './automation-icons';
 import { SectionCard, GroupHeading, DisabledSectionNotice } from './form-layout';
 import {
   TRIGGERS,
   TRIGGER_LABELS,
   canRunRow,
   columnFacts,
-  describeDraft,
   dropIndexFor,
   rowsFor,
   type AutomationDraft,
 } from './automation-drafts';
+
+/**
+ * A row's second line, the sentence. Muted and set 3px under the name rather
+ * than `SETTING_DESCRIPTION_CLASS`: a list row's supporting line, not a
+ * setting's description, needs a clearer step down from its name.
+ */
+const AUTOMATION_ROW_SENTENCE_CLASS = 'mt-[3px] text-xs text-fg-muted';
+/** The same line when it quotes a script, in the mono font. */
+const AUTOMATION_ROW_SENTENCE_CODE_CLASS = `${AUTOMATION_ROW_SENTENCE_CLASS} font-mono`;
 
 /**
  * A column's automations: one card, two groups.
@@ -235,7 +243,7 @@ export function AutomationsPane(props: AutomationsPaneProps) {
     <SectionCard
       id="automations"
       label="Automations"
-      icon={Zap}
+      icon={Columns3Cog}
       info="What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
       className="flex flex-col min-h-0"
     >
@@ -341,7 +349,10 @@ function AutomationRow({
   const runnable = canRunRow(draft, { ...column, reportsTurnEnd });
   const entry = AUTOMATION_MANIFEST[draft.type];
   const legacy = entry.status === 'legacy';
-  const guardLine = describeAutomationGuards(draft);
+  // Each mark's tooltip leads with its editor card's name, so a first hover
+  // names the concept: "Condition: only if the review is clean."
+  const marks = describeAutomationMarks(draft);
+  const sentence = describeAutomationSentence(draft.type, draft.config);
 
   // A row the column cannot run is shown OFF with its switch disabled, and the
   // draft keeps its stored `enabled`, so turning the setting back on restores it
@@ -380,8 +391,11 @@ function AutomationRow({
       // role is invalid and mis-announced. Every action stays reachable from
       // those real controls, so the row click is an enhancement on top of a
       // keyboard path that already worked.
+      //
+      // `py-[7px]` rather than `py-1.5`: the sentence sits 3px under the name,
+      // and the extra pixel above and below keeps that gap from crowding the row.
       onClick={readOnly ? undefined : () => onEdit(draft)}
-      className={`group flex select-none items-center gap-2 rounded border border-edge-input bg-surface-control px-2 py-1.5 ${
+      className={`group flex select-none items-center gap-2 rounded border border-edge-input bg-surface-control px-2 py-[7px] ${
         readOnly ? '' : 'cursor-pointer hover:border-fg-faint'
       } ${isDragging ? 'z-10 shadow-lg' : ''}`}
     >
@@ -414,7 +428,7 @@ function AutomationRow({
         //
         // `self-stretch` takes the row's full inner height against its
         // `items-center`, and the negative margins cancel the row's own
-        // `px-2 py-1.5` so the strip reaches the inside of the border instead
+        // `px-2 py-[7px]` so the strip reaches the inside of the border instead
         // of floating in the middle of it. The padding is then given back on
         // the inside, so the glyph sits exactly where it always did.
         //
@@ -441,7 +455,7 @@ function AutomationRow({
         // token is near-white in the dark themes and near-black in the light
         // ones, so the strip lifts against a dark row and deepens against a
         // light one without a second rule.
-        className={`flex select-none items-center self-stretch rounded-l -my-1.5 -ml-2 -mr-2 pl-2 pr-3 text-fg-faint transition-colors ${
+        className={`flex select-none items-center self-stretch rounded-l -my-[7px] -ml-2 -mr-2 pl-2 pr-3 text-fg-faint transition-colors ${
           reorderable ? 'cursor-grab group-hover:bg-fg/[0.08] group-hover:text-fg-tertiary active:cursor-grabbing' : ''
         }`}
       >
@@ -458,26 +472,32 @@ function AutomationRow({
       <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-fg-faint">{index + 1}</span>
       <AutomationIcon name={entry.icon} size={13} className="shrink-0 text-fg-muted" />
 
-      {/* The SHARED label/description pair, not a bespoke one. A row is a
-          setting's title over its supporting line, exactly like the ToggleCards
-          and SettingFields beside it, so it reads at the same size, weight and
-          tone as they do. It used to re-type `text-xs`/`text-[11px] fg-faint`,
-          which both looked different from every other panel and put a line the
-          user has to read in the tone `SettingText` reserves for decoration -
-          `fg-faint` clears AA in almost none of the ten themes. */}
+      {/* The name is the shared setting label, so it reads at the size, weight
+          and tone of the ToggleCards and SettingFields beside it. The sentence
+          under it is its own muted line (`AUTOMATION_ROW_SENTENCE_CLASS`): never
+          `fg-faint`, which clears AA in almost none of the ten themes. */}
       <span data-testid="column-automation-row-label" className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
+        <span data-testid="column-automation-row-title" className="flex items-center gap-1.5">
           <span className={`truncate ${SETTING_LABEL_CLASS}`}>{draft.name}</span>
+          {/* Every option that is on is a mark beside the name, in the editor's
+              card order: the Condition, the Frequency, then the action's own.
+              One tone for all of them, and each tooltip names its card and
+              value. The words used to print as a third line, which was too much
+              to scan, and the editor holds the detail. The marks never shrink,
+              so a long name truncates before they do. The Add automation
+              picker's copy rows draw the same component. */}
+          <AutomationMarks marks={marks} />
           {isDirty(draft) && <span title="Unsaved" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
         </span>
-        <span className={`block truncate ${SETTING_DESCRIPTION_CLASS}`}>{describeDraft(draft)}</span>
-        {/* The guards, read as the rule runs: the Condition, then the
-            Frequency. Only on a row that has one, so most rows stay two lines. */}
-        {guardLine && (
-          <span data-testid="column-automation-guards" className={`block truncate ${SETTING_DESCRIPTION_CLASS}`}>
-            {guardLine}
-          </span>
-        )}
+        {/* A long value ends where the row ends, and a multi-line one shows its
+            first line. The tooltip holds all of it, every line. */}
+        <span
+          data-testid="column-automation-row-sentence"
+          title={sentence.tooltip}
+          className={`block truncate ${sentence.code ? AUTOMATION_ROW_SENTENCE_CODE_CLASS : AUTOMATION_ROW_SENTENCE_CLASS}`}
+        >
+          {sentence.text}
+        </span>
         {/* No last-run line. One used to print under the description once a row
             had run, so rows in one list differed in height by their history,
             and nobody found the history valuable here: a failure reaches the

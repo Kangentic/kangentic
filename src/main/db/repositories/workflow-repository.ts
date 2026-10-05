@@ -8,6 +8,7 @@ import type {
   WorkflowState,
   WorkflowSupersession,
 } from '../../../shared/types';
+import { readRunSettings } from '../../../shared/workflow-run-settings';
 
 /**
  * The `workflows` table: a set of linked tasks with its own agent, stored in
@@ -362,6 +363,8 @@ function readDraftTask(value: unknown): WorkflowDraftTask[] {
     priority: typeof entry.priority === 'number' ? entry.priority : 0,
     canvas_x: numberOrNull(entry.canvas_x),
     canvas_y: numberOrNull(entry.canvas_y),
+    // A draft saved before a planned task had run settings reads as the default.
+    ...readRunSettings(entry),
   }];
 }
 

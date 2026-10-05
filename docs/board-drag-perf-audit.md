@@ -281,6 +281,34 @@ journey fixes, medians:
   refreshes with one 46.6ms frame and 62ms of stall over 16ms in all. It happens once per Start,
   and nothing in it is a gesture.
 
+### The workflow card's drag start, traced (2026-10-04, #732)
+
+The M4 bullet blamed the remaining gap on taller cards' forced layout in dnd-kit's measuring and
+on the activity marks' `getAnimations`. A trace says neither. Every `Layout` in the drag-start
+task was 0.4 to 0.5ms with about 54 dirty objects, and both calls were only where a forced style
+pass landed. Two board costs scaled with the size of the dragged card's column, which at W100 is
+To Do with about 90 cards:
+
+- **The drop highlight restyled the whole column.** The first `onDragOver` names the card's own
+  column, and `updateDropHighlight` wrote `--drop-color` onto it. A custom property is
+  inherited, so the next measurement recalculated every element in the column: 2,948 elements
+  and 10ms with workflow cards, 608 and 3ms without. The column now carries its color from
+  render (`Swimlane`), and the drag only toggles the class.
+- **Every card in that column started a transition.** dnd-kit gives each of those cards its zero
+  transform when the drag starts, with the sortable `transition` in the same commit. The resting
+  value was `translate3d(0, 0, 0)`, the same matrix spelled differently, so about 90 cards ran a
+  200ms transition from identity to identity. That cost a 3ms style pass inside the task and
+  about 5ms of paint and layerize on the frame that first draws the overlay (1.5ms on the plain
+  board). The resting value is now dnd-kit's own spelling (`TaskCard`), so nothing changes and
+  nothing starts.
+
+The committed rig, interleaving the two builds (two invocations each, 6 runs per scenario),
+medians with the worst in brackets: the workflow card's overlay latency went from 122.5ms (132)
+to 86.5ms (88), and the same cards with no workflow from 92.5ms (95) to 86.5ms (108). The
+drag-start frame went from about 69ms to 42ms on the workflow board, the same as the plain
+board. What is left is the board's own activation (four commits that each re-render every card,
+because the sortable context changes) and the overlay drawing the taller card.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in

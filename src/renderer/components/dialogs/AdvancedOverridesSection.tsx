@@ -6,7 +6,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { DEFAULT_AGENT, DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../shared/types';
-import type { TaskRunMode } from '../../../shared/types';
+import type { BoardProfile, PermissionMode, Project, Swimlane, TaskRunMode } from '../../../shared/types';
 import { modelRowLabel } from '../../utils/format-tokens';
 import { ModelCombobox } from './ModelCombobox';
 import { Combobox } from './Combobox';
@@ -34,7 +34,32 @@ interface AdvancedOverridesSectionProps {
   /** Board Profile this task rides, or null for Default (the columns' own settings). */
   profileId: string | null;
   setProfileId: (value: string | null) => void;
+  /**
+   * The board the task goes on, when the host names it: a workflow's planned
+   * task, which may go on another project's board. Its project, its column and
+   * its profiles stand in for the open board's. Omitted, the open board's,
+   * with the column `swimlaneId` names.
+   */
+  board?: AdvancedOverridesBoard;
 }
+
+/** A board's facts as this section reads them (see `useTaskBoardFacts`). */
+export interface AdvancedOverridesBoard {
+  /** For its default agent, model and effort, and the agent pencil's settings. */
+  project: Project | null;
+  /** The column the task's inherited values come from (its To Do column). */
+  lane: Swimlane | null;
+  boardProfiles: BoardProfile[];
+  /** The project's default permission mode, under the column's. */
+  permissionMode: PermissionMode;
+  /** The open board, whose profiles the Board Manager edits. */
+  isOpenBoard: boolean;
+  /** Its profiles have not arrived yet. */
+  loading: boolean;
+}
+
+/** The profile pencil's tooltip on another board: the Board Manager edits only the open board's. */
+const OTHER_BOARD_PROFILES_EDIT = 'Open that board to edit its profiles';
 
 interface EditPencilButtonProps {
   onClick: () => void;
@@ -157,12 +182,20 @@ export function AdvancedOverridesSection({
   setPermissionOverride,
   profileId,
   setProfileId,
+  board,
 }: AdvancedOverridesSectionProps) {
-  const currentProject = useProjectStore((state) => state.currentProject);
-  const destinationSwimlane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
-  const boardProfiles = useBoardStore((state) => state.boardProfiles);
+  const openProject = useProjectStore((state) => state.currentProject);
+  const openBoardLane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
+  const openBoardProfiles = useBoardStore((state) => state.boardProfiles);
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
-  const globalPermissionMode = useConfigStore((state) => state.config.agent.permissionMode);
+  const openPermissionMode = useConfigStore((state) => state.config.agent.permissionMode);
+  // The board the task goes on: the one the host names, else the open one.
+  const currentProject = board ? board.project : openProject;
+  const destinationSwimlane = board ? board.lane : openBoardLane;
+  const boardProfiles = board ? board.boardProfiles : openBoardProfiles;
+  const globalPermissionMode = board ? board.permissionMode : openPermissionMode;
+  const profilesEditableHere = board ? board.isOpenBoard : true;
+  const profilesLoading = board?.loading ?? false;
   // The three-arg PROJECT open, never a bare open-to-tab: the Agent tab's
   // Project Defaults are `scope: 'project'`, and `updateProjectOverride`
   // returns early when `projectSettingsPath` is null, so a panel opened
@@ -239,7 +272,13 @@ export function AdvancedOverridesSection({
 
   if (!showAdvancedSection) return null;
 
-  const hasProfiles = boardProfiles.length > 0;
+  // A planned task's profile that its board no longer lists (deleted since the
+  // plan set it) still shows, so the select can move off it: a disabled select
+  // reading Default over a stale id would send the stale id back, which main
+  // refuses (`requireProfileOnBoard`), leaving the form unable to save.
+  const unlistedProfile = board !== undefined && profileId !== null && !profilesLoading
+    && !boardProfiles.some((profile) => profile.id === profileId);
+  const hasProfiles = boardProfiles.length > 0 || unlistedProfile;
 
   const selectProfileMode = () => {
     setRunMode('column_settings');
@@ -399,6 +438,7 @@ export function AdvancedOverridesSection({
               {boardProfiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>{profile.name}</option>
               ))}
+              {unlistedProfile && <option value={profileId ?? ''}>Removed profile</option>}
             </Select>
             {/* An affordance where a line of instructions used to be. It is the
                 only route to authoring from here, so it stays visible whether or
@@ -407,8 +447,9 @@ export function AdvancedOverridesSection({
                 edit-column button. */}
             <EditPencilButton
               onClick={() => openBoardManager()}
-              title="Edit profiles in Edit Columns"
+              title={profilesEditableHere ? 'Edit profiles in Edit Columns' : OTHER_BOARD_PROFILES_EDIT}
               testId="task-profile-edit"
+              disabled={!profilesEditableHere}
             />
           </div>,
         )}

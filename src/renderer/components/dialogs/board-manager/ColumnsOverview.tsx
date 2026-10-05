@@ -1,4 +1,4 @@
-import { Bot, CircleArrowUp, MessageSquare, Zap } from 'lucide-react';
+import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Pill } from '../../Pill';
 import { ToggleSwitch } from '../../settings/shared';
@@ -182,7 +182,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     { label: '', span: 1 },
     { label: 'Agent', span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
     { label: 'Conversation', span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
-    { label: 'Automations', span: 3, icon: <Zap size={12} strokeWidth={1.75} /> },
+    { label: 'Automations', span: 3, icon: <Columns3Cog size={12} strokeWidth={1.75} /> },
   ];
 
   // The widths reach the table through DataTable's <colgroup>; a grouped

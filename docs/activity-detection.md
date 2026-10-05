@@ -235,7 +235,7 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 
 Going idle and finishing a turn are different facts, and On agent turn end automations need the
 second. The engine reports one through `ActivityEngineCallbacks.onTurnEnded(sessionId,
-turnStartedAt)`, which `SessionTelemetry` relays and `SessionManager` emits as `'turn-ended'`
+turnStartedAt, workSerial)`, which `SessionTelemetry` relays and `SessionManager` emits as `'turn-ended'`
 (`TurnEndedPayload`, with the task, project, agent session and isolated column). `'activity'` is
 not overloaded for it: that event fires on every state change, and a Stop commits as
 `timer:stability`, the same trigger three watchdogs use.
@@ -251,12 +251,22 @@ not overloaded for it: that event fires on every state change, and a Stop commit
 - **`turnStartedAt`** is stamped on every idle-to-thinking commit, and at spawn when the session is
   seeded thinking. A permission prompt resolving back to thinking keeps it, since that is the same
   turn. The turn-end runner uses it to ignore a turn that began before the task entered its column.
+- **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
+  `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
+  `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no
+  work since. The turn-end runner and the workflow step ask it before acting on a check's answer, so
+  a turn the user began meanwhile stops them even after it failed or was interrupted back to idle
+  with no turn end of its own. It is not `turnStartedAt` because `forceThinking` re-stamps that: a
+  PTY-tracked agent's trailing paint after its turn end (Kimi's tracker is never suppressed) would
+  read as a new turn every time. Only an agent's own hook or wire events move the serial.
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for the
   hook agents and Kimi (whose wire protocol emits `TurnEnd`); false for agents whose only signal is
   terminal silence, where a quiet compile and a finished turn look the same.
-- Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and the
-  `session-030-code-review-background-subagents` replay fixture (#529's pass #76: 12 Stops, 3 turn
-  ends, because the background reviewers held the other nine).
+- Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and two replay fixtures:
+  `session-030-code-review-background-subagents` (#529's pass #76: 12 Stops, 3 turn ends, because
+  the background reviewers held the other nine) and `session-031-turn-failed-then-continue` (a
+  captured task session: a `turn_failed` with error `unknown` idles with no turn end, then the turn
+  after the user's "continue" ends once at its Stop).
 
 ### Aborted-turn recovery (service errors)
 

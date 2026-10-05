@@ -208,7 +208,7 @@ const api: ElectronAPI = {
   },
 
   swimlanes: {
-    list: () => ipcRenderer.invoke(IPC.SWIMLANE_LIST),
+    list: (projectId) => ipcRenderer.invoke(IPC.SWIMLANE_LIST, projectId ?? null),
     create: (input) => ipcRenderer.invoke(IPC.SWIMLANE_CREATE, input),
     update: (input) => ipcRenderer.invoke(IPC.SWIMLANE_UPDATE, input),
     delete: (id) => ipcRenderer.invoke(IPC.SWIMLANE_DELETE, id),
@@ -370,7 +370,7 @@ const api: ElectronAPI = {
   },
 
   config: {
-    get: () => ipcRenderer.invoke(IPC.CONFIG_GET),
+    get: (projectId) => ipcRenderer.invoke(IPC.CONFIG_GET, projectId ?? null),
     getGlobal: () => ipcRenderer.invoke(IPC.CONFIG_GET_GLOBAL),
     set: (config) => ipcRenderer.invoke(IPC.CONFIG_SET, config),
     setSync: (config) => { ipcRenderer.sendSync(IPC.CONFIG_SET_SYNC, config); },
@@ -433,7 +433,7 @@ const api: ElectronAPI = {
 
   git: {
     detect: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.GIT_DETECT, forceRefresh),
-    listBranches: () => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES),
+    listBranches: (projectId) => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES, projectId ?? null),
     diffFiles: (input) => ipcRenderer.invoke(IPC.GIT_DIFF_FILES, input),
     fileContent: (input) => ipcRenderer.invoke(IPC.GIT_FILE_CONTENT, input),
     fileImage: (input) => ipcRenderer.invoke(IPC.GIT_FILE_IMAGE, input),
@@ -744,7 +744,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
       return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
     },
-    getBoardProfiles: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES),
+    getBoardProfiles: (projectId) => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, projectId ?? null),
     setBoardProfiles: (profiles) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, profiles),
     onBoardProfilesChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);

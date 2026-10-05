@@ -1028,7 +1028,11 @@ function worst(values, direction = 'max') {
   if (nums.length === 0) return null;
   return direction === 'max' ? Math.max(...nums) : Math.min(...nums);
 }
-const fmt = (v) => (v === null || v === undefined ? '-' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
+// A declaration, not a const: `--analyze` calls analyze() at the top of the
+// file, before a const here would be initialized.
+function fmt(v) {
+  return v === null || v === undefined ? '-' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v);
+}
 
 function analyze(file) {
   const data = JSON.parse(fs.readFileSync(file, 'utf-8'));

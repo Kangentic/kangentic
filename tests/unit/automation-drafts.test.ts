@@ -490,8 +490,9 @@ describe('the row sentence', () => {
   it('comes from the shared describer, so a row reads the same everywhere', () => {
     expect(describeDraft(draft({ type: 'webhook', config: { url: 'https://hooks.example.com/abc' } })))
       .toBe('POST to hooks.example.com');
+    // The timing is a mark beside the name now, not words in the sentence.
     expect(describeDraft(draft({ type: 'send_message', config: { message: '/code-review', mode: 'deferred' } })))
-      .toBe('Sends "/code-review" after the current turn.');
+      .toBe('Sends "/code-review"');
   });
 
   it('survives a half-built row', () => {

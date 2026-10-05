@@ -15,6 +15,13 @@
  * is the runner's own decision rather than an escaped throw. `clearSpawnProgress`
  * runs in the pass's `finally`, so it is the barrier that the pass finished: a
  * "step was not called" assertion waits on it instead of a fixed sleep.
+ *
+ * The last block is the turn identity race: the user starts a new turn while
+ * the Condition check is out, and that turn fails (`turn_failed`) back to idle,
+ * which emits no turn end. Idle again, the old re-check passed and the rows ran
+ * on the old turn's reply. The fake session manager's `isLatestTurn` compares
+ * against a work serial the test moves, the way the activity engine moves it
+ * when the agent reports new work (the "continue" prompt).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -32,6 +39,7 @@ const hoisted = vi.hoisted(() => ({
   deliverMessageToSession: vi.fn(),
   clearSpawnProgress: vi.fn(),
   executeTransition: vi.fn(),
+  checkConditions: vi.fn(),
   rows: [] as unknown[],
   task: {} as Record<string, unknown>,
   column: {} as Record<string, unknown>,
@@ -54,7 +62,12 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   })),
 }));
 vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
-  createTransitionEngine: vi.fn(() => ({ executeTransition: hoisted.executeTransition })),
+  createTransitionEngine: vi.fn(() => ({
+    executeTransition: hoisted.executeTransition,
+    resolveGroupTemplateVars: vi.fn(() => ({})),
+    conditionCheckInput: vi.fn(() => ({})),
+    checkConditions: hoisted.checkConditions,
+  })),
   resolveInjectionVerifier: vi.fn(() => undefined),
 }));
 vi.mock('../../src/main/ipc/helpers/automation-failures', () => ({ reportAutomationFailures: vi.fn() }));
@@ -96,9 +109,31 @@ const KEEP_GOING_ROW = {
   max_runs: null,
 } as unknown as ColumnAutomation;
 
+/** A row the Automation agent has to answer for, so the pass waits on a check. */
+const CLEAN_REVIEW_ROW = {
+  id: 'row-clean-review',
+  type: 'move_to_column',
+  name: 'On to Testing',
+  config: { targetColumn: 'Testing' },
+  condition: 'The review is clean',
+  max_runs: null,
+} as unknown as ColumnAutomation;
+
+/** The work serial the turn end reports: the turn's identity. */
+const TURN_WORK_SERIAL = 41;
+/** The serial once the user's "continue" prompt starts a newer turn. */
+const NEXT_TURN_WORK_SERIAL = 42;
+
+interface FakeSessionManager extends EventEmitter {
+  getActivityCache: () => Record<string, string>;
+  isLatestTurn: (sessionId: string, workSerial: number) => boolean;
+}
+
 describe('a turn end and the workflow step', () => {
-  let sessionManager: EventEmitter & { getActivityCache: () => Record<string, string> };
+  let sessionManager: FakeSessionManager;
   let activity: Record<string, string>;
+  /** The session's current work serial, which new work the agent reports moves. */
+  let currentWorkSerial: number;
   let taskCounter = 0;
   let taskId: string;
 
@@ -107,6 +142,10 @@ describe('a turn end and the workflow step', () => {
     hoisted.runWorkflowStep.mockImplementation(async () => undefined);
     hoisted.workflowStepApplies.mockImplementation(() => true);
     hoisted.deliverMessageToSession.mockImplementation(async () => undefined);
+    hoisted.checkConditions.mockImplementation(async () => ({
+      ok: true,
+      answers: new Map([[CLEAN_REVIEW_ROW.id, { met: true, reason: 'No findings.' }]]),
+    }));
     // The fake engine runs the row the way the real runner does: it hands the
     // row's message to `deliverToAgent`, and a rejection is the row's failure,
     // recorded and not thrown.
@@ -136,7 +175,12 @@ describe('a turn end and the workflow step', () => {
     hoisted.rows = [KEEP_GOING_ROW];
 
     activity = { [SESSION_ID]: 'idle' };
-    sessionManager = Object.assign(new EventEmitter(), { getActivityCache: () => activity });
+    currentWorkSerial = TURN_WORK_SERIAL;
+    sessionManager = Object.assign(new EventEmitter(), {
+      getActivityCache: () => activity,
+      isLatestTurn: (sessionId: string, workSerial: number) =>
+        sessionId === SESSION_ID && workSerial === currentWorkSerial,
+    });
     registerTurnEndAutomations({
       sessionManager,
       mainWindow: MAIN_WINDOW,
@@ -153,6 +197,7 @@ describe('a turn end and the workflow step', () => {
       agentSessionId: 'agent-session-1',
       isolatedSwimlaneId: null,
       turnStartedAt: null,
+      workSerial: TURN_WORK_SERIAL,
     });
     await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalledWith(MAIN_WINDOW, taskId));
   }
@@ -228,5 +273,46 @@ describe('a turn end and the workflow step', () => {
 
     expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
     expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  describe('a new turn while the check is out', () => {
+    beforeEach(() => {
+      hoisted.rows = [CLEAN_REVIEW_ROW];
+      hoisted.executeTransition.mockImplementation(async () => ({ results: [] }));
+    });
+
+    it('runs the rows when the turn the check judged is still the latest (the control)', async () => {
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs no row and no step when a newer turn failed back to idle during the check', async () => {
+      // The user typed "continue" while the check was out, and that turn ended
+      // in an API error: idle again, with no turn end of its own.
+      hoisted.checkConditions.mockImplementation(async () => {
+        currentWorkSerial = NEXT_TURN_WORK_SERIAL;
+        activity[SESSION_ID] = 'idle';
+        return { ok: true, answers: new Map([[CLEAN_REVIEW_ROW.id, { met: true, reason: 'No findings.' }]]) };
+      });
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing when a newer turn began before the check could start', async () => {
+      currentWorkSerial = NEXT_TURN_WORK_SERIAL;
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    });
   });
 });

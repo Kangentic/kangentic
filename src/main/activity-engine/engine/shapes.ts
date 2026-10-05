@@ -524,6 +524,20 @@ export interface SessionEngineState {
    */
   turnStartedAt: number | null;
   /**
+   * How many events that start or carry a turn's work (`TURN_INITIATING_EVENTS`)
+   * the engine has processed for this session. Reported with a turn end, so a
+   * consumer that judged that turn can ask later whether the agent has reported
+   * anything since: a newer turn moves it even when that turn failed or was
+   * interrupted back to idle with no turn end of its own.
+   *
+   * Only `processEvent` moves it, so only the agent's own hooks or wire events
+   * do. PTY output and the status heartbeat force thinking without touching it,
+   * since an agent's trailing paint after a turn end is not a new turn. That is
+   * why it, and not `turnStartedAt`, is the turn's identity: a PTY-tracked
+   * agent's paint re-stamps `turnStartedAt`.
+   */
+  workSerial: number;
+  /**
    * The last `ActivityReason` handed to a consumer, or null before the first
    * one. Exists so a reason that changes KIND without the activity changing can
    * still be reported.
@@ -778,9 +792,10 @@ export interface ActivityEngineCallbacks {
    *
    * `turnStartedAt` is when the turn that just ended began
    * (`SessionEngineState.turnStartedAt`), or null when the engine never saw it
-   * begin.
+   * begin. `workSerial` is `SessionEngineState.workSerial` at the turn end: the
+   * turn's identity, still current until the agent reports new work.
    */
-  onTurnEnded?(sessionId: string, turnStartedAt: number | null): void;
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
 }
 
 /**

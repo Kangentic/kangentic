@@ -45,8 +45,16 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
   };
 }
 
-/** `paused`: board 11's pair, the running workflow paused yesterday at 18:20 beside the draft. */
-type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused';
+/** The other board in `across-boards`, whose Done column has its own color. */
+const OTHER_PROJECT_ID = 'workflows-view-mobile';
+const OTHER_DONE_COLOR = '#a855f7';
+
+/**
+ * `paused`: board 11's pair, the running workflow paused yesterday at 18:20
+ * beside the draft. `across-boards`: the running workflow with one more task,
+ * #420, in Done on another board.
+ */
+type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards';
 
 function seedScript(seed: Seed, sidebarWidth: number): string {
   const draft = {
@@ -63,8 +71,21 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
     },
   };
   const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5 } };
-  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused';
-  const workflows = seed === 'running' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
+  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards';
+  const workflows = seed === 'running' || seed === 'across-boards' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
+  // A task row and a Done column tagged with the other project are on its board.
+  const otherBoard = seed === 'across-boards'
+    ? `state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts });
+       state.swimlanes.push(Object.assign({}, state.DEFAULT_SWIMLANES[6], { id: 'mobile-done', position: 6, color: '${OTHER_DONE_COLOR}', projectId: '${OTHER_PROJECT_ID}', created_at: ts }));
+       state.tasks.push({
+         id: 't420', display_id: 420, title: 'Budgets on the phone', description: 'Planned by the workflow agent.',
+         swimlane_id: 'mobile-done', position: 0, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
+         pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
+         attachment_count: 0, archived_at: ts, workflow_id: 'wf-usage', workflow_project_id: '${PROJECT_ID}', projectId: '${OTHER_PROJECT_ID}',
+         route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
+         created_at: ts, updated_at: ts,
+       });`
+    : '';
   const links = hasRunning
     ? RUNNING_LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }))
     : [];
@@ -96,6 +117,7 @@ function seedScript(seed: Seed, sidebarWidth: number): string {
           created_at: ts, updated_at: ts,
         });
       });
+      ${otherBoard}
       return { currentProjectId: '${PROJECT_ID}' };
     });
   `;
@@ -209,6 +231,57 @@ test.describe('Workflows header', () => {
     try {
       await expect(byTestId(page, 'workflow-start')).toBeDisabled();
       await expect(byTestId(page, 'workflow-start')).toHaveAttribute('title', 'This workflow has no tasks yet.');
+      // Nothing to select: the inspector shows the empty run order, with no prompt.
+      await expect(byTestId(page, 'workflow-run-order')).toContainText('No tasks yet.');
+      await expect(byTestId(page, 'workflow-inspector-title')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-inspector-prompt')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('an empty workflow\'s canvas shows the three steps until its first cards land, selected from the run order', async () => {
+    const { browser, page } = await launch('empty-draft');
+    try {
+      const welcome = byTestId(page, 'workflow-canvas-welcome');
+      await expect(welcome).toBeVisible();
+      await expect(welcome.locator('[data-testid="workflows-empty-illustration"]')).toHaveCount(1);
+      await expect(byTestId(page, 'workflow-canvas-welcome-title')).toHaveText('Nothing planned yet');
+      const steps = welcome.locator('[data-testid="workflow-canvas-welcome-step"]');
+      await expect(steps.locator(':scope > span:first-child')).toHaveText(['1', '2', '3']);
+      await expect(steps.locator(':scope > span:last-child')).toHaveText([
+        'Tell the workflow agent what to build, and it plans the tasks.',
+        'Review the plan, and click a task to change its route or blockers.',
+        'Press Start and the tasks run automatically in order until complete.',
+      ]);
+      // No button: Add task stays in the canvas tools, and the inspector keeps the empty run order.
+      await expect(welcome.locator('button, [role="button"], a')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-add-task')).toBeVisible();
+      await expect(byTestId(page, 'workflow-run-order')).toContainText('No tasks yet.');
+
+      // The workflow agent's first draft lands while the user watches: two
+      // tasks in one change, the second added blocking the first.
+      await page.evaluate(async (projectId) => {
+        const workflows = window.electronAPI.workflows;
+        await workflows.addTask(projectId, 'wf-draft', { title: 'Token docs' });
+        await workflows.addTask(projectId, 'wf-draft', { title: 'Token table' });
+        await workflows.setLink(projectId, 'wf-draft', 'task-2', 'task-1', true);
+      }, PROJECT_ID);
+      await expect(welcome).toHaveCount(0);
+      // The first in the run order is selected, not the first added.
+      await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'false');
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Token table');
+
+      // Cleared with tasks present, the selection stays cleared as more land.
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
+      await page.evaluate(async (projectId) => {
+        await window.electronAPI.workflows.addTask(projectId, 'wf-draft', { title: 'Token picker' });
+      }, PROJECT_ID);
+      await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
+      await expect(welcome).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -218,6 +291,10 @@ test.describe('Workflows header', () => {
     const { browser, page } = await launch('draft');
     try {
       await byTestId(page, 'workflow-rename').click();
+      // The header button's pencil leads the title, as on the other titled dialogs (Final 8).
+      const pencil = byTestId(page, 'workflow-rename-icon');
+      await expect(pencil).toHaveCount(1);
+      expect(await pencil.evaluate((element) => getComputedStyle(element).color)).toBe(await computedColor(page, 'var(--color-fg-muted)'));
       const input = byTestId(page, 'workflow-rename-input');
       await expect(input).toHaveValue('Theme tokens');
       await expect.poll(() => input.evaluate((element) => {
@@ -288,11 +365,19 @@ test.describe('Workflows header', () => {
       await byTestId(page, 'workflow-picker').click();
       const options = page.locator('[data-testid="workflow-picker-option"]');
       await expect(options).toHaveCount(2);
+      // Workflows draw two linked cards, in the view toggle and on every
+      // picker row. The list tree is the Changes panel's file tree.
+      await expect(byTestId(page, 'view-toggle-workflows').locator('svg.lucide-workflow')).toHaveCount(1);
+      await expect(options.locator('svg.lucide-workflow')).toHaveCount(2);
+      await expect(page.locator('[data-testid="view-toggle-workflows"] svg.lucide-list-tree, [data-testid="workflow-picker-option"] svg.lucide-list-tree')).toHaveCount(0);
       await expect(options.filter({ hasText: 'Usage budgets' })).toContainText('Running');
       await expect(options.filter({ hasText: 'Theme tokens' })).toContainText('Not started');
       await options.filter({ hasText: 'Theme tokens' }).click();
       await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
       await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+      // Another workflow opens on its own first task (Final 4).
+      await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'true');
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(1);
     } finally {
       await browser.close();
     }
@@ -418,10 +503,18 @@ test.describe('Workflows header', () => {
 });
 
 test.describe('Workflows inspector', () => {
-  test('with nothing selected it shows the run order, and a row selects its card', async () => {
+  test('opens on the first task in the run order; cleared, it shows the run order, and a row selects its card', async () => {
     const { browser, page } = await launch('running');
     try {
-      await expect(byTestId(page, 'workflow-inspector-prompt')).toContainText('Select a task');
+      // The first stop's first row is #411, so the inspector opens on it (Final 4).
+      await expect(card(page, 't411')).toHaveAttribute('data-selected', 'true');
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Budgets table and repository');
+      await expect(byTestId(page, 'workflow-inspector-prompt')).toHaveCount(0);
+
+      // A click on empty canvas clears it, and nothing selects it again.
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-inspector-prompt')).toHaveCount(0);
       // Five tasks with nothing left to wait for start together; then each later step.
       await expect(page.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(9);
       await page.locator('[data-testid="workflow-run-order-row"][data-task-key="t417"]').click();
@@ -521,6 +614,40 @@ test.describe('Workflows inspector', () => {
     }
   });
 
+  test('a Done card wears the Done column\'s color, and every card\'s 2px border when selected', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      const doneLaneColor = await page.evaluate(async () => (
+        (await window.electronAPI.swimlanes.list()).find((lane) => lane.role === 'done')?.color ?? ''
+      ));
+      expect(doneLaneColor).not.toBe('');
+      const doneColor = await computedColor(page, doneLaneColor);
+      // The selected border every card shares: 2px of the muted grey at 75%.
+      const selectedBorder = await computedColor(page, 'color-mix(in oklab, var(--color-fg-muted) 75%, transparent)');
+
+      // #411 is done and opens selected (the run order's first row): the 2px
+      // border inside the card, no ring outside it.
+      await expect(card(page, 't411')).toHaveAttribute('data-selected', 'true');
+      await expect(card(page, 't411')).toHaveCSS('border-top-width', '2px');
+      await expect(card(page, 't411')).toHaveCSS('border-top-color', selectedBorder);
+      await expect(card(page, 't411')).toHaveCSS('box-shadow', 'none');
+      // #412, done and not selected: 1px in the board's Done column color (Final 1).
+      await expect(card(page, 't412')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 't412')).toHaveCSS('border-top-color', doneColor);
+      // A card that is not done keeps its grey edge.
+      await expect(card(page, 't415')).toHaveCSS('border-top-color', await computedColor(page, 'var(--color-edge)'));
+
+      // Selecting a card that is not done moves the same border there, and #411 wears the Done color again.
+      await card(page, 't414').click();
+      await expect(card(page, 't414')).toHaveAttribute('data-selected', 'true');
+      await expect(card(page, 't414')).toHaveCSS('border-top-color', selectedBorder);
+      await expect(card(page, 't411')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 't411')).toHaveCSS('border-top-color', doneColor);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Add blocker lists only what the task can wait for, and links it', async () => {
     const { browser, page } = await launch('running');
     try {
@@ -548,7 +675,38 @@ test.describe('Workflows inspector', () => {
       await expect(confirm).toContainText('It stays where it is, as an ordinary task.');
       await confirm.getByRole('button', { name: 'Remove' }).click();
       await expect(card(page, 't417')).toHaveCount(0);
-      await expect(byTestId(page, 'workflow-inspector-prompt')).toBeVisible();
+      // The selection moves to the run order's first task, not to a prompt (Final 4).
+      await expect(card(page, 't411')).toHaveAttribute('data-selected', 'true');
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Budgets table and repository');
+      await expect(byTestId(page, 'workflow-inspector-prompt')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('Workflows across boards', () => {
+  test('a Done card on another board wears that board\'s Done color, and the open board\'s keep its own', async () => {
+    const { browser, page } = await launch('across-boards');
+    try {
+      const homeDoneColor = await page.evaluate(async () => (
+        (await window.electronAPI.swimlanes.list()).find((lane) => lane.role === 'done')?.color ?? ''
+      ));
+      expect(homeDoneColor).not.toBe(OTHER_DONE_COLOR);
+      const otherDone = await computedColor(page, OTHER_DONE_COLOR);
+      const homeDone = await computedColor(page, homeDoneColor);
+      // #411 opens selected; #412 (this board) and #420 (the other) are Done and not.
+      await expect(card(page, 't411')).toHaveAttribute('data-selected', 'true');
+      await expect(card(page, 't420')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 't420')).toHaveCSS('border-top-color', otherDone);
+      await expect(card(page, 't412')).toHaveCSS('border-top-color', homeDone);
+
+      // The inspector's route ends in that board's Done too.
+      const doneMark = byTestId(page, 'workflow-route-done').locator('.lucide-circle-check-big');
+      await card(page, 't420').click();
+      await expect(doneMark).toHaveCSS('color', otherDone);
+      await card(page, 't412').click();
+      await expect(doneMark).toHaveCSS('color', homeDone);
     } finally {
       await browser.close();
     }
@@ -556,14 +714,18 @@ test.describe('Workflows inspector', () => {
 });
 
 test.describe('Workflows canvas tools and search', () => {
-  test('Add task opens New Task without the branch and agent rows, and the card lands selected', async () => {
+  test('Add task opens New Task with the board form\'s project, base branch and run rows, and the card lands selected', async () => {
     const { browser, page } = await launch('draft');
     try {
       await byTestId(page, 'workflow-add-task').click();
       const dialog = byTestId(page, 'new-task-dialog');
       await expect(dialog).toBeVisible();
-      // A planned task has no branch, agent or attachments until Start creates it.
-      await expect(dialog.getByText('Advanced')).toHaveCount(0);
+      // The board's own rows (sign-offs 9 and 25), less the branch name and
+      // attachments, which a task gets once Start creates it.
+      await expect(dialog.locator('input[data-testid="workflow-task-project"]')).toHaveValue('kangentic');
+      await expect(dialog.locator('[data-testid="task-branch-row"]')).toBeVisible();
+      await expect(dialog.locator('[data-testid="task-run-mode"]')).toBeVisible();
+      await expect(dialog.locator('[data-testid="custom-branch-name-input"]')).toHaveCount(0);
       await dialog.getByPlaceholder('Task title').fill('Token contrast check');
       await dialog.getByRole('button', { name: 'Create' }).click();
       await expect(dialog).toHaveCount(0);
@@ -623,6 +785,26 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
+  test('a task that waits for nothing sits in the column just before the task that waits on it', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      // The column a node sits in, from the translate React Flow writes on it: state, not a measured box.
+      const columnOf = (key: string) => page.locator(`.react-flow__node[data-id="${key}"]`).evaluate((element) => (
+        /translate\(\s*(-?[\d.]+)px/.exec((element as HTMLElement).style.transform)?.[1] ?? ''
+      ));
+      await expect(card(page, 't419')).toBeVisible();
+      // #419 waits for nothing and only #418 waits on it: it sits beside #418's
+      // other blockers (#415, #416, #417), not with the first tasks (Final 2).
+      const column419 = await columnOf('t419');
+      expect(column419).not.toBe('');
+      expect(column419).toBe(await columnOf('t415'));
+      expect(await columnOf('t411')).toBe(await columnOf('t412'));
+      expect(column419).not.toBe(await columnOf('t411'));
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Auto layout stays disabled until a card is moved by hand', async () => {
     const { browser, page } = await launch('draft');
     try {
@@ -646,6 +828,9 @@ test.describe('Workflows canvas tools and search', () => {
     const { browser, page } = await launch('running');
     try {
       await expect(page.locator('[data-testid="workflow-canvas-card"]:visible')).toHaveCount(9);
+      // The run order shows with nothing selected, and the workflow opens on its first task.
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toHaveCount(0);
       await byTestId(page, 'board-search').fill('budget');
       // Titles with "budget": #411, #412, #415, #416 and #418.
       await expect(page.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(5);

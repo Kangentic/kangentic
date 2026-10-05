@@ -193,6 +193,52 @@ function row(name: string): Locator {
   return dialog().locator(`[data-testid="column-automation-row"][data-name="${name}"]`);
 }
 
+/** A row's first line: its name, then its guard marks. */
+function titleLine(name: string): Locator {
+  return row(name).locator('[data-testid="column-automation-row-title"]');
+}
+
+/** The Condition mark, looked up on the name's line so a mark anywhere else does not count. */
+function conditionMark(name: string): Locator {
+  return titleLine(name).locator('[data-testid="column-automation-condition-mark"]');
+}
+
+/** The Frequency mark, looked up on the name's line for the same reason. */
+function frequencyMark(name: string): Locator {
+  return titleLine(name).locator('[data-testid="column-automation-frequency-mark"]');
+}
+
+/** An action's own mark (Delivery or Message), on the name's line like the guards. */
+function markOf(name: string, kind: 'delivery' | 'message'): Locator {
+  return titleLine(name).locator(`[data-testid="column-automation-${kind}-mark"]`);
+}
+
+/** A mark says its guard in its aria-label and its tooltip, and the two agree. */
+async function expectMarkSays(mark: Locator, sentence: string): Promise<void> {
+  await expect(mark).toHaveAttribute('role', 'img');
+  await expect(mark).toHaveAttribute('aria-label', sentence);
+  await expect(mark).toHaveAttribute('title', sentence);
+  await expect(mark.locator('svg')).toHaveCount(1);
+}
+
+/**
+ * The row is two lines whatever its guards: the name's line and the action
+ * sentence. The old third line (its test id, and the words it printed) is gone,
+ * and no guard word sits beside the icons. `toContainText` reads text content,
+ * not attributes, so the tooltips do not count against it.
+ */
+async function expectTwoLines(name: string, sentence?: string): Promise<void> {
+  const label = row(name).locator('[data-testid="column-automation-row-label"]');
+  expect(await label.evaluate((node) => Array.from(node.children).map((child) => child.getAttribute('data-testid'))))
+    .toEqual(['column-automation-row-title', 'column-automation-row-sentence']);
+  if (sentence !== undefined) {
+    await expect(row(name).locator('[data-testid="column-automation-row-sentence"]')).toHaveText(sentence);
+  }
+  await expect(row(name).locator('[data-testid="column-automation-guards"]')).toHaveCount(0);
+  await expect(row(name)).not.toContainText('Only if');
+  await expect(row(name)).not.toContainText('for each task');
+}
+
 test.describe('Edit automation: guards, turn end and Move to column', () => {
   test.beforeEach(async () => {
     if (await editDialog().isVisible({ timeout: 200 }).catch(() => false)) {
@@ -285,8 +331,11 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
 
-    await expect(row('Ping').locator('[data-testid="column-automation-guards"]'))
-      .toHaveText('Only if CI is green. At most 3 times for each task.');
+    // Marks beside the name, not words under the sentence.
+    await expectMarkSays(conditionMark('Ping'), 'Condition: only if CI is green.');
+    await expectMarkSays(frequencyMark('Ping'), 'Frequency: at most 3 times for each task.');
+    await expect(frequencyMark('Ping').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
+    await expectTwoLines('Ping');
 
     await saveManager();
     const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Ping');
@@ -333,9 +382,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toBeDisabled();
   });
 
-  // 3 - The pane's groups and the guard line ─────────────────────────────────
+  // 3 - The pane's groups and the guard marks ────────────────────────────────
 
-  test('the pane stacks enter, turn end and exit, and a guarded row says so under its sentence', async () => {
+  test('the pane stacks enter, turn end and exit, and a guarded row marks its guards beside its name', async () => {
     await seedColumn('Executing', [
       { name: 'Plain', type: 'run_script', trigger: 'enter', config: { script: 'echo plain' } },
       {
@@ -362,18 +411,28 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
       await expect(dialog().locator(`[data-testid="column-automation-add"][data-trigger="${trigger}"]`)).toBeVisible();
     }
 
-    // The row lands in its own group, and carries both guards in the order the rule runs.
+    // The row lands in its own group, and marks both guards on the name's line,
+    // in the order the rule runs. The words are in the marks' labels, not on the row.
     await expect(groups.nth(1).locator('[data-testid="column-automation-row"]')).toHaveCount(1);
     await expect(row('Hand off')).toHaveAttribute('data-trigger', 'turn_end');
-    await expect(row('Hand off').locator('[data-testid="column-automation-guards"]'))
-      .toHaveText('Only if the review is clean. At most 3 times for each task.');
+    await expectMarkSays(conditionMark('Hand off'), 'Condition: only if the review is clean.');
+    await expectMarkSays(frequencyMark('Hand off'), 'Frequency: at most 3 times for each task.');
+    await expect(frequencyMark('Hand off').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
+    expect(await titleLine('Hand off').evaluate((node) =>
+      Array.from(node.children).map((child) => child.getAttribute('data-testid')).filter((id) => id !== null)))
+      .toEqual(['column-automation-condition-mark', 'column-automation-frequency-mark']);
+    // Line two is the action sentence, with no full stop, and there is no line three.
+    await expectTwoLines('Hand off', 'Moves the task to Testing');
 
-    // A row with no guard stays two lines: nothing is printed for it.
-    await expect(row('Plain').locator('[data-testid="column-automation-guards"]')).toHaveCount(0);
-    await expect(row('Tell me').locator('[data-testid="column-automation-guards"]')).toHaveCount(0);
+    // A row with no guard has no mark, and the same two lines.
+    for (const [name, sentence] of [['Plain', 'Runs echo plain'], ['Tell me', 'Notifies "Done here"']]) {
+      await expect(conditionMark(name)).toHaveCount(0);
+      await expect(frequencyMark(name)).toHaveCount(0);
+      await expectTwoLines(name, sentence);
+    }
   });
 
-  test('a row with one guard prints only that guard', async () => {
+  test('a row with one guard shows only that guard\'s mark', async () => {
     await seedColumn('Executing', [
       { name: 'Only condition', type: 'notify', trigger: 'exit', config: { title: 'a' }, condition: 'CI is green.' },
       { name: 'Only once', type: 'notify', trigger: 'exit', config: { title: 'b' }, maxRuns: 1 },
@@ -381,10 +440,219 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await openColumn('Executing');
 
     // A leading acronym keeps its capitals, and the sentence's own full stop is not doubled.
-    await expect(row('Only condition').locator('[data-testid="column-automation-guards"]'))
-      .toHaveText('Only if CI is green.');
-    await expect(row('Only once').locator('[data-testid="column-automation-guards"]'))
-      .toHaveText('At most once for each task.');
+    await expectMarkSays(conditionMark('Only condition'), 'Condition: only if CI is green.');
+    await expect(frequencyMark('Only condition')).toHaveCount(0);
+    await expectTwoLines('Only condition', 'Notifies "a"');
+
+    // One run reads "once" in the label, and the mark shows the bare count.
+    await expectMarkSays(frequencyMark('Only once'), 'Frequency: at most once for each task.');
+    await expect(frequencyMark('Only once').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('1');
+    await expect(conditionMark('Only once')).toHaveCount(0);
+    await expectTwoLines('Only once', 'Notifies "b"');
+  });
+
+  test('a long name truncates before the guard marks give ground', async () => {
+    const longName = 'Hand the task back to planning whenever the review finds anything the implementer can still fix';
+    await seedColumn('Executing', [
+      {
+        name: longName,
+        type: 'move_to_column',
+        trigger: 'turn_end',
+        config: { targetColumn: 'Testing' },
+        condition: 'The review is clean',
+        maxRuns: 3,
+      },
+    ]);
+    await openColumn('Executing');
+    await expect(conditionMark(longName)).toBeVisible();
+
+    // Read in one evaluate, each box against its own line, so the dialog's
+    // entrance scale cannot land the reads on different frames.
+    const layout = await titleLine(longName).evaluate((line) => {
+      const name = line.firstElementChild as HTMLElement;
+      const condition = line.querySelector('[data-testid="column-automation-condition-mark"]') as HTMLElement;
+      const frequency = line.querySelector('[data-testid="column-automation-frequency-mark"]') as HTMLElement;
+      const lineBox = line.getBoundingClientRect();
+      return {
+        nameTruncated: name.scrollWidth > name.clientWidth,
+        conditionWidth: condition.getBoundingClientRect().width,
+        conditionIconWidth: (condition.querySelector('svg') as SVGElement).getBoundingClientRect().width,
+        frequencyFits: frequency.scrollWidth <= frequency.clientWidth + 1,
+        frequencyInsideLine: frequency.getBoundingClientRect().right <= lineBox.right + 1,
+      };
+    });
+    expect(layout.nameTruncated).toBe(true);
+    expect(layout.conditionWidth).toBeGreaterThanOrEqual(layout.conditionIconWidth - 1);
+    expect(layout.frequencyFits).toBe(true);
+    expect(layout.frequencyInsideLine).toBe(true);
+    await expect(frequencyMark(longName).locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
+  });
+
+  // 3b - One grammar: the action's own marks, the sentence's look ─────────────
+
+  test('a waiting Send message on enter or exit carries the Delivery mark, and only there', async () => {
+    await seedColumn('Executing', [
+      { name: 'Waits on enter', type: 'send_message', trigger: 'enter', config: { message: 'Review it', mode: 'deferred' } },
+      { name: 'Waits on exit', type: 'send_message', trigger: 'exit', config: { message: 'Wrap up', mode: 'deferred' } },
+      { name: 'Right away', type: 'send_message', trigger: 'enter', config: { message: 'Go', mode: 'immediate' } },
+      { name: 'At turn end', type: 'send_message', trigger: 'turn_end', config: { message: 'Summarize', mode: 'deferred' } },
+    ]);
+    await openColumn('Executing');
+
+    for (const name of ['Waits on enter', 'Waits on exit']) {
+      await expectMarkSays(markOf(name, 'delivery'), 'Delivery: waits for the current turn to end.');
+    }
+    // Run immediately is the default, and a turn end has no turn left to wait for.
+    await expect(markOf('Right away', 'delivery')).toHaveCount(0);
+    await expect(markOf('At turn end', 'delivery')).toHaveCount(0);
+
+    // The timing is no longer words in the sentence, whichever Delivery is set.
+    await expectTwoLines('Waits on enter', 'Sends "Review it"');
+    await expectTwoLines('Right away', 'Sends "Go"');
+    await expectTwoLines('At turn end', 'Sends "Summarize"');
+  });
+
+  test("Move to column's message is a mark after the guards, all in one tone", async () => {
+    await seedColumn('Executing', [
+      {
+        name: 'Back for revisions',
+        type: 'move_to_column',
+        trigger: 'turn_end',
+        config: { targetColumn: 'Planning', message: '{{agentReply}}\nand the rest' },
+        condition: 'The review found work the implementer can do',
+        maxRuns: 3,
+      },
+      { name: 'Hand off', type: 'move_to_column', trigger: 'turn_end', config: { targetColumn: '' } },
+    ]);
+    await openColumn('Executing');
+
+    // The editor's card order: Condition, Frequency, then the action's own.
+    expect(await titleLine('Back for revisions').evaluate((node) =>
+      Array.from(node.children).map((child) => child.getAttribute('data-testid')).filter((id) => id !== null)))
+      .toEqual(['column-automation-condition-mark', 'column-automation-frequency-mark', 'column-automation-message-mark']);
+    // The label is the whole message, every line: the mark is the one place
+    // the row names it.
+    await expectMarkSays(markOf('Back for revisions', 'message'), 'Message: {{agentReply}}\nand the rest');
+    // The message left the sentence.
+    await expectTwoLines('Back for revisions', 'Moves the task to Planning');
+
+    // No message, no mark, and the next column needs no full stop either.
+    await expect(markOf('Hand off', 'message')).toHaveCount(0);
+    await expectTwoLines('Hand off', 'Moves the task to the next column');
+
+    // One tone: every mark's icon, and the Frequency's count, paint the same
+    // color. Read off the svg, not the wrapper, since a class on the icon
+    // itself is what would break it.
+    const colors = await titleLine('Back for revisions').evaluate((line) => {
+      const marks = Array.from(line.querySelectorAll('[role="img"]'));
+      const icons = marks.map((mark) => getComputedStyle(mark.querySelector('svg') as SVGElement).color);
+      const count = line.querySelector('[data-testid="column-automation-frequency-count"]') as HTMLElement;
+      return { icons, count: getComputedStyle(count).color, wrappers: marks.map((mark) => getComputedStyle(mark).color) };
+    });
+    expect(colors.icons).toHaveLength(3);
+    expect(new Set([...colors.icons, colors.count, ...colors.wrappers]).size).toBe(1);
+  });
+
+  test('a long value ends where the row ends, and the sentence tooltip holds all of it', async () => {
+    const message = 'Review the latest changes against the plan, fix anything the tests or the type checker report, then summarize what you changed';
+    await seedColumn('Executing', [
+      { name: 'Review on arrival', type: 'send_message', trigger: 'enter', config: { message } },
+    ]);
+    await openColumn('Executing');
+
+    const sentence = row('Review on arrival').locator('[data-testid="column-automation-row-sentence"]');
+    const expected = `Sends "${message}"`;
+    // The whole value is in the text: no fixed character cut, no "...".
+    await expect(sentence).toHaveText(expected);
+    await expect(sentence).toHaveAttribute('title', expected);
+    // CSS ends it instead: the line overflows its box and draws an ellipsis.
+    const overflow = await sentence.evaluate((node) => ({
+      overflows: node.scrollWidth > node.clientWidth,
+      textOverflow: getComputedStyle(node).textOverflow,
+    }));
+    expect(overflow.overflows).toBe(true);
+    expect(overflow.textOverflow).toBe('ellipsis');
+  });
+
+  test('a multi-line message shows its first line, and the tooltips hold every line', async () => {
+    await seedColumn('Executing', [
+      {
+        name: 'Review on arrival',
+        type: 'send_message',
+        trigger: 'enter',
+        config: { message: 'Review the diff.\nThen run the tests\nand report back.' },
+        condition: 'The plan is approved\nand CI is green',
+      },
+    ]);
+    await openColumn('Executing');
+
+    await expectTwoLines('Review on arrival', 'Sends "Review the diff."');
+    await expect(row('Review on arrival').locator('[data-testid="column-automation-row-sentence"]'))
+      .toHaveAttribute('title', 'Sends "Review the diff.\nThen run the tests\nand report back."');
+    await expectMarkSays(conditionMark('Review on arrival'), 'Condition: only if the plan is approved\nand CI is green.');
+  });
+
+  test("a script's sentence is set in the mono font, and an empty one is not", async () => {
+    await seedColumn('Executing', [
+      { name: 'Lint', type: 'run_script', trigger: 'enter', config: { script: 'npm run lint' } },
+      { name: 'Not yet', type: 'run_script', trigger: 'enter', config: {} },
+      { name: 'Tell me', type: 'notify', trigger: 'exit', config: { title: 'Done here' } },
+    ]);
+    await openColumn('Executing');
+
+    const fontOf = (name: string) => row(name).locator('[data-testid="column-automation-row-sentence"]')
+      .evaluate((node) => getComputedStyle(node).fontFamily);
+    const script = await fontOf('Lint');
+    const prose = await fontOf('Tell me');
+    expect(script).not.toBe(prose);
+    expect(script.toLowerCase()).toContain('mono');
+    // The empty state is prose, not code.
+    expect(await fontOf('Not yet')).toBe(prose);
+    await expectTwoLines('Lint', 'Runs npm run lint');
+    await expectTwoLines('Not yet', 'No script yet.');
+  });
+
+  test('Delivery on a turn-end Send message is disabled with the reason, and keeps its value', async () => {
+    await seedColumn('Executing', [
+      { name: 'Summarize', type: 'send_message', trigger: 'turn_end', config: { message: 'Summarize', mode: 'deferred' } },
+    ]);
+    await openColumn('Executing');
+    await row('Summarize').locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+
+    const reason = 'At a turn end the turn is over, so it sends at once.';
+    const options = [
+      editDialog().locator('[data-testid="auto-command-mode-immediate"]'),
+      editDialog().locator('[data-testid="auto-command-mode-deferred"]'),
+    ];
+    // In place, not hidden, with the stored choice still showing.
+    await expect(card('action').locator('[data-testid="automation-config-mode-row"]')).toBeVisible();
+    await expect(options[1]).toHaveAttribute('aria-checked', 'true');
+    for (const option of options) {
+      await expect(option).toBeDisabled();
+      await expect(option).toHaveAttribute('title', reason);
+    }
+    await options[0].click({ force: true });
+    await expect(options[1]).toHaveAttribute('aria-checked', 'true');
+
+    // Moving the row to enter brings Delivery back, with no reason on it.
+    await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
+    for (const option of options) {
+      await expect(option).toBeEnabled();
+      await expect(option).not.toHaveAttribute('title', reason);
+    }
+    // And back to turn end, where Done keeps the stored value untouched. The
+    // rename is a real edit, so Save has something to write.
+    await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
+    await expect(options[0]).toBeDisabled();
+    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Summarize the turn');
+    await editDialog().locator('[data-testid="edit-automation-done"]').click();
+    await expect(editDialog()).toBeHidden();
+
+    await saveManager();
+    const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Summarize the turn');
+    expect(saved?.trigger).toBe('turn_end');
+    expect(saved?.config.mode).toBe('deferred');
   });
 
   // 4 - The Condition card without an Automation agent ───────────────────────
@@ -642,6 +910,15 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(deliveryRow.getByText('Delivery', { exact: true })).toBeVisible();
     await expect(deliveryRow.locator('[data-testid="automation-config-mode"]')).toBeVisible();
     expect(await deliveryRow.evaluate((node) => getComputedStyle(node).flexDirection)).toBe('row');
+
+    // Run immediately types the message and presses Enter, so it shows the
+    // Enter key glyph. The bolt is the Trigger card's mark in this same dialog.
+    const immediate = deliveryRow.locator('[data-testid="auto-command-mode-immediate"]');
+    await expect(immediate.locator('svg.lucide-corner-down-left')).toHaveCount(1);
+    await expect(immediate.locator('svg.lucide-zap')).toHaveCount(0);
+    await expect(deliveryRow.locator('[data-testid="auto-command-mode-deferred"] svg.lucide-clock')).toHaveCount(1);
+    // On enter, Delivery is live.
+    await expect(immediate).toBeEnabled();
 
     // The Message starts one row tall and grows with its text, as Condition does.
     const message = card('action').locator('[data-testid="automation-config-message"]');

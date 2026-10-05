@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ListTree, X } from 'lucide-react';
+import { Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { Task } from '../../../shared/types';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -11,7 +11,7 @@ import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { WorkflowInspector } from './WorkflowInspector';
 import { RemoveTaskDialog } from './WorkflowDialogs';
-import { findTask } from './workflow-graph';
+import { DONE_COLOR_FALLBACK, findTask } from './workflow-graph';
 
 /**
  * Task detail's workflow panel (#732 board 9): the Workflows inspector itself,
@@ -37,9 +37,15 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
   const watched = useWorkflowStore((state) => (workflowId ? state.watchedDetails[workflowId] : undefined));
   const detail = watched?.detail ?? null;
   const boardProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const doneColumnColor = useBoardStore((state) => (taskProjectId === boardProjectId
+  // The workflow's home board's Done color, which the inspector's rail ends
+  // in: live from the board store when that board is open, else as the
+  // workflow read it. A task on yet another board wears its own board's.
+  const openBoardDoneColor = useBoardStore((state) => (homeProjectId === boardProjectId
     ? state.swimlanes.find((lane) => lane.role === 'done')?.color
-    : undefined)) ?? 'var(--color-active)';
+    : undefined));
+  const doneColumnColor = openBoardDoneColor
+    ?? (homeProjectId ? detail?.doneColors[homeProjectId] : null)
+    ?? DONE_COLOR_FALLBACK;
   const [removing, setRemoving] = useState(false);
   const inPopOut = !!window.electronAPI.popOut?.descriptor;
 
@@ -106,7 +112,7 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
         className="flex items-center gap-2 h-10 shrink-0 px-4 border-b border-edge text-[13px] font-semibold text-fg-secondary"
         data-testid="task-workflow-panel-header"
       >
-        <ListTree size={15} className="text-fg-muted" />
+        <WorkflowIcon size={15} className="text-fg-muted" />
         Workflow
         <button
           type="button"

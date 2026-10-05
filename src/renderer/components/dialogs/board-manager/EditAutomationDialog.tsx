@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, Info, Repeat, Settings, Split, Zap } from 'lucide-react';
+import { Funnel, Info, Repeat, Settings, Zap } from 'lucide-react';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
   EXIT_GROUP_BUDGET_MS,
+  automationFieldUnavailableReason,
   canTriggerRun,
   isTypeOfferedOnTrigger,
   stableAutomationTypes,
@@ -114,11 +115,39 @@ function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: 
   });
 }
 
-/** Moved verbatim from BoardManagerDialog, where it carried the same comment. */
-const AUTO_COMMAND_MODE_OPTIONS: SegmentedControlOption<string>[] = [
-  { value: 'immediate', label: 'Run immediately', icon: <Zap size={14} />, testId: 'auto-command-mode-immediate' },
-  { value: 'deferred', label: 'Wait for current turn', icon: <Clock size={14} />, testId: 'auto-command-mode-deferred' },
-];
+/**
+ * A segmented field's options, built from its manifest declaration: each
+ * option's label, test id and icon (resolved by name, as a type's icon is). On
+ * a trigger where the field does nothing (`unavailableOn`), every option is
+ * disabled with the reason as its hover tip, as the Trigger's blocked options
+ * are, and the stored value is left alone, so moving the row back to a trigger
+ * where it applies keeps what was chosen.
+ *
+ * Cached per field and reason, so the same array comes back while neither
+ * changes: the ResizeObserver reason `TRIGGER_OPTIONS` is module scope for.
+ * Manifest fields are module constants, so the field object is a stable key.
+ */
+const segmentedOptionsCache = new WeakMap<AutomationField, Map<string, SegmentedControlOption<string>[]>>();
+function segmentedOptionsFor(field: AutomationField, unavailableReason: string | null): SegmentedControlOption<string>[] {
+  let byReason = segmentedOptionsCache.get(field);
+  if (!byReason) {
+    byReason = new Map();
+    segmentedOptionsCache.set(field, byReason);
+  }
+  // A reason is never empty (the reserved-keys test), so '' can stand for none.
+  const cacheKey = unavailableReason ?? '';
+  const cached = byReason.get(cacheKey);
+  if (cached) return cached;
+  const built = (field.options ?? []).map((option): SegmentedControlOption<string> => ({
+    value: option.value,
+    label: option.label,
+    testId: option.testId,
+    ...(option.icon ? { icon: <AutomationIcon name={option.icon} size={14} /> } : {}),
+    ...(unavailableReason !== null ? { disabled: true, title: unavailableReason } : {}),
+  }));
+  byReason.set(cacheKey, built);
+  return built;
+}
 
 export interface EditAutomationDialogProps {
   draft: AutomationDraft;
@@ -297,7 +326,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
 
         <RuleCard
           testId="edit-automation-card-condition"
-          icon={<Split size={16} />}
+          icon={<Funnel size={16} />}
           title="Condition"
           description="Describe it in plain words; an agent checks it."
           checked={conditionOn}
@@ -426,6 +455,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                 onChange={(value) => setConfigValue(pairColumn.key, value)}
                 templatePicker={props.templatePicker}
                 columns={props.columns}
+                trigger={local.trigger}
               />
             )}
           </div>
@@ -440,6 +470,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               onChange={(value) => setConfigValue(field.key, value)}
               templatePicker={props.templatePicker}
               columns={props.columns}
+              trigger={local.trigger}
             />
           ))}
         </RuleCard>
@@ -527,15 +558,21 @@ function FieldLabel({ field }: { field: AutomationField }) {
 }
 
 /** One field, rendered from its manifest declaration. No type branching. */
-function ManifestField({ field, value, onChange, templatePicker: TemplatePicker, columns }: {
+function ManifestField({ field, value, onChange, templatePicker: TemplatePicker, columns, trigger }: {
   field: AutomationField;
   value: unknown;
   onChange: (value: unknown) => void;
   templatePicker: EditAutomationDialogProps['templatePicker'];
   columns: readonly AutomationColumnChoice[];
+  /** The row's trigger, which decides whether the field applies (`unavailableOn`). */
+  trigger: AutomationTrigger;
 }) {
   const text = typeof value === 'string' ? value : '';
   const testId = `automation-config-${field.key}`;
+  // A field the manifest declares does nothing on this trigger (Delivery at a
+  // turn end, where the turn is already over) stays in place, disabled, with
+  // the reason, and its value is not touched.
+  const unavailableReason = automationFieldUnavailableReason(field, trigger);
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   // A highlighted textarea owns its own caret, so the picker button routes
   // through the field rather than through `inputRef`. Only the plain `text`
@@ -589,13 +626,11 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
             className="flex-shrink-0"
             ariaLabel={field.label}
             testId={testId}
-            // The mode options are module scope for the same ResizeObserver
-            // reason as the trigger options above.
-            options={field.key === 'mode' ? AUTO_COMMAND_MODE_OPTIONS : (field.options ?? []).map((option) => ({
-              value: option.value,
-              label: option.label,
-              testId: option.testId,
-            }))}
+            // Cached, for the same ResizeObserver reason as the trigger options above.
+            options={segmentedOptionsFor(field, unavailableReason)}
+            // The whole control dims as well, so it reads as off rather than as
+            // a choice with its selected option still live.
+            disabled={unavailableReason !== null}
             value={text || String(field.defaultValue ?? '')}
             onChange={(next) => onChange(next)}
           />

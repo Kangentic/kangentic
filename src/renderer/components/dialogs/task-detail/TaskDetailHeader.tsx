@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, ListTree } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -480,7 +480,7 @@ export function TaskDetailHeader({
           {showPill('workflow') && canShowWorkflow && onToggleWorkflow && (
             <div data-pill-id="workflow" className="flex-shrink-0">
               <HeaderActionButton
-                icon={ListTree}
+                icon={WorkflowIcon}
                 onClick={onToggleWorkflow}
                 active={workflowPanelOpen}
                 title={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
@@ -814,7 +814,7 @@ function TaskDetailKebabItems({
       {/* Workflow panel (parity with the header pill; an archived task shows no pills) */}
       {canShowWorkflow && onToggleWorkflow && (
         <KebabMenuItem
-          icon={<ListTree size={14} />}
+          icon={<WorkflowIcon size={14} />}
           label={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
           onClick={() => { closeAll(); onToggleWorkflow(); }}
           data-testid="kebab-toggle-workflow"

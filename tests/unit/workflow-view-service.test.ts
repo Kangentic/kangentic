@@ -169,6 +169,22 @@ describeWithSqlite('the Workflows view operations', () => {
     expect(() => view.updatePlannedTask(context, 'home', workflow.id, key, { title: '  ' })).toThrow(/needs a title/);
   });
 
+  it('carries each board\'s Done column color, planned and started, so a Done card on another board wears its own', async () => {
+    (harness.dbs.get('mobile') as Database.Database).prepare("UPDATE swimlanes SET color = ? WHERE role = 'done'").run('#a855f7');
+    const homeDone = lanesOf('home').find((lane) => lane.role === 'done')!.color;
+    expect(homeDone).not.toBe('#a855f7');
+    const workflow = service.createWorkflow('home', {});
+    // A workflow on one board carries that board's alone.
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone });
+    service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' }],
+      links: [],
+    });
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone, mobile: '#a855f7' });
+    await service.startWorkflow(context, 'home', workflow.id);
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone, mobile: '#a855f7' });
+  });
+
   it('removes a planned task with its links', () => {
     const workflow = service.createWorkflow('home', {});
     const api = view.addViewTask(context, 'home', workflow.id, { title: 'API' });

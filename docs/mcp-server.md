@@ -872,6 +872,18 @@ Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `conditi
 the type's own fields. `condition` and `maxRuns` are null when the row has none.
 A row that cannot run as things stand is flagged with the reason.
 
+The text lists each row on one line: its name, its type, and the sentence the Column Manager shows
+(the verb and the one required value), then every option the panel shows as a mark, in words, in
+parentheses. The action's own options come first, then the Condition and the Frequency:
+
+```
+Moves the task to Executing (with a message; only if the review is clean; at most 3 times for each task)
+```
+
+A waiting Send message reads "waits for the current turn to end", on enter and exit only: at a turn
+end the turn is already over, so it sends at once. A Move to column row's message text is in the
+row's data, not the line.
+
 ### kangentic_set_automations
 
 Replace one column's automations wholesale. The array becomes that column's entire list, in order,
@@ -993,7 +1005,10 @@ The project's workflows with their state (not started, running, paused) and prog
 ### kangentic_get_workflow
 
 One workflow: its state, its `revision`, and each task with its column, route and what it waits
-for. A workflow not started lists its planned tasks by key.
+for. A workflow not started lists its planned tasks by key, each with any run setting that is not
+the default, in `kangentic_save_workflow`'s own names (`baseBranch "develop", useWorktree false,
+profile "Heavy"`), so a plan read and sent back keeps them. `data` carries every task's
+`runSettings` in the task row's shape.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1017,9 +1032,28 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 
 Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally
 `project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
-one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`. Every problem is
-reported before anything is written: a duplicate key, a column a route cannot use, a link to an
-unknown key, a loop. The answer reads "Saved: 9 tasks, 13 links."
+one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`. It also takes the
+run settings a task on the board has, which Start copies onto the task it creates:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `baseBranch` | string | The branch its worktree is cut from. Omitted is the board's base branch. |
+| `useWorktree` | boolean | `true` for its own worktree, `false` for the project folder. Omitted is the project's setting. |
+| `runMode` | string | `column_settings` (the default) or `agent_override`. A pin below implies `agent_override`. |
+| `profile` | string | A Board Profile on the task's own board, by name or id. Column Settings only. |
+| `agentOverride` | string | A registered agent, pinned for the whole task. |
+| `modelOverride` | string | A model, checked against what that agent's CLI offers. |
+| `effortOverride` | string | An effort level, checked against that agent's levels. |
+| `permissionMode` | string | A permission mode, pinned for the whole task. |
+
+The handler checks each of these itself, since a command can be reached without the tool's
+schema. An unknown agent, model, effort or profile is refused with the valid ones, and so is a
+profile together with a pin, or `runMode: "column_settings"` with a pin. A task taken in with
+`existingTask` keeps its own settings, so it takes none. Every problem is reported before anything
+is written: a duplicate key, a column a route cannot use, a link to an unknown key, a loop. That
+holds for a new workflow too: a save without `workflow` creates the workflow only with a plan that
+passed, in the same write, so a refused one leaves nothing behind. The answer reads "Saved: 9
+tasks, 13 links."
 
 ### kangentic_start_workflow
 
@@ -1065,7 +1099,13 @@ Add a task to a started workflow. It lands in To Do and starts once nothing it w
 | `routeStart` / `routeLast` | string | No | First and last columns it visits. |
 | `skip` | string[] | No | Columns inside its route it skips. |
 | `waitsFor` | string[] | No | Tasks in this workflow it waits for. |
+| `baseBranch`, `useWorktree`, `runMode`, `profile`, `agentOverride`, `modelOverride`, `effortOverride`, `permissionMode` | | No | Its run settings, as [`kangentic_save_workflow`](#kangentic_save_workflow)'s planned tasks take them. The task is created with them. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
+
+The run settings go through the same checks and refusals as a save's: the wrong type, an unknown
+agent, model, effort or profile (the profile is looked up on the task's own board), a profile
+together with a pin, or `runMode: "column_settings"` with a pin. Each refusal names the task by its
+title, and nothing is written.
 
 ### kangentic_link_workflow_tasks
 

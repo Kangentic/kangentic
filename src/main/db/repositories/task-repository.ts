@@ -49,7 +49,7 @@ function rowToTask(row: TaskRow): Task {
 const ADVANCED_PIN_FIELDS = ['agent_override', 'model_override', 'effort_override', 'permission_mode'] as const;
 
 type AdvancedPinFields = Pick<Task, typeof ADVANCED_PIN_FIELDS[number]>;
-type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id' | 'run_mode'>;
+export type ExclusiveFields = AdvancedPinFields & Pick<Task, 'profile_id' | 'run_mode'>;
 
 const CLEARED_PINS = {
   agent_override: null,
@@ -86,8 +86,11 @@ const CLEARED_PINS = {
  *   3. Asking for `'column_settings'` clears the pins, mirroring what the
  *      dialog's Column Settings card does locally.
  * A write touching none of them leaves all three alone.
+ *
+ * Exported for a workflow's planned task, which holds the same fields before
+ * the task exists, so its draft never holds a state `create` would rewrite.
  */
-function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
+export function applyProfileExclusivity(next: ExclusiveFields, requested: Partial<ExclusiveFields>): ExclusiveFields {
   if (requested.profile_id != null) {
     return { ...next, ...CLEARED_PINS, run_mode: 'column_settings' };
   }

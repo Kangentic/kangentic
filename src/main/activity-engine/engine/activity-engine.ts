@@ -248,6 +248,9 @@ export class ActivityEngine {
 
     if (TURN_INITIATING_EVENTS.has(event.type)) {
       state.turnActive = true;
+      // The agent reported work, so a turn end reported before now is no
+      // longer its latest (`workSerial`).
+      state.workSerial += 1;
       // A new turn: whatever ended the previous one no longer describes it.
       state.turnEndSource = null;
       // A real turn hook confirms the turn - it is no longer merely
@@ -1022,7 +1025,7 @@ export class ActivityEngine {
     // any background work it left has drained). Consumed so it reports once.
     if (fromActivity === 'thinking' && newActivity === 'idle' && state.turnEndSource === 'stop') {
       state.turnEndSource = null;
-      this.callbacks.onTurnEnded?.(sessionId, state.turnStartedAt);
+      this.callbacks.onTurnEnded?.(sessionId, state.turnStartedAt, state.workSerial);
     }
     this.scheduleTimer(sessionId, state);
   }

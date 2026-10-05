@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ListTree, Play } from 'lucide-react';
+import { Pencil, Play, Workflow as WorkflowIcon } from 'lucide-react';
 import type { Workflow, WorkflowSummary, WorkflowViewTask } from '../../../shared/types';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -16,8 +16,8 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-function WorkflowIcon({ summary }: { summary: WorkflowSummary }) {
-  return <ListTree size={16} style={{ color: workflowColor(summary.workflow.color_slot) }} />;
+function TintedWorkflowIcon({ summary }: { summary: WorkflowSummary }) {
+  return <WorkflowIcon size={16} style={{ color: workflowColor(summary.workflow.color_slot) }} />;
 }
 
 /**
@@ -35,7 +35,7 @@ export function StartWorkflowDialog({ summary, sourceTaskLabel, onConfirm, onCan
   return (
     <ConfirmDialog
       title={`Start ${summary.workflow.title}?`}
-      icon={<WorkflowIcon summary={summary} />}
+      icon={<TintedWorkflowIcon summary={summary} />}
       message={(
         <>
           <p>
@@ -107,7 +107,7 @@ export function RemoveTaskDialog({ workflow, task, onConfirm, onCancel }: {
   return (
     <ConfirmDialog
       title={`Remove ${taskLabel(task)} from ${workflow.title}?`}
-      icon={<ListTree size={16} style={{ color: workflowColor(workflow.color_slot) }} />}
+      icon={<WorkflowIcon size={16} style={{ color: workflowColor(workflow.color_slot) }} />}
       message={<p>{planned ? 'It exists only in this workflow, so it is gone for good.' : 'It stays where it is, as an ordinary task.'}</p>}
       confirmLabel="Remove"
       testId="workflow-remove-confirm"
@@ -142,6 +142,8 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
   return (
     <BaseDialog
       title="Rename workflow"
+      // The header's Rename button's pencil, before the title as the other titled dialogs have one.
+      icon={<Pencil size={16} className="text-fg-muted" data-testid="workflow-rename-icon" />}
       onClose={onCancel}
       testId="workflow-rename-dialog"
       footer={(

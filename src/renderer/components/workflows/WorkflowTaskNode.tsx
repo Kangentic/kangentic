@@ -44,6 +44,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   editable: boolean;
   /** The task's board, named while the workflow spans boards (board 17); null while it is on one. */
   projectName: string | null;
+  /** A task on another board than the home: that board's Done color, which its Done card wears. Null on the home board. */
+  doneColor: string | null;
 }
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, 'workflowTask'>;
@@ -133,6 +135,7 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
         locked={data.locked}
         waiting={data.waiting}
         projectName={data.projectName}
+        doneColor={data.doneColor}
       />
       <Handle
         type="source"

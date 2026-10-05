@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ListTree, Maximize2, RotateCcw } from 'lucide-react';
+import { Maximize2, RotateCcw, Workflow as WorkflowIcon } from 'lucide-react';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import { TemplateVariablePicker } from '../../TemplateVariablePicker';
 import { Pill } from '../../Pill';
@@ -168,7 +168,7 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
         onCloseRequest={handleCloseAttempt}
         onHeaderDoubleClick={toggleMaximized}
         title="Workflow agent prompt"
-        icon={<ListTree size={16} className="text-fg-muted" />}
+        icon={<WorkflowIcon size={16} className="text-fg-muted" />}
         headerRight={<MaximizeToggleButton isMaximized={isMaximized} onToggle={toggleMaximized} />}
         className={dialogClassName}
         backdropPositionClass={backdropPositionClass}

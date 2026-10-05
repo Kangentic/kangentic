@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link2, ListTree } from 'lucide-react';
+import { Link2, Workflow as WorkflowIcon } from 'lucide-react';
 import { workflowColor } from '../workflows/workflow-graph';
 import type { BoardWorkflow } from '../../utils/board-workflow';
 
@@ -20,7 +20,7 @@ export function OpenWorkflowMenuItem({ workflow, onOpen, onClose }: { workflow: 
       className={ROW_CLASS}
       data-testid="context-open-workflow"
     >
-      <ListTree size={14} style={{ color: workflowColor(workflow.colorSlot) }} />
+      <WorkflowIcon size={14} style={{ color: workflowColor(workflow.colorSlot) }} />
       Open workflow
     </button>
   );

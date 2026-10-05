@@ -1,12 +1,15 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { Plus, X } from 'lucide-react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import { FolderOpen, Pencil, Plus, X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
+import { useWorkflowStore } from '../../stores/workflow-store';
 import { describeIpcError } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
+import { useTaskBoardFacts } from '../../hooks/useTaskBoardFacts';
 import { NameFromPromptButton } from '../NameFromPromptButton';
 import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -15,8 +18,20 @@ import { TaskBranchRow } from './TaskBranchRow';
 import { PriorityLabelsRow } from './PriorityLabelsRow';
 import { DialogFooterActions } from './DialogFooterActions';
 import { AdvancedOverridesSection } from './AdvancedOverridesSection';
+import { Combobox } from './Combobox';
 import { useBranchSettings, type BranchSettingsInitial } from '../../hooks/useBranchSettings';
-import { DEFAULT_AGENT, type PermissionMode, type TaskRunMode, type WorkflowTaskInput } from '../../../shared/types';
+import {
+  DEFAULT_AGENT,
+  type PermissionMode,
+  type Project,
+  type ProjectGroup,
+  type TaskRunMode,
+  type WorkflowTaskInput,
+  type WorkflowTaskRunSettings,
+} from '../../../shared/types';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { isPermissionMode } from '../../../shared/workflow-run-settings';
+import { runSettingsFrom, showsPlannedTaskRows, type WorkflowTaskInitial } from './workflow-task-form';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from './AttachmentChipStrip';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from './attachment-utils';
@@ -36,20 +51,22 @@ interface NewTaskDialogProps {
   /**
    * Write into a workflow instead of onto the board: the Workflows canvas's
    * Add task, and the editor for a task that is still only planned (it has no
-   * task id yet, so the task window cannot host it). A workflow task carries
-   * what it has before Start creates it: title, description, priority and
-   * labels. Its branch, agent settings and attachments are set in the task's
-   * own window once it exists, so those rows are left out here rather than
-   * taking input that would be dropped. `onSubmit` resolves true once the
-   * workflow has the task.
+   * task id yet, so the task window cannot host it). The form is the board's
+   * own, with the board's own rows: the project picker first (which board the
+   * task goes on), then Base branch with Worktree or Project, and Column
+   * Settings or Agent Override (#732, sign-offs 9 and 25). It leaves out the
+   * branch name, Pull Request and attachments, which a task gets once Start
+   * creates it. Save waits while the workflow agent's turn runs, as every
+   * other planning control does. `onSubmit` resolves true once the workflow
+   * has the task.
    */
   workflow?: {
     /** The dialog's title; "New Task" when omitted. */
     title?: string;
     /** The submit button's label; "Create" when omitted. */
     submitLabel?: string;
-    /** A planned task's current fields, when editing one. */
-    initial?: { title: string; description: string; labels: string[]; priority: number };
+    /** The planned task itself, when editing one: its text, its board and its run settings. */
+    initial?: WorkflowTaskInitial;
     onSubmit: (input: WorkflowTaskInput) => Promise<boolean>;
   };
 }
@@ -61,15 +78,29 @@ const NEW_TASK_ENTITY_ID = 'new-task-dialog';
 /** A new task starts with nothing pinned: base, branch name, and worktree all inherit. */
 const EMPTY_BRANCH_SETTINGS: BranchSettingsInitial = { baseBranch: '', customBranchName: '', useWorktree: null };
 
+/** The registered projects in the sidebar's order: each group's by position, groups by position, then the ungrouped. */
+function projectsInSidebarOrder(projects: readonly Project[], groups: readonly ProjectGroup[]): Project[] {
+  if (groups.length === 0) return [...projects];
+  const ordered: Project[] = [];
+  for (const group of [...groups].sort((left, right) => left.position - right.position)) {
+    ordered.push(...projects.filter((project) => project.group_id === group.id).sort((left, right) => left.position - right.position));
+  }
+  // The ungrouped, and any whose group is gone: every project stays choosable.
+  ordered.push(...projects.filter((project) => !ordered.includes(project)));
+  return ordered;
+}
+
 export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogProps) {
   const createTask = useBoardStore((s) => s.createTask);
-  const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
-  const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
   const currentProject = useProjectStore((s) => s.currentProject);
   const isMaximized = useSessionStore((s) => s.maximizedTasks.has(NEW_TASK_ENTITY_ID));
   const toggleMaximized = useSessionStore((s) => s.toggleMaximized);
   const handleToggleMaximized = useCallback(() => toggleMaximized(NEW_TASK_ENTITY_ID), [toggleMaximized]);
+  // The planned task an edit opens on, whole: its text, its board and its run
+  // settings. Read once: the edit then measures against it (`isDirty`), never
+  // against an empty form.
   const initial = workflow?.initial;
+  const [initialRun] = useState(() => runSettingsFrom(initial));
   const [title, setTitle] = useState(initial?.title ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [description, setDescription] = useState(initial?.description ?? '');
@@ -89,23 +120,60 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   // default" for that field. The Advanced section locks all three for the
   // task's lifetime once set - column moves cannot change them (see
   // `resolveTargetAgent` and the cross-agent guards in `task-move.ts`).
-  const [agentOverride, setAgentOverride] = useState('');
-  const [modelOverride, setModelOverride] = useState('');
-  const [effortOverride, setEffortOverride] = useState('');
-  const [permissionOverride, setPermissionOverride] = useState('');
-  const [profileId, setProfileId] = useState<string | null>(null);
+  // A planned task opens on what it holds; everything else on nothing pinned.
+  const [agentOverride, setAgentOverride] = useState(initialRun.agent_override ?? '');
+  const [modelOverride, setModelOverride] = useState(initialRun.model_override ?? '');
+  const [effortOverride, setEffortOverride] = useState(initialRun.effort_override ?? '');
+  const [permissionOverride, setPermissionOverride] = useState<string>(initialRun.permission_mode ?? '');
+  const [profileId, setProfileId] = useState<string | null>(initialRun.profile_id);
   // Which run-mode branch is selected. Persisted as `Task.run_mode`, so it is
   // real form state here rather than local state inside AdvancedOverridesSection
   // - which is also what lets `isDirty` below see it.
-  const [runMode, setRunMode] = useState<TaskRunMode>('column_settings');
+  const [runMode, setRunMode] = useState<TaskRunMode>(initialRun.run_mode);
+
+  // A workflow task's board: the project picker, first in the form. It starts
+  // on the planned task's board, or the workflow's own (the open project). A
+  // task the plan takes in from a board keeps that board and its own settings,
+  // so it shows neither the picker nor the run rows.
+  const projects = useProjectStore((s) => s.projects);
+  const projectGroups = useProjectStore((s) => s.groups);
+  const homeProjectId = currentProject?.id ?? null;
+  const initialProjectId = initial?.project_id ?? homeProjectId;
+  const [taskProjectId, setTaskProjectId] = useState<string | null>(initialProjectId);
+  const showsWorkflowRows = showsPlannedTaskRows(workflow !== undefined, initial);
+  const taskProject = projects.find((project) => project.id === taskProjectId) ?? currentProject;
+  // Everything the rows below inherit comes from the board the task goes on,
+  // which for a workflow task may be another project's: its default base
+  // branch, Worktrees switch, To Do column, profiles and default agent. The
+  // board's own form reads the open board, as it always has.
+  const boardFacts = useTaskBoardFacts(workflow ? taskProjectId : null);
+  const { defaultBaseBranch, worktreesEnabled } = boardFacts;
+  const projectOptions = useMemo(
+    () => projectsInSidebarOrder(projects, projectGroups).map((project) => ({ value: project.id, label: project.name })),
+    [projects, projectGroups],
+  );
+
+  // Save waits while the workflow agent's turn runs, as every other control
+  // that changes its plan does (board 2c).
+  const selectedWorkflowId = useWorkflowStore((s) => s.selectedWorkflowId);
+  const workflowAgentWorking = useWorkflowAgentWorking(workflow ? selectedWorkflowId : null);
+  const heldReason = workflow && workflowAgentWorking ? WORKFLOW_REFUSALS.agentWorking : null;
 
   // The Branch row: state, placeholder, hint, and the structural blockers,
   // shared with the task-detail edit form through one hook. The remote-agent
   // input mirrors the spawn-time skip in `ensureTaskWorktree`: the user's own
   // pick, else the destination column's override, else the project default.
-  const destinationLane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
-  const agentExecution = useConfigStore((state) => state.config.agent.execution);
-  const resolvedAgent = agentOverride || destinationLane?.agent_override || currentProject?.default_agent || DEFAULT_AGENT;
+  // A workflow task's column is its board's To Do, on whichever board it goes.
+  const openBoardLane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
+  const destinationLane = workflow ? boardFacts.todoLane : openBoardLane;
+  const destinationProject = workflow ? boardFacts.project : currentProject;
+  const agentExecution = boardFacts.agentExecution;
+  const resolvedAgent = agentOverride || destinationLane?.agent_override || destinationProject?.default_agent || DEFAULT_AGENT;
+  const [branchInitial] = useState<BranchSettingsInitial>(() => ({
+    ...EMPTY_BRANCH_SETTINGS,
+    baseBranch: initialRun.base_branch ?? '',
+    useWorktree: initialRun.use_worktree === null ? null : initialRun.use_worktree === 1,
+  }));
   const {
     baseBranch,
     setBaseBranch,
@@ -120,23 +188,43 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
     blocker: worktreeBlocker,
   } = useBranchSettings({
     title,
-    initial: EMPTY_BRANCH_SETTINGS,
+    initial: branchInitial,
     worktreesEnabled,
     defaultBaseBranch,
     active: true,
-    projectPath: currentProject?.path ?? null,
-    remoteAgent: agentExecution?.[resolvedAgent]?.mode === 'remote',
+    // The board the task goes on: a workflow task's may be another project's.
+    projectPath: (workflow ? taskProject?.path : currentProject?.path) ?? null,
+    projectId: workflow ? taskProjectId : null,
+    remoteAgent: agentExecution[resolvedAgent]?.mode === 'remote',
   });
+
+  /** A new board for a workflow task: the base branch and the profile named the old board's, so both go back to its defaults. */
+  const handleProjectChange = (nextProjectId: string) => {
+    if (!nextProjectId || nextProjectId === taskProjectId) return;
+    setTaskProjectId(nextProjectId);
+    setBaseBranch('');
+    setProfileId(null);
+  };
 
   // Every field the user can touch, including the two that pin nothing on their
   // own: selecting Agent Override with all four inherited, or picking a Board
   // Profile, is still work to lose, so Escape must prompt.
   // Editing a planned task measures against what it already holds, not an empty form.
+  // A workflow task's board, base branch and Worktree choice count too; the
+  // board form's never did, and keeps its old measure.
   const isDirty = title.trim() !== (initial?.title ?? '').trim()
     || description.trim() !== (initial?.description ?? '').trim()
     || labels.join('\n') !== (initial?.labels ?? []).join('\n')
     || priority !== (initial?.priority ?? 0)
-    || customBranchName.trim() !== '' || attachments.length > 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '' || profileId !== null || runMode !== 'column_settings';
+    || customBranchName.trim() !== '' || attachments.length > 0
+    || agentOverride !== (initialRun.agent_override ?? '') || modelOverride !== (initialRun.model_override ?? '')
+    || effortOverride !== (initialRun.effort_override ?? '') || permissionOverride !== (initialRun.permission_mode ?? '')
+    || profileId !== initialRun.profile_id || runMode !== initialRun.run_mode
+    || (workflow !== undefined && (
+      taskProjectId !== initialProjectId
+      || baseBranch.trim() !== (initialRun.base_branch ?? '')
+      || useWorktree !== branchInitial.useWorktree
+    ));
 
   // Guard close gestures (X, Escape, backdrop, Ctrl+Shift+W) so unsaved work is
   // not lost: when the form is dirty, ask before discarding. Returns true to let
@@ -311,14 +399,32 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!title.trim() || submitting) return;
-    if (branchNameError) return;
+    if (branchNameError || heldReason) return;
     setSubmitting(true);
     try {
       const taskTitle = title.trim();
       if (workflow) {
         // The store reports its own failure; the dialog stays open to retry.
-        // Labels and priority are always sent, so an edit can clear them.
-        const saved = await workflow.onSubmit({ title: taskTitle, description: description.trim(), labels, priority });
+        // Labels, priority and every run setting are always sent, so an edit
+        // can clear them. The profile is one of the task's own board's, which
+        // the select lists whichever board that is.
+        const runSettings: Partial<WorkflowTaskRunSettings> = {
+          base_branch: baseBranch.trim() || null,
+          use_worktree: useWorktree === null ? null : useWorktree ? 1 : 0,
+          run_mode: runMode,
+          profile_id: profileId,
+          agent_override: agentOverride || null,
+          model_override: modelOverride || null,
+          effort_override: effortOverride || null,
+          permission_mode: isPermissionMode(permissionOverride) ? permissionOverride : null,
+        };
+        const saved = await workflow.onSubmit({
+          title: taskTitle,
+          description: description.trim(),
+          labels,
+          priority,
+          ...(showsWorkflowRows ? { projectId: taskProjectId, ...runSettings } : {}),
+        });
         if (saved) onClose();
         return;
       }
@@ -388,7 +494,10 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           // whichever of those is on top, alone.
           suppressEscape={boardManagerOpen || settingsOpen}
           title={workflow?.title ?? 'New Task'}
-          icon={<Plus size={14} className="text-fg-muted" />}
+          // Editing a planned task carries the board's Edit Task pencil; adding one, the plus.
+          icon={initial
+            ? <Pencil size={14} className="text-fg-muted" data-testid="new-task-dialog-edit-icon" />
+            : <Plus size={14} className="text-fg-muted" data-testid="new-task-dialog-add-icon" />}
           headerRight={
             <MaximizeToggleButton isMaximized={isMaximized} onToggle={handleToggleMaximized} />
           }
@@ -403,7 +512,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               onCancel={closeWithAnimation}
               submitLabel={workflow?.submitLabel ?? 'Create'}
               busy={submitting}
-              disabled={!!branchNameError}
+              disabled={!!branchNameError || heldReason !== null}
+              disabledReason={heldReason}
             />
           }
         >
@@ -413,6 +523,21 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
+            {showsWorkflowRows && (<>
+              {/* Which board the task goes on, first, since it decides the base
+                  branch and the columns its route can use (board 17b). Full
+                  width, then a full-bleed divider before the board's own form. */}
+              <Combobox
+                value={taskProjectId ?? ''}
+                onChange={handleProjectChange}
+                options={projectOptions}
+                allowClear={false}
+                leadingIcon={<FolderOpen size={14} />}
+                className="w-full"
+                testId="workflow-task-project"
+              />
+              <div className="-mx-4 border-t border-edge" role="separator" data-testid="workflow-task-project-divider" />
+            </>)}
             <div className="flex items-center gap-2">
               <input
                 ref={inputRef}
@@ -429,7 +554,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               onChange={setDescription}
               onPaste={handlePaste}
               testId="task-description"
-              mentionSearchCwd={currentProject?.path ?? null}
+              // Mentions search the repository the task works in.
+              mentionSearchCwd={(workflow ? taskProject?.path : currentProject?.path) ?? null}
               className="flex-1"
             />
 
@@ -481,6 +607,45 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               setPermissionOverride={setPermissionOverride}
               profileId={profileId}
               setProfileId={setProfileId}
+            />
+            </>)}
+
+            {/* A workflow task: the board form's own rows, less the branch name,
+                which Start chooses, as it does for every task. */}
+            {showsWorkflowRows && (<>
+            <TaskBranchRow
+              baseBranch={baseBranch}
+              setBaseBranch={setBaseBranch}
+              defaultBaseBranch={defaultBaseBranch}
+              effectiveWorktree={effectiveWorktree}
+              setUseWorktree={setUseWorktree}
+              showWorktree={worktreesEnabled}
+              worktreeBlocker={worktreeBlocker}
+              projectId={taskProjectId}
+            />
+
+            <AdvancedOverridesSection
+              swimlaneId={swimlaneId}
+              runMode={runMode}
+              setRunMode={setRunMode}
+              agentOverride={agentOverride}
+              setAgentOverride={setAgentOverride}
+              modelOverride={modelOverride}
+              setModelOverride={setModelOverride}
+              effortOverride={effortOverride}
+              setEffortOverride={setEffortOverride}
+              permissionOverride={permissionOverride}
+              setPermissionOverride={setPermissionOverride}
+              profileId={profileId}
+              setProfileId={setProfileId}
+              board={{
+                project: boardFacts.project,
+                lane: boardFacts.todoLane,
+                boardProfiles: boardFacts.boardProfiles,
+                permissionMode: boardFacts.permissionMode,
+                isOpenBoard: boardFacts.isOpenBoard,
+                loading: boardFacts.loading,
+              }}
             />
             </>)}
 

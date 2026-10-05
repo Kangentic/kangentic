@@ -219,7 +219,7 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 |---------|---------|---------|
 | `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
 | `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
-| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions |
+| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, and each board's name and Done column color |
 | `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
 | `workflow:rename` | invoke | Rename a workflow |
 | `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
@@ -240,7 +240,7 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 ### Swimlanes (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `swimlane:list` | invoke | Fetch all swimlanes |
+| `swimlane:list` | invoke | Fetch all swimlanes. An optional `projectId` reads another registered project's board (a workflow's planned task on it) |
 | `swimlane:create` | invoke | Create swimlane with name, color, icon, role |
 | `swimlane:update` | invoke | Update swimlane properties |
 | `swimlane:delete` | invoke | Delete swimlane (blocked if has tasks) |
@@ -344,7 +344,7 @@ from a host's complete mounted set, never accumulated from claim/release - see
 ### Config (11 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
+| `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides, and the board's team-shared default base branch). An optional `projectId` reads another registered project's |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
 | `config:set` | invoke | Update global config (partial merge). Resolves `ConfigSetResult` (`{ persisted }`), which says whether the write reached disk. Only the settings panel acts on it: this channel also carries window layouts, model caches and announcement dismissals, so a failure here is not necessarily something a user asked for (Sentry DESKTOP-1C) |
 | `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down. Puts the same boolean on `event.returnValue`, which the preload bridge discards: there is no renderer left to tell |
@@ -370,7 +370,7 @@ from a host's complete mounted set, never accumulated from claim/release - see
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
 | `boardConfig:warnings` | on | Event: the project-open reconcile's warnings for the board's warning banner, sent on every open (an empty list clears it) |
 | `boardConfig:getLastWarnings` | invoke | The warnings of a project's last apply. The renderer fetches them each time a project becomes current, for the push it drops when it lands first (a launch restore, an open by folder path) |
-| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)) |
+| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](configuration.md#board-profiles)). An optional `projectId` reads another registered project's board |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |
@@ -439,7 +439,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
-| `git:listBranches` | invoke | List branches for a repository |
+| `git:listBranches` | invoke | List branches for a repository: the open project's, or another registered project's by an optional `projectId` |
 | `git:diffFiles` | invoke | List changed files with status and stats for a scope (working / staged / branch), or for a single commit (`<oid>^..<oid>`) when `commitOid` is set, overriding `scope` |
 | `git:fileContent` | invoke | Fetch original and modified file content for diff display (per scope, or for a single commit when `commitOid` is set). A `filePath` or rename `oldPath` that is absolute, drive-relative, or holds a `..` segment, or a `commitOid` that is not a hex object id, is refused before any read and returns empty text, as `git:fileImage` refuses it with unreadable sides |
 | `git:fileImage` | invoke | Fetch both sides of a changed raster image or SVG as bytes for the Changes panel's image view, with the same per-scope revisions as `git:fileContent`. Each side is fingerprinted and sized before its bytes are read: a side from git from the header of one `git cat-file --batch` process (`src/main/git/git-object-reader.ts`), a working-tree side from `stat`. A side whose fingerprint (its blob id, or a working-tree file's size and modified time) matches one the caller passes in `knownFingerprints` answers `unchanged` without bytes, so a diff refresh does not resend an image that did not change. A working-tree side read within 2 seconds of its last write gets a fingerprint marked racy, which never matches, so the next refresh reads it again. A side over 10 MB returns its size alone. A Git LFS pointer answers `lfs-pointer`, and a side that cannot be read (a refused path, a missing object or file, a failed read) answers `unreadable`; a refused or missing path is quiet and any other failure is logged. A separate channel because the mobile bridge forwards `git:fileContent`'s result to the phone as JSON |

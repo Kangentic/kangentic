@@ -22,6 +22,23 @@ export function workflowColor(slot: number): string {
   return `var(--color-chart-${clamped})`;
 }
 
+/** What a board with no Done column, or one with no color, draws Done in, as the board does. */
+export const DONE_COLOR_FALLBACK = 'var(--color-active)';
+
+/**
+ * The Done color of a task on ANOTHER board than the workflow's home: that
+ * board's Done column color (Final 1 follows each card's own board). Null for
+ * a task on the home board, which the caller draws in the home board's live
+ * color, so a recolored column repaints without a reload.
+ */
+export function otherBoardDoneColor(
+  detail: Pick<WorkflowDetail, 'homeProjectId' | 'doneColors'>,
+  task: Pick<WorkflowViewTask, 'projectId'>,
+): string | null {
+  if (task.projectId === detail.homeProjectId) return null;
+  return detail.doneColors[task.projectId] ?? DONE_COLOR_FALLBACK;
+}
+
 export function taskLabel(task: Pick<WorkflowViewTask, 'displayId' | 'title'>): string {
   return workflowTaskLabel(task.displayId, task.title);
 }
@@ -177,4 +194,17 @@ export function runOrder(detail: WorkflowDetail): WorkflowViewTask[][] {
     (groups[index] ??= []).push(task);
   }
   return groups.filter((group) => group && group.length > 0);
+}
+
+/**
+ * The task a workflow opens on: the run order's first row (its first stop's
+ * first task), among the tasks the board's search leaves showing. Null when
+ * the workflow has no task, or none shows.
+ */
+export function firstInRunOrder(detail: WorkflowDetail, visibleKeys: ReadonlySet<string> | null = null): string | null {
+  for (const group of runOrder(detail)) {
+    const first = group.find((task) => !visibleKeys || visibleKeys.has(task.key));
+    if (first) return first.key;
+  }
+  return null;
 }

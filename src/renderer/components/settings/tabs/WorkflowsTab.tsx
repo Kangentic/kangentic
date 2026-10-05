@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { CircleCheck, ListTree } from 'lucide-react';
+import { CircleCheck, Workflow as WorkflowIcon } from 'lucide-react';
 import { useScopedUpdate } from '../shared';
 import { CardTile, SettingsCard } from '../settings-card';
 import { settingProps } from '../settings-registry';
@@ -66,7 +66,7 @@ export function WorkflowsTab({ globalConfig }: { globalConfig: AppConfig }) {
         />
       </SettingsCard>
       <SettingsCard
-        icon={<ListTree size={16} />}
+        icon={<WorkflowIcon size={16} />}
         {...settingProps('workflows.agentPrompt')}
         testId="settings-card-workflow-agent-prompt"
         headerAction={<WorkflowAgentPromptExpandButton onClick={() => setPromptExpanded(true)} />}

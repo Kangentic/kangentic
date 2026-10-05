@@ -25,18 +25,22 @@ interface Harness {
   turnEnds: number[];
   /** The `turnStartedAt` each turn end reported, in order. */
   turnStarts: Array<number | null>;
+  /** The `workSerial` each turn end reported, in order: the turn's identity. */
+  workSerials: number[];
   send: (type: EventType, extra?: Partial<SessionEvent>) => void;
 }
 
 function createHarness(options: { stabilityMs?: number; seedThinking?: boolean } = {}): Harness {
   const turnEnds: number[] = [];
   const turnStarts: Array<number | null> = [];
+  const workSerials: number[] = [];
   const engine = new ActivityEngine(
     {
       onActivityChange() {},
-      onTurnEnded(_sessionId, turnStartedAt) {
+      onTurnEnded(_sessionId, turnStartedAt, workSerial) {
         turnEnds.push(Date.now());
         turnStarts.push(turnStartedAt);
+        workSerials.push(workSerial);
       },
     },
     {
@@ -49,7 +53,7 @@ function createHarness(options: { stabilityMs?: number; seedThinking?: boolean }
   const send = (type: EventType, extra: Partial<SessionEvent> = {}) => {
     engine.processEvent(SESSION_ID, { ts: Date.now(), type, ...extra });
   };
-  return { engine, turnEnds, turnStarts, send };
+  return { engine, turnEnds, turnStarts, workSerials, send };
 }
 
 function loadFixture(name: string): SessionEvent[] {
@@ -117,6 +121,39 @@ describe('onTurnEnded', () => {
     vi.advanceTimersByTime(1_000);
     harness.send(EventType.Idle);
     expect(harness.turnStarts).toEqual([start]);
+    harness.engine.dispose();
+  });
+
+  it('names the turn by its work serial, which a trailing paint leaves alone and new work moves', () => {
+    // The turn-end runner and the workflow step act on a turn only while it is
+    // still the latest (`SessionManager.isLatestTurn`), and this is what they
+    // compare.
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.ToolStart, { tool: 'Read', toolId: 'a' });
+    harness.send(EventType.ToolEnd, { tool: 'Read', toolId: 'a' });
+    harness.send(EventType.Idle);
+    expect(harness.turnEnds).toHaveLength(1);
+    const [ended] = harness.workSerials;
+    expect(harness.engine.getState(SESSION_ID)?.workSerial).toBe(ended);
+
+    // A PTY-tracked agent's trailing paint forces thinking and back. That
+    // re-stamps the turn start, which is why the start is not the identity,
+    // but it is no new work, so the turn that ended is still the latest.
+    const startBefore = harness.engine.getState(SESSION_ID)?.turnStartedAt;
+    vi.advanceTimersByTime(1_000);
+    harness.engine.forceThinking(SESSION_ID);
+    harness.engine.forceIdle(SESSION_ID);
+    expect(harness.engine.getState(SESSION_ID)?.turnStartedAt).not.toBe(startBefore);
+    expect(harness.engine.getState(SESSION_ID)?.workSerial).toBe(ended);
+
+    // The user's next prompt is new work, even when that turn fails back to
+    // idle with no turn end of its own.
+    harness.send(EventType.Prompt);
+    harness.send(EventType.TurnFailed, { detail: 'unknown' });
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    expect(harness.engine.getState(SESSION_ID)?.workSerial).not.toBe(ended);
     harness.engine.dispose();
   });
 
@@ -302,6 +339,57 @@ describe('onTurnEnded', () => {
       for (const heldStop of [676, 1459, 1782, 1868, 2074]) {
         expect(turnEnds).not.toContain(heldStop);
       }
+    });
+  });
+
+  describe('session-031: a failed turn, "continue", then a normal Stop', () => {
+    // A captured task session. A turn ended in "API Error: Request size exceeds
+    // model context window", which Claude Code reports as StopFailure with the
+    // error "unknown", so the bridge emits `turn_failed`. The user typed
+    // "continue", and that turn ended with a normal Stop. The failed turn idles
+    // the session with no turn end, which is why the turn-end runner and the
+    // workflow step cannot treat idle as "the turn I judged is still the
+    // latest": they compare the turn's work serial (`isLatestTurn`) instead.
+    function replay(): { turnEnds: number[]; idledAt: number[]; turnFailedAt: number; stopAt: number } {
+      const events = loadFixture('session-031-turn-failed-then-continue.jsonl');
+      const turnEnds: number[] = [];
+      const idledAt: number[] = [];
+      let currentTs = 0;
+      const engine = new ActivityEngine(
+        {
+          onActivityChange(_sessionId, activity) {
+            if (activity === 'idle') idledAt.push(currentTs);
+          },
+          onTurnEnded() {
+            turnEnds.push(currentTs);
+          },
+        },
+        { idleStabilityWindowMs: 0, bgShellEscapeHatchMs: 1000, staleThinkingTimeoutMs: 60_000 },
+      );
+      // Seeded thinking: the excerpt opens mid-session, on the prompt of a
+      // turn. Its leading `session_start` is the fixtures' shared opening line
+      // and log-only.
+      engine.initSession(SESSION_ID, true);
+      for (const event of events) {
+        currentTs = event.ts;
+        engine.processEvent(SESSION_ID, event);
+      }
+      engine.dispose();
+      const turnFailed = events.find((event) => event.type === EventType.TurnFailed);
+      const stop = events.find((event) => event.type === EventType.Idle);
+      if (!turnFailed || !stop) throw new Error('The fixture lost its turn_failed or its Stop');
+      return { turnEnds, idledAt, turnFailedAt: turnFailed.ts, stopAt: stop.ts };
+    }
+
+    it('reports no turn end through the turn_failed, though the session idles there', () => {
+      const { turnEnds, idledAt, turnFailedAt } = replay();
+      expect(idledAt).toContain(turnFailedAt);
+      expect(turnEnds.filter((ts) => ts <= turnFailedAt)).toEqual([]);
+    });
+
+    it('reports exactly one turn end, at the Stop after "continue"', () => {
+      const { turnEnds, stopAt } = replay();
+      expect(turnEnds).toEqual([stopAt]);
     });
   });
 });

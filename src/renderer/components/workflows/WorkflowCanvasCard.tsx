@@ -22,6 +22,9 @@ export const CANVAS_CARD_HEIGHT: Record<AppConfig['cardDensity'], number> = {
 /** The strip over the Done column's compact card (title, a line, labels, when it finished), measured at 127. */
 export const CANVAS_DONE_CARD_HEIGHT = 132;
 
+/** A selected card's border, on every card: 2px inside the card, in the muted grey. */
+const SELECTED_BORDER_CLASS = '!border-2 !border-fg-muted/75';
+
 export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity'], withProjectRow = false): number {
   const base = task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
   return withProjectRow ? base + PROJECT_ROW_HEIGHT : base;
@@ -123,6 +126,12 @@ interface WorkflowCanvasCardProps {
   waiting: WorkflowWaiting | null;
   /** The task's board, named while the workflow spans boards; null while it is on one. */
   projectName: string | null;
+  /**
+   * A task on another board: that board's Done column color, which its Done
+   * border wears. Null on the home board, whose live color the canvas sets as
+   * `--workflow-done-color`.
+   */
+  doneColor: string | null;
 }
 
 /** Why a workflow task in To Do has not started. */
@@ -131,7 +140,7 @@ export interface WorkflowWaiting {
   paused: boolean;
 }
 
-export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName }: WorkflowCanvasCardProps) {
+export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName, doneColor }: WorkflowCanvasCardProps) {
   // The board's own live row when the board holds it (this project, not yet
   // archived): every writer keeps the board current, including the ones that
   // never announce a workflow change (an agent's rename, auto-naming, a PR
@@ -157,19 +166,26 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   );
 
   if (viewTask.place === 'done') {
-    // The Done card keeps its own selection ring: its border waits on a separate approval.
-    const doneSelectionClass = selected ? 'ring-2 ring-fg-faint/75' : '';
+    // A 1px border in the board's own Done column color, which the canvas sets
+    // as `--workflow-done-color`, so finished work stands out and follows the
+    // column (Final 1). A task on another board sets the variable to its own
+    // board's color here, on the card, since that board's Done column is not
+    // the open one's. Selected, it takes every card's 2px border instead; the
+    // body's padding gives the extra pixel back, so its text does not move.
+    // The board's own Done cards are drawn elsewhere and keep their look.
+    const frameClass = selected ? SELECTED_BORDER_CLASS : 'border border-[color:var(--workflow-done-color)]';
+    const bodyPadding = selected ? 'px-[9px] py-[5px]' : 'px-2.5 py-1.5';
     return (
       <div
-        className={`flex flex-col overflow-hidden bg-surface-raised/60 border border-edge/50 rounded-md select-none hover:border-edge-input transition-colors ${doneSelectionClass}`}
-        style={{ height }}
+        className={`flex flex-col overflow-hidden bg-surface-raised/60 rounded-md select-none transition-colors ${frameClass}`}
+        style={doneColor !== null ? { height, '--workflow-done-color': doneColor } as React.CSSProperties : { height }}
         data-workflow-task-key={viewTask.key}
         data-selected={selected}
         data-testid="workflow-canvas-card"
       >
         {projectRow}
         {strip}
-        <div className="px-2.5 py-1.5 min-h-0 overflow-hidden">
+        <div className={`${bodyPadding} min-h-0 overflow-hidden`}>
           <TaskCardCompactBody task={task} view={view} />
         </div>
       </div>
@@ -178,13 +194,14 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
 
   const idleFooter = waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : undefined;
 
-  // Selected: a 2px border inside the card, solid even where a planned card's
-  // is dashed (boards 1, 10, 17). The padding and the header's inset give back
-  // the extra pixel, so nothing inside the card moves.
+  // Selected: a 2px border inside the card (boards 1, 10, 17). The padding and
+  // the header's inset give back the extra pixel, so nothing inside the card
+  // moves. A planned card draws like any To Do card: what says it is not
+  // created yet is its missing #id (Final 3).
   const comfortable = view.cardDensity === 'comfortable';
   const borderClass = selected
-    ? `!border-2 !border-solid !border-fg-muted/75 ${comfortable ? '!p-[11px]' : '!p-[9px]'}`
-    : planned ? '!border-dashed !border-edge-input' : '';
+    ? `${SELECTED_BORDER_CLASS} ${comfortable ? '!p-[11px]' : '!p-[9px]'}`
+    : '';
   const headerInset = selected
     ? (comfortable ? '-mx-[11px] -mt-[11px]' : '-mx-[9px] -mt-[9px]')
     : (comfortable ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5');

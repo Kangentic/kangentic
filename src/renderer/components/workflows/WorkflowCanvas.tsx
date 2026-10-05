@@ -19,7 +19,7 @@ import {
 import type { WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { layoutWorkflow } from './workflow-layout';
-import { canBlock, canWait, findTask, linkRefusal, taskLabel, waitingOf } from './workflow-graph';
+import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
 import { canvasCardHeight } from './WorkflowCanvasCard';
 import { LINK_HINT_CLASS, WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
 import { WorkflowConnectionLine, WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
@@ -64,6 +64,7 @@ function sameNodeData(previous: WorkflowNodeData, next: WorkflowNodeData): boole
     && previous.canWait === next.canWait
     && previous.canBlock === next.canBlock
     && previous.editable === next.editable
+    && previous.doneColor === next.doneColor
     && previous.waiting?.label === next.waiting?.label
     && previous.waiting?.paused === next.waiting?.paused;
 }
@@ -115,6 +116,14 @@ interface WorkflowCanvasProps {
    * fixed menu inside the transformed viewport would land offset.
    */
   onCardContextMenu?: (key: string, position: { x: number; y: number }) => void;
+  /**
+   * The home board's Done column color (the open board: a workflow opens on
+   * its home), which a Done card's border wears (Final 1). Set once on the
+   * canvas as a CSS variable, so a recolored column repaints the cards without
+   * re-rendering one. A card on another board sets the variable to that
+   * board's color itself (`otherBoardDoneColor`).
+   */
+  doneColumnColor: string;
 }
 
 export function WorkflowCanvas({
@@ -131,6 +140,7 @@ export function WorkflowCanvas({
   onAddTask,
   onAutoLayout,
   onCardContextMenu,
+  doneColumnColor,
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
@@ -161,6 +171,7 @@ export function WorkflowCanvas({
       canBlock: canBlock(task),
       editable: editable && !planHeld,
       projectName: acrossBoards ? detail.projectNames[task.projectId] ?? 'Another project' : null,
+      doneColor: otherBoardDoneColor(detail, task),
     },
   })), [detail, layout, selectedTaskKey, editable, planHeld, locked, visibleKeys, acrossBoards]);
 
@@ -322,6 +333,7 @@ export function WorkflowCanvas({
       // re-renders at either end.
       data-linking={linkingFrom !== null ? '' : undefined}
       onKeyDown={handleKeyDown}
+      style={{ '--workflow-done-color': doneColumnColor } as React.CSSProperties}
       data-testid="workflow-canvas"
     >
       {WORKFLOW_EDGE_MARKERS}

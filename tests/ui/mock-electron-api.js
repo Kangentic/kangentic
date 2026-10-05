@@ -1916,12 +1916,14 @@
     },
 
     swimlanes: {
-      list: async function () {
+      list: async function (projectId) {
         hydrateSeededSwimlanePatches();
         // A row that carries a projectId belongs to that project only (the real DB is per
         // project); a row without one stays global, so single-project specs are unchanged.
+        // `projectId` reads another project's board, as main's swimlane:list does.
+        var boardProjectId = projectId || currentProjectId;
         return swimlanes.filter(function (s) {
-          return !s.projectId || s.projectId === currentProjectId;
+          return !s.projectId || s.projectId === boardProjectId;
         }).sort(function (a, b) {
           return a.position - b.position;
         });
@@ -2066,7 +2068,11 @@
             enabled: row.enabled !== false,
             config: Object.assign({}, row.config),
             // Null when absent, as the repository returns it. `undefined` is not
-            // the same thing to a consumer: the guard line tests `max_runs !== null`.
+            // the same thing to a consumer: the row draws its Frequency mark (Repeat
+            // with a count) for any `max_runs` that is not null, so an undefined one
+            // would show a Repeat with no count and the tooltip "Frequency: at most
+            // undefined times for each task." The Condition mark (the funnel) reads
+            // a blank condition as none either way.
             condition: typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
             max_runs: Number.isFinite(row.max_runs) && Math.floor(row.max_runs) >= 1 ? Math.floor(row.max_runs) : null,
             created_at: now(),
@@ -2894,7 +2900,16 @@
     },
 
     config: {
-      get: async function () {
+      get: async function (projectId) {
+        // Another project's effective config (a workflow's planned task on its
+        // board), as main answers config:get with a projectId: global merged
+        // with that project's overrides. Outside the graphics-acceleration
+        // counters below, which track the open project's reads.
+        if (projectId && projectId !== currentProjectId) {
+          var otherProject = projects.find(function (p) { return p.id === projectId; });
+          if (!otherProject) throw new Error('Unknown project');
+          return projectConfigs[otherProject.path] ? deepMerge(config, projectConfigs[otherProject.path]) : config;
+        }
         // Return effective config: global merged with current project's overrides
         var currentProject = projects.find(function (p) { return p.id === currentProjectId; });
         graphicsAccelerationGetCallCount++;
@@ -3512,7 +3527,12 @@
       detect: async function (_forceRefresh) {
         return { found: true, path: '/usr/bin/git', version: '2.43.0', meetsMinimum: true };
       },
-      listBranches: async function () {
+      // `projectId` lists another project's branches, as main's git:listBranches
+      // does: seed them per project with window.__mockGitBranchesByProject =
+      // { [projectId]: string[] }. Every other read gets the one fixed list.
+      listBranches: async function (projectId) {
+        var byProject = window.__mockGitBranchesByProject || {};
+        if (projectId && byProject[projectId]) return byProject[projectId].slice();
         return ['main', 'develop', 'feature/auth', 'feature/dashboard', 'fix/login-bug'];
       },
       diffFiles: async function (request) {
@@ -4463,7 +4483,17 @@
         return Array.isArray(window.__mockLastConfigWarnings) ? window.__mockLastConfigWarnings.slice() : [];
       },
       onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
-      getBoardProfiles: async function () { return mockBoardProfiles; },
+      // `projectId` reads another project's board, as main's
+      // boardConfig:getBoardProfiles does: seed it with
+      // window.__mockBoardProfilesByProject = { [projectId]: BoardProfile[] }.
+      // An unseeded other board has none.
+      getBoardProfiles: async function (projectId) {
+        if (projectId && projectId !== currentProjectId) {
+          var byProject = window.__mockBoardProfilesByProject || {};
+          return JSON.parse(JSON.stringify(byProject[projectId] || []));
+        }
+        return mockBoardProfiles;
+      },
       // window.__mockBoardProfilesSaveError makes the write reject, for a spec
       // covering the failure path. It throws BEFORE assigning, deliberately:
       // board-store's catch reloads via getBoardProfiles() before it toasts, so
@@ -4842,26 +4872,41 @@
         });
       }
 
+      // A board's Done column color, as main's readWorkflowDetail reads it: a
+      // lane tagged with that project wins over an untagged (every-project) one.
+      function doneColorOf(projectId) {
+        var tagged = swimlanes.find(function (lane) { return lane.role === 'done' && lane.projectId === projectId; });
+        var lane = tagged || swimlanes.find(function (candidate) { return candidate.role === 'done' && !candidate.projectId; });
+        return lane && lane.color ? lane.color : null;
+      }
+
       function detail(entry) {
         var workflow = entry.workflow;
         var home = homeOf(entry);
         var names = {};
+        var doneColors = {};
         var project = projects.find(function (candidate) { return candidate.id === home; });
         names[home] = project ? project.name : 'Project';
+        doneColors[home] = doneColorOf(home);
+        function noteProject(taskProjectId) {
+          if (!names[taskProjectId]) {
+            var other = projects.find(function (candidate) { return candidate.id === taskProjectId; });
+            names[taskProjectId] = other ? other.name : 'Another project';
+          }
+          if (!Object.prototype.hasOwnProperty.call(doneColors, taskProjectId)) doneColors[taskProjectId] = doneColorOf(taskProjectId);
+        }
         if (workflow.state === 'draft') {
           var draft = workflow.draft || { tasks: [], links: [] };
           return {
             workflow: JSON.parse(JSON.stringify(workflow)),
             homeProjectId: home,
             projectNames: names,
+            doneColors: doneColors,
             tasks: draft.tasks.map(function (planned) {
               // A planned task names its board as main's read model does: its own
               // project_id, else the workflow's home.
               var taskProjectId = planned.project_id || home;
-              if (!names[taskProjectId]) {
-                var other = projects.find(function (candidate) { return candidate.id === taskProjectId; });
-                names[taskProjectId] = other ? other.name : 'Another project';
-              }
+              noteProject(taskProjectId);
               return {
                 key: planned.key, projectId: taskProjectId, task: null, planned: Object.assign({}, planned),
                 title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
@@ -4877,10 +4922,15 @@
           workflow: JSON.parse(JSON.stringify(workflow)),
           homeProjectId: home,
           projectNames: names,
+          doneColors: doneColors,
           tasks: created.map(function (task) {
             var place = placeOf(task);
+            // A task row tagged with a projectId is on that project's board, as
+            // tasks.list scopes it; an untagged one is on the workflow's home.
+            var taskProjectId = task.projectId || home;
+            noteProject(taskProjectId);
             return {
-              key: task.id, projectId: home, task: withAttachmentCount(task), planned: null,
+              key: task.id, projectId: taskProjectId, task: withAttachmentCount(task), planned: null,
               title: task.title, displayId: task.display_id, place: place, swimlaneId: task.swimlane_id,
               steps: stepsOf(task, place), canvasX: task.canvas_x == null ? null : task.canvas_x, canvasY: task.canvas_y == null ? null : task.canvas_y,
             };
@@ -4988,6 +5038,34 @@
         task.skipped_swimlane_ids = [];
       }
 
+      // A planned task's run settings (WorkflowTaskRunSettings), in the task
+      // row's shape. KEEP IN SYNC with src/shared/workflow-run-settings.ts.
+      // A plain passthrough of what the form sent, like buildTaskRow: main's
+      // profile-vs-pin exclusivity is not copied here.
+      var RUN_SETTINGS_FIELDS = ['base_branch', 'use_worktree', 'run_mode', 'profile_id', 'agent_override', 'model_override', 'effort_override', 'permission_mode'];
+      function runSettingsOver(current, input) {
+        var next = {
+          base_branch: null, use_worktree: null, run_mode: 'column_settings', profile_id: null,
+          agent_override: null, model_override: null, effort_override: null, permission_mode: null,
+        };
+        RUN_SETTINGS_FIELDS.forEach(function (field) {
+          if (current && current[field] !== undefined) next[field] = current[field];
+          if (input && input[field] !== undefined) next[field] = input[field];
+        });
+        return next;
+      }
+      // The run settings as buildTaskRow takes them (TaskCreateInput's names), as main's Start does.
+      function runSettingsCreateInput(settings) {
+        var run = runSettingsOver(settings, null);
+        return {
+          baseBranch: run.base_branch || undefined,
+          useWorktree: run.use_worktree === null ? null : run.use_worktree === 1,
+          run_mode: run.run_mode, profile_id: run.profile_id,
+          agent_override: run.agent_override, model_override: run.model_override,
+          effort_override: run.effort_override, permission_mode: run.permission_mode,
+        };
+      }
+
       return {
         list: async function (projectId) {
           hydrate();
@@ -5066,8 +5144,11 @@
           var todo = todoLane();
           var idByKey = {};
           draft.tasks.forEach(function (planned) {
-            var row = buildTaskRow({ title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
-              tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+            // Main's Start creates each task with its planned run settings.
+            var row = buildTaskRow(Object.assign(
+              { title: planned.title, description: planned.description, swimlane_id: todo.id, labels: planned.labels, priority: planned.priority },
+              runSettingsCreateInput(planned),
+            ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
             membership(row, entry, planned);
             row.canvas_x = planned.canvas_x;
             row.canvas_y = planned.canvas_y;
@@ -5120,17 +5201,23 @@
               var used = draft.tasks.map(function (task) { return task.key; });
               while (used.indexOf('task-' + index) !== -1) index += 1;
               key = 'task-' + index;
-              draft.tasks.push({
-                key: key, title: title, description: input.description || '', project_id: null, existing_task_id: null,
+              draft.tasks.push(Object.assign({
+                key: key, title: title, description: input.description || '',
+                // Main stores the workflow's own project as null.
+                project_id: input.projectId && input.projectId !== homeOf(entry) ? input.projectId : null,
+                existing_task_id: null,
                 route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
                 labels: input.labels || [], priority: input.priority || 0, canvas_x: null, canvas_y: null,
-              });
+              }, runSettingsOver(null, input)));
             });
             return key;
           }
           var todo = todoLane();
-          var row = buildTaskRow({ title: title, description: input.description, swimlane_id: todo.id, labels: input.labels, priority: input.priority },
-            tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
+          // A real task in To Do with the settings the form chose, as main's addViewTask makes it.
+          var row = buildTaskRow(Object.assign(
+            { title: title, description: input.description, swimlane_id: todo.id, labels: input.labels, priority: input.priority },
+            runSettingsCreateInput(runSettingsOver(null, input)),
+          ), tasks.filter(function (task) { return task.swimlane_id === todo.id; }).length);
           membership(row, entry, { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [] });
           tasks.push(row);
           entry.workflow.revision += 1;
@@ -5149,6 +5236,21 @@
             if (input.description !== undefined) planned.description = input.description;
             if (input.labels !== undefined) planned.labels = input.labels;
             if (input.priority !== undefined) planned.priority = input.priority;
+            var current = runSettingsOver(planned, null);
+            if (input.projectId !== undefined) {
+              var storedProject = input.projectId && input.projectId !== homeOf(entry) ? input.projectId : null;
+              if (storedProject !== (planned.project_id || null)) {
+                // Main's updatePlannedTask: a new board resets the route, and the
+                // base branch and profile that named the old one's.
+                planned.project_id = storedProject;
+                planned.route_start_swimlane_id = null;
+                planned.route_last_swimlane_id = null;
+                planned.skipped_swimlane_ids = [];
+                current.base_branch = null;
+                current.profile_id = null;
+              }
+            }
+            Object.assign(planned, runSettingsOver(current, input));
           });
         },
         removeTask: async function (projectId, workflowId, key) {

@@ -122,6 +122,20 @@ export interface AutomationField {
   optional?: boolean;
   /** A note behind an info icon beside the label, for a field whose effect is not obvious from its name. */
   info?: string;
+  /**
+   * A trigger where the field does nothing, and why. The Edit automation dialog
+   * keeps the field in place there, disabled, with the reason on each option,
+   * and leaves its stored value alone, so moving the row to another trigger
+   * brings the choice back. The row's marks skip it there too. Read through
+   * `automationFieldUnavailableReason`, never by the field's key. Send
+   * message's Delivery is the one: at a turn end the turn is already over.
+   */
+  unavailableOn?: { trigger: AutomationTrigger; reason: string };
+}
+
+/** Why this field does nothing on this trigger (`AutomationField.unavailableOn`), or null where it applies. */
+export function automationFieldUnavailableReason(field: AutomationField, trigger: AutomationTrigger): string | null {
+  return field.unavailableOn?.trigger === trigger ? field.unavailableOn.reason : null;
 }
 
 export interface AutomationManifestEntry {
@@ -198,7 +212,7 @@ export const EXIT_GROUP_BUDGET_MS = 60_000;
 export const DEFAULT_SCRIPT_TIMEOUT_MINUTES = 10;
 
 const AUTO_COMMAND_MODE_FIELD_OPTIONS: readonly AutomationFieldOption[] = [
-  { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'zap', testId: 'auto-command-mode-immediate' },
+  { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'corner-down-left', testId: 'auto-command-mode-immediate' },
   { value: 'deferred' satisfies AutoCommandMode, label: 'Wait for current turn', icon: 'clock', testId: 'auto-command-mode-deferred' },
 ];
 
@@ -231,6 +245,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         options: AUTO_COMMAND_MODE_FIELD_OPTIONS,
         defaultValue: 'immediate',
         info: 'Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends.',
+        unavailableOn: { trigger: 'turn_end', reason: 'At a turn end the turn is over, so it sends at once.' },
       },
     ],
   },

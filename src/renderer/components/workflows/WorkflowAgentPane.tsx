@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, X } from 'lucide-react';
-import type { Session } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useSessionStore } from '../../stores/session-store';
+import { selectAgentSession, useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -63,29 +63,9 @@ const COLLAPSED_WIDTH = 36;
  */
 const dismissedStartOvers = new Set<string>(); // hmr-safe: a reset only shows a closed line again, until the agent next resumes
 
-/** The workflow's agent session: its live or paused one first, else the last that exited. */
-function selectAgentSession(sessions: readonly Session[], workflowId: string): Session | null {
-  let exited: Session | null = null;
-  for (const session of sessions) {
-    if (session.workflowId !== workflowId) continue;
-    if (session.status !== 'exited') return session;
-    exited = session;
-  }
-  return exited;
-}
-
-/**
- * Whether the workflow's agent is mid-turn: what holds the plan (#732, board
- * 2c). The agent works from what it read when its turn began, so a hand edit
- * meanwhile would leave it building on a plan that no longer exists.
- */
-export function useWorkflowAgentWorking(workflowId: string | null): boolean {
-  return useSessionStore((state) => {
-    if (!workflowId) return false;
-    const session = selectAgentSession(state.sessions, workflowId);
-    return session?.status === 'running' && isActive(state.sessionActivity[session.id]);
-  });
-}
+// The plan's hold lives in its own module, so the New Task form can read it
+// without importing this pane. Re-exported for the view.
+export { useWorkflowAgentWorking };
 
 /**
  * `floating`: the view is too narrow to give the pane its width (below

@@ -114,7 +114,8 @@ type SectionId = 'general' | 'agent' | 'auto';
  * the per-column list on the right, so a settings card cannot also hold it. Both
  * of this card's controls are about the agent's conversation, one handing the
  * previous agent's over and one choosing which the column continues, so the name
- * is reinforced by its own contents. `Zap` stays free for the automations card.
+ * is reinforced by its own contents. `Columns3Cog` stays free for the
+ * automations card.
  */
 const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
   { id: 'general', label: 'General', icon: Sliders },

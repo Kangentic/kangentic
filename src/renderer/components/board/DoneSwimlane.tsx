@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Pencil, ArrowDownToLine, Maximize2, ClipboardList, ListTree } from 'lucide-react';
+import { Pencil, ArrowDownToLine, Maximize2, ClipboardList, Workflow as WorkflowIcon } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -28,7 +28,7 @@ const SupersededLine = React.memo(function SupersededLine({ taskId }: { taskId: 
   if (!superseder) return null;
   return (
     <div className="mt-1.5 flex items-center gap-1.5 min-w-0 text-xs text-fg-faint" data-testid="superseded-line">
-      <ListTree size={12} strokeWidth={2} className="flex-shrink-0" style={{ color: workflowColor(superseder.colorSlot) }} />
+      <WorkflowIcon size={12} strokeWidth={2} className="flex-shrink-0" style={{ color: workflowColor(superseder.colorSlot) }} />
       <span className="truncate">Superseded by {superseder.title}</span>
     </div>
   );

@@ -1,7 +1,34 @@
-import type { AutomationConfig, AutomationType } from './types';
+import { AUTOMATION_MANIFEST, automationFieldUnavailableReason } from './automation-manifest';
+import type { AutomationConfig, AutomationTrigger, AutomationType } from './types';
 
 /**
- * The one-line sentence an automation's row shows.
+ * The most of a value a row sentence carries.
+ *
+ * A bound for the run log, which writes the sentence too, and not the row's
+ * look: the column panel ends a long value where the row ends, with CSS, and
+ * no realistic row is wide enough to reach this. Tooltips and mark labels hold
+ * the value whole.
+ */
+export const AUTOMATION_VALUE_MAX = 300;
+
+/** A row's second line, its tooltip, and whether the value it quotes is code. */
+export interface AutomationSentence {
+  text: string;
+  /**
+   * The same sentence with its value whole, every line kept: the row's
+   * tooltip, since the row shows a multi-line message or script's first line
+   * only. Equal to `text` for a one-line value, and always for a webhook, whose
+   * URL is never printed in full.
+   */
+  tooltip: string;
+  /** The value is a script's first line, which the column panel sets in the mono font. */
+  code: boolean;
+}
+
+/**
+ * The one-line sentence an automation's row shows: the verb and the type's one
+ * required value, and nothing optional. Timing and the other options are marks
+ * beside the row's name (`describeAutomationMarks`), not words here.
  *
  * Shared rather than per-adapter because BOTH sides need it: the main process
  * writes it into a run's log line, and the renderer draws it on every row in
@@ -16,62 +43,230 @@ import type { AutomationConfig, AutomationType } from './types';
  * picker adds an automation before it has a name or a value.
  */
 export function describeAutomation(type: AutomationType, config: AutomationConfig): string {
+  return describeAutomationSentence(type, config).text;
+}
+
+/** `describeAutomation`'s sentence, plus its tooltip and whether it quotes code, for the column panel. */
+export function describeAutomationSentence(type: AutomationType, config: AutomationConfig): AutomationSentence {
   switch (type) {
     case 'send_message': {
       // `command` is the legacy `send_command` key a migrated row may carry.
       const message = (config.message ?? config.command ?? '').trim();
-      if (!message) return 'No message yet.';
-      const timing = config.mode === 'deferred' ? 'after the current turn' : 'immediately';
-      return `Sends "${firstLine(message, 52)}" ${timing}.`;
+      return message
+        ? prose(`Sends "${wholeFirstLine(message)}"`, `Sends "${wholeValue(message)}"`)
+        : prose('No message yet.');
     }
 
     case 'run_script': {
       const script = (config.script ?? '').trim();
-      return script ? `Runs ${firstLine(script, 56)}` : 'No script yet.';
+      // Only a script is code. The empty state is prose, so it keeps the prose font.
+      return script
+        ? { text: `Runs ${wholeFirstLine(script)}`, tooltip: `Runs ${wholeValue(script)}`, code: true }
+        : prose('No script yet.');
     }
 
     case 'webhook': {
+      // Host only, in the tooltip too: a signed URL is a secret.
       const url = (config.url ?? '').trim();
-      return url ? `${config.method ?? 'POST'} to ${hostOf(url)}` : 'No URL yet.';
+      return prose(url ? `${config.method ?? 'POST'} to ${hostOf(url)}` : 'No URL yet.');
     }
 
     case 'notify': {
       const title = (config.title ?? '').trim();
-      return title ? `Notifies "${firstLine(title, 52)}"` : 'Shows a desktop notification.';
+      return title
+        ? prose(`Notifies "${wholeFirstLine(title)}"`, `Notifies "${wholeValue(title)}"`)
+        : prose('Shows a desktop notification.');
     }
 
     case 'move_to_column': {
+      // The Message is optional, so it is a mark, not part of the sentence.
       const column = typeof config.targetColumn === 'string' ? config.targetColumn.trim() : '';
-      const where = column ? `to ${firstLine(column, 40)}` : 'to the next column';
-      const message = typeof config.message === 'string' ? config.message.trim() : '';
-      return message ? `Moves the task ${where} with "${firstLine(message, 40)}"` : `Moves the task ${where}.`;
+      return prose(`Moves the task to ${column ? wholeFirstLine(column) : 'the next column'}`);
     }
 
     case 'spawn_agent': {
       const prompt = (config.promptTemplate ?? '').trim();
-      return prompt ? `Starts the agent with "${firstLine(prompt, 48)}"` : 'Starts the agent.';
+      return prompt
+        ? prose(`Starts the agent with "${wholeFirstLine(prompt)}"`, `Starts the agent with "${wholeValue(prompt)}"`)
+        : prose('Starts the agent.');
     }
   }
 }
 
+function prose(text: string, tooltip: string = text): AutomationSentence {
+  return { text, tooltip, code: false };
+}
+
+/** What a row's mark stands for, in the Edit automation dialog's card order. */
+export type AutomationRowMarkKind = 'condition' | 'frequency' | 'delivery' | 'message';
+
+/** One mark beside a row's name: an option that is switched on. */
+export interface AutomationRowMark {
+  kind: AutomationRowMarkKind;
+  /**
+   * "<card or field name>: <value>", the mark's tooltip and its accessible
+   * name. A Message or a Condition is whole here, every line kept: the mark is
+   * the one place the row names it.
+   */
+  label: string;
+  /**
+   * The option as words that follow the row's sentence, on one line: "with a
+   * message", "only if the review is clean". For a listing that prints one row
+   * per line, such as the MCP list (`describeAutomationMarksInWords`).
+   */
+  phrase: string;
+  /** What the mark prints beside its icon: the Frequency's run limit. */
+  count?: number;
+}
+
 /**
- * The line under a row that names its guards, or null when it has none:
- * "Only if the review is clean. At most 3 times for each task." Read in the
- * same order the rule runs, condition first.
+ * The marks a row shows after its name, in the editor's card order: the
+ * Condition, the Frequency, then the action's own. Each says an option is on,
+ * and its label says which card and what value: "Condition: only if the review
+ * is clean."
+ *
+ * Here rather than in the column panel for the reason the sentence is: what a
+ * type marks is a question about the type, and this module is where the row's
+ * words already switch on it, so the renderer never branches on a type name.
+ */
+export function describeAutomationMarks(row: {
+  type: AutomationType;
+  trigger: AutomationTrigger;
+  config: AutomationConfig;
+  condition: string | null;
+  max_runs: number | null;
+}): AutomationRowMark[] {
+  const marks: AutomationRowMark[] = [];
+  const condition = onlyIf(row.condition, 'keep-lines');
+  const conditionPhrase = onlyIf(row.condition, 'one-line');
+  if (condition !== null && conditionPhrase !== null) {
+    marks.push({ kind: 'condition', label: labelled('Condition', condition), phrase: asPhrase(conditionPhrase) });
+  }
+  const frequency = describeAutomationFrequency(row.max_runs);
+  if (frequency !== null && row.max_runs !== null) {
+    marks.push({ kind: 'frequency', label: labelled('Frequency', frequency), phrase: asPhrase(frequency), count: row.max_runs });
+  }
+  marks.push(...actionMarks(row.type, row.trigger, row.config));
+  return marks;
+}
+
+/**
+ * A row's marks as words after its sentence, or null when it has none: "with a
+ * message; only if the review is clean; at most 3 times for each task". The
+ * MCP list prints this, since an agent reads text and cannot hover a mark.
+ *
+ * The action's own options lead, unlike the marks' card order, because they
+ * finish the sentence's verb ("Moves the task to Executing, with a message")
+ * and the guards then say when it runs.
+ */
+export function describeAutomationMarksInWords(row: Parameters<typeof describeAutomationMarks>[0]): string | null {
+  const marks = describeAutomationMarks(row);
+  const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'frequency';
+  const ordered = [...marks.filter((mark) => !isGuard(mark)), ...marks.filter(isGuard)];
+  return ordered.length > 0 ? ordered.map((mark) => mark.phrase).join('; ') : null;
+}
+
+/** The marks an action's own options earn. */
+function actionMarks(type: AutomationType, trigger: AutomationTrigger, config: AutomationConfig): AutomationRowMark[] {
+  switch (type) {
+    case 'send_message': {
+      // Run immediately is the default, so only waiting is marked, and only
+      // where Delivery applies. The manifest says where it does not (at a turn
+      // end the turn is already over and the message goes at once), and a mark
+      // there would promise a wait that never happens.
+      const delivery = AUTOMATION_MANIFEST.send_message.fields.find((field) => field.key === 'mode');
+      const applies = delivery !== undefined && automationFieldUnavailableReason(delivery, trigger) === null;
+      return applies && config.mode === 'deferred'
+        ? [{ kind: 'delivery', label: 'Delivery: waits for the current turn to end.', phrase: 'waits for the current turn to end' }]
+        : [];
+    }
+
+    case 'move_to_column': {
+      const message = typeof config.message === 'string' ? config.message.trim() : '';
+      return message ? [{ kind: 'message', label: `Message: ${wholeValue(message)}`, phrase: 'with a message' }] : [];
+    }
+
+    // A webhook's body and headers and a notification's body only shape what is
+    // sent, so they earn no mark: open the row for those.
+    case 'run_script':
+    case 'webhook':
+    case 'notify':
+    case 'spawn_agent':
+      return [];
+  }
+}
+
+/** "Condition: only if ..." from "Only if ...". */
+function labelled(cardName: string, sentence: string): string {
+  return `${cardName}: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
+}
+
+/** "only if the review is clean" from "Only if the review is clean.": words that continue a sentence. */
+function asPhrase(sentence: string): string {
+  return `${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`.replace(/[.!?]+$/, '');
+}
+
+/**
+ * A value whole, every line kept: trimmed, with Windows line breaks made plain.
+ * What a tooltip holds where the row shows only the first line.
+ */
+export function wholeValue(text: string): string {
+  return text.replace(/\r\n?/g, '\n').trim();
+}
+
+/**
+ * A value's first line, whole: everything before its first line break, with
+ * inner whitespace collapsed, bounded only by `AUTOMATION_VALUE_MAX`. A row is
+ * one line, so a multi-line script or message shows its first line.
+ */
+export function wholeFirstLine(text: string): string {
+  const [first = ''] = text.trim().split(/\r?\n/, 1);
+  return firstLine(first, AUTOMATION_VALUE_MAX);
+}
+
+/**
+ * A row's Condition as one sentence on one line, or null when it has none:
+ * "Only if the review is clean." Never cut short. The Condition mark's tooltip
+ * keeps the condition's own line breaks instead (`describeAutomationMarks`).
+ */
+export function describeAutomationCondition(condition: string | null): string | null {
+  return onlyIf(condition, 'one-line');
+}
+
+/**
+ * "Only if <condition>." with the condition whole: its line breaks kept for a
+ * tooltip, or folded into one line for a sentence or a listing.
+ */
+function onlyIf(condition: string | null, lines: 'keep-lines' | 'one-line'): string | null {
+  const plain = (condition ?? '').replace(/\r\n?/g, '\n');
+  const sentence = lines === 'one-line'
+    ? plain.replace(/\s+/g, ' ').trim()
+    : plain.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter((line) => line !== '').join('\n');
+  if (!sentence) return null;
+  // Lower-case the first letter so it reads as one sentence, unless it starts
+  // an acronym or a name ("CI is green" stays as written).
+  const continued = /^[A-Z][a-z]/.test(sentence) ? sentence[0].toLowerCase() + sentence.slice(1) : sentence;
+  return `Only if ${continued.replace(/[.!?]+$/, '')}.`;
+}
+
+/**
+ * A row's Frequency as one sentence, or null when it has none: "At most 3 times
+ * for each task." The tooltip of the Frequency mark, whose visible part is the
+ * bare count.
+ */
+export function describeAutomationFrequency(maxRuns: number | null): string | null {
+  if (maxRuns === null) return null;
+  return maxRuns === 1 ? 'At most once for each task.' : `At most ${maxRuns} times for each task.`;
+}
+
+/**
+ * Both guards as one string, or null when the row has neither, read in the
+ * order the rule runs: "Only if the review is clean. At most 3 times for each
+ * task." Built from the two sentences above, so the wording lives in one place.
  */
 export function describeAutomationGuards(guards: { condition: string | null; max_runs: number | null }): string | null {
-  const parts: string[] = [];
-  const condition = guards.condition?.trim() ?? '';
-  if (condition) {
-    const sentence = firstLine(condition, 72);
-    // Lower-case the first letter so it reads as one sentence, unless it starts
-    // an acronym or a name ("CI is green" stays as written).
-    const continued = /^[A-Z][a-z]/.test(sentence) ? sentence[0].toLowerCase() + sentence.slice(1) : sentence;
-    parts.push(`Only if ${continued.replace(/[.!?]+$/, '')}.`);
-  }
-  if (guards.max_runs !== null) {
-    parts.push(guards.max_runs === 1 ? 'At most once for each task.' : `At most ${guards.max_runs} times for each task.`);
-  }
+  const parts = [describeAutomationCondition(guards.condition), describeAutomationFrequency(guards.max_runs)]
+    .filter((part): part is string => part !== null);
   return parts.length > 0 ? parts.join(' ') : null;
 }
 

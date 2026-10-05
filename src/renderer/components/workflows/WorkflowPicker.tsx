@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, ListTree, Pause } from 'lucide-react';
+import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, Pause, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowState, WorkflowSummary } from '../../../shared/types';
 import { OverlayPopover } from '../OverlayPopover';
 import { ActivityMark } from '../ActivityMark';
@@ -156,7 +156,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
           open ? 'border-accent' : 'border-edge-input hover:border-fg-faint/60'
         } ${controlClassName}`}
       >
-        <ListTree size={14} className="shrink-0" style={{ color: selected ? workflowColor(selected.workflow.color_slot) : undefined }} />
+        <WorkflowIcon size={14} className="shrink-0" style={{ color: selected ? workflowColor(selected.workflow.color_slot) : undefined }} />
         <span className="min-w-0 truncate text-left">{name}</span>
         <Pill
           size="sm"
@@ -195,7 +195,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
                 data-testid="workflow-picker-option"
                 data-workflow-id={summary.workflow.id}
               >
-                <ListTree size={15} className="shrink-0" style={{ color: workflowColor(summary.workflow.color_slot) }} />
+                <WorkflowIcon size={15} className="shrink-0" style={{ color: workflowColor(summary.workflow.color_slot) }} />
                 <PickerRowName summary={summary} />
                 <span className="shrink-0 text-xs text-fg-muted tabular-nums">
                   {started ? `${summary.doneCount} of ${summary.taskCount}` : tasksText(summary.taskCount)}

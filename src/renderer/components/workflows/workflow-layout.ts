@@ -6,11 +6,15 @@
  * A layered layout, the shape CI pipelines draw (GitLab `needs`):
  *
  * - **Layers** by longest path: a task sits one column right of the furthest
- *   task it waits for, so every link points rightwards.
+ *   task it waits for, so every link points rightwards. A task that waits for
+ *   nothing sits just before the earliest task that waits on it, as dagre
+ *   places one, so a column says how far down the chain a task is, not when
+ *   it can start (the run order says that).
  * - **Lanes** for a link that skips a column: it gets a dummy node in each
  *   column it crosses, ordered with the cards, so its line runs through that
  *   column's open space (above, between or below its cards) and never under a
- *   card. Dummy slots are `LANE_GAP` tall, so lanes stack without crossing.
+ *   card. Dummy slots are `LANE_GAP` tall, so lanes stack without crossing,
+ *   and a lane keeps `LANE_CLEARANCE` from every card's edge.
  * - **Order** within a column by barycenter sweeps (the average position of a
  *   node's neighbours in the next column over), which keeps crossings low.
  * - **Transitive reduction**: a link another path already implies (A to C when
@@ -25,6 +29,8 @@ export const CARD_WIDTH = 256;
 export const COLUMN_GAP = 96;
 export const ROW_GAP = 20;
 export const LANE_GAP = 12;
+/** How far a lane runs from the edge of any card in its column, above or below it. */
+export const LANE_CLEARANCE = 12;
 /** Where a link meets a card: the middle of its title row, under the workflow strip. */
 export const PORT_OFFSET_Y = 49;
 /**
@@ -76,7 +82,7 @@ export interface WorkflowLayout {
   automaticPositions: Map<string, Point>;
   /** The links drawn: the transitive reduction. */
   edges: LaidOutEdge[];
-  /** Column index per card: run-order groups for the inspector. */
+  /** Column index per card on the canvas. The inspector's run order is `runOrder` in workflow-graph.ts, not this. */
   layers: Map<string, number>;
 }
 
@@ -91,15 +97,24 @@ export function edgeId(blockerKey: string, blockedKey: string): string {
   return `${blockerKey}->${blockedKey}`;
 }
 
-/** Each task's column: one right of the furthest task it waits for. */
+/**
+ * Each task's column: one right of the furthest task it waits for. A task that
+ * waits for nothing sits in the column just before the earliest task that waits
+ * on it, so its links are one column long (Final 2, B); one that nothing waits
+ * on either stays in the first column.
+ */
 export function computeLayers(keys: readonly string[], links: readonly LayoutLink[]): Map<string, number> {
   const known = new Set(keys);
   const blockersOf = new Map<string, string[]>();
+  const dependentsOf = new Map<string, string[]>();
   for (const link of links) {
     if (!known.has(link.blockerKey) || !known.has(link.blockedKey)) continue;
     const list = blockersOf.get(link.blockedKey) ?? [];
     list.push(link.blockerKey);
     blockersOf.set(link.blockedKey, list);
+    const dependents = dependentsOf.get(link.blockerKey) ?? [];
+    dependents.push(link.blockedKey);
+    dependentsOf.set(link.blockerKey, dependents);
   }
   const layers = new Map<string, number>();
   const visiting = new Set<string>();
@@ -117,6 +132,15 @@ export function computeLayers(keys: readonly string[], links: readonly LayoutLin
     return layer;
   };
   for (const key of keys) layerOf(key);
+  // One pass is enough: only a task with no blocker moves, and no other
+  // task's column depends on where one of those sits. Every one of its
+  // dependents stays at least a column to its right, so links still point
+  // rightwards.
+  for (const key of keys) {
+    const dependents = dependentsOf.get(key);
+    if ((blockersOf.get(key)?.length ?? 0) > 0 || !dependents || dependents.length === 0) continue;
+    layers.set(key, Math.max(0, Math.min(...dependents.map((dependent) => layers.get(dependent) ?? 0)) - 1));
+  }
   return layers;
 }
 
@@ -207,10 +231,19 @@ export function layoutWorkflow(tasks: readonly LayoutTask[], links: readonly Lay
     for (let layer = columns.length - 2; layer >= 0; layer--) sortBy(columns[layer], lower);
   }
 
-  // Coordinates: stack each column, cards a card apart and lanes a lane apart,
-  // centred against the tallest column.
+  // Coordinates: stack each column, centred against the tallest column. Cards
+  // sit a row gap apart and lanes a lane apart. A lane keeps LANE_CLEARANCE
+  // from the card above or below it, measured from the lane's line at the
+  // middle of its slot, so a link never runs along a card's edge.
+  const laneEdgeGap = LANE_CLEARANCE - LANE_GAP / 2;
+  const gapBefore = (previous: LayerItem | undefined, item: LayerItem): number => {
+    if (!previous) return 0;
+    if (previous.dummyOf && item.dummyOf) return 0;
+    if (previous.dummyOf || item.dummyOf) return laneEdgeGap;
+    return ROW_GAP;
+  };
   const stackHeight = (column: LayerItem[]): number => column.reduce(
-    (sum, item, index) => sum + (item.dummyOf ? LANE_GAP : item.height) + (index > 0 ? (item.dummyOf ? 0 : ROW_GAP) : 0),
+    (sum, item, index) => sum + gapBefore(column[index - 1], item) + (item.dummyOf ? LANE_GAP : item.height),
     0,
   );
   const tallest = Math.max(0, ...columns.map(stackHeight));
@@ -220,7 +253,7 @@ export function layoutWorkflow(tasks: readonly LayoutTask[], links: readonly Lay
     const x = layer * (CARD_WIDTH + COLUMN_GAP);
     let y = (tallest - stackHeight(column)) / 2;
     column.forEach((item, index) => {
-      if (index > 0 && !item.dummyOf) y += ROW_GAP;
+      y += gapBefore(column[index - 1], item);
       if (item.dummyOf) {
         laneY.set(item.id, y + LANE_GAP / 2);
         y += LANE_GAP;

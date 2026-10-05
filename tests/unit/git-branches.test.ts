@@ -80,6 +80,22 @@ describe('fetchGitBranches', () => {
     expect(mocks.listBranches).toHaveBeenCalledTimes(2);
   });
 
+  it('lists a named project\'s branches by its id, never from the current project\'s cache', async () => {
+    mocks.listBranches.mockImplementation(async (projectId?: string) => (projectId ? ['release'] : ['main']));
+    await expect(fetchGitBranches()).resolves.toEqual(['main']);
+    // The current project is asked for by omission, as before.
+    expect(mocks.listBranches).toHaveBeenLastCalledWith();
+
+    // Naming the current project is the current project's cache.
+    await expect(fetchGitBranches('project-1')).resolves.toEqual(['main']);
+    expect(mocks.listBranches).toHaveBeenCalledTimes(1);
+
+    // Another project's is its own read, by its id.
+    await expect(fetchGitBranches('project-2')).resolves.toEqual(['release']);
+    expect(mocks.listBranches).toHaveBeenCalledTimes(2);
+    expect(mocks.listBranches).toHaveBeenLastCalledWith('project-2');
+  });
+
   it('does not cache a rejection: the next call retries', async () => {
     mocks.listBranches.mockRejectedValueOnce(new Error('git failed'));
     await expect(fetchGitBranches()).rejects.toThrow('git failed');
