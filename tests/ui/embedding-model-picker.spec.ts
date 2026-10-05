@@ -63,7 +63,7 @@ function makeErrorPreConfig(workerError?: string): string {
     model: {
       id: 'bge-small',
       displayName: 'bge small',
-      tier: 'balanced',
+      tier: 'light',
       approxSizeMb: 34,
       dimensions: 384,
       state: 'error',

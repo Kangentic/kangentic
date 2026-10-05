@@ -1,6 +1,7 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
 import type { ModelLicenseId } from './model-licenses';
 import type { EmbeddingTier } from './embedding-models';
+import type { DictationMode } from './dictation-presets';
 import type {
   Announcement,
   AnnouncementArchiveEntry,
@@ -2786,7 +2787,7 @@ export interface DictationStartOptions {
   engineMode: DictationEngineMode;
   /** The preset or `custom`; main resolves a preset's models itself
    *  (`src/shared/dictation-presets.ts`). Absent = derived from the ids. */
-  mode?: 'fast' | 'balanced' | 'accurate' | 'custom';
+  mode?: DictationMode;
   /** The FINAL (accurate) model id in Custom, or null/undefined for the machine's
    *  default preset, or `'none'` for no post-processing pass. */
   modelId?: string | null;
@@ -2843,10 +2844,10 @@ export interface DictationInfo {
   /** Selectable offline models (accuracy/size trade-off) - kept as the union for
    *  any general consumer; the two-stage dropdowns use the lists below. */
   availableModels: DictationModelOption[];
-  /** Live-preview model choices: the streaming Zipformer (native, instant) plus
-   *  the offline models small enough to chunk (Parakeet, Whisper tiny/base). */
+  /** Live-preview model choices: the registry's live-capable models, the
+   *  streaming transducers plus the offline models light enough to chunk. */
   liveModels: DictationModelOption[];
-  /** Final/accurate model choices: every offline model (Parakeet + Whisper ladder). */
+  /** Final/accurate model choices: every offline model in the registry. */
   finalModels: DictationModelOption[];
   /** The resolved live + final model ids for the current selection. */
   selectedLiveModelId: string | null;
@@ -3612,7 +3613,7 @@ export interface AppConfig {
      *  (`fast`). A preset names its models through `src/shared/dictation-presets.ts`,
      *  resolved by main each session, so it follows the lineup; `custom` uses the
      *  two ids above. Absent = derived (`effectiveMode`). */
-    mode?: 'fast' | 'balanced' | 'accurate' | 'custom';
+    mode?: DictationMode;
     /** BCP-47 language the user speaks. The presets pick models that cover it.
      *  Default `en`. */
     language?: string;

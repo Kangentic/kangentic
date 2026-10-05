@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   modelLanguages,
+  isOfflineKind,
   isOfflineModel,
   getModel,
   liveCapableModels,
   finalCapableModels,
   MODELS,
   type ModelDef,
+  type ModelEngineKind,
 } from '../../src/main/transcription/models/model-registry';
 import { DICTATION_LANGUAGES, MULTILINGUAL_LANGUAGE_CODES, PARAKEET_V3_LANGUAGE_CODES } from '../../src/shared/dictation-languages';
 import { MODEL_LICENSES } from '../../src/shared/model-licenses';
@@ -140,6 +142,28 @@ describe('isOfflineModel', () => {
   });
 });
 
+describe('isOfflineKind', () => {
+  // Every engine routes on this set. A kind that drops out of it falls out of
+  // finalCapableModels(), so its model silently vanishes from the Refinement
+  // dropdown with nothing else failing.
+  const offlineKinds: ModelEngineKind[] = [
+    'offline-whisper',
+    'offline-nemo-transducer',
+    'offline-moonshine',
+    'offline-cohere-transcribe',
+  ];
+
+  for (const kind of offlineKinds) {
+    it(`returns true for ${kind}`, () => {
+      expect(isOfflineKind(kind)).toBe(true);
+    });
+  }
+
+  it('returns false for online-transducer (the streaming engines decode natively)', () => {
+    expect(isOfflineKind('online-transducer')).toBe(false);
+  });
+});
+
 describe('getModel', () => {
   it('returns undefined for an unrecognized model id', () => {
     expect(getModel('unknown-model-id-that-does-not-exist')).toBeUndefined();
@@ -218,6 +242,34 @@ describe('finalCapableModels', () => {
     const finalIds = finalCapableModels().map((model) => model.id);
     expect(finalIds).toContain('whisper-base-multi');
     expect(finalIds).toContain('whisper-small-multi');
+  });
+});
+
+describe('cohere-transcribe-2b model registration', () => {
+  it('exists in the MODELS catalogue', () => {
+    expect(getModel('cohere-transcribe-2b')).toBeDefined();
+  });
+
+  it('engineKind is offline-cohere-transcribe', () => {
+    expect(getModel('cohere-transcribe-2b')!.engineKind).toBe('offline-cohere-transcribe');
+  });
+
+  it('is an offline model (a refinement model, decoded after release)', () => {
+    expect(isOfflineModel(getModel('cohere-transcribe-2b')!)).toBe(true);
+  });
+
+  it('is in finalCapableModels() (it must stay in the Refinement dropdown)', () => {
+    const finalIds = finalCapableModels().map((model) => model.id);
+    expect(finalIds).toContain('cohere-transcribe-2b');
+  });
+
+  it('liveCapable is falsy (2.7 GiB and three times slower than Parakeet, far too heavy to chunk for live)', () => {
+    expect(getModel('cohere-transcribe-2b')!.liveCapable).toBeFalsy();
+  });
+
+  it('is NOT in liveCapableModels()', () => {
+    const liveIds = liveCapableModels().map((model) => model.id);
+    expect(liveIds).not.toContain('cohere-transcribe-2b');
   });
 });
 

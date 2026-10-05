@@ -123,7 +123,9 @@ async function dictatedClips() {
   if (!fs.existsSync(path.join(kokoro, 'model.onnx'))) {
     const archive = path.join(root, 'kokoro-en-v0_19.tar.bz2');
     await fetchTo('https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2', archive);
-    execFileSync('tar', ['-xjf', archive, '-C', root]);
+    // A relative archive name: GNU tar (Git Bash) reads `C:` in an absolute
+    // Windows path as a remote host.
+    execFileSync('tar', ['-xjf', path.basename(archive)], { cwd: root });
   }
   const clipDir = path.join(root, 'measure-clips');
   fs.mkdirSync(clipDir, { recursive: true });
