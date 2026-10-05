@@ -132,6 +132,10 @@ let listGeneration = 0; // hmr-safe: as above.
 let homeGeneration = 0; // hmr-safe: as above.
 /** The same, for the supersessions. */
 let supersessionGeneration = 0; // hmr-safe: as above.
+/** The same, for the board's links overlay: a clear outranks a load still in flight. */
+let linkGeneration = 0; // hmr-safe: as above; the overlay is cleared on leaving the board.
+/** The same, per watched workflow (a task detail's panel). */
+const watchedGenerations = new Map<string, number>(); // hmr-safe: as above; a reset only discards in-flight answers.
 
 function currentProjectId(): string | null {
   return useProjectStore.getState().currentProject?.id ?? null;
@@ -236,6 +240,9 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   async function refreshWatched(workflowId: string): Promise<void> {
     const watched = get().watchedDetails[workflowId];
     if (!watched) return;
+    // Two pushes in a row can answer out of order: only the newest read lands.
+    const generation = (watchedGenerations.get(workflowId) ?? 0) + 1;
+    watchedGenerations.set(workflowId, generation);
     let detail: WorkflowDetail;
     try {
       detail = await window.electronAPI.workflows.get(watched.homeProjectId, workflowId);
@@ -243,6 +250,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       console.warn('[workflow-store] Failed to load a task\'s workflow:', describeIpcError(error));
       return;
     }
+    if (watchedGenerations.get(workflowId) !== generation) return;
     const current = get().watchedDetails[workflowId];
     if (!current) return;
     set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail) } } });
@@ -335,6 +343,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         summaries = await window.electronAPI.workflows.list(projectId);
       } catch (error) {
         console.error('[workflow-store] Failed to load workflows:', describeIpcError(error));
+        // A project switch whose read failed must not leave the old project's
+        // workflow on screen under the new project's header, where its actions
+        // would still reach the old project.
+        if (generation === listGeneration && get().projectId !== projectId) {
+          set({ projectId, summaries: [], selectedWorkflowId: null, detail: null, selectedTaskKey: null });
+        }
         return;
       }
       if (generation !== listGeneration) return;
@@ -414,16 +428,24 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     showLinks: async (taskId, homeProjectId, workflowId) => {
+      // A clear (Escape, a click on empty board) or a newer show while this one
+      // loads wins: a late answer must not bring the overlay back.
+      const generation = ++linkGeneration;
       try {
         const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
+        if (generation !== linkGeneration) return;
         set({ linkFocus: { taskId, homeProjectId, detail } });
       } catch (error) {
         console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
+        if (generation !== linkGeneration) return;
         set({ linkFocus: null });
       }
     },
 
-    clearLinks: () => set({ linkFocus: null }),
+    clearLinks: () => {
+      linkGeneration += 1;
+      set({ linkFocus: null });
+    },
 
     watchDetail: (homeProjectId, workflowId) => {
       const existing = get().watchedDetails[workflowId];
@@ -587,8 +609,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
           },
         });
       }
-      return (await onSelected('Could not save the layout', (projectId, workflowId) =>
+      const saved = (await onSelected('Could not save the layout', (projectId, workflowId) =>
         window.electronAPI.workflows.setPositions(projectId, workflowId, positions))).ok;
+      // The positions above were drawn before the save. A refused save writes
+      // nothing, so no push arrives to put the cards back: read them again.
+      if (!saved) void get().loadDetail();
+      return saved;
     },
   };
 });

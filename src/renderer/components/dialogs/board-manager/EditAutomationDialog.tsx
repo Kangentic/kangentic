@@ -210,16 +210,28 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     setLocal((current) => ({ ...current, config: { ...current.config, [key]: value } }));
   };
 
-  // A type that is not offered on the current trigger moves the row to the
-  // first trigger it is offered on (Move to column to On agent turn end), so
-  // the dialog never holds a rule the engine would refuse.
+  // A type the current trigger cannot run moves the row to the first trigger
+  // that both offers the type and runs in this column (Move to column to On
+  // agent turn end), so the dialog never holds a rule the engine would refuse.
+  // The Type picker lists only types with such a trigger (`typeOptions`).
   const changeType = (type: AutomationType): void => {
     setLocal((current) => {
-      if (isTypeOfferedOnTrigger(type, current.trigger)) return { ...current, type };
-      const offered = AUTOMATION_TRIGGERS.find((trigger) => isTypeOfferedOnTrigger(type, trigger)) ?? current.trigger;
+      const reasons = triggerReasons(type, props.column, props.reportsTurnEnd);
+      if (reasons[AUTOMATION_TRIGGERS.indexOf(current.trigger)] === null) return { ...current, type };
+      const runnable = AUTOMATION_TRIGGERS.find((_trigger, index) => reasons[index] === null);
+      const offered = runnable ?? AUTOMATION_TRIGGERS.find((trigger) => isTypeOfferedOnTrigger(type, trigger)) ?? current.trigger;
       return { ...current, type, trigger: offered };
     });
   };
+
+  // The types this column can run on some trigger, as the Add automation
+  // picker offers them, plus the row's own type so a legacy or now-blocked row
+  // still reads what it is.
+  const typeOptions = useMemo(
+    () => stableAutomationTypes().filter((type) => type === local.type
+      || triggerReasons(type, props.column, props.reportsTurnEnd).some((reason) => reason === null)),
+    [local.type, props.column, props.reportsTurnEnd],
+  );
 
   // Mount only, and deliberately not on every focus: a new row arrives named
   // "New run script", which is a placeholder rather than a choice, so the first
@@ -442,9 +454,9 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                 testId="edit-automation-type"
                 ariaLabel="Type"
                 value={local.type}
-                // Just the offerable set. The picker lists the current value
-                // too, which is what keeps a legacy row's type readable.
-                options={stableAutomationTypes()}
+                // The offerable set this column can run. The picker lists the
+                // current value too, which keeps a legacy row's type readable.
+                options={typeOptions}
                 onChange={changeType}
               />
             </div>

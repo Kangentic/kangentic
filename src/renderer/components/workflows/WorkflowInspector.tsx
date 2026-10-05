@@ -298,7 +298,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
         data-testid="workflow-add-blocker-menu"
       >
         {candidates.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-fg-faint">No task it can wait for.</div>
+          <div className="px-3 py-2 text-sm text-fg-faint">No task it can wait for.</div>
         ) : candidates.map((candidate) => (
           <button
             key={candidate.key}

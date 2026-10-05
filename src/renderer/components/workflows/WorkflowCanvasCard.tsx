@@ -4,6 +4,7 @@ import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
 import { PROJECT_ROW_HEIGHT } from './workflow-layout';
 import { RegistryIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
+import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
 import { WorkflowCardStrip } from './WorkflowStrip';
 
@@ -147,7 +148,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   // refresh), so the card reads exactly what its board card reads. The
   // workflow's snapshot covers the rest: a task in Done, or on another board.
   const taskId = viewTask.task?.id ?? null;
-  const liveTask = useBoardStore((state) => (taskId ? state.tasks.find((candidate) => candidate.id === taskId) : undefined));
+  const liveTask = useBoardStore((state) => (taskId ? findBoardTask(state.tasks, taskId) : undefined));
   const snapshotTask = useMemo(() => viewTask.task ?? plannedAsTask(viewTask), [viewTask]);
   const task = liveTask ?? snapshotTask;
   const view = useTaskCardViewModel(task);

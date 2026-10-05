@@ -30,7 +30,7 @@ import {
   pruneColumnRows,
   remapDraftIds,
   removeRow,
-  renameColumnInDrafts,
+  renameColumnsInDrafts,
   replaceRow,
   runnableAutomationCounts,
   runnableRows,
@@ -77,16 +77,6 @@ import {
 import { ProfileBar } from './board-manager/ProfileBar';
 import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TemplateVariablePicker } from '../TemplateVariablePicker';
-
-/**
- * Every field this picker serves belongs to a column automation, which runs on
- * a move, so the four move keywords resolve here and are offered. A spawn
- * prompt is not a move and gets the shorter list; that is what `contexts`
- * exists for, and filtering here is what makes the declaration mean something.
- *
- * Module scope because the list never changes, and because the picker is
- * rendered inside a dialog that re-renders on every keystroke.
- */
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 
@@ -1442,13 +1432,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       for (const deletedId of pendingDeleteIds) plannedDrafts = pruneColumnRows(plannedDrafts, deletedId);
       // A row that names a column renamed in this same Save (Move to column's
       // Column) follows the new name. Main renames saved rows on its own; this
-      // covers the drafts about to overwrite them.
-      for (const [id, laneDraft] of Object.entries(drafts)) {
+      // covers the drafts about to overwrite them. All renames in one pass, so a
+      // chain of renames moves each row once.
+      const renames = Object.entries(drafts).flatMap(([id, laneDraft]) => {
         const before = originals[id]?.name;
-        if (before && laneDraft.name.trim() && before !== laneDraft.name) {
-          plannedDrafts = renameColumnInDrafts(plannedDrafts, before, laneDraft.name);
-        }
-      }
+        return before && laneDraft.name.trim() && before !== laneDraft.name
+          ? [{ oldName: before, newName: laneDraft.name }]
+          : [];
+      });
+      plannedDrafts = renameColumnsInDrafts(plannedDrafts, renames);
 
       for (const entry of planAutomationSave(automationOriginals, plannedDrafts)) {
         try {

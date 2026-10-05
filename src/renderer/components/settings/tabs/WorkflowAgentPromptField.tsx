@@ -90,6 +90,10 @@ export function WorkflowAgentPromptSetting({ stored, onSave }: { stored: string;
     const next = pendingRef.current;
     pendingRef.current = null;
     onSave(next);
+    // A blank prompt saves as unset, which sends the default. When the stored
+    // text was already the default nothing remounts the field, so show the
+    // default it falls back to rather than an empty field.
+    if (!next.trim()) setDraft(DEFAULT_WORKFLOW_AGENT_PROMPT);
   }, [onSave]);
 
   const handleReset = useCallback(() => {

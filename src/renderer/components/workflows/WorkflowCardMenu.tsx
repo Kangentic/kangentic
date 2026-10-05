@@ -8,6 +8,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { describeIpcError } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
+import { findBoardTask } from '../../utils/board-task-index';
 import { TaskContextMenu } from '../board/TaskContextMenu';
 
 /**
@@ -34,8 +35,12 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const onThisBoard = viewTask.projectId === currentProjectId;
   const taskId = viewTask.task.id;
-  const liveTask = useBoardStore((state) => (onThisBoard ? state.tasks.find((candidate) => candidate.id === taskId) : undefined));
+  const liveTask = useBoardStore((state) => (onThisBoard ? findBoardTask(state.tasks, taskId) : undefined));
   const boardSwimlanes = useBoardStore((state) => state.swimlanes);
+  // Subscribed, not read once: a push while the menu is open (the workflow
+  // pausing) changes which rows are locked, and the menu must say so.
+  const summaries = useWorkflowStore((state) => state.summaries);
+  const homeSummaries = useWorkflowStore((state) => state.homeSummaries);
   const [elsewhere, setElsewhere] = useState<{ task: Task; swimlanes: Swimlane[] } | null>(null);
 
   useEffect(() => {
@@ -52,7 +57,6 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   if (!task || !swimlanes) return null;
 
   // This view is the workflow's home, so its summary is in this project's list.
-  const { summaries, homeSummaries } = useWorkflowStore.getState();
   const workflow = boardWorkflowOf(summaries, homeSummaries, task, currentProjectId);
   const reportFailure = (action: string, error: unknown) => {
     useToastStore.getState().addToast({ message: `Failed to ${action} "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });

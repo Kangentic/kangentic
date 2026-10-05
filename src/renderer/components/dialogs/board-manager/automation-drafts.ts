@@ -410,19 +410,20 @@ export function describeAutomationChanges(
   });
 }
 
-/** The whole-column writes a Save should send. Untouched columns are skipped. */
 /**
- * Point every column-naming field (`kind: 'column'`) that holds `oldName` at
- * `newName`, across every column's drafts. Case-blind, as the engine reads the
- * name. Returns the same object when nothing changed, so a Save with no rename
- * plans nothing new.
+ * Point every column-naming field (`kind: 'column'`) at its column's new name,
+ * for every column renamed in one Save, across every column's drafts. One pass
+ * over all the renames, so a chain (A renamed B, and B renamed C) moves a row
+ * naming A to B, not on to C. Case-blind, as the engine reads the name; the new
+ * name is written trimmed. Returns the same object when nothing changed, so a
+ * Save with no rename plans nothing new.
  */
-export function renameColumnInDrafts(
+export function renameColumnsInDrafts(
   drafts: AutomationDraftsByColumn,
-  oldName: string,
-  newName: string,
+  renames: ReadonlyArray<{ oldName: string; newName: string }>,
 ): AutomationDraftsByColumn {
-  const wanted = oldName.trim().toLowerCase();
+  const newNameByOld = new Map(renames.map((rename) => [rename.oldName.trim().toLowerCase(), rename.newName.trim()]));
+  if (newNameByOld.size === 0) return drafts;
   let changed = false;
   const next: AutomationDraftsByColumn = {};
   for (const [columnId, rows] of Object.entries(drafts)) {
@@ -431,8 +432,9 @@ export function renameColumnInDrafts(
       let config = row.config;
       for (const field of columnFields) {
         const value = (config as Record<string, unknown>)[field.key];
-        if (typeof value === 'string' && value.trim().toLowerCase() === wanted) {
-          config = { ...config, [field.key]: newName };
+        const renamed = typeof value === 'string' ? newNameByOld.get(value.trim().toLowerCase()) : undefined;
+        if (renamed !== undefined && renamed !== value) {
+          config = { ...config, [field.key]: renamed };
           changed = true;
         }
       }
@@ -442,6 +444,7 @@ export function renameColumnInDrafts(
   return changed ? next : drafts;
 }
 
+/** The whole-column writes a Save should send. Untouched columns are skipped. */
 export function planAutomationSave(
   originals: AutomationDraftsByColumn,
   drafts: AutomationDraftsByColumn,
