@@ -19,7 +19,7 @@ import { linkPaths, type CardBox, type LinkRequest } from './workflow-links-geom
  * at most once per animation frame on a scroll, a resize or a board change.
  * A board drag clears it (`useBoardDragDrop`), so a refused drop never leaves
  * it measuring under the next drag. Escape or a pointer press on empty board
- * space clears it too.
+ * space clears it too, from the moment its load starts.
  *
  * The lines are an SVG drawn from measured card boxes, not an icon, as the
  * commit graph's is (`CommitGraphSvg.tsx`), so the Lucide-only icon rule
@@ -100,6 +100,7 @@ function focusStyle(relations: Relations): string {
 
 export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<HTMLDivElement | null> }) {
   const linkFocus = useWorkflowStore((state) => state.linkFocus);
+  const linkFocusLoading = useWorkflowStore((state) => state.linkFocusLoading);
   const [segments, setSegments] = useState<Segment[]>(NO_SEGMENTS);
 
   const relations = useMemo(
@@ -179,10 +180,13 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
   // Clear on a press on empty board space, or Escape. Escape here is the
   // structural kind (keybindings-registry.md): it acts only when nothing else
   // took the key, a dialog, a menu or a task window, all of which handle
-  // Escape themselves and keep focus inside them.
+  // Escape themselves and keep focus inside them. Both listen from the moment
+  // a load starts, not only once it has drawn, so a clear made before the
+  // first answer lands cancels that answer too.
+  const listening = relations !== null || linkFocusLoading;
   useEffect(() => {
     const board = boardRef.current;
-    if (!relations || !board) return undefined;
+    if (!listening || !board) return undefined;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (target?.closest('[data-task-id], button, a, input, [role="button"]')) return;
@@ -201,7 +205,7 @@ export function WorkflowLinksOverlay({ boardRef }: { boardRef: React.RefObject<H
       board.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [boardRef, relations]);
+  }, [boardRef, listening]);
 
   if (!relations) return null;
   return (

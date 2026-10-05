@@ -92,6 +92,12 @@ interface WorkflowStore {
 
   /** The board's links overlay: the card it is on, and that card's workflow. */
   linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail } | null;
+  /**
+   * A "Show workflow links" load is in flight. The overlay listens for Escape
+   * and a press on empty board space from here, so a clear made before the
+   * first answer lands still cancels it.
+   */
+  linkFocusLoading: boolean;
   showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
   clearLinks: () => void;
 
@@ -288,6 +294,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     homeSummaries: {},
     pendingOpen: null,
     linkFocus: null,
+    linkFocusLoading: false,
     watchedDetails: {},
     agentUnavailable: {},
     agentPaneSessionId: null,
@@ -430,21 +437,24 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     showLinks: async (taskId, homeProjectId, workflowId) => {
       // A clear (Escape, a click on empty board) or a newer show while this one
       // loads wins: a late answer must not bring the overlay back.
+      // A superseded load returns without touching `linkFocusLoading`: whatever
+      // superseded it (a clear, or a newer show) owns the flag now.
       const generation = ++linkGeneration;
+      if (!get().linkFocusLoading) set({ linkFocusLoading: true });
       try {
         const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
         if (generation !== linkGeneration) return;
-        set({ linkFocus: { taskId, homeProjectId, detail } });
+        set({ linkFocus: { taskId, homeProjectId, detail }, linkFocusLoading: false });
       } catch (error) {
         console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
         if (generation !== linkGeneration) return;
-        set({ linkFocus: null });
+        set({ linkFocus: null, linkFocusLoading: false });
       }
     },
 
     clearLinks: () => {
       linkGeneration += 1;
-      set({ linkFocus: null });
+      set({ linkFocus: null, linkFocusLoading: false });
     },
 
     watchDetail: (homeProjectId, workflowId) => {

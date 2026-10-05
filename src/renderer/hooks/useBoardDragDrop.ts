@@ -319,9 +319,11 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // apply; only a full reload re-measures a lane). Flushed in handleDragEnd/Cancel.
     beginBoardDrag();
     dragInFlightRef.current = true;
-    // A drag ends the workflow links overlay. A refused drop leaves it on, and
-    // left on it re-measures its cards on every scroll frame of this drag.
-    if (useWorkflowStore.getState().linkFocus) useWorkflowStore.getState().clearLinks();
+    // A drag ends the workflow links overlay, and a load of one still in flight.
+    // A refused drop leaves it on, and left on it re-measures its cards on every
+    // scroll frame of this drag.
+    const workflowState = useWorkflowStore.getState();
+    if (workflowState.linkFocus || workflowState.linkFocusLoading) workflowState.clearLinks();
     const id = event.active.id as string;
     if (!id.startsWith('column:')) {
       const swimlaneId = taskToSwimlane.get(id);

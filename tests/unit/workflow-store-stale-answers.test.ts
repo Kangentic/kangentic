@@ -136,6 +136,61 @@ describe('showLinks and clearLinks', () => {
     expect(useWorkflowStore.getState().linkFocus?.taskId).toBe('t2');
   });
 
+  // The overlay listens for Escape and a press on empty space while
+  // `linkFocusLoading` is set, so the flag has to cover exactly the loads
+  // still in flight: an outranked answer must not end it early.
+  it('says a load is in flight from the show until its answer, or a clear', async () => {
+    const bridge = installBridge();
+    const first = deferred<WorkflowDetail>();
+    const second = deferred<WorkflowDetail>();
+    bridge.get.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+
+    const firstShown = useWorkflowStore.getState().showLinks('t1', 'p', 'w');
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(true);
+    first.resolve(detailOf('w'));
+    await firstShown;
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+
+    const secondShown = useWorkflowStore.getState().showLinks('t2', 'p', 'w');
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(true);
+    useWorkflowStore.getState().clearLinks();
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+    second.resolve(detailOf('w'));
+    await secondShown;
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+    expect(useWorkflowStore.getState().linkFocus).toBeNull();
+  });
+
+  it('keeps saying a load is in flight when an outranked one answers first', async () => {
+    const bridge = installBridge();
+    const older = deferred<WorkflowDetail>();
+    const newer = deferred<WorkflowDetail>();
+    bridge.get.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    const olderShown = useWorkflowStore.getState().showLinks('t1', 'p', 'w');
+    const newerShown = useWorkflowStore.getState().showLinks('t2', 'p', 'w');
+    older.resolve(detailOf('w'));
+    await olderShown;
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(true);
+
+    newer.resolve(detailOf('w'));
+    await newerShown;
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+  });
+
+  it('ends the in-flight state when the load fails', async () => {
+    const bridge = installBridge();
+    bridge.get.mockRejectedValueOnce(new Error('The workflow is gone.'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await useWorkflowStore.getState().showLinks('t1', 'p', 'w');
+    warn.mockRestore();
+
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+    expect(useWorkflowStore.getState().linkFocus).toBeNull();
+  });
+
   it('does not clear the overlay when a load that was outranked fails', async () => {
     const bridge = installBridge();
     const older = deferred<WorkflowDetail>();

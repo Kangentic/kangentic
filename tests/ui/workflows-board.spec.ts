@@ -412,11 +412,77 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  // The overlay's Escape and press-on-empty-space listeners exist only while an
-  // overlay is up, so a clear can reach a load still in flight when a SECOND
-  // card's links are being fetched over the first's (or on a change push). The
-  // answer that lands after the clear must not bring the overlay back.
+  // The overlay's Escape and press-on-empty-space listeners exist from the
+  // moment a load starts, so a clear reaches a load still in flight: the very
+  // first one, before anything is drawn, and a SECOND card's links fetched over
+  // the first's (or on a change push). The answer that lands after the clear
+  // must not bring the overlay back.
   test.describe('a clear while a workflow is still loading', () => {
+    /** #413's "Show workflow links" is waiting on its workflow, and nothing is drawn yet. */
+    async function showLinksWhileFirstLoadHeld(page: Page): Promise<void> {
+      await holdNextWorkflowGet(page);
+      await openMenu(page, 't413');
+      await byTestId(page, 'context-show-workflow-links').click();
+      await expectWorkflowGetHeld(page);
+      await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+    }
+
+    test('Escape during the first load cancels it, so its answer draws nothing', async () => {
+      const { browser, page } = await launch();
+      try {
+        await showLinksWhileFirstLoadHeld(page);
+
+        await page.keyboard.press('Escape');
+
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(false);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a press on empty board space during the first load cancels it, so its answer draws nothing', async () => {
+      const { browser, page } = await launch();
+      try {
+        await showLinksWhileFirstLoadHeld(page);
+
+        const testing = page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Testing"]');
+        await testing.scrollIntoViewIfNeeded();
+        const box = await testing.boundingBox();
+        if (!box) throw new Error('No Testing column');
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(false);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a board drag that starts during the first load cancels it, so its answer never lands under the drag', async () => {
+      const { browser, page } = await launch();
+      try {
+        await showLinksWhileFirstLoadHeld(page);
+
+        // A press on a card is not a press on empty space: only the drag starting clears.
+        const card = boardCard(page, 't500');
+        await card.scrollIntoViewIfNeeded();
+        const box = await card.boundingBox();
+        if (!box) throw new Error('No box for #500');
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2, { steps: 3 });
+        await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(false);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+        await page.mouse.up();
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
     /** #413's overlay is up, and #414's "Show workflow links" is waiting on its workflow. */
     async function showLinksOnWhileLoadingAnother(page: Page): Promise<void> {
       await openMenu(page, 't413');
