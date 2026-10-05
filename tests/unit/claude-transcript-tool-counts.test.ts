@@ -647,6 +647,57 @@ describe('parseClaudeTranscriptToolCounts - real captured session', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A real Claude tool result carrying an image: a screenshot tool's result, as
+// Claude wrote it, paired with the assistant line that made the call. Every key
+// is the real one; values are placeholders or filler, and the image keeps only
+// its first 33 bytes (the PNG signature and the IHDR chunk), so it has the real
+// dimensions and no pixels. It pins the shape the image path reads
+// (`tool_result.content[].type === 'image'`, `source.media_type`,
+// `source.data`), which the synthetic image cases above build by hand.
+// ---------------------------------------------------------------------------
+
+describe('parseClaudeTranscriptToolResultTokens - real captured image result', () => {
+  const IMAGE_FIXTURE = path.join(__dirname, '..', 'fixtures', 'claude-image-tool-result.jsonl');
+
+  beforeEach(() => {
+    resetToolCallCursorsForTests();
+  });
+
+  it('counts the screenshot by its PNG dimensions, not by the length of its base64', async () => {
+    const [assistantLine, userLine] = fs.readFileSync(IMAGE_FIXTURE, 'utf-8').trim().split('\n').map((line) => JSON.parse(line) as {
+      message: { content: Array<Record<string, unknown>> };
+    });
+    const toolUse = assistantLine.message.content[0] as { type: string; id: string; name: string };
+    const toolResult = userLine.message.content[0] as { type: string; tool_use_id: string; content: Array<Record<string, unknown>> };
+    expect(toolUse.type).toBe('tool_use');
+    expect(toolResult.type).toBe('tool_result');
+    expect(toolResult.tool_use_id).toBe(toolUse.id);
+
+    const image = toolResult.content.find((block) => block.type === 'image') as { source: { media_type: string; data: string } };
+    const text = toolResult.content.find((block) => block.type === 'text') as { text: string };
+    expect(image.source.media_type).toBe('image/png');
+
+    // Read the dimensions straight from the IHDR chunk, independent of the parser.
+    const header = Buffer.from(image.source.data, 'base64');
+    const width = header.readUInt32BE(16);
+    const height = header.readUInt32BE(20);
+    // Anthropic's high-resolution tier: scale the long edge to at most 2576px,
+    // then one token per 28x28 patch, capped at 4784.
+    const scale = Math.min(1, 2576 / Math.max(width, height));
+    const imageTokens = Math.min(4784, Math.ceil(Math.round(width * scale) / 28) * Math.ceil(Math.round(height * scale) / 28));
+    // Below the cap, so this is the dimension path and not the unreadable-header fallback.
+    expect(imageTokens).toBeLessThan(4784);
+    const textTokens = Math.ceil(text.text.length / 4);
+
+    const resultTokens = await parseClaudeTranscriptToolResultTokens(IMAGE_FIXTURE);
+
+    expect(resultTokens).toEqual({ [toolUse.name]: imageTokens + textTokens });
+    // The base64 here is 44 characters; a character count would give about 11.
+    expect(resultTokens![toolUse.name]).toBeGreaterThan(image.source.data.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ClaudeAdapter.transcriptToolCounts - three input-path branches, mirroring
 // ClaudeAdapter.transcriptUsage's branch coverage.
 //
