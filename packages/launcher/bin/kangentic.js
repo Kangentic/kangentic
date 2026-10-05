@@ -18,7 +18,26 @@ const REPO_OWNER = 'Kangentic';
 const REPO_NAME = 'kangentic';
 const MAX_REDIRECTS = 5;
 
+// The oldest macOS the app starts on, as the Darwin major that os.release()
+// reports (macOS 13 is Darwin 22). Electron 44 dropped macOS 12, and
+// electron-builder.yml's mac.minimumSystemVersion says 13.0;
+// tests/unit/launcher-macos-floor.test.ts keeps the two in step.
+const MINIMUM_DARWIN_MAJOR = 22;
+
 // --- Platform detection ---
+
+/**
+ * Whether this Mac is too old for the app this launcher installs. Checked
+ * before anything downloads: macOS refuses to open the app on an older system,
+ * so the alternative is a download, an install, and a launch that silently
+ * does nothing. A release string that does not parse is not refused, so an
+ * unexpected format can never lock a supported Mac out.
+ */
+function isUnsupportedMacOS(platform, osRelease) {
+  if (platform !== 'darwin') return false;
+  const darwinMajor = Number.parseInt(String(osRelease).split('.')[0], 10);
+  return Number.isFinite(darwinMajor) && darwinMajor < MINIMUM_DARWIN_MAJOR;
+}
 
 function getPlatformInfo() {
   const platform = process.platform;
@@ -441,6 +460,11 @@ async function main() {
     process.exit(1);
   }
 
+  if (isUnsupportedMacOS(process.platform, os.release())) {
+    console.error('Kangentic requires macOS 13 or later.');
+    process.exit(1);
+  }
+
   // Check if already installed
   if (!forceInstall && isInstalled(platformInfo)) {
     console.log(`Kangentic v${VERSION} is already installed.`);
@@ -531,4 +555,6 @@ module.exports = {
   installLinux,
   isAppRunning,
   shouldAdviseReopen,
+  isUnsupportedMacOS,
+  MINIMUM_DARWIN_MAJOR,
 };
