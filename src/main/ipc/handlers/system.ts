@@ -21,6 +21,7 @@ import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/ext
 import { readClipboardImage, writePastedImage } from '../helpers/clipboard-image';
 import { openPathBounded } from '../helpers/open-path';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
+import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
 import type {
   NotificationInput,
   AgentCommand,
@@ -36,6 +37,24 @@ import type { IpcContext } from '../ipc-context';
 // Held only so a shown Notification is not garbage-collected before the user
 // interacts with it (Electron's Notification has no other owner).
 const activeNotifications = new Set<Notification>();
+
+/**
+ * The OS identity of a task's toast. `id` (the Windows toast Tag, the macOS
+ * UNNotificationRequest identifier) is the task id, so a new toast for a task
+ * REPLACES the one already in Action Center or Notification Center instead of
+ * stacking beside it: the newest state (finished, crashed, waiting) is the only
+ * one worth acting on. `groupId` is the project, so a project's toasts group
+ * together. Task and project ids are uuidv4, 36 characters, under the 64 Windows
+ * allows for a Tag or a Group.
+ *
+ * The Command Terminal sentinel takes no `id`: it stands for every Command
+ * Terminal in every project, so one shared id would collapse them all into a
+ * single toast. Electron then gives each a random id, as before.
+ */
+export function notificationIdentity(input: NotificationInput): { id?: string; groupId: string } {
+  if (input.taskId === COMMAND_TERMINAL_NOTIFICATION_TASK_ID) return { groupId: input.projectId };
+  return { id: input.taskId, groupId: input.projectId };
+}
 
 /**
  * Shows a native OS notification and wires its click round-trip back to the
@@ -54,6 +73,7 @@ export function showDesktopNotification(context: IpcContext, input: Notification
   const notification = new Notification({
     title: input.title,
     body: input.body,
+    ...notificationIdentity(input),
   });
 
   activeNotifications.add(notification);
@@ -61,6 +81,16 @@ export function showDesktopNotification(context: IpcContext, input: Notification
   const cleanup = () => {
     activeNotifications.delete(notification);
   };
+
+  // Since Electron 42 macOS notifications go through UNNotification, which
+  // needs a signed app and the user's permission: an unsigned `npm start` or a
+  // user who denied notifications gets `failed` and never `close`. Without this
+  // the toast vanished with no trace and its object stayed in
+  // activeNotifications for the rest of the run.
+  notification.on('failed', (_failedEvent, error) => {
+    console.warn('[NOTIFICATION] The OS did not show a notification:', error);
+    cleanup();
+  });
 
   notification.on('click', () => {
     cleanup();
