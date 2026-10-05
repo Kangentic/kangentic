@@ -25,10 +25,13 @@ The webview is hardened in `src/main/index.ts`:
     bot (decision 41). The offscreen lane calls it too.
   - `setWindowOpenHandler` allows an http(s) `window.open` / `target=_blank` into a chromed popup
     window on the guest's own session, and denies every other scheme. See decisions 10 to 12.
-  - `setPermissionRequestHandler` AND `setPermissionCheckHandler` both read
-    `isEmbeddedBrowserPermissionAllowed` (decision 14).
-  - `session.on('will-download')` saves to the OS Downloads folder, installed once per `Session`
-    (decision 13).
+  - `installEmbeddedBrowserSessionPolicy` (`browser/guest-session-policy.ts`) sets
+    `setPermissionRequestHandler` AND `setPermissionCheckHandler`, both reading
+    `isEmbeddedBrowserPermissionAllowed` (decision 14), and installs the `will-download` policy
+    that saves to the OS Downloads folder, once per `Session` (decision 13). The offscreen lane
+    calls it for its own session too. A lane is a BrowserWindow that never reaches this handler,
+    so until it did, a lane opened before any pane had used its task's partition ran with
+    Electron's default, which grants every permission request.
   - `will-navigate` rejects non-`http(s):` schemes.
   - `before-input-event` binds F5 / Ctrl+R / Cmd+R to `webContents.reload`, EXCEPT while an
     agent is driving the pane. During a drive every keystroke that reaches this handler is the
@@ -359,6 +362,7 @@ src/main/
                                             interception
   window-open-policy.ts                     app-window deny handler + webview popup allow handler
   permission-policy.ts                      first-party and embedded-browser permission predicates
+  browser/guest-session-policy.ts           permission + download policy for a pane or lane session
   ipc/handlers/browser.ts                   BROWSER_CAPTURE_SEND, URL persistence
   pty/paste-engine.ts                       paste-and-submit primitive
   pty/write-queue.ts                        bracketed-paste-aware chunking

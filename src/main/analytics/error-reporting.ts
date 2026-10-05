@@ -7,11 +7,14 @@ import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
 import type { HostMemorySample } from '../../shared/types';
 import {
   correctNativeCrashEvent,
+  isBrowserGuestCrashEvent,
   readMinidumpIdentity,
+  toBrowserGuestCrashWarning,
   type NativeCrashContext,
 } from './native-crash-event';
 import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
 import { redactEventHomeDirectory } from './redact-event-paths';
+import { rendererNameForReporting } from './renderer-classification';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -192,6 +195,16 @@ function resolveNativeCrashContext(): NativeCrashContext {
  */
 export function filterNativeCrashEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
   try {
+    // A Browser pane page's crash is reduced before anything reads its dump:
+    // the dump is the page's memory, and the event names the page
+    // (toBrowserGuestCrashWarning). With the dump stripped, nothing below runs.
+    if (isBrowserGuestCrashEvent(event)) {
+      hint.attachments = hint.attachments?.filter(
+        (attachment) => attachment.attachmentType !== MINIDUMP_ATTACHMENT_TYPE
+      );
+      return toBrowserGuestCrashWarning(event);
+    }
+
     const minidump = hint.attachments?.find(
       (attachment) => attachment.attachmentType === MINIDUMP_ATTACHMENT_TYPE
     );
@@ -281,8 +294,10 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * machine's home directory to `~` in every event string
  * (src/main/analytics/redact-event-paths.ts). An exception message is free
  * text, normalizePathsIntegration never touches it, and an OS username is often
- * a real name. The native crash fields (module paths, crashpad annotations) are
- * built on Sentry's servers from the dump, so they stay a Sentry-side rule.
+ * a real name. A native crash's module paths and stack are built on Sentry's
+ * servers from the dump, so they stay a Sentry-side rule. Its Crashpad
+ * annotations do not: the SDK copies them into `contexts.electron` on this
+ * machine, so the rewrite above reaches them too.
  *
  * BREADCRUMBS are an exception to that stance, filtered on the machine by
  * `beforeBreadcrumb` (src/shared/sentry-breadcrumbs.ts). normalizePathsIntegration never touches
@@ -344,6 +359,11 @@ export function initErrorReporting(): void {
       // NATIVE CRASH EVENTS note above for why that one class cannot go in
       // ignoreErrors below.
       beforeSend: beforeSendEvent,
+      // Names a Browser pane page's renderer 'browser-guest' (a <webview> guest
+      // or an offscreen lane), so beforeSend can reduce its crash to a warning
+      // without the page's URL, JavaScript stack, or memory. Our own windows
+      // return undefined and keep the SDK's 'renderer'.
+      getRendererName: rendererNameForReporting,
       // Noise filtering, which is a different concern from the scrubbing above:
       // these are real events we deliberately do not want as issues, not data
       // we need removed from events we do keep.
@@ -394,6 +414,12 @@ export function initErrorReporting(): void {
         // alone is what DESKTOP-15 is: the reason Chromium's own recovery
         // (a lone crash it relaunches past) fires this integration at all.
         /'GPU' process exited with 'abnormal-exit'/,
+        // A Browser pane page's renderer exiting abnormally (getRendererName
+        // above names it 'browser-guest'). It is the user's page, not our UI,
+        // and the message carries nothing that could say why. A pane page that
+        // actually CRASHES still arrives, as the reduced native warning beforeSend
+        // builds; the breadcrumb survives this filter too.
+        /'browser-guest' process exited with/,
         // Renderer errors that are known-benign and outside our control. Shared
         // with the monaco error funnel (monacoConfig.ts) and the UI-test
         // collector (tests/ui/helpers.ts) so one registry drives all three.

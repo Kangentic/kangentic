@@ -26,6 +26,11 @@ interface FakeWindow {
     session: {
       getUserAgent: () => string;
       setUserAgent: (userAgent: string) => void;
+      setPermissionRequestHandler: (
+        handler: (contents: unknown, permission: string, callback: (granted: boolean) => void) => void,
+      ) => void;
+      setPermissionCheckHandler: (handler: (contents: unknown, permission: string) => boolean) => void;
+      on: (event: string, handler: (...args: unknown[]) => void) => void;
     };
     loadURL: (url: string) => Promise<void>;
     once: (event: string, handler: () => void) => void;
@@ -58,6 +63,9 @@ vi.mock('electron', () => ({
           session: {
             getUserAgent: () => DEFAULT_USER_AGENT,
             setUserAgent: vi.fn(),
+            setPermissionRequestHandler: vi.fn(),
+            setPermissionCheckHandler: vi.fn(),
+            on: vi.fn(),
           },
           loadURL: vi.fn(async () => {
             if (loadGate) await loadGate();
@@ -127,6 +135,7 @@ const {
   laneTaskIds,
   setLaneChangeListener,
   isLaneId,
+  isLaneWebContents,
   resetLanesForTests,
   LANE_FRAME_RATE,
 } = await import('../../src/main/browser/browser-lane-manager');
@@ -293,6 +302,49 @@ describe('openLane', () => {
       setUserAgent.mock.invocationCallOrder[0],
       'the user agent must be set before loadURL, or the first request still carries the token',
     ).toBeLessThan(vi.mocked(guest.loadURL).mock.invocationCallOrder[0]);
+  });
+
+  // A lane can open before any pane has used this task's partition in this run, and the pane's
+  // policy is installed only from the <webview> branch of web-contents-created, which a lane
+  // never reaches. With no handler, Electron GRANTS every permission request.
+  it('denies device permissions on its own session before its first load', async () => {
+    await openLane(input());
+    const guest = created[0].window.webContents;
+    const requestHandler = vi.mocked(guest.session.setPermissionRequestHandler).mock.calls[0]?.[0];
+    const checkHandler = vi.mocked(guest.session.setPermissionCheckHandler).mock.calls[0]?.[0];
+    expect(requestHandler, 'no permission request handler on the lane session').toBeTypeOf('function');
+    expect(checkHandler, 'no permission check handler on the lane session').toBeTypeOf('function');
+
+    for (const permission of ['media', 'geolocation', 'notifications', 'clipboard-read']) {
+      const callback = vi.fn();
+      requestHandler?.(guest, permission, callback);
+      expect(callback, permission).toHaveBeenCalledWith(false);
+      expect(checkHandler?.(guest, permission), permission).toBe(false);
+    }
+    // The pane's one grant holds on a lane too, so the same page behaves the same in either.
+    expect(checkHandler?.(guest, 'clipboard-sanitized-write')).toBe(true);
+
+    expect(
+      vi.mocked(guest.session.setPermissionRequestHandler).mock.invocationCallOrder[0],
+      'the policy must be in place before the page loads, or its first request meets the default',
+    ).toBeLessThan(vi.mocked(guest.loadURL).mock.invocationCallOrder[0]);
+  });
+
+  it('routes its downloads through the download policy instead of a native save dialog', async () => {
+    await openLane(input());
+    const guest = created[0].window.webContents;
+    expect(vi.mocked(guest.session.on)).toHaveBeenCalledWith('will-download', expect.any(Function));
+  });
+
+  it('recognizes a live lane page by its webContents id, for crash reporting', async () => {
+    const lane = await openLane(input());
+    if (!lane.ok) throw new Error(lane.detail);
+    const laneWebContentsId = created[0].window.webContents.id;
+    expect(isLaneWebContents(laneWebContentsId)).toBe(true);
+    expect(isLaneWebContents(laneWebContentsId + 1000)).toBe(false);
+
+    destroyLane(lane.laneId);
+    expect(isLaneWebContents(laneWebContentsId)).toBe(false);
   });
 
   it('shares the task cookie jar (keyed by task identity) rather than minting a fresh one', async () => {

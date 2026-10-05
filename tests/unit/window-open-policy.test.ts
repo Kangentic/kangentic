@@ -651,23 +651,35 @@ describe('the webview popup policy is wired into src/main/index.ts', () => {
     ).toMatch(/'did-create-window'[\s\S]{0,400}hardenWebviewPopupWindow\(/);
   });
 
-  it('sets a permission CHECK handler alongside the request handler on the guest session', () => {
+  // The permission and download policy is shared with the offscreen lane, so it lives in
+  // guest-session-policy.ts and index.ts calls it for the guest session. Both halves are pinned:
+  // the call here, and what the shared function installs.
+  const sessionPolicySource = fs.readFileSync(path.join(REPO_ROOT, 'src/main/browser/guest-session-policy.ts'), 'utf-8');
+
+  it('installs the shared embedded-browser session policy on the guest session', () => {
     expect(
       source,
-      'src/main/index.ts must set BOTH setPermissionRequestHandler and setPermissionCheckHandler on the guest session; with only the request handler, synchronous permission checks fall through to Electron\'s default instead of the pane\'s policy',
-    ).toMatch(/setPermissionCheckHandler/);
+      "src/main/index.ts must call installEmbeddedBrowserSessionPolicy(contents.session) for webview contents; without it the guest runs with Electron's grant-everything permission default and Chromium's modal save dialog",
+    ).toMatch(/installEmbeddedBrowserSessionPolicy\(\s*contents\.session\s*\)/);
+  });
+
+  it('sets a permission CHECK handler alongside the request handler on the guest session', () => {
+    expect(
+      sessionPolicySource,
+      'guest-session-policy.ts must set BOTH setPermissionRequestHandler and setPermissionCheckHandler; with only the request handler, synchronous permission checks fall through to Electron\'s default instead of the pane\'s policy',
+    ).toMatch(/setPermissionRequestHandler[\s\S]*setPermissionCheckHandler/);
   });
 
   it('reads one predicate for both permission handlers', () => {
-    const matches = source.match(/isEmbeddedBrowserPermissionAllowed/g) ?? [];
+    const matches = sessionPolicySource.match(/isEmbeddedBrowserPermissionAllowed\(/g) ?? [];
     expect(matches.length, 'both the request and check handlers must read isEmbeddedBrowserPermissionAllowed, so the two cannot drift').toBeGreaterThanOrEqual(2);
   });
 
   it('installs the download policy on the guest session', () => {
     expect(
-      source,
-      'src/main/index.ts must call installWebviewDownloadPolicy for the guest session, or a download falls through to Chromium\'s native save dialog, which is modal and can block an agent-driven pane',
-    ).toMatch(/installWebviewDownloadPolicy\(/);
+      sessionPolicySource,
+      'guest-session-policy.ts must call installWebviewDownloadPolicy for the session, or a download falls through to Chromium\'s native save dialog, which is modal and can block an agent-driven pane',
+    ).toMatch(/installWebviewDownloadPolicy\(\s*guestSession\s*\)/);
   });
 
   it('drops the Electron token from the guest user agent', () => {

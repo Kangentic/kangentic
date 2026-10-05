@@ -311,6 +311,7 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       commitRemainingBytes: 2_256_896,
       physicalTotalBytes: 34_060_931_072,
       physicalFreeBytes: 5_005_045_760,
+      physicalAvailableBytes: null,
     };
 
     it('forwards the sample to Sentry.setContext("host_memory", ...) only when active', async () => {
@@ -512,6 +513,83 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(result?.breadcrumbs).toBeUndefined();
       expect(result?.level).not.toBe('warning');
       expect(minidumpCount(hint)).toBe(1);
+    });
+
+    // A Browser pane page runs as Kangentic.exe, so its dump reads as ours, but its content is the
+    // user's page. The SDK stamps it through getRendererName (renderer-classification.ts).
+    it('reduces a Browser pane page crash to a warning without the page, and keeps its dump off the upload', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.39.0' });
+      const guestCrash = {
+        level: 'fatal',
+        platform: 'native',
+        release: 'Kangentic@0.39.0',
+        tags: { 'event.process': 'browser-guest', 'exit.reason': 'oom' },
+        exception: {
+          values: [{ type: 'OutOfMemoryError', value: 'Renderer reached heap limit', stacktrace: { frames: [{ function: 'leakyDevAppLoop' }] } }],
+        },
+        contexts: {
+          electron: {
+            crashed_url: 'https://intranet.example/private/report?id=42',
+            details: { reason: 'oom', exitCode: -536870904 },
+            'crashpad.url-chunk': 'https://intranet.example/private/report?id=42',
+            'crashpad.process_type': 'renderer',
+          },
+        },
+      };
+
+      const result = beforeSend(guestCrash, hint);
+
+      expect(result).toMatchObject({
+        level: 'warning',
+        message: 'A Browser pane page crashed',
+        fingerprint: ['browser-guest-crash', 'oom'],
+        tags: { 'event.process': 'browser-guest', 'exit.reason': 'oom' },
+      });
+      expect(result?.exception).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('intranet.example');
+      expect(JSON.stringify(result)).not.toContain('leakyDevAppLoop');
+      // The exit reason and code survive, so the warning still says how the page died.
+      expect((result?.contexts as { electron: { details: unknown } }).electron.details).toEqual({
+        reason: 'oom',
+        exitCode: -536870904,
+      });
+      expect(minidumpCount(hint)).toBe(0);
+    });
+
+    it('leaves our own renderer crash, its stack, and its dump alone', async () => {
+      const beforeSend = await initAndGetBeforeSend();
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.39.0' });
+      const ownRendererCrash = {
+        level: 'fatal',
+        platform: 'native',
+        release: 'Kangentic@0.39.0',
+        tags: { 'event.process': 'renderer', 'exit.reason': 'oom' },
+        exception: { values: [{ type: 'OutOfMemoryError', value: 'Renderer reached heap limit' }] },
+      };
+
+      const result = beforeSend(ownRendererCrash, hint);
+
+      expect(result?.level).toBe('fatal');
+      expect(result?.exception).toBeDefined();
+      expect(minidumpCount(hint)).toBe(1);
+    });
+
+    it('names Browser pane renderers for the SDK, and drops their un-attributable exit messages', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      const options = mocks.sentryMock.init.mock.calls[0][0] as {
+        getRendererName: (contents: { id: number; getType: () => string }) => string | undefined;
+        ignoreErrors: Array<string | RegExp>;
+      };
+      expect(options.getRendererName({ id: 1, getType: () => 'webview' })).toBe('browser-guest');
+      expect(options.getRendererName({ id: 2, getType: () => 'window' })).toBeUndefined();
+
+      const matches = (message: string) =>
+        options.ignoreErrors.some((pattern) => (typeof pattern === 'string' ? message.includes(pattern) : pattern.test(message)));
+      expect(matches("'browser-guest' process exited with 'abnormal-exit'")).toBe(true);
+      // Our own renderer's exit keeps reporting, as before.
+      expect(matches("'renderer' process exited with 'crashed'")).toBe(false);
     });
 
     it('leaves a live-reported error alone: it carries no minidump', async () => {
