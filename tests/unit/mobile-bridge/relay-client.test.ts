@@ -580,6 +580,61 @@ describe('RelayClient redial and dial watchdog', () => {
     expect(loggedLines(warnSpy).some((line) => line.includes('dial failed: error event with no message'))).toBe(true);
   });
 
+  // Electron's net.WebSocket (the app's relay socket) reverses undici's shape: a bare Event with
+  // no message, then a close whose reason names the failure. Measured on Electron 44.5.1:
+  // reason "Error in connection establishment: net::ERR_CONNECTION_REFUSED".
+  it("takes the dial failure from the close reason when the error event is Chromium's bare Event", () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot' });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    FakeWebSocket.instances[0].fail(1006, 'Error in connection establishment: net::ERR_CONNECTION_REFUSED', { type: 'error' });
+
+    expect(
+      loggedLines(warnSpy).some((line) => line.includes('dial failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED')),
+    ).toBe(true);
+  });
+
+  it('keeps the slot out of a dial-failure line built from a close reason', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'secret-slot-value' });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    FakeWebSocket.instances[0].fail(1006, 'handshake to ws://127.0.0.1:1/?slot=secret-slot-value failed', { type: 'error' });
+
+    const lines = loggedLines(warnSpy);
+    expect(lines.some((line) => line.includes('slot=<slot>'))).toBe(true);
+    expect(lines.some((line) => line.includes('secret-slot-value'))).toBe(false);
+  });
+
+  it('dials with an injected WebSocket constructor, not the global, when one is given', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const injectedUrls: string[] = [];
+    class InjectedWebSocket extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        injectedUrls.push(url);
+      }
+    }
+    const client = new RelayClient({
+      relayUrl: 'ws://127.0.0.1:1',
+      slotId: 'test-slot',
+      webSocketConstructor: InjectedWebSocket as unknown as typeof WebSocket,
+    });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+
+    expect(injectedUrls).toEqual(['ws://127.0.0.1:1/?slot=test-slot&role=desktop']);
+    // The fake's own instance list sees it once, through the subclass; the global was not called separately.
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances[0]).toBeInstanceOf(InjectedWebSocket);
+  });
+
   it('scheduleReconnect() arms the reconnect timer before emitting "reconnecting", so a re-entrant kick clears the timer instead of racing one that was never armed', async () => {
     // Pins the ORDER inside scheduleReconnect(): the reconnect timer must be
     // armed before setState('reconnecting') emits, because a listener that
