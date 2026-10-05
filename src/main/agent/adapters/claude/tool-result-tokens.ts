@@ -1,5 +1,3 @@
-import { estimateTokens } from '../../../retrieval/token-estimate';
-
 /**
  * Estimated tokens one Claude `tool_result` adds to the conversation, from its
  * size. An estimate, not reported usage: the transcript carries no per-result
@@ -31,8 +29,18 @@ export const IMAGE_TOKEN_CAP = 4784;
 /** Enough decoded bytes to reach a JPEG frame header past typical EXIF blocks. */
 const JPEG_HEADER_SCAN_BYTES = 64 * 1024;
 
+/**
+ * The chars/4 estimate, the same rule as `retrieval/token-estimate.ts`. Kept
+ * here rather than imported: the transcript parser that calls this is bundled
+ * into the pty host, whose graph may not reach `src/main/retrieval/`
+ * (`tests/unit/pty-host-boundary.test.ts`).
+ */
+function estimateTextTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
 export function estimateToolResultTokens(content: unknown): number {
-  if (typeof content === 'string') return estimateTokens(content);
+  if (typeof content === 'string') return estimateTextTokens(content);
   if (!Array.isArray(content)) return 0;
   let total = 0;
   for (const block of content) {
@@ -40,7 +48,7 @@ export function estimateToolResultTokens(content: unknown): number {
     if (block.type === 'image') {
       total += estimateImageTokens(block.source);
     } else if (typeof block.text === 'string') {
-      total += estimateTokens(block.text);
+      total += estimateTextTokens(block.text);
     }
   }
   return total;
