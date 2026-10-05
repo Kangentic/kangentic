@@ -377,6 +377,33 @@ async function openKnowledgeGraph(page: Page): Promise<void> {
 }
 
 test.describe('knowledge graph', () => {
+  /**
+   * Compile the board and the graph body on the Vite dev server once per worker, before any
+   * test here starts its 15s budget. The body is a lazy chunk that only this file asks for.
+   * When this file opened a CI shard, all three workers made that cold compile at once, on top
+   * of the board's, and each worker's first test ran out of time on a 4-vCPU runner. The same
+   * tests passed in about 7s on retry, once warm. Which tests land first moves with shard
+   * assignment, so the compile is paid here, under its own budget, rather than by whichever
+   * test happens to run first.
+   */
+  test.beforeAll(async () => {
+    test.setTimeout(60_000);
+    await waitForViteReady(VITE_URL);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+      const page = await context.newPage();
+      await page.addInitScript({ path: MOCK_SCRIPT });
+      await page.addInitScript(snapshotScript({ projection: projectionLiteral(12) }));
+      await page.goto(VITE_URL);
+      await page.waitForSelector('text=Kangentic', { timeout: 50_000 });
+      await page.locator('[data-testid="knowledge-graph-button"]').click();
+      await page.locator('[data-testid="knowledge-graph-search-input"]').waitFor({ state: 'visible', timeout: 50_000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('opens from the title bar and shows reconciled counts in the Index panel', async () => {
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {

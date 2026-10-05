@@ -29,7 +29,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { test, expect } from './shared-app';
 import { createTask, waitForRunningSession, getTaskIdByTitle, moveTaskIpc } from './helpers';
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { Dialog, ElectronApplication, Page } from '@playwright/test';
 import type { Swimlane } from '../../src/shared/types';
 
 const runId = Date.now();
@@ -213,10 +213,21 @@ test.describe('Browser pane CDP across navigations', () => {
       // in this worker. A listener that answers nothing leaves the dialog to the app alone, so
       // the value confirm() returns is the driver's answer and only the driver's. If the
       // driver stopped answering, nothing would, and the bounded eval below would fail.
-      const leaveDialogToTheApp = (): void => {};
+      //
+      // The listener must outlive Playwright's copy of the event, not just the confirm() call.
+      // The app's debugger runs inside the browser process and answers at once, so confirm()
+      // can return before Playwright, on its own pipe, has processed the opening event. Remove
+      // the listener in that gap and Playwright finds no handler, dismisses a dialog that is
+      // already gone, and throws the same "No dialog is showing" from a promise nothing
+      // catches. So it stays until Playwright has reported this dialog.
+      let playwrightSawDialog = false;
+      const leaveDialogToTheApp = (dialog: Dialog): void => {
+        if (dialog.message() === DIALOG_MESSAGE) playwrightSawDialog = true;
+      };
       electronApp.context().on('dialog', leaveDialogToTheApp);
       try {
         expect(await evalInGuest(electronApp, `confirm(${JSON.stringify(DIALOG_MESSAGE)})`)).toBe(true);
+        await expect.poll(() => playwrightSawDialog).toBe(true);
       } finally {
         electronApp.context().off('dialog', leaveDialogToTheApp);
       }
