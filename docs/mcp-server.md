@@ -1161,9 +1161,9 @@ missing from disk is left out. An agent whose CLI cannot widen its reads
 (`supportsReadableDirectories`) keeps reading its own project only.
 
 The workflow agent's server instructions name this tool, since Claude Code defers MCP tools when
-there are many and the agent then sees only a tool's name until it searches. In the preview
-journey a small model searched the disk for the other project instead, and hit Claude's own
-permission prompt for a read outside its directories.
+there are many and the agent then sees only a tool's name until it searches. An agent that does
+not find it searches the disk instead, and hits Claude's own permission prompt for a read outside
+its directories.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

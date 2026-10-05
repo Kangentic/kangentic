@@ -476,7 +476,7 @@ from bouncing a task forever. Both start off.
 
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
-task to Executing`, or `Runs npm run lint` (a script is set in code type). A long value ends where
+task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where
 the row ends, and a message or script with several lines shows its first line; hover the line to
 read all of it, every line. Any option you switched on is a mark after the name,
 in the editor's card order: a funnel for a Condition, a repeat icon with the run limit for a
@@ -512,8 +512,8 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
-they are shared with your team through git. The column header shows the automations mark, a
-column with a cog, with the count of automations that will actually run there, and **All columns** in the Column Manager shows
+they are shared with your team through git. The column header shows the automations mark (a
+column with a cog) and the count of automations that will run there, and **All columns** in the Column Manager shows
 every column's counts side by side.
 
 ### Reorder Columns
@@ -602,9 +602,9 @@ a click on empty board space clears them. Task detail has a Workflow panel (the 
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector.
 
-**Locked while it runs.** A running workflow's cards cannot be moved by hand, except out of a
-column you move by hand onto the next column of its route, and no workflow task can be moved back
-to To Do. A refused move leaves the card where it is, says why with an Open workflow link, and
+**Locked while it runs.** A running workflow's cards cannot be moved by hand. The exception is a
+card you move on yourself (no Automation agent, or a column with no agent), which you drag onto the
+next column of its route. No workflow task can be moved back to To Do. A refused move leaves the card where it is, says why with an Open workflow link, and
 shows the card's links. The menu keeps Move to, Backlog and Archive, disabled with the same
 reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).

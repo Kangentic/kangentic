@@ -131,7 +131,7 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 
 One desktop notification through the same `showNotification` path `DesktopNotifier` uses, so it inherits click-to-task. No timeout, no retry.
 
-### `move_to_column` -- Move to column
+### `move_to_column`: Move to column
 
 | Field | Type | Description |
 |-------|------|-------------|

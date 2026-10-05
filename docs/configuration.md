@@ -562,7 +562,7 @@ Condition (and judges when a workflow step is done).
 | `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
 | `workflows.agentPaneWidth` | `number \| null` | `null` | The agent pane's width in the Workflows view, in pixels. Written when a drag on the pane's right edge ends, never shown in Settings. Unset means 560; read back clamped to 360 to 960 (`workflowAgentPaneWidth`, `WorkflowAgentPane.tsx`). Below that width plus 780 (the inspector and a 400px canvas), the open pane lies over the canvas instead of taking its width. A drag on a docked pane stops where the canvas would drop below 400px, so the drag itself never turns the pane floating. |
 
-**The card is a registry entry of its own (not a config key):** `automation.agentCard` is the Automation agent card, so Settings search finds it by "automation", "condition" or "workflow step" and lands on the whole card. Its three rows are the `automation.agent`, `automation.model` and `automation.effort` entries above.
+**The Automation agent card is a registry entry, not a config key.** `automation.agentCard` is the Automation agent card, so Settings search finds it by "automation", "condition" or "workflow step" and lands on the whole card. Its three rows are the `automation.agent`, `automation.model` and `automation.effort` entries above.
 
 ### Mobile Bridge
 

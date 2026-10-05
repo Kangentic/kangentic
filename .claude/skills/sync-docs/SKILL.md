@@ -91,7 +91,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 |--------|----------------|------------|
 | `PermissionMode` | Union variants | configuration.md (canonical, the user-facing setting), database.md (the same variants again as stored column values; both must enumerate all of them) |
 | `TaskRunMode` | Union variants | database.md |
-| `AutomationType` | Union variants | transition-engine.md (canonical, one heading per adapter), configuration.md and mcp-server.md (the 4 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
+| `AutomationType` | Union variants | transition-engine.md (canonical, one heading per adapter), configuration.md and mcp-server.md (the 5 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
 | `AutomationTrigger` | Union variants | transition-engine.md |
 | `AutomationRunStatus` | Union variants | transition-engine.md (canonical), database.md (the same variants as stored column values) |
 | `ColumnAutomation` | Interface fields | database.md (schema table) |

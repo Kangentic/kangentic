@@ -4856,7 +4856,7 @@ export interface TaskMoveInput {
 }
 
 /**
- * Who moved a task into a column, as `task_moves` records it. The four move
+ * Who moved a task into a column, as `task_moves` records it. The six move
  * origins `handleTaskMove` takes, plus the writes that place a task without it:
  * a rollback of a failed move, an unarchive, and a create into a column.
  */
@@ -6029,12 +6029,13 @@ export interface BoardColumnConfig {
   /** LEGACY companion to `autoCommand`. Read on apply, never written. */
   autoCommandMode?: AutoCommandMode;
   /**
-   * What happens when a task enters or leaves this column.
+   * What happens when a task enters this column, when its agent finishes a
+   * turn here, and when the task leaves.
    *
-   * Two named arrays rather than one list with an `on` key per row: it mirrors
-   * the two groups the UI shows, array order IS each row's `position` within
-   * its group, and adding an exit automation touches only the `onExit` array in
-   * a diff. An empty group is an absent key.
+   * Three named arrays rather than one list with an `on` key per row: it
+   * mirrors the three groups the UI shows, array order IS each row's `position`
+   * within its group, and adding an exit automation touches only the `onExit`
+   * array in a diff. An empty group is an absent key.
    */
   automations?: BoardColumnAutomations;
   agentOverride?: string | null;

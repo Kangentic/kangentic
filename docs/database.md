@@ -367,7 +367,7 @@ mark) rather than migration bookkeeping.
 
 ### column_automations table
 
-What a column does when a task enters or leaves it. Replaces the `actions` + `swimlane_transitions`
+What a column does when a task enters it, when its agent finishes a turn there, and when the task leaves it. Replaces the `actions` + `swimlane_transitions`
 pair, which modelled a shared action referenced by N transitions; an automation belongs to exactly
 one column.
 
