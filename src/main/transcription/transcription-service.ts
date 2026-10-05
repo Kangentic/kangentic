@@ -34,6 +34,24 @@ interface PreparedModels {
   needsDownload: boolean;
 }
 
+/** A model whose download failed, named so the error event can say which: the
+ *  Dictation tab marks only that model's line failed. It keeps the cause's
+ *  message, so the text the user reads is the same. */
+class ModelDownloadError extends Error {
+  readonly modelId: string;
+
+  constructor(modelId: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Model download failed', { cause });
+    this.modelId = modelId;
+  }
+}
+
+/** The model a failure names: the one whose download failed, else the first of
+ *  the selection (a failed worker load has no single model to blame). */
+function failedModelId(selected: EngineSelection, error: unknown): string {
+  return error instanceof ModelDownloadError ? error.modelId : selected.models[0].id;
+}
+
 /**
  * The single transcription funnel and choke point. The renderer's local PCM
  * stream and a future mobile/network source both reach the active engine
@@ -237,7 +255,7 @@ export class TranscriptionService extends EventEmitter {
   private reportPrepareFailure(selected: EngineSelection, error: unknown): Error {
     const message = error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
     if (selected.models.length > 0) {
-      this.emitModelProgress({ modelId: selected.models[0].id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
+      this.emitModelProgress({ modelId: failedModelId(selected, error), status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
     }
     return new Error(message);
   }
@@ -276,22 +294,27 @@ export class TranscriptionService extends EventEmitter {
     // smoothly without flooding IPC, but always emit the final byte so it hits 100%.
     let lastEmitMs = 0;
     for (const model of models) {
-      const resolvedPaths = await ensureModel(model, (progress) => {
-        const downloadedBytes = priorBytes + progress.downloadedBytes;
-        const now = Date.now();
-        if (now - lastEmitMs < 150 && downloadedBytes < totalBytes) return;
-        lastEmitMs = now;
-        // The aggregate drives the popup's one bar; the per-model pair drives
-        // the Dictation tab's line for this model.
-        this.emitModelProgress({
-          modelId: model.id,
-          status: 'downloading',
-          downloadedBytes,
-          totalBytes,
-          modelDownloadedBytes: progress.downloadedBytes,
-          modelTotalBytes: progress.totalBytes,
+      let resolvedPaths: Awaited<ReturnType<typeof ensureModel>>;
+      try {
+        resolvedPaths = await ensureModel(model, (progress) => {
+          const downloadedBytes = priorBytes + progress.downloadedBytes;
+          const now = Date.now();
+          if (now - lastEmitMs < 150 && downloadedBytes < totalBytes) return;
+          lastEmitMs = now;
+          // The aggregate drives the popup's one bar; the per-model pair drives
+          // the Dictation tab's line for this model.
+          this.emitModelProgress({
+            modelId: model.id,
+            status: 'downloading',
+            downloadedBytes,
+            totalBytes,
+            modelDownloadedBytes: progress.downloadedBytes,
+            modelTotalBytes: progress.totalBytes,
+          });
         });
-      });
+      } catch (error) {
+        throw new ModelDownloadError(model.id, error);
+      }
       priorBytes += Math.round(model.approxSizeMb * 1024 * 1024);
       resolved.push({ id: model.id, engineId, kind: resolvedPaths.kind, paths: resolvedPaths.paths });
     }
@@ -313,7 +336,7 @@ export class TranscriptionService extends EventEmitter {
       this.emitModelProgress({ modelId: selected.models[0].id, status: 'done', downloadedBytes: totalBytes, totalBytes });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Model download failed';
-      this.emitModelProgress({ modelId: selected.models[0].id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
+      this.emitModelProgress({ modelId: failedModelId(selected, error), status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
       throw new Error(message, { cause: error });
     }
   }

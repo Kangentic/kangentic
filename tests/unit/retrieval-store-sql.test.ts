@@ -553,7 +553,7 @@ describe('RetrievalStore corpus reads', () => {
       },
     });
 
-    const hits = store.searchSemantic(new Float32Array([0.1]), 2, ['conversation', 'task']);
+    const hits = store.searchSemantic(new Float32Array([0.1]), 2, ['conversation', 'task'], 'model@1');
 
     expect(hits).toEqual([
       { chunkId: 1, rank: 1, distance: 0.2 },
@@ -959,7 +959,7 @@ describe('reconcileVecOrphans against a real vec0 table', () => {
     // would stay, and without the `NOT IN` over the chunk ids the other two would.
     expect(vectorIds()).toEqual([keptIds[0]]);
     // And the survivor is still its own vector, readable through the extension.
-    expect(new RetrievalStore(database).searchSemantic(vectorFor(1), 1, ['conversation'])[0]?.chunkId).toBe(keptIds[0]);
+    expect(new RetrievalStore(database).searchSemantic(vectorFor(1), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(keptIds[0]);
     // The new chunk is untouched: still waiting for its own embedding.
     expect(database.prepare('SELECT embedded_model AS model FROM memory_chunks WHERE id = ?').get(reusedIds[0])).toEqual({ model: null });
   });
@@ -987,7 +987,9 @@ describe('a model switch at the same width resets the vec tables (real database)
     const embeddedTags = (): Array<string | null> => (database.prepare('SELECT embedded_model AS model FROM memory_chunks ORDER BY id').all() as Array<{ model: string | null }>)
       .map((row) => row.model);
     const vectorCount = (): number => (database.prepare('SELECT COUNT(*) AS count FROM memory_vec_conversation').get() as { count: number }).count;
-    return { database, access, embeddedTags, vectorCount };
+    // In the order they were embedded: the first holds vectorFor(1), the second vectorFor(2).
+    const embeddedChunkIds = (pending ?? []).map((stored) => stored.id);
+    return { database, access, embeddedTags, vectorCount, embeddedChunkIds };
   }
 
   it('resets when the model changes and the width does not', async () => {
@@ -1026,6 +1028,32 @@ describe('a model switch at the same width resets the vec tables (real database)
     expect((await access.nextBatch('project', modelB, 10))?.length).toBe(2);
     expect(embeddedTags()).toEqual([null, null]);
     expect(vectorCount()).toBe(0);
+  });
+
+  // Between the switch and the drain's reset, the tables still hold the old
+  // model's vectors. A query embedded by the new model would score against them
+  // without an error (same width), so the search answers nothing and the caller
+  // falls back to keywords until the drain has rebuilt the tables.
+  it('searches no vectors for a query from another model while the tables still hold this one\'s', async () => {
+    const { database, embeddedChunkIds } = await embeddedProject();
+    const store = new RetrievalStore(database);
+
+    const holder = store.searchSemantic(vectorFor(1), 2, ['conversation'], modelA.modelTag);
+    expect(holder.map((hit) => hit.chunkId)).toEqual([embeddedChunkIds[0], embeddedChunkIds[1]]);
+
+    expect(store.searchSemantic(vectorFor(1), 2, ['conversation'], modelB.modelTag)).toEqual([]);
+    expect(store.searchSemantic(vectorFor(1), 1, ['conversation'], modelB.modelTag)).toEqual([]);
+    expect(store.searchSemantic(vectorFor(1), 1, ['conversation'], modelA.modelTag).map((hit) => hit.chunkId)).toEqual([embeddedChunkIds[0]]);
+  });
+
+  it('does the same for an index from before the model was recorded, judging by the chunks\' own tags', async () => {
+    const { database, embeddedChunkIds } = await embeddedProject();
+    database.prepare('DELETE FROM memory_meta WHERE key = ?').run('vec_model');
+    const store = new RetrievalStore(database);
+    expect(store.getMeta('vec_model')).toBeUndefined();
+
+    expect(store.searchSemantic(vectorFor(1), 2, ['conversation'], modelB.modelTag)).toEqual([]);
+    expect(store.searchSemantic(vectorFor(1), 1, ['conversation'], modelA.modelTag).map((hit) => hit.chunkId)).toEqual([embeddedChunkIds[0]]);
   });
 });
 

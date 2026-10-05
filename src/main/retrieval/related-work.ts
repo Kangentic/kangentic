@@ -512,6 +512,8 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
   // and IPC. Yielding before each one splits the work into one scan per slice
   // instead of one freeze for all of it.
   const noiseFloor = input.embedder?.noiseFloor ?? 0;
+  // The model the vectors came from: the store scores them only against its own.
+  const modelTag = input.embedder?.modelTag ?? '';
   const relevanceOf = (distance: number): number => {
     const cosine = 1 - (distance * distance) / 2;
     return noiseFloor > 0 && noiseFloor < 1 ? (cosine - noiseFloor) / (1 - noiseFloor) : cosine;
@@ -523,7 +525,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
       await yieldToEventLoop();
       let hits: ReturnType<RetrievalStore['searchSemantic']>;
       try {
-        hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, limit, corpus));
+        hits = timeSyncWork('related:semantic', () => store.searchSemantic(vector, limit, corpus, modelTag));
       } catch {
         hits = [];
       }
@@ -558,7 +560,7 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     await yieldToEventLoop();
     try {
       const floor = codeFloorFor(input.question);
-      const hits = timeSyncWork('related:code', () => store.searchSemantic(vectors[0], CODE_POOL, ['code']))
+      const hits = timeSyncWork('related:code', () => store.searchSemantic(vectors[0], CODE_POOL, ['code'], modelTag))
         .map((hit) => ({ chunkId: hit.chunkId, relevance: relevanceOf(hit.distance) }))
         .filter((hit) => hit.relevance >= floor);
       const chunks = new Map(store.getChunks(hits.map((hit) => hit.chunkId)).map((chunk) => [chunk.id, chunk]));

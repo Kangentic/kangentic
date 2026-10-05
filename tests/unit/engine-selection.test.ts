@@ -125,6 +125,19 @@ describe('selectEngine - on-device (auto) mode', () => {
     expect(result.liveModelId).toBeNull();
     expect(result.liveModelKind).toBeNull();
   });
+
+  it('a legacy config with only a refinement model keeps the Zipformer live slot on a capable machine, not the default preset\'s Nemotron', () => {
+    // No mode, no live model, a refinement model: a config saved before Custom
+    // saved both ids. That config ran the Zipformer for the empty live slot, so a
+    // capable machine must not hand it the Best preset's 600 MB Nemotron instead.
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ modelId: 'parakeet-tdt-0.6b-en' }),
+    );
+    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.liveModelKind).toBe('online-transducer');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-en');
+  });
 });
 
 describe('selectEngine - on-device slot guard (at least one slot always active)', () => {

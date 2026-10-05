@@ -164,6 +164,95 @@ test('a model that finished downloading reads ready while the next one downloads
   }
 });
 
+/** Wait for the always-mounted dictation hook to subscribe to model progress
+ *  (it does once dictation is on), so an emitted event reaches the store. */
+async function waitForProgressListener(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const listeners = (window as unknown as { __mockDictationModelProgressListeners?: unknown[] })
+      .__mockDictationModelProgressListeners;
+    return (listeners?.length ?? 0) > 0;
+  }, undefined, { timeout: 5000 });
+}
+
+/** Push one model-progress event through the mock's bridge, as main does. */
+async function emitModelProgress(page: Page, event: Record<string, unknown>): Promise<void> {
+  await page.evaluate((payload) => {
+    (window as unknown as { __emitDictationModelProgress?: (event: unknown) => void }).__emitDictationModelProgress?.(payload);
+  }, event);
+}
+
+// A download error names the model that failed (`progress.modelId`). Best
+// downloads its two models one after the other, so the one still waiting its
+// turn is not the one that failed and has to keep reading queued. Before the
+// error was matched to its model, every line not yet on disk read "Download
+// failed" on any error.
+test('a download error names one model: only that line reads Download failed, the other stays queued', async () => {
+  const { browser, page } = await launchWithInfo({ ...BEST_SELECTION, installedModels: [] });
+  try {
+    await openDictationTab(page);
+    await waitForProgressListener(page);
+    const refinementLine = page.getByTestId('dictation-refinement-model-line');
+    const refinementValue = page.getByTestId('dictation-refinement-model-line-value');
+    const liveLine = page.getByTestId('dictation-live-model-line');
+    const liveValue = page.getByTestId('dictation-live-model-line-value');
+
+    await emitModelProgress(page, {
+      modelId: PARAKEET_V3.id,
+      status: 'error',
+      downloadedBytes: 0,
+      totalBytes: 0,
+      error: 'No space left on device',
+    });
+
+    // The refinement model failed: the warning word before its name, and the
+    // reason in the line's info tip (a line holds one short value).
+    await expect(refinementValue).toHaveText('Download failed, Parakeet v3 (multilingual)');
+    await expect(refinementValue.locator('.text-warning')).toHaveText('Download failed');
+    await expect(refinementLine.getByRole('button', { name: 'About Refinement model: No space left on device' }))
+      .toHaveAttribute('title', 'No space left on device');
+
+    // The live model did not: still queued, its name and size muted, no warning.
+    await expect(liveValue).toHaveText('Nemotron streaming, 631 MB');
+    await expect(liveValue).toHaveClass(/text-fg-muted/);
+    await expect(liveLine).not.toContainText('Download failed');
+    await expect(liveLine.locator('svg.text-warning')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an error naming the live model leaves the refinement line queued', async () => {
+  const { browser, page } = await launchWithInfo({ ...BEST_SELECTION, installedModels: [] });
+  try {
+    await openDictationTab(page);
+    await waitForProgressListener(page);
+    const refinementLine = page.getByTestId('dictation-refinement-model-line');
+    const refinementValue = page.getByTestId('dictation-refinement-model-line-value');
+    const liveLine = page.getByTestId('dictation-live-model-line');
+    const liveValue = page.getByTestId('dictation-live-model-line-value');
+
+    await emitModelProgress(page, {
+      modelId: NEMOTRON_STREAMING.id,
+      status: 'error',
+      downloadedBytes: 0,
+      totalBytes: 0,
+      error: 'Network unreachable',
+    });
+
+    await expect(liveValue).toHaveText('Download failed, Nemotron streaming');
+    await expect(liveValue.locator('.text-warning')).toHaveText('Download failed');
+    await expect(liveLine.getByRole('button', { name: 'About Live model: Network unreachable' }))
+      .toHaveAttribute('title', 'Network unreachable');
+
+    await expect(refinementValue).toHaveText('Parakeet v3 (multilingual), 639 MB');
+    await expect(refinementValue).toHaveClass(/text-fg-muted/);
+    await expect(refinementLine).not.toContainText('Download failed');
+    await expect(refinementLine.locator('svg.text-warning')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a preset with no refinement model reads None on that line, and the License line names only the live model\'s', async () => {
   const { browser, page } = await launchWithInfo({ ...BEST_SELECTION, selectedFinalModelId: null });
   try {

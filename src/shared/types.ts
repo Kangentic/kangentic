@@ -2791,7 +2791,7 @@ export interface DictationStartOptions {
   /** The FINAL (accurate) model id in Custom, or null/undefined for the machine's
    *  default preset, or `'none'` for no post-processing pass. */
   modelId?: string | null;
-  /** The LIVE (preview) model id in Custom: null/undefined = the default preset's,
+  /** The LIVE (preview) model id in Custom: null/undefined = the Light preset's,
    *  an offline model id = chunked live, `'none'` = no live preview. */
   liveModelId?: string | null;
   language: string;
@@ -3605,9 +3605,9 @@ export interface AppConfig {
      *  machine's default preset's, or `'none'` = no post-processing pass (keep the
      *  live text). A preset ignores it. */
     modelId?: string | null;
-    /** The LIVE (preview) model in Custom: null/absent = the default preset's, an
-     *  offline model id = chunked live, `'none'` = no live preview. A preset
-     *  ignores it. */
+    /** The LIVE (preview) model in Custom: null/absent = the Light preset's (the
+     *  Zipformer an older config ran), an offline model id = chunked live,
+     *  `'none'` = no live preview. A preset ignores it. */
     liveModelId?: string | null;
     /** Quality preset, shown as Best (`accurate`), Balanced (`balanced`) and Light
      *  (`fast`). A preset names its models through `src/shared/dictation-presets.ts`,

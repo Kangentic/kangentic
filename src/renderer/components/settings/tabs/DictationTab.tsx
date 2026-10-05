@@ -27,7 +27,7 @@ import {
   type DictationMode,
   type DictationPreset,
 } from '../../../../shared/dictation-presets';
-import { distinctLicenses } from '../../../../shared/model-licenses';
+import { licenseLinks } from '../../../../shared/model-licenses';
 
 const PUSH_TO_TALK_ACTION = 'dictation.pushToTalk';
 
@@ -49,6 +49,16 @@ function optionText(model: DictationModelOption): string {
 const percentOf = (downloaded: number | undefined, total: number | undefined): number =>
   downloaded !== undefined && total !== undefined && total > 0 ? Math.min(100, Math.floor((downloaded / total) * 100)) : 0;
 
+/** The Refinement dropdown's value for the cloud endpoint (it sets `engineMode`
+ *  to `remote`, not a model id). */
+const CLOUD_REFINEMENT = 'cloud';
+
+/** A model id's option among the slots' lists, if any list offers it. */
+function modelOption(info: DictationInfo, modelId: string | null): DictationModelOption | undefined {
+  if (!modelId) return undefined;
+  return info.liveModels.find((option) => option.id === modelId) ?? info.finalModels.find((option) => option.id === modelId);
+}
+
 /**
  * One slot's line in the model list: the model and its size once it is on
  * disk, its share over a track while it downloads, its size muted while it
@@ -65,14 +75,15 @@ function modelLine(
   testId: string,
 ): CardSourceLineProps {
   const base = { label, info: description, testId };
-  if (modelId === 'cloud') return { ...base, value: 'Cloud endpoint' };
-  const model = modelId ? [...info.liveModels, ...info.finalModels].find((option) => option.id === modelId) : undefined;
+  if (modelId === CLOUD_REFINEMENT) return { ...base, value: 'Cloud endpoint' };
+  const model = modelOption(info, modelId);
   if (!model) return { ...base, value: 'None', tone: 'muted' };
   const sized = `${model.displayName}, ${model.sizeMb} MB`;
   if (info.installedModels.includes(model.id)) return { ...base, value: sized, tone: 'ready' };
   // Why it failed (no space, no network) is what the user can act on: it rides
-  // in the line's info tip, since a line holds one short value.
-  if (progress?.status === 'error') {
+  // in the line's info tip, since a line holds one short value. The error names
+  // the model that failed, so a model still waiting its turn stays queued.
+  if (progress?.status === 'error' && progress.modelId === model.id) {
     return { ...base, info: progress.error ?? description, value: model.displayName, tone: 'caution', problem: 'Download failed' };
   }
   if (progress?.status === 'downloading' && progress.modelId === model.id) {
@@ -157,7 +168,7 @@ export function DictationTab({
   const liveValue = dictation.liveModelId ?? info?.selectedLiveModelId ?? NO_MODEL;
   // The Refinement dropdown shows 'cloud' when the final pass is the remote endpoint,
   // else the explicit/resolved offline model id, else 'none'.
-  const finalValue = isCloud ? 'cloud' : (dictation.modelId ?? info?.selectedFinalModelId ?? NO_MODEL);
+  const finalValue = isCloud ? CLOUD_REFINEMENT : (dictation.modelId ?? info?.selectedFinalModelId ?? NO_MODEL);
 
   // Language-first: the dropdown offers every language any model supports (the
   // union = English plus the multilingual set), independent of the current
@@ -207,7 +218,7 @@ export function DictationTab({
       (sortedLiveModels.find((model) => model.id === liveValue)?.languages.includes(nextLanguage) ?? false);
     const finalOk =
       finalValue === NO_MODEL ||
-      finalValue === 'cloud' ||
+      finalValue === CLOUD_REFINEMENT ||
       (sortedFinalModels.find((model) => model.id === finalValue)?.languages.includes(nextLanguage) ?? false);
     if (liveOk && finalOk) {
       updateGlobal({ dictation: { language: nextLanguage } });
@@ -236,16 +247,16 @@ export function DictationTab({
   const modelLines: CardSourceLineProps[] = info
     ? [
         modelLine('Live model', LIVE_MODEL_DESCRIPTION, info.selectedLiveModelId, info, modelProgress, 'dictation-live-model-line'),
-        modelLine('Refinement model', REFINEMENT_MODEL_DESCRIPTION, isCloud ? 'cloud' : info.selectedFinalModelId, info, modelProgress, 'dictation-refinement-model-line'),
+        modelLine('Refinement model', REFINEMENT_MODEL_DESCRIPTION, isCloud ? CLOUD_REFINEMENT : info.selectedFinalModelId, info, modelProgress, 'dictation-refinement-model-line'),
       ]
     : [];
   // The licenses of the on-device models that run. A cloud refinement has none.
   const runningModels = info
     ? [info.selectedLiveModelId, isCloud ? null : info.selectedFinalModelId]
-      .map((modelId) => [...info.liveModels, ...info.finalModels].find((option) => option.id === modelId))
+      .map((modelId) => modelOption(info, modelId))
       .filter((model): model is DictationModelOption => model !== undefined)
     : [];
-  const licenses = distinctLicenses(runningModels.map((model) => model.license));
+  const licenses = licenseLinks(runningModels.map((model) => model.license));
 
   const pushToTalkDescription = 'Hold to record; release to insert the transcription. Rebind it in Hotkeys.';
   const modeDescription = 'A preset picks the live and refinement models for you. Custom lets you pick them.';
@@ -388,7 +399,7 @@ export function DictationTab({
                         const value = event.target.value;
                         // The Refinement dropdown is what drives local vs cloud: 'cloud' routes
                         // the final pass to the remote endpoint; any model id keeps it on-device.
-                        if (value === 'cloud') updateGlobal({ dictation: { engineMode: 'remote', mode: 'custom' } });
+                        if (value === CLOUD_REFINEMENT) updateGlobal({ dictation: { engineMode: 'remote', mode: 'custom' } });
                         else updateGlobal({ dictation: { engineMode: 'auto', modelId: value } });
                       }}
                       data-testid="dictation-final-model-select"
@@ -399,7 +410,7 @@ export function DictationTab({
                         </option>
                       ))}
                       <option value={NO_MODEL}>None</option>
-                      <option value="cloud">Cloud endpoint</option>
+                      <option value={CLOUD_REFINEMENT}>Cloud endpoint</option>
                     </Select>
                     {/* The cloud refinement needs its endpoint. Only the final clip
                         is sent; the live preview always runs on this machine. */}
@@ -439,7 +450,7 @@ export function DictationTab({
               {licenses.length > 0 ? (
                 <CardLinkRow
                   label="License"
-                  links={licenses.map((license) => ({ label: license.name, href: license.url }))}
+                  links={licenses}
                   onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
                   testId="dictation-license"
                 />
