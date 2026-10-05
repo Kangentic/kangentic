@@ -618,6 +618,132 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
+  /**
+   * Monaco 0.57 (vscode cd2e918a) LATCHES a diff inline when a pointer-held resize widens it past
+   * its 900px breakpoint: the view stays inline until the width drops back to 900 or below, an
+   * option VALUE changes, or the diff gets new models. DiffViewer reuses its models across files and
+   * re-sends identical options on every render, so before the fix nothing ever reset it: the Side by
+   * side button stayed pressed and did nothing, and so did switching files. Both cases first prove
+   * the latch itself (still inline at a measured width above 900), so a pane that simply never got
+   * wide enough cannot pass for the bug.
+   */
+  const LATCH_FILES = [
+    {
+      path: 'src/renderer/components/LatchFirst.tsx',
+      status: 'M',
+      insertions: 1,
+      deletions: 1,
+      binary: false,
+      original: 'const first = 1;\n',
+      modified: 'const first = 2;\n',
+      language: 'typescript',
+    },
+    {
+      path: 'src/renderer/components/LatchSecond.tsx',
+      status: 'M',
+      insertions: 1,
+      deletions: 1,
+      binary: false,
+      original: 'const second = 1;\n',
+      modified: 'const second = 2;\n',
+      language: 'typescript',
+    },
+  ];
+
+  const MONACO_SIDE_BY_SIDE_BREAKPOINT_PX = 900;
+
+  async function diffEditorWidth(): Promise<number> {
+    return page.evaluate(() => document.querySelector('.monaco-diff-editor')?.getBoundingClientRect().width ?? 0);
+  }
+
+  async function setDividerRatio(ratio: number): Promise<void> {
+    await page.evaluate(
+      ([id, value]: [string, number]) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session: { getState: () => { setDividerRatio: (taskId: string, ratio: number) => void } } };
+        }).__zustandStores;
+        if (!stores) throw new Error('__zustandStores not available');
+        stores.session.getState().setDividerRatio(id, value);
+      },
+      [TASK_ID, ratio] as [string, number],
+    );
+  }
+
+  /** Opens the maximized task window on the latch files with Side by side selected and a narrow (inline) diff. */
+  async function openNarrowSideBySideDiff(): Promise<void> {
+    await page.evaluate((files) => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = { files };
+    }, LATCH_FILES);
+    await page.locator('[data-swimlane-name="Code Review"]').locator('text=DiffViewer Toolbar Task').first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await setDividerRatio(0.5);
+    await page.locator('[data-testid="diff-view-split"]').click();
+    await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 8000 });
+    // Maximized at a 50% split the diff sits under the breakpoint, so Monaco renders it inline.
+    await expect.poll(diffEditorWidth, { timeout: 5000 }).toBeLessThanOrEqual(MONACO_SIDE_BY_SIDE_BREAKPOINT_PX);
+    await expect(page.locator('.monaco-diff-editor.side-by-side')).not.toBeVisible();
+  }
+
+  /** Widens the diff past the breakpoint with a real pointer drag on the split divider, which is what latches it. */
+  async function dragDiffWiderThanBreakpoint(): Promise<void> {
+    const divider = page.locator('[data-testid="task-detail-split-divider"]');
+    const box = await divider.boundingBox();
+    expect(box, 'split divider not laid out').not.toBeNull();
+    const startX = box!.x + box!.width / 2;
+    const startY = box!.y + box!.height / 2;
+    const widthBefore = await diffEditorWidth();
+    // Leftward grows the right-hand Changes pane; the shortfall plus a margin clears the breakpoint
+    // without reaching the divider's clamp.
+    const targetX = startX - (MONACO_SIDE_BY_SIDE_BREAKPOINT_PX - widthBefore + 120);
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(targetX, startY, { steps: 12 });
+    await page.mouse.up();
+    await expect.poll(diffEditorWidth, { timeout: 5000 }).toBeGreaterThan(MONACO_SIDE_BY_SIDE_BREAKPOINT_PX);
+  }
+
+  async function closeLatchDiff(): Promise<void> {
+    await setDividerRatio(0.5);
+    await page.locator('[data-testid="task-detail-maximize"]').click();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+  }
+
+  test('after a drag widens a narrow diff, Side by side brings back the side-by-side view', async () => {
+    await openNarrowSideBySideDiff();
+    await dragDiffWiderThanBreakpoint();
+
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+    // The latch: wide enough for side by side, still inline.
+    await expect(sideBySide).not.toBeVisible();
+
+    await page.locator('[data-testid="diff-view-split"]').click();
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    await closeLatchDiff();
+  });
+
+  test('after a drag widens a narrow diff, switching files renders the next one side by side', async () => {
+    await openNarrowSideBySideDiff();
+    await dragDiffWiderThanBreakpoint();
+
+    const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
+    await expect(sideBySide).not.toBeVisible();
+
+    await page.locator('[data-testid="changes-file-row"]').filter({ hasText: 'LatchSecond.tsx' }).first().click();
+    await expect(page.locator('.monaco-diff-editor .editor.modified')).toContainText('second', { timeout: 8000 });
+    await expect(sideBySide).toBeVisible({ timeout: 8000 });
+
+    await closeLatchDiff();
+  });
+
   test('markdown files show a preview toggle that renders the new content and hides diff-only controls', async () => {
     // Seed a markdown file so ChangesPanel auto-selects it and DiffViewer mounts
     // with the preview toggle (only rendered when language === 'markdown').
