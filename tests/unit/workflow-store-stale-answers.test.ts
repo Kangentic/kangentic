@@ -179,6 +179,26 @@ describe('showLinks and clearLinks', () => {
     expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
   });
 
+  it('keeps saying a load is in flight when an outranked one fails first', async () => {
+    const bridge = installBridge();
+    const older = deferred<WorkflowDetail>();
+    const newer = deferred<WorkflowDetail>();
+    bridge.get.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const olderShown = useWorkflowStore.getState().showLinks('t1', 'p', 'w');
+    const newerShown = useWorkflowStore.getState().showLinks('t2', 'p', 'w');
+    older.reject(new Error('The workflow is gone.'));
+    await olderShown;
+    warn.mockRestore();
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(true);
+
+    newer.resolve(detailOf('w'));
+    await newerShown;
+    expect(useWorkflowStore.getState().linkFocusLoading).toBe(false);
+    expect(useWorkflowStore.getState().linkFocus?.taskId).toBe('t2');
+  });
+
   it('ends the in-flight state when the load fails', async () => {
     const bridge = installBridge();
     bridge.get.mockRejectedValueOnce(new Error('The workflow is gone.'));
