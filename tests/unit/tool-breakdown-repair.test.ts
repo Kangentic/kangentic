@@ -1,6 +1,6 @@
 /**
- * Real-database tests (node:sqlite behind the better-sqlite3 slice the app
- * uses, migrated with the production schema) for:
+ * Real-database tests (better-sqlite3, the driver production uses, migrated
+ * with the production schema) for:
  *   - the one-time repair of per-tool durations saved while tool events were
  *     paired by name (`repairToolBreakdownDurations`), driven by the real event
  *     log replay (`replayToolBreakdowns`) over temp directories;
@@ -24,25 +24,23 @@ import {
 } from '../../src/main/ipc/helpers/tool-breakdown-repair';
 import { replayToolBreakdowns } from '../../src/main/activity-engine/tool-breakdown-replay';
 import type { PerToolStat, SessionRecordStatus } from '../../src/shared/types';
-import { adaptDatabase } from './helpers/node-sqlite-database';
+import { openTestDatabase } from './helpers/test-database';
 
 /** A sanitized capture of a real session's events.jsonl, id-paired, with one permission prompt. */
 const REAL_EVENT_LOG_FIXTURE = path.join(__dirname, '..', 'fixtures', 'replay', 'session-010-subagent-permission-resume.jsonl');
 
-type SqliteModule = typeof import('node:sqlite');
-let sqlite: SqliteModule | null = null;
-try {
-  sqlite = await import('node:sqlite');
-} catch {
-  sqlite = null;
-}
-const describeWithSqlite = sqlite ? describe : describe.skip;
+const openDatabases: DatabaseType.Database[] = [];
 
 function migratedDatabase(): DatabaseType.Database {
-  const database = adaptDatabase(new sqlite!.DatabaseSync(':memory:'));
+  const database = openTestDatabase();
+  openDatabases.push(database);
   runProjectMigrations(database);
   return database;
 }
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 function insertRecord(
   database: DatabaseType.Database,
@@ -154,7 +152,7 @@ const INFLATED: PerToolStat[] = [
   { toolName: 'Read', callCount: 1, totalDurationMs: 300, interruptedCount: 0, resultTokens: 1_400 },
 ];
 
-describeWithSqlite('repairToolBreakdownDurations (real database, real replay)', () => {
+describe('repairToolBreakdownDurations (real database, real replay)', () => {
   let database: DatabaseType.Database;
   let sessionsDir: string;
 
@@ -559,7 +557,7 @@ describe('replayToolBreakdowns', () => {
   });
 });
 
-describeWithSqlite('SessionRepository.updateTranscriptToolCounts (real database)', () => {
+describe('SessionRepository.updateTranscriptToolCounts (real database)', () => {
   let database: DatabaseType.Database;
 
   beforeEach(() => {
@@ -637,7 +635,7 @@ describeWithSqlite('SessionRepository.updateTranscriptToolCounts (real database)
   });
 });
 
-describeWithSqlite('SessionRepository.patchToolBreakdownDurations (real database)', () => {
+describe('SessionRepository.patchToolBreakdownDurations (real database)', () => {
   let database: DatabaseType.Database;
   let repository: SessionRepository;
 
