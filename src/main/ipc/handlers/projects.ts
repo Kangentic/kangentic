@@ -28,6 +28,7 @@ import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { retrievalClient } from '../../retrieval/retrieval-client';
+import { repairToolBreakdownDurations, toolBreakdownRepairRan } from '../helpers/tool-breakdown-repair';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -616,11 +617,44 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
         .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path)))
-        .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
+        .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err))
+        .then(() => startToolBreakdownRepair(openedProject)),
     );
   }
 
   return project;
+}
+
+/**
+ * Fire the one-time repair of per-tool durations saved before tool events were
+ * paired by id, once a cold open has finished its own recovery. Background
+ * and best-effort: the event logs are read in the retrieval worker, only
+ * durations are ever patched, and a run that cannot finish leaves the
+ * `schema_meta` flag unset so the next open tries again
+ * (`helpers/tool-breakdown-repair.ts`).
+ */
+function startToolBreakdownRepair(project: Project): void {
+  try {
+    const db = getProjectDb(project.id);
+    if (toolBreakdownRepairRan(db)) return;
+    void repairToolBreakdownDurations(
+      db,
+      path.join(project.path, '.kangentic', 'sessions'),
+      (sessionsDir, sessionIds) => retrievalClient.call(
+        'sessions.replayToolBreakdowns',
+        { sessionsDir, sessionIds },
+        { timeoutMs: null },
+      ),
+    )
+      .then((result) => {
+        if (result.repaired > 0) {
+          console.log(`[TOOL-BREAKDOWN-REPAIR] ${project.name}: corrected tool durations on ${result.repaired} of ${result.scanned} session records`);
+        }
+      })
+      .catch((error) => console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error));
+  } catch (error) {
+    console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} could not start:`, error);
+  }
 }
 
 /**
@@ -784,6 +818,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       // front to guard rapid double-opens): a failed background activation
       // stays cold, so the user's next explicit open retries recovery.
       context.recoveredProjects.add(project.id);
+      startToolBreakdownRepair(project);
     })),
   );
 
@@ -930,6 +965,7 @@ export function registerProjectHandlers(context: IpcContext): void {
             .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
           await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
+          startToolBreakdownRepair(project);
         });
       });
     }

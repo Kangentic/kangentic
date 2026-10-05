@@ -535,7 +535,7 @@ export function ModelCombobox({
         style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
-        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-64 overflow-y-auto"
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-[min(16rem,var(--popover-available-height,16rem))] overflow-y-auto"
         data-testid={`${testId}-menu`}
       >
         {hasAnyRow ? (

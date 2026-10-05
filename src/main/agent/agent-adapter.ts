@@ -638,17 +638,39 @@ export interface AgentAdapter {
    * throw on a missing/tool-less transcript: return null so the caller keeps
    * the live count. Counts DISTINCT `tool_use` ids (parallel tool calls in one
    * message count separately; a streamed re-emission of the same message does
-   * not double-count). The returned breakdown is callCount-only
+   * not double-count). The returned breakdown carries no timing
    * (`totalDurationMs`/`interruptedCount` are 0 - the transcript has no
-   * ToolStart/ToolEnd pairing to derive them from). Implemented only by
-   * adapters whose CLI writes a parseable transcript (Claude today); other
-   * adapters are a no-op.
+   * ToolStart/ToolEnd pairing to derive them from), and may carry
+   * `resultTokens`. `sinceMs`, when given, counts only calls made at or after
+   * it: a transcript can span several runs (Claude appends across `--resume`),
+   * while a session record covers one. An adapter that cannot scope by time
+   * ignores it. Implemented only by adapters whose CLI writes a parseable
+   * transcript; other adapters are a no-op.
    */
   transcriptToolCounts?(input: {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    sinceMs?: number | null;
   }): Promise<TranscriptToolCounts | null>;
+
+  /**
+   * Optional: estimated result tokens per tool name, for the calls made at or
+   * after `sinceMs` (the current run's start), read from the agent's own
+   * transcript. Feeds the live tool-call popover's Tokens column, which
+   * refetches on every tool call, so an implementation must be cheap to call
+   * repeatedly (Claude resumes a per-path cursor and reads only appended
+   * bytes). Same location contract as `transcriptUsage`; must not throw;
+   * returns null when the transcript cannot be read. An adapter that cannot
+   * estimate result tokens leaves this unimplemented, and its transcript is
+   * then never read for them.
+   */
+  transcriptToolResultTokens?(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+  }): Promise<Record<string, number> | null>;
 
   /**
    * Optional: return a callback that confirms a submission was processed.

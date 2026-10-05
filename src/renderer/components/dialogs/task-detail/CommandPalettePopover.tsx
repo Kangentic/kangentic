@@ -36,7 +36,7 @@ export function CommandPalettePopover({ triggerRef, cwd, onSelect, onClose }: Co
     <div
       ref={popoverRef}
       style={{ ...popoverStyle, transformOrigin: 'top center' }}
-      className="fixed w-[280px] max-h-[300px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-[2147483646] flex flex-col overflow-hidden overlay-popover-in"
+      className="fixed w-[280px] max-h-[min(300px,var(--popover-available-height,300px))] bg-surface-raised border border-edge-input rounded-md shadow-xl z-[2147483646] flex flex-col overflow-hidden overlay-popover-in"
       // An open dismissable layer so the click-outside window dismiss yields to
       // it: a board click while this body-portaled popover is open closes the
       // popover, not the task-detail window underneath.

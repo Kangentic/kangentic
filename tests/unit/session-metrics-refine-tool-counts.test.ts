@@ -31,6 +31,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** This run's start: a transcript can hold earlier `--resume` runs too. */
+const RUN_STARTED_AT = '2026-10-04T22:56:53.959Z';
+
 /**
  * Await one setImmediate so the fire-and-forget Promise chain inside
  * refineTranscriptToolCounts can settle. In Node.js, setImmediate fires after
@@ -54,6 +57,7 @@ function makeStubManager(options: {
         ? { 'session-1': { transcriptPath: options.transcriptPath ?? undefined } }
         : { 'session-1': { transcriptPath: '/path/to/transcript.jsonl' } },
     ),
+    getSession: vi.fn(() => ({ startedAt: RUN_STARTED_AT })),
   } as unknown as SessionManager;
 }
 
@@ -99,6 +103,16 @@ describe('refineTranscriptToolCounts orchestration', () => {
     const [calledId, calledCounts] = updateTranscriptToolCountsCalls[0];
     expect(calledId).toBe('record-1');
     expect(calledCounts).toEqual(resolvedCounts);
+  });
+
+  it('scopes the transcript read to this run, which is all the record covers', async () => {
+    const transcriptToolCounts = vi.fn().mockResolvedValue(null);
+    vi.spyOn(agentRegistry, 'get').mockReturnValue({ transcriptToolCounts } as unknown as AgentAdapter);
+
+    refineTranscriptToolCounts(makeStubManager({ agentName: 'stub-agent' }), makeStubRepo().repo, 'session-1', 'record-1');
+    await flushAsync();
+
+    expect(transcriptToolCounts).toHaveBeenCalledWith(expect.objectContaining({ sinceMs: Date.parse(RUN_STARTED_AT) }));
   });
 
   it('does NOT call updateTranscriptToolCounts when the adapter transcriptToolCounts resolves null', async () => {

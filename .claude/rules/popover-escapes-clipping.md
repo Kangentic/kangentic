@@ -57,12 +57,23 @@ Four things that are easy to get wrong, each of which fails silently:
 Two properties of the pattern to know before you reach for it, both shared with the existing
 portaled sites (`LabelInput`, `KebabMenu`) rather than new:
 
-- **The position is computed once, at open.** `usePopoverPosition` has no `scroll` or `resize`
-  listener, so a `fixed` menu holds its viewport coordinates while its trigger moves. Scrolling
-  the settings tab body, the task-detail edit form, the board-manager body, or a `DataTable`
-  while a menu is open visually detaches it. Prefer a trigger that cannot scroll under an open
-  menu; the `DataTable` sites partly self-heal, because virtualizing the anchor row out unmounts
-  the popover with it.
+- **The side is decided once, at open, and the anchor faces the trigger.** `usePopoverPosition`
+  picks above or below and left or right from the size it measures on open, then anchors the
+  fixed popover on the edge that faces its trigger: `bottom` when it opens above, `right` when it
+  is right-aligned. Content that changes after that (rows an async fetch delivers, a list the
+  user filters) moves only the far edge, so it grows away from the trigger. The hook used to write
+  a `top` computed from the measured height, and `ToolBreakdownPopover`, measured in its 80px
+  empty state, grew down over its own trigger and past the window once its 340px table arrived.
+  The hook also publishes the room on the chosen side as `--popover-available-height` and
+  `--popover-available-width` on the popover. A popover whose content arrives or grows after open
+  caps itself with them, `max-h-[min(340px,var(--popover-available-height,340px))]`, so a short
+  window scrolls inside it instead of spilling out. The hook never writes an inline `max-height`,
+  which would override the consumer's own cap.
+- **Nothing re-measures while it is open.** `usePopoverPosition` has no `scroll` or `resize`
+  listener, so a `fixed` menu holds its viewport coordinates while its trigger moves. Scrolling the settings tab body, the task-detail edit form, the board-manager body, or a
+  `DataTable` while a menu is open visually detaches it. Prefer a trigger that cannot scroll under
+  an open menu; the `DataTable` sites partly self-heal, because virtualizing the anchor row out
+  unmounts the popover with it.
 - **`z-[2147483646]` clears the toast layer too.** Toasts render at `z-[60]`
   (`ToastContainer.tsx`), so a toast that fires while a portaled menu is open renders behind it.
 
@@ -98,6 +109,11 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
 
   Neither check can tell whether a mount site actually clips, which is why they are the
   tripwire and the UI specs are the guard.
+- **Test (async content, behavior):** `tests/ui/context-bar-tool-breakdown.spec.ts` resolves the
+  breakdown 300ms after the popover opens and asserts its bottom stays at or above the trigger and
+  inside the window, then shrinks the window so the room above the trigger is under the 340px cap
+  and asserts the popover stays inside and scrolls. The first case read red against the
+  `top`-anchored hook; the second reads red without the `--popover-available-height` cap.
 - **Test (first-open width, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` opens
   the Settings > Agent comboboxes on a fresh page at 1920x1080 and asserts the menu's left edge
   and width match the field on the FIRST open (then again after a close). Each test owns its

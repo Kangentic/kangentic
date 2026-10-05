@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
-import { EventType } from '../../src/shared/types';
+import { EventType, IdleReason } from '../../src/shared/types';
 import type { SessionUsage, SessionEvent } from '../../src/shared/types';
 
 /** Build a tool lifecycle event, optionally carrying cost/token fields. */
@@ -519,21 +519,18 @@ describe('UsageAccumulator - per-tool aggregation', () => {
     expect(usage.getToolBreakdown('s1')).toEqual([]);
   });
 
-  it('sorts by duration descending when no row carries cost', () => {
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Quick', 0));
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Quick', 100));
+  it('sorts by call count descending, not by duration or cost', () => {
     usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Slow', 0));
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Slow', 900));
-    expect(usage.getToolBreakdown('s1').map((row) => row.toolName)).toEqual(['Slow', 'Quick']);
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Slow', 900, { costUsd: 0.5 }));
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Busy', 10));
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Busy', 20));
+    expect(usage.getToolBreakdown('s1').map((row) => row.toolName)).toEqual(['Busy', 'Slow']);
   });
 
-  it('sorts by cost descending when any row carries cost', () => {
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Cheap', 0));
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Cheap', 900, { costUsd: 0.01 }));
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Pricey', 0));
-    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Pricey', 100, { costUsd: 0.5 }));
-    // Pricey wins on cost despite a shorter duration.
-    expect(usage.getToolBreakdown('s1').map((row) => row.toolName)).toEqual(['Pricey', 'Cheap']);
+  it('breaks a call-count tie by tool name so the order is stable', () => {
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 0));
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 0));
+    expect(usage.getToolBreakdown('s1').map((row) => row.toolName)).toEqual(['Bash', 'Read']);
   });
 
   it('getToolCallCount sums completed calls across tools (excludes interrupted)', () => {
@@ -550,6 +547,176 @@ describe('UsageAccumulator - per-tool aggregation', () => {
     const cache = usage.getUsageCache();
     expect(Object.keys(cache).sort()).toEqual(['s1', 's2']);
     expect(cache.s1.contextWindow.contextWindowSize).toBe(1000);
+  });
+
+  describe('pairing by toolId', () => {
+    it('a denied start that never ends does not inflate the calls after it', () => {
+      // The bash-guard hook denies a chained command: PreToolUse fired our
+      // tool_start, and no PostToolUse or PostToolUseFailure ever follows.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'denied' }));
+      for (let index = 0; index < 3; index++) {
+        const start = 10_000 * (index + 1);
+        usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', start, { toolId: `b${index}` }));
+        usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', start + 100, { toolId: `b${index}` }));
+      }
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash.callCount).toBe(3);
+      // Name-FIFO pairing paired each end with the PREVIOUS start: ~30s.
+      expect(bash.totalDurationMs).toBe(300);
+    });
+
+    it('pairs parallel calls of one tool that end out of order', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 0, { toolId: 'r1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 10, { toolId: 'r2' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 30, { toolId: 'r2' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 500, { toolId: 'r1' }));
+      const [read] = usage.getToolBreakdown('s1');
+      expect(read.totalDurationMs).toBe(20 + 500);
+    });
+
+    it('an end whose id never started adds nothing and leaves an id-less start alone', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 1000, { toolId: 'stranger' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 1200));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash.callCount).toBe(2);
+      // Only the id-less end paired with the id-less start.
+      expect(bash.totalDurationMs).toBe(1200);
+    });
+
+    it('an Interrupted with an id but no tool name lands on the started tool', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Interrupted, undefined, 250, { toolId: 'b1' }));
+      const rows = usage.getToolBreakdown('s1');
+      expect(rows.map((row) => row.toolName)).toEqual(['Bash']);
+      expect(rows[0].interruptedCount).toBe(1);
+      expect(rows[0].totalDurationMs).toBe(250);
+    });
+
+    it('an id-paired call survives a turn-ending Idle (a background subagent keeps working)', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 0, { toolId: 'r1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 100));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 900, { toolId: 'r1' }));
+      const [read] = usage.getToolBreakdown('s1');
+      expect(read.totalDurationMs).toBe(900);
+    });
+
+    it('caps unmatched id-keyed starts, dropping the oldest', () => {
+      for (let index = 0; index <= 512; index++) {
+        usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', index, { toolId: `orphan-${index}` }));
+      }
+      // orphan-0 was evicted, so its end pairs with nothing.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 10_000, { toolId: 'orphan-0' }));
+      expect(usage.getToolBreakdown('s1')[0].totalDurationMs).toBe(0);
+      // orphan-1 is still held.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 10_001, { toolId: 'orphan-1' }));
+      expect(usage.getToolBreakdown('s1')[0].totalDurationMs).toBe(10_000);
+    });
+
+    it('a start moved to the background never pairs and creates no row', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'bg' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 5000, { toolId: 'bg' }));
+      expect(usage.getToolBreakdown('s1')).toEqual([]);
+    });
+  });
+
+  describe('id-less fallback', () => {
+    it('still pairs start and end FIFO by tool name', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 10));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 40));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 100));
+      const byName = Object.fromEntries(usage.getToolBreakdown('s1').map((row) => [row.toolName, row.totalDurationMs]));
+      expect(byName).toEqual({ Bash: 100, Read: 30 });
+    });
+
+    it('a turn-ending Idle drops an unmatched start so later calls are not inflated', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0)); // never ends
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 1000));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 60_000));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 60_100));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash.totalDurationMs).toBe(100);
+    });
+
+    it('a permission Idle keeps the pending id-less start (the tool resumes after approval)', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 100, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 4000));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 5000));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 5200));
+      const [bash] = usage.getToolBreakdown('s1');
+      // The waited call is counted but its time is left out; the next call
+      // still pairs with its own start rather than the waited one's.
+      expect(bash).toMatchObject({ callCount: 2, waitedCount: 1, totalDurationMs: 200 });
+    });
+
+    it('an Idle creates no row', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 0));
+      expect(usage.getToolBreakdown('s1')).toEqual([]);
+    });
+  });
+
+  describe('calls that waited on the user', () => {
+    it('leaves a waited call out of the time and counts it in waitedCount', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 300, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 1000, { toolId: 'b2' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 1050, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 120_000, { toolId: 'b2' }));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash).toMatchObject({ callCount: 2, waitedCount: 1, totalDurationMs: 300 });
+    });
+
+    it('credits the prompt to the most recently started pending call, as the engine does', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Agent', 0, { toolId: 'a1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 500, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 600, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 30_000, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Agent', 40_000, { toolId: 'a1' }));
+      const byName = Object.fromEntries(usage.getToolBreakdown('s1').map((row) => [row.toolName, row]));
+      expect(byName.Bash).toMatchObject({ waitedCount: 1, totalDurationMs: 0 });
+      expect(byName.Agent.waitedCount).toBeUndefined();
+      expect(byName.Agent.totalDurationMs).toBe(40_000);
+    });
+
+    it('a call where every run waited (AskUserQuestion) has no run time', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'AskUserQuestion', 0, { toolId: 'q1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 10, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'AskUserQuestion', 600_000, { toolId: 'q1' }));
+      const [question] = usage.getToolBreakdown('s1');
+      expect(question).toMatchObject({ callCount: 1, waitedCount: 1, totalDurationMs: 0 });
+    });
+
+    it('an interrupted call that waited is counted as waited too', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'b1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 10, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Interrupted, undefined, 9000, { toolId: 'b1' }));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash).toMatchObject({ callCount: 0, interruptedCount: 1, waitedCount: 1, totalDurationMs: 0 });
+    });
+
+    it('never credits a prompt to a call left pending from an earlier turn', () => {
+      // A background subagent call started before the main turn ended keeps
+      // running; a prompt in the next turn with nothing of its own pending must
+      // not take it, since the engine's stack was emptied at the turn end.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Grep', 0, { toolId: 'g1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 1000));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 2000, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Grep', 3000, { toolId: 'g1' }));
+      const [grep] = usage.getToolBreakdown('s1');
+      expect(grep.waitedCount).toBeUndefined();
+      expect(grep.totalDurationMs).toBe(3000);
+    });
+
+    it('a permission Idle with nothing pending marks nothing and creates no row', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 0, { detail: IdleReason.Permission }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 100, { toolId: 'r1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 150, { toolId: 'r1' }));
+      const [read] = usage.getToolBreakdown('s1');
+      expect(read.waitedCount).toBeUndefined();
+      expect(read.totalDurationMs).toBe(50);
+    });
   });
 
   it('removeSession drops both usage and per-tool stats', () => {

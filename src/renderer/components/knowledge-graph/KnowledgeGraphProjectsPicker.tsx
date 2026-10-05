@@ -160,7 +160,7 @@ export function KnowledgeGraphProjectsPicker({
         style={style}
         portal
         transformOrigin="top center"
-        className="fixed z-[2147483646] flex max-h-[26rem] w-72 flex-col overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
+        className="fixed z-[2147483646] flex max-h-[min(26rem,var(--popover-available-height,26rem))] w-72 flex-col overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
         data-testid="knowledge-graph-projects-menu"
       >
         <div className="relative m-2 mb-1.5">

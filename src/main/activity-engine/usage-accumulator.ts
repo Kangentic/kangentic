@@ -1,4 +1,4 @@
-import { EventType } from '../../shared/types';
+import { EventType, IdleReason } from '../../shared/types';
 import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types';
 
 /**
@@ -10,8 +10,9 @@ import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types
  *   - The merge in `setSessionUsage` is non-trivial (Codex/Gemini
  *     emit usage in chunks across separate JSONL events; we have to
  *     recompute `usedPercentage` after every merge).
- *   - The per-tool FIFO pairing in `recordToolEvent` matches
- *     interleaved Bash + Read calls correctly by tool name.
+ *   - The per-tool pairing in `recordToolEvent` matches each end to its
+ *     own start by `toolId`, falling back to FIFO by tool name only for
+ *     adapters that send no id.
  *   - Both are pure transformations of already-parsed events, so the
  *     logic earns isolation under unit tests without touching the
  *     orchestrator.
@@ -20,22 +21,60 @@ import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types
 interface ToolAccumulator {
   callCount: number;
   interruptedCount: number;
+  /** Run time of the calls that did not wait on the user (see `waitedCount`). */
   totalDurationMs: number;
+  /** Calls that paused for the user's answer or approval; their time is left out. */
+  waitedCount: number;
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
   hasCost: boolean;
   hasInputTokens: boolean;
   hasOutputTokens: boolean;
-  /** FIFO of unmatched ToolStart timestamps, paired by tool name. */
-  pendingStarts: number[];
+  /**
+   * FIFO of unmatched starts that carried NO `toolId`, paired by tool name.
+   * Starts with an id live in `SessionToolState.pendingById`.
+   */
+  pendingStarts: PendingToolStart[];
 }
+
+interface PendingToolStart {
+  startTs: number;
+  toolName: string;
+  /** Set when a permission Idle arrived while this was the newest pending call. */
+  waited: boolean;
+}
+
+interface SessionToolState {
+  byTool: Map<string, ToolAccumulator>;
+  /**
+   * Unmatched starts keyed by `toolId`. A start the agent never ends (a
+   * PreToolUse a hook denied, a cancelled parallel sibling) stays here and
+   * pairs with nothing, so it cannot shift any later call's duration.
+   * Bounded by `MAX_PENDING_BY_ID`.
+   */
+  pendingById: Map<string, PendingToolStart>;
+  /**
+   * Timestamp of the last turn-ending Idle. A permission prompt is credited
+   * only to a call started since then, because the engine's pending stack,
+   * whose top `permissionAwaitedToolId` reads, is emptied at that same Idle.
+   */
+  turnStartTs: number;
+}
+
+/**
+ * Cap on a session's unmatched id-keyed starts. Far above any real number of
+ * calls in flight at once, so only orphans (denied or cancelled starts) are
+ * ever dropped, oldest first.
+ */
+const MAX_PENDING_BY_ID = 512;
 
 function newAccumulator(): ToolAccumulator {
   return {
     callCount: 0,
     interruptedCount: 0,
     totalDurationMs: 0,
+    waitedCount: 0,
     costUsd: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -75,7 +114,7 @@ function baseModelId(modelId: string): string {
 
 export class UsageAccumulator {
   private usageCache = new Map<string, SessionUsage>();
-  private toolStats = new Map<string, Map<string, ToolAccumulator>>();
+  private toolStats = new Map<string, SessionToolState>();
   /** Per-session count of context compactions (PreCompact -> Compact events). */
   private compactionCounts = new Map<string, number>();
   /**
@@ -238,42 +277,109 @@ export class UsageAccumulator {
 
   /**
    * Update the per-tool aggregator for one event. ToolStart records a
-   * pending start timestamp; ToolEnd/Interrupted pops the matching
-   * start and accumulates duration. Optional cost/tokens on the
-   * ToolEnd event are summed when present.
+   * pending start; ToolEnd/Interrupted takes its matching start and
+   * accumulates the duration. Optional cost/tokens on the end event are
+   * summed when present.
    *
-   * Pairing is keyed by tool name with a FIFO queue, so interleaved
-   * tool calls (parallel Bash + Read) match correctly. An unmatched
-   * ToolEnd still increments the count but contributes zero duration,
-   * so the counter stays faithful even if the start was dropped before
-   * this session began capturing.
+   * Pairing is by `toolId` whenever the event carries one (Claude sets it
+   * on start, end and interrupt alike). An end with an id looks up ONLY its
+   * own start: a miss adds nothing, and it never borrows an id-less start.
+   * Only an end with no id falls back to FIFO by tool name, for adapters
+   * that send no correlation id. Name-FIFO pairing alone was wrong: one
+   * start that never ends (a PreToolUse the bash-guard hook denied fires
+   * our tool_start and nothing after it) shifted that tool's queue for the
+   * rest of the session, so every later call reported the gap since the
+   * previous call as its duration.
+   *
+   * An unmatched end still increments the count but contributes zero
+   * duration, so the counter stays faithful even if the start was dropped
+   * before this session began capturing. A turn-ending Idle drops the
+   * pending id-less starts, which is what keeps an unended id-less start
+   * from poisoning the next turn.
+   *
+   * Time spent waiting on the user is left out. A permission Idle (the agent
+   * asked for approval, or AskUserQuestion is waiting for an answer) marks the
+   * newest pending call as waited, the same attribution the activity engine
+   * uses for `permissionAwaitedToolId`. When that call ends it is counted and
+   * tallied in `waitedCount`, but its time is not added: nothing marks the
+   * moment the user answers, so the wait cannot be split from the run, and
+   * leaving the call out is the honest measure of the tool's own run time.
    */
   recordToolEvent(sessionId: string, event: SessionEvent): void {
+    if (event.type === EventType.Idle) {
+      const state = this.toolStats.get(sessionId);
+      if (!state) return;
+      if (event.detail === IdleReason.Permission) {
+        const awaited = this.newestPendingStart(state);
+        if (awaited) awaited.waited = true;
+        return;
+      }
+      // A turn-ending Idle drops the id-less FIFOs, where one unended start
+      // would shift every later pairing (the rule `updateCounters` in
+      // engine/event-handlers.ts applies to its own stack). Permission idles
+      // are handled above: that tool resumes after approval. The id map is
+      // NOT cleared: a background subagent's calls keep running past the main
+      // turn's Stop (about 750 of them in this repo's own session logs), and
+      // an orphaned id pairs with nothing, so keeping it costs memory only,
+      // which `MAX_PENDING_BY_ID` bounds.
+      for (const accumulator of state.byTool.values()) accumulator.pendingStarts.length = 0;
+      state.turnStartTs = event.ts;
+      return;
+    }
+    if (event.type === EventType.BackgroundShellStart) {
+      // A foreground tool promoted to the background: its ToolEnd never
+      // comes, so release the start. Handled before any row lookup so it
+      // never creates one.
+      if (event.toolId) this.toolStats.get(sessionId)?.pendingById.delete(event.toolId);
+      return;
+    }
     if (event.type !== EventType.ToolStart
         && event.type !== EventType.ToolEnd
         && event.type !== EventType.Interrupted) {
       return;
     }
-    const toolName = event.tool ?? 'unknown';
-    let perSession = this.toolStats.get(sessionId);
-    if (!perSession) {
-      perSession = new Map<string, ToolAccumulator>();
-      this.toolStats.set(sessionId, perSession);
-    }
-    let accumulator = perSession.get(toolName);
-    if (!accumulator) {
-      accumulator = newAccumulator();
-      perSession.set(toolName, accumulator);
+    let state = this.toolStats.get(sessionId);
+    if (!state) {
+      state = {
+        byTool: new Map<string, ToolAccumulator>(),
+        pendingById: new Map<string, PendingToolStart>(),
+        turnStartTs: Number.NEGATIVE_INFINITY,
+      };
+      this.toolStats.set(sessionId, state);
     }
 
     if (event.type === EventType.ToolStart) {
-      accumulator.pendingStarts.push(event.ts);
+      const startName = event.tool ?? 'unknown';
+      const pendingStart: PendingToolStart = { startTs: event.ts, toolName: startName, waited: false };
+      if (event.toolId) {
+        state.pendingById.set(event.toolId, pendingStart);
+        if (state.pendingById.size > MAX_PENDING_BY_ID) {
+          // Map iteration is insertion order, so the first key is the oldest.
+          const oldest = state.pendingById.keys().next();
+          if (!oldest.done) state.pendingById.delete(oldest.value);
+        }
+      } else {
+        this.accumulatorFor(state, startName).pendingStarts.push(pendingStart);
+      }
       return;
     }
 
-    const startTs = accumulator.pendingStarts.shift();
-    if (startTs !== undefined) {
-      accumulator.totalDurationMs += Math.max(0, event.ts - startTs);
+    let matched: PendingToolStart | undefined;
+    let toolName = event.tool;
+    if (event.toolId) {
+      matched = state.pendingById.get(event.toolId);
+      if (matched) {
+        state.pendingById.delete(event.toolId);
+        // An interrupt can carry the id without the name; the start knows it.
+        toolName ??= matched.toolName;
+      }
+    }
+    const accumulator = this.accumulatorFor(state, toolName ?? 'unknown');
+    if (!event.toolId) matched = accumulator.pendingStarts.shift();
+    if (matched?.waited) {
+      accumulator.waitedCount += 1;
+    } else if (matched) {
+      accumulator.totalDurationMs += Math.max(0, event.ts - matched.startTs);
     }
     if (event.type === EventType.ToolEnd) {
       accumulator.callCount += 1;
@@ -301,27 +407,26 @@ export class UsageAccumulator {
    * once the event cache rolls.
    */
   getToolCallCount(sessionId: string): number {
-    const perSession = this.toolStats.get(sessionId);
-    if (!perSession) return 0;
+    const state = this.toolStats.get(sessionId);
+    if (!state) return 0;
     let total = 0;
-    for (const accumulator of perSession.values()) {
+    for (const accumulator of state.byTool.values()) {
       total += accumulator.callCount;
     }
     return total;
   }
 
   /**
-   * Snapshot of per-tool aggregates for a session. Sorted by total
-   * duration descending (cost descending when any row carries cost
-   * data, matching the survey spec). Returns an empty array when the
-   * session has produced no tool events.
+   * Snapshot of per-tool aggregates for a session. Sorted by call count
+   * descending, tie broken by tool name, which is also the table's default
+   * order (`ByToolTable` re-sorts on its own headers). Returns an empty
+   * array when the session has produced no tool events.
    */
   getToolBreakdown(sessionId: string): PerToolStat[] {
-    const perSession = this.toolStats.get(sessionId);
-    if (!perSession) return [];
+    const state = this.toolStats.get(sessionId);
+    if (!state) return [];
     const rows: PerToolStat[] = [];
-    let anyCost = false;
-    for (const [toolName, accumulator] of perSession) {
+    for (const [toolName, accumulator] of state.byTool) {
       if (accumulator.callCount === 0 && accumulator.interruptedCount === 0) continue;
       const stat: PerToolStat = {
         toolName,
@@ -329,19 +434,41 @@ export class UsageAccumulator {
         totalDurationMs: accumulator.totalDurationMs,
         interruptedCount: accumulator.interruptedCount,
       };
-      if (accumulator.hasCost) {
-        stat.costUsd = accumulator.costUsd;
-        anyCost = true;
-      }
+      if (accumulator.waitedCount > 0) stat.waitedCount = accumulator.waitedCount;
+      if (accumulator.hasCost) stat.costUsd = accumulator.costUsd;
       if (accumulator.hasInputTokens) stat.inputTokens = accumulator.inputTokens;
       if (accumulator.hasOutputTokens) stat.outputTokens = accumulator.outputTokens;
       rows.push(stat);
     }
-    rows.sort((a, b) => {
-      if (anyCost) return (b.costUsd ?? 0) - (a.costUsd ?? 0);
-      return b.totalDurationMs - a.totalDurationMs;
-    });
+    rows.sort((a, b) => (b.callCount - a.callCount) || a.toolName.localeCompare(b.toolName));
     return rows;
+  }
+
+  /**
+   * The most recently started call still waiting for its end, among calls
+   * started this turn: the last id start (Map order is insertion order) or the
+   * last id-less one, whichever began later. This is the call a permission
+   * prompt belongs to, since the prompt fires between a call's PreToolUse and
+   * its execution. Undefined when nothing started this turn is pending, which
+   * is when the engine's own stack is empty too.
+   */
+  private newestPendingStart(state: SessionToolState): PendingToolStart | undefined {
+    let newest: PendingToolStart | undefined;
+    for (const pending of state.pendingById.values()) newest = pending;
+    for (const accumulator of state.byTool.values()) {
+      const last = accumulator.pendingStarts[accumulator.pendingStarts.length - 1];
+      if (last && (!newest || last.startTs > newest.startTs)) newest = last;
+    }
+    return newest && newest.startTs >= state.turnStartTs ? newest : undefined;
+  }
+
+  private accumulatorFor(state: SessionToolState, toolName: string): ToolAccumulator {
+    let accumulator = state.byTool.get(toolName);
+    if (!accumulator) {
+      accumulator = newAccumulator();
+      state.byTool.set(toolName, accumulator);
+    }
+    return accumulator;
   }
 
   /**

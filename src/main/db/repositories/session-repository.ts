@@ -29,9 +29,9 @@ export interface SessionMetricsInput {
 
 /**
  * Type guard for a single tool_breakdown entry. Required fields must be
- * present and correctly typed; optional fields (costUsd / inputTokens /
- * outputTokens) are only validated when present so future writers can
- * extend the shape without tripping the guard.
+ * present and correctly typed; optional fields (waitedCount / costUsd /
+ * inputTokens / outputTokens / resultTokens) are only validated when present
+ * so future writers can extend the shape without tripping the guard.
  */
 function isPerToolStat(value: unknown): value is PerToolStat {
   if (value === null || typeof value !== 'object') return false;
@@ -40,9 +40,11 @@ function isPerToolStat(value: unknown): value is PerToolStat {
   if (typeof candidate.callCount !== 'number') return false;
   if (typeof candidate.totalDurationMs !== 'number') return false;
   if (typeof candidate.interruptedCount !== 'number') return false;
+  if (candidate.waitedCount !== undefined && typeof candidate.waitedCount !== 'number') return false;
   if (candidate.costUsd !== undefined && typeof candidate.costUsd !== 'number') return false;
   if (candidate.inputTokens !== undefined && typeof candidate.inputTokens !== 'number') return false;
   if (candidate.outputTokens !== undefined && typeof candidate.outputTokens !== 'number') return false;
+  if (candidate.resultTokens !== undefined && typeof candidate.resultTokens !== 'number') return false;
   return true;
 }
 
@@ -391,17 +393,21 @@ export class SessionRepository {
   }
 
   /**
-   * Backfill ONLY the tool-count columns from the transcript-derived
-   * cumulative, fire-and-forget after `captureSessionMetrics` (see
-   * `refineTranscriptToolCounts` in `session-metrics.ts`). Guarded to fill
-   * ONLY an empty count (NULL or 0) so a working live accumulator - higher
-   * fidelity when it worked (real durations + a separate interrupted tally) -
-   * is never overwritten by the transcript's coarser callCount-only figure.
-   * Count and breakdown are written together so
-   * `SUM(breakdown.callCount) == tool_call_count` stays consistent.
+   * Backfill the tool columns from the transcript-derived cumulative,
+   * fire-and-forget after `captureSessionMetrics` (see
+   * `refineTranscriptToolCounts` in `session-metrics.ts`). Two branches:
+   *
+   * - An EMPTY live count (NULL or 0) takes the transcript's count and rows
+   *   outright. Count and breakdown are written together so
+   *   `SUM(breakdown.callCount) == tool_call_count` stays consistent.
+   * - A healthy live count is never overwritten: the live accumulator is
+   *   higher fidelity when it worked (real durations + a separate interrupted
+   *   tally). Only the transcript's `resultTokens` estimates are merged onto
+   *   the live rows, matched by tool name, since the live hook events carry no
+   *   token data at all.
    */
   updateTranscriptToolCounts(id: string, counts: { toolCallCount: number; toolBreakdown: PerToolStat[] }): void {
-    this.db.prepare(
+    const filled = this.db.prepare(
       `UPDATE sessions SET tool_call_count = ?, tool_breakdown = ?
        WHERE id = ? AND (tool_call_count IS NULL OR tool_call_count = 0)`,
     ).run(
@@ -409,6 +415,85 @@ export class SessionRepository {
       counts.toolBreakdown.length > 0 ? JSON.stringify(counts.toolBreakdown) : null,
       id,
     );
+    if (filled.changes > 0) return;
+
+    const resultTokensByTool = new Map<string, number>();
+    for (const stat of counts.toolBreakdown) {
+      if (typeof stat.resultTokens === 'number') resultTokensByTool.set(stat.toolName, stat.resultTokens);
+    }
+    if (resultTokensByTool.size === 0) return;
+    const row = this.db.prepare('SELECT tool_breakdown FROM sessions WHERE id = ?')
+      .get(id) as { tool_breakdown: string | null } | undefined;
+    const liveRows = parseToolBreakdown(row?.tool_breakdown ?? null);
+    if (liveRows.length === 0) return;
+    let changed = false;
+    for (const liveRow of liveRows) {
+      const resultTokens = resultTokensByTool.get(liveRow.toolName);
+      if (resultTokens !== undefined && liveRow.resultTokens !== resultTokens) {
+        liveRow.resultTokens = resultTokens;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    this.db.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(JSON.stringify(liveRows), id);
+  }
+
+  /**
+   * Ids of finished records (exited or suspended) that carry a stored
+   * `tool_breakdown`: the rows the one-time duration repair replays. A running
+   * record is still being measured and is left alone.
+   */
+  listToolBreakdownRecordIds(): string[] {
+    const rows = this.db.prepare(
+      `SELECT id FROM sessions
+       WHERE tool_breakdown IS NOT NULL AND status IN ('exited', 'suspended')
+       ORDER BY started_at`,
+    ).all() as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Replace a record's stored per-tool durations with ones replayed from its
+   * own event log, for rows saved while tool events were paired by name.
+   *
+   * A row takes the replayed `totalDurationMs` and `waitedCount` only when the
+   * replay saw the same calls (`callCount` and `interruptedCount` match), which
+   * is what shows it replayed the same events; any other row keeps what it had.
+   * The two travel together because the duration leaves out exactly the calls
+   * the count names. Nothing else is touched: counts, `resultTokens` and every
+   * other field stay as stored.
+   * The current column is read here, at write time, so a value written since
+   * the replay was computed is not lost. A stored array holding an entry the
+   * shape guard rejects is left whole rather than rewritten without it.
+   * Returns true when the row changed.
+   */
+  patchToolBreakdownDurations(id: string, replayed: PerToolStat[]): boolean {
+    const row = this.db.prepare('SELECT tool_breakdown FROM sessions WHERE id = ?')
+      .get(id) as { tool_breakdown: string | null } | undefined;
+    if (!row?.tool_breakdown) return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.tool_breakdown);
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isPerToolStat)) return false;
+    const stored = parsed as PerToolStat[];
+    const replayedByTool = new Map(replayed.map((stat) => [stat.toolName, stat]));
+    let changed = false;
+    for (const storedRow of stored) {
+      const replayedRow = replayedByTool.get(storedRow.toolName);
+      if (!replayedRow) continue;
+      if (replayedRow.callCount !== storedRow.callCount || replayedRow.interruptedCount !== storedRow.interruptedCount) continue;
+      if (replayedRow.totalDurationMs === storedRow.totalDurationMs && replayedRow.waitedCount === storedRow.waitedCount) continue;
+      storedRow.totalDurationMs = replayedRow.totalDurationMs;
+      if (replayedRow.waitedCount === undefined) delete storedRow.waitedCount;
+      else storedRow.waitedCount = replayedRow.waitedCount;
+      changed = true;
+    }
+    if (!changed) return false;
+    this.db.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(JSON.stringify(stored), id);
+    return true;
   }
 
   /**

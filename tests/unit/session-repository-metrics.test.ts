@@ -170,6 +170,28 @@ describe('parseToolBreakdown (via getSummaryForTask)', () => {
     ]);
   });
 
+  it('keeps resultTokens through the parse, and drops an entry whose resultTokens is not a number', () => {
+    const row = JSON.stringify([
+      { toolName: 'Read', callCount: 2, totalDurationMs: 200, interruptedCount: 0, resultTokens: 1500 },
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 50, interruptedCount: 0, resultTokens: 'lots' },
+    ]);
+    const summary = getSummaryWithBreakdown(row);
+    expect(summary!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 2, totalDurationMs: 200, interruptedCount: 0, resultTokens: 1500 },
+    ]);
+  });
+
+  it('keeps waitedCount through the parse, and drops an entry whose waitedCount is not a number', () => {
+    const row = JSON.stringify([
+      { toolName: 'ExitPlanMode', callCount: 1, totalDurationMs: 0, interruptedCount: 0, waitedCount: 1 },
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 50, interruptedCount: 0, waitedCount: 'yes' },
+    ]);
+    const summary = getSummaryWithBreakdown(row);
+    expect(summary!.toolBreakdown).toEqual([
+      { toolName: 'ExitPlanMode', callCount: 1, totalDurationMs: 0, interruptedCount: 0, waitedCount: 1 },
+    ]);
+  });
+
   it('accepts a valid row with optional fields absent (cost/tokens omitted)', () => {
     const row = JSON.stringify([
       { toolName: 'Read', callCount: 2, totalDurationMs: 200, interruptedCount: 0 },
@@ -519,6 +541,67 @@ describe('SessionRepository.updateTranscriptToolCounts', () => {
 
     const { sql } = capturedCalls[0];
     expect(sql).toMatch(/WHERE\s+id\s*=\s*\?\s*AND\s*\(\s*tool_call_count\s+IS\s+NULL\s+OR\s+tool_call_count\s*=\s*0\s*\)/i);
+  });
+
+  /**
+   * A DB whose guarded fill matches no row (the live count is healthy), and
+   * whose SELECT returns `liveBreakdown`. Captures every `run`.
+   */
+  function createHealthyLiveCountMockDb(liveBreakdown: string | null): {
+    db: Database.Database;
+    capturedCalls: Array<{ sql: string; params: unknown[] }>;
+  } {
+    const capturedCalls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      prepare: vi.fn((sql: string) => ({
+        run: vi.fn((...params: unknown[]) => {
+          capturedCalls.push({ sql, params });
+          return { changes: /tool_call_count IS NULL/i.test(sql) ? 0 : 1 };
+        }),
+        get: vi.fn(() => ({ tool_breakdown: liveBreakdown })),
+        all: vi.fn(() => []),
+      })),
+    } as unknown as Database.Database;
+    return { db, capturedCalls };
+  }
+
+  it('merges resultTokens onto a healthy live breakdown by tool name, keeping live counts and durations', () => {
+    const live = [
+      { toolName: 'Read', callCount: 40, totalDurationMs: 12_000, interruptedCount: 1 },
+      { toolName: 'Bash', callCount: 9, totalDurationMs: 30_000, interruptedCount: 0 },
+    ];
+    const { db, capturedCalls } = createHealthyLiveCountMockDb(JSON.stringify(live));
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', {
+      toolCallCount: 35,
+      toolBreakdown: [
+        { toolName: 'Read', callCount: 35, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 },
+        { toolName: 'Glob', callCount: 2, totalDurationMs: 0, interruptedCount: 0, resultTokens: 300 },
+      ],
+    });
+
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[1].sql).toMatch(/UPDATE\s+sessions\s+SET\s+tool_breakdown\s*=\s*\?\s+WHERE\s+id\s*=\s*\?/i);
+    expect(capturedCalls[1].sql).not.toMatch(/tool_call_count/i);
+    expect(JSON.parse(capturedCalls[1].params[0] as string)).toEqual([
+      { toolName: 'Read', callCount: 40, totalDurationMs: 12_000, interruptedCount: 1, resultTokens: 41_000 },
+      { toolName: 'Bash', callCount: 9, totalDurationMs: 30_000, interruptedCount: 0 },
+    ]);
+    expect(capturedCalls[1].params[1]).toBe('session-abc');
+  });
+
+  it('writes nothing more when the transcript carries no resultTokens', () => {
+    const live = [{ toolName: 'Read', callCount: 4, totalDurationMs: 100, interruptedCount: 0 }];
+    const { db, capturedCalls } = createHealthyLiveCountMockDb(JSON.stringify(live));
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', {
+      toolCallCount: 4,
+      toolBreakdown: [{ toolName: 'Read', callCount: 4, totalDurationMs: 0, interruptedCount: 0 }],
+    });
+
+    expect(capturedCalls).toHaveLength(1);
   });
 });
 

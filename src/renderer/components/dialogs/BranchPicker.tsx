@@ -226,7 +226,7 @@ export function BranchPicker({
   const dropdownContent = (
     <>
       {/* Search input */}
-      <div className="p-2 border-b border-edge">
+      <div className="p-2 border-b border-edge shrink-0">
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-disabled" />
           <input
@@ -241,7 +241,7 @@ export function BranchPicker({
       </div>
 
       {/* Branch list */}
-      <div className="max-h-[200px] overflow-y-auto py-1">
+      <div className="max-h-[200px] min-h-0 overflow-y-auto py-1">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-4 text-xs text-fg-faint">
             <Loader2 size={14} className="animate-spin" />
@@ -295,7 +295,10 @@ export function BranchPicker({
         style={dropdownStyle}
         portal
         transformOrigin="top left"
-        className={`fixed z-[2147483646] bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${
+        // A flex column capped to the room on its side: the branch list loads
+        // after the popover opens and is measured, so in a short window it
+        // shrinks and scrolls rather than spilling past the window edge.
+        className={`fixed z-[2147483646] flex flex-col max-h-[var(--popover-available-height,none)] bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${
           variant === 'input' ? '' : 'w-64'
         }`}
         data-testid="branch-picker-dropdown"
