@@ -146,14 +146,28 @@ module.exports = async function afterPack(context) {
   });
   verifyPtyHostLoads({ unpackedRoot, electronBinaryPath });
 
+  // strictlyRequireAllFuses makes flipFuses throw when the binary carries a fuse
+  // this config does not set, so an Electron upgrade that adds one fails the
+  // build instead of shipping the new fuse at whatever default it came with.
+  // Every fuse is therefore set explicitly, the last three at the defaults read
+  // off Electron 44.5.1's own wire.
   await flipFuses(electronBinaryPath, {
     version: FuseVersion.V1,
+    strictlyRequireAllFuses: true,
     [FuseV1Options.RunAsNode]: false,
     [FuseV1Options.EnableCookieEncryption]: true,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
+    // Default. No browser-process-specific V8 snapshot is built or shipped.
+    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
+    // Default, and load-bearing: every window loads the renderer over file://
+    // through loadFile, lazy chunks and the Monaco ?worker workers included.
+    // Turning this off needs a protocol.handle migration first.
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]: true,
+    // Default. V8's WebAssembly trap handlers, which Electron enables.
+    [FuseV1Options.WasmTrapHandlers]: true,
   });
 };
 
