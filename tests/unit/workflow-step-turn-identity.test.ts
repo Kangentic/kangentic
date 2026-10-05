@@ -13,6 +13,9 @@
  * The session manager is a fake whose `isLatestTurn` compares against a work
  * serial the test moves, the way the activity engine moves it when the agent
  * reports new work. Everything the step reads from the database is a fake too.
+ *
+ * The same re-check after the check also reads the workflow's state: a Pause
+ * pressed while the check was out moves the task nowhere.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -23,6 +26,8 @@ const hoisted = vi.hoisted(() => ({
   handleTaskMove: vi.fn(),
   recordWorkflowStep: vi.fn(),
   task: {} as Record<string, unknown>,
+  /** The state the workflow row reads, which a test moves to pause it. */
+  workflowState: 'running',
 }));
 
 const COLUMNS = [
@@ -35,7 +40,7 @@ const COLUMNS = [
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/workflow-repository', () => ({
   WorkflowRepository: class {
-    getById = vi.fn(() => ({ id: 'workflow-1', state: 'running' }));
+    getById = vi.fn(() => ({ id: 'workflow-1', state: hoisted.workflowState }));
   },
 }));
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
@@ -81,6 +86,7 @@ describe('the workflow step and the turn it judged', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    hoisted.workflowState = 'running';
     hoisted.task = {
       id: 'task-1',
       title: 'Add the export button',
@@ -163,5 +169,22 @@ describe('the workflow step and the turn it judged', () => {
     expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
     expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
     expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+  });
+
+  it('moves nothing when the workflow was paused while the check was out', async () => {
+    // Pause pressed during the seconds the check takes; the answer that lands is
+    // "met" for the same, latest, idle turn, and the task is still in its column.
+    hoisted.checkAutomationConditions.mockImplementation(async () => {
+      hoisted.workflowState = 'paused';
+      return { ok: true, answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'The work is done.' }]]) };
+    });
+
+    await runStep();
+
+    expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
+    expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    // A run-log line saying "Moving on to Code Review" for a move that never
+    // happens would be false, so the step writes nothing either.
+    expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
   });
 });

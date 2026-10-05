@@ -145,6 +145,17 @@ describe('the start and completion plan', () => {
     expect(intents.map((intent) => intent.kind === 'start' ? intent.taskId : intent.kind)).toEqual(['t2']);
   });
 
+  it('says on each start whether it spends an agent slot, so the host can hold one back while it is in flight', () => {
+    const plan = workflow([
+      coreTask('t1', 'todo', { todoPosition: 0 }),
+      coreTask('t2', 'todo', { todoPosition: 1, startTakesSlot: false, startColumnId: 'testing' }),
+    ]);
+    expect(planPass([plan], 4, new Set())).toEqual([
+      { kind: 'start', workflowId: 'w1', homeProjectId: 'home', projectId: 'home', taskId: 't1', toSwimlaneId: 'executing', takesSlot: true },
+      { kind: 'start', workflowId: 'w1', homeProjectId: 'home', projectId: 'home', taskId: 't2', toSwimlaneId: 'testing', takesSlot: false },
+    ]);
+  });
+
   it('does not issue a start already in flight', () => {
     const plan = workflow([coreTask('t1', 'todo')]);
     expect(planPass([plan], 4, new Set([inFlightKey('home', 't1')]))).toEqual([]);

@@ -5,10 +5,11 @@
  * removal) hold.
  *
  * Two projects, so a task on another board is covered. The move path and the
- * session handlers are mocked: Start moves only the source task, and none here
- * has one.
+ * session handlers are mocked: Start moves only the source task, and most
+ * workflows here have none. The ones that do pin that a source task that cannot
+ * move to Done never fails a Start that has already run.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
@@ -22,7 +23,13 @@ vi.mock('../../src/main/db/database', () => ({
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/sessions', () => ({ pauseTaskSession: vi.fn(), resumeTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/workflows/workflow-changed')>()),
+  notifyWorkflowChanged: vi.fn(),
+}));
 
+const { handleTaskMove } = await import('../../src/main/ipc/handlers/task-move');
+const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
@@ -60,6 +67,12 @@ describe('workflow operations', () => {
       boardEvents: { emitBoardChanged: vi.fn() },
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
     } as unknown as IpcContext;
+  });
+
+  afterEach(() => {
+    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    harness.dbs.clear();
+    vi.restoreAllMocks();
   });
 
   const lanesOf = (projectId: string) => new SwimlaneRepository(harness.dbs.get(projectId) as Database.Database).list();
@@ -172,6 +185,73 @@ describe('workflow operations', () => {
     const phone = view.tasks.find((task) => task.title === 'Budgets on the phone')!;
     expect(phone.route).toEqual(['Planning', 'Executing', 'Code Review']);
     expect(phone.waitsFor).toHaveLength(1);
+  });
+
+  describe('the task a workflow was made from', () => {
+    let wake: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      vi.mocked(handleTaskMove).mockReset();
+      vi.mocked(notifyWorkflowChanged).mockClear();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      wake = vi.fn();
+      setWorkflowWake(wake);
+    });
+
+    afterEach(() => {
+      setWorkflowWake(null);
+    });
+
+    /** A workflow planned from a task waiting in To Do on the home board. */
+    function plannedFromSource(): { workflowId: string; source: { id: string; display_id: number }; todoId: string; doneId: string } {
+      const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+      const done = lanesOf('home').find((lane) => lane.role === 'done')!;
+      const source = tasksOf('home').create({ title: 'Budgets', description: '', swimlane_id: todo.id });
+      const workflow = service.createWorkflow('home', { sourceTaskId: source.id });
+      service.savePlan(context, 'home', workflow.id, plan());
+      return { workflowId: workflow.id, source, todoId: todo.id, doneId: done.id };
+    }
+
+    it('moves it to Done on Start, and reports which task it superseded (the control)', async () => {
+      const { workflowId, source, doneId } = plannedFromSource();
+
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: source.id, targetSwimlaneId: doneId }),
+        'workflow',
+        'home',
+        '/projects/home',
+        expect.anything(),
+      );
+      expect(result.supersededSource).toBe(source.display_id);
+    });
+
+    it('still starts when it cannot move to Done: the workflow runs, the engine wakes, and the task stays in To Do', async () => {
+      const { workflowId, source, todoId, doneId } = plannedFromSource();
+      vi.mocked(handleTaskMove).mockRejectedValueOnce(new Error('Worktree setup failed: no space left'));
+      wake.mockClear();
+      vi.mocked(notifyWorkflowChanged).mockClear();
+
+      const result = await service.startWorkflow(context, 'home', workflowId);
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: source.id, targetSwimlaneId: doneId }),
+        'workflow',
+        'home',
+        '/projects/home',
+        expect.anything(),
+      );
+      expect(result.workflow.state).toBe('running');
+      expect(result.createdCount).toBe(3);
+      expect(result.supersededSource).toBeNull();
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId);
+      expect(tasksOf('home').getById(source.id)!.swimlane_id).toBe(todoId);
+      expect(tasksOf('home').listByWorkflow(workflowId)).toHaveLength(2);
+    });
   });
 
   it('refuses to start an empty workflow, or one already started', async () => {

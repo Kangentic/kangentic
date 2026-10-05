@@ -16,7 +16,11 @@
  * once per reason, with the step the error names.
  *
  * Also here: the home-link remover `registerWorkflowEngine` installs, so a task
- * deleted on another board takes its links out of the home project's database.
+ * deleted on another board takes its links out of the home project's database,
+ * and the agent slots a start still in flight holds back: its session counts
+ * against the free slots only once its spawn registers, so until its move
+ * settles the host takes one slot off the count for it, and only when its start
+ * column runs an agent.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -76,6 +80,8 @@ describe('the workflow engine host', () => {
   let engine: ReturnType<typeof registerWorkflowEngine>;
   /** The simulated time of each start the mocked move was asked for. */
   let startTimes: number[];
+  /** What the session manager reports as the free agent slots, which a test sets per pass. */
+  let freeAgentSlots: number;
 
   function database(projectId: string): Database.Database {
     const db = openTestDatabase();
@@ -139,6 +145,7 @@ describe('the workflow engine host', () => {
     harness.handleTaskMove.mockReset();
     harness.notifySpawnBlocked.mockReset();
     startTimes = [];
+    freeAgentSlots = 10;
     harness.dbs.clear();
     database('home');
     database('mobile');
@@ -151,7 +158,7 @@ describe('the workflow engine host', () => {
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },
-      sessionManager: Object.assign(new EventEmitter(), { getFreeAgentSlots: () => 10 }),
+      sessionManager: Object.assign(new EventEmitter(), { getFreeAgentSlots: () => freeAgentSlots }),
       boardEvents: { onBoardChanged: vi.fn() },
       mainWindow: { isDestroyed: () => false },
     } as unknown as IpcContext;
@@ -165,6 +172,8 @@ describe('the workflow engine host', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    harness.dbs.clear();
   });
 
   describe('a start that fails', () => {
@@ -424,6 +433,87 @@ describe('the workflow engine host', () => {
 
       for (const taskId of first.taskIds) expect(engine.failedStart('home', taskId)).toBeNull();
       expect(engine.failedStart('home', second.taskIds[0])).not.toBeNull();
+    });
+  });
+
+  describe('the agent slots a start in flight holds back', () => {
+    /**
+     * Moves that stay in flight until the test ends one, the way a start does
+     * while its worktree is set up and before its session registers. `fail(index)`
+     * rejects the index-th move, as a worktree failure does: no session was
+     * registered, so the free slot count does not change either.
+     */
+    function holdMoves(): { fail: (index: number) => void } {
+      const rejectors: Array<(error: Error) => void> = [];
+      harness.handleTaskMove.mockImplementation(() => new Promise<void>((_resolve, reject) => {
+        rejectors.push(reject);
+      }));
+      return { fail: (index) => rejectors[index](new Error('git exploded')) };
+    }
+
+    const movedTaskIds = () => harness.handleTaskMove.mock.calls.map(([, input]) => (input as MoveInput).taskId);
+
+    it('starts 2, not 3, when 3 slots are free and 1 start into an agent column is still in flight', async () => {
+      runningWorkflow('Usage budgets', 6);
+      holdMoves();
+      freeAgentSlots = 1;
+      await advance(DEBOUNCE_MS);
+      expect(harness.handleTaskMove).toHaveBeenCalledTimes(1);
+
+      // The count says 3 are free, but the start in flight has not registered its
+      // session, so one of the 3 is already spoken for.
+      freeAgentSlots = 3;
+      engine.wake();
+      await advance(DEBOUNCE_MS);
+
+      expect(harness.handleTaskMove).toHaveBeenCalledTimes(3);
+      expect(new Set(movedTaskIds()).size).toBe(3);
+    });
+
+    it('holds nothing back for a start into a column that runs no agent', async () => {
+      const { taskIds } = runningWorkflow('Usage budgets', 5);
+      const executing = lanesOf('home').find((lane) => lane.name === 'Executing')!;
+      dbOf('home').prepare('UPDATE swimlanes SET auto_spawn = 0 WHERE id = ?').run(executing.id);
+      expect(lanesOf('home').find((lane) => lane.id === executing.id)!.auto_spawn).toBe(false);
+      // The first task starts in Executing, which runs no agent; the others in Planning, which does.
+      new TaskRepository(dbOf('home')).setRoute(taskIds[0], {
+        route_start_swimlane_id: executing.id,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: [],
+      });
+      holdMoves();
+
+      // With no slot free, only the start that needs none can run.
+      freeAgentSlots = 0;
+      await advance(DEBOUNCE_MS);
+      expect(movedTaskIds()).toEqual([taskIds[0]]);
+
+      // It is still in flight, and it spends no slot: all 3 free ones go to the others.
+      freeAgentSlots = 3;
+      engine.wake();
+      await advance(DEBOUNCE_MS);
+
+      expect(harness.handleTaskMove).toHaveBeenCalledTimes(4);
+      expect(new Set(movedTaskIds()).size).toBe(4);
+    });
+
+    it('gives the slot back when the start settles, so the next pass can use it', async () => {
+      runningWorkflow('Usage budgets', 6);
+      const moves = holdMoves();
+      freeAgentSlots = 1;
+      await advance(DEBOUNCE_MS);
+      freeAgentSlots = 3;
+      engine.wake();
+      await advance(DEBOUNCE_MS);
+      // Three starts in flight hold all three free slots.
+      expect(harness.handleTaskMove).toHaveBeenCalledTimes(3);
+
+      // The first fails, so no session took its slot: the count stays 3, and 1 is free again.
+      moves.fail(0);
+      await advance(DEBOUNCE_MS);
+
+      expect(harness.handleTaskMove).toHaveBeenCalledTimes(4);
+      expect(new Set(movedTaskIds()).size).toBe(4);
     });
   });
 

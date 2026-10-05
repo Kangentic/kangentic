@@ -5,9 +5,13 @@
  * - it reads every other project a task of its workflow is on, and every one it
  *   asked for, and never a checkout that is gone from disk;
  * - a request is granted at once and kept on the workflow, and a running agent
- *   picks it up at its next idle, or at once when it is idle already.
+ *   picks it up at its next idle, or at once when it is idle already;
+ * - that restart waits out a turn the user started in the tick before it ran
+ *   (the access stays owed), and leaves a Pause the user pressed while the
+ *   agent was stopping standing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -89,6 +93,8 @@ describe('the workflow agent\'s reads across projects', () => {
   });
 
   afterEach(() => {
+    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    harness.dbs.clear();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -139,5 +145,80 @@ describe('the workflow agent\'s reads across projects', () => {
     expect(agent.requestWorkflowAgentProjectAccess(context, 'home', idle.id, 'mobile').when).toBe('now');
     await vi.waitFor(() => expect(suspend).toHaveBeenCalledWith('session-idle'));
     errorSpy.mockRestore();
+  });
+
+  describe('the restart for new read access', () => {
+    /** Every call is a start the restart attempted: the start reads the config first, and finds the MCP server off. */
+    let startAttempts: ReturnType<typeof vi.fn>;
+    let manager: EventEmitter;
+
+    beforeEach(() => {
+      startAttempts = vi.fn(() => ({ mcpServer: { enabled: false }, agent: { cliPaths: {} } }));
+      Object.assign(context.configManager, { getEffectiveConfig: startAttempts });
+      // An emitter, so the lifecycle's activity listener (the next idle) can be driven.
+      manager = Object.assign(new EventEmitter(), {
+        listSessions: () => sessions,
+        getSession: (sessionId: string) => sessions.find((session) => session.id === sessionId),
+        getSessionAgentName: () => 'claude',
+        getActivityCache: () => activity,
+        suspend,
+      });
+      Object.assign(context, { sessionManager: manager });
+      agent.registerWorkflowAgentLifecycle(context);
+    });
+
+    /** An idle running agent for a new workflow, owed a restart for `mobile`'s checkout. */
+    function idleAgent(sessionId: string): string {
+      const workflow = service.createWorkflow('home', {});
+      sessions.push({ id: sessionId, workflowId: workflow.id, status: 'running' });
+      activity[sessionId] = 'idle';
+      return workflow.id;
+    }
+
+    it('suspends the agent and starts it again when nobody paused it (the control)', async () => {
+      const workflowId = idleAgent('session-control');
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
+      expect(suspend).toHaveBeenCalledWith('session-control');
+    });
+
+    it('does not suspend an agent whose turn began again before the restart ran, and restarts it at its next idle', async () => {
+      const workflowId = idleAgent('session-reprompted');
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      // The user's prompt starts a turn in the tick between the idle edge and the restart.
+      activity['session-reprompted'] = 'thinking';
+      // The restart was queued first, so it has run by the time this resolves.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(suspend).not.toHaveBeenCalled();
+      expect(startAttempts).not.toHaveBeenCalled();
+
+      // The access is still owed: the turn's end restarts the agent.
+      activity['session-reprompted'] = 'idle';
+      manager.emit('activity', 'session-reprompted', 'idle');
+      await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
+      expect(suspend).toHaveBeenCalledWith('session-reprompted');
+    });
+
+    it('does not start the agent again when the user paused it while it was being suspended', async () => {
+      const workflowId = idleAgent('session-pausing');
+      let finishRestartSuspend!: () => void;
+      const restartSuspendGate = new Promise<void>((resolve) => {
+        finishRestartSuspend = resolve;
+      });
+      suspend.mockImplementationOnce(async () => restartSuspendGate);
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+      await vi.waitFor(() => expect(suspend).toHaveBeenCalledTimes(1));
+
+      // Pause, pressed while the restart's suspend is still stopping the agent.
+      await agent.pauseWorkflowAgent(context, workflowId);
+      finishRestartSuspend();
+      // The restart's continuation is microtasks only: one macrotask lets it run to its end.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(startAttempts).not.toHaveBeenCalled();
+    });
   });
 });

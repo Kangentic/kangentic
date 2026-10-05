@@ -10,6 +10,12 @@
  *
  * Real, migrated SQLite (better-sqlite3) behind a fake session manager, as in
  * `workflow-agent-spend.test.ts`.
+ *
+ * The races around a start live here too, since they share the harness: a
+ * start-over never replaces a session the user resumed while the dead one's
+ * scrollback was read; the end of a workflow waits for an open still in flight
+ * and ends what it spawned; and a start reads its workflow again before it
+ * spawns, so one deleted or finished while the CLI was being found spawns nothing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -203,6 +209,9 @@ describe('a workflow\'s own agent starting over', () => {
   afterEach(async () => {
     await agent.endWorkflowAgent(context, workflowId);
     vi.restoreAllMocks();
+    // After the end: it reads the home database to record the agent's spend.
+    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    harness.dbs.clear();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -271,5 +280,90 @@ describe('a workflow\'s own agent starting over', () => {
     manager.sessions.push({ ...startedOver, status: 'running' });
 
     expect(agent.workflowAgentSummary(context, workflowId)?.startedOverSessionId).toBeNull();
+  });
+
+  it('does not start over when the user resumed the agent while the dead session\'s scrollback was being read', async () => {
+    const resumed = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+    let finishScrollback!: () => void;
+    const scrollbackGate = new Promise<void>((resolve) => {
+      finishScrollback = resolve;
+    });
+    manager.getRawScrollback.mockImplementationOnce(async () => {
+      await scrollbackGate;
+      return 'No conversation found with session ID: conv-gone';
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    manager.exitOnItsOwn(resumed.session!.id);
+    await vi.waitFor(() => expect(manager.getRawScrollback).toHaveBeenCalledTimes(1));
+
+    // The user presses Resume while the last words are still being read.
+    const userResume = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+    expect(userResume.session?.id).toBe('pty-spawned-2');
+
+    finishScrollback();
+    await vi.waitFor(() => expect(describeStartupFailure).toHaveBeenCalledTimes(1));
+    // The start-over, were it not skipped, spawns through microtasks only: one macrotask lets it run.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(manager.spawn).toHaveBeenCalledTimes(2);
+    expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
+    expect(agent.workflowAgentSummary(context, workflowId)).toMatchObject({ state: 'idle', startedOverSessionId: null });
+    // The conversation the user resumed is still the workflow's.
+    expect(new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(workflowId)!.agent_session_id).toBe('conv-gone');
+  });
+
+  describe('the end of a workflow while its agent is still opening', () => {
+    it('ends the session the open spawns, rather than leaving it running', async () => {
+      let finishSpawn!: () => void;
+      const spawnGate = new Promise<void>((resolve) => {
+        finishSpawn = resolve;
+      });
+      const spawnImmediately = manager.spawn.getMockImplementation()!;
+      manager.spawn.mockImplementationOnce(async (options: SpawnOptions) => {
+        await spawnGate;
+        return spawnImmediately(options);
+      });
+      const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+      await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+
+      // The end arrives while the open still waits on its spawn: no session exists to find.
+      const ended = agent.endWorkflowAgent(context, workflowId);
+      finishSpawn();
+      const [status] = await Promise.all([opened, ended]);
+
+      expect(status.session?.id).toBe('pty-spawned-1');
+      expect(manager.kill).toHaveBeenCalledWith('pty-spawned-1');
+      expect(manager.remove).toHaveBeenCalledWith('pty-spawned-1');
+      expect(manager.sessions).toEqual([]);
+    });
+  });
+
+  describe('a start whose workflow went while the CLI was being found', () => {
+    const changes: Array<{ name: string; change: (context: IpcContext) => void }> = [
+      { name: 'was deleted', change: () => new WorkflowRepository(harness.dbs.get('home') as Database.Database).delete(workflowId) },
+      { name: 'finished', change: () => new WorkflowRepository(harness.dbs.get('home') as Database.Database).setState(workflowId, 'done') },
+      { name: 'lost its project', change: (target) => { vi.spyOn(target.projectRepo, 'getById').mockReturnValue(undefined); } },
+    ];
+
+    it.each(changes)('spawns nothing and says the workflow is gone when it $name', async ({ change }) => {
+      let finishDetect!: () => void;
+      const detectGate = new Promise<void>((resolve) => {
+        finishDetect = resolve;
+      });
+      const detect = (harness.adapter as { detect: ReturnType<typeof vi.fn> }).detect;
+      detect.mockImplementationOnce(async () => {
+        await detectGate;
+        return { found: true, path: '/mock/bin/claude' };
+      });
+      const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
+      await vi.waitFor(() => expect(detect).toHaveBeenCalledTimes(1));
+
+      change(context);
+      finishDetect();
+      const status = await opened;
+
+      expect(status).toEqual({ session: null, unavailable: 'This workflow no longer exists.' });
+      expect(manager.spawn).not.toHaveBeenCalled();
+    });
   });
 });
