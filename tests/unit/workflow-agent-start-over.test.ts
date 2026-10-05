@@ -28,6 +28,8 @@ const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
   adapter: null as unknown,
   notifyWorkflowChanged: vi.fn(),
+  /** The retrieval worker's `call`, where the agent's turn tokens are indexed from. */
+  retrievalCall: vi.fn(async (_method: string, _params: unknown) => ({ outcome: 'indexed' })),
 }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: (projectId: string) => {
@@ -38,7 +40,7 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: () => harness.adapter, list: () => [] } }));
-vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: vi.fn(async () => ({ outcome: 'indexed' })) } }));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: harness.retrievalCall } }));
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: async (options: { agentPath: string; prompt?: string }) => ({ agentPath: options.agentPath, prompt: options.prompt }),
 }));
@@ -52,9 +54,11 @@ vi.mock('../../src/main/workflows/workflow-changed', () => ({
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const agent = await import('../../src/main/workflows/workflow-agent');
+const agentEffort = await import('../../src/main/workflows/workflow-agent-effort');
 
 import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import type { WorkflowAgentStatus } from '../../src/shared/types';
 
 interface FakeSession {
   id: string;
@@ -171,6 +175,7 @@ describe('a workflow\'s own agent starting over', () => {
     runProjectMigrations(db);
     harness.dbs.set('home', db);
     harness.notifyWorkflowChanged.mockReset();
+    harness.retrievalCall.mockClear();
     describeStartupFailure = vi.fn(() => true);
     harness.adapter = {
       name: 'claude',
@@ -313,7 +318,11 @@ describe('a workflow\'s own agent starting over', () => {
   });
 
   describe('the end of a workflow while its agent is still opening', () => {
-    it('ends the session the open spawns, rather than leaving it running', async () => {
+    /**
+     * Open the agent with its spawn held, and return the open and the way to let
+     * the spawn finish. Until it does, no session exists to find.
+     */
+    async function openWithSpawnHeld(): Promise<{ opened: Promise<WorkflowAgentStatus>; finishSpawn: () => void }> {
       let finishSpawn!: () => void;
       const spawnGate = new Promise<void>((resolve) => {
         finishSpawn = resolve;
@@ -325,6 +334,11 @@ describe('a workflow\'s own agent starting over', () => {
       });
       const opened = agent.openWorkflowAgent(context, 'home', workflowId, {});
       await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(1));
+      return { opened, finishSpawn };
+    }
+
+    it('ends the session the open spawns, rather than leaving it running', async () => {
+      const { opened, finishSpawn } = await openWithSpawnHeld();
 
       // The end arrives while the open still waits on its spawn: no session exists to find.
       const ended = agent.endWorkflowAgent(context, workflowId);
@@ -335,6 +349,97 @@ describe('a workflow\'s own agent starting over', () => {
       expect(manager.kill).toHaveBeenCalledWith('pty-spawned-1');
       expect(manager.remove).toHaveBeenCalledWith('pty-spawned-1');
       expect(manager.sessions).toEqual([]);
+    });
+
+    it('is the end of its project too: the project\'s delete ends an agent still opening in it', async () => {
+      const { opened, finishSpawn } = await openWithSpawnHeld();
+
+      // No session of the project's lists a workflow yet, so only the open in flight names it.
+      const ended = agent.endWorkflowAgentsOfProject(context, 'home');
+      finishSpawn();
+      const [status] = await Promise.all([opened, ended]);
+
+      expect(status.session?.id).toBe('pty-spawned-1');
+      expect(manager.kill).toHaveBeenCalledWith('pty-spawned-1');
+      expect(manager.remove).toHaveBeenCalledWith('pty-spawned-1');
+      expect(manager.sessions).toEqual([]);
+    });
+
+    it('leaves an agent opening in another project alone when a project is deleted (the control)', async () => {
+      const { opened, finishSpawn } = await openWithSpawnHeld();
+
+      const ended = agent.endWorkflowAgentsOfProject(context, 'another-project');
+      finishSpawn();
+      const [status] = await Promise.all([opened, ended]);
+
+      expect(status.session?.id).toBe('pty-spawned-1');
+      expect(manager.kill).not.toHaveBeenCalled();
+      expect(manager.remove).not.toHaveBeenCalled();
+      expect(manager.sessions.map((session) => session.id)).toEqual(['pty-spawned-1']);
+    });
+  });
+
+  describe('the effort a start replaces', () => {
+    it('is forgotten with the session the start replaces, and kept for the new one', async () => {
+      // The project's effort tier is what the agent starts with, and what Stats reads back.
+      (context.projectRepo.getById('home') as unknown as { default_effort: string }).default_effort = 'high';
+      const first = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      expect(agentEffort.workflowAgentEffort(first.session!.id)).toBe('high');
+
+      // Pause, then Resume: the resume spawns a new session and replaces the paused one.
+      await agent.pauseWorkflowAgent(context, workflowId);
+      const second = await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(second.session!.id).not.toBe(first.session!.id);
+      expect(agentEffort.workflowAgentEffort(first.session!.id)).toBeNull();
+      expect(agentEffort.workflowAgentEffort(second.session!.id)).toBe('high');
+      // Ids repeat across tests (one fake manager each), so leave none behind.
+      agentEffort.forgetWorkflowAgentEffort(second.session!.id);
+    });
+  });
+
+  describe('the idle auto-suspend', () => {
+    it('records a workflow agent\'s turn tokens and tells the pane it is paused', async () => {
+      const opened = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      const session = opened.session!;
+      harness.retrievalCall.mockClear();
+      harness.notifyWorkflowChanged.mockClear();
+
+      manager.emit('idle-timeout', session.id, workflowId, 5);
+
+      expect(harness.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(harness.retrievalCall).toHaveBeenCalledWith('index.workflowAgentTurns', expect.objectContaining({
+        projectId: 'home',
+        sessionId: session.id,
+        agentSessionId: 'conv-gone',
+        sessionType: 'claude_agent',
+        cwd: session.cwd,
+      }));
+      expect(harness.notifyWorkflowChanged).toHaveBeenCalledTimes(1);
+      expect(harness.notifyWorkflowChanged).toHaveBeenCalledWith('home', workflowId);
+    });
+
+    it('does nothing for a task\'s session (the control)', () => {
+      // A task's session: no workflow id, but everything else the agent's has.
+      manager.sessions.push({
+        id: 'task-session',
+        taskId: 'task-1',
+        projectId: 'home',
+        pid: 6001,
+        status: 'running',
+        shell: 'bash',
+        cwd: root,
+        startedAt: '2026-10-04T10:00:00.000Z',
+        exitCode: null,
+        resuming: false,
+        transient: false,
+        agentSessionId: 'task-agent-session',
+      });
+
+      manager.emit('idle-timeout', 'task-session', 'task-1', 5);
+
+      expect(harness.retrievalCall).not.toHaveBeenCalled();
+      expect(harness.notifyWorkflowChanged).not.toHaveBeenCalled();
     });
   });
 

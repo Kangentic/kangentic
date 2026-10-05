@@ -220,5 +220,33 @@ describe('the workflow agent\'s reads across projects', () => {
 
       expect(startAttempts).not.toHaveBeenCalled();
     });
+
+    // In these two the fake's suspend leaves the row running, as in the tests
+    // above, so a Resume finds a live agent and starts nothing: what is pinned
+    // is whether the user's Pause still stands when the restart is owed.
+    it('leaves an agent the user paused alone: no suspend, no start (the control)', async () => {
+      const workflowId = idleAgent('session-paused');
+      await agent.pauseWorkflowAgent(context, workflowId);
+      expect(suspend).toHaveBeenCalledTimes(1);
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+      // The restart was queued first, so it has run by the time this resolves.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(suspend).toHaveBeenCalledTimes(1);
+      expect(startAttempts).not.toHaveBeenCalled();
+    });
+
+    it('restarts an agent after the user paused it and then resumed it: the Pause no longer stands', async () => {
+      const workflowId = idleAgent('session-resumed');
+      await agent.pauseWorkflowAgent(context, workflowId);
+      await agent.resumeWorkflowAgent(context, 'home', workflowId, {});
+      suspend.mockClear();
+
+      expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+      await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
+      expect(suspend).toHaveBeenCalledWith('session-resumed');
+    });
   });
 });

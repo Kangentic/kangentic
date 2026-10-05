@@ -294,6 +294,31 @@ describe('workflow operations', () => {
     expect(new TaskLinkRepository(harness.dbs.get('home') as Database.Database).listBlockersOf(ui.id)).toEqual([]);
   });
 
+  it('removes a task\'s links before it clears the task\'s membership, so a failure between the two writes leaves a member with no links', async () => {
+    // The links are in the home database and the membership on the task's own
+    // board: two writes. If the second fails, links left to a task outside the
+    // workflow would hold a dependent back forever (a blocker the workflow
+    // cannot see is never done), while a member with no links can be removed again.
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+    const links = new TaskLinkRepository(harness.dbs.get('home') as Database.Database);
+    const linksOfUi = () => links.listForWorkflow(workflow.id)
+      .filter((link) => link.blocker_task_id === ui.id || link.blocked_task_id === ui.id);
+    expect(linksOfUi()).toHaveLength(1);
+    vi.spyOn(TaskRepository.prototype, 'setWorkflowMembership').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    expect(() => service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) })).toThrow('disk full');
+
+    expect(linksOfUi()).toEqual([]);
+    // Still a member, and the other task's links are untouched.
+    expect(tasksOf('home').getById(ui.id)!.workflow_id).toBe(workflow.id);
+    expect(links.listForWorkflow(workflow.id)).toHaveLength(1);
+  });
+
   it('keeps a started task\'s past route fixed, and lets what is ahead change', async () => {
     const workflow = service.createWorkflow('home', {});
     service.savePlan(context, 'home', workflow.id, plan());
