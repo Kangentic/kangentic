@@ -25,7 +25,12 @@
  * broken code.
  */
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import {
+  launchPage,
+  createProject,
+  launchWithTransientTerminal,
+  openTransientCommandTerminal,
+} from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -274,6 +279,8 @@ interface MenuGeometry {
   publishedWidth: string;
   scrollerScrollHeight: number;
   scrollerClientHeight: number;
+  /** Where the scroller's own box ends. For a menu that scrolls through an inner list, a list that never shrank ends past the menu. */
+  scrollerBottom: number;
 }
 
 /** A pixel string the hook wrote, parsed; fails the case if it is not `<n>px`. */
@@ -357,6 +364,7 @@ async function readMenuGeometry(
       publishedWidth: computed.getPropertyValue('--popover-available-width'),
       scrollerScrollHeight: scrollerElement.scrollHeight,
       scrollerClientHeight: scrollerElement.clientHeight,
+      scrollerBottom: scrollerElement.getBoundingClientRect().bottom,
     };
   }, selectors);
 }
@@ -551,3 +559,341 @@ for (const side of ['below', 'above'] as const) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Short window: the other menus that cap themselves to the published room
+// ---------------------------------------------------------------------------
+
+/**
+ * The same contract as the Combobox and BranchPicker cases above, for the four
+ * menus that were switched from a fixed `max-h` to
+ * `max-h-[min(<own cap>,var(--popover-available-height,<own cap>))]`:
+ *
+ * - ModelCombobox (16rem), FontCombobox (12rem) and the Knowledge Graph's
+ *   projects picker (26rem) hold their content when the hook measures them, so
+ *   on the first open the variable is unset and the hook measures
+ *   `min(content, own cap)`. The cap only binds when NEITHER side has the menu's
+ *   own cap of room, so each case leaves little room on both sides of its trigger
+ *   and accepts whichever side the hook picks.
+ * - CommandPalettePopover (300px) mounts with its list still loading (a search row
+ *   and a spinner, about 100px) and the commands arrive after the hook measured,
+ *   the same shape as the branch list. It fits below in that state, then grows.
+ *
+ * Each case seeds enough rows that its list overflows the menu's own cap, so the
+ * published room is the only thing that can hold the menu inside the window.
+ */
+
+/** Room left under the trigger, past which a model or font menu cannot fit below. */
+const SHORT_MENU_ROOM_BELOW_TRIGGER_PX = 100;
+/** The projects picker's trigger sits low in its panel, so it is given a little more. */
+const PROJECTS_ROOM_BELOW_TRIGGER_PX = 160;
+/** Room under the Command Terminal's kebab. Holds the palette's loading state (about 100px) and stays under its 300px cap. */
+const PALETTE_ROOM_BELOW_TRIGGER_PX = 150;
+/**
+ * A window short enough that the settings body scrolls, so a field can be brought
+ * to the top of it before the window is sized around the field. The Agent tab's
+ * field has under 192px of room above it once it is there.
+ */
+const SCROLLING_BODY_WINDOW_HEIGHT_PX = 330;
+
+/** ModelCombobox's own cap, `16rem` at the 16px root. */
+const MODEL_MENU_CAP_PX = 256;
+/** FontCombobox's own cap, `12rem` at the 16px root. */
+const FONT_MENU_CAP_PX = 192;
+/** CommandPalettePopover's own cap. */
+const PALETTE_MENU_CAP_PX = 300;
+/** The projects picker's own cap, `26rem` at the 16px root. */
+const PROJECTS_MENU_CAP_PX = 416;
+
+/** Enough rows that each list overflows its menu's own cap several times over. */
+const SEEDED_ROW_COUNT = 30;
+
+/**
+ * `count` distinct names, letters only (`sample-aa`, `sample-ab`, ...). A model id
+ * with digits parses as a version, and all but the newest of a family fold into the
+ * versions section, which is collapsed and would not render the rows.
+ */
+function sampleNames(count: number): string[] {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  return Array.from({ length: count }, (_unused, index) => (
+    `sample-${letters[Math.floor(index / letters.length) % letters.length]}${letters[index % letters.length]}`
+  ));
+}
+
+/**
+ * Shortens the window until `roomBelowPx` is left under `anchor`, and returns the
+ * anchor's box once it holds still. The window is sized from the anchor's real
+ * position, not a fixed height: its position differs by a few pixels between
+ * platforms, and the room under it is what each case is about. Fails when the
+ * anchor moved while the window shrank, since the room is then not what was sized.
+ */
+async function shortenWindowUnder(page: Page, anchor: Locator, roomBelowPx: number): Promise<Box> {
+  const startBox = await readSteadyBox(anchor);
+  await page.setViewportSize({
+    width: page.viewportSize()!.width,
+    height: Math.round(startBox.y + startBox.height + PUBLISHED_HEIGHT_INSET_PX + roomBelowPx),
+  });
+  const settledBox = await readSteadyBox(anchor);
+  expect(Math.abs(settledBox.y - startBox.y)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE_PX);
+  return settledBox;
+}
+
+/**
+ * What every short-window case asserts about its open menu. The preconditions
+ * come first so the case cannot pass vacuously: the list is taller than the menu's
+ * own cap, and the room on the chosen side is short enough that an uncapped menu
+ * would cross the window edge. They read the same on the old fixed cap, so on the
+ * old code the failure lands on the cap assertions below, not on these.
+ */
+function expectMenuCappedToRoom(geometry: MenuGeometry, ownCapPx: number): void {
+  const publishedHeight = parsePixels(geometry.publishedHeight);
+
+  expect(geometry.scrollerScrollHeight).toBeGreaterThan(ownCapPx);
+  expect(ownCapPx).toBeGreaterThan(publishedHeight + VIEWPORT_PADDING_PX + GEOMETRY_TOLERANCE_PX);
+
+  // Inside the window whichever side it took, and clear of the trigger.
+  expect(geometry.menu.top).toBeGreaterThanOrEqual(-GEOMETRY_TOLERANCE_PX);
+  expect(geometry.menu.bottom).toBeLessThanOrEqual(geometry.windowHeight + GEOMETRY_TOLERANCE_PX);
+  const aboveTrigger = geometry.menu.bottom <= geometry.trigger.top + GEOMETRY_TOLERANCE_PX;
+  const belowTrigger = geometry.menu.top >= geometry.trigger.bottom - GEOMETRY_TOLERANCE_PX;
+  expect(aboveTrigger || belowTrigger).toBe(true);
+
+  // Capped to the room, and scrolling inside. A menu that scrolls through an inner
+  // list also has to give that list the height: a list that never shrank would end
+  // past the menu (clipped there by its overflow) and still pass the two above.
+  expect(geometry.menu.offsetHeight).toBeLessThanOrEqual(publishedHeight + GEOMETRY_TOLERANCE_PX);
+  expect(geometry.scrollerScrollHeight).toBeGreaterThan(geometry.scrollerClientHeight);
+  expect(geometry.scrollerBottom).toBeLessThanOrEqual(geometry.menu.bottom + GEOMETRY_TOLERANCE_PX);
+}
+
+/**
+ * Gives the Claude agent `modelNames` as its models, ahead of the Agent tab
+ * opening. `capabilities` is replaced whole by the override, so the effort levels
+ * and the model-override flag are restated: dropping either would remove a row
+ * and move the field this case sizes the window around.
+ */
+async function seedModels(page: Page, modelNames: string[]): Promise<void> {
+  await page.evaluate(async (names) => {
+    const scope = window as unknown as {
+      __mockAgentListOverrides: Record<string, unknown>;
+      __zustandStores: { config: { getState: () => { loadAgentList: (forceRefresh?: boolean) => Promise<void> } } };
+    };
+    scope.__mockAgentListOverrides = {
+      claude: {
+        capabilities: {
+          effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+          supportsModelOverride: true,
+          models: names,
+        },
+      },
+    };
+    await scope.__zustandStores.config.getState().loadAgentList(true);
+  }, modelNames);
+}
+
+test('Settings > Agent: in a short window the model menu caps itself to the room on its side and scrolls', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `ModelShortWindow ${Date.now()}`);
+    const modelNames = sampleNames(SEEDED_ROW_COUNT);
+    await seedModels(page, modelNames);
+    await page.setViewportSize({ width: page.viewportSize()!.width, height: SCROLLING_BODY_WINDOW_HEIGHT_PX });
+    await openSettingsTab(page, 'Agent');
+    const input = page.locator('input[data-testid="project-default-model"]');
+    await expect(input).toBeVisible({ timeout: 3000 });
+
+    // To the top of the panel body, so there is little room above the field as well
+    // as below it. The settings body scrolls; the window does not.
+    await input.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    const field = input.locator('xpath=..');
+    await shortenWindowUnder(page, field, SHORT_MENU_ROOM_BELOW_TRIGGER_PX);
+
+    await field.locator('button[aria-label="Open dropdown"]').click();
+    const menu = page.locator('[data-testid="project-default-model-menu"]');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    // The seed landed: every model is a top-level row, none folded into the versions section.
+    await expect(menu.locator('[data-model-option]')).toHaveCount(modelNames.length);
+    await waitForMenuEntrance(menu);
+
+    const geometry = await readMenuGeometry(page, {
+      trigger: 'div:has(> input[data-testid="project-default-model"])',
+      menu: '[data-testid="project-default-model-menu"]',
+    });
+    expectMenuCappedToRoom(geometry, MODEL_MENU_CAP_PX);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Settings > Terminal: in a short window the font menu caps itself to the room on its side and scrolls', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `FontShortWindow ${Date.now()}`);
+    const fontNames = sampleNames(SEEDED_ROW_COUNT).map((name) => `Font ${name}`);
+    // Before the panel opens: it asks for the fonts once, as it mounts.
+    await page.evaluate((names) => {
+      (window as unknown as { electronAPI: { font: { getAvailable: () => Promise<string[]> } } })
+        .electronAPI.font.getAvailable = async () => names;
+    }, fontNames);
+    await page.setViewportSize({ width: page.viewportSize()!.width, height: SCROLLING_BODY_WINDOW_HEIGHT_PX });
+    await openSettingsTab(page, 'Terminal');
+    const input = page.locator('input[data-testid="terminal-font-family"]');
+    await expect(input).toBeVisible({ timeout: 3000 });
+
+    await input.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    const field = input.locator('xpath=..');
+    await shortenWindowUnder(page, field, SHORT_MENU_ROOM_BELOW_TRIGGER_PX);
+
+    await field.locator('button[aria-label="Open dropdown"]').click();
+    const menu = page.locator('[data-testid="terminal-font-family-menu"]');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    // The seed landed: the last font is in the list.
+    await expect(menu.locator('[data-font-option]')).toHaveCount(fontNames.length);
+    await waitForMenuEntrance(menu);
+
+    const geometry = await readMenuGeometry(page, {
+      trigger: 'div:has(> input[data-testid="terminal-font-family"])',
+      menu: '[data-testid="terminal-font-family-menu"]',
+    });
+    expectMenuCappedToRoom(geometry, FONT_MENU_CAP_PX);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Command Terminal: in a short window the command palette caps itself to the room under its kebab and its list scrolls', async () => {
+  const sessionId = 'palette-short-window-session';
+  const { browser, page } = await launchWithTransientTerminal({
+    projectId: 'palette-short-window',
+    projectName: 'Palette Short Window',
+    sessionId,
+  });
+  try {
+    const commandNames = sampleNames(SEEDED_ROW_COUNT);
+    await page.evaluate((names) => {
+      (window as unknown as { electronAPI: { agent: { listCommands: () => Promise<unknown[]> } } })
+        .electronAPI.agent.listCommands = async () => names.map((name) => ({
+          name,
+          displayName: `/${name}`,
+          description: `Sample command ${name}`,
+          argumentHint: '',
+          source: 'command',
+        }));
+    }, commandNames);
+
+    const commandWindow = await openTransientCommandTerminal(page, sessionId);
+    // Maximized, so the window's header stays at the top of the page when the page
+    // shrinks. A floating window moves when the page gets shorter (its kebab shifted
+    // by about 90px), which changes the room under the kebab after it was sized.
+    const maximizeButton = commandWindow.getByTestId('command-bar-maximize');
+    await maximizeButton.click();
+    await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+    const kebabButton = commandWindow.locator('button[title="Actions"]');
+    // The palette anchors to the wrapper around the kebab button, not the button.
+    const kebabAnchor = commandWindow.locator('div:has(> div > button[title="Actions"])');
+    await expect(kebabButton).toBeVisible({ timeout: 3000 });
+    await shortenWindowUnder(page, kebabAnchor, PALETTE_ROOM_BELOW_TRIGGER_PX);
+
+    await kebabButton.click();
+    await page.getByRole('button', { name: 'Commands', exact: true }).click();
+    const palette = page.locator('[data-testid="command-palette-popover"]');
+    await expect(palette).toBeVisible({ timeout: 3000 });
+    // The seed landed: the commands arrive after the palette mounted.
+    await expect(palette.locator('[data-command-item]')).toHaveCount(commandNames.length);
+    await waitForMenuEntrance(palette);
+
+    const geometry = await readMenuGeometry(page, {
+      trigger: '[data-testid="command-terminal-window"] div:has(> div > button[title="Actions"])',
+      menu: '[data-testid="command-palette-popover"]',
+      scroller: '.overflow-y-auto',
+    });
+    // The palette measured its loading state, which fits under the kebab; the cap
+    // is what holds it there once the commands land and the list grows.
+    expect(geometry.menu.top).toBeGreaterThanOrEqual(geometry.trigger.bottom - GEOMETRY_TOLERANCE_PX);
+    expectMenuCappedToRoom(geometry, PALETTE_MENU_CAP_PX);
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * Seeds the Knowledge Graph with `projectCount` indexed projects and a map that
+ * has not been drawn yet, which is the layout that hosts the projects picker with
+ * no canvas: the open project first, then the rest. Done after a project is open
+ * and before the page opens, which reads both when it opens.
+ */
+async function seedKnowledgeGraphProjects(page: Page, projectCount: number): Promise<void> {
+  await page.evaluate((count) => {
+    const scope = window as unknown as {
+      electronAPI: {
+        knowledgeGraph: {
+          graphProjects: () => Promise<unknown[]>;
+          graphSnapshot: (projectId?: string | null) => Promise<unknown>;
+        };
+      };
+      __zustandStores: { project: { getState: () => { currentProject: { id: string } | null } } };
+    };
+    const openProjectId = scope.__zustandStores.project.getState().currentProject?.id ?? 'open-project';
+    const bucket = (documents: number, chunks: number) => ({ documents, chunks, tone: 'ok' });
+    scope.electronAPI.knowledgeGraph.graphProjects = async () => Array.from({ length: count }, (_unused, index) => ({
+      id: index === 0 ? openProjectId : `sample-project-${index}`,
+      name: index === 0 ? 'Open project' : `Sample project ${index}`,
+      conversations: 10 + index,
+      taskRecords: 5,
+      lastActivityMs: 1700000000000 - index * 1000,
+    }));
+    scope.electronAPI.knowledgeGraph.graphSnapshot = async (projectId) => ({
+      projectId: projectId ?? openProjectId,
+      projection: null,
+      building: false,
+      buildProgress: null,
+      stale: false,
+      semanticAvailable: true,
+      coverage: {
+        indexed: bucket(10, 100),
+        sourceMissingButSearchable: bucket(0, 0),
+        empty: bucket(0, 0),
+        failed: bucket(0, 0),
+        notYetIndexed: bucket(0, 0),
+        totalDocumentsWithChunks: 10,
+        totalChunks: 100,
+        totalEmbeddedChunks: 100,
+        embeddedFraction: 1,
+        knownDocumentIdsMatched: 10,
+      },
+      index: {
+        corpora: [{ corpus: 'conversation', documents: 10, chunks: 100, embeddedChunks: 100, embeds: true }],
+        summaries: { written: 0, finishedTasks: 0, awaitingRewrite: 0, writtenWith: [], skipped: 0, state: 'idle', retryInMs: null, choice: null },
+        storageBytes: 1048576,
+      },
+    });
+  }, projectCount);
+}
+
+test('Knowledge Graph: in a short window the projects menu caps itself to the room on its side and its list scrolls', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `ProjectsShortWindow ${Date.now()}`);
+    await seedKnowledgeGraphProjects(page, SEEDED_ROW_COUNT);
+    await page.locator('[data-testid="knowledge-graph-button"]').click();
+    const trigger = page.locator('[data-testid="knowledge-graph-projects"]');
+    await expect(trigger).toBeVisible({ timeout: 10000 });
+    await shortenWindowUnder(page, trigger, PROJECTS_ROOM_BELOW_TRIGGER_PX);
+
+    await trigger.click();
+    const menu = page.locator('[data-testid="knowledge-graph-projects-menu"]');
+    await expect(menu).toBeVisible({ timeout: 3000 });
+    // The seed landed: every project is a row.
+    await expect(menu.locator('[data-testid="knowledge-graph-projects-row"]')).toHaveCount(SEEDED_ROW_COUNT);
+    await waitForMenuEntrance(menu);
+
+    const geometry = await readMenuGeometry(page, {
+      trigger: '[data-testid="knowledge-graph-projects"]',
+      menu: '[data-testid="knowledge-graph-projects-menu"]',
+      scroller: '[role="listbox"]',
+    });
+    expectMenuCappedToRoom(geometry, PROJECTS_MENU_CAP_PX);
+  } finally {
+    await browser.close();
+  }
+});

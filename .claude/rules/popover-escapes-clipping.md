@@ -118,7 +118,9 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
   arriving table widens it, which reads red against the old `left` computed from the measured
   width.
 - **Test (available-room caps, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` shrinks
-  the window around the Settings > Git `BranchPicker` and the Settings > Agent `Combobox` and asserts
+  the window around the Settings > Git `BranchPicker`, the Settings > Agent `Combobox` and
+  `ModelCombobox`, the Settings > Terminal `FontCombobox`, the Command Terminal's
+  `CommandPalettePopover` and the Knowledge Graph's `KnowledgeGraphProjectsPicker`, and asserts
   each menu stays inside the window and scrolls, and that a fixed popover opening above or below
   publishes `--popover-available-height` and `--popover-available-width` matching the room on that
   side. `tests/ui/context-bar-popover.spec.ts` does the same for `ContextBarPopover`. Each reads red
