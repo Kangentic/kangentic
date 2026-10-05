@@ -106,6 +106,13 @@ export function buildConditionPrompt(input: ConditionPromptInput): string {
     sections.push(`<agent_reply>\n${defuse(reply)}\n</agent_reply>`);
   }
 
+  // A Condition is the user's own rule, but its variables can carry outside
+  // text into it ({{agentReply}}, an imported issue's {{description}}). That
+  // text is cut to 1,000 characters and its tags defused, and a label it gets
+  // the reply to write twice is dropped (`parseConditionReply`), so one rule
+  // cannot answer for another. The frame around it is left as it is: the
+  // workflow step's check was measured on this exact text (#732, decision 128),
+  // and a reworded frame would need measuring again.
   const conditionLines = input.rows
     .map((row, index) => `C${index + 1}: ${defuse(collapse(row.condition, 1_000))}`)
     .join('\n');

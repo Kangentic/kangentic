@@ -666,7 +666,12 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
     byProject.set(projectId, group);
   }
 
-  // Create, one transaction per board.
+  // Create, one transaction per board. Start is not one transaction: a board's
+  // tasks and the home database's links and state are separate files, which no
+  // single transaction spans. The window is the home write below: if it fails,
+  // the boards hold the new tasks while the workflow stays a draft, and a retry
+  // of Start creates them again. Both writes are local SQLite, and the
+  // re-checks above have already run, so the window needs a disk failure.
   const idByKey = new Map<string, { projectId: string; taskId: string }>();
   for (const [projectId, plannedTasks] of byProject) {
     const { db, tasks, lanes } = projectRepos(projectId);
@@ -1085,8 +1090,12 @@ export function removeFromWorkflow(
     throw new WorkflowRequestError(WORKFLOW_REFUSALS.doneStays(`#${resolved.task.display_id}`));
   }
   const tasks = new TaskRepository(getProjectDb(resolved.projectId));
-  tasks.setWorkflowMembership(resolved.task.id, null);
+  // Two databases, so two writes: links first. A failure after it leaves a
+  // member with no links, which the user can remove again; the other order
+  // would leave links to a task outside the workflow, and a dependent waiting
+  // on it would never start (a blocker the workflow cannot see is never done).
   new TaskLinkRepository(getProjectDb(homeProjectId)).deleteForTask(resolved.task.id);
+  tasks.setWorkflowMembership(resolved.task.id, null);
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, resolved.projectId);
   wakeWorkflowEngine();

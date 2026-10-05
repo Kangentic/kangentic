@@ -461,6 +461,10 @@ async function startWorkflowAgent(
   const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
 
   // The same pre-spawn steps every spawn path runs before building a command.
+  // The first message rides the command line, as a task's `{{task_xml}}` does,
+  // with the same limits: 32,767 characters for a process, 8,191 under a
+  // cmd.exe shell (the shim resolver moves PowerShell and Git Bash off a
+  // `.cmd` shim, which cmd.exe would otherwise run).
   await adapter.ensureTrust(projectRoot);
   const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
   // The project's model tier applies to the project's own default agent only
