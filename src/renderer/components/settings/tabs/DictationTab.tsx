@@ -183,8 +183,8 @@ export function DictationTab({
 
   // The model dropdowns only offer models that can transcribe the chosen language
   // (English shows everything; a non-English language narrows to the multilingual
-  // builds). The selected models always support the language because changing it
-  // re-points them (see applyLanguage).
+  // builds). The selected models always support the language: a preset resolves
+  // models that cover it, and Custom re-points them when it changes (see applyLanguage).
   const liveModelsForLanguage = sortedLiveModels.filter((model) => model.languages.includes(languageValue));
   const finalModelsForLanguage = sortedFinalModels.filter((model) => model.languages.includes(languageValue));
 

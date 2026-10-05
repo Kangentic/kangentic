@@ -280,6 +280,33 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
     expect(result.language).toBe('fr');
   });
 
+  // Cohere Transcribe covers twelve of the curated languages, not Russian, Ukrainian
+  // or Turkish. As the only active slot (no live model) it alone sets the clamp, so a
+  // language it lacks falls back to English and one it has passes through. The pair
+  // pins both directions: a Cohere with no declared languages would clamp ja to en, and
+  // one stamped with the whole multilingual set would pass ru.
+  const COHERE_ONLY = { mode: 'custom', liveModelId: 'none', modelId: 'cohere-transcribe-2b' } as const;
+
+  it('ru with Cohere Transcribe as the only active slot clamps to en (Cohere has no Russian)', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ ...COHERE_ONLY, language: 'ru' }),
+    );
+    expect(result.liveModelId).toBeNull();
+    expect(result.finalModelId).toBe('cohere-transcribe-2b');
+    expect(result.language).toBe('en');
+  });
+
+  it('ja with Cohere Transcribe as the only active slot passes through (Cohere covers Japanese)', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ ...COHERE_ONLY, language: 'ja' }),
+    );
+    expect(result.liveModelId).toBeNull();
+    expect(result.finalModelId).toBe('cohere-transcribe-2b');
+    expect(result.language).toBe('ja');
+  });
+
   it('remote mode: final modelId is excluded from language resolution - multilingual live passes fr', () => {
     // In remote mode, resolveLanguage only considers the live slot (the code
     // passes `isRemote ? null : final`). Even if modelId points to an

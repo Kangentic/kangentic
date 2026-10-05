@@ -3,9 +3,9 @@ import type { CreateSessionOptions, ResolvedModel } from '../../src/main/transcr
 
 /**
  * SherpaOnlineEngine, the streaming transducer (the Zipformer, or a NeMo model
- * such as Nemotron) that drives the live preview. It is the one engine that decodes synchronously inside push(),
- * reuses a single OnlineStream for the whole utterance, and pads the tail on
- * finalize. None of that had coverage.
+ * such as Nemotron) that drives the live preview. It is the one engine that
+ * decodes synchronously inside push(), reuses a single OnlineStream for the
+ * whole utterance, and pads the tail on finalize. None of that had coverage.
  *
  * sherpa-onnx-node is a native addon, so it is mocked. The fake recognizer
  * replays a scripted `isReady` sequence, which is what lets a test prove push()

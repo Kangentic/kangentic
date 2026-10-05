@@ -269,6 +269,33 @@ test('the License line names each running license once and opens it outside the 
   }
 });
 
+// A cloud refinement is the Refinement dropdown's "Cloud endpoint" choice, which saves
+// engineMode 'remote'. The tab itself decides what that reads as: the refinement line
+// says Cloud endpoint and the License line drops the refinement slot, because the
+// cloud runs no on-device model. The fixture keeps `selectedFinalModelId` set to
+// Parakeet v3 on purpose. Real main reports null for the final under cloud, but then
+// reverting the tab's handling would still read None and still list only the live
+// license, and this test could not fail. A non-null final is what proves the tab, not
+// main, is dropping it.
+test('a cloud refinement reads Cloud endpoint and the License line names only the live model\'s', async () => {
+  const { browser, page } = await launchWithInfo(BEST_SELECTION);
+  try {
+    await seedDictation(page, {
+      enabled: true, mode: 'custom', engineMode: 'remote', liveModelId: NEMOTRON_STREAMING.id,
+    });
+    await openDictationTab(page);
+    // The premise: the tab is really in the cloud shape.
+    await expect(page.getByTestId('dictation-final-model-select')).toHaveValue('cloud');
+    await expect(page.getByTestId('dictation-cloud-fields')).toBeVisible();
+
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText('Cloud endpoint');
+    await expect(page.getByTestId('dictation-license-link')).toHaveText(['NVIDIA Open Model License']);
+    await expect(page.getByTestId('dictation-license')).not.toContainText('CC-BY-4.0');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Balanced then Custom opens Custom on the models Balanced was running', async () => {
   const { browser, page } = await launchWithInfo(BEST_SELECTION);
   try {
@@ -536,6 +563,77 @@ test('every model option fits inside its closed dropdown at the 900x600 window f
         .filter((option) => option.width > measured.room)
         .map((option) => `"${option.text}" is ${Math.round(option.width)}px in ${Math.round(measured.room)}px`);
       expect(overflow, testId).toEqual([]);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+/** One dropdown option as the browser holds it: the model id it saves and the text it shows. */
+interface SelectOption {
+  value: string;
+  text: string;
+}
+
+async function selectOptions(page: Page, testId: string): Promise<SelectOption[]> {
+  const select = page.getByTestId(testId);
+  await expect(select).toBeVisible();
+  return select.evaluate((element) =>
+    Array.from((element as HTMLSelectElement).options).map((option) => ({ value: option.value, text: option.text })),
+  );
+}
+
+/** The same models, least accurate first: the reverse of the order the tab must show.
+ *  Feeding the tab this order is what makes its sort observable, since a tab that
+ *  stopped sorting would show it as given. */
+function leastAccurateFirst(models: DictationModelOption[]): DictationModelOption[] {
+  return [...models].sort((first, second) => first.accuracyRank - second.accuracyRank);
+}
+
+// Custom opens both dropdowns. Each lists its slot's models most accurate first (the
+// sort lives in the tab, not in the lists main sends), then the empty choice (and, for
+// Refinement, the cloud one). Each model reads as its name, how accurate it is, and
+// its download size.
+test('Custom lists each dropdown\'s models most accurate first, each as "name - accuracy (N MB)"', async () => {
+  const liveModels = leastAccurateFirst(REGISTRY_CATALOGUE.liveModels);
+  const finalModels = leastAccurateFirst(REGISTRY_CATALOGUE.finalModels);
+  const { browser, page } = await launchWithInfo({
+    liveModels,
+    finalModels,
+    selectedLiveModelId: NEMOTRON_STREAMING.id,
+    selectedFinalModelId: PARAKEET_V3.id,
+  });
+  try {
+    // English is the default language and lists every model, so nothing is filtered out.
+    await seedDictation(page, { enabled: true, mode: 'custom' });
+    await openDictationTab(page);
+
+    const slots = [
+      { testId: 'dictation-live-model-select', models: liveModels, example: NEMOTRON_STREAMING },
+      { testId: 'dictation-final-model-select', models: finalModels, example: PARAKEET_V3 },
+    ];
+    for (const { testId, models, example } of slots) {
+      const rankById = new Map(models.map((model) => [model.id, model.accuracyRank]));
+      // The Select also holds None (and Cloud endpoint), which are not models.
+      const modelOptions = (await selectOptions(page, testId)).filter((option) => rankById.has(option.value));
+
+      // Every model of the slot is listed, so the order check below has the whole list to judge.
+      expect(modelOptions.map((option) => option.value).sort(), testId)
+        .toEqual(models.map((model) => model.id).sort());
+      // The fixture really holds more than one rank, or any order would pass.
+      expect(new Set(rankById.values()).size, testId).toBeGreaterThan(1);
+
+      // Non-increasing rather than an exact sequence: models of one rank may sit in either order.
+      const ranks = modelOptions.map((option) => rankById.get(option.value) ?? Number.NaN);
+      for (let index = 1; index < ranks.length; index++) {
+        expect(ranks[index], `${testId}: ${modelOptions[index].text} after ${modelOptions[index - 1].text}`)
+          .toBeLessThanOrEqual(ranks[index - 1]);
+      }
+
+      // The separators are written out here on purpose; the pieces come from the model.
+      const shown = modelOptions.find((option) => option.value === example.id);
+      expect(shown?.text, testId)
+        .toBe(`${example.displayName} - ${example.accuracyLabel} (${example.sizeMb} MB)`);
     }
   } finally {
     await browser.close();

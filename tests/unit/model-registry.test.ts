@@ -316,6 +316,18 @@ describe('cohere-transcribe-2b model registration', () => {
     const liveIds = liveCapableModels().map((model) => model.id);
     expect(liveIds).not.toContain('cohere-transcribe-2b');
   });
+
+  // The list is typed out here rather than read from COHERE_TRANSCRIBE_LANGUAGE_CODES,
+  // so an edit to that constant (or pointing the model at the wider multilingual set)
+  // fails this test instead of moving it along. The model card lists 14 languages; the
+  // curated dropdown offers 12 of them (no Greek or Vietnamese entry to pick).
+  it('transcribes exactly its twelve curated languages, and none of ru, uk or tr', () => {
+    const languages = modelLanguages(getModel('cohere-transcribe-2b')!);
+    expect([...languages].sort()).toEqual(['ar', 'de', 'en', 'es', 'fr', 'it', 'ja', 'ko', 'nl', 'pl', 'pt', 'zh']);
+    for (const missing of ['ru', 'uk', 'tr']) {
+      expect(languages).not.toContain(missing);
+    }
+  });
 });
 
 describe('whisper-base-multi model registration', () => {

@@ -13,9 +13,9 @@ import { isOfflineKind } from '../models/model-registry';
  * The accurate offline path, model-driven via sherpa-onnx `OfflineRecognizer`.
  * It runs whichever offline model the registry selected: an NVIDIA Parakeet
  * NeMo transducer (Parakeet v3 refines the presets), a Whisper or Moonshine
- * model, or Cohere Transcribe. Each produces punctuation and casing. There are no live
- * partials (the popup shows the recording state, then the final text on
- * release). The model loads and decodes on a worker thread (createAsync /
+ * model, or Cohere Transcribe. Each produces punctuation and casing. There are
+ * no live partials (the popup shows the recording state, then the final text
+ * on release). The model loads and decodes on a worker thread (createAsync /
  * decodeAsync), so the main process event loop is not blocked.
  *
  * The engine id stays `whisper-cpp` (the engine-mode value) to avoid a config

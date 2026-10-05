@@ -96,8 +96,9 @@ export const PUSH_SECONDS = 0.1;
 /**
  * What a `SherpaOnlineEngine` session does with one clip: the stream pinned to
  * `language`, the lead padding decoded at the press, a drain after every push,
- * then the tail padding, inputFinished and a last drain on finalize. `partials` counts the distinct hypotheses the pushes produced, and
- * `decodeSeconds` leaves out the lead padding, as the press pays it.
+ * then the tail padding, inputFinished and a last drain on finalize. `partials`
+ * counts the distinct hypotheses the pushes produced, and `decodeSeconds`
+ * leaves out the lead padding, as the press pays it.
  */
 export function streamDecode(recognizer, wave, language) {
   const stream = recognizer.createStream();

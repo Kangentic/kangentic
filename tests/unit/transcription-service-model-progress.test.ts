@@ -80,7 +80,7 @@ function makeModel(id: string, approxSizeMb: number): ModelDef {
     engineKind: 'online-transducer',
     displayName: id,
     license: 'MIT',
-    tier: 'accurate-base',
+    accuracy: { rank: 1, label: 'Basic accuracy' },
     approxSizeMb,
     files: [],
     roles: {},

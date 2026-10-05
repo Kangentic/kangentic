@@ -67,14 +67,15 @@ function forSlot(models: ResolvedModel[], modelId: string | null): ResolvedModel
  * dictation worker small while it waits (what each slot costs in commit:
  * DictationClient's IDLE_SHUTDOWN_MS note). `load()` loads the LIVE slot only.
  * The FINAL slot loads lazily, started by the first `createSession()` and
- * overlapped with the utterance it serves: the session streams partials from the live slot at
- * once, buffers every frame for the final slot, and `finalize()` hands the
- * buffer to a final sub-session created only then. A press that releases
- * before the accurate model is ready (a short utterance on a cold disk) waits a
- * bounded FINAL_LOAD_WAIT_MS and then commits a full live decode instead. So a
- * pre-warmed worker holds only the live model, and the accurate model is
- * resident only in a worker that has actually served a session - which is
- * exactly the worker DictationClient recycles after its idle window.
+ * overlapped with the utterance it serves: the session streams partials from
+ * the live slot at once, buffers every frame for the final slot, and
+ * `finalize()` hands the buffer to a final sub-session created only then. A
+ * press that releases before the accurate model is ready (a short utterance on
+ * a cold disk) waits a bounded FINAL_LOAD_WAIT_MS and then commits a full live
+ * decode instead. So a pre-warmed worker holds only the live model, and the
+ * accurate model is resident only in a worker that has actually served a
+ * session - which is exactly the worker DictationClient recycles after its
+ * idle window.
  */
 export class HybridEngine implements TranscriptionEngine {
   readonly info = SHERPA_HYBRID_INFO;
