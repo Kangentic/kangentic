@@ -185,6 +185,16 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | macOS | Disk image + ZIP | DMG |
 | Linux | Package | deb, rpm |
 
+### Windows install-folder ACL grant
+
+The NSIS config includes `build/installer.nsh` (`nsis.include`). Its `customInstall` macro runs on
+every install and every `--updated` auto-update, which recreates the folder, and on a per-user
+(`CurrentUser`) install it runs `icacls "$INSTDIR" /grant *S-1-15-2-1:(OI)(CI)(RX)` to give ALL
+APPLICATION PACKAGES read access. Electron 44.5 aborts at launch when the install folder's ACL
+carries an AppContainer entry without that one (electron/electron#51761). A failed `icacls` is
+logged and the install continues. Delete the file and the `include:` once electron-builder ships
+the grant itself (electron-builder#10242); `tests/unit/nsis-acl-grant.test.ts` fails when it does.
+
 ## Windows Taskbar Identity (AUMID)
 
 Windows resolves taskbar icons by matching the running window's AppUserModelID (AUMID) to a `.lnk` shortcut with the same AUMID. The NSIS installer creates shortcuts with the `appId` from `electron-builder.yml`.

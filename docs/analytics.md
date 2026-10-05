@@ -232,7 +232,7 @@ in one Sentry org, one triage surface.
   part this cannot reach (see "Native crash fields" below).
 - **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
   data from an event we keep; filtering decides a whole class of event is un-actionable and should
-  never become an issue. Four classes are filtered:
+  never become an issue. Five classes are filtered:
   - Benign Windows stdio write artifacts, in two message shapes. Node's `errnoException` reads
     `write EAGAIN` / `write EPIPE` (the dev `npm start` TTY case) and is matched by those two
     string literals; libuv's `uvException` reads `EPIPE: broken pipe, write` (a packaged GUI
@@ -258,6 +258,10 @@ in one Sentry org, one triage surface.
     The launch failure that ends in the fatal still does not, so DESKTOP-W's ladder is caught by the
     GPU health tracker, which on 44 records the survived failures as fault deaths as well as the
     fallback - see below.
+  - The same integration's message for a Browser pane page's renderer,
+    `'browser-guest' process exited with ...`. The page is the user's, not ours, and a pane page
+    that actually crashes still arrives once, as the reduced native warning described under
+    "A Browser pane page's crash becomes a warning without the page" below.
   - `BENIGN_RENDERER_ERRORS` (`src/shared/benign-renderer-errors.ts`) is spread in, so the one
     registry drives the monaco error funnel, the UI-test collector, and Sentry. Patterns there
     must stay unanchored: monaco re-throws as `message + '\n\n' + stack`.
