@@ -533,6 +533,7 @@ export async function resumeSuspendedSessions(
         agentName: input.adapter.name,
         agentSessionId: input.agentSessionId,
         isolatedSwimlaneId: input.record.isolated_swimlane_id,
+        permissionMode: input.permissionMode,
         // Recovery spawns carry no initial prompt (prompt: undefined in
         // prepare-spawn), so the agent comes up waiting for the user: a resume
         // sits at a quiet prompt, a fresh spawn at a blank one. Mark resuming so

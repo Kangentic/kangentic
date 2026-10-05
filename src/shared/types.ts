@@ -1174,6 +1174,14 @@ export interface SessionRecord {
    */
   last_pty_cols: number | null;
   last_pty_rows: number | null;
+  /**
+   * When a transcript read for this record's per-tool Tokens estimates answered
+   * and gave it nothing to keep (no estimates in its window, or none matching a
+   * stored row), as a UTC ISO timestamp. The earlier-run Tokens fill skips a
+   * record with this set, so it does not read the same transcript on every
+   * launch. NULL until such a read; a read that wrote estimates leaves it NULL.
+   */
+  result_tokens_read_at: string | null;
 }
 
 /**
@@ -1315,7 +1323,10 @@ export interface SessionSummary {
   startedAt: string;
   exitedAt: string | null;
   exitCode: number | null;
-  /** Per-tool breakdown for the latest captured session record. Empty when missing. */
+  /**
+   * Per-tool breakdown merged by tool name over the same records `toolCallCount`
+   * sums, so the table adds up to the count. Empty when no record has one.
+   */
   toolBreakdown: PerToolStat[];
 }
 
@@ -1812,9 +1823,10 @@ export interface SessionUsage {
     totalDurationMs: number;
   };
   /**
-   * Cumulative count of completed tool calls for the session. Stamped onto the
-   * usage payload by the orchestrator just before it is pushed to the renderer:
-   * the authoritative count lives in the main-process accumulator and survives
+   * Cumulative count of completed tool calls for the session across its runs:
+   * this run's, from the main-process accumulator, plus its earlier records'
+   * (every resume is a new record). Stamped onto the usage payload by the
+   * orchestrator just before it is pushed to the renderer: the count survives
    * the bounded event cache, so the renderer cannot derive it from
    * `sessionEvents`. Optional because older main builds and non-stamping code
    * paths may omit it; read it with `?? 0`.
@@ -5366,6 +5378,13 @@ export interface SpawnSessionInput {
   /** Human-readable agent name for diagnostic logs (e.g. "claude", "gemini").
    *  Survives production minification unlike `agentParser.constructor.name`. */
   agentName?: string;
+  /**
+   * The resolved permission mode the session spawns under, the value its
+   * record's `permission_mode` gets. Carried on the session because the spawn
+   * analytics event fires inside spawn(), before the caller inserts that
+   * record, so it cannot be read from the database at that moment.
+   */
+  permissionMode?: PermissionMode | null;
   /** Sequence of strings to write to PTY before killing for graceful exit (e.g. ['\x03', '/exit\r']). */
   exitSequence?: string[];
   /**
@@ -6072,13 +6091,17 @@ export interface ElectronAPI {
     onIdleTimeout: (callback: (sessionId: string, taskId: string, timeoutMinutes: number, projectId?: string) => void) => () => void;
     getSummary: (taskId: string) => Promise<SessionSummary | null>;
     listSummaries: () => Promise<Record<string, SessionSummary>>;
-    /** Live per-tool breakdown for an active session (from the in-memory accumulator, not the DB). */
+    /**
+     * Per-tool breakdown for an active session across its runs: the stored rows
+     * of its earlier records (same task and isolated swimlane) merged by tool
+     * name with the live in-memory accumulator.
+     */
     getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
     /**
-     * Estimated result tokens per tool name for an active session's current run,
-     * read from the agent's transcript in the retrieval worker. Null when the
-     * agent cannot estimate them or keeps no readable transcript. Merged onto
-     * `getToolBreakdown`'s rows as `resultTokens`.
+     * Estimated result tokens per tool name for an active session across its
+     * runs: the earlier records' estimates (filled from their transcripts where
+     * missing) plus the live run's, read in the retrieval worker. Null when no
+     * run has an estimate. Replaces `getToolBreakdown`'s rows' `resultTokens`.
      */
     getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;

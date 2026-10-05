@@ -186,6 +186,14 @@ export class SessionTelemetry {
    */
   private readonly lastReportedAgentSessionIds = new Map<string, string>();
   private readonly eventCache = new Map<string, SessionEvent[]>();
+  /**
+   * Tool calls the session's track made in earlier runs (earlier session
+   * records of the same task and isolated swimlane), added to the live count
+   * when it is stamped onto the usage payload. Kept apart from the accumulator
+   * so the per-run reads `captureSessionMetrics` persists stay per run. Set by
+   * `SessionManager` at spawn and refreshed when the per-tool table is read.
+   */
+  private readonly earlierToolCallCounts = new Map<string, number>();
   private _idleTimeoutMinutes = 0;
   private idleTimeoutInterval: ReturnType<typeof setInterval> | null = null;
   /**
@@ -536,7 +544,7 @@ export class SessionTelemetry {
     // It lives in the accumulator and survives the bounded event cache, so the
     // renderer cannot derive it from `sessionEvents`. Stamping before the cache
     // write means snapshot reads (getUsageCache) carry it too.
-    usage.toolCallCount = this.usage.getToolCallCount(sessionId);
+    this.stampToolCallCount(sessionId, usage);
     this.usage.replaceSessionUsage(sessionId, usage);
     this.callbacks.onUsageChange(sessionId, usage);
 
@@ -769,6 +777,7 @@ export class SessionTelemetry {
   /** Delete all state for a session (full removal). */
   removeSession(sessionId: string): void {
     this.usage.removeSession(sessionId);
+    this.earlierToolCallCounts.delete(sessionId);
     this.activityEngine.deleteSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
     this.eventCache.delete(sessionId);
@@ -847,7 +856,7 @@ export class SessionTelemetry {
     // `merged` is the cached object, so stamping the live tool-call count here
     // keeps both the renderer push and snapshot reads consistent (see
     // processStatusUpdate).
-    merged.toolCallCount = this.usage.getToolCallCount(sessionId);
+    this.stampToolCallCount(sessionId, merged);
     this.callbacks.onUsageChange(sessionId, merged);
   }
 
@@ -872,9 +881,34 @@ export class SessionTelemetry {
     for (const sessionId of sessionIds) {
       const usage = this.usage.getSessionUsage(sessionId);
       if (!usage) continue;
-      usage.toolCallCount = this.usage.getToolCallCount(sessionId);
+      this.stampToolCallCount(sessionId, usage);
       this.callbacks.onUsageChange(sessionId, usage);
     }
+  }
+
+  /**
+   * The count the pill shows: this run's calls plus the track's earlier runs.
+   * The single place a usage payload gets its `toolCallCount`.
+   */
+  private stampToolCallCount(sessionId: string, usage: SessionUsage): void {
+    usage.toolCallCount = this.usage.getToolCallCount(sessionId) + (this.earlierToolCallCounts.get(sessionId) ?? 0);
+  }
+
+  /**
+   * Record how many tool calls the session's track made in earlier runs. When
+   * that changes the stamped count of a usage already on screen, the usage is
+   * re-stamped and re-emitted, so the pill agrees with the per-tool table that
+   * prompted the refresh. Before the first usage there is nothing to re-emit:
+   * the first stamp picks the count up.
+   */
+  setEarlierToolCallCount(sessionId: string, count: number): void {
+    const previous = this.earlierToolCallCounts.get(sessionId) ?? 0;
+    this.earlierToolCallCounts.set(sessionId, count);
+    if (count === previous) return;
+    const usage = this.usage.getSessionUsage(sessionId);
+    if (!usage) return;
+    this.stampToolCallCount(sessionId, usage);
+    this.callbacks.onUsageChange(sessionId, usage);
   }
 
   // ==== Event ingest (the main pipeline) ====
@@ -1026,10 +1060,16 @@ export class SessionTelemetry {
     return result;
   }
 
+  /**
+   * This run's tool-call count only, on purpose: `captureSessionMetrics` writes
+   * it to this run's record, and the Session Summary sums records. A count that
+   * included earlier runs would be stored again on every record.
+   */
   getToolCallCount(sessionId: string): number {
     return this.usage.getToolCallCount(sessionId);
   }
 
+  /** This run's per-tool rows only, for the same reason as `getToolCallCount`. */
   getToolBreakdown(sessionId: string): PerToolStat[] {
     return this.usage.getToolBreakdown(sessionId);
   }

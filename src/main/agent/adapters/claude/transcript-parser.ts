@@ -749,7 +749,9 @@ export function resetToolCallCursorsForTests(): void {
  *
  * `sinceMs` scopes the answer to calls made at or after it (a run's start).
  * Without it the whole file counts, every `--resume` of the conversation
- * included.
+ * included. `untilMs` closes the window before it (the next run's start), so a
+ * finished run read after a later run began counts only its own calls; see
+ * `callsInWindow` for calls with no timestamp.
  *
  * RESUMABLE. A per-path cursor keeps one entry per call and the byte offset of
  * the last complete line, so a repeat call reads only what was appended. Not
@@ -767,12 +769,13 @@ export function resetToolCallCursorsForTests(): void {
 export function parseClaudeTranscriptToolCounts(
   filePath: string,
   sinceMs?: number | null,
+  untilMs?: number | null,
 ): Promise<TranscriptToolCounts | null> {
   return withToolCallCursor(filePath, (cursor) => {
     const countByTool = new Map<string, number>();
     const resultTokensByTool = new Map<string, number>();
     let toolCallCount = 0;
-    for (const call of callsSince(cursor, sinceMs)) {
+    for (const call of callsInWindow(cursor, sinceMs, untilMs)) {
       toolCallCount += 1;
       countByTool.set(call.toolName, (countByTool.get(call.toolName) ?? 0) + 1);
       if (call.resultTokens !== undefined) {
@@ -792,18 +795,21 @@ export function parseClaudeTranscriptToolCounts(
 
 /**
  * Estimated result tokens per tool name for the calls made at or after
- * `sinceMs`, from the same resumable cursor as `parseClaudeTranscriptToolCounts`.
- * The live tool-call popover calls this on every tool call, which the cursor
- * makes cheap: each call reads only the bytes appended since the last. A tool
- * with no result yet in scope is absent. Null when the file cannot be read.
+ * `sinceMs` and, when given, before `untilMs`, from the same resumable cursor
+ * as `parseClaudeTranscriptToolCounts`. The live tool-call popover calls this
+ * on every tool call, which the cursor makes cheap: each call reads only the
+ * bytes appended since the last. A closed window is how an earlier run's
+ * estimates are read after a later run began. A tool with no result yet in
+ * scope is absent. Null when the file cannot be read.
  */
 export function parseClaudeTranscriptToolResultTokens(
   filePath: string,
   sinceMs?: number | null,
+  untilMs?: number | null,
 ): Promise<Record<string, number> | null> {
   return withToolCallCursor(filePath, (cursor) => {
     const resultTokensByTool: Record<string, number> = {};
-    for (const call of callsSince(cursor, sinceMs)) {
+    for (const call of callsInWindow(cursor, sinceMs, untilMs)) {
       if (call.resultTokens === undefined) continue;
       resultTokensByTool[call.toolName] = (resultTokensByTool[call.toolName] ?? 0) + call.resultTokens;
     }
@@ -811,10 +817,24 @@ export function parseClaudeTranscriptToolResultTokens(
   });
 }
 
-function* callsSince(cursor: ToolCallCursor, sinceMs: number | null | undefined): Generator<ToolCallEntry> {
+/**
+ * The calls with `sinceMs <= ts < untilMs`; a missing bound is open. A call
+ * whose line carried no timestamp has `ts` = +Infinity: it counts under any
+ * open-ended window rather than vanishing, and is left out of a closed one,
+ * which cannot claim a call it cannot place.
+ */
+function* callsInWindow(
+  cursor: ToolCallCursor,
+  sinceMs: number | null | undefined,
+  untilMs: number | null | undefined,
+): Generator<ToolCallEntry> {
   const since = typeof sinceMs === 'number' && Number.isFinite(sinceMs) ? sinceMs : Number.NEGATIVE_INFINITY;
+  const until = typeof untilMs === 'number' && Number.isFinite(untilMs) ? untilMs : Number.POSITIVE_INFINITY;
+  const closed = until !== Number.POSITIVE_INFINITY;
   for (const call of cursor.calls) {
-    if (call.ts >= since) yield call;
+    if (call.ts < since) continue;
+    if (closed && !(call.ts < until)) continue;
+    yield call;
   }
 }
 

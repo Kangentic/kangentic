@@ -5,7 +5,7 @@ import type { Event as ElectronEvent } from 'electron';
 import type { GpuGraphicsStatus } from '../shared/types';
 import path from 'node:path';
 import fs from 'node:fs';
-import { relaunchApp, devRestartFileFrom } from './app-relaunch';
+import { relaunchApp, devRestartFileFrom, isRestartRequested } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
@@ -2426,6 +2426,7 @@ function getShutdownDependencies() {
       getOptionalIpcContext()?.desktopNotifier.dispose();
     },
     isEphemeral,
+    isRestartRequested,
   };
 }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { WorktreeManager, type GitWaitProgress } from '../../git/worktree-manager';
@@ -723,7 +724,7 @@ export async function handleTaskMove(
         // "Paused" through the whole archive below.
         clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
-          const record = sessionRepo.getLatestForTask(task.id);
+          const record = resolveOwnSessionRecord(sessionRepo, task.session_id, task.id);
           // Accept 'running' AND 'exited' -- exited covers Claude natural exit.
           // Queued sessions never started Claude CLI, so mark exited (not suspended)
           // to avoid a failed --resume attempt when the task is later moved back.
@@ -774,10 +775,11 @@ export async function handleTaskMove(
         // branch is usually already merged by the time a task reaches Done, so
         // this mostly just re-confirms whatever an earlier suspend/move already
         // captured; the no-clobber guard means a now-empty diff here can never
-        // wipe that earlier real capture.
-        const latestRecord = sessionRepo.getLatestForTask(task.id);
-        if (latestRecord) {
-          captureGitChurn(task, sessionRepo, usageHistoryRepo, latestRecord.id, resolvedProjectPath, effectiveDefaultBranch);
+        // wipe that earlier real capture. Attributed to the session that just
+        // ended; the task's newest record when the task had no live session.
+        const churnRecord = resolveOwnSessionRecord(sessionRepo, task.session_id, task.id);
+        if (churnRecord) {
+          captureGitChurn(task, sessionRepo, usageHistoryRepo, churnRecord.id, resolvedProjectPath, effectiveDefaultBranch);
         }
 
         // Delete the local worktree to reclaim disk. Preserve branch_name and
@@ -814,7 +816,7 @@ export async function handleTaskMove(
         // renderer's suspended-row carve-out doesn't keep it alive.
         clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
-          const record = sessionRepo.getLatestForTask(task.id);
+          const record = resolveOwnSessionRecord(sessionRepo, task.session_id, task.id);
           if (record && record.agent_session_id
               && (record.status === 'running' || record.status === 'exited')) {
             captureSessionMetrics(

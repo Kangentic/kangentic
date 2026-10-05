@@ -48,8 +48,8 @@ export function stopMetricsSnapshotTimer(): void {
  * `db.transaction` (one WAL commit per project per tick) instead of two write
  * transactions per session. Fully best-effort: a transiently-unavailable
  * project DB is skipped, and each session's capture is wrapped in its own
- * try/catch inside the shared transaction so one session's failure (in
- * `getLatestForTask` or the capture itself) cannot roll back its siblings in the
+ * try/catch inside the shared transaction so one session's failure (in the
+ * record read or the capture itself) cannot roll back its siblings in the
  * same project's batch. Mirrors the pre-batch per-session isolation.
  */
 function snapshotRunningSessions(sessionManager: SessionManager): void {
@@ -72,7 +72,8 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
       const snapshotProjectBatch = writeTransaction(db, () => {
         for (const session of sessions) {
           try {
-            const record = sessionRepo.getLatestForTask(session.taskId);
+            // The session's own record with no fallback (see resolveOwnSessionRecord).
+            const record = sessionRepo.findByAnyId(session.id);
             if (!record || record.status !== 'running') continue;
             captureSessionMetrics(
               sessionManager,
@@ -84,7 +85,7 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
               record.session_type,
             );
           } catch {
-            // Isolate one session's failure (e.g. a transient getLatestForTask
+            // Isolate one session's failure (e.g. a transient record read
             // throw) inside the shared transaction so it cannot roll back its
             // siblings' captures in this batch.
           }

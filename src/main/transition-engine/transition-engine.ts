@@ -536,6 +536,7 @@ export class TransitionEngine {
       agentName: adapter.name,
       agentSessionId,
       isolatedSwimlaneId,
+      permissionMode,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
       // The grid recorded on the record this spawn retires. Only used when no
       // in-memory predecessor speaks for it (a resume after a desktop restart).

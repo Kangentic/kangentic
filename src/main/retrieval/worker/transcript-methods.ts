@@ -84,12 +84,16 @@ export interface TranscriptMethods {
   };
   /** Tool-call counts from a finished run's transcript (`transcriptToolCounts`). */
   'transcript.toolCounts': {
-    params: RunTranscriptRef & { sinceMs?: number | null };
+    params: RunTranscriptRef & { sinceMs?: number | null; untilMs?: number | null };
     result: TranscriptToolCounts | null;
   };
-  /** A live run's per-tool result-token estimates (`transcriptToolResultTokens`). */
+  /**
+   * Per-tool result-token estimates for one run's window
+   * (`transcriptToolResultTokens`): open-ended for the live run, closed at the
+   * next run's start for an earlier one.
+   */
   'transcript.toolResultTokens': {
-    params: RunTranscriptRef & { sinceMs: number | null };
+    params: RunTranscriptRef & { sinceMs: number | null; untilMs?: number | null };
     result: Record<string, number> | null;
   };
 }
@@ -255,15 +259,15 @@ export const transcriptHandlers: TranscriptHandlers = {
     return adapter.transcriptUsage({ transcriptPath, agentSessionId, cwd });
   },
 
-  'transcript.toolCounts': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs }) => {
+  'transcript.toolCounts': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs, untilMs }) => {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolCounts) return null;
-    return adapter.transcriptToolCounts({ transcriptPath, agentSessionId, cwd, sinceMs });
+    return adapter.transcriptToolCounts({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs });
   },
 
-  'transcript.toolResultTokens': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs }) => {
+  'transcript.toolResultTokens': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs, untilMs }) => {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolResultTokens) return null;
-    return adapter.transcriptToolResultTokens({ transcriptPath, agentSessionId, cwd, sinceMs });
+    return adapter.transcriptToolResultTokens({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs });
   },
 };

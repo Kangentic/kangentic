@@ -9,7 +9,8 @@
  *   - session-lineage token dedup (latest row per COALESCE(agent_session_id, id),
  *     summed across lineages - a flat SUM would double-count resumed sessions);
  *   - MAX(files_changed) vs SUM for the other counters;
- *   - latest-record scalars (model, exit code, tool breakdown);
+ *   - latest-record scalars (model, exit code);
+ *   - the tool breakdown merged by tool name over every costed record;
  *   - MIN(started_at) / MAX(COALESCE(exited_at, suspended_at)) timeline;
  *   - sessions with NULL total_cost_usd are excluded entirely.
  *
@@ -240,8 +241,11 @@ describe('SessionRepository.listAllSummaries (real DB)', () => {
     expect(summary.sessionId).toBe('lineage-a');
     expect(summary.modelDisplayName).toBe('Latest Model');
     expect(summary.exitCode).toBe(1);
+    // Every run's rows. A resume is a new record, and the table must add up
+    // across the same records toolCallCount sums.
     expect(summary.toolBreakdown).toEqual([
       { toolName: 'Edit', callCount: 4, totalDurationMs: 900, interruptedCount: 1 },
+      { toolName: 'Bash', callCount: 2, totalDurationMs: 500, interruptedCount: 0 },
     ]);
     expect(summary.taskCreatedAt).toBe('2026-01-01T08:00:00.000Z');
     expect(summary.startedAt).toBe('2026-01-01T09:00:00.000Z');
@@ -261,6 +265,34 @@ describe('SessionRepository.listAllSummaries (real DB)', () => {
     expect(summary.exitedAt).toBe('2026-01-02T09:30:00.000Z');
     expect(summary.exitCode).toBeNull();
     expect(summary.toolBreakdown).toEqual([]);
+  });
+
+  it('merges the breakdown over exactly the records the tool-call count sums', () => {
+    insertTask('task-mixed', '2026-01-06T08:00:00.000Z');
+    insertSession({
+      id: 'record-costed',
+      taskId: 'task-mixed',
+      startedAt: '2026-01-06T09:00:00.000Z',
+      totalCostUsd: 0.5,
+      toolCallCount: 3,
+      toolBreakdown: JSON.stringify([{ toolName: 'Read', callCount: 3, totalDurationMs: 30, interruptedCount: 0 }]),
+    });
+    // No cost, so the count leaves it out; the table must too, or it would not
+    // add up to the count it sits under.
+    insertSession({
+      id: 'record-uncosted-with-tools',
+      taskId: 'task-mixed',
+      startedAt: '2026-01-06T10:00:00.000Z',
+      totalCostUsd: null,
+      toolCallCount: 50,
+      toolBreakdown: JSON.stringify([{ toolName: 'Read', callCount: 50, totalDurationMs: 500, interruptedCount: 0 }]),
+    });
+
+    const summary = repository.listAllSummaries()['task-mixed'];
+
+    expect(summary.toolCallCount).toBe(3);
+    expect(summary.toolBreakdown).toEqual([{ toolName: 'Read', callCount: 3, totalDurationMs: 30, interruptedCount: 0 }]);
+    expect(summary).toEqual(repository.getSummaryForTask('task-mixed'));
   });
 
   it('returns an empty record when no session has cost data', () => {

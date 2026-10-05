@@ -267,6 +267,10 @@ export class ClaudeAdapter implements AgentAdapter {
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.
   readonly reportsRateLimits = true;
+  // Claude appends every --resume of a conversation to one transcript, and its
+  // tool-call cursor filters calls by timestamp, so a read can be scoped to one
+  // run with sinceMs/untilMs (transcript-parser.ts, callsInWindow).
+  readonly scopesTranscriptReadsByTime = true;
   // Claude's own clipboard image paste fails silently on Windows Snipping Tool
   // images (claude-code #26679), so Kangentic captures the image itself and
   // hands Claude the saved file's path. Claude's prompt input scans a bracketed
@@ -513,10 +517,11 @@ export class ClaudeAdapter implements AgentAdapter {
     agentSessionId?: string | null;
     cwd?: string | null;
     sinceMs?: number | null;
+    untilMs?: number | null;
   }): Promise<TranscriptToolCounts | null> {
     const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
-    return parseClaudeTranscriptToolCounts(filePath, input.sinceMs);
+    return parseClaudeTranscriptToolCounts(filePath, input.sinceMs, input.untilMs);
   }
 
   async transcriptToolResultTokens(input: {
@@ -524,10 +529,11 @@ export class ClaudeAdapter implements AgentAdapter {
     agentSessionId?: string | null;
     cwd?: string | null;
     sinceMs?: number | null;
+    untilMs?: number | null;
   }): Promise<Record<string, number> | null> {
     const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
-    return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs);
+    return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs);
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {

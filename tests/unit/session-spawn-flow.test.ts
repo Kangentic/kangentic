@@ -1065,6 +1065,61 @@ describe('performSpawn - activity engine initialTurnActive seed (thinking vs idl
   });
 });
 
+describe('performSpawn - the resolved permission mode rides on the session', () => {
+  // The spawn analytics event fires inside spawn(), before the caller inserts
+  // the session's record, so it reads the mode off the registry row.
+
+  it('records the input\'s permission mode on the registry row', async () => {
+    const context = makeContext();
+    const input = makeInput({ permissionMode: 'plan' });
+
+    await performSpawn(input, context);
+
+    expect(context.registry.getSessionPermissionMode(input.id!)).toBe('plan');
+  });
+
+  it('records none for a spawn that passes none (a Command Terminal)', async () => {
+    const context = makeContext();
+    const input = makeInput({ transient: true });
+
+    await performSpawn(input, context);
+
+    expect(context.registry.getSessionPermissionMode(input.id!)).toBeNull();
+  });
+});
+
+describe('performSpawn - earlier runs load', () => {
+  // A resume is a new session record, so the pill's tool-call count needs the
+  // track's earlier runs. performSpawn hands the new session to the manager's
+  // loader once its row is registered and telemetry initialised, and before
+  // the status-file reader can stamp a first usage without them.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('loads the earlier runs once, after initSession and before the status reader attaches', async () => {
+    const context = makeContext();
+    const order: string[] = [];
+    vi.mocked(context.telemetry.initSession).mockImplementation(() => { order.push('initSession'); });
+    vi.mocked(context.statusFileReader.attach).mockImplementation(() => { order.push('statusFileReader.attach'); });
+    let rowRegistered = false;
+    context.loadEarlierRuns = vi.fn((sessionId: string) => {
+      rowRegistered = context.registry.get(sessionId) !== undefined;
+      order.push('loadEarlierRuns');
+    });
+    const input = makeInput({ resuming: true, statusOutputPath: '/home/dev/project/.kangentic/sessions/s/status.json' });
+
+    await performSpawn(input, context);
+
+    expect(context.loadEarlierRuns).toHaveBeenCalledOnce();
+    expect(context.loadEarlierRuns).toHaveBeenCalledWith(input.id);
+    expect(rowRegistered).toBe(true);
+    expect(order.indexOf('loadEarlierRuns')).toBe(order.indexOf('initSession') + 1);
+    expect(order.indexOf('loadEarlierRuns')).toBeLessThan(order.indexOf('statusFileReader.attach'));
+  });
+});
+
 describe('performSpawn - cols/rows precedence', () => {
   // Pins the precedence chain documented at session-spawn-flow.ts lines
   // 167-192: takePendingResize's stashed grid wins over a caller-supplied

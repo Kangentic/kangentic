@@ -56,6 +56,25 @@ export interface RelaunchDependencies {
 
 export type RelaunchRoute = 'skipped-in-test' | 'dev-restart' | 'update-install' | 'relaunch';
 
+/** Set once a restart has been requested, so the quit it starts can tell itself
+ *  from a quit that ends the app. */
+let restartRequested = false;
+
+/**
+ * Whether the quit in progress is a restart this process asked for. The
+ * synchronous shutdown reads it: an ephemeral preview deletes its open project
+ * from the index on a quit that ends it, but on a restart that would cost the
+ * board and every suspended session the relaunch is about to resume.
+ */
+export function isRestartRequested(): boolean {
+  return restartRequested;
+}
+
+/** Test-only: forget a requested restart between cases. */
+export function resetRestartRequestedForTests(): void {
+  restartRequested = false;
+}
+
 /** Throws if the dev restart file cannot be written, so the caller can tell the
  *  user the restart did not happen instead of quitting into a dead dev server. */
 export function relaunchApp(dependencies: RelaunchDependencies): RelaunchRoute {
@@ -65,9 +84,11 @@ export function relaunchApp(dependencies: RelaunchDependencies): RelaunchRoute {
   }
   if (dependencies.devRestartFile) {
     dependencies.writeFile(dependencies.devRestartFile, new Date().toISOString());
+    restartRequested = true;
     dependencies.quit();
     return 'dev-restart';
   }
+  restartRequested = true;
   if (dependencies.installPendingUpdateAndRelaunch()) return 'update-install';
   dependencies.relaunch();
   dependencies.quit();

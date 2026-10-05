@@ -560,6 +560,50 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     await expect(table.locator('tbody tr', { hasText: 'Bash' }).locator('td').last()).toHaveText('-');
   });
 
+  test('a resumed session shows its earlier runs before any new call, then the Tokens total', async () => {
+    // A resume (an app restart, a pause and resume) is a new run with a live
+    // count of 0. Main stamps the earlier runs onto the count and merges their
+    // stored rows into the breakdown, Tokens included; the separate result-token
+    // read then answers with the total across runs, which replaces each row's.
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as ToolMockWindow & {
+        __resolveTrackTokens?: (tokens: Record<string, number>) => void;
+      };
+      mockWindow.electronAPI.sessions.getToolBreakdown = async () => [
+        { toolName: 'Read', callCount: 26, totalDurationMs: 4_400, interruptedCount: 0, resultTokens: 57_900 },
+        { toolName: 'Grep', callCount: 25, totalDurationMs: 5_800, interruptedCount: 0 },
+      ];
+      mockWindow.electronAPI.sessions.getToolResultTokens = () => new Promise((resolve) => {
+        mockWindow.__resolveTrackTokens = resolve;
+      });
+    });
+    await seedUsage(page, 51);
+
+    const trigger = page.locator('[data-testid="context-bar-tool-calls-trigger"]');
+    await expect(trigger).toContainText('51');
+    await expect(trigger).toHaveAttribute('title', 'Tool calls across every run of this session - click for the per-tool breakdown');
+    await trigger.click();
+
+    const table = page.locator('[data-testid="session-summary-by-tool"]');
+    const readRow = table.locator('tbody tr', { hasText: 'Read' });
+    const grepRow = table.locator('tbody tr', { hasText: 'Grep' });
+    await expect(readRow).toContainText('26');
+    await expect(grepRow).toContainText('25');
+    // First paint: the Tokens the earlier records already stored.
+    await expect(readRow).toContainText('57.9k');
+
+    // The track total arrives: an earlier run's filled estimates plus the live run's.
+    await expect.poll(() => page.evaluate(() => typeof (window as unknown as {
+      __resolveTrackTokens?: unknown;
+    }).__resolveTrackTokens)).toBe('function');
+    await page.evaluate(() => {
+      (window as unknown as { __resolveTrackTokens: (tokens: Record<string, number>) => void })
+        .__resolveTrackTokens({ Read: 63_400, Grep: 13_700 });
+    });
+    await expect(readRow).toContainText('63.4k');
+    await expect(grepRow).toContainText('13.7k');
+  });
+
   test('a sort on a column that a refetch removes falls back to Calls, most first', async () => {
     // First fetch: Read has an estimate, so Tokens shows and can be sorted on.
     await setToolMocks(page, [

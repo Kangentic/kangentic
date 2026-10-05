@@ -34,12 +34,12 @@ import type { SessionManager } from '../../src/main/pty/session-manager';
 // returned function synchronously runs the batch body.
 const makeMockDb = () => ({ transaction: passThroughTransaction });
 
-const { mockCaptureSessionMetrics, mockGetProjectDb, mockGetLatestForTask } = vi.hoisted(() => ({
+const { mockCaptureSessionMetrics, mockGetProjectDb, mockFindByAnyId } = vi.hoisted(() => ({
   mockCaptureSessionMetrics: vi.fn(),
   // Inline rather than the shared helper: vi.hoisted runs before imports.
   mockGetProjectDb: vi.fn(() => ({ transaction: (fn: () => void) => Object.assign(fn, { immediate: fn }) })),
-  /** Shared getLatestForTask stub - re-configured per test in beforeEach. */
-  mockGetLatestForTask: vi.fn(),
+  /** Shared findByAnyId stub - re-configured per test in beforeEach. */
+  mockFindByAnyId: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/database', () => ({
@@ -48,10 +48,10 @@ vi.mock('../../src/main/db/database', () => ({
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   // Each new SessionRepository(db) instance created in snapshotRunningSessions
-  // exposes the same mockGetLatestForTask reference, so calls from any instance
+  // exposes the same mockFindByAnyId reference, so calls from any instance
   // are observable on a single spy.
   SessionRepository: class {
-    getLatestForTask = mockGetLatestForTask;
+    findByAnyId = mockFindByAnyId;
   },
 }));
 
@@ -98,7 +98,7 @@ function makeSession(overrides: Partial<Pick<Session, 'id' | 'taskId' | 'project
 }
 
 /**
- * Minimal SessionRecord shape for getLatestForTask. Only id/status/started_at/session_type
+ * Minimal SessionRecord shape for findByAnyId. Only id/status/started_at/session_type
  * are read by snapshotRunningSessions before it calls captureSessionMetrics.
  */
 function makeRunningRecord(overrides: { id?: string; status?: string } = {}) {
@@ -122,10 +122,10 @@ function makeManagerStub(sessions: Session[]): SessionManager {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
-  // Default: getLatestForTask returns a running record, so any running in-memory
+  // Default: findByAnyId returns a running record, so any running in-memory
   // session will propagate all the way to captureSessionMetrics. Individual tests
   // that want to verify the DB-record guard override this.
-  mockGetLatestForTask.mockReturnValue(makeRunningRecord());
+  mockFindByAnyId.mockReturnValue(makeRunningRecord());
 });
 
 afterEach(() => {
@@ -238,18 +238,38 @@ describe('snapshotRunningSessions filter', () => {
       expect.any(String), // record.session_type
     );
 
-    // getLatestForTask was queried only for the running session (not the
-    // suspended or queued ones, which were filtered before the DB call).
-    expect(mockGetLatestForTask).toHaveBeenCalledTimes(1);
-    expect(mockGetLatestForTask).toHaveBeenCalledWith('task-run');
+    // The record was looked up only for the running session (not the
+    // suspended or queued ones, which were filtered before the DB call), and by
+    // the session's own id.
+    expect(mockFindByAnyId).toHaveBeenCalledTimes(1);
+    expect(mockFindByAnyId).toHaveBeenCalledWith('session-run');
   });
+
+  it('captures into the session\'s own record, never the task\'s newest', () => {
+    // A task can hold a main and an isolated session, and the isolated one's
+    // record can be the task's newest. Writing this session's live numbers onto
+    // it would count them twice in the track's merged tool totals.
+    mockFindByAnyId.mockImplementation((recordId: string) => (
+      recordId === 'session-main' ? makeRunningRecord({ id: 'session-main' }) : null
+    ));
+    const manager = makeManagerStub([makeSession({ id: 'session-main', taskId: 'task-with-two-tracks' })]);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
+    const [, , , sessionId, recordId] = mockCaptureSessionMetrics.mock.calls[0] as unknown[];
+    expect(sessionId).toBe('session-main');
+    expect(recordId).toBe('session-main');
+  });
+
 
   it('skips a session whose in-memory status is running but whose DB record is not running', () => {
     // The tick has TWO guards:
     //   1. if (session.status !== 'running') continue   <- in-memory
     //   2. if (!record || record.status !== 'running') continue  <- DB re-read
     // This test covers the second guard: in-memory says running, DB says suspended.
-    mockGetLatestForTask.mockReturnValue(makeRunningRecord({ status: 'suspended' }));
+    mockFindByAnyId.mockReturnValue(makeRunningRecord({ status: 'suspended' }));
 
     const manager = makeManagerStub([makeSession({ status: 'running' })]);
     startMetricsSnapshotTimer(manager);
@@ -260,11 +280,11 @@ describe('snapshotRunningSessions filter', () => {
     expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
   });
 
-  it('skips a session whose in-memory status is running but getLatestForTask returns null', () => {
-    // null record from getLatestForTask hits the `!record` branch of the second guard.
-    mockGetLatestForTask.mockReturnValue(null);
+  it('skips a running session with no record of its own (a Command Terminal)', () => {
+    // No record for the session's id hits the `!record` branch of the second guard.
+    mockFindByAnyId.mockReturnValue(null);
 
-    const manager = makeManagerStub([makeSession({ status: 'running' })]);
+    const manager = makeManagerStub([makeSession({ id: 'command-terminal-1', status: 'running' })]);
     startMetricsSnapshotTimer(manager);
 
     vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
@@ -315,16 +335,16 @@ describe('snapshotRunningSessions filter', () => {
     expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(3);
   });
 
-  it('isolates one session\'s getLatestForTask throw from its sibling in the same project transaction', () => {
+  it('isolates one session\'s record-read throw from its sibling in the same project transaction', () => {
     // The fix: each session's body inside the shared per-project db.transaction
-    // is wrapped in its own try/catch, so one session's getLatestForTask throw
+    // is wrapped in its own try/catch, so one session's record-read throw
     // must not roll back / skip its sibling's capture in the same batch. This is
     // distinct from the "getProjectDb throws for one project" test above, which
     // covers isolation ACROSS projects, not across sessions within one project's
     // shared transaction.
-    mockGetLatestForTask.mockImplementation((taskId: string) => {
-      if (taskId === 'task-throws') {
-        throw new Error('DB read failed for task-throws');
+    mockFindByAnyId.mockImplementation((recordId: string) => {
+      if (recordId === 'session-throws') {
+        throw new Error('DB read failed for session-throws');
       }
       return makeRunningRecord();
     });
@@ -338,7 +358,7 @@ describe('snapshotRunningSessions filter', () => {
 
     vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
 
-    // session-throws's getLatestForTask threw; session-ok, in the same project's
+    // session-throws's record read threw; session-ok, in the same project's
     // shared transaction, must still have been captured.
     expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
     expect(mockCaptureSessionMetrics).toHaveBeenCalledWith(

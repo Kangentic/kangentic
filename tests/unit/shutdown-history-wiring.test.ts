@@ -13,8 +13,8 @@
  * records every constructed instance so the test can assert the right one
  * reached captureSessionMetrics as arg[2].
  *
- * SessionRepository.getLatestForTask is configured via a module-level fn ref
- * so each test can control what record the shutdown loop sees for the session.
+ * SessionRepository.findByAnyId is configured via a module-level fn ref so each
+ * test can control what record the shutdown loop sees for the session.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,8 +33,8 @@ vi.mock('../../src/main/db/database', () => ({
   closeAll: vi.fn(),
 }));
 
-// getLatestForTask is configured per-test via the exported fn reference.
-const mockGetLatestForTask = vi.fn(() => null as null | {
+// findByAnyId is configured per-test via the exported fn reference.
+const mockFindByAnyId = vi.fn(() => null as null | {
   id: string;
   status: string;
   agent_session_id: string | null;
@@ -44,7 +44,7 @@ const mockGetLatestForTask = vi.fn(() => null as null | {
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    getLatestForTask = mockGetLatestForTask;
+    findByAnyId = mockFindByAnyId;
     compareAndUpdateStatus = vi.fn(() => true);
     updateMetrics = vi.fn();
     updateStatus = vi.fn();
@@ -145,6 +145,7 @@ function buildMockDependencies(
     stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
+    isRestartRequested: () => false,
     allowGrace,
   };
 }
@@ -160,7 +161,7 @@ describe('syncShutdownCleanup history wire-up', () => {
   });
 
   it('constructs a UsageHistoryRepository and passes it as the third argument to captureSessionMetrics', () => {
-    mockGetLatestForTask.mockReturnValue({
+    mockFindByAnyId.mockReturnValue({
       id: 'record-001',
       status: 'running',
       agent_session_id: 'agent-aaa',
@@ -183,6 +184,31 @@ describe('syncShutdownCleanup history wire-up', () => {
     // A UsageHistoryRepository instance must have been constructed and forwarded.
     expect(createdHistoryInstances).toHaveLength(1);
     expect(passedHistory).toBe(createdHistoryInstances[0]);
+  });
+
+  it('captures into the session\'s own record, looked up by its id, never the task\'s newest', () => {
+    // A task can hold a main and an isolated session. "Latest for task" could
+    // capture this session's numbers onto the other one, which the track's
+    // merged tool totals would then count twice.
+    mockFindByAnyId.mockImplementation((recordId: string) => (recordId === 'pty-abc'
+      ? { id: 'pty-abc', status: 'running', agent_session_id: 'agent-aaa', session_type: 'claude_agent', started_at: '2026-01-01T10:00:00Z' }
+      : null));
+
+    syncShutdownCleanup(buildMockDependencies([buildRunningSession({ id: 'pty-abc' })]));
+
+    expect(mockFindByAnyId).toHaveBeenCalledWith('pty-abc');
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
+    const [, , , sessionId, recordId] = mockCaptureSessionMetrics.mock.calls[0] as unknown[];
+    expect(sessionId).toBe('pty-abc');
+    expect(recordId).toBe('pty-abc');
+  });
+
+  it('skips a running session with no record of its own (a Command Terminal)', () => {
+    mockFindByAnyId.mockReturnValue(null);
+
+    syncShutdownCleanup(buildMockDependencies([buildRunningSession({ id: 'command-terminal-1' })]));
+
+    expect(mockCaptureSessionMetrics).not.toHaveBeenCalled();
   });
 
   it('does NOT call captureSessionMetrics when no sessions are running', () => {
@@ -471,8 +497,32 @@ describe('syncShutdownCleanup history wire-up', () => {
     expect(closeAll).toHaveBeenCalledTimes(1);
   });
 
+  it('deletes an ephemeral preview\'s open project from the index on a quit that ends the app', () => {
+    const dependencies = buildMockDependencies([]);
+    dependencies.isEphemeral = true;
+    dependencies.getCurrentProjectId.mockReturnValue('proj-ephemeral');
+
+    syncShutdownCleanup({ ...dependencies, isRestartRequested: () => false });
+
+    expect(dependencies.deleteProjectFromIndex).toHaveBeenCalledWith('proj-ephemeral');
+  });
+
+  it('keeps an ephemeral preview\'s open project on a restart the app asked for, so the relaunch resumes into it', () => {
+    // dev.js respawns Electron on the same data dir and the boot adopts the
+    // project row by path. Deleting it brought every in-app restart back to an
+    // empty board, with the suspended sessions it should resume gone with it.
+    const dependencies = buildMockDependencies([]);
+    dependencies.isEphemeral = true;
+    dependencies.getCurrentProjectId.mockReturnValue('proj-ephemeral');
+
+    syncShutdownCleanup({ ...dependencies, isRestartRequested: () => true });
+
+    expect(dependencies.deleteProjectFromIndex).not.toHaveBeenCalled();
+    expect(closeAll).toHaveBeenCalled();
+  });
+
   it('does NOT call captureSessionMetrics for queued sessions (never spawned - nothing to capture)', () => {
-    mockGetLatestForTask.mockReturnValue({
+    mockFindByAnyId.mockReturnValue({
       id: 'record-002',
       status: 'queued',
       agent_session_id: null,

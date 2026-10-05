@@ -3,12 +3,9 @@
  * and for the `updateMetrics` -> `getSummaryForTask` round-trip with
  * `tool_breakdown`.
  *
- * Both helpers are module-private. They are exercised indirectly through
- * `getSummaryForTask`, which is the sole caller of `parseToolBreakdown`.
- * This approach is preferred over exporting the helpers because:
- *   - it tests the actual integration path (DB column -> deserialized PerToolStat[])
- *   - it avoids exposing implementation details in the public module surface
- *   - it gives the same branch coverage as direct tests
+ * They are exercised through `getSummaryForTask`, because that tests the
+ * actual integration path (DB column -> deserialized PerToolStat[]) and gives
+ * the same branch coverage as direct tests.
  *
  * All tests use a queue-based mock DB that returns pre-programmed values per
  * `prepare()` call, matching the exact call order inside `getSummaryForTask`.
@@ -33,9 +30,12 @@ import type { SessionRecord } from '../../src/shared/types';
  *   call 0 - the latestRecord query (returns a SessionRecord row)
  *   call 1 - the aggregated query (SUM cost/duration/compactions/tool calls/lines)
  *   call 2 - the tokens query (latest row per lineage, SUMmed)
+ * and then `prepare().all()` once, for every costed record's `tool_breakdown`.
  *
  * Pass `latestRecordReturn` for call 0, `aggregateReturn` for call 1, and
  * `tokensReturn` for call 2. Additional `prepare()` calls fall back to undefined.
+ * The breakdown query answers with the latest record's own `tool_breakdown`
+ * under the tests' task id, as a task with a single costed record would.
  */
 function createGetSummaryMockDb(options: {
   latestRecordReturn: unknown;
@@ -47,6 +47,8 @@ function createGetSummaryMockDb(options: {
     options.aggregateReturn,
     options.tokensReturn ?? { total_input_tokens: 0, total_output_tokens: 0 },
   ];
+  const latestBreakdown = (options.latestRecordReturn as { tool_breakdown?: string | null } | undefined)?.tool_breakdown ?? null;
+  const breakdownRows = latestBreakdown === null ? [] : [{ task_id: 'task-1', tool_breakdown: latestBreakdown }];
   let callIndex = 0;
 
   const mockDb = {
@@ -56,7 +58,7 @@ function createGetSummaryMockDb(options: {
       return {
         run: vi.fn(() => ({ changes: 0 })),
         get: vi.fn((..._params: unknown[]) => getReturns[index]),
-        all: vi.fn(() => []),
+        all: vi.fn(() => breakdownRows),
       };
     }),
   } as unknown as Database.Database;
@@ -665,13 +667,19 @@ function createListAllSummariesMockDb(rows: ListAllSummariesAggregateRow[]): {
   capturedSql: string[];
 } {
   const capturedSql: string[] = [];
+  // The fixture's `tool_breakdown` stands for its task's one costed record, and
+  // answers the separate breakdown query (every costed row's breakdown).
+  const breakdownRows = rows
+    .filter((row) => row.tool_breakdown !== null)
+    .map((row) => ({ task_id: row.task_id, tool_breakdown: row.tool_breakdown }));
   const db = {
     prepare: vi.fn((sql: string) => {
       capturedSql.push(sql);
+      const isBreakdownQuery = /SELECT\s+task_id\s*,\s*tool_breakdown\s+FROM\s+sessions/i.test(sql);
       return {
         run: vi.fn(() => ({ changes: 0 })),
         get: vi.fn(),
-        all: vi.fn(() => rows),
+        all: vi.fn(() => (isBreakdownQuery ? breakdownRows : rows)),
       };
     }),
   } as unknown as Database.Database;
@@ -747,12 +755,14 @@ describe('listAllSummaries lifetime rollup (SQL-aggregated)', () => {
     expect(summary.toolBreakdown).toEqual([]);
   });
 
-  it('issues ONE query whose SQL carries the load-bearing aggregation clauses', () => {
+  it('issues one aggregate query plus one breakdown query, whose SQL carries the load-bearing clauses', () => {
     const { db, capturedSql } = createListAllSummariesMockDb([]);
     const repo = new SessionRepository(db);
     repo.listAllSummaries();
 
-    expect(capturedSql).toHaveLength(1);
+    expect(capturedSql).toHaveLength(2);
+    // The breakdown merges over exactly the costed rows the count sums.
+    expect(capturedSql[1]).toMatch(/WHERE\s+total_cost_usd\s+IS\s+NOT\s+NULL\s+AND\s+tool_breakdown\s+IS\s+NOT\s+NULL/i);
     const sql = capturedSql[0];
     // Costed rows only, grouped per task.
     expect(sql).toMatch(/WHERE\s+total_cost_usd\s+IS\s+NOT\s+NULL/i);

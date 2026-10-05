@@ -686,6 +686,26 @@ describe('TransitionEngine - recorded grid on a resume (executeSpawnAgent chokep
   });
 });
 
+describe('TransitionEngine - the spawn carries the permission mode its record gets', () => {
+  // The spawn analytics event fires inside spawn(), before this record is
+  // inserted, so it reads the mode off the session. The two must agree.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+  });
+
+  it('hands spawn() the same resolved mode it writes to the record', async () => {
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn, sessionManager } = makeEngine({ sessionRepo });
+    await runSpawn(makeTask());
+
+    const spawned = sessionManager.spawn.mock.calls[0][0] as unknown as { permissionMode?: string | null };
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string | null };
+    expect(spawned.permissionMode).toBeTruthy();
+    expect(spawned.permissionMode).toBe(inserted.permission_mode);
+  });
+});
+
 describe('TransitionEngine - resume-time agent-session-id reconcile wiring (executeSpawnAgent chokepoint)', () => {
   // Coverage hole (issue #481 review): executeSpawnAgent's resume branch
   // computes `agentSessionId` by awaiting `reconcileResumeAgentSessionId`

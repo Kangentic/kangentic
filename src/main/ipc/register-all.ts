@@ -65,6 +65,8 @@ import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-r
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { getOpenProjectDb, getProjectDb } from '../db/database';
 import { TranscriptRepository } from '../db/repositories/transcript-repository';
+import { SessionRepository } from '../db/repositories/session-repository';
+import { fillEarlierRunResultTokens } from './handlers/session-metrics';
 import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
@@ -134,6 +136,21 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       transcriptRepositories.set(db, repository);
     }
     return repository;
+  });
+  // A resumed session is a new record, so its tool-call count and per-tool
+  // table come partly from the track's earlier records. A project whose
+  // database is not open contributes nothing rather than being opened again.
+  sessionManager.setEarlierRunsSource({
+    readToolTotals: (session) => {
+      const db = getOpenProjectDb(session.projectId);
+      if (!db) return { toolCallCount: 0, toolBreakdown: [] };
+      return new SessionRepository(db).getEarlierRunToolTotals(session.taskId, session.isolatedSwimlaneId ?? null, session.id);
+    },
+    fillMissingResultTokens: async (session) => {
+      const db = getOpenProjectDb(session.projectId);
+      if (!db) return false;
+      return fillEarlierRunResultTokens(sessionManager, new SessionRepository(db), session.id, { queued: true });
+    },
   });
   const pasteEngine = createPasteEngine(sessionManager);
   const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);

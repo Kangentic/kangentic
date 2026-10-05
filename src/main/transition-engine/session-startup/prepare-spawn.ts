@@ -6,7 +6,7 @@ import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
-import type { AppConfig, BoardProfile, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -33,7 +33,7 @@ export interface PreparedSpawn {
   /** Agent-CLI-side session identifier. Null for agents that don't accept caller-specified IDs (Codex/Gemini). */
   agentSessionId: string | null;
   /** Effective permission mode after lane override + global fallback. */
-  permissionMode: string;
+  permissionMode: PermissionMode;
   statusOutputPath: string;
   eventsOutputPath: string;
   /**

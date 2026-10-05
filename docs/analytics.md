@@ -108,7 +108,10 @@ For Claude sessions, `model` is normalized to its base id via `parseModelId` (`s
 
 `permissionMode` on `session_spawn` / `task_complete` is the RESOLVED mode the session record
 actually spawned under (from `resolveEffectivePermissionMode`), not the task's raw override
-(which is null for most tasks, meaning "inherit"). `worktree` says whether the session ran in a
+(which is null for most tasks, meaning "inherit"). `session_spawn` fires inside the spawn,
+before the session's record is inserted, so it reads the mode the spawn carried onto the session
+(`SpawnSessionInput.permissionMode`, `SessionManager.getSessionPermissionMode`); a Command
+Terminal carries none. `worktree` says whether the session ran in a
 git worktree. `intentional` on `session_exit` distinguishes a deliberate kill/suspend (tagged by
 the session manager) from a genuine agent-side exit, closing the crash-versus-intentional blind
 spot.

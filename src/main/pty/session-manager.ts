@@ -42,6 +42,7 @@ import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from 
 import type { HostExecRequest, HostExecResult, PtyHostEvent } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import type {
+  PermissionMode,
   Session,
   SessionUsage,
   ActivityState,
@@ -53,6 +54,7 @@ import type {
   SessionResizeResult,
 } from '../../shared/types';
 import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
+import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
@@ -153,6 +155,24 @@ export interface SessionTerminalDimensions {
 export interface MobileTerminalProbe {
   isSizeHeld(sessionId: string): boolean;
   hasStreamSubscriber(sessionId: string): boolean;
+}
+
+/**
+ * Where a session's earlier runs come from: the stored records of its track
+ * (the same task and isolated swimlane), which only the database layer can
+ * read. Injected via setEarlierRunsSource, since the pty layer has no
+ * database. Every resume is a new record, so these are what keep a resumed
+ * session's tool-call count and per-tool table from starting at zero.
+ */
+export interface EarlierRunsSource {
+  /** The stored tool totals of the track's records, the live one excluded. */
+  readToolTotals(session: Session): ToolCallTotals;
+  /**
+   * Fill the per-tool Tokens estimates those records lack (a run that ended at
+   * app quit stores none). Started without waiting at spawn; resolves true
+   * when any record changed, and never rejects.
+   */
+  fillMissingResultTokens(session: Session): Promise<boolean>;
 }
 
 /**
@@ -301,6 +321,8 @@ export class SessionManager extends EventEmitter {
   private lastDesktopDimensions = new Map<string, { cols: number; rows: number }>();
   /** See MobileTerminalProbe; null until the bridge attaches (or forever, unpaired). */
   private mobileTerminalProbe: MobileTerminalProbe | null = null;
+  /** See EarlierRunsSource; null until the IPC layer wires it (and in unit tests). */
+  private earlierRunsSource: EarlierRunsSource | null = null;
   /**
    * Pending resting-grid restores, keyed by session. See
    * scheduleRestingGridRestore.
@@ -1084,6 +1106,43 @@ export class SessionManager extends EventEmitter {
     this.mobileTerminalProbe = probe;
   }
 
+  /** See EarlierRunsSource. Called once by the IPC layer at registration. */
+  setEarlierRunsSource(source: EarlierRunsSource): void {
+    this.earlierRunsSource = source;
+  }
+
+  /**
+   * Read the session's earlier runs and hand their tool-call count to
+   * telemetry, which adds it to every stamped count (and re-emits the usage
+   * when that count changed). Returns the session snapshot the source read and
+   * the totals, or null for a session with no track (a Command Terminal has no
+   * record) or a failed read, which leaves the count at this run's alone
+   * rather than failing a spawn or a read.
+   */
+  private refreshEarlierRunTotals(sessionId: string): { session: Session; totals: ToolCallTotals } | null {
+    const source = this.earlierRunsSource;
+    const row = this.registry.get(sessionId);
+    if (!source || !row || row.transient) return null;
+    const session = toSession(row);
+    try {
+      const totals = source.readToolTotals(session);
+      this.telemetry.setEarlierToolCallCount(sessionId, totals.toolCallCount);
+      return { session, totals };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Spawn-time load of a task session's earlier runs (performSpawn calls it
+   * right after telemetry.initSession, before any usage can be stamped), plus
+   * the Tokens fill for the runs that have none, started without waiting.
+   */
+  private loadEarlierRuns(sessionId: string): void {
+    const refreshed = this.refreshEarlierRunTotals(sessionId);
+    if (refreshed) void this.earlierRunsSource?.fillMissingResultTokens(refreshed.session);
+  }
+
   /**
    * The renderer reports that it has consumed `bytes` of this session's output
    * (written to xterm or deliberately dropped during scrollback replay), which
@@ -1298,6 +1357,7 @@ export class SessionManager extends EventEmitter {
         isolatedSwimlaneId: input.isolatedSwimlaneId,
         exitSequence: input.exitSequence ?? ['\x03'],
         agentParser: input.agentParser,
+        permissionMode: input.permissionMode ?? null,
       };
       this.registry.set(id, session);
       this.sessionQueue.enqueue(inputWithId);
@@ -1383,6 +1443,7 @@ export class SessionManager extends EventEmitter {
       inheritedGrid: (predecessor) => this.successorGridFor(predecessor),
       restoredGrid: (grid) => this.vetRestoredGrid(grid),
       emit: (event, ...args) => this.emit(event, ...args),
+      loadEarlierRuns: (sessionId) => this.loadEarlierRuns(sessionId),
       isSpawnCancelled: (sessionId) => this.spawnsInFlight.get(sessionId)?.cancelled === true,
       onSpawnAbandoned: (sessionId, ptyExited) => {
         const inFlight = this.spawnsInFlight.get(sessionId);
@@ -2650,21 +2711,39 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Cumulative ToolEnd count for a session. Tracked independently of the
-   * bounded event cache so captureSessionMetrics can write a faithful
-   * tool_call_count even after the cache has rolled past 500 events.
+   * Cumulative ToolEnd count for this run of a session. Tracked independently
+   * of the bounded event cache so captureSessionMetrics can write a faithful
+   * tool_call_count even after the cache has rolled past 500 events. Per run on
+   * purpose: it is written to this run's record, and the Session Summary sums
+   * records. The count across runs is the stamped `usage.toolCallCount`.
    */
   getToolCallCount(sessionId: string): number {
     return this.telemetry.getToolCallCount(sessionId);
   }
 
   /**
-   * Per-tool aggregate snapshot for a session. Used by captureSessionMetrics
-   * to persist a JSON breakdown so the Session Summary panel can render a
-   * "By tool" section for archived tasks.
+   * Per-tool aggregate snapshot for this run of a session. Used by
+   * captureSessionMetrics to persist a JSON breakdown so the Session Summary
+   * panel can render a "By tool" section for archived tasks. Per run for the
+   * same reason as getToolCallCount; see refreshToolBreakdownAcrossRuns.
    */
   getToolBreakdown(sessionId: string): PerToolStat[] {
     return this.telemetry.getToolBreakdown(sessionId);
+  }
+
+  /**
+   * The per-tool table the context bar's tool-call popover shows: the session
+   * track's earlier runs, read fresh from their records, merged by tool name
+   * with this run's live rows. Not a plain read: the fresh read also refreshes
+   * the earlier-run count the pill adds, and re-emits the usage when that
+   * count changed, so a write that landed on an earlier record after the spawn
+   * (a run-end backfill, a Tokens fill) reaches both views together.
+   */
+  refreshToolBreakdownAcrossRuns(sessionId: string): PerToolStat[] {
+    const liveRows = this.telemetry.getToolBreakdown(sessionId);
+    const refreshed = this.refreshEarlierRunTotals(sessionId);
+    if (!refreshed) return liveRows;
+    return mergeToolBreakdowns([refreshed.totals.toolBreakdown, liveRows]);
   }
 
   /**
@@ -2745,6 +2824,12 @@ export class SessionManager extends EventEmitter {
    *  or undefined if not found or the spawn predates agentName tracking. */
   getSessionAgentName(sessionId: string): string | undefined {
     return this.registry.getSessionAgentName(sessionId);
+  }
+
+  /** The resolved permission mode the session spawned under, or null when the
+   *  spawn passed none (a Command Terminal) or the session is unknown. */
+  getSessionPermissionMode(sessionId: string): PermissionMode | null {
+    return this.registry.getSessionPermissionMode(sessionId);
   }
 
   /**

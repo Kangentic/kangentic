@@ -42,6 +42,8 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: () => ({}) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No own-record row, so the capture sites fall back to getLatestForTask.
+    findByAnyId = vi.fn(() => undefined);
     getLatestForTask = vi.fn(() => null);
   },
 }));
