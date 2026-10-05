@@ -25,6 +25,8 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { buildBoardConfigFromDb } = await import('../../src/main/config/board-config/build-config');
 const { applyBoardConfigToDb } = await import('../../src/main/config/board-config/apply-config');
 const { AutomationRepository } = await import('../../src/main/db/repositories/automation-repository');
+const { AutomationRunRepository } = await import('../../src/main/db/repositories/automation-run-repository');
+const { frequencyLimitReason } = await import('../../src/main/automations/automation-runner');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
 
@@ -185,6 +187,45 @@ describe('kangentic.json automations round-trip', () => {
       const second = build();
 
       expect(second.columns).toEqual(first.columns);
+    });
+
+    // apply-config runs on every project open and hands the rows to the
+    // repository without ids. Frequency counts runs by automation id, so a row
+    // that came back with a fresh id each time would start its count over at every
+    // launch, and a "twice only" review loop would loop forever across restarts.
+    it('keeps a row\'s id, and with it its Frequency count, when the same file is applied again', () => {
+      const { database, lanes, automations } = freshDatabase();
+      const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+      const taskId = 'task-frequency';
+      database
+        .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(taskId, 'A task in review', '', codeReview.id, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+      const file = build();
+      columnNamed(file, 'Code Review')!.automations = {
+        onTurnEnd: [{ name: 'Back for revisions', type: 'move_to_column', targetColumn: 'Executing', maxRuns: 2 }],
+      };
+      // The file on disk, read back the way the app reads it on each open.
+      const fileText = JSON.stringify(file);
+
+      applyBoardConfigToDb('p1', JSON.parse(fileText) as BoardConfig);
+      const [applied] = automations.listForColumn(codeReview.id);
+      expect(applied).toMatchObject({ name: 'Back for revisions', trigger: 'turn_end', max_runs: 2 });
+
+      const runs = new AutomationRunRepository(database);
+      for (const runId of ['run-1', 'run-2']) {
+        runs.start({ id: runId, automation: applied, taskId });
+        runs.finish(runId, 'succeeded', 'Moved to Executing.');
+      }
+      expect(runs.countRuns(applied.id, taskId)).toBe(2);
+
+      applyBoardConfigToDb('p1', JSON.parse(fileText) as BoardConfig);
+
+      const [reapplied] = automations.listForColumn(codeReview.id);
+      expect(reapplied.id).toBe(applied.id);
+      expect(runs.countRuns(reapplied.id, taskId)).toBe(2);
+      // And the limit still bites: the row is spent for this task, not fresh.
+      expect(frequencyLimitReason(reapplied, runs, taskId)).toBe('Already ran 2 times on this task, its limit.');
     });
 
     it('warns and skips a Move to column row filed under onEnter or onExit', () => {

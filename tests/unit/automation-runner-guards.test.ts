@@ -12,9 +12,16 @@
  *   the group that made it.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { runAutomations, frequencyLimitReason, hasCondition } from '../../src/main/automations/automation-runner';
+import {
+  runAutomations,
+  frequencyLimitReason,
+  hasCondition,
+  CONDITION_CHECK_WAIT_MS,
+  type ConditionCheckResult,
+} from '../../src/main/automations/automation-runner';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
-import { AUTOMATION_MANIFEST } from '../../src/shared/automation-manifest';
+import type { ConditionCheckLimits } from '../../src/main/automations/condition-check/condition-check';
+import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS } from '../../src/shared/automation-manifest';
 import type { AutomationAdapter, AutomationContext } from '../../src/main/automations/shared/automation-adapter';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../src/main/db/repositories/automation-run-repository';
 import type { AutomationRunStatus, AutomationType, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
@@ -74,13 +81,13 @@ function fakeRuns(priorRuns: Record<string, number> = {}) {
   return { rows, repository: repository as unknown as AutomationRunRepository };
 }
 
-function context(): Omit<AutomationContext, 'runId' | 'signal'> {
+function context(trigger: AutomationContext['trigger'] = 'turn_end'): Omit<AutomationContext, 'runId' | 'signal'> {
   return {
     task: { id: 'task-1', title: 'A task', session_id: 'session-1' } as Task,
     column: COLUMN,
     fromColumn: null,
     toColumn: null,
-    trigger: 'turn_end',
+    trigger,
     cwd: '/mock/worktree',
     projectId: 'project-1',
     projectPath: '/mock/project',
@@ -233,6 +240,74 @@ describe('Condition', () => {
     expect(hasCondition({ condition: '   ' })).toBe(false);
     expect(hasCondition({} as { condition: string | null })).toBe(false);
     expect(hasCondition({ condition: 'Tests pass' })).toBe(true);
+  });
+});
+
+// Enter and exit groups run inside the move's task lock, so the one Condition
+// check they make is bounded: the group's own budget, else
+// CONDITION_CHECK_WAIT_MS, and the move's own abort. Without the bound a slow
+// Automation agent, or a queue of turn-end checks ahead of it, held that
+// task's lock for minutes.
+describe('the bound on a group Condition check', () => {
+  /** Run one group with a guarded row and return the limits its single check was given. */
+  async function limitsGiven(
+    trigger: 'enter' | 'exit',
+    options: { groupBudgetMs?: number; signal?: AbortSignal } = {},
+  ): Promise<ConditionCheckLimits> {
+    const checkConditions = vi.fn(async (rows: ColumnAutomation[], _limits: ConditionCheckLimits): Promise<ConditionCheckResult> => ({
+      ok: true,
+      answers: new Map(rows.map((row) => [row.id, { met: true, reason: null }])),
+    }));
+    const { repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation({ id: 'guarded', trigger, condition: 'Tests pass' })],
+      column: COLUMN,
+      context: context(trigger),
+      runs: repository,
+      signal: options.signal ?? new AbortController().signal,
+      groupBudgetMs: options.groupBudgetMs,
+      registry: registryOf(adapter('webhook', async () => ({ detail: 'ok' }))),
+      checkConditions,
+    });
+    expect(checkConditions).toHaveBeenCalledTimes(1);
+    return checkConditions.mock.calls[0][1];
+  }
+
+  it('gives an exit group no more than its group budget', async () => {
+    const limits = await limitsGiven('exit');
+
+    expect(limits.timeoutMs).toBeGreaterThan(0);
+    expect(limits.timeoutMs).toBeLessThanOrEqual(EXIT_GROUP_BUDGET_MS);
+    expect(limits.timeoutMs).toBeLessThanOrEqual(CONDITION_CHECK_WAIT_MS);
+  });
+
+  it('gives a group the time left of a tighter budget it was handed', async () => {
+    const limits = await limitsGiven('exit', { groupBudgetMs: 10_000 });
+
+    expect(limits.timeoutMs).toBeGreaterThan(9_000);
+    expect(limits.timeoutMs).toBeLessThanOrEqual(10_000);
+  });
+
+  // EXIT_GROUP_BUDGET_MS and CONDITION_CHECK_WAIT_MS are both 60 s today, so a
+  // budget that is looser than either is the case that tells the two caps apart.
+  it.each(['enter', 'exit'] as const)('caps a %s group at CONDITION_CHECK_WAIT_MS however loose its budget', async (trigger) => {
+    const limits = await limitsGiven(trigger, { groupBudgetMs: 120_000 });
+
+    expect(limits.timeoutMs).toBe(CONDITION_CHECK_WAIT_MS);
+  });
+
+  it('gives an enter group with no budget of its own CONDITION_CHECK_WAIT_MS', async () => {
+    const limits = await limitsGiven('enter');
+
+    expect(limits.timeoutMs).toBe(CONDITION_CHECK_WAIT_MS);
+  });
+
+  it('hands the check the group\'s own signal, so a superseded move stops the wait', async () => {
+    const groupController = new AbortController();
+
+    const limits = await limitsGiven('enter', { signal: groupController.signal });
+
+    expect(limits.signal).toBe(groupController.signal);
   });
 });
 

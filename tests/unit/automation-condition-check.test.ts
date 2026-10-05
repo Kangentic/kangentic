@@ -9,10 +9,27 @@
  * carry a closing tag or ask for a line under another label. The prompt
  * defuses its own tags inside that text, and the parser drops a label written
  * twice rather than trusting either line.
+ *
+ * The last block is the bound on a check (`checkAutomationConditions` limits).
+ * An enter or exit group makes its check inside the move's task lock, so the
+ * check stops waiting at a timeout or when the move is superseded, and a waiter
+ * that gives up leaves the slot queue instead of taking a slot nobody releases.
+ * The Automation agent is a fake whose answers the test holds and releases, and
+ * the answer-run directory is mocked, so everything up to the slot runs in
+ * microtasks and fake timers decide when a limit fires.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as ConditionCheckModule from '../../src/main/automations/condition-check/condition-check';
+import type { ConditionCheckDeps } from '../../src/main/automations/condition-check/condition-check';
 import { buildConditionPrompt, parseConditionReply, type ConditionPromptInput } from '../../src/main/automations/condition-check/condition-prompt';
 import { describeAutomationGuards } from '../../src/shared/automation-describe';
+import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import type { AppConfig } from '../../src/shared/types';
+
+vi.mock('../../src/main/agent/shared/answer-run-directory', () => ({
+  ensureAnswerHomeDirectory: async () => '/mock/answer-home',
+  withAnswerRunDirectory: async (work: (directory: string) => Promise<unknown>) => work('/mock/answer-run'),
+}));
 
 function input(overrides: Partial<ConditionPromptInput> = {}): ConditionPromptInput {
   return {
@@ -115,5 +132,177 @@ describe('describeAutomationGuards', () => {
   it('is null for a row with no guards', () => {
     expect(describeAutomationGuards({ condition: null, max_runs: null })).toBeNull();
     expect(describeAutomationGuards({ condition: '  ', max_runs: null })).toBeNull();
+  });
+});
+
+interface HeldAnswer {
+  prompt: string;
+  /** Hand the check this reply, as the CLI finishing would. */
+  answer: (reply: string) => void;
+}
+
+/**
+ * A fake Automation agent. Every call to `answerFromContext` is recorded and
+ * left pending until the test answers it, which is what lets a test hold a slot
+ * open for as long as it needs.
+ */
+function createHeldAgent(): { deps: ConditionCheckDeps; held: HeldAnswer[] } {
+  const held: HeldAnswer[] = [];
+  const adapter = {
+    name: 'fake-agent',
+    displayName: 'Fake Agent',
+    answerCapabilities: { streaming: false, search: false, model: false, effort: false },
+    detect: async () => ({ found: true, path: '/mock/fake-agent' }),
+    answerFromContext: (prompt: string) => new Promise<string>((resolve) => {
+      held.push({ prompt, answer: resolve });
+    }),
+  } as unknown as AgentAdapter;
+  const deps: ConditionCheckDeps = {
+    loadConfig: () => ({
+      automation: { agent: 'fake-agent', model: null, effort: null },
+      agent: { cliPaths: {} },
+    }) as unknown as AppConfig,
+    listAgents: async () => [{ name: 'fake-agent', adapter }],
+  };
+  return { deps, held };
+}
+
+const TIMED_OUT_REASON = 'The Automation agent did not answer in time, so the condition was not checked.';
+const STOPPED_REASON = 'The condition check was stopped because the task moved on.';
+const BOTH_MET_REPLY = 'C1: yes - fine\nC2: yes - fine';
+
+describe('checkAutomationConditions limits', () => {
+  /** Well past any limit a test sets, so a stop that fails to land answers with the wrong reason instead of hanging. */
+  const BACKSTOP_MS = 30_000;
+
+  let check: typeof ConditionCheckModule.checkAutomationConditions;
+  let agent: ReturnType<typeof createHeldAgent>;
+
+  beforeEach(async () => {
+    // The slot counter and queue are module state: a fresh module per test keeps
+    // one test's held checks from taking another's slots.
+    vi.resetModules();
+    ({ checkAutomationConditions: check } = await import('../../src/main/automations/condition-check/condition-check'));
+    agent = createHeldAgent();
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    for (const held of agent.held) held.answer('');
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+  });
+
+  /** Let every microtask the check has queued run, without moving the clock. */
+  const settle = (): Promise<unknown> => vi.advanceTimersByTimeAsync(0);
+
+  it('answers every condition when nothing limits the check (the control)', async () => {
+    const pending = check(agent.deps, input());
+    await settle();
+    expect(agent.held).toHaveLength(1);
+
+    agent.held[0].answer('C1: yes - all clean\nC2: no - nothing to revise');
+
+    const outcome = await pending;
+    if (!outcome.ok) throw new Error(`expected an answer, got: ${outcome.reason}`);
+    expect(outcome.agentName).toBe('fake-agent');
+    expect(outcome.answers.get('clean')).toEqual({ met: true, reason: 'all clean' });
+    expect(outcome.answers.get('revise')).toEqual({ met: false, reason: 'nothing to revise' });
+  });
+
+  it('gives up with the did-not-answer-in-time reason when the agent is slower than timeoutMs', async () => {
+    const pending = check(agent.deps, input(), { timeoutMs: 1_000 });
+    await settle();
+    expect(agent.held).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+  });
+
+  it('does not give up before timeoutMs', async () => {
+    const pending = check(agent.deps, input(), { timeoutMs: 1_000 });
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(999);
+    agent.held[0].answer(BOTH_MET_REPLY);
+
+    await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  it('stops at once, and never asks the agent, when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const pending = check(agent.deps, input(), { signal: controller.signal, timeoutMs: BACKSTOP_MS });
+    await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON });
+    expect(agent.held).toHaveLength(0);
+  });
+
+  it('stops with the task-moved-on reason when the signal aborts while the agent is answering', async () => {
+    const controller = new AbortController();
+    const pending = check(agent.deps, input(), { signal: controller.signal, timeoutMs: BACKSTOP_MS });
+    await settle();
+    expect(agent.held).toHaveLength(1);
+
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON });
+  });
+
+  describe('the slot queue (two checks run at once)', () => {
+    it('drops a check that times out while queued, so it never holds a slot nobody releases', async () => {
+      const first = check(agent.deps, input());
+      const second = check(agent.deps, input());
+      await settle();
+      // Both slots are taken, and both answers are held open.
+      expect(agent.held).toHaveLength(2);
+
+      const queued = check(agent.deps, input(), { timeoutMs: 1_000 });
+      await settle();
+      expect(agent.held).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(queued).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+
+      // One slow check finishes. The slot it frees must go to a fourth check,
+      // not to the waiter that already gave up (which would hold it forever).
+      agent.held[0].answer(BOTH_MET_REPLY);
+      await expect(first).resolves.toMatchObject({ ok: true });
+      const fourth = check(agent.deps, input());
+      await settle();
+      expect(agent.held).toHaveLength(3);
+
+      agent.held[2].answer(BOTH_MET_REPLY);
+      await expect(fourth).resolves.toMatchObject({ ok: true });
+      agent.held[1].answer(BOTH_MET_REPLY);
+      await expect(second).resolves.toMatchObject({ ok: true });
+    });
+
+    it('keeps the slot of a check the caller stopped waiting for until its agent run ends', async () => {
+      const abandoned = check(agent.deps, input(), { timeoutMs: 1_000 });
+      const holder = check(agent.deps, input());
+      await settle();
+      expect(agent.held).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(abandoned).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+
+      // The caller is gone, but its CLI run is not: a third check still waits.
+      const waiting = check(agent.deps, input());
+      await settle();
+      expect(agent.held).toHaveLength(2);
+
+      // The abandoned run finishes in the background and frees its slot then.
+      agent.held[0].answer(BOTH_MET_REPLY);
+      await settle();
+      expect(agent.held).toHaveLength(3);
+
+      agent.held[2].answer(BOTH_MET_REPLY);
+      await expect(waiting).resolves.toMatchObject({ ok: true });
+      agent.held[1].answer(BOTH_MET_REPLY);
+      await expect(holder).resolves.toMatchObject({ ok: true });
+    });
   });
 });

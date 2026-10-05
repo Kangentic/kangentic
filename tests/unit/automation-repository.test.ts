@@ -85,6 +85,93 @@ describe('AutomationRepository', () => {
     expect(minted?.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  // A writer that carries no ids (the kangentic.json apply on every project open,
+  // an agent's kangentic_set_automations) must not reset a row's identity: the
+  // Frequency count and the once-per-visit check read runs by automation id.
+  describe('ids of rows written without one', () => {
+    it('reuses the id of the row in the same column with the same name, type and trigger', () => {
+      const { automations, columnId } = setup();
+      const [first] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      const [second] = automations.replaceForColumn(columnId, [
+        webhook('Ping', { config: { url: 'https://changed.example.com' } }),
+      ]);
+
+      expect(second.id).toBe(first.id);
+      expect(second.config.url).toBe('https://changed.example.com');
+      expect(second.created_at).toBe(first.created_at);
+    });
+
+    it('keeps each row its own id when the rows come back in another order', () => {
+      const { automations, columnId } = setup();
+      const written = automations.replaceForColumn(columnId, [webhook('Alpha'), webhook('Beta'), webhook('Gamma')]);
+      const idByName = new Map(written.map((row) => [row.name, row.id]));
+
+      const rewritten = automations.replaceForColumn(columnId, [webhook('Gamma'), webhook('Alpha'), webhook('Beta')]);
+
+      expect(rewritten.map((row) => row.name)).toEqual(['Gamma', 'Alpha', 'Beta']);
+      for (const row of rewritten) expect(row.id).toBe(idByName.get(row.name));
+      expect(new Set(rewritten.map((row) => row.id)).size).toBe(rewritten.length);
+    });
+
+    it('does not reuse the id of a row in another column', () => {
+      const { database, lanes, automations, columnId } = setup();
+      const otherColumn = lanes.create({ name: 'Elsewhere', position: 98 });
+      const [inOtherColumn] = automations.replaceForColumn(otherColumn.id, [webhook('Ping')]);
+
+      const [inThisColumn] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      expect(inThisColumn.id).not.toBe(inOtherColumn.id);
+      expect((database.prepare('SELECT COUNT(*) as c FROM column_automations').get() as { c: number }).c).toBe(2);
+    });
+
+    // One write per case, so the name index (unique per column, case-blind) never
+    // sees the old and the new row together.
+    const changedIdentity: Array<[string, Partial<AutomationWriteInput>]> = [
+      ['name', { name: 'Pong' }],
+      ['type', { type: 'notify', config: {} }],
+      ['trigger', { trigger: 'exit' }],
+    ];
+    it.each(changedIdentity)('gives a new id when the %s differs', (_field, changes) => {
+      const { automations, columnId } = setup();
+      const [first] = automations.replaceForColumn(columnId, [webhook('Ping')]);
+
+      const [second] = automations.replaceForColumn(columnId, [webhook('Ping', changes)]);
+
+      expect(second.id).not.toBe(first.id);
+      expect(second.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(automations.getById(first.id)).toBeNull();
+    });
+
+    // The row without an id comes FIRST: the explicit-id set is built up front,
+    // which is what stops it taking 'a' before 'Beta' has been written. With the
+    // explicit row first, the ids already handed out would hide the same mistake.
+    it('never hands an id another row in the same call names to a row written without one', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [webhook('Alpha', { id: 'a' })]);
+
+      const rewrite = () => automations.replaceForColumn(columnId, [webhook('Alpha'), webhook('Beta', { id: 'a' })]);
+      expect(rewrite).not.toThrow();
+
+      const saved = automations.listForColumn(columnId);
+      expect(saved).toHaveLength(2);
+      expect(saved.find((row) => row.name === 'Beta')?.id).toBe('a');
+      expect(saved.find((row) => row.name === 'Alpha')?.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(new Set(saved.map((row) => row.id)).size).toBe(saved.length);
+    });
+
+    it('never hands an id to two rows, whichever order they are written in', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [webhook('Alpha', { id: 'a' })]);
+
+      const saved = automations.replaceForColumn(columnId, [webhook('Beta', { id: 'a' }), webhook('Alpha')]);
+
+      expect(saved.find((row) => row.name === 'Beta')?.id).toBe('a');
+      expect(saved).toHaveLength(2);
+      expect(new Set(saved.map((row) => row.id)).size).toBe(2);
+    });
+  });
+
   it('keeps the created_at of a row that survives the replace', () => {
     const { automations, columnId } = setup();
     const first = automations.replaceForColumn(columnId, [webhook('Ping', { id: 'ping' })]);
