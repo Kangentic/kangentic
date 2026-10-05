@@ -61,8 +61,15 @@ async function openColumn(columnName: string): Promise<void> {
 
 async function cancelManager(): Promise<void> {
   await dialog().getByRole('button', { name: 'Cancel' }).click();
+  // Cancel either closes the manager or, with a dirty draft, raises the
+  // Discard confirm first. Wait for whichever happens: `isVisible` takes no
+  // timeout (Playwright ignores it), so it could look before the confirm drew.
   const discard = page.locator('button', { hasText: 'Discard' });
-  if (await discard.isVisible({ timeout: 500 }).catch(() => false)) await discard.click();
+  const outcome = await Promise.race([
+    discard.waitFor({ state: 'visible', timeout: 3000 }).then(() => 'confirm' as const, () => 'none' as const),
+    dialog().waitFor({ state: 'detached', timeout: 3000 }).then(() => 'closed' as const, () => 'none' as const),
+  ]);
+  if (outcome === 'confirm') await discard.click();
   await dialog().waitFor({ state: 'detached', timeout: 3000 });
 }
 
@@ -187,6 +194,26 @@ async function pickType(type: string): Promise<void> {
   await expect(option).toBeVisible();
   await option.click();
   await expect(editDialog().locator('[data-testid="edit-automation-type"]')).toHaveAttribute('data-value', type);
+}
+
+/** One entry of the Type field's open listbox. */
+function typeOption(type: string): Locator {
+  return page.locator(`[data-testid="edit-automation-type-option"][data-type="${type}"]`);
+}
+
+/** Open the Type field's listbox and return its entries. */
+async function openTypeOptions(): Promise<Locator> {
+  await editDialog().locator('[data-testid="edit-automation-type"]').click();
+  const options = page.locator('[data-testid="edit-automation-type-option"]');
+  await expect(options.first()).toBeVisible();
+  return options;
+}
+
+/** Escape closes the open listbox and leaves the editor under it open. */
+async function closeTypeOptions(options: Locator): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(options).toHaveCount(0);
+  await expect(editDialog()).toBeVisible();
 }
 
 function row(name: string): Locator {
@@ -380,6 +407,68 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
     await expect(enter).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toBeDisabled();
+  });
+
+  // 2b - The Type picker lists what the column can run ───────────────────────
+
+  test('the Type picker leaves Move to column out of To Do, where no agent ever ends a turn', async () => {
+    await openColumn('To Do');
+    await addThroughPicker('exit', 'notify');
+
+    const options = await openTypeOptions();
+    // The listbox is really open, and still offers what To Do can run on exit.
+    await expect(typeOption('run_script')).toBeVisible();
+    await expect(typeOption('notify')).toBeVisible();
+    await expect(typeOption('move_to_column')).toHaveCount(0);
+
+    await closeTypeOptions(options);
+  });
+
+  test('the Type picker leaves Move to column out of a column that starts no agent', async () => {
+    await openColumn('Testing');
+    await dialog().locator('[role="switch"][aria-label="Start an agent here"]').click();
+    await addThroughPicker('exit', 'run_script');
+
+    const options = await openTypeOptions();
+    await expect(typeOption('run_script')).toBeVisible();
+    await expect(typeOption('notify')).toBeVisible();
+    await expect(typeOption('move_to_column')).toHaveCount(0);
+
+    await closeTypeOptions(options);
+  });
+
+  // The other half, a column that CAN end a turn offering Move to column and
+  // landing on turn end when it is chosen, is the test above this group:
+  // "switching a row to Move to column moves it to turn end". `pickType` there
+  // waits for the option to be visible before it clicks it.
+
+  test('a row on a turn end the column can no longer run keeps its type listed, and a type change lands it on a trigger that runs', async () => {
+    await seedColumn('Testing', [
+      { name: 'Tell me', type: 'notify', trigger: 'turn_end', config: { title: 'Turn ended' } },
+    ]);
+    await openColumn('Testing');
+    // The column stops starting an agent after the row was written, so its turn
+    // end is now a trigger nothing runs on.
+    await dialog().locator('[role="switch"][aria-label="Start an agent here"]').click();
+    await row('Tell me').locator('[data-testid="column-automation-edit"]').click();
+    await expect(editDialog()).toBeVisible();
+    const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
+    const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
+    await expect(turnEnd).toBeDisabled();
+
+    const options = await openTypeOptions();
+    // The row's own type stays listed so it still reads what it is.
+    await expect(typeOption('notify')).toBeVisible();
+    await expect(typeOption('move_to_column')).toHaveCount(0);
+    await typeOption('run_script').click();
+    await expect(options).toHaveCount(0);
+
+    // Run script is allowed at a turn end by its type, but this column cannot
+    // run one, so the row moves to the first trigger that does.
+    await expect(editDialog().locator('[data-testid="edit-automation-type"]')).toHaveAttribute('data-value', 'run_script');
+    await expect(enter).toHaveAttribute('aria-checked', 'true');
+    await expect(turnEnd).toHaveAttribute('aria-checked', 'false');
   });
 
   // 3 - The pane's groups and the guard marks ────────────────────────────────

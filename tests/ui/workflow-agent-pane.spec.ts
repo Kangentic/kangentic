@@ -239,6 +239,41 @@ test('Workflows folds the project sidebar, and leaving restores it at the width 
   }
 });
 
+test('a sidebar opened inside Workflows stays open for that visit, and the next visit folds it again', async () => {
+  const { browser, page } = await launch();
+  try {
+    const sidebar = byTestId(page, 'sidebar-area');
+    const savedVisible = () => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).sidebarVisible);
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    // The fold is for the view only: the saved choice is still "open".
+    expect(await savedVisible()).not.toBe(false);
+
+    // Open it from the strip. It stays open through what else the view does,
+    // here the agent pane folding to its strip and back (a re-layout of the view).
+    await page.locator('[data-testid="sidebar-expand-button"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+    await byTestId(page, 'workflow-agent-pane-collapse').click();
+    await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-collapsed', 'true');
+    await byTestId(page, 'workflow-agent-pane-expand').click();
+    await expect(byTestId(page, 'workflow-agent-pane')).toHaveAttribute('data-collapsed', 'false');
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+    // Lifting the fold wrote nothing: it was never the saved choice.
+    expect(await savedVisible()).not.toBe(false);
+
+    // Back on the board it is the user's own choice, open.
+    await page.locator('[data-testid="view-toggle-board"]').click();
+    await expect(sidebar).toHaveAttribute('data-open', 'true');
+
+    // A new visit folds it again, though it was open the last time.
+    await page.locator('[data-testid="view-toggle-workflows"]').click();
+    await expect(byTestId(page, 'workflows-view')).toBeVisible();
+    await expect(sidebar).toHaveAttribute('data-open', 'false');
+    expect(await savedVisible()).not.toBe(false);
+  } finally {
+    await browser.close();
+  }
+});
+
 /**
  * Drags the pane's edge by `distance` pixels inside the page, one mousemove per
  * animation frame over 20 frames, which is how Chromium delivers a real drag at

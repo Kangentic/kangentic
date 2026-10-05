@@ -119,8 +119,15 @@ async function saveManager(detachTimeout = 10000): Promise<void> {
 
 async function cancelManager(): Promise<void> {
   await dialog().getByRole('button', { name: 'Cancel' }).click();
+  // Cancel either closes the manager or, with a dirty draft, raises the
+  // Discard confirm first. Wait for whichever happens: `isVisible` takes no
+  // timeout (Playwright ignores it), so it could look before the confirm drew.
   const discard = page.locator('button', { hasText: 'Discard' });
-  if (await discard.isVisible({ timeout: 500 }).catch(() => false)) await discard.click();
+  const outcome = await Promise.race([
+    discard.waitFor({ state: 'visible', timeout: 3000 }).then(() => 'confirm' as const, () => 'none' as const),
+    dialog().waitFor({ state: 'detached', timeout: 3000 }).then(() => 'closed' as const, () => 'none' as const),
+  ]);
+  if (outcome === 'confirm') await discard.click();
   await dialog().waitFor({ state: 'detached', timeout: 3000 });
 }
 

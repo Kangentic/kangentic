@@ -19,6 +19,8 @@ test.describe.configure({ mode: 'parallel' });
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 const PROJECT_ID = 'workflows-board-proj';
+/** The board a `homeElsewhere` workflow lives on: its tasks are on `PROJECT_ID`'s board, its home is this one. */
+const HOME_PROJECT_ID = 'workflows-board-home';
 
 /** Board 6's running workflow: two done, one in Merge, one in Executing, five in To Do. Lanes by index. */
 const TASKS: Array<[number, string, number]> = [
@@ -48,15 +50,27 @@ interface Options {
   newerCompleted?: number;
   /** #414 has a running session, so its window opens on the session view and its header pills. */
   session414?: boolean;
+  /**
+   * The workflow's home is ANOTHER board (`HOME_PROJECT_ID`), where a decoy workflow
+   * is listed ahead of it, so a view that opens there and takes the first workflow
+   * lands on the wrong one. The workflow's tasks stay on this board.
+   */
+  homeElsewhere?: boolean;
   viewport?: { width: number; height: number };
 }
 
 function seedScript(options: Options): string {
+  const homeProjectId = options.homeElsewhere ? HOME_PROJECT_ID : PROJECT_ID;
   const workflow = {
     workflow: {
       id: 'wf-usage', title: 'Usage budgets', state: options.state ?? 'running', draft: null, color_slot: 5,
       source_task_id: options.supersededSource ? 't409' : null,
     },
+    ...(options.homeElsewhere ? { projectId: HOME_PROJECT_ID } : {}),
+  };
+  const decoy = {
+    workflow: { id: 'wf-decoy', title: 'Decoy plan', state: 'draft', draft: { tasks: [], links: [] }, color_slot: 2 },
+    projectId: HOME_PROJECT_ID,
   };
   const links = LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }));
   const finished = options.state === 'done';
@@ -66,28 +80,35 @@ function seedScript(options: Options): string {
     finished ? 6 : id === 414 && options.lane414 !== undefined ? options.lane414 : lane,
   ]);
   return `
-    window.__mockWorkflows = ${JSON.stringify([workflow])};
+    window.__mockWorkflows = ${JSON.stringify(options.homeElsewhere ? [decoy, workflow] : [workflow])};
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
       var gates = ${JSON.stringify(options.gateLanes ?? [])};
       var supersededSource = ${options.supersededSource ? 'true' : 'false'};
       var newerCompleted = ${options.newerCompleted ?? 0};
+      var homeElsewhere = ${options.homeElsewhere ? 'true' : 'false'};
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
+      if (homeElsewhere) {
+        state.projects.push({ id: '${HOME_PROJECT_ID}', name: 'kangentic-planning', path: '/mock/kangentic-planning', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts });
+      }
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         var lane = Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts });
         if (gates.indexOf(index) !== -1) lane.auto_spawn = false;
         state.swimlanes.push(lane);
       });
       function row(id, title, lane, workflowId) {
-        return {
+        var task = {
           id: 't' + id, display_id: id, title: title, description: 'Planned by the workflow agent.',
           swimlane_id: 'lane-' + lane, position: id, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
-          attachment_count: 0, archived_at: lane === 6 ? ts : null, workflow_id: workflowId, workflow_project_id: workflowId ? '${PROJECT_ID}' : null,
+          attachment_count: 0, archived_at: lane === 6 ? ts : null, workflow_id: workflowId, workflow_project_id: workflowId ? '${homeProjectId}' : null,
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
           created_at: ts, updated_at: ts,
         };
+        // Tagged, the row belongs to this board alone: the home board lists none of the workflow's tasks.
+        if (workflowId && homeElsewhere) task.projectId = '${PROJECT_ID}';
+        return task;
       }
       ${JSON.stringify(tasks)}.forEach(function (entry) {
         var task = row(entry[0], entry[1], entry[2], 'wf-usage');
@@ -138,6 +159,46 @@ const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${t
 async function openMenu(page: Page, id: string): Promise<void> {
   await boardCard(page, id).click({ button: 'right' });
   await byTestId(page, 'task-context-menu').waitFor({ state: 'visible' });
+}
+
+/** The mock's hold on `workflows.get`: see `__mockHoldNextWorkflowGet` in mock-electron-api.js. */
+interface HeldWorkflowGetWindow {
+  __mockHoldNextWorkflowGet?: boolean;
+  __mockReleaseWorkflowGet?: () => void;
+}
+
+/** Make the next `workflows.get` wait for `releaseHeldWorkflowGet`, which is the answer a "Show workflow links" load is waiting on. */
+async function holdNextWorkflowGet(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const win = window as unknown as HeldWorkflowGetWindow;
+    delete win.__mockReleaseWorkflowGet;
+    win.__mockHoldNextWorkflowGet = true;
+  });
+}
+
+/** The held call is in flight: the mock only defines the release while it holds an answer. */
+async function expectWorkflowGetHeld(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => typeof (window as unknown as HeldWorkflowGetWindow).__mockReleaseWorkflowGet === 'function'))
+    .toBe(true);
+}
+
+/**
+ * Whether the links overlay shows on any of the next three frames, after the
+ * held call is answered when `release` is set. The answer is delivered in
+ * microtasks and painted a frame or two later, so a count taken right after the
+ * release would pass before a late answer had a chance to draw anything. Release
+ * and frames are one evaluate, so the frames are all after the answer.
+ */
+async function overlayShowsWithinThreeFrames(page: Page, options: { release: boolean }): Promise<boolean> {
+  return page.evaluate(async ({ release }) => {
+    if (release) (window as unknown as HeldWorkflowGetWindow).__mockReleaseWorkflowGet?.();
+    let shown = false;
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (document.querySelector('[data-testid="workflow-links-overlay"]')) shown = true;
+    }
+    return shown;
+  }, options);
 }
 
 async function dragToColumn(page: Page, id: string, columnName: string): Promise<void> {
@@ -351,6 +412,84 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  // The overlay's Escape and press-on-empty-space listeners exist only while an
+  // overlay is up, so a clear can reach a load still in flight when a SECOND
+  // card's links are being fetched over the first's (or on a change push). The
+  // answer that lands after the clear must not bring the overlay back.
+  test.describe('a clear while a workflow is still loading', () => {
+    /** #413's overlay is up, and #414's "Show workflow links" is waiting on its workflow. */
+    async function showLinksOnWhileLoadingAnother(page: Page): Promise<void> {
+      await openMenu(page, 't413');
+      await byTestId(page, 'context-show-workflow-links').click();
+      await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-focus-task-id', 't413');
+
+      await holdNextWorkflowGet(page);
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-show-workflow-links').click();
+      await expectWorkflowGetHeld(page);
+      // The new card's links have not landed, so #413's overlay is still the one up.
+      await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-focus-task-id', 't413');
+    }
+
+    test('Escape clears the overlay, and the answer that lands afterwards does not bring it back', async () => {
+      const { browser, page } = await launch();
+      try {
+        await showLinksOnWhileLoadingAnother(page);
+
+        await page.keyboard.press('Escape');
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(false);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a press on empty board space clears the overlay, and the answer that lands afterwards does not bring it back', async () => {
+      const { browser, page } = await launch();
+      try {
+        await showLinksOnWhileLoadingAnother(page);
+
+        // The middle of the Testing column's list, which holds no card.
+        const testing = page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Testing"]');
+        await testing.scrollIntoViewIfNeeded();
+        const box = await testing.boundingBox();
+        if (!box) throw new Error('No Testing column');
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(false);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // Not here: leaving the board while the FIRST load is in flight. The overlay's
+    // unmount clears the store (the same `clearLinks`), but React.StrictMode's
+    // dev remount runs that cleanup again on every mount, so the board that
+    // returns is clean with or without the generation guard and a UI test of it
+    // cannot fail. That case lives in tests/unit/workflow-store-stale-answers.test.ts.
+
+    test('an answer nothing cleared draws the overlay when it lands', async () => {
+      const { browser, page } = await launch();
+      try {
+        await holdNextWorkflowGet(page);
+        await openMenu(page, 't413');
+        await byTestId(page, 'context-show-workflow-links').click();
+        await expectWorkflowGetHeld(page);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+
+        // The control for the three above: the same hold, released with nothing in between.
+        expect(await overlayShowsWithinThreeFrames(page, { release: true })).toBe(true);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-focus-task-id', 't413');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
   test('a related card pushed out of the Done column\'s list draws no line', async () => {
     // Fifteen tasks completed after #411 and #412 fill Done's list, so neither is rendered.
     const { browser, page } = await launch({ newerCompleted: 15 });
@@ -411,6 +550,30 @@ test.describe('Workflow tasks on the board', () => {
       await byTestId(page, 'context-open-workflow').click();
       await expect(byTestId(page, 'workflows-view')).toBeVisible();
       await expect(byTestId(page, 'workflow-picker')).toContainText('Usage budgets');
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Refuse to spawn past the hard cap');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Open workflow on a card whose workflow lives on another board switches to that board and lands on the task', async () => {
+    const { browser, page } = await launch({ homeElsewhere: true });
+    try {
+      const currentProjectId = () => page.evaluate(() => (
+        window as unknown as { __zustandStores: { project: { getState: () => { currentProject: { id: string } | null } } } }
+      ).__zustandStores.project.getState().currentProject?.id ?? null);
+      expect(await currentProjectId()).toBe(PROJECT_ID);
+
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-open-workflow').click();
+
+      // The other board is open, and so is the Workflows view on it.
+      await expect.poll(currentProjectId).toBe(HOME_PROJECT_ID);
+      await expect(byTestId(page, 'workflows-view')).toBeVisible();
+      // That board lists its decoy first. The open waits for the board's list,
+      // then picks the card's own workflow and task rather than the first.
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Usage budgets');
+      await expect(byTestId(page, 'workflow-picker')).not.toContainText('Decoy plan');
       await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Refuse to spawn past the hard cap');
     } finally {
       await browser.close();

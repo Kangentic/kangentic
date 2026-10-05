@@ -4703,6 +4703,9 @@
     // A started workflow's tasks are ordinary task fixtures carrying workflow_id.
     // The engine does not run here: Start creates the tasks in To Do and stops.
     // window.__mockFireWorkflowChanged({ projectId, workflowId }) pushes a change.
+    // window.__mockHoldNextWorkflowGet = true holds the next get() until
+    // window.__mockReleaseWorkflowGet() runs; window.__mockWorkflowSetPositionsRejectOnce
+    // = 'message' makes the next setPositions() throw before it writes anything.
     workflows: (function () {
       var entries = [];
       var links = [];
@@ -5098,7 +5101,23 @@
           return Object.keys(bySource).map(function (sourceId) { return bySource[sourceId]; });
         },
         get: async function (projectId, workflowId) {
-          return detail(requireEntry(projectId, workflowId));
+          // Snapshot at call time, so a held answer is the workflow as it was
+          // when it was asked for (the same property __mockHoldNextTaskList keeps).
+          var answer = detail(requireEntry(projectId, workflowId));
+          // Test hook: hold THIS call's answer until __mockReleaseWorkflowGet().
+          // Set window.__mockHoldNextWorkflowGet = true before the call; it is
+          // consumed by the next get, and __mockReleaseWorkflowGet exists only
+          // while an answer is held, so a spec can poll for "the call is in flight".
+          if (window.__mockHoldNextWorkflowGet) {
+            window.__mockHoldNextWorkflowGet = false;
+            return new Promise(function (resolve) {
+              window.__mockReleaseWorkflowGet = function () {
+                delete window.__mockReleaseWorkflowGet;
+                resolve(answer);
+              };
+            });
+          }
+          return answer;
         },
         create: async function (projectId, sourceTaskId) {
           hydrate();
@@ -5312,6 +5331,14 @@
           emit(homeOf(entry), workflowId, true);
         },
         setPositions: async function (projectId, workflowId, positions) {
+          // Test hook: refuse the next save the way main does, before anything is
+          // written and with no change push. Set window.__mockWorkflowSetPositionsRejectOnce
+          // = 'message'; it is consumed by the next call.
+          if (typeof window !== 'undefined' && window.__mockWorkflowSetPositionsRejectOnce) {
+            var refusal = String(window.__mockWorkflowSetPositionsRejectOnce);
+            window.__mockWorkflowSetPositionsRejectOnce = null;
+            throw new Error(refusal);
+          }
           var entry = requireEntry(projectId, workflowId);
           var byKey = {};
           (positions || []).forEach(function (position) { byKey[position.key] = position; });

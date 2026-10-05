@@ -56,6 +56,46 @@ test('the field shows the default, saves an edit on blur, and resets to the defa
   }
 });
 
+test('clearing the field shows the default again, which is what a blank prompt sends', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `WorkflowPromptClear ${Date.now()}`);
+    await openWorkflowsTab(page);
+    const field = page.locator(FIELD);
+    const heading = page.locator('[data-testid="settings-card-workflow-agent-prompt"] h3');
+
+    // Holding the default, nothing was stored: the blank below saves as unset
+    // again, so the stored text never changes and nothing remounts the field.
+    await expect(field).toHaveValue(/^<workflow_request>/);
+    expect(await storedPrompt(page)).toBeNull();
+    await field.click();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Delete');
+    await expect(field).toHaveValue('');
+
+    await heading.click();
+    await expect(field).toHaveValue(/^<workflow_request>/);
+    await expect(field).toHaveValue(/\{\{brief_xml\}\}/);
+    expect(await storedPrompt(page)).toBeNull();
+
+    // An edited prompt that is then cleared lands in the same place: the default.
+    await field.click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('\nKeep it to three tasks.');
+    await heading.click();
+    await expect.poll(() => storedPrompt(page)).toContain('Keep it to three tasks.');
+    await field.click();
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Delete');
+    await heading.click();
+    await expect.poll(() => storedPrompt(page)).toBeNull();
+    await expect(field).toHaveValue(/^<workflow_request>/);
+    await expect(field).not.toHaveValue(/Keep it to three tasks\./);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Template variable offers the workflow agent\'s variables only', async () => {
   const { browser, page } = await launchPage();
   try {

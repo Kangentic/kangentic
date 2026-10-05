@@ -275,6 +275,50 @@ test.describe('Workflows canvas gestures', () => {
     }
   });
 
+  test('a layout save main refuses puts the moved card back where the workflow says it is', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      const transformOf = () => node(page, 'task-3').evaluate((element) => (element as HTMLElement).style.transform);
+      const original = await transformOf();
+      expect(original).not.toBe('');
+
+      // Every transform the card is given from here on, so "it moved" does not
+      // depend on a poll landing inside the 400ms the keys rest before the save.
+      await node(page, 'task-3').evaluate((element) => {
+        const win = window as unknown as { __cardTransforms: string[] };
+        win.__cardTransforms = [];
+        new MutationObserver(() => { win.__cardTransforms.push((element as HTMLElement).style.transform); })
+          .observe(element, { attributes: true, attributeFilter: ['style'] });
+      });
+      await page.evaluate(() => {
+        (window as unknown as { __mockWorkflowSetPositionsRejectOnce: string }).__mockWorkflowSetPositionsRejectOnce =
+          'That workflow is no longer in this project.';
+      });
+
+      await card(page, 'task-3').click();
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      for (let press = 0; press < 3; press += 1) await page.keyboard.press('ArrowRight');
+
+      // The keys rest, the save goes out, and main refuses it: no change push follows.
+      const refusal = page.locator('[data-testid="toast"]').filter({ hasText: 'Could not save the layout' });
+      await expect(refusal).toBeVisible();
+      await expect(refusal).toContainText('That workflow is no longer in this project.');
+
+      // The card was drawn where it was dropped, and is read back to where the workflow has it.
+      const seen = await page.evaluate(() => (window as unknown as { __cardTransforms: string[] }).__cardTransforms);
+      expect(seen.some((transform) => transform !== original)).toBe(true);
+      await expect.poll(transformOf).toBe(original);
+      // Nothing is placed by hand, so Auto layout has nothing to undo.
+      await expect(byTestId(page, 'workflow-auto-layout')).toBeDisabled();
+      await expect.poll(() => page.evaluate(async (projectId) => {
+        const detail = await window.electronAPI.workflows.get(projectId, 'wf-draft');
+        return detail.tasks.every((task) => task.canvasX === null && task.canvasY === null);
+      }, PROJECT_ID)).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a double-click on a planned card selects it and opens the task form', async () => {
     const { browser, page } = await launch('draft');
     try {
