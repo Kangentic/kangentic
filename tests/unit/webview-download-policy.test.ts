@@ -200,6 +200,25 @@ describe('installWebviewDownloadPolicy - host resolution is per download', () =>
     expect(setProgressBar).toHaveBeenLastCalledWith(-1);
   });
 
+  // A server that sends no Content-Length reports 0 total bytes. Electron removes the bar for a
+  // value below 0 and shows it indeterminate for a value above 1, so the unknown size must send
+  // something above 1. It used to send -1, which left a download with no bar at all.
+  it('shows an indeterminate bar, not none, while the size is unknown', () => {
+    const host = fakeWindow('window');
+    windowsByContentsId.set(1, host);
+    const guest = { id: 1, isDestroyed: () => false, hostWebContents: { id: 1 } };
+
+    const item = fakeDownloadItem('stream.bin');
+    item.getTotalBytes = () => 0;
+    session.listeners[0]({}, item, guest);
+    item.handlers.updated?.({}, 'progressing');
+    const sent = setProgressBar.mock.calls.at(-1)?.[0] as number;
+    expect(sent).toBeGreaterThan(1);
+
+    item.handlers.done?.({}, 'completed');
+    expect(setProgressBar).toHaveBeenLastCalledWith(-1);
+  });
+
   it('still saves the file when no host window can be resolved', () => {
     // A pane whose window has already gone: the download must not throw, it just
     // has nowhere to report to.

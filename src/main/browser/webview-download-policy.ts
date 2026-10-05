@@ -28,6 +28,9 @@ import { IPC } from '../../shared/ipc-channels';
 
 const sessionsWithDownloadPolicy = new WeakSet<Session>();
 
+/** Any `setProgressBar` value above 1 shows an indeterminate bar (below 0 removes it). */
+const INDETERMINATE_PROGRESS = 2;
+
 /**
  * First free path for `fileName` under `directory`, suffixing ` (1)`, ` (2)`...
  * BEFORE the extension, so `report.pdf` collides to `report (1).pdf` rather than
@@ -101,9 +104,10 @@ export function installWebviewDownloadPolicy(guestSession: Session): void {
     item.on('updated', (_updatedEvent, state) => {
       if (state !== 'progressing' || !hostWindow || hostWindow.isDestroyed()) return;
       const total = item.getTotalBytes();
-      // A server that sends no Content-Length reports 0 total; -1 is Electron's
-      // "indeterminate" value and is the honest answer there.
-      hostWindow.setProgressBar(total > 0 ? item.getReceivedBytes() / total : -1);
+      // A server that sends no Content-Length reports 0 total, so the size is
+      // unknown. Electron reads any value above 1 as "indeterminate" and any value
+      // below 0 as "remove the bar", so 2 keeps the bar up as indeterminate there.
+      hostWindow.setProgressBar(total > 0 ? item.getReceivedBytes() / total : INDETERMINATE_PROGRESS);
     });
 
     item.once('done', (_doneEvent, state) => {
