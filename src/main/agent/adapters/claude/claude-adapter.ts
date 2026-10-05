@@ -220,6 +220,22 @@ function isResultLine(line: string): boolean {
 }
 
 /**
+ * The transcript a run-level read targets: the exact path Claude reported in
+ * status.json, else the canonical `~/.claude/projects/<slug>/<id>.jsonl` path
+ * derived from the session id and cwd, else null.
+ */
+function resolveRunTranscriptPath(input: {
+  transcriptPath?: string | null;
+  agentSessionId?: string | null;
+  cwd?: string | null;
+}): string | null {
+  return input.transcriptPath
+    ?? (input.agentSessionId && input.cwd
+      ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
+      : null);
+}
+
+/**
  * Turn a stream of stdout chunks into a stream of answer events.
  *
  * Chunk boundaries fall anywhere, including mid-line, so lines are reassembled
@@ -487,10 +503,7 @@ export class ClaudeAdapter implements AgentAdapter {
     agentSessionId?: string | null;
     cwd?: string | null;
   }): Promise<TranscriptUsage | null> {
-    const filePath = input.transcriptPath
-      ?? (input.agentSessionId && input.cwd
-        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
-        : null);
+    const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptUsage(filePath);
   }
@@ -501,10 +514,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
   }): Promise<TranscriptToolCounts | null> {
-    const filePath = input.transcriptPath
-      ?? (input.agentSessionId && input.cwd
-        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
-        : null);
+    const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolCounts(filePath, input.sinceMs);
   }
@@ -515,10 +525,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
   }): Promise<Record<string, number> | null> {
-    const filePath = input.transcriptPath
-      ?? (input.agentSessionId && input.cwd
-        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
-        : null);
+    const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs);
   }

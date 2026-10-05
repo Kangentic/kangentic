@@ -422,10 +422,8 @@ export class SessionRepository {
       if (typeof stat.resultTokens === 'number') resultTokensByTool.set(stat.toolName, stat.resultTokens);
     }
     if (resultTokensByTool.size === 0) return;
-    const row = this.db.prepare('SELECT tool_breakdown FROM sessions WHERE id = ?')
-      .get(id) as { tool_breakdown: string | null } | undefined;
-    const liveRows = parseToolBreakdown(row?.tool_breakdown ?? null);
-    if (liveRows.length === 0) return;
+    const liveRows = this.readToolBreakdownForUpdate(id);
+    if (!liveRows) return;
     let changed = false;
     for (const liveRow of liveRows) {
       const resultTokens = resultTokensByTool.get(liveRow.toolName);
@@ -468,17 +466,8 @@ export class SessionRepository {
    * Returns true when the row changed.
    */
   patchToolBreakdownDurations(id: string, replayed: PerToolStat[]): boolean {
-    const row = this.db.prepare('SELECT tool_breakdown FROM sessions WHERE id = ?')
-      .get(id) as { tool_breakdown: string | null } | undefined;
-    if (!row?.tool_breakdown) return false;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.tool_breakdown);
-    } catch {
-      return false;
-    }
-    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isPerToolStat)) return false;
-    const stored = parsed as PerToolStat[];
+    const stored = this.readToolBreakdownForUpdate(id);
+    if (!stored) return false;
     const replayedByTool = new Map(replayed.map((stat) => [stat.toolName, stat]));
     let changed = false;
     for (const storedRow of stored) {
@@ -494,6 +483,26 @@ export class SessionRepository {
     if (!changed) return false;
     this.db.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(JSON.stringify(stored), id);
     return true;
+  }
+
+  /**
+   * A record's stored `tool_breakdown`, read for a read-modify-write. Null when
+   * the column is empty or unparseable, or holds an entry the shape guard
+   * rejects: `parseToolBreakdown` drops such an entry, so a writer that wrote
+   * its result back would delete it. Such a row is left whole instead.
+   */
+  private readToolBreakdownForUpdate(id: string): PerToolStat[] | null {
+    const row = this.db.prepare('SELECT tool_breakdown FROM sessions WHERE id = ?')
+      .get(id) as { tool_breakdown: string | null } | undefined;
+    if (!row?.tool_breakdown) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.tool_breakdown);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isPerToolStat)) return null;
+    return parsed as PerToolStat[];
   }
 
   /**

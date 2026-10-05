@@ -591,6 +591,27 @@ describe('SessionRepository.updateTranscriptToolCounts', () => {
     expect(capturedCalls[1].params[1]).toBe('session-abc');
   });
 
+  it('issues no write when the stored breakdown holds an entry the shape guard rejects', () => {
+    // The merge branch used to read through the filtering parser and save the
+    // filtered array back, which deleted the bad entry. It must leave the row whole.
+    // The byte-for-byte check against a real database is in tool-breakdown-repair.test.ts.
+    const live = [
+      { toolName: 'Read', callCount: 40, totalDurationMs: 12_000, interruptedCount: 1 },
+      { toolName: 'X', callCount: 'bad', totalDurationMs: 0, interruptedCount: 0 },
+    ];
+    const { db, capturedCalls } = createHealthyLiveCountMockDb(JSON.stringify(live));
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', {
+      toolCallCount: 35,
+      toolBreakdown: [{ toolName: 'Read', callCount: 35, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 }],
+    });
+
+    // Only the guarded fill ran (it matched no row); no second UPDATE followed.
+    expect(capturedCalls).toHaveLength(1);
+    expect(capturedCalls[0].sql).toMatch(/tool_call_count IS NULL/i);
+  });
+
   it('writes nothing more when the transcript carries no resultTokens', () => {
     const live = [{ toolName: 'Read', callCount: 4, totalDurationMs: 100, interruptedCount: 0 }];
     const { db, capturedCalls } = createHealthyLiveCountMockDb(JSON.stringify(live));

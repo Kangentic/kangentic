@@ -618,6 +618,35 @@ describe('UsageAccumulator - per-tool aggregation', () => {
       usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 5000, { toolId: 'bg' }));
       expect(usage.getToolBreakdown('s1')).toEqual([]);
     });
+
+    it('releases the start of a call moved to the background, so a late end pairs with nothing', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 1000, { toolId: 'bg' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 2000, { toolId: 'bg' }));
+      // Far later: were the start still held, this end would pair with it and
+      // report the ~1000s gap as the call's duration.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 1_000_000, { toolId: 'bg' }));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash.toolName).toBe('Bash');
+      expect(bash.callCount).toBe(1);
+      expect(bash.totalDurationMs).toBe(0);
+    });
+
+    it('releases only the promoted call: a sibling start of the same tool still pairs', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 0, { toolId: 'bg' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 100, { toolId: 'fg' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 200, { toolId: 'bg' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 450, { toolId: 'fg' }));
+      const [bash] = usage.getToolBreakdown('s1');
+      expect(bash.callCount).toBe(1);
+      expect(bash.totalDurationMs).toBe(350);
+    });
+
+    it('a background start with no prior start, or no id, creates no row', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 100, { toolId: 'never-started' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.BackgroundShellStart, 'Bash', 200));
+      expect(usage.getToolBreakdown('s1')).toEqual([]);
+      expect(usage.getToolCallCount('s1')).toBe(0);
+    });
   });
 
   describe('id-less fallback', () => {

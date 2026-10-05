@@ -113,7 +113,10 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
   breakdown 300ms after the popover opens and asserts its bottom stays at or above the trigger and
   inside the window, then shrinks the window so the room above the trigger is under the 340px cap
   and asserts the popover stays inside and scrolls. The first case read red against the
-  `top`-anchored hook; the second reads red without the `--popover-available-height` cap.
+  `top`-anchored hook; the second reads red without the `--popover-available-height` cap. A third
+  opens the popover right-aligned and asserts its right edge stays on the trigger's while the
+  arriving table widens it, which reads red against the old `left` computed from the measured
+  width.
 - **Test (first-open width, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` opens
   the Settings > Agent comboboxes on a fresh page at 1920x1080 and asserts the menu's left edge
   and width match the field on the FIRST open (then again after a close). Each test owns its
