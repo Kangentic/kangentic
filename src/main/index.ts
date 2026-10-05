@@ -508,6 +508,17 @@ app.on('web-contents-created', (_event, contents) => {
     // Suppressing it here rather than in the driver because this is Electron's
     // own delegate, which the CDP interception does not sit in front of.
     webPreferences.disableDialogs = true;
+    // Zoom belongs to the pane, not to the site. In Electron's default mode a
+    // zoom is stored PER ORIGIN within the partition, so a zoom in one task's
+    // pane (or the viewport fit an agent applied there) changed every other
+    // pane, pop-out and lane showing the same dev server, and a cross-origin
+    // navigation silently dropped the zoom the toolbar still displayed.
+    // Measured on 44.5.1 with a live guest pair: 'isolated' keeps a 0.5 zoom
+    // out of a second guest on the same origin, keeps the pane's zoom across
+    // reload and same- and cross-origin navigation, and Ctrl+wheel still steps
+    // exactly once through the zoom-changed handler below (identical to the
+    // default mode).
+    webPreferences.zoomMode = 'isolated';
 
     let allowed: boolean;
     try {

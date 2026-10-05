@@ -755,12 +755,14 @@ export async function applyViewport(
       );
     }
     // A real window renders 1:1, which is the entire reason to use one instead
-    // of emulation - so a leftover zoom has to go. Electron persists the zoom
-    // factor PER ORIGIN within a session partition, so the fit applied to the
-    // docked pane followed the page into its fresh pop-out guest: observed
-    // 0.3854 on a window that had never been zoomed, which makes every
-    // measurement against it a different number from the one on screen. An
-    // explicit `zoom` still wins, for an agent that wants one.
+    // of emulation - so a leftover zoom has to go, or every measurement against
+    // it is a different number from the one on screen. This used to be mostly
+    // the docked pane's fit following the page into the fresh pop-out guest,
+    // because Electron kept zoom PER ORIGIN within a partition (observed 0.3854
+    // on a window that had never been zoomed). Guests now run in the 'isolated'
+    // zoom mode (will-attach-webview in index.ts), so that leak is gone; what is
+    // left is a zoom the user applied to this window themselves. An explicit
+    // `zoom` still wins, for an agent that wants one.
     if (typeof request.zoom !== 'number') webContents.setZoomFactor(1);
 
     const release = popOutWindowManager.suppressBoundsSave('browser', {
