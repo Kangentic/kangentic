@@ -15,10 +15,19 @@
  * and demo/vite.config.mts serializes this module into the static build.
  */
 
-import { buildModelCapabilityFields } from '../../../src/main/agent/adapters/claude/model-display-name';
+import { buildModelCapabilityFields, humanizeClaudeModelId } from '../../../src/main/agent/adapters/claude/model-display-name';
 import { buildDictationInfo } from '../../../src/main/transcription/dictation-info';
 import { selectEngine } from '../../../src/main/transcription/engines/engine-selection';
 import { DEFAULT_CONFIG } from '../../../src/shared/types';
+import type {
+  KnowledgeGraphClustering, KnowledgeGraphCoverageSummary, KnowledgeGraphEdge, KnowledgeGraphGranularity,
+  KnowledgeGraphIndexSummary, KnowledgeGraphStatus,
+} from '../../../src/shared/types';
+import { resolveEmbeddingModel } from '../../../src/shared/embedding-models';
+import { NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf } from '../../../src/shared/index-summary';
+import archivedRunsFixture from '../fixtures/demo/archived/runs.json';
+import historyFixture from '../fixtures/demo/archived/history.json';
+import knowledgeGraphFixture from '../fixtures/demo/graph/knowledge-graph.json';
 
 export interface DemoScrollbackMap {
   /** Session id to the serialized terminal stream replayed into that session's xterm. */
@@ -351,7 +360,8 @@ const CONTOSO = `${HOME}\\work\\contoso-web`;
 const PETCLINIC = `${HOME}\\oss\\spring-petclinic`;
 const BOUTIQUE = `${HOME}\\oss\\online-boutique`;
 
-export const DEMO_TASKS: DemoTask[] = [
+/** The boards' own tasks, live and archived, which the scenes and recordings are built around. */
+const DEMO_BOARD_TASKS: DemoTask[] = [
   // contoso-web
   { id: TASK_AUTH, projectId: PROJECT_CONTOSO, display_id: 1, title: 'Add user auth flow', description: 'Implement OAuth2 login with GitHub and Google providers', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['feature', 'security'], priority: 2, attachment_count: 1, createdDaysAgo: 3, updatedMinutesAgo: 340 },
   { id: 'task-cw-api-errors', projectId: PROJECT_CONTOSO, display_id: 2, title: 'Refactor API error handling', description: 'Standardize error responses and add error codes', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['refactor'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 1500 },
@@ -362,9 +372,9 @@ export const DEMO_TASKS: DemoTask[] = [
   { id: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, display_id: 6, title: 'Add rate limiting', description: 'Implement per-user rate limiting on API endpoints', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_RATE_LIMIT, worktree_folder: 'rate-limit-jkl012', branch_name: 'add-rate-limiting', pr_number: 42, pr_url: 'https://github.com/contoso/contoso-web/pull/42', pr_state: 'open', base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 22 },
   { id: 'task-cw-integration', projectId: PROJECT_CONTOSO, display_id: 7, title: 'Integration test coverage', description: 'Add integration tests for auth and billing flows', lane: 'testing', position: 0, agent: 'cursor', session_id: SESSION_INTEGRATION, worktree_folder: 'integration-tests-mno345', branch_name: 'integration-tests', pr_number: 38, pr_url: 'https://github.com/contoso/contoso-web/pull/38', pr_state: 'open', pr_merge_readiness: 'blocked', base_branch: 'main', labels: ['tests'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 6 },
   { id: 'task-cw-vite8', projectId: PROJECT_CONTOSO, display_id: 9, title: 'Upgrade to Vite 8', description: 'Move the build to Vite 8 and drop the legacy Rollup plugins', lane: 'merge', position: 0, agent: null, session_id: SESSION_VITE8, worktree_folder: 'vite-8-pqr678', branch_name: 'upgrade-vite-8', pr_number: 45, pr_url: 'https://github.com/contoso/contoso-web/pull/45', pr_state: 'open', pr_merge_readiness: 'ready', base_branch: 'main', labels: [], priority: 1, attachment_count: 0, createdDaysAgo: 6, updatedMinutesAgo: 48 },
-  { id: 'task-cw-done-deploy', projectId: PROJECT_CONTOSO, display_id: 10, title: 'Set up CI/CD pipeline', description: 'GitHub Actions for build, test, deploy', lane: 'done', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: 'setup-cicd', pr_number: 31, pr_url: 'https://github.com/contoso/contoso-web/pull/31', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 4300, archivedDaysAgo: 3 },
-  { id: 'task-cw-done-schema', projectId: PROJECT_CONTOSO, display_id: 11, title: 'Database schema migration', description: 'Add billing tables and indexes', lane: 'done', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: 'billing-schema', pr_number: 35, pr_url: 'https://github.com/contoso/contoso-web/pull/35', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 10, updatedMinutesAgo: 2900, archivedDaysAgo: 2 },
-  { id: 'task-cw-done-logging', projectId: PROJECT_CONTOSO, display_id: 12, title: 'Structured logging', description: 'Replace console.log with pino structured logging', lane: 'done', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: 'structured-logging', pr_number: 37, pr_url: 'https://github.com/contoso/contoso-web/pull/37', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['refactor'], priority: 0, attachment_count: 0, createdDaysAgo: 8, updatedMinutesAgo: 1450, archivedDaysAgo: 1 },
+  { id: 'task-cw-done-deploy', projectId: PROJECT_CONTOSO, display_id: 10, title: 'Set up CI/CD pipeline', description: 'GitHub Actions for build, test, deploy', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'setup-cicd', pr_number: 31, pr_url: 'https://github.com/contoso/contoso-web/pull/31', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 4300, archivedDaysAgo: 3 },
+  { id: 'task-cw-done-schema', projectId: PROJECT_CONTOSO, display_id: 11, title: 'Database schema migration', description: 'Add billing tables and indexes', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'billing-schema', pr_number: 35, pr_url: 'https://github.com/contoso/contoso-web/pull/35', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 10, updatedMinutesAgo: 2900, archivedDaysAgo: 2 },
+  { id: 'task-cw-done-logging', projectId: PROJECT_CONTOSO, display_id: 12, title: 'Structured logging', description: 'Replace console.log with pino structured logging', lane: 'done', position: 2, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'structured-logging', pr_number: 37, pr_url: 'https://github.com/contoso/contoso-web/pull/37', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['refactor'], priority: 0, attachment_count: 0, createdDaysAgo: 8, updatedMinutesAgo: 1450, archivedDaysAgo: 1 },
 
   // spring-petclinic
   { id: 'task-pc-vets-paging', projectId: PROJECT_PETCLINIC, display_id: 1, title: 'Add pagination to the vets list', description: 'The /vets page renders every vet; page it like the owners list and keep the JSON endpoint stable', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 600 },
@@ -374,8 +384,8 @@ export const DEMO_TASKS: DemoTask[] = [
   { id: 'task-pc-owner-search', projectId: PROJECT_PETCLINIC, display_id: 5, title: 'Add owner search by phone number', description: 'The find-owners form only searches last name; add a telephone field and a repository query', lane: 'executing', position: 1, agent: 'gemini', session_id: SESSION_PETCLINIC_SEARCH, worktree_folder: 'owner-phone-search-1e2d3c', branch_name: 'owner-search-by-phone', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 9 },
   { id: 'task-pc-boot-35', projectId: PROJECT_PETCLINIC, display_id: 6, title: 'Upgrade the toolchain to Java 25', description: 'java.version in pom.xml, the GitHub Actions matrix, and the Dockerfile base image', lane: 'review', position: 0, agent: 'claude', session_id: SESSION_PETCLINIC_BOOT35, worktree_folder: 'java-25-7a6b5c', branch_name: 'java-25-toolchain', pr_number: 1412, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1412', pr_state: 'draft', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 130 },
   { id: 'task-pc-caffeine', projectId: PROJECT_PETCLINIC, display_id: 7, title: 'Cache vets with Caffeine instead of JCache', description: 'Drop the JCache config in favour of the Caffeine starter; keep the cache name so the actuator view stays', lane: 'testing', position: 0, agent: 'opencode', session_id: SESSION_PETCLINIC_CACHE, worktree_folder: 'caffeine-cache-3c4d5e', branch_name: 'vets-cache-caffeine', pr_number: 1408, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1408', pr_state: 'open', base_branch: 'main', labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 17 },
-  { id: 'task-pc-done-java21', projectId: PROJECT_PETCLINIC, display_id: 8, title: 'Bump Java to 21', description: 'Toolchain, CI matrix, and the Dockerfile base image', lane: 'done', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: 'java-21', pr_number: 1391, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1391', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 14, updatedMinutesAgo: 8600, archivedDaysAgo: 5 },
-  { id: 'task-pc-done-postgres', projectId: PROJECT_PETCLINIC, display_id: 9, title: 'Add a Postgres profile', description: 'application-postgres.properties plus the docker-compose service', lane: 'done', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: 'postgres-profile', pr_number: 1397, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1397', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 11, updatedMinutesAgo: 7200, archivedDaysAgo: 4 },
+  { id: 'task-pc-done-java21', projectId: PROJECT_PETCLINIC, display_id: 8, title: 'Bump Java to 21', description: 'Toolchain, CI matrix, and the Dockerfile base image', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'java-21', pr_number: 1391, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1391', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 14, updatedMinutesAgo: 8600, archivedDaysAgo: 5 },
+  { id: 'task-pc-done-postgres', projectId: PROJECT_PETCLINIC, display_id: 9, title: 'Add a Postgres profile', description: 'application-postgres.properties plus the docker-compose service', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'postgres-profile', pr_number: 1397, pr_url: 'https://github.com/spring-projects/spring-petclinic/pull/1397', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 11, updatedMinutesAgo: 7200, archivedDaysAgo: 4 },
 
   // online-boutique
   { id: 'task-ob-checkout-retry', projectId: PROJECT_BOUTIQUE, display_id: 1, title: 'Add retry with backoff to checkoutservice gRPC calls', description: 'PlaceOrder fails hard when paymentservice restarts; wrap the client calls with a bounded exponential retry', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug'], priority: 3, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 400 },
@@ -385,9 +395,61 @@ export const DEMO_TASKS: DemoTask[] = [
   { id: 'task-ob-mtls', projectId: PROJECT_BOUTIQUE, display_id: 5, title: 'Istio strict mTLS for the frontend namespace', description: 'PeerAuthentication in STRICT mode plus the DestinationRules the frontend needs to keep talking to the services', lane: 'executing', position: 1, agent: 'opencode', session_id: SESSION_BOUTIQUE_MTLS, worktree_folder: 'istio-mtls-2b3c4d', branch_name: 'istio-strict-mtls', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['security'], priority: 2, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 41 },
   { id: 'task-ob-currency-a11y', projectId: PROJECT_BOUTIQUE, display_id: 6, title: 'Frontend: currency selector keyboard and screen-reader support', description: 'The header currency dropdown is a styled div; make it a real select with a label', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_BOUTIQUE_A11Y, worktree_folder: 'currency-a11y-5e6f7a', branch_name: 'frontend-currency-a11y', pr_number: 2941, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2941', pr_state: 'open', pr_merge_readiness: 'conflicting', base_branch: 'main', labels: ['a11y'], priority: 1, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 75 },
   { id: 'task-ob-otel', projectId: PROJECT_BOUTIQUE, display_id: 7, title: 'OpenTelemetry traces for shippingservice', description: 'Instrument the gRPC server with the otel Go SDK and export to the collector already in the cluster', lane: 'testing', position: 0, agent: 'codex', session_id: SESSION_BOUTIQUE_OTEL, worktree_folder: 'otel-shipping-6f7a8b', branch_name: 'shippingservice-otel', pr_number: 2937, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2937', pr_state: 'open', base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 30 },
-  { id: 'task-ob-done-go124', projectId: PROJECT_BOUTIQUE, display_id: 8, title: 'Bump Go to 1.24 across services', description: 'go.mod, the Dockerfiles, and the release workflow', lane: 'done', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: 'go-1-24', pr_number: 2921, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2921', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 5800, archivedDaysAgo: 3 },
-  { id: 'task-ob-done-skaffold', projectId: PROJECT_BOUTIQUE, display_id: 9, title: 'Update the Skaffold profiles for the new registry', description: 'Image names and the kustomize overlays', lane: 'done', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: 'skaffold-registry', pr_number: 2915, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2915', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 9000, archivedDaysAgo: 6 },
+  { id: 'task-ob-done-go124', projectId: PROJECT_BOUTIQUE, display_id: 8, title: 'Bump Go to 1.24 across services', description: 'go.mod, the Dockerfiles, and the release workflow', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'go-1-24', pr_number: 2921, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2921', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 5800, archivedDaysAgo: 3 },
+  { id: 'task-ob-done-skaffold', projectId: PROJECT_BOUTIQUE, display_id: 9, title: 'Update the Skaffold profiles for the new registry', description: 'Image names in the manifests and the kustomize overlays, from gcr.io/google-samples to us-central1-docker.pkg.dev/google-samples/microservices-demo', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'skaffold-registry', pr_number: 2915, pr_url: 'https://github.com/GoogleCloudPlatform/microservices-demo/pull/2915', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 9000, archivedDaysAgo: 6 },
 ];
+
+/** One older Done task, as fixtures/demo/archived/history.json lists it. */
+interface DemoHistoryEntry {
+  id: string;
+  project: string;
+  title: string;
+  description: string;
+  archivedDaysAgo: number;
+  /** The upstream sample's own commit this task is, and its parent, which the run starts from. */
+  upstream: { commit: string; parent: string; pr: number | null } | null;
+}
+
+interface DemoHistory {
+  model: string;
+  effort: string;
+  tasks: DemoHistoryEntry[];
+}
+
+/** The install's older history, whose runs give the Knowledge Graph its depth. */
+export const DEMO_HISTORY = historyFixture as DemoHistory;
+
+/**
+ * The history as Done task rows, archived on their fixture dates. Each project's history takes
+ * ticket numbers after its board tasks', oldest first, so no card on a board changes number; the
+ * cost is that an old task carries a higher number than a newer live one. An upstream task links
+ * the sample's own merged pull request when its commit names one.
+ */
+function demoHistoryTasks(boardTasks: DemoTask[]): DemoTask[] {
+  const rows: DemoTask[] = [];
+  for (const project of DEMO_PROJECTS) {
+    const ownBoard = boardTasks.filter((task) => task.projectId === project.id);
+    let nextDisplayId = Math.max(0, ...ownBoard.map((task) => task.display_id)) + 1;
+    let nextPosition = ownBoard.filter((task) => task.lane === 'done').length;
+    const entries = DEMO_HISTORY.tasks
+      .filter((entry) => entry.project === project.name)
+      .sort((left, right) => right.archivedDaysAgo - left.archivedDaysAgo);
+    for (const entry of entries) {
+      const pr = entry.upstream?.pr ?? null;
+      rows.push({
+        id: entry.id, projectId: project.id, display_id: nextDisplayId++, title: entry.title, description: entry.description,
+        lane: 'done', position: nextPosition++, agent: 'claude', session_id: null, worktree_folder: null,
+        branch_name: taskSlugOf(entry.id),
+        pr_number: pr, pr_url: pr && project.github_url ? `${project.github_url}/pull/${pr}` : null, pr_state: pr ? 'merged' : null,
+        pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0,
+        createdDaysAgo: entry.archivedDaysAgo + 1, updatedMinutesAgo: entry.archivedDaysAgo * 1440, archivedDaysAgo: entry.archivedDaysAgo,
+      });
+    }
+  }
+  return rows;
+}
+
+export const DEMO_TASKS: DemoTask[] = [...DEMO_BOARD_TASKS, ...demoHistoryTasks(DEMO_BOARD_TASKS)];
 
 // ---------------------------------------------------------------- sessions
 // The models the recordings were made on, named the way each CLI prints them.
@@ -447,37 +509,104 @@ export const DEMO_SESSIONS: DemoSession[] = [
 ];
 
 /**
- * What each archived task's last session cost and did, which the Completed Tasks dialog lists
- * (`sessions.listSummaries`, keyed by task id). Main captures this at suspend from the session's
- * own telemetry; an archived task here has no recording behind it, so these are authored, and
- * were reviewed as a set. The model is the project's default agent's (MODEL_BY_AGENT), and the tool
- * count is the sum of the breakdown. Every cost sits under the lightest WEEKDAY the usage dashboard
- * draws for one project. That is all the two can promise each other: the dashboard's series is
- * seeded noise with idle and weekend days far below any of these, and which weekday "3 days ago"
- * lands on depends on the day the frame is opened, so a task can read more than its day's bar.
+ * One archived task's last run, as scripts/capture-demo-archived-runs.mjs recorded it: a real
+ * headless Claude Code run of the task's prompt in its own clone of the repo, measured with main's
+ * own transcript parsers and the run's own cost and duration (fixtures/demo/archived/runs.json).
  */
-export interface DemoArchivedSummary {
-  taskId: string;
+export interface DemoArchivedRun {
+  agent: string;
+  agentVersion: string;
+  model: string;
+  permissionMode: string;
+  prompt: string;
+  /** The commit an upstream repo's run started from, or null for the scaffold. */
+  ref: string | null;
+  /** The agent's own id for the run's history, which the Knowledge Graph capture indexes. */
+  agentSessionId: string;
+  /** The effort the run was asked for; absent on a run made at the CLI's default. */
+  effort?: string;
+  capturedAt: string;
+  durationMs: number;
   costUsd: number;
-  durationMinutes: number;
+  numTurns: number;
   inputTokens: number;
   outputTokens: number;
-  /** Calls per tool, in the names each agent's sessions report above. */
   tools: Record<string, number>;
   filesChanged: number;
   linesAdded: number;
   linesRemoved: number;
 }
 
-export const DEMO_ARCHIVED_SUMMARIES: DemoArchivedSummary[] = [
-  { taskId: 'task-cw-done-deploy', costUsd: 1.84, durationMinutes: 38, inputTokens: 412000, outputTokens: 38000, tools: { Read: 18, Bash: 16, Edit: 14, Write: 5, Grep: 4 }, filesChanged: 4, linesAdded: 186, linesRemoved: 12 },
-  { taskId: 'task-cw-done-schema', costUsd: 2.35, durationMinutes: 52, inputTokens: 538000, outputTokens: 51000, tools: { Read: 22, Edit: 19, Bash: 17, Write: 8, Grep: 8 }, filesChanged: 7, linesAdded: 312, linesRemoved: 48 },
-  { taskId: 'task-cw-done-logging', costUsd: 1.12, durationMinutes: 24, inputTokens: 266000, outputTokens: 22000, tools: { Edit: 15, Read: 12, Grep: 7, Bash: 5, Write: 2 }, filesChanged: 9, linesAdded: 148, linesRemoved: 61 },
-  { taskId: 'task-pc-done-java21', costUsd: 0.64, durationMinutes: 17, inputTokens: 148000, outputTokens: 11000, tools: { Read: 9, Bash: 8, Edit: 6 }, filesChanged: 3, linesAdded: 9, linesRemoved: 9 },
-  { taskId: 'task-pc-done-postgres', costUsd: 1.08, durationMinutes: 29, inputTokens: 231000, outputTokens: 19000, tools: { Read: 13, Bash: 12, Edit: 11 }, filesChanged: 4, linesAdded: 96, linesRemoved: 3 },
-  { taskId: 'task-ob-done-go124', costUsd: 0.92, durationMinutes: 26, inputTokens: 204000, outputTokens: 15000, tools: { Edit: 22, Bash: 15, Read: 11 }, filesChanged: 22, linesAdded: 44, linesRemoved: 44 },
-  { taskId: 'task-ob-done-skaffold', costUsd: 0.41, durationMinutes: 12, inputTokens: 87000, outputTokens: 7000, tools: { Read: 6, Bash: 5, Edit: 3 }, filesChanged: 2, linesAdded: 18, linesRemoved: 11 },
-];
+export const DEMO_ARCHIVED_RUNS: Record<string, DemoArchivedRun> = archivedRunsFixture;
+
+/** A task's id without its `task-` prefix, which a history task's branch and session ids are named from. */
+export function taskSlugOf(taskId: string): string {
+  return taskId.replace(/^task-/, '');
+}
+
+/** The id the seed gives an archived task's last session; its summary and its graph node share it. */
+export function archivedSessionIdOf(taskId: string): string {
+  return `sess-${taskSlugOf(taskId)}`;
+}
+
+/** The prompt an archived task's run was given: what Kangentic's default template sends for the task. */
+export function archivedRunPromptOf(task: Pick<DemoTask, 'title' | 'description'>): string {
+  return task.description ? `${task.title}: ${task.description}` : task.title;
+}
+
+/**
+ * What each archived task's last session cost and did, which the Completed Tasks dialog lists
+ * (`sessions.listSummaries`, keyed by task id). Main captures this at suspend from the session's
+ * own telemetry, and so is this: each row is its task's recorded run (DEMO_ARCHIVED_RUNS), never
+ * written by hand. The model is the one the run's main conversation ran on, never its advisor's,
+ * named as the CLI's status line names it, and the tool count is the sum of the breakdown. A task in Done with no run is left out here, so
+ * the recorder can load this module before every run exists; the build refuses to seed one
+ * (`buildDemoPreConfig`), and tests/unit/demo-archived-summaries.test.ts fails on the gap.
+ */
+export interface DemoArchivedSummary {
+  taskId: string;
+  /** The run's model as a card names it. */
+  modelDisplayName: string;
+  /** The effort the run was made at, or null when it took the CLI's default. */
+  effort: string | null;
+  costUsd: number;
+  durationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Calls per tool, in the names the run's transcript reports. */
+  tools: Record<string, number>;
+  filesChanged: number;
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+/**
+ * Every archived task: in Done with no session on the board, so its last run is a recorded one.
+ * The run recorder and the Knowledge Graph capture read this list too.
+ */
+export const DEMO_ARCHIVED_TASKS: DemoTask[] = DEMO_TASKS.filter((task) => task.archivedDaysAgo && !task.session_id);
+
+/** Every archived task with no recorded run yet; the build refuses to seed while any is listed. */
+export const DEMO_ARCHIVED_TASKS_WITHOUT_RUN: string[] = DEMO_ARCHIVED_TASKS
+  .filter((task) => !DEMO_ARCHIVED_RUNS[task.id])
+  .map((task) => task.id);
+
+/** A run's model as a card names it: the dataset's own name for the model the recordings ran on,
+ *  otherwise the Claude adapter's humanized id. */
+function runModelDisplayName(modelId: string): string {
+  const known = Object.values(MODEL_BY_AGENT).find((model) => model.id === modelId);
+  return known?.displayName ?? humanizeClaudeModelId(modelId) ?? modelId;
+}
+
+export const DEMO_ARCHIVED_SUMMARIES: DemoArchivedSummary[] = DEMO_ARCHIVED_TASKS
+  .filter((task) => DEMO_ARCHIVED_RUNS[task.id])
+  .map((task) => {
+    const { model, effort, costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved } = DEMO_ARCHIVED_RUNS[task.id];
+    return {
+      taskId: task.id, modelDisplayName: runModelDisplayName(model), effort: effort ?? null,
+      costUsd, durationMs, inputTokens, outputTokens, tools, filesChanged, linesAdded, linesRemoved,
+    };
+  });
 
 export const DEMO_BACKLOG: DemoBacklogItem[] = [
   { id: 'backlog-cw-dark-mode', projectId: PROJECT_CONTOSO, title: 'Dark mode for the dashboard', description: 'Token pass over the dashboard cards and charts; the marketing site already ships both themes', priority: 2, labels: ['design'], position: 0, external_source: null, external_id: null, external_url: null, createdDaysAgo: 9 },
@@ -549,6 +678,93 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
     .filter((modelId): modelId is string => modelId !== null),
 );
 
+// ---------------------------------------------------------------- the Knowledge Graph
+/**
+ * The Knowledge Graph the sample install's conversations make, built by main's own pipeline (index,
+ * embed, lay out, cluster, name) on the machine that recorded them, and read back out by
+ * scripts/capture-demo-knowledge-graph.mjs into fixtures/demo/graph/knowledge-graph.json. Nothing in it is
+ * placed or named by hand. A node carries what the pipeline computed (its place, size, regions,
+ * and the agent name main resolved); its title, model, cost and times are joined from the rows
+ * below when the seed runs, as main's `documentMetadata` joins the same rows on the desktop, so a
+ * node always agrees with its card. `withoutNode` names each recorded session the map does not
+ * draw, with the reason (no transcript Kangentic can read, for Cursor and Copilot).
+ */
+export interface DemoKnowledgeGraphNode {
+  docKey: string;
+  sessionId: string;
+  taskId: string | null;
+  agent: string | null;
+  x: number;
+  y: number;
+  z: number;
+  chunkCount: number;
+  clusters: Record<KnowledgeGraphGranularity, number>;
+}
+
+export interface DemoKnowledgeGraphProject {
+  projection: {
+    nodes: DemoKnowledgeGraphNode[];
+    edges: KnowledgeGraphEdge[];
+    nodeNeighbors: Array<Array<{ index: number; similarity: number }>>;
+    clusterings: KnowledgeGraphClustering[];
+    signature: string;
+    modelTag: string;
+    dimensions: number;
+    storageBytes: number;
+  };
+  coverage: KnowledgeGraphCoverageSummary;
+  index: KnowledgeGraphIndexSummary;
+  withoutNode: Array<{ sessionId: string; reason: string }>;
+}
+
+export interface DemoKnowledgeGraph {
+  modelTag: string;
+  /** Keyed by the sample install's project id. */
+  projects: Record<string, DemoKnowledgeGraphProject>;
+}
+
+export const DEMO_KNOWLEDGE_GRAPH = knowledgeGraphFixture as unknown as DemoKnowledgeGraph;
+
+/** Every node the three maps draw: the count the `knowledge-graph` scene waits to see drawn. */
+export const DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL = Object.values(DEMO_KNOWLEDGE_GRAPH.projects)
+  .reduce((sum, project) => sum + project.projection.nodes.length, 0);
+
+/**
+ * The config the maps were built under, which the sample install carries so Settings and the map's
+ * Index panel describe the same index: semantic search on, the default model. No Ask agent is
+ * chosen, as on a desktop whose user has not picked one, so pressing Enter in Ask opens Settings.
+ */
+export const DEMO_KNOWLEDGE_GRAPH_CONFIG = { ...DEFAULT_CONFIG.knowledgeGraph, enabled: true };
+
+/**
+ * What Settings, Knowledge Graph reads from `knowledgeGraph.getStatus()`: main's own shape, summed
+ * the way main sums it (`sumIndexCounts`, `summaryStatusOf`, `sourceStatusOf`) over the same three
+ * projects' counts the maps carry, so the tab's Index card and the map's agree. The model is the
+ * one the maps were embedded with, present. `activeBackend` is left out because no embedding runs
+ * in a browser, and `code` because source code is not indexed and main's estimate of a branch is a
+ * read of the open project's repository, which this install has no copy of.
+ */
+const DEMO_KNOWLEDGE_GRAPH_SUMMED = sumIndexCounts(Object.values(DEMO_KNOWLEDGE_GRAPH.projects).map((project) => project.index));
+const DEMO_KNOWLEDGE_GRAPH_MODEL = resolveEmbeddingModel(DEMO_KNOWLEDGE_GRAPH_CONFIG.localModel);
+export const DEMO_KNOWLEDGE_GRAPH_STATUS: KnowledgeGraphStatus = {
+  indexingEnabled: true,
+  semantic: 'hybrid',
+  model: {
+    id: DEMO_KNOWLEDGE_GRAPH_MODEL.id,
+    displayName: DEMO_KNOWLEDGE_GRAPH_MODEL.displayName,
+    tier: DEMO_KNOWLEDGE_GRAPH_MODEL.tier,
+    approxSizeMb: DEMO_KNOWLEDGE_GRAPH_MODEL.approxSizeMb,
+    dimensions: DEMO_KNOWLEDGE_GRAPH_MODEL.dimensions,
+    state: 'ready',
+  },
+  summaries: summaryStatusOf(DEMO_KNOWLEDGE_GRAPH_SUMMED.summaries, null),
+  sources: {
+    conversations: sourceStatusOf(DEMO_KNOWLEDGE_GRAPH_SUMMED, 'conversation', true, null) ?? NO_SOURCE,
+    tasks: sourceStatusOf(DEMO_KNOWLEDGE_GRAPH_SUMMED, 'task', true, null) ?? NO_SOURCE,
+    commits: sourceStatusOf(DEMO_KNOWLEDGE_GRAPH_SUMMED, 'commit', true, null) ?? NO_SOURCE,
+  },
+};
+
 // ---------------------------------------------------------------- the applier
 /**
  * The script the page runs after the mock has loaded. Everything above is inlined as JSON; the
@@ -604,6 +820,11 @@ export function buildDemoPreConfig(options: {
     tasks: DEMO_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
     sessions: DEMO_SESSIONS,
     archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
+    // One rule for an archived task's session id, read by its summary and its graph node alike.
+    archivedSessionIds: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedSessionIdOf(summary.taskId)])),
+    knowledgeGraph: DEMO_KNOWLEDGE_GRAPH,
+    knowledgeGraphConfig: DEMO_KNOWLEDGE_GRAPH_CONFIG,
+    knowledgeGraphStatus: DEMO_KNOWLEDGE_GRAPH_STATUS,
     backlog: DEMO_BACKLOG,
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
@@ -636,8 +857,8 @@ export function buildDemoPreConfig(options: {
   // it moves with the replay. A session absent here legitimately has none; see the loader.
   const messageTrails = options.messageTrails ?? {};
   // Both real callers pass MESSAGE_TRAIL_MAX_ENTRIES. It is restated rather than imported because
-  // this module must stay free of Node imports (scripts/capture-demo-sessions.mjs loads it through
-  // Node's own type stripping), and the tracker reaches node:events and node:fs.
+  // this module must stay free of Node imports (demo/vite.config.mts bundles it for the browser),
+  // and the tracker reaches node:events and node:fs.
   const messageTrailMaxEntries = options.messageTrailMaxEntries ?? 5;
   // Every session with a terminal replays a recording; there is no hand-authored fallback. A
   // missing one would be a blank terminal in the frame and in every capture, so it fails the
@@ -649,6 +870,14 @@ export function buildDemoPreConfig(options: {
     throw new Error(
       `[demo] no terminal recording for ${missingRecordings.join(', ')}: add each to `
       + 'tests/captures/fixtures/demo/manifest.json and run "node scripts/capture-demo-sessions.mjs --skip-existing"',
+    );
+  }
+  // An archived task with no run would draw "-" in every Completed Tasks cell; refuse it here, at
+  // build time, rather than at module load, which the recorder itself needs.
+  if (DEMO_ARCHIVED_TASKS_WITHOUT_RUN.length > 0) {
+    throw new Error(
+      `[demo] no recorded run for ${DEMO_ARCHIVED_TASKS_WITHOUT_RUN.length} archived task(s), first ${DEMO_ARCHIVED_TASKS_WITHOUT_RUN[0]}: `
+      + 'run "node scripts/capture-demo-archived-runs.mjs"',
     );
   }
   return `
@@ -686,6 +915,9 @@ export function buildDemoPreConfig(options: {
       var now = Date.now();
       function minutesAgo(minutes) { return new Date(now - minutes * 60000).toISOString(); }
       function daysAgo(days) { return minutesAgo(days * 1440); }
+      // When an archived task's last run ended: ten minutes before the task was archived, as a Done
+      // move suspends a finished agent. Its Completed Tasks row and its graph node both read this.
+      function archivedExitedAtMs(task) { return now - task.archivedDaysAgo * 1440 * 60000 - 10 * 60000; }
       var projectsById = {};
       data.projects.forEach(function (project) { projectsById[project.id] = project; });
       var tasksById = {};
@@ -793,6 +1025,85 @@ export function buildDemoPreConfig(options: {
         return Math.max(0, duration - tail);
       }
 
+      // The Knowledge Graph's snapshots, one per project, and its Projects picker. The map itself
+      // is the fixture main's pipeline built (DEMO_KNOWLEDGE_GRAPH); what main's documentMetadata
+      // joins from the board's rows is joined here from the same rows, so a node's title, model,
+      // cost, tokens, outcome and last activity are the card's own. A working session's last
+      // activity is its newest tool call, and an archived task's is when its run ended, the moment
+      // its Completed Tasks row records.
+      function knowledgeGraphSeed() {
+        var sessionsById = {};
+        data.sessions.forEach(function (session) { sessionsById[session.id] = session; });
+        var summariesByTask = {};
+        data.archivedSummaries.forEach(function (summary) { summariesByTask[summary.taskId] = summary; });
+        function laneRole(task) {
+          var lanes = data.lanesByProject[task.projectId] || [];
+          for (var index = 0; index < lanes.length; index++) if (lanes[index].slug === task.lane) return lanes[index].role;
+          return null;
+        }
+        function nodeFacts(node) {
+          var task = node.taskId ? tasksById[node.taskId] : null;
+          var facts = {
+            title: task ? task.title : null, displayId: task ? task.display_id : null,
+            model: null, effort: null, durationMs: null, costUsd: null, tokens: null, lastActivityMs: null,
+            outcome: task ? (task.archivedDaysAgo || laneRole(task) === 'done' ? 'done' : 'active') : null,
+          };
+          var session = sessionsById[node.sessionId];
+          if (session) {
+            var events = session.events || [];
+            var newestMinutesAgo = events.length > 0 ? events[events.length - 1].minutesAgo : (task ? task.updatedMinutesAgo : session.startedMinutesAgo);
+            var used = Math.round(session.contextWindowSize * session.contextPercent / 100);
+            facts.model = session.model ? session.model.displayName : null;
+            facts.effort = session.effort || null;
+            facts.durationMs = session.durationMinutes * 60000;
+            facts.costUsd = session.costUsd;
+            facts.tokens = used > 0 ? used : null;
+            facts.lastActivityMs = now - newestMinutesAgo * 60000;
+            return facts;
+          }
+          var summary = task ? summariesByTask[task.id] : null;
+          if (summary) {
+            facts.model = summary.modelDisplayName;
+            facts.effort = summary.effort;
+            facts.durationMs = summary.durationMs;
+            facts.costUsd = summary.costUsd;
+            facts.tokens = summary.inputTokens + summary.outputTokens;
+            facts.lastActivityMs = archivedExitedAtMs(task);
+          }
+          return facts;
+        }
+        var snapshots = {};
+        var projects = [];
+        data.projects.forEach(function (project) {
+          var graph = data.knowledgeGraph.projects[project.id];
+          if (!graph) return;
+          var newest = null;
+          var nodes = graph.projection.nodes.map(function (node) {
+            var facts = nodeFacts(node);
+            if (facts.lastActivityMs !== null && (newest === null || facts.lastActivityMs > newest)) newest = facts.lastActivityMs;
+            return Object.assign({}, node, facts);
+          });
+          var corpus = function (name) {
+            for (var index = 0; index < graph.index.corpora.length; index++) if (graph.index.corpora[index].corpus === name) return graph.index.corpora[index];
+            return { documents: 0 };
+          };
+          snapshots[project.id] = {
+            projectId: project.id,
+            // Built after the newest conversation it draws, which is what "not stale" means.
+            projection: Object.assign({}, graph.projection, { nodes: nodes, builtAt: new Date(newest === null ? now : newest).toISOString() }),
+            coverage: graph.coverage, index: graph.index,
+            building: false, buildProgress: null, stale: false, semanticAvailable: true,
+            projectionKey: project.id + ':' + graph.projection.signature,
+          };
+          projects.push({
+            id: project.id, name: project.name,
+            conversations: corpus('conversation').documents, taskRecords: corpus('task').documents,
+            lastActivityMs: newest,
+          });
+        });
+        return { snapshots: snapshots, projects: projects };
+      }
+
       // An EMPTY install: the welcome screen a first launch lands on. The frame's boot script sets
       // window.__demoInstall from the scene; nothing but the returning-user markers is seeded, so
       // the renderer hydrates with no project and mounts the welcome screen, whose agent detection
@@ -847,26 +1158,24 @@ export function buildDemoPreConfig(options: {
           };
           if (task.archivedDaysAgo) state.archivedTasks.push(row); else state.tasks.push(row);
         });
-        // The Completed Tasks dialog's cost, duration, token, tool, file, and line cells. The run
-        // ended ten minutes before the task was archived, as a Done move suspends a finished agent.
+        // The Completed Tasks dialog's cost, duration, token, tool, file, and line cells, timed from
+        // when the run ended (archivedExitedAtMs).
         var TOOL_MEAN_MS = { Read: 300, Grep: 250, Edit: 400, Write: 350, Bash: 6000 };
         data.archivedSummaries.forEach(function (summary) {
           var task = tasksById[summary.taskId];
-          var project = projectsById[task.projectId];
-          var model = data.modelByAgent[task.agent || project.default_agent] || null;
-          var exitedAtMs = now - task.archivedDaysAgo * 1440 * 60000 - 10 * 60000;
+          var exitedAtMs = archivedExitedAtMs(task);
           var toolBreakdown = Object.keys(summary.tools).map(function (toolName) {
             var calls = summary.tools[toolName];
             return { toolName: toolName, callCount: calls, totalDurationMs: calls * (TOOL_MEAN_MS[toolName] || 500), interruptedCount: 0 };
           });
           state.summaryCache[summary.taskId] = {
-            sessionId: 'sess-' + summary.taskId.replace(/^task-/, ''),
+            sessionId: data.archivedSessionIds[summary.taskId],
             totalCostUsd: summary.costUsd, totalInputTokens: summary.inputTokens, totalOutputTokens: summary.outputTokens,
-            modelDisplayName: model ? model.displayName : '', durationMs: summary.durationMinutes * 60000,
+            modelDisplayName: summary.modelDisplayName, durationMs: summary.durationMs,
             toolCallCount: toolBreakdown.reduce(function (sum, tool) { return sum + tool.callCount; }, 0),
             compactionCount: 0, linesAdded: summary.linesAdded, linesRemoved: summary.linesRemoved, filesChanged: summary.filesChanged,
             taskCreatedAt: daysAgo(task.createdDaysAgo),
-            startedAt: new Date(exitedAtMs - summary.durationMinutes * 60000).toISOString(),
+            startedAt: new Date(exitedAtMs - summary.durationMs).toISOString(),
             exitedAt: new Date(exitedAtMs).toISOString(), exitCode: 0,
             toolBreakdown: toolBreakdown,
           };
@@ -908,8 +1217,17 @@ export function buildDemoPreConfig(options: {
         // The concurrency cap leaves room above the running count, so a drag into an auto-spawn
         // column starts an agent the way it does on the desktop rather than queueing it.
         state.config.agent.maxConcurrentSessions = data.sessions.filter(function (session) { return session.status === 'running'; }).length + 4;
+        // Semantic search on, as it was when the maps were built, so Settings and the map's Index
+        // panel describe the same index.
+        state.config.knowledgeGraph = Object.assign({}, data.knowledgeGraphConfig);
         mockState = state;
-        return { currentProjectId: data.currentProjectId };
+        var graph = knowledgeGraphSeed();
+        return {
+          currentProjectId: data.currentProjectId,
+          knowledgeGraphSnapshotsByProject: graph.snapshots,
+          knowledgeGraphProjects: graph.projects,
+          memoryStatus: data.knowledgeGraphStatus,
+        };
       });
 
       if (data.appVersion) {

@@ -6,6 +6,21 @@
     "spring-petclinic": { "git": "https://github.com/spring-projects/spring-petclinic.git" },
     "online-boutique": { "git": "https://github.com/GoogleCloudPlatform/microservices-demo.git" }
   },
+  "archived": {
+    "$comment": "The archived tasks' runs (scripts/capture-demo-archived-runs.mjs): one headless Claude Code run per task in Done with no session, each in its own throwaway clone, kept in archived/runs.json. refs pins the commit a task starts from when upstream has already made its change, so the run has the work to do: the parent of the upstream commit that made it (spring-petclinic ce626da7 added the Postgres profile; online-boutique 0434be5 moved the Go services from 1.23 to 1.25, d97cd5a moved the images to Artifact Registry). The Java 21 task starts at the commit the petclinic scratch clone is on, still on Java 17. contoso-web's tasks start at the scaffold, which has none of their changes.",
+    "model": "claude-opus-5",
+    "permissionMode": "acceptEdits",
+    "permissionModes": {
+      "$comment": "A run whose task needs an edit headless mode refuses as sensitive runs in bypassPermissions, which stands in for the approval the merged task got: in acceptEdits the Java 21 run could not touch .devcontainer/Dockerfile, one of the three things its task names.",
+      "task-pc-done-java21": "bypassPermissions"
+    },
+    "refs": {
+      "task-pc-done-java21": "818c4136ea971c21674525f9053de0d9c7ad8cfe",
+      "task-pc-done-postgres": "20adfb71be4d7a50779e83abef98cdd3c01a1908",
+      "task-ob-done-go124": "18f3b732934abd656dc013bac7327a95c762b21c",
+      "task-ob-done-skaffold": "a8003087487473b3d471bb72d6238ac2e60f428a"
+    }
+  },
   "geometry": {
     "$comment": "Terminal sizes at the 1600x1000 site frame, measured by `node demo/measure.mjs --geometry` (it reads the seed's window.__demoNaturalGeometry; `--check` compares each surface against the scale it names). A surface's grid moves with the device scale, because the renderer rounds the terminal cell to device pixels, so `scale` records the launch each surface was measured at. taskWindow and commandTerminal are the window manager's default window (0.58 of the frame) at scale 1, the demo tier's launch, where it fits 154 by 37; at the rig's scale 2 launch the same window fits 142, which is why the floating scenes size their window to the recording at the visitor's own cell instead of opening at a fixed fraction (FITTED_FLOATING_GEOMETRY in tests/captures/scenes.ts). taskWindowTiled and commandTerminalTiled are one of two panes tiled in the footprint a dock produces, measured at scale 2, the rig's launch, so the rig shows a tiled recording at native type: 115 there, and 125 (task window) or 124 (Command Terminal) at scale 1, where the wider pane plays the recording at native type, widened to it. A session records at taskWindow, a Command Terminal session at commandTerminal, a session with a `tiled` sibling once more at the tiled surface, and a Command Terminal boot at both sizes its window can open at (terminal-<project>.json alone, terminal-<project>-tiled.json beside an existing terminal), chosen at spawn time. The spring-petclinic and online-boutique tiled boots are still at the earlier 124 (Codex, out of credits on the recording machine); a recording carries its own grid, so a tiled pane plays those fitted to its own until they are re-run. The rows depend on the session's agent: a Claude session's context bar carries the account's rate-limit pills and wraps to two rows, leaving 37; every other agent's bar is one row, leaving 39 (rowsByAgent). A replay cannot renegotiate the size the way a live PTY does.",
     "taskWindow": { "cols": 154, "rows": 37, "scale": 1, "rowsByAgent": { "codex": 39, "gemini": 39, "opencode": 39, "copilot": 39 } },

@@ -410,6 +410,36 @@ describe('scene registry', () => {
     expect(boot, 'boot.js validates a state= blob against it').toContain('window.__demoConfigShape');
   });
 
+  it('keeps settle to the rig, on markers the renderer still stamps', () => {
+    // A live frame plays a scene's motion as the desktop does, and a browser with no WebGL shows
+    // the app's own no-GPU card, so boot.js never waits on `settle`. The rig does, before it shoots.
+    const boot = fs.readFileSync(DEMO_BOOT_PATH, 'utf-8');
+    expect(boot, 'boot.js reads no settle').not.toContain('settle');
+    const scenePage = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/helpers/scene-page.ts'), 'utf-8');
+    expect(scenePage, 'the rig waits on settle').toContain('scene.settle');
+    // Each settle selector names a testid the renderer stamps, as does the no-GPU card the rig
+    // refuses to shoot: a renamed marker would otherwise time every shot out, or let the card through.
+    const rendererSources = (function readAll(directory: string): string {
+      return fs.readdirSync(directory, { withFileTypes: true }).map((entry) => {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) return readAll(full);
+        return /\.tsx?$/.test(entry.name) ? fs.readFileSync(full, 'utf-8') : '';
+      }).join('\n');
+    })(path.join(REPO_ROOT, 'src/renderer'));
+    const testIds: string[] = ['knowledge-graph-webgl-unavailable'];
+    for (const scene of Object.values(SCENES)) {
+      if (scene.settle === undefined) continue;
+      const parts = scene.settle.split(',').map((part) => part.trim());
+      expect(parts.length, `${scene.name}.settle names nothing`).toBeGreaterThan(0);
+      for (const part of parts) {
+        const testId = /^\[data-testid="([^"]+)"\]$/.exec(part)?.[1];
+        expect(testId, `${scene.name}.settle part ${part} is not a data-testid selector`).toBeTruthy();
+        if (testId) testIds.push(testId);
+      }
+    }
+    for (const testId of testIds) expect(rendererSources, `no renderer file stamps data-testid="${testId}"`).toContain(`data-testid="${testId}"`);
+  });
+
   it('guards the escape message on markers the renderer still stamps', () => {
     // boot.js decides "does the app own this Escape" by looking for these in the DOM, mirroring
     // PopOutWindowFrame's own ladder. A renamed marker would not fail anything: the frame would

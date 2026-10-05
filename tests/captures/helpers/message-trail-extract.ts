@@ -278,6 +278,61 @@ export async function extractTranscript(facts: RecordingFacts, cwd: string): Pro
   return { entries: chosen.entries, sourcePath: chosen.sourcePath, startMs };
 }
 
+/** Where one run's history lives, in the terms main's indexer reads it by. */
+export interface TranscriptSource {
+  /** The agent's own session id: what main stores as `sessions.agent_session_id`. */
+  agentSessionId: string;
+  /** The history file, or for OpenCode `<database>#<session row id>`. */
+  historyPath: string;
+}
+
+/**
+ * The agent's own session id from the file the match chose. Each agent names it differently, and
+ * main's adapters locate the history from it, so this is the inverse of each adapter's
+ * `locateSessionHistoryFile`: the Claude file name, the Codex rollout id, the id inside a Gemini
+ * chat file (whose name carries only its first eight characters), the OpenCode session row.
+ */
+export function agentSessionIdOf(agent: string, sourcePath: string): string {
+  switch (agent) {
+    case 'claude':
+      return path.basename(sourcePath, '.jsonl');
+    case 'codex': {
+      const rolloutId = /-([0-9a-f-]{36})\.jsonl$/i.exec(path.basename(sourcePath))?.[1];
+      if (!rolloutId) throw new TranscriptMatchError(`no rollout id in the Codex file name ${path.basename(sourcePath)}`);
+      return rolloutId;
+    }
+    case 'gemini': {
+      const text = fs.readFileSync(sourcePath, 'utf-8');
+      const firstRecord = sourcePath.endsWith('.jsonl') ? text.slice(0, text.indexOf('\n') === -1 ? text.length : text.indexOf('\n')) : text;
+      const parsed: unknown = JSON.parse(firstRecord);
+      const sessionId = typeof parsed === 'object' && parsed !== null ? (parsed as { sessionId?: unknown }).sessionId : undefined;
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throw new TranscriptMatchError(`no sessionId in the Gemini chat file ${path.basename(sourcePath)}`);
+      }
+      return sessionId;
+    }
+    case 'opencode': {
+      const rowId = sourcePath.slice(sourcePath.lastIndexOf('#') + 1);
+      if (rowId.length === 0 || rowId === sourcePath) throw new TranscriptMatchError(`no session row in ${sourcePath}`);
+      return rowId;
+    }
+    default:
+      throw new TranscriptMatchError(`no session id reader wired for agent "${agent}"`);
+  }
+}
+
+/**
+ * The history behind one run, identified by the same prompt and start-time match as
+ * `extractTranscript`, or `null` when the agent keeps no transcript. The Knowledge Graph capture
+ * writes the id into a session row so main's own indexer finds the file the way it does on the
+ * desktop (scripts/capture-demo-knowledge-graph.mjs).
+ */
+export async function locateTranscriptSource(facts: RecordingFacts, cwd: string): Promise<TranscriptSource | null> {
+  const transcript = await extractTranscript(facts, cwd);
+  if (!transcript) return null;
+  return { agentSessionId: agentSessionIdOf(facts.agent, transcript.sourcePath), historyPath: transcript.sourcePath };
+}
+
 /**
  * The entries that fall inside the recording: from its first byte to its last.
  *

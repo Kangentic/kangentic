@@ -20,6 +20,7 @@ import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large
 import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
 import { registerSeedKnowledgeGraphDevIpc } from '../devtools/main/seed-knowledge-graph';
 import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-knowledge-graph-real';
+import { registerSeedKnowledgeGraphDemoDevIpc } from '../devtools/main/seed-knowledge-graph-demo';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -1469,6 +1470,9 @@ const createWindow = () => {
           // drain instead of writing vectors.
           registerSeedKnowledgeGraphRealDevIpc(getOptionalIpcContext);
           registerSeedKnowledgeGraphDevIpc(getOptionalIpcContext);
+          // The web demo's sample install as real projects, so the demo's Knowledge Graph
+          // fixture is built by the shipped pipeline (scripts/capture-demo-knowledge-graph.mjs).
+          registerSeedKnowledgeGraphDemoDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"

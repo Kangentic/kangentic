@@ -40,14 +40,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { importTsModule } from './lib/bundle-ts-module.mjs';
 import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
 const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8'));
-// Node strips the types itself; the dataset module has no Node imports by design.
-const dataset = await import(pathToFileURL(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts')).href);
+// Bundled, not imported: the dataset reaches extensionless app modules and imports JSON fixtures,
+// neither of which Node's own type stripping resolves (scripts/lib/bundle-ts-module.mjs).
+const dataset = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts'));
 
 const argv = process.argv.slice(2);
 const readFlag = (name) => { const index = argv.indexOf(name); return index === -1 ? null : argv[index + 1]; };

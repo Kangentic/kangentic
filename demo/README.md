@@ -236,7 +236,11 @@ tier fails a focus that matches nothing, is empty, or is the whole frame). A sel
 match exactly one element, so a single selector that starts matching a second one cannot quietly
 widen a figure's crop. A scene may also say
 `install: 'empty'`, which seeds no project at all (the
-welcome screen). `tests/unit/scene-registry.test.ts` pins the rest: a `state` scene has no
+welcome screen). And it may say `settle`, a selector list of elements its subject places on
+every animation frame, for a frame that keeps moving after `ready`: the rig and the smoke tier
+shoot only once one of them is shown and none has moved for half a second (`waitForSettled` in
+`tests/captures/helpers/scene-page.ts`). `boot.js` never reads it; a live frame plays the motion as
+the desktop does. `tests/unit/scene-registry.test.ts` pins the rest: a `state` scene has no
 steps, a `boot` scene carries only boot steps (a `click`, a `type` with `text`, or a `press` of a
 hotkey in the registry's spelling, held for the frame, each with an optional `waitFor`), a
 `driver` scene carries at least one rig step (`hover`, `contextmenu`, or `drag` with a `hold` that
@@ -272,6 +276,8 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `command-terminal` | boot | the title-bar toggle; the window's rect is the global `commandTerminalWorkspace` blob the scene seeds, sized to the terminal session's recording like the task window |
 | `command-terminal-tiled` | boot | the toggle, then New terminal, which docks a second window beside the first and boots the project's default agent from the boot recorded at the tiled width; the first switches to its own tiled recording as it narrows |
 | `usage`, `backlog`, `quick-find`, `new-task`, `completed-tasks` | boot | one click each; `usage` also sets `usageStatsScope` and `usageStatsPeriod` |
+| `knowledge-graph` | boot | the title-bar button, then the Projects picker, All, and the picker again to close its menu (the open flag and the scope are store state); the map is the one main's pipeline built over the recorded conversations, and the rig waits for it to `settle` (Knowledge Graph below) |
+| `knowledge-graph-<project>` | boot | one per sample project, generated from the dataset: the title-bar button alone for the open project (contoso-web), and for the others the picker, that project's row, the open project's row to untick it, and the picker again. A single map frames close enough for each conversation's title to show |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below) |
 | `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch |
 | `card-drag`, `card-menu`, `window-dock` | driver | a held drag over Executing, a right-click on a card, a window dragged to the right edge |
@@ -346,6 +352,74 @@ answers `search.everything` with a keyword match over the same rows it installed
 the palette asks (this project or all), and builds the `task`, `backlog`, and `session_event`
 hit shapes, so a visitor's query finds what the desktop's would and `quick-find-results` types
 one. Conversation hits (the memory index) have no rows to search here and do not appear.
+
+### Knowledge Graph
+
+The map a frame opens from the title bar, and the `knowledge-graph` scene, are the Knowledge Graph
+main's own pipeline built over the sample install's recorded conversations: index, embed with the
+default model, nearest neighbours, the 3D layout, regions at three granularities, and region names
+from the task titles. `scripts/capture-demo-knowledge-graph.mjs` registers the three projects in a
+running `/preview` (`seed-knowledge-graph-demo.ts`, dev only), points each recorded session's row at
+its agent's own history, opens each project, waits for the sweep, the embedding drain, the map and
+its names, and reads the snapshots back into `tests/captures/fixtures/demo/graph/knowledge-graph.json`.
+Nothing on the map is placed or named here. Like the message trails, it cannot be rebuilt from the
+repository: the conversations are on the machine that recorded them, and Claude Code deletes its
+own after `cleanupPeriodDays` (30 by default), so a re-derivation has to run while they exist.
+
+A node is a conversation main can index. That is every recorded task session whose agent keeps a
+transcript Kangentic reads (Claude Code, Codex CLI, Gemini CLI, OpenCode), and each archived task's
+run (below), the install's older history included.
+
+That history is what gives the map its depth. `tests/captures/fixtures/demo/archived/history.json`
+lists 177 older Done tasks across the three projects, each with one real headless run on Sonnet 5.5
+at low effort. The two upstream samples' history is their own: each task is one of the sample's
+merged, human-made commits (no dependency bots, no release or typo commits), titled from its
+subject, and its run starts at that commit's parent, so the work was really there to do.
+contoso-web has no upstream, so its history was drafted and reviewed. Twenty-six tasks were
+swapped out after their runs. Sixteen left no change, since a run that finds no work is not a
+finished task. Most found the work already done at the parent commit, or a drafted ask named a
+page the scaffold does not have. Two boutique runs declined an ask too vague to act on, and one
+ended without a single tool call. Ten contoso-web tasks installed a package. The scaffold commits
+no lockfile, so each run counted a new `package-lock.json` of 3,000 to 4,700 lines, which a
+repository that commits its lockfile never shows. Replacements take new ids after the last, and
+the guard holds every run to at least one changed line. Archive dates spread from the
+day after each project joined the install to four days ago, oldest commits oldest, and the history
+takes ticket numbers after each board's, so no card on a board changed number. Main indexes at most
+25 conversations per project open (`MAX_SESSIONS_PER_SWEEP`), so the capture opens a project again
+whenever its sweep stops with conversations left, as a user's later visits would. Cursor and Copilot sessions get no node, since their adapters have no transcript
+parser, which is what the desktop draws too; the Command Terminal is transient and has no row. The
+fixture's `withoutNode` names each recorded session without a node and the reason, and
+`tests/unit/demo-knowledge-graph-seeded.test.ts` holds every recorded conversation to being drawn
+or named.
+
+The fixture keeps what the pipeline computed: each node's place, size, regions and agent name (the
+adapter's display name, which main resolves), the links, the neighbour lists, the regions at every
+granularity, and the coverage and Index counts. A node's title, ticket, model, effort, cost,
+duration, tokens, outcome and last activity are joined from the dataset's rows when the seed runs,
+as main's `documentMetadata` joins the same rows on the desktop, so a node agrees with its card.
+The counts are the install's own because the capture registers each project at a repository with
+the History pane's history: task records are its tasks plus its backlog, and commits are the
+scaffold's commit plan for contoso-web and the one commit of each shallow upstream clone. Settings, Knowledge Graph
+reads the same counts through `getStatus`, summed with main's shared helpers
+(`DEMO_KNOWLEDGE_GRAPH_STATUS`), with semantic search on and the default model present, which is
+the config the maps were built under. No Ask agent is chosen, so Enter in the Ask box opens
+Settings, as on a desktop where nobody picked one. An Ask answer is not seeded: an honest one needs
+a recorded answer run and a mock that refuses every other question.
+
+The map draws with three.js on WebGL 2. A browser that cannot give it a context shows the app's own
+"The map needs a GPU" card, and the region pills and island labels stay at zero opacity, since only
+a drawn frame places them. So the scene's `settle` names those labels: the rig shoots only once one
+is shown and none moves (the camera flies to the three islands after the scope click), and it
+refuses to write a poster while the no-GPU card is up (`NO_GPU_FALLBACKS`). The smoke tier asserts
+the same on the headless shell CI runs, which is the browser and launcher the release's poster job
+uses: Playwright's Chromium launcher passes `--enable-unsafe-swiftshader`, so the shell gets WebGL 2
+on SwiftShader.
+
+```
+node scripts/capture-demo-archived-runs.mjs       # the archived tasks' runs, into archived/runs.json
+node scripts/capture-demo-knowledge-graph.mjs     # needs a /preview of this worktree with Allow Unsafe
+                                                  # Operations on, and the default embedding model cached
+```
 
 ### Git history, blame, and the three scopes
 
@@ -640,13 +714,35 @@ Sessions cover every state the app distinguishes (thinking, needs-you, a permiss
 suspended, queued) plus a Command Terminal; Monitor rows are derived from the session rows so the
 two views cannot disagree; the usage dashboard is a seeded, deterministic fourteen-day series.
 Each archived task carries the stats its last session left (`DEMO_ARCHIVED_SUMMARIES`, what the
-Completed Tasks dialog lists). No recording stands behind an archived task, so these are authored
-and were reviewed as a set: the model is the project's default agent's, the tool count is the sum
-of the breakdown, and every cost sits under the lightest weekday the dashboard draws for one
-project. They do not reconcile with the dashboard beyond that. Its series is seeded noise with idle
-and weekend days far below any of these costs, and the weekday an archive date lands on moves with
-the day the frame is opened. The mock answers the archived list per project, as each project's
-own DB does on the desktop, so contoso-web's dialog lists its three, not all seven.
+Completed Tasks dialog lists), and that session was run for real. `scripts/capture-demo-archived-runs.mjs`
+gives each archived task one headless Claude Code run of its own prompt (`claude -p` with the
+default template's `<title>: <description>`), in a throwaway clone of its repo beside the
+project's scratch clone, trusted the way the desktop trusts a workspace before a spawn, in
+acceptEdits. A run has to start before its task's change: upstream had already made three of them
+(petclinic's Postgres profile, boutique's Go bump and its move to Artifact Registry), so
+`manifest.archived.refs` pins the parent of the upstream commit that made each. The row is the run:
+cost and duration from the run's own result, which is what the status line reports, tokens and
+tools from main's own transcript parsers, and churn from git over the clone, untracked files
+included as `getChurnSummary` counts them. The contoso-web scaffold commits no lockfile, so the CI
+task, which generates one for `npm ci`, counts all 3,069 of its lines. The board's seven runs were on
+Opus 5, and the row's model is read from the run's history: the model the main conversation's turns
+name. The result's `modelUsage` is no guide. Claude Code's advisor answers on its own model and bills
+it to the run, and in three of the seven runs it wrote more than the main conversation, which is how
+those rows once read Opus 5.5. After a change to how a run is measured,
+`node scripts/capture-demo-archived-runs.mjs --remeasure` re-reads every recorded run from its history
+without running anything. Every run is Claude Code's, so each archived task names it as the agent
+that did the work.
+The rows do not reconcile with the usage dashboard: its series is seeded noise, the
+Postgres run alone costs more than the lightest weekday it draws for one project, and the weekday
+an archive date lands on moves with the day the frame is opened. One run differs in mode. In
+acceptEdits, headless Claude refused the Java 21 task's `.devcontainer/Dockerfile` edit as a
+sensitive file, which left one of its three named changes undone, so that task runs in
+bypassPermissions (`manifest.archived.permissionModes`), standing in for the approval the merged
+task got. The runs' transcripts stay on the recording
+machine, where the Knowledge Graph indexed them (Knowledge Graph above). The mock answers the
+archived list per project, as each project's own DB does on the desktop, so contoso-web's dialog
+lists its own archive, the history included (Knowledge Graph above), and not every project's. The
+history runs are on Sonnet 5.5, so their rows name it, beside the board's seven Opus 5 runs.
 
 ### Terminal recordings
 
@@ -1187,7 +1283,14 @@ board cards themselves say under the default Card Preview. It grew 4 KB more whe
 became physical rows and the seed took on the cell-width table the applier clips with. It grew
 17 KB more for the tiled frames of the three sessions with a tiled recording (a final frame and
 a working session's opening frame each), which is what lets a still of a tiled window paint the
-right recording without a fetch.
+right recording without a fetch. It grew about 50 KB more (156 to 207 KB by the same gzip, built
+from the commit before and after) for the Knowledge Graph's three maps and the 177 older archived
+tasks whose conversations make them up, with each task's run summary. The maps alone are about
+30 KB of that. They stay in the seed because the mock takes its graph answers from what
+`__mockPreConfigure` returns, as it takes every other seeded read. Eight board frames on one page
+were ready in 1,569 ms against 1,476 ms before, with 74 MB of heap against 62 MB (`demo:measure`,
+both builds on one machine, run back to back); a single frame's ready time moved by less than its
+run-to-run noise.
 The 44 recordings under `recordings/` (six of them tiled siblings, five of them resume boots) are
 17.3 MB raw and 543 KB gzipped in total, fetched one at a time as terminals mount, so none of it
 is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched

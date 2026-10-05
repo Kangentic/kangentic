@@ -5685,6 +5685,59 @@ export interface DevSeedKnowledgeGraphRealUnavailable {
   unavailable: string;
 }
 
+/**
+ * The web demo's sample install, as board rows for a preview to index (see
+ * DEV_SEED_KNOWLEDGE_GRAPH_DEMO and scripts/capture-demo-knowledge-graph.mjs). Every `key` is the
+ * dataset's own id, so the snapshots read back out can be mapped onto the demo's rows.
+ */
+export interface DevSeedKnowledgeGraphDemoPlan {
+  projects: Array<{
+    key: string;
+    name: string;
+    /** A repository whose history is the one the demo's History pane shows. */
+    path: string;
+    defaultAgent: string;
+    tasks: Array<{
+      key: string;
+      title: string;
+      description: string;
+      labels: string[];
+      displayId: number;
+      done: boolean;
+      archived: boolean;
+    }>;
+    /** Backlog items, which the task-record corpus indexes beside the tasks. */
+    backlog: Array<{
+      title: string;
+      description: string;
+      priority: number;
+      labels: string[];
+    }>;
+    sessions: Array<{
+      key: string;
+      taskKey: string;
+      /** The agent's registry name; the seeder resolves its session type. */
+      agent: string;
+      /** The agent's own id for its history, or null when it keeps none. */
+      agentSessionId: string | null;
+      /** The directory the agent ran in, which its history is filed under. */
+      cwd: string;
+    }>;
+  }>;
+}
+
+/** What a demo-graph seed registered: each project's id and its rows' ids, mapped to the dataset keys. */
+export interface DevSeedKnowledgeGraphDemoResult {
+  projects: Array<{
+    key: string;
+    projectId: string;
+    /** Preview task id to dataset task id. */
+    taskKeys: Record<string, string>;
+    /** Preview session id to dataset session id. */
+    sessionKeys: Record<string, string>;
+  }>;
+}
+
 /** Summary of a dev test-harness usage-data seed (see DEV_SEED_USAGE_DATA). */
 export interface DevSeedUsageDataResult {
   /** Synthetic finalized sessions written to usage_history (across all projects). */
@@ -5788,6 +5841,12 @@ export interface ElectronAPI {
     seedKnowledgeGraphReal: (options: {
       documentLimit?: number; sourceProject?: string; embeddingBacklog?: number;
     }) => Promise<DevSeedKnowledgeGraphRealResult | DevSeedKnowledgeGraphRealUnavailable>;
+    /**
+     * Register the web demo's sample install as real projects, with the rows main's indexer
+     * reads, so the demo's Knowledge Graph fixture is built by the shipped pipeline. Driven by
+     * scripts/capture-demo-knowledge-graph.mjs; refuses a second seed into the same preview.
+     */
+    seedKnowledgeGraphDemo: (plan: DevSeedKnowledgeGraphDemoPlan) => Promise<DevSeedKnowledgeGraphDemoResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**

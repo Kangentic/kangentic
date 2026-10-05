@@ -1,11 +1,11 @@
 /**
  * Bundle a TypeScript module with esbuild, then import the result.
  *
- * Node 24 strips types itself, which is why scripts/capture-demo-sessions.mjs can import
- * tests/captures/helpers/demo-dataset.ts directly. That works only while every module in the
- * import graph is resolvable by Node ESM, and the agent transcript parsers are not: they use
- * extensionless relative specifiers ('../../shared/history-scan'), which Node answers with
- * ERR_MODULE_NOT_FOUND. esbuild resolves those the way tsc and the app build do.
+ * Node 24 strips types itself, but that works only while every module in the import graph is
+ * resolvable by Node ESM. The agent transcript parsers are not: they use extensionless relative
+ * specifiers ('../../shared/history-scan'), which Node answers with ERR_MODULE_NOT_FOUND. Nor is
+ * tests/captures/helpers/demo-dataset.ts, which imports its JSON fixtures. esbuild resolves both
+ * the way tsc and the app build do.
  *
  * The bundle lands under node_modules/.cache so a runtime `external` still resolves from the
  * repo's own node_modules. A temp directory would put it outside every resolution root.
