@@ -32,17 +32,38 @@ function gifBase64(width: number, height: number): string {
   return header.toString('base64');
 }
 
+/** A JPEG stream as base64: SOI followed by the given raw segments, in order. */
+function jpegFromSegments(...segments: Buffer[]): string {
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), ...segments]).toString('base64');
+}
+
+/** A length-prefixed segment: 0xff, the marker, a big-endian length that counts itself, then the payload. */
+function jpegSegment(marker: number, payload: Buffer): Buffer {
+  const segment = Buffer.alloc(4 + payload.length);
+  segment[0] = 0xff;
+  segment[1] = marker;
+  segment.writeUInt16BE(2 + payload.length, 2);
+  payload.copy(segment, 4);
+  return segment;
+}
+
+/** A 16-byte APP0 segment, the usual first thing after SOI. */
+function app0Segment(): Buffer {
+  return jpegSegment(0xe0, Buffer.alloc(14));
+}
+
+/** A 19-byte frame header with the given SOF marker (0xc0 baseline, 0xc2 progressive, ...). */
+function sofSegment(marker: number, width: number, height: number): Buffer {
+  const payload = Buffer.alloc(15);
+  payload[0] = 8;
+  payload.writeUInt16BE(height, 1);
+  payload.writeUInt16BE(width, 3);
+  return jpegSegment(marker, payload);
+}
+
 /** SOI, an APP0 segment to skip, then an SOF0 frame header. */
 function jpegBase64(width: number, height: number): string {
-  const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x10, ...Buffer.alloc(14)]);
-  const sof0 = Buffer.alloc(19);
-  sof0[0] = 0xff;
-  sof0[1] = 0xc0;
-  sof0.writeUInt16BE(17, 2);
-  sof0[4] = 8;
-  sof0.writeUInt16BE(height, 5);
-  sof0.writeUInt16BE(width, 7);
-  return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof0]).toString('base64');
+  return jpegFromSegments(app0Segment(), sofSegment(0xc0, width, height));
 }
 
 describe('estimateToolResultTokens', () => {
@@ -99,5 +120,53 @@ describe('readImageDimensions', () => {
   it('returns null for anything else', () => {
     expect(readImageDimensions('')).toBeNull();
     expect(readImageDimensions(Buffer.from('RIFF....WEBP').toString('base64'))).toBeNull();
+  });
+});
+
+describe('readImageDimensions JPEG segment walk', () => {
+  // 0xc4 (DHT), 0xc8 (JPG), and 0xcc (DAC) sit inside the 0xc0-0xcf SOF range
+  // but are not frame headers. Each is a length-prefixed segment to skip.
+  const nonFrameMarkers = [
+    { name: 'DHT', marker: 0xc4 },
+    { name: 'JPG', marker: 0xc8 },
+    { name: 'DAC', marker: 0xcc },
+  ];
+
+  it.each(nonFrameMarkers)('skips a $name segment and reads the SOF2 frame header after it', ({ marker }) => {
+    // Laid out so that reading this segment as a frame header would give
+    // 1110 x 291, which is not the image's real 640 x 480.
+    const misleadingPayload = Buffer.alloc(18);
+    misleadingPayload.writeUInt16BE(291, 1);
+    misleadingPayload.writeUInt16BE(1110, 3);
+    const base64 = jpegFromSegments(
+      jpegSegment(marker, misleadingPayload),
+      sofSegment(0xc2, 640, 480),
+    );
+    expect(readImageDimensions(base64)).toEqual({ width: 640, height: 480 });
+  });
+
+  it('skips fill bytes before a marker', () => {
+    // Three 0xff in a row (two fill bytes plus the SOF0 marker's own 0xff).
+    const base64 = jpegFromSegments(Buffer.from([0xff, 0xff]), sofSegment(0xc0, 800, 450));
+    expect(readImageDimensions(base64)).toEqual({ width: 800, height: 450 });
+  });
+
+  it('returns null when the stream ends before any frame header', () => {
+    expect(readImageDimensions(jpegFromSegments(app0Segment()))).toBeNull();
+  });
+
+  it('returns null, without throwing, when the stream ends inside the frame header', () => {
+    // SOF0 cut after 6 of its 19 bytes: too short to hold the width and height.
+    const truncatedFrameHeader = sofSegment(0xc0, 800, 450).subarray(0, 6);
+    expect(readImageDimensions(jpegFromSegments(app0Segment(), truncatedFrameHeader))).toBeNull();
+  });
+
+  it('returns null when a segment does not start with 0xff', () => {
+    // A valid SOF0 follows the garbage. The garbage is shaped so a walker that
+    // ignored the 0xff check would step over it (marker 0x00, length 2) and
+    // land on that SOF0, so only the check itself yields null here.
+    const garbage = Buffer.from([0x12, 0x00, 0x00, 0x02]);
+    const base64 = jpegFromSegments(app0Segment(), garbage, sofSegment(0xc0, 800, 450));
+    expect(readImageDimensions(base64)).toBeNull();
   });
 });

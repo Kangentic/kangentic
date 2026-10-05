@@ -40,8 +40,9 @@ Four things that are easy to get wrong, each of which fails silently:
   and every subsequent key is dead.
 - **`z-50` is wrong for a portaled element.** `BaseDialog` is itself `z-50`, and a body portal
   is its sibling. Use `z-[2147483646]`, as `LabelInput` and `KebabMenu` do.
-- **Width and height caps do not survive.** `usePopoverPosition` writes `top`/`left`, so
-  `left-0 right-0` width matching is lost: pass `matchTriggerWidth: true` and the hook writes the
+- **Width and height caps do not survive.** `usePopoverPosition` writes one vertical edge
+  (`top` or `bottom`) and one horizontal edge (`left` or `right`), so `left-0 right-0` width
+  matching is lost: pass `matchTriggerWidth: true` and the hook writes the
   trigger's width onto the menu BEFORE it measures. Do not measure the trigger in a second
   `useLayoutEffect` and pass `width` through `style`. Layout effects run in declaration order, so
   the hook's effect fires first and measures a width-less menu on the mount commit. Its
@@ -52,9 +53,9 @@ Four things that are easy to get wrong, each of which fails silently:
   remounts its comboboxes on every panel open. The same one-line measurement also reads the
   height one row tall, so the fits-below decision was made against the wrong height. Keep the
   `max-h-*` cap on the portaled element, or a tall list fits neither below nor above,
-  `openAbove` fires unconditionally, and `top` goes negative.
+  `openAbove` fires unconditionally, and the menu runs off the top of the window.
 
-Two properties of the pattern to know before you reach for it, both shared with the existing
+Three properties of the pattern to know before you reach for it, all shared with the existing
 portaled sites (`LabelInput`, `KebabMenu`) rather than new:
 
 - **The side is decided once, at open, and the anchor faces the trigger.** `usePopoverPosition`
@@ -70,10 +71,11 @@ portaled sites (`LabelInput`, `KebabMenu`) rather than new:
   window scrolls inside it instead of spilling out. The hook never writes an inline `max-height`,
   which would override the consumer's own cap.
 - **Nothing re-measures while it is open.** `usePopoverPosition` has no `scroll` or `resize`
-  listener, so a `fixed` menu holds its viewport coordinates while its trigger moves. Scrolling the settings tab body, the task-detail edit form, the board-manager body, or a
-  `DataTable` while a menu is open visually detaches it. Prefer a trigger that cannot scroll under
-  an open menu; the `DataTable` sites partly self-heal, because virtualizing the anchor row out
-  unmounts the popover with it.
+  listener, so a `fixed` menu holds its viewport coordinates while its trigger moves. Scrolling
+  the settings tab body, the task-detail edit form, the board-manager body, or a `DataTable`
+  while a menu is open visually detaches it. Prefer a trigger that cannot scroll under an open
+  menu; the `DataTable` sites partly self-heal, because virtualizing the anchor row out unmounts
+  the popover with it.
 - **`z-[2147483646]` clears the toast layer too.** Toasts render at `z-[60]`
   (`ToastContainer.tsx`), so a toast that fires while a portaled menu is open renders behind it.
 

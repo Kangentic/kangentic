@@ -13,10 +13,11 @@ function formatToolDuration(milliseconds: number): string {
   return formatDuration(milliseconds);
 }
 
-function formatOptionalDuration(milliseconds: number | undefined) {
-  return milliseconds === undefined
-    ? <span className="text-fg-disabled">-</span>
-    : formatToolDuration(milliseconds);
+/** A cell's formatted value, or the muted dash every column shows for a row with none. */
+function formatOptional(value: number | undefined, format: (value: number) => string): ReactNode {
+  return typeof value === 'number'
+    ? format(value)
+    : <span className="text-fg-disabled">-</span>;
 }
 
 type SortKey = 'tool' | 'calls' | 'time' | 'avg' | 'tokens' | 'cost' | 'inputTokens' | 'outputTokens';
@@ -87,10 +88,6 @@ function compareRows(left: PerToolStat, right: PerToolStat, sort: SortState): nu
 
 const VALUE_CELL_CLASS = 'py-1 pr-3 last:pr-0 text-right text-fg-secondary';
 
-function formatOptionalValue(value: number | undefined, format: (value: number) => string): string {
-  return typeof value === 'number' ? format(value) : '-';
-}
-
 /** A sortable column after Tool and Calls, shown only when some row has a value for it. */
 interface ValueColumn {
   key: Exclude<NumericSortKey, 'calls'>;
@@ -101,12 +98,12 @@ interface ValueColumn {
 }
 
 const VALUE_COLUMNS: ValueColumn[] = [
-  { key: 'time', label: 'Time', title: timeColumnTitle, cell: (row) => formatOptionalDuration(runTimeMs(row)) },
-  { key: 'avg', label: 'Avg', title: () => AVG_COLUMN_TITLE, cell: (row) => formatOptionalDuration(averageDurationMs(row)) },
-  { key: 'tokens', label: 'Tokens', title: () => TOKENS_COLUMN_TITLE, cell: (row) => formatOptionalValue(row.resultTokens, formatTokenCount) },
-  { key: 'cost', label: 'Cost', cell: (row) => formatOptionalValue(row.costUsd, formatCost) },
-  { key: 'inputTokens', label: 'In', cell: (row) => formatOptionalValue(row.inputTokens, formatTokenCount) },
-  { key: 'outputTokens', label: 'Out', cell: (row) => formatOptionalValue(row.outputTokens, formatTokenCount) },
+  { key: 'time', label: 'Time', title: timeColumnTitle, cell: (row) => formatOptional(runTimeMs(row), formatToolDuration) },
+  { key: 'avg', label: 'Avg', title: () => AVG_COLUMN_TITLE, cell: (row) => formatOptional(averageDurationMs(row), formatToolDuration) },
+  { key: 'tokens', label: 'Tokens', title: () => TOKENS_COLUMN_TITLE, cell: (row) => formatOptional(row.resultTokens, formatTokenCount) },
+  { key: 'cost', label: 'Cost', cell: (row) => formatOptional(row.costUsd, formatCost) },
+  { key: 'inputTokens', label: 'In', cell: (row) => formatOptional(row.inputTokens, formatTokenCount) },
+  { key: 'outputTokens', label: 'Out', cell: (row) => formatOptional(row.outputTokens, formatTokenCount) },
 ];
 
 function SortableHeader({

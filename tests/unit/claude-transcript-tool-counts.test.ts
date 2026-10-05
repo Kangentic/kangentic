@@ -167,6 +167,47 @@ function readPositions(readSpy: Awaited<ReturnType<typeof spyOnHandleReads>>): n
   return readSpy.mock.calls.map((callArguments) => (callArguments as unknown[])[3] as number);
 }
 
+type PositionedRead = (
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+) => Promise<{ bytesRead: number; buffer: Buffer }>;
+
+/**
+ * The real `FileHandle.read`, for a fake that fails one read and passes every
+ * other through. Call it BEFORE `spyOnHandleReads`: afterwards the prototype
+ * holds the spy, and calling that from inside its own fake recurses.
+ */
+async function captureOriginalHandleRead(filePath: string): Promise<PositionedRead> {
+  const probe = await fsPromises.open(filePath, 'r');
+  const original = (Object.getPrototypeOf(probe) as FileHandle).read;
+  await probe.close();
+  return original as unknown as PositionedRead;
+}
+
+/**
+ * Make ONE positioned read fail, the first whose position `matches`: `'short'`
+ * returns a byte fewer than the real read got (a file truncated mid-read),
+ * `'reject'` rejects without reading (an I/O error). Every other read, before
+ * and after, goes through to the real file.
+ */
+function injectReadFault(
+  readSpy: Awaited<ReturnType<typeof spyOnHandleReads>>,
+  originalRead: PositionedRead,
+  fault: 'short' | 'reject',
+  matches: (position: number) => boolean,
+): void {
+  let injected = false;
+  readSpy.mockImplementation((async function (this: FileHandle, buffer: Buffer, offset: number, length: number, position: number) {
+    const shouldFail = !injected && matches(position);
+    if (shouldFail) injected = true;
+    if (shouldFail && fault === 'reject') throw new Error('EIO: simulated read failure');
+    const result = await originalRead.call(this, buffer, offset, length, position);
+    return shouldFail ? { ...result, bytesRead: result.bytesRead - 1 } : result;
+  }) as unknown as FileHandle['read']);
+}
+
 describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
   let dir: string;
 
@@ -563,6 +604,135 @@ describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(second).toEqual(first);
     expect(tokens).toEqual({ Read: 100 });
+  });
+
+  // A count that comes back low is written to the session row as the run's
+  // total, so a read that fails partway must yield null and a dropped cursor,
+  // never a count from a half-read file or a cursor that resumes from it.
+  describe('a read that fails partway', () => {
+    const initialCallCount = 5;
+    const initialContent = (): string =>
+      Array.from({ length: initialCallCount }, (_, index) => assistantToolUse(`t${index}`, 'Read')).join('');
+    const appendedContent = (): string => assistantToolUse('a1', 'Bash') + assistantToolUse('a2', 'Bash');
+
+    it('returns null on a short read, then recounts the whole file from byte 0 with nothing counted twice', async () => {
+      const filePath = path.join(dir, 'short-read.jsonl');
+      fs.writeFileSync(filePath, initialContent());
+      const warm = await parseClaudeTranscriptToolCounts(filePath);
+      expect(warm!.toolCallCount).toBe(initialCallCount);
+      const warmEnd = fs.statSync(filePath).size;
+
+      fs.appendFileSync(filePath, appendedContent());
+      const originalRead = await captureOriginalHandleRead(filePath);
+      const faultedSpy = await spyOnHandleReads(filePath);
+      // Fault the read of the appended bytes, which starts at the old end. The
+      // read before it is the tail check, and a short tail check only resets
+      // the cursor; it does not fail the call.
+      injectReadFault(faultedSpy, originalRead, 'short', (position) => position === warmEnd);
+
+      // Null, not a count of the five calls the cursor already held.
+      expect(await parseClaudeTranscriptToolCounts(filePath)).toBeNull();
+      // The fault landed on the read it was aimed at, so this cannot pass vacuously.
+      expect(readPositions(faultedSpy)).toContain(warmEnd);
+      faultedSpy.mockRestore();
+
+      const recoverySpy = await spyOnHandleReads(filePath);
+      const recovered = await parseClaudeTranscriptToolCounts(filePath);
+      expect(recovered!.toolCallCount).toBe(initialCallCount + 2);
+      expect(recovered!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Read', initialCallCount], ['Bash', 2]]);
+      // The failed call dropped the cursor, so the recount starts at 0 and does
+      // not resume from an offset the failed read left behind.
+      expect(Math.min(...readPositions(recoverySpy))).toBe(0);
+    });
+
+    it('lets the call chained behind a failed one return the correct count', async () => {
+      const filePath = path.join(dir, 'failure-isolation.jsonl');
+      fs.writeFileSync(filePath, initialContent() + userToolResult('t0', 'x'.repeat(400)));
+      expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(initialCallCount);
+
+      fs.appendFileSync(filePath, appendedContent());
+      const originalRead = await captureOriginalHandleRead(filePath);
+      const readSpy = await spyOnHandleReads(filePath);
+      // The first read of the first call rejects. Nothing after it does.
+      injectReadFault(readSpy, originalRead, 'reject', () => true);
+
+      // Both start in the same tick, so the second chains onto the first.
+      const [failed, chained] = await Promise.allSettled([
+        parseClaudeTranscriptToolCounts(filePath),
+        parseClaudeTranscriptToolCounts(filePath),
+      ]);
+
+      // A read error is an answer of null, never a rejection that reaches the caller.
+      expect(failed).toEqual({ status: 'fulfilled', value: null });
+      expect(chained.status).toBe('fulfilled');
+      const counts = (chained as PromiseFulfilledResult<Awaited<ReturnType<typeof parseClaudeTranscriptToolCounts>>>).value;
+      expect(counts!.toolCallCount).toBe(initialCallCount + 2);
+      expect(counts!.toolBreakdown).toEqual([
+        { toolName: 'Read', callCount: initialCallCount, totalDurationMs: 0, interruptedCount: 0, resultTokens: 100 },
+        { toolName: 'Bash', callCount: 2, totalDurationMs: 0, interruptedCount: 0 },
+      ]);
+      // The first read is the failed call's tail check. Everything after it is
+      // the chained call, which found no cursor and so read the file from the start.
+      expect(Math.min(...readPositions(readSpy).slice(1))).toBe(0);
+    });
+  });
+
+  describe('the retained-cursor limit', () => {
+    // Mirrors the parser's private TOOL_CALL_CURSOR_LIMIT. The two cases below
+    // fail on either side of it, so a stale mirror shows up as a red test.
+    const CURSOR_LIMIT = 16;
+
+    function writeTranscripts(count: number): string[] {
+      return Array.from({ length: count }, (_, index) => {
+        const filePath = path.join(dir, `retained-${index}.jsonl`);
+        fs.writeFileSync(filePath, assistantToolUse(`f${index}`, 'Read'));
+        return filePath;
+      });
+    }
+
+    it('keeps the cursors of the 16 most recent paths, so re-parsing every one of them reads nothing', async () => {
+      const filePaths = writeTranscripts(CURSOR_LIMIT);
+      for (const filePath of filePaths) {
+        expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(1);
+      }
+
+      const readSpy = await spyOnHandleReads(filePaths[0]);
+      const openSpy = vi.spyOn(fsPromises, 'open');
+      readSpy.mockClear();
+      openSpy.mockClear();
+      for (const filePath of filePaths) {
+        expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(1);
+      }
+
+      // Positions, not the spy itself, so a failure prints a short list rather than every buffer read.
+      expect(readPositions(readSpy)).toEqual([]);
+      expect(openSpy).not.toHaveBeenCalled();
+    });
+
+    it('evicts the oldest path past the limit and re-reads it from byte 0, while the newest stays resumable', async () => {
+      const filePaths = writeTranscripts(CURSOR_LIMIT + 1);
+      for (const filePath of filePaths) {
+        expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(1);
+      }
+      const newestPath = filePaths[CURSOR_LIMIT];
+
+      const readSpy = await spyOnHandleReads(filePaths[0]);
+      readSpy.mockClear();
+
+      // The newest path first: re-parsing the oldest below would evict another
+      // path, and this keeps that out of the picture.
+      expect((await parseClaudeTranscriptToolCounts(newestPath))!.toolCallCount).toBe(1);
+      expect(readPositions(readSpy)).toEqual([]);
+
+      // The first path lost its cursor to the 17th, so it is read in full, and
+      // counted once.
+      const oldest = await parseClaudeTranscriptToolCounts(filePaths[0]);
+      expect(oldest!.toolCallCount).toBe(1);
+      expect(oldest!.toolBreakdown).toEqual([{ toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0 }]);
+      const oldestReadPositions = readPositions(readSpy);
+      expect(oldestReadPositions.length).toBeGreaterThan(0);
+      expect(Math.min(...oldestReadPositions)).toBe(0);
+    });
   });
 });
 
