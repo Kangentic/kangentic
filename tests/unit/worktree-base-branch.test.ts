@@ -18,7 +18,7 @@
  * A repo whose base resolves normally must take a byte-identical path - no
  * move that currently succeeds may be blocked.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,12 @@ import { execFileSync } from 'node:child_process';
 import { WorktreeManager } from '../../src/main/git/worktree-manager';
 import { resolveWorktreeBase, describeUnresolvableBase, type WorktreeBaseResolution } from '../../src/main/git/base-branch';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
+
+// Nearly every test here spawns real git (init, commit, clone, fetch, worktree add),
+// a second or two alone. Under a full unit run's load on Windows they ran 5.2 to
+// 6.6s, past the default 5s, a different test each run. One budget for the file,
+// rather than chasing them one at a time.
+vi.setConfig({ testTimeout: 20000 });
 
 let workspace: string;
 
