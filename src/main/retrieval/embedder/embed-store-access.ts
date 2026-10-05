@@ -18,6 +18,7 @@ export interface EmbedStore {
   setMeta(key: string, value: string): void;
   resetVec(dimensions: number, awaitTurn: () => Promise<void>): Promise<void> | void;
   ensureVecTable(dimensions: number): void;
+  hasEmbeddingsFromOtherModel(modelTag: string): boolean;
   readonly hasVec: boolean;
   chunksNeedingEmbedding(modelTag: string, limit: number): StoredChunk[];
   writeEmbeddings(rows: EmbeddingRow[], modelTag: string): void;
@@ -48,15 +49,30 @@ export interface EmbedStoreAccess {
   write(projectId: string, rows: EmbeddingRow[], modelTag: string): Promise<void>;
 }
 
-/** The vec tables at the model's width: a new width needs a full reset, the
- *  same width only needs the table to exist. False when there is none. */
+/**
+ * The vec tables for the model: a new width OR a new model resets them, the
+ * same model only needs the table to exist. False when there is none.
+ *
+ * A new model at the same width resets too. bge-base and Granite R2 are both
+ * 768-wide, and the search does not filter by tag, so without the reset a
+ * re-embed drain left one table scoring queries against two models' vectors.
+ * `vec_model` records the tag the tables hold; an index from before it was
+ * kept resets only when a stored vector comes from another model, so a user
+ * whose model did not change never re-embeds for it.
+ */
 async function syncVecTable(store: EmbedStore, model: EmbedModelRef, awaitTurn: () => Promise<void>): Promise<boolean> {
-  if (store.getMeta('vec_dims') !== String(model.dimensions)) {
+  const storedModel = store.getMeta('vec_model');
+  const widthChanged = store.getMeta('vec_dims') !== String(model.dimensions);
+  const modelChanged = storedModel === undefined
+    ? store.hasEmbeddingsFromOtherModel(model.modelTag)
+    : storedModel !== model.modelTag;
+  if (widthChanged || modelChanged) {
     await store.resetVec(model.dimensions, awaitTurn);
     store.setMeta('vec_dims', String(model.dimensions));
   } else {
     store.ensureVecTable(model.dimensions);
   }
+  if (storedModel !== model.modelTag) store.setMeta('vec_model', model.modelTag);
   return store.hasVec;
 }
 

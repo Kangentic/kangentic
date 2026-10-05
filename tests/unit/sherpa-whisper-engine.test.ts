@@ -5,7 +5,7 @@ import type { CreateSessionOptions, ResolvedModel } from '../../src/main/transcr
  * SherpaWhisperEngine, the accurate offline pass that produces the committed
  * text. Its whole contract is that push() only buffers and exactly one decode
  * happens, on finalize. It also owns buildOfflineConfig, the config builder the
- * chunked live engine shares, whose three model-kind branches are the thing most
+ * chunked live engine shares, whose model-kind branches are the thing most
  * likely to break silently when a model kind is added.
  *
  * sherpa-onnx-node is a native addon, so it is mocked.
@@ -30,6 +30,8 @@ const harness = vi.hoisted(() => ({
      *  test observe drain() while a decode is still on the threadpool. */
     manualDecode: false,
     pending: [] as PendingDecode[],
+    /** Each setOption call on a stream, in order. */
+    streamOptions: [] as Array<[string, string]>,
   },
 }));
 
@@ -38,6 +40,9 @@ vi.mock('sherpa-onnx-node', () => {
     sampleCount = 0;
     acceptWaveform(waveform: { samples: Float32Array; sampleRate: number }): void {
       this.sampleCount = waveform.samples.length;
+    }
+    setOption(key: string, value: string): void {
+      harness.state.streamOptions.push([key, value]);
     }
   }
 
@@ -79,6 +84,7 @@ interface OfflineConfig {
     transducer?: { encoder: string; decoder: string; joiner: string };
     moonshine?: Record<string, string>;
     whisper?: { encoder: string; decoder: string; language: string; task: string };
+    cohereTranscribe?: { encoder: string; decoder: string; usePunct: number; useItn: number };
   };
 }
 
@@ -122,7 +128,8 @@ describe('SherpaWhisperEngine', () => {
     state.lastConfig = null;
     state.manualDecode = false;
     state.pending = [];
-    options = { sampleRate: 16000, language: 'en', punctuation: true, onPartial: vi.fn() };
+    state.streamOptions = [];
+    options = { sampleRate: 16000, language: 'en', onPartial: vi.fn() };
   });
 
   it('buffers without decoding until finalize', async () => {
@@ -150,6 +157,19 @@ describe('SherpaWhisperEngine', () => {
     await session.finalize();
 
     expect(options.onPartial).not.toHaveBeenCalled();
+  });
+
+  // Cohere Transcribe reads the language from the stream, not the config; left
+  // unset it would not transcribe the language the user picked.
+  it('pins the final decode\'s stream to the engine\'s language', async () => {
+    const engine = new SherpaWhisperEngine('de');
+    await engine.load([model('offline-cohere-transcribe', { encoder: 'e', decoder: 'd', tokens: 't' })]);
+    const session = engine.createSession(options);
+
+    session.push(audioFrame(100));
+    await session.finalize();
+
+    expect(state.streamOptions).toEqual([['language', 'de']]);
   });
 
   it('finalizes an empty buffer without touching the recognizer', async () => {
@@ -293,11 +313,25 @@ describe('buildOfflineConfig', () => {
     expect(config.modelConfig.whisper?.language).toBe('en');
   });
 
+  // Cohere Transcribe takes punctuation and number formatting as switches, and
+  // reads its language from each stream rather than the config.
+  it('builds a Cohere Transcribe config with punctuation and number formatting on', () => {
+    const config = buildOfflineConfig(
+      model('offline-cohere-transcribe', { encoder: 'enc.onnx', decoder: 'dec.onnx', tokens: 'tokens.txt' }),
+      'de',
+    ) as OfflineConfig;
+
+    expect(config.modelConfig.cohereTranscribe).toEqual({ encoder: 'enc.onnx', decoder: 'dec.onnx', usePunct: 1, useItn: 1 });
+    expect(config.modelConfig.whisper).toBeUndefined();
+    expect(config.modelConfig.transducer).toBeUndefined();
+  });
+
   it('captures 16 kHz 80-dim features for every kind', () => {
     for (const resolved of [
       PARAKEET,
       model('offline-whisper', { encoder: 'e', decoder: 'd', tokens: 't' }),
       model('offline-moonshine', { preprocessor: 'p', encoder: 'e', uncachedDecoder: 'u', cachedDecoder: 'c', tokens: 't' }),
+      model('offline-cohere-transcribe', { encoder: 'e', decoder: 'd', tokens: 't' }),
     ]) {
       const config = buildOfflineConfig(resolved) as OfflineConfig;
       expect(config.featConfig).toEqual({ sampleRate: 16000, featureDim: 80 });

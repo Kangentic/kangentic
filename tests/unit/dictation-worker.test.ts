@@ -124,7 +124,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -132,7 +132,7 @@ describe('dictation-worker', () => {
     expect(mockBuildEngine).toHaveBeenCalledTimes(1);
     expect(engine.load).toHaveBeenCalledTimes(1);
     expect(engine.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ sampleRate: 16000, language: 'en', punctuation: true }),
+      expect.objectContaining({ sampleRate: 16000, language: 'en' }),
     );
     expect(port.postMessage).toHaveBeenCalledWith({ type: 'result', id: 1 });
   });
@@ -151,7 +151,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -179,7 +179,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -208,7 +208,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -252,7 +252,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -278,7 +278,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -327,7 +327,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -370,7 +370,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -404,7 +404,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -437,7 +437,7 @@ describe('dictation-worker', () => {
           id: 1,
           dictationSessionId: 'dictation-1',
           ...ensureEngineFields('key-a'),
-          sessionOptions: { language: 'en', punctuation: true },
+          sessionOptions: { language: 'en' },
         },
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -481,7 +481,7 @@ describe('dictation-worker', () => {
           id: 1,
           dictationSessionId: 'dictation-1',
           ...ensureEngineFields('key-a'),
-          sessionOptions: { language: 'en', punctuation: true },
+          sessionOptions: { language: 'en' },
         },
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -570,7 +570,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     await flush();
@@ -642,7 +642,7 @@ describe('dictation-worker', () => {
         id: 1,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     // disposeWarm() bumps warmGeneration while this createSession's own load
@@ -725,7 +725,7 @@ describe('dictation-worker', () => {
         id: 2,
         dictationSessionId: 'dictation-1',
         ...ensureEngineFields('key-a'),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       },
     });
     // Both requests join the same in-flight load; disposeWarm() supersedes

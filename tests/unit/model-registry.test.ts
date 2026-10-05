@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   modelLanguages,
-  defaultModelForTier,
   isOfflineModel,
   getModel,
   liveCapableModels,
@@ -9,7 +8,8 @@ import {
   MODELS,
   type ModelDef,
 } from '../../src/main/transcription/models/model-registry';
-import { MULTILINGUAL_LANGUAGE_CODES } from '../../src/shared/dictation-languages';
+import { DICTATION_LANGUAGES, MULTILINGUAL_LANGUAGE_CODES, PARAKEET_V3_LANGUAGE_CODES } from '../../src/shared/dictation-languages';
+import { MODEL_LICENSES } from '../../src/shared/model-licenses';
 
 describe('modelLanguages', () => {
   it('returns the declared languages array when the field is present', () => {
@@ -18,7 +18,7 @@ describe('modelLanguages', () => {
       engineKind: 'offline-whisper',
       displayName: 'Test multi',
       license: 'MIT',
-      tier: 'accurate-base',
+      accuracy: { rank: 1, label: 'Basic accuracy' },
       approxSizeMb: 100,
       languages: ['en', 'fr', 'de'],
       files: [],
@@ -35,7 +35,7 @@ describe('modelLanguages', () => {
       engineKind: 'offline-whisper',
       displayName: 'Test English',
       license: 'MIT',
-      tier: 'accurate-base',
+      accuracy: { rank: 1, label: 'Basic accuracy' },
       approxSizeMb: 100,
       files: [],
       roles: {},
@@ -51,7 +51,7 @@ describe('modelLanguages', () => {
       engineKind: 'offline-whisper',
       displayName: 'Test',
       license: 'MIT',
-      tier: 'accurate-base',
+      accuracy: { rank: 1, label: 'Basic accuracy' },
       approxSizeMb: 10,
       languages,
       files: [],
@@ -64,19 +64,50 @@ describe('modelLanguages', () => {
   });
 });
 
-describe('defaultModelForTier', () => {
-  it('accurate-base tier default is parakeet-tdt-0.6b-en (first in MODELS with that tier)', () => {
-    // MODELS is ordered: Parakeet first, then the Whisper ladder. The first
-    // accurate-base entry is Parakeet - the leaderboard-topping English model.
-    const model = defaultModelForTier('accurate-base');
-    expect(model.id).toBe('parakeet-tdt-0.6b-en');
-    expect(model.tier).toBe('accurate-base');
+describe('the October 2026 lineup', () => {
+  it('registers each new model under its own id and engine kind', () => {
+    expect(getModel('parakeet-unified-0.6b-en')?.engineKind).toBe('offline-nemo-transducer');
+    expect(getModel('parakeet-tdt-0.6b-v3')?.engineKind).toBe('offline-nemo-transducer');
+    expect(getModel('nemotron-streaming-0.6b-en')?.engineKind).toBe('online-transducer');
+    expect(getModel('nemotron-3.5-streaming-0.6b')?.engineKind).toBe('online-transducer');
   });
 
-  it('streaming-tiny tier default is streaming-zipformer-en (the only streaming model)', () => {
-    const model = defaultModelForTier('streaming-tiny');
-    expect(model.id).toBe('streaming-zipformer-en');
-    expect(model.tier).toBe('streaming-tiny');
+  // The downloader skips a file already on disk, so a model's weights can only
+  // change under a new id. The ids the old lineup saved must keep resolving.
+  it('keeps every id an older config may hold', () => {
+    for (const id of ['parakeet-tdt-0.6b-en', 'streaming-zipformer-en', 'whisper-base-multi', 'whisper-small-multi']) {
+      expect(getModel(id)).toBeDefined();
+    }
+  });
+
+  it('pins the new models to a commit, not main', () => {
+    for (const id of ['parakeet-unified-0.6b-en', 'parakeet-tdt-0.6b-v3', 'nemotron-streaming-0.6b-en', 'nemotron-3.5-streaming-0.6b']) {
+      for (const fileSpec of getModel(id)!.files) {
+        expect(fileSpec.url).toMatch(/\/resolve\/[0-9a-f]{40}\//);
+      }
+    }
+  });
+
+  it('gives Parakeet v3 its ten languages and Nemotron 3.5 the whole curated set', () => {
+    expect(modelLanguages(getModel('parakeet-tdt-0.6b-v3')!)).toEqual([...PARAKEET_V3_LANGUAGE_CODES]);
+    expect(modelLanguages(getModel('nemotron-3.5-streaming-0.6b')!)).toEqual([...MULTILINGUAL_LANGUAGE_CODES]);
+  });
+});
+
+describe('every registered model', () => {
+  it('carries an accuracy label and a license the settings tabs can name', () => {
+    for (const model of MODELS) {
+      expect(model.accuracy.rank).toBeGreaterThan(0);
+      expect(model.accuracy.label).toMatch(/accuracy$/);
+      expect(MODEL_LICENSES[model.license]).toBeDefined();
+    }
+  });
+
+  it('declares only languages the Language dropdown offers', () => {
+    const offered = DICTATION_LANGUAGES.map((language) => language.code);
+    for (const model of MODELS) {
+      for (const code of modelLanguages(model)) expect(offered).toContain(code);
+    }
   });
 });
 

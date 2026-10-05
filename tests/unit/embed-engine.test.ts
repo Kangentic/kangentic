@@ -75,6 +75,9 @@ class FakeStore implements EmbedStore {
   setMeta(): void {}
   resetVec(): void {}
   ensureVecTable(): void {}
+  hasEmbeddingsFromOtherModel(): boolean {
+    return false;
+  }
 
   chunksNeedingEmbedding(_modelTag: string, limit: number): StoredChunk[] {
     this.visits.push(this.projectId);
@@ -802,7 +805,7 @@ describe('createEmbedEngine getClientFor model/acceleration switch', () => {
     expect(createClient).toHaveBeenCalledTimes(1);
     expect(first).toBe(createdClients[0]);
 
-    state.localModel = 'bge-large';
+    state.localModel = 'granite-r2';
     const second = engine.getEmbedder(context);
 
     expect(createdClients[0].dispose).toHaveBeenCalledTimes(1);

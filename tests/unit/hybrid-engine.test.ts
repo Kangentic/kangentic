@@ -72,7 +72,7 @@ function deferredLoad(engine: FakeEngine): { resolve: () => void; reject: (error
 }
 
 function makeOptions(): CreateSessionOptions {
-  return { sampleRate: 16000, language: 'en', punctuation: true, onPartial: vi.fn() };
+  return { sampleRate: 16000, language: 'en', onPartial: vi.fn() };
 }
 
 function model(id: string): ResolvedModel {

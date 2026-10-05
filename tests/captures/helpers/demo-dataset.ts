@@ -658,14 +658,14 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
  * read None whatever the config says, which made the feature look switched off in every figure.
  *
  * The machine is the sample install's Windows box, and nothing renders the profile. What matters is
- * the tier it resolves to: this one is `accurate-base`, so the default config selects the streaming
- * Zipformer live and Parakeet to refine, which is the Best accuracy preset. A machine on
- * `streaming-tiny` would select no refinement model at all. The CPU name is detection's own
+ * the tier it resolves to: this one is `accurate-base`, so the default config runs the Best preset,
+ * Nemotron streaming live and Parakeet v3 to refine. A machine on `streaming-tiny` runs Light, with
+ * no refinement model at all. The CPU name is detection's own
  * fallback, and AVX2 is false because detection cannot read it on Windows.
  *
  * Both selected models are cached: the sample install has used dictation, which is why the
  * `dictation` scene's chip reads Listening rather than a model download. The answer is fixed at the
- * default config, so after a visitor changes Mode the status row still names these two.
+ * default config, so after a visitor changes Mode the model list still names these two.
  */
 const DEMO_DICTATION_HARDWARE = {
   cpuModel: 'Unknown CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: false, gpu: 'none', platform: 'win32', arch: 'x64',

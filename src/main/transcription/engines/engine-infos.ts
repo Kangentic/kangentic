@@ -49,13 +49,13 @@ export const CHUNKED_OFFLINE_INFO: DictationEngineInfo = {
 export const REMOTE_OPENAI_INFO: DictationEngineInfo = {
   id: 'remote-openai',
   displayName: 'Cloud (live preview + remote final)',
-  // The local streaming Zipformer drives the live preview (Cloud is built as
-  // a hybrid in engine-build.ts), so the cloud path is streaming too.
+  // The local live model drives the live preview (Cloud is built as a hybrid
+  // in engine-build.ts), so the cloud path is streaming too.
   streaming: true,
   punctuation: true,
   license: 'remote',
-  // The ~70 MB transducer for the live preview is downloaded; the cloud
-  // endpoint produces the final.
+  // The live preview's model is downloaded; the cloud endpoint produces the
+  // final.
   requiresModelDownload: true,
 };
 

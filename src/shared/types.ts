@@ -1,4 +1,6 @@
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
+import type { ModelLicenseId } from './model-licenses';
+import type { EmbeddingTier } from './embedding-models';
 import type {
   Announcement,
   AnnouncementArchiveEntry,
@@ -2782,13 +2784,15 @@ export interface DictationRemoteEndpoint {
 /** Payload for `dictation.start` (renderer passes the current global config). */
 export interface DictationStartOptions {
   engineMode: DictationEngineMode;
-  /** The FINAL (accurate) model id, or null/undefined for the tier default
-   *  (Parakeet on the accurate tier), or `'none'` for no post-processing pass. */
+  /** The preset or `custom`; main resolves a preset's models itself
+   *  (`src/shared/dictation-presets.ts`). Absent = derived from the ids. */
+  mode?: 'fast' | 'balanced' | 'accurate' | 'custom';
+  /** The FINAL (accurate) model id in Custom, or null/undefined for the machine's
+   *  default preset, or `'none'` for no post-processing pass. */
   modelId?: string | null;
-  /** The LIVE (preview) model id: null/undefined = the streaming Zipformer default,
+  /** The LIVE (preview) model id in Custom: null/undefined = the default preset's,
    *  an offline model id = chunked live, `'none'` = no live preview. */
   liveModelId?: string | null;
-  punctuation: boolean;
   language: string;
 }
 
@@ -2800,15 +2804,29 @@ export interface DictationStartResult {
   needsDownload: boolean;
 }
 
+/** The native engine shape a dictation model drives. The one definition: the
+ *  model registry, the engines and the settings options all read it. */
+export type DictationModelEngineKind =
+  | 'online-transducer'
+  | 'offline-whisper'
+  | 'offline-nemo-transducer'
+  | 'offline-moonshine'
+  | 'offline-cohere-transcribe';
+
 /** A user-selectable transcription model (for the settings model dropdown). */
 export interface DictationModelOption {
   id: string;
   displayName: string;
   sizeMb: number;
-  engineKind: 'online-transducer' | 'offline-whisper' | 'offline-nemo-transducer' | 'offline-moonshine';
+  engineKind: DictationModelEngineKind;
   /** Spoken languages this model can transcribe (Whisper / BCP-47 codes). The
    *  Language dropdown shows the intersection of the selected models' sets. */
   languages: string[];
+  /** Higher is more accurate; the dropdowns sort on it. */
+  accuracyRank: number;
+  /** "Best accuracy" through "Basic accuracy", shown after the name. */
+  accuracyLabel: string;
+  license: ModelLicenseId;
 }
 
 /** Hardware + engine snapshot for the settings panel (`dictation.getInfo`). */
@@ -2842,12 +2860,16 @@ export interface DictationInfo {
   workerError?: string;
 }
 
-/** Progress event for an in-flight model download. */
+/** Progress event for an in-flight model download. `downloadedBytes` and
+ *  `totalBytes` span every model the selection downloads; the `model*` pair is
+ *  the one model `modelId` names, for a status line per model. */
 export interface DictationModelProgress {
   modelId: string;
   status: 'downloading' | 'verifying' | 'done' | 'error';
   downloadedBytes: number;
   totalBytes: number;
+  modelDownloadedBytes?: number;
+  modelTotalBytes?: number;
   error?: string;
 }
 
@@ -3483,7 +3505,7 @@ export interface AppConfig {
      *  moves here once. */
     enabled?: boolean;
     /** Selected embedding model id (see src/shared/embedding-models.ts). Default
-     *  'bge-base'. Switching re-embeds the index in the background. */
+     *  'granite-r2'. Switching re-embeds the index in the background. */
     localModel?: string;
     /** Which hardware the embedding model runs on. 'auto' (default) prefers a GPU
      *  execution provider (DirectML on Windows, WebGPU elsewhere) and falls back to
@@ -3578,20 +3600,21 @@ export interface AppConfig {
     enabled?: boolean;
     /** Engine selection. `auto` tiers by detected hardware. Default `auto`. */
     engineMode?: DictationEngineMode;
-    /** The FINAL (accurate) model: a model id, null/absent = the tier default
-     *  (Parakeet), or `'none'` = no post-processing pass (keep the live text). */
+    /** The FINAL (accurate) model in Custom: a model id, null/absent = the
+     *  machine's default preset's, or `'none'` = no post-processing pass (keep the
+     *  live text). A preset ignores it. */
     modelId?: string | null;
-    /** The LIVE (preview) model: null/absent = the streaming Zipformer, an offline
-     *  model id = chunked live, `'none'` = no live preview. */
+    /** The LIVE (preview) model in Custom: null/absent = the default preset's, an
+     *  offline model id = chunked live, `'none'` = no live preview. A preset
+     *  ignores it. */
     liveModelId?: string | null;
-    /** Quality preset. `fast`/`balanced`/`accurate` set AND lock the live +
-     *  refinement models; `custom` unlocks the two dropdowns for manual choice.
-     *  Absent = derive from the model selection (back-compat). UI-only; the engine
-     *  reads the resolved model ids, not this. */
+    /** Quality preset, shown as Best (`accurate`), Balanced (`balanced`) and Light
+     *  (`fast`). A preset names its models through `src/shared/dictation-presets.ts`,
+     *  resolved by main each session, so it follows the lineup; `custom` uses the
+     *  two ids above. Absent = derived (`effectiveMode`). */
     mode?: 'fast' | 'balanced' | 'accurate' | 'custom';
-    /** Add punctuation + capitalization to committed text. Default true (OFF = faster path). */
-    punctuation?: boolean;
-    /** BCP-47 language. v1 ships English only. Default `en`. */
+    /** BCP-47 language the user speaks. The presets pick models that cover it.
+     *  Default `en`. */
     language?: string;
     /** Press Enter automatically once the transcription is inserted, submitting it to
      *  the agent. Default true; set false to leave the text in the input for you to
@@ -4032,14 +4055,13 @@ export const DEFAULT_CONFIG: AppConfig = {
   knowledgeGraph: {
     indexingEnabled: true,
     enabled: false,
-    localModel: 'bge-base',
+    localModel: 'granite-r2',
     acceleration: 'auto',
   },
   dictation: {
     enabled: false,
     engineMode: 'auto',
     modelId: null,
-    punctuation: true,
     language: 'en',
     autoSubmit: true,
     releaseBufferMs: 250,
@@ -7065,12 +7087,12 @@ export type KnowledgeGraphSemanticState = 'disabled' | 'downloading' | 'lexical'
 /** Download/availability state of the selected embedding model. */
 export type KnowledgeGraphModelState = 'absent' | 'downloading' | 'ready' | 'error';
 
-/** The selected embedding model's identity + download state, for the settings
- *  model card (mirrors the dictation model-status card). */
+/** The selected embedding model's identity + download state, for the Knowledge
+ *  Graph card's Local model row. */
 export interface KnowledgeGraphModelStatus {
   id: string;
   displayName: string;
-  tier: 'balanced' | 'accurate' | 'max';
+  tier: EmbeddingTier;
   approxSizeMb: number;
   dimensions: number;
   state: KnowledgeGraphModelState;

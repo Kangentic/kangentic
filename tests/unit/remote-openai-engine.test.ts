@@ -20,7 +20,6 @@ import type { CreateSessionOptions } from '../../src/main/transcription/engines/
 const SESSION_OPTIONS: CreateSessionOptions = {
   sampleRate: 16000,
   language: 'en',
-  punctuation: true,
   onPartial: () => {},
 };
 

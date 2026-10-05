@@ -19,6 +19,12 @@ declare module 'sherpa-onnx-node' {
   export class OnlineStream {
     acceptWaveform(waveform: Waveform): void;
     inputFinished(): void;
+    /** Per-stream runtime option (added in 1.13.7). A multilingual Nemotron
+     *  reads `language` ('en', 'de', or 'auto') on every decode; other models
+     *  ignore it. */
+    setOption(key: string, value: string): void;
+    getOption(key: string): string;
+    hasOption(key: string): boolean;
   }
 
   export class OnlineRecognizer {
@@ -33,6 +39,9 @@ declare module 'sherpa-onnx-node' {
 
   export class OfflineStream {
     acceptWaveform(waveform: Waveform): void;
+    /** Per-stream runtime option. Cohere Transcribe reads `language`; the
+     *  other offline kinds ignore it. */
+    setOption(key: string, value: string): void;
   }
 
   export class OfflineRecognizer {

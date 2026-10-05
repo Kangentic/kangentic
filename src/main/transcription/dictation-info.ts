@@ -24,10 +24,10 @@ export function buildDictationInfo(
   installedModels: string[],
 ): Omit<DictationInfo, 'workerUnavailable' | 'workerError'> {
   const selected = selectEngine(profile, config);
-  // For the on-device hybrid the set is [streaming Zipformer, accurate model];
-  // the accurate model is the one the user picks, so surface it (not models[0],
-  // which is the always-present live model). Streaming-only / cloud have no
-  // offline model and fall back to the first (the Zipformer live model).
+  // For the on-device hybrid the set is [live model, refinement model]; the
+  // refinement model is the user-meaningful one, so surface it (not models[0],
+  // the live model). Streaming-only / cloud have no offline model and fall back
+  // to the first (the live model).
   const primary = primaryModel(selected.models);
   const finals = finalCapableModels().map(toModelOption);
   return {
@@ -49,7 +49,7 @@ export function buildDictationInfo(
 }
 
 /** The accurate (offline) model when present, else the first model in the set
- *  (the streaming Zipformer for streaming-only / cloud). The user-meaningful one. */
+ *  (the streaming live model for streaming-only / cloud). The user-meaningful one. */
 export function primaryModel(models: ModelDef[]): ModelDef | undefined {
   return models.find(isOfflineModel) ?? models[0];
 }
@@ -61,5 +61,8 @@ function toModelOption(model: ModelDef): DictationModelOption {
     sizeMb: model.approxSizeMb,
     engineKind: model.engineKind,
     languages: modelLanguages(model),
+    accuracyRank: model.accuracy.rank,
+    accuracyLabel: model.accuracy.label,
+    license: model.license,
   };
 }

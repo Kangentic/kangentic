@@ -57,7 +57,7 @@ export class StubTranscriptionEngine implements TranscriptionEngine {
       },
       async finalize(): Promise<string> {
         stop();
-        return options.punctuation ? STUB_FINAL : STUB_FINAL.toLowerCase().replace(/[.,]/g, '');
+        return STUB_FINAL;
       },
       cancel(): void {
         stop();

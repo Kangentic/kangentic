@@ -355,7 +355,7 @@ const SETTINGS_PANEL = '[data-testid="settings-panel"]';
  * Dictation switched on and nothing else changed. Nested config blocks replace the demo defaults
  * whole (boot.js merges config shallowly), so the whole block rides along with only `enabled`
  * flipped. With every other field at its default the Dictation tab reads what a user sees right
- * after turning it on: the Best accuracy preset, whose models the dataset's getInfo answer names
+ * after turning it on: the Best preset, whose models the dataset's getInfo answer names
  * (DEMO_DICTATION_INFO in demo-dataset.ts).
  */
 const DICTATION_ON = { ...DEFAULT_CONFIG.dictation, enabled: true };
@@ -409,11 +409,11 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
   performance: { ready: '[data-testid="setting-row-graphicsAccelerationEnabled"]', alt: 'Settings on the Performance tab: switches for graphics acceleration and for animations.' },
   hotkeys: { ready: '[data-testid="hotkeys-tab"]', alt: 'Settings on the Hotkeys tab: every keyboard shortcut with its current binding and a Rebind control, with a reset to defaults above the list.' },
   notifications: { ready: '[data-testid="setting-row-notifications.onAgentIdle"]', alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.' },
-  // `ready` is the model status row, which mounts only once getInfo has answered, so the frame is
-  // never shot on the empty model selects of the first render.
+  // `ready` is the model list, which mounts only once getInfo has answered, so the frame is never
+  // shot before its lines name their models.
   dictation: {
-    ready: '[data-testid="dictation-model-ready"]',
-    alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best accuracy mode, a Models row naming its two models with a check, and punctuation.',
+    ready: '[data-testid="dictation-model-lines"]',
+    alt: 'Settings on the Dictation tab with voice dictation on: the push-to-talk key, release buffer, and auto-submit, then a Transcription card with English, the Best mode, the live and refinement models each with a check, and their licenses.',
     config: { dictation: DICTATION_ON },
     note: 'Dictation is switched on, with every other setting at its default, so the models are the ones the dataset\'s getInfo answer selects (DEMO_DICTATION_INFO).',
   },
@@ -713,7 +713,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'dictation-field',
     reach: 'boot',
     description: 'Push-to-talk held with the caret in the Settings search box, the live chip anchored under the field and the Dictation tab\'s options around it. Dictation types into any text field, not only a terminal. The click on the search box focuses it (boot.js focuses a text field it clicks), and the target is resolved from that focus on the press. A bottom-panel terminal cannot take the focus back once a field holds it (arrival focus denies it as occupied). No transcript lands on release: the dataset answers stop with nothing, which is what a silent microphone transcribes to.',
-    alt: 'The Settings panel on the Dictation tab with its search box focused and the dictation chip under it: a live dot beside Listening, a hint that releasing the key sends the words, and a Clear control, over dictation settings in Best accuracy mode.',
+    alt: 'The Settings panel on the Dictation tab with its search box focused and the dictation chip under it: a live dot beside Listening, a hint that releasing the key sends the words, and a Clear control, over dictation settings in Best mode.',
     config: { dictation: DICTATION_ON },
     // Below the field, which fails on the fallback: had the search box not held focus, the press
     // would resolve to the bottom panel's terminal and the chip would mount above that instead.
@@ -726,7 +726,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     // live frame, the frame posted a rect 220px right of where the chip settles.
     steps: [
       { click: '[data-testid="settings-button"]', waitFor: `${SETTINGS_PANEL}:not(.overlay-panel-in)` },
-      { click: '[data-testid="settings-tab-dictation"]', waitFor: '[data-testid="dictation-model-ready"]' },
+      { click: '[data-testid="settings-tab-dictation"]', waitFor: '[data-testid="dictation-model-lines"]' },
       { click: '[data-testid="settings-search"]' },
       { press: 'Mouse:Back', waitFor: '[data-testid="dictation-live-chip"]' },
     ],

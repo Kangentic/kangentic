@@ -34,10 +34,21 @@ export const DICTATION_LANGUAGES: readonly DictationLanguage[] = [
   { code: 'ar', label: 'Arabic' },
 ];
 
-/** Every language the multilingual models expose (the curated set above). */
+/** Every language the multilingual models expose (the curated set above).
+ *  Whisper and Nemotron 3.5 both cover all of it. */
 export const MULTILINGUAL_LANGUAGE_CODES: readonly string[] = DICTATION_LANGUAGES.map(
   (language) => language.code,
 );
+
+/** The part of the curated set NVIDIA Parakeet TDT 0.6B v3 transcribes. It
+ *  covers 25 European languages, so it has none of zh, ja, ko, ar or tr. The
+ *  registry stamps this onto the model, and the Best preset reads it to pick a
+ *  refinement model per language. */
+export const PARAKEET_V3_LANGUAGE_CODES: readonly string[] = ['en', 'pt', 'es', 'it', 'fr', 'de', 'nl', 'ru', 'pl', 'uk'];
+
+/** The part of the curated set Cohere Transcribe transcribes: 12 of its 14
+ *  languages (it also has Greek and Vietnamese), so none of ru, uk or tr. */
+export const COHERE_TRANSCRIBE_LANGUAGE_CODES: readonly string[] = ['en', 'pt', 'es', 'it', 'fr', 'de', 'nl', 'pl', 'zh', 'ja', 'ko', 'ar'];
 
 /** Display label for a code, falling back to the raw code. */
 export function languageLabel(code: string): string {

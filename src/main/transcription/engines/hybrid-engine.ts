@@ -55,7 +55,7 @@ function forSlot(models: ResolvedModel[], modelId: string | null): ResolvedModel
 
 /**
  * Composite engine with two independent, injectable slots:
- *   - LIVE: emits partials as the user speaks (the streaming Zipformer natively,
+ *   - LIVE: emits partials as the user speaks (a streaming transducer natively,
  *     or an offline model re-decoded in chunks). Optional - omit for no preview.
  *   - FINAL: produces the committed accurate text on release (an on-device offline
  *     model, or the remote cloud engine). Optional - omit to keep the live text.
@@ -64,9 +64,9 @@ function forSlot(models: ResolvedModel[], modelId: string | null): ResolvedModel
  * sub-engines without inferring slots from model kind.
  *
  * The two slots load at different times, and that split is what keeps the
- * dictation worker small while it waits. `load()` loads the LIVE slot only (the
- * ~70 MB streaming model). The FINAL slot (the 631 MB accurate model) loads
- * lazily, started by the first `createSession()` and overlapped with the
+ * dictation worker small while it waits. `load()` loads the LIVE slot only (160 MB
+ * of commit for the Zipformer, 780 MB for Nemotron). The FINAL slot (another
+ * 740 MB for Parakeet v3) loads lazily, started by the first `createSession()` and overlapped with the
  * utterance it serves: the session streams partials from the live slot at
  * once, buffers every frame for the final slot, and `finalize()` hands the
  * buffer to a final sub-session created only then. A press that releases

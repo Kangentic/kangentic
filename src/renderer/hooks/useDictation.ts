@@ -54,13 +54,19 @@ function sanitizeInline(text: string): string {
 }
 
 /**
- * The streaming preview engine emits uppercase, unpunctuated tokens, which then
- * flip to the accurate model's sentence-cased, punctuated text on release - a
- * jarring change. Lowercase the live partial and capitalize its first letter so
- * the preview already reads like the final text (just without final punctuation).
+ * The Zipformer emits uppercase, unpunctuated tokens, which then flip to the
+ * accurate model's sentence-cased, punctuated text on release - a jarring
+ * change. Lowercase such a partial and capitalize its first letter so the
+ * preview already reads like the final text (just without final punctuation).
+ *
+ * A partial that already holds a lowercase letter is left as written: Nemotron
+ * and the chunked Whisper models case their own text, and lowercasing it would
+ * erase "I", names and a sentence's capitals. Unicode classes, so a Cyrillic or
+ * Greek partial is treated the same as a Latin one.
  */
-function toPreviewCase(text: string): string {
-  return text.toLowerCase().replace(/[a-z]/, (char) => char.toUpperCase());
+export function toPreviewCase(text: string): string {
+  if (/\p{Ll}/u.test(text)) return text;
+  return text.toLowerCase().replace(/\p{L}/u, (char) => char.toUpperCase());
 }
 
 /**
@@ -92,7 +98,7 @@ export function useDictation(): void {
   const engineMode = useConfigStore((state) => state.globalConfig.dictation?.engineMode ?? 'auto');
   const modelId = useConfigStore((state) => state.globalConfig.dictation?.modelId ?? null);
   const liveModelId = useConfigStore((state) => state.globalConfig.dictation?.liveModelId ?? null);
-  const punctuation = useConfigStore((state) => state.globalConfig.dictation?.punctuation ?? true);
+  const mode = useConfigStore((state) => state.globalConfig.dictation?.mode);
   const language = useConfigStore((state) => state.globalConfig.dictation?.language ?? 'en');
   const autoSubmit = useConfigStore((state) => state.globalConfig.dictation?.autoSubmit ?? true);
   const releaseBufferMs = useConfigStore((state) => state.globalConfig.dictation?.releaseBufferMs ?? 250);
@@ -163,9 +169,9 @@ export function useDictation(): void {
   // Latest config read by the press/release handlers without re-arming them.
   // Written on commit (a layout effect), never during render, which the
   // compiler rules forbid.
-  const optionsRef = useRef({ engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience });
+  const optionsRef = useRef({ engineMode, modelId, liveModelId, mode, language, autoSubmit, releaseBufferMs, experience });
   useLayoutEffect(() => {
-    optionsRef.current = { engineMode, modelId, liveModelId, punctuation, language, autoSubmit, releaseBufferMs, experience };
+    optionsRef.current = { engineMode, modelId, liveModelId, mode, language, autoSubmit, releaseBufferMs, experience };
   });
 
   /** Drop this utterance's transient handles. Called on every path that ends a
@@ -246,7 +252,7 @@ export function useDictation(): void {
       }
     });
     finalUnsubscribeRef.current = window.electronAPI.dictation.onFinal((_dictationSessionId, text) => {
-      useDictationStore.setState({ finalText: text });
+      useDictationStore.setState({ finalText: toPreviewCase(text) });
     });
 
     // The dictation session id once `start` returns, so the catch can cancel a
@@ -276,7 +282,7 @@ export function useDictation(): void {
         engineMode: optionsRef.current.engineMode,
         modelId: optionsRef.current.modelId,
         liveModelId: optionsRef.current.liveModelId,
-        punctuation: optionsRef.current.punctuation,
+        mode: optionsRef.current.mode,
         language: optionsRef.current.language,
       });
       startedSessionId = result.dictationSessionId;
@@ -450,7 +456,9 @@ export function useDictation(): void {
     let finalText: string;
     try {
       // Pass the sent-frame count so finalize drains the tail before decoding.
-      finalText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
+      // With no refinement pass the committed text is the live model's: the
+      // Zipformer's is all caps, so it gets the preview's casing too.
+      finalText = toPreviewCase(await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current));
     } catch (error) {
       // The dictation engine runs in its own process (DESKTOP-X), so a
       // native fault there no longer takes the whole app down with it - but
@@ -513,7 +521,7 @@ export function useDictation(): void {
   }, [enabled]);
 
   // Pre-load the engine so the FIRST push-to-talk is instant: the model load
-  // (the 631 MB Parakeet ONNX takes seconds) happens ahead of the press, not
+  // (a 0.6B model takes seconds) happens ahead of the press, not
   // during it. Re-warm whenever the engine / model selection changes so the warm
   // engine always matches the current choice, and release the warm engines when
   // dictation is turned off. Debounced so rapid setting changes do not thrash the
@@ -525,10 +533,10 @@ export function useDictation(): void {
       return;
     }
     const timer = setTimeout(() => {
-      window.electronAPI.dictation.prewarm({ engineMode, modelId, liveModelId, punctuation, language });
+      window.electronAPI.dictation.prewarm({ engineMode, modelId, liveModelId, mode, language });
     }, 300);
     return () => clearTimeout(timer);
-  }, [enabled, engineMode, modelId, liveModelId, punctuation, language]);
+  }, [enabled, engineMode, modelId, liveModelId, mode, language]);
 
   /**
    * Start, and never fail SILENTLY.

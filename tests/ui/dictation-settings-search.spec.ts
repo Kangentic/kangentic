@@ -3,7 +3,7 @@
  *
  * `DictationTab` draws its Transcription card only while dictation is on
  * ("off means hidden, not greyed out"), but the settings registry still lists
- * that card's rows (Language, Punctuation and capitalization, Cloud endpoint)
+ * that card's rows (Language, Cloud endpoint)
  * under the Dictation tab. A search that matches only one of them switches to
  * the Dictation tab and then filters every card to the matching ids.
  *
@@ -30,7 +30,6 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 // master row or from another tab.
 const TRANSCRIPTION_QUERIES = [
   { row: 'Language', query: 'multilingual' },
-  { row: 'Punctuation and capitalization', query: 'punctuation' },
   { row: 'Cloud endpoint', query: 'openai' },
 ];
 

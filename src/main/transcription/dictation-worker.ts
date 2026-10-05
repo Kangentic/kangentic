@@ -51,7 +51,7 @@ export interface CreateSessionMessage extends EnsureEngineRequest {
   type: 'createSession';
   id: number;
   dictationSessionId: string;
-  sessionOptions: { language: string; punctuation: boolean };
+  sessionOptions: { language: string };
 }
 export interface PushMessage {
   type: 'push';
@@ -299,7 +299,6 @@ async function handleCreateSession(message: CreateSessionMessage): Promise<void>
     const session = engine.createSession({
       sampleRate: 16000,
       language: message.sessionOptions.language,
-      punctuation: message.sessionOptions.punctuation,
       onPartial: (text: string) => {
         // Only forward if the session is still active - a partial firing
         // after finalize/cancel already removed the entry must not

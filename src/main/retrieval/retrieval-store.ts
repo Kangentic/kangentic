@@ -1068,6 +1068,14 @@ export class RetrievalStore {
     return rows.map(toStoredChunk);
   }
 
+  /** True when any chunk holds a vector from a model other than `modelTag`. An
+   *  index seek on either side of the tag, as `chunksNeedingEmbedding`'s is. */
+  hasEmbeddingsFromOtherModel(modelTag: string): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM memory_chunks WHERE embedded_model < ? OR embedded_model > ? LIMIT 1')
+      .get(modelTag, modelTag) !== undefined;
+  }
+
   /**
    * Chunks still waiting for a `modelTag` vector, by corpus: the same rows
    * `chunksNeedingEmbedding` serves, counted. For Settings > Knowledge Graph's Index

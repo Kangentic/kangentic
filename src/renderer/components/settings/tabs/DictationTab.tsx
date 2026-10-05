@@ -5,74 +5,89 @@ import type {
   AppConfig,
   DictationConfig,
   DictationInfo,
+  DictationModelOption,
+  DictationModelProgress,
 } from '../../../../shared/types';
 import { Select, SettingTextInput, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow, CardTile, CardStatusRow, InfoTip } from '../settings-card';
+import {
+  SettingsCard, CardRow, CardToggleRow, CardChoiceRow, CardTile, CardSourceList, CardLinkRow, InfoTip,
+  type CardSourceLineProps,
+} from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
 import { orderLanguages } from '../../../../shared/dictation-languages';
+import {
+  DICTATION_PRESETS,
+  DICTATION_PRESET_LABELS,
+  NO_MODEL,
+  effectiveMode,
+  presetModels,
+  type DictationMode,
+  type DictationPreset,
+} from '../../../../shared/dictation-presets';
+import { distinctLicenses } from '../../../../shared/model-licenses';
 
 const PUSH_TO_TALK_ACTION = 'dictation.pushToTalk';
 
-// Relative accuracy per model. Speed is mostly determined by the machine, so the
-// only figure worth comparing across models is accuracy (best -> basic).
-const MODEL_ACCURACY: Record<string, { rank: number; label: string }> = {
-  'parakeet-tdt-0.6b-en': { rank: 5, label: 'Best accuracy' },
-  'whisper-distil-medium-en': { rank: 4, label: 'High accuracy' },
-  'whisper-medium-en': { rank: 4, label: 'High accuracy' },
-  'whisper-distil-small-en': { rank: 3, label: 'Good accuracy' },
-  'whisper-small-en': { rank: 3, label: 'Good accuracy' },
-  'moonshine-base-en': { rank: 3, label: 'Good accuracy' },
-  'whisper-base-en': { rank: 2, label: 'Fair accuracy' },
-  'whisper-tiny-en': { rank: 1, label: 'Basic accuracy' },
-  'moonshine-tiny-en': { rank: 1, label: 'Basic accuracy' },
-  'whisper-small-multi': { rank: 3, label: 'Good accuracy' },
-  'whisper-base-multi': { rank: 2, label: 'Fair accuracy' },
-};
+/** What each slot does: the Custom dropdowns and the model lines share them. */
+const LIVE_MODEL_DESCRIPTION = 'Preview while you speak: streaming is instant, chunked is accurate.';
+const REFINEMENT_MODEL_DESCRIPTION = 'Refines the live draft into the accurate result on release. None keeps the live text as-is.';
 
-function accuracyLabel(modelId: string): string {
-  return MODEL_ACCURACY[modelId]?.label ?? '';
+/** Most accurate first, for each slot's dropdown. */
+function byAccuracy(models: DictationModelOption[]): DictationModelOption[] {
+  return [...models].sort((first, second) => second.accuracyRank - first.accuracyRank);
 }
 
-function accuracyRank(modelId: string): number {
-  return MODEL_ACCURACY[modelId]?.rank ?? 0;
+/** A model's dropdown option: its name, how accurate it is, and its download.
+ *  Short on purpose, so the native menu never widens past the field. */
+function optionText(model: DictationModelOption): string {
+  return `${model.displayName} - ${model.accuracyLabel} (${model.sizeMb} MB)`;
 }
 
-type DictationModelState = 'ready' | 'downloading' | 'failed';
+const percentOf = (downloaded: number | undefined, total: number | undefined): number =>
+  downloaded !== undefined && total !== undefined && total > 0 ? Math.min(100, Math.floor((downloaded / total) * 100)) : 0;
 
 /**
- * The picked models' state, as the same status row every Settings status uses.
- * Switching dictation on starts the download (prewarm on enable), so a model
- * not on disk yet reads as Downloading, never as a separate waiting state.
- * Every state names the same models.
+ * One slot's line in the model list: the model and its size once it is on
+ * disk, its share over a track while it downloads, its size muted while it
+ * waits its turn, and None for an empty slot. Switching dictation on starts the
+ * download (prewarm on enable), so a model not on disk yet is queued, never a
+ * separate waiting state.
  */
-function DictationModelStatus({ names, state, percent, error }: { names: string; state: DictationModelState; percent: number; error?: string }) {
-  if (state === 'failed') {
-    // Why it failed (no space, no network) is what the user can act on.
-    return <CardStatusRow label="Download failed" value={error ?? names} tone="failure" testId="dictation-model-download" />;
+function modelLine(
+  label: string,
+  description: string,
+  modelId: string | null,
+  info: DictationInfo,
+  progress: DictationModelProgress | null,
+  testId: string,
+): CardSourceLineProps {
+  const base = { label, info: description, testId };
+  if (modelId === 'cloud') return { ...base, value: 'Cloud endpoint' };
+  const model = modelId ? [...info.liveModels, ...info.finalModels].find((option) => option.id === modelId) : undefined;
+  if (!model) return { ...base, value: 'None', tone: 'muted' };
+  const sized = `${model.displayName}, ${model.sizeMb} MB`;
+  if (info.installedModels.includes(model.id)) return { ...base, value: sized, tone: 'ready' };
+  // Why it failed (no space, no network) is what the user can act on: it rides
+  // in the line's info tip, since a line holds one short value.
+  if (progress?.status === 'error') {
+    return { ...base, info: progress.error ?? description, value: model.displayName, tone: 'caution', problem: 'Download failed' };
   }
-  if (state === 'ready') {
-    return <CardStatusRow label="Models" value={names} tone="ready" testId="dictation-model-download" valueTestId="dictation-model-ready" />;
+  if (progress?.status === 'downloading' && progress.modelId === model.id) {
+    const percent = percentOf(progress.modelDownloadedBytes, progress.modelTotalBytes);
+    return { ...base, value: `${model.displayName}, ${percent}%`, percent, progressLabel: `${label} downloaded` };
   }
-  return (
-    <CardStatusRow
-      label="Downloading"
-      value={`${Math.min(100, Math.floor(percent))}%, ${names}`}
-      percent={percent}
-      progressLabel="Dictation models downloaded"
-      testId="dictation-model-download"
-    />
-  );
+  return { ...base, value: sized, tone: 'muted' };
 }
 
 /**
  * Voice-to-text dictation settings. GLOBAL/shared scope (below the settings
  * separator). Two cards: Voice dictation (the switch, then how you trigger and
- * insert it) and Transcription (language, mode, models, punctuation), both
- * hidden while dictation is off. Dictation always streams a live preview as you
- * talk, on-device or cloud.
+ * insert it) and Transcription (language, mode, models), both hidden while
+ * dictation is off. Dictation always streams a live preview as you talk,
+ * on-device or cloud.
  */
 export function DictationTab({
   globalConfig,
@@ -101,12 +116,12 @@ export function DictationTab({
     () => ({
       enabled: dictation.enabled ?? false,
       engineMode,
+      mode: dictation.mode,
       modelId: dictation.modelId ?? null,
       liveModelId: dictation.liveModelId ?? null,
-      punctuation: dictation.punctuation ?? true,
       language: dictation.language ?? 'en',
     }),
-    [dictation.enabled, engineMode, dictation.modelId, dictation.liveModelId, dictation.punctuation, dictation.language],
+    [dictation.enabled, engineMode, dictation.mode, dictation.modelId, dictation.liveModelId, dictation.language],
   );
 
   const [info, setInfo] = useState<DictationInfo | null>(null);
@@ -134,25 +149,15 @@ export function DictationTab({
     };
   }, [infoConfig]);
 
-  const modelInstalled =
-    !!info?.selectedModelId && info.installedModels.includes(info.selectedModelId);
-  const isDownloading = modelProgress?.status === 'downloading';
-
   // Most accurate first, for each slot's dropdown.
-  const sortedLiveModels = useMemo(
-    () => (info ? [...info.liveModels].sort((first, second) => accuracyRank(second.id) - accuracyRank(first.id)) : []),
-    [info],
-  );
-  const sortedFinalModels = useMemo(
-    () => (info ? [...info.finalModels].sort((first, second) => accuracyRank(second.id) - accuracyRank(first.id)) : []),
-    [info],
-  );
+  const sortedLiveModels = useMemo(() => (info ? byAccuracy(info.liveModels) : []), [info]);
+  const sortedFinalModels = useMemo(() => (info ? byAccuracy(info.finalModels) : []), [info]);
   // The dropdowns show the resolved slot when the config leaves it at the default
   // (null), the explicit id when set, or 'none' for an empty slot.
-  const liveValue = dictation.liveModelId ?? info?.selectedLiveModelId ?? '';
+  const liveValue = dictation.liveModelId ?? info?.selectedLiveModelId ?? NO_MODEL;
   // The Refinement dropdown shows 'cloud' when the final pass is the remote endpoint,
   // else the explicit/resolved offline model id, else 'none'.
-  const finalValue = isCloud ? 'cloud' : (dictation.modelId ?? info?.selectedFinalModelId ?? 'none');
+  const finalValue = isCloud ? 'cloud' : (dictation.modelId ?? info?.selectedFinalModelId ?? NO_MODEL);
 
   // Language-first: the dropdown offers every language any model supports (the
   // union = English plus the multilingual set), independent of the current
@@ -172,100 +177,75 @@ export function DictationTab({
   const liveModelsForLanguage = sortedLiveModels.filter((model) => model.languages.includes(languageValue));
   const finalModelsForLanguage = sortedFinalModels.filter((model) => model.languages.includes(languageValue));
 
-  // The Live + Refinement combo derived as a named preset (back-compat with
-  // configs saved before the explicit `mode`; only the English presets match).
-  const derivedMode =
-    liveValue === 'streaming-zipformer-en' && finalValue === 'none'
-      ? 'fast'
-      : liveValue === 'parakeet-tdt-0.6b-en' && finalValue === 'none'
-        ? 'balanced'
-        : liveValue === 'streaming-zipformer-en' && finalValue === 'parakeet-tdt-0.6b-en'
-          ? 'accurate'
-          : 'custom';
-  // The Mode is the explicit choice when set, else derived. A preset
-  // (fast/balanced/accurate) LOCKS the two model dropdowns; Custom unlocks them.
-  const mode = dictation.mode ?? derivedMode;
+  // The explicit mode when saved, else derived: the machine's default preset when
+  // no model is picked, the preset whose pair the config holds, or Custom. A
+  // preset (Best/Balanced/Light) LOCKS the two model dropdowns; Custom unlocks them.
+  const mode: DictationMode = info ? effectiveMode(infoConfig, info.tier) : (dictation.mode ?? 'accurate');
   const modelsLocked = mode !== 'custom';
 
-  // Language-aware preset model combos: English uses the English-optimized models;
-  // any other language uses the multilingual Whisper builds.
-  const presetModels = (
-    preset: 'fast' | 'balanced' | 'accurate',
-    language: string,
-  ): { liveModelId: string; modelId: string } => {
-    const isEnglish = language === 'en';
-    if (preset === 'fast') return { liveModelId: isEnglish ? 'streaming-zipformer-en' : 'whisper-base-multi', modelId: 'none' };
-    if (preset === 'balanced') return { liveModelId: isEnglish ? 'parakeet-tdt-0.6b-en' : 'whisper-base-multi', modelId: 'none' };
-    return {
-      liveModelId: isEnglish ? 'streaming-zipformer-en' : 'whisper-base-multi',
-      modelId: isEnglish ? 'parakeet-tdt-0.6b-en' : 'whisper-small-multi',
-    };
-  };
-  const applyMode = (next: string): void => {
-    // Presets are on-device, so selecting one also clears a Cloud refinement.
-    if (next === 'fast' || next === 'balanced' || next === 'accurate') {
-      updateGlobal({ dictation: { mode: next, engineMode: 'auto', ...presetModels(next, languageValue) } });
-    } else {
-      updateGlobal({ dictation: { mode: 'custom' } });
+  const applyMode = (next: DictationMode): void => {
+    // Presets are on-device, so selecting one also clears a Cloud refinement. A
+    // preset is a name main resolves each session, so it saves no model ids.
+    if (next !== 'custom') {
+      updateGlobal({ dictation: { mode: next, engineMode: 'auto' } });
+      return;
     }
+    // Custom opens on what was just running, not on ids an older preset saved.
+    const running = mode === 'custom' ? null : presetModels(mode, languageValue);
+    updateGlobal({ dictation: { mode: 'custom', ...(running ?? {}) } });
   };
-  // Changing the language re-points the models so they can transcribe it: re-apply
-  // the active preset for the new language, or (in Custom) keep the models when
-  // they already support it and otherwise fall back to that language's default.
+  // Changing the language re-points the models so they can transcribe it: a
+  // preset resolves its own models for the new language; Custom keeps the models
+  // when they already support it and otherwise falls back to the Light preset's.
   const applyLanguage = (nextLanguage: string): void => {
-    if (mode === 'fast' || mode === 'balanced' || mode === 'accurate') {
-      updateGlobal({ dictation: { language: nextLanguage, engineMode: 'auto', ...presetModels(mode, nextLanguage) } });
+    if (mode !== 'custom') {
+      updateGlobal({ dictation: { language: nextLanguage, engineMode: 'auto' } });
       return;
     }
     const liveOk =
-      liveValue === 'none' ||
+      liveValue === NO_MODEL ||
       (sortedLiveModels.find((model) => model.id === liveValue)?.languages.includes(nextLanguage) ?? false);
     const finalOk =
-      finalValue === 'none' ||
+      finalValue === NO_MODEL ||
       finalValue === 'cloud' ||
       (sortedFinalModels.find((model) => model.id === finalValue)?.languages.includes(nextLanguage) ?? false);
     if (liveOk && finalOk) {
       updateGlobal({ dictation: { language: nextLanguage } });
     } else {
-      const fallback =
-        nextLanguage === 'en'
-          ? { liveModelId: 'streaming-zipformer-en', modelId: 'none' }
-          : { liveModelId: 'whisper-base-multi', modelId: 'none' };
-      updateGlobal({ dictation: { language: nextLanguage, engineMode: 'auto', ...fallback } });
+      updateGlobal({ dictation: { language: nextLanguage, engineMode: 'auto', ...presetModels('fast', nextLanguage) } });
     }
   };
 
   // The model auto-downloads in the background (prewarm on enable), which does
   // not re-fetch getInfo, so its installed-state snapshot would stay stale and
-  // the row would keep reading "not ready". Re-fetch when a download finishes
-  // (transitions from in-flight to done/cleared) so the status flips to "Ready".
-  const wasDownloadingRef = useRef(false);
+  // the lines would keep reading "not ready". Re-fetch when a download finishes
+  // (transitions from in-flight to done/cleared) so each line flips to ready.
+  // Best downloads two models one after the other, so a move on to the next
+  // model re-fetches too: the finished one reads ready, not queued, while the
+  // second is still coming.
+  const downloadingModelRef = useRef<string | null>(null);
   useEffect(() => {
-    const downloadingNow = modelProgress?.status === 'downloading';
-    if (wasDownloadingRef.current && !downloadingNow) {
+    const downloadingModel = modelProgress?.status === 'downloading' ? modelProgress.modelId : null;
+    if (downloadingModelRef.current !== null && downloadingModelRef.current !== downloadingModel) {
       void refreshInfo();
     }
-    wasDownloadingRef.current = downloadingNow;
+    downloadingModelRef.current = downloadingModel;
   }, [modelProgress, refreshInfo]);
 
-  // The on-device models this setup runs, live then refinement, for the one
-  // status line under Mode. A cloud refinement has no model to download.
-  const pickedModelIds = [liveValue, isCloud ? 'none' : finalValue].filter((id) => id !== '' && id !== 'none');
-  const modelNameOf = (id: string): string => (
-    [...(info?.liveModels ?? []), ...(info?.finalModels ?? [])].find((model) => model.id === id)?.displayName
-      ?? (id.includes('zipformer') ? 'Streaming Zipformer' : id)
-  );
-  const pickedModelNames = [...new Set(pickedModelIds.map(modelNameOf))].join(' and ');
-  const allModelsInstalled = pickedModelIds.length > 0
-    && pickedModelIds.every((id) => info?.installedModels.includes(id) ?? false);
-  const downloadPercent = modelProgress && modelProgress.totalBytes > 0
-    ? (modelProgress.downloadedBytes / modelProgress.totalBytes) * 100
-    : 0;
-
-  const modelsReady = allModelsInstalled || (modelInstalled && pickedModelIds.length === 1);
-  const modelState: DictationModelState = modelProgress?.status === 'error'
-    ? 'failed'
-    : modelsReady ? 'ready' : 'downloading';
+  // The two slots main resolved for this config: what runs, whatever the mode.
+  const modelLines: CardSourceLineProps[] = info
+    ? [
+        modelLine('Live model', LIVE_MODEL_DESCRIPTION, info.selectedLiveModelId, info, modelProgress, 'dictation-live-model-line'),
+        modelLine('Refinement model', REFINEMENT_MODEL_DESCRIPTION, isCloud ? 'cloud' : info.selectedFinalModelId, info, modelProgress, 'dictation-refinement-model-line'),
+      ]
+    : [];
+  // The licenses of the on-device models that run. A cloud refinement has none.
+  const runningModels = info
+    ? [info.selectedLiveModelId, isCloud ? null : info.selectedFinalModelId]
+      .map((modelId) => [...info.liveModels, ...info.finalModels].find((option) => option.id === modelId))
+      .filter((model): model is DictationModelOption => model !== undefined)
+    : [];
+  const licenses = distinctLicenses(runningModels.map((model) => model.license));
 
   const pushToTalkDescription = 'Hold to record; release to insert the transcription. Rebind it in Hotkeys.';
   const modeDescription = 'A preset picks the live and refinement models for you. Custom lets you pick them.';
@@ -286,7 +266,7 @@ export function DictationTab({
         searchIds={[
           'dictation.releaseBufferMs',
           'dictation.autoSubmit',
-          ...(enabled ? [] : ['dictation.language', 'dictation.punctuation', 'dictation.remote']),
+          ...(enabled ? [] : ['dictation.language', 'dictation.remote']),
         ]}
         checked={enabled}
         onChange={(value) => updateGlobal({ dictation: { enabled: value } })}
@@ -345,7 +325,7 @@ export function DictationTab({
           icon={<AudioLines size={16} />}
           label="Transcription"
           description="Runs on this machine unless you choose a cloud refinement."
-          searchIds={['dictation.language', 'dictation.punctuation', 'dictation.remote']}
+          searchIds={['dictation.language', 'dictation.remote']}
         >
           {info?.workerUnavailable ? (
             <CardTile className="text-xs text-red-400" testId="dictation-worker-unavailable">
@@ -370,13 +350,15 @@ export function DictationTab({
                   ))}
                 </Select>
               </CardRow>
-              <CardChoiceRow
+              <CardChoiceRow<DictationMode>
                 label="Mode"
                 description={modeDescription}
                 options={[
-                  { value: 'accurate', label: 'Best accuracy', testId: 'dictation-preset-accurate' },
-                  { value: 'balanced', label: 'Balanced', testId: 'dictation-preset-balanced' },
-                  { value: 'fast', label: 'Fastest', testId: 'dictation-preset-fast' },
+                  ...DICTATION_PRESETS.map((preset: DictationPreset) => ({
+                    value: preset,
+                    label: DICTATION_PRESET_LABELS[preset],
+                    testId: `dictation-preset-${preset}`,
+                  })),
                   { value: 'custom', label: 'Custom', testId: 'dictation-preset-custom' },
                 ]}
                 value={mode}
@@ -385,10 +367,7 @@ export function DictationTab({
               />
               {modelsLocked ? null : (
                 <>
-                  <CardRow
-                    label="Live model"
-                    description="Preview while you speak: streaming is instant, chunked is accurate."
-                  >
+                  <CardRow label="Live model" description={LIVE_MODEL_DESCRIPTION}>
                     <Select
                       value={liveValue}
                       onChange={(event) => updateGlobal({ dictation: { liveModelId: event.target.value } })}
@@ -396,18 +375,13 @@ export function DictationTab({
                     >
                       {liveModelsForLanguage.map((model) => (
                         <option key={model.id} value={model.id}>
-                          {model.displayName}
-                          {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
-                          {` (${model.sizeMb} MB)`}
+                          {optionText(model)}
                         </option>
                       ))}
-                      <option value="none">None</option>
+                      <option value={NO_MODEL}>None</option>
                     </Select>
                   </CardRow>
-                  <CardRow
-                    label="Refinement model"
-                    description="Refines the live draft into the accurate result on release. None keeps the live text as-is."
-                  >
+                  <CardRow label="Refinement model" description={REFINEMENT_MODEL_DESCRIPTION}>
                     <Select
                       value={finalValue}
                       onChange={(event) => {
@@ -421,12 +395,10 @@ export function DictationTab({
                     >
                       {finalModelsForLanguage.map((model) => (
                         <option key={model.id} value={model.id}>
-                          {model.displayName}
-                          {accuracyLabel(model.id) ? ` - ${accuracyLabel(model.id)}` : ''}
-                          {` (${model.sizeMb} MB)`}
+                          {optionText(model)}
                         </option>
                       ))}
-                      <option value="none">None</option>
+                      <option value={NO_MODEL}>None</option>
                       <option value="cloud">Cloud endpoint</option>
                     </Select>
                     {/* The cloud refinement needs its endpoint. Only the final clip
@@ -460,25 +432,20 @@ export function DictationTab({
                   </CardRow>
                 </>
               )}
-              {/* The models this setup runs and whether they are on disk, under
-                  the rows that pick them: Mode for a preset, the two pickers in
-                  Custom. A cloud-only setup has none to show, and a stopped
-                  worker downloads nothing, which the tile above already says. */}
-              {pickedModelIds.length > 0 && !info.workerUnavailable ? (
-                <DictationModelStatus
-                  names={pickedModelNames}
-                  state={modelState}
-                  percent={isDownloading ? downloadPercent : 0}
-                  error={modelProgress?.error}
+              {/* The models this setup runs and whether they are on disk, one line
+                  per slot, under the rows that pick them. A stopped worker
+                  downloads nothing, which the tile above already says. */}
+              {!info.workerUnavailable ? <CardSourceList lines={modelLines} readOnly testId="dictation-model-lines" /> : null}
+              {licenses.length > 0 ? (
+                <CardLinkRow
+                  label="License"
+                  links={licenses.map((license) => ({ label: license.name, href: license.url }))}
+                  onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
+                  testId="dictation-license"
                 />
               ) : null}
             </>
           ) : null}
-          <CardToggleRow
-            {...settingProps('dictation.punctuation')}
-            checked={dictation.punctuation ?? true}
-            onChange={(value) => updateGlobal({ dictation: { punctuation: value } })}
-          />
         </SettingsCard>
       ) : null}
     </div>
