@@ -244,7 +244,9 @@ build time to embed a scene by name. `--base=<path>` on the CLI
 moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml`, called from
 the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
 documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
-inert in a browser.
+inert in a browser. `npm run demo:serve` serves the build for a manual look (open
+`/demo/stage.html`), and `npm run demo:measure` reports its weight and boot timings (both run
+`demo/measure.mjs`).
 
 The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run capture` builds
 the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
@@ -396,8 +398,14 @@ unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To ru
 
 ```bash
 npx playwright test              # UI + E2E
+npm run test:headed               # UI + E2E with visible windows (HEADED=1)
 npm run test:unit                 # Unit (separate runner)
+npm run lint                      # ESLint over src/ and packages/protocol/src/, zero warnings allowed
 ```
+
+`npm run validate:kimi-mcp` is a Windows-only manual check, not part of any tier. It builds Kimi's
+`--mcp-config` argument with the real command builder and runs it through `powershell.exe
+-Command` to confirm PowerShell's parser accepts the JSON (`scripts/kimi-validate-mcp.mjs`).
 
 ## Adding Features
 
@@ -506,5 +514,8 @@ Security fuses: every fuse is set explicitly with `strictlyRequireAllFuses`, so 
 ```bash
 npm run package    # Package for current platform
 npm run make       # Create distributable
+npm run make:win   # Build, then the Windows installer only
+npm run make:mac   # Build, then the macOS DMG and ZIP only
+npm run make:linux # Build, then the Linux deb and rpm only
 npm run publish    # Publish to GitHub (draft release)
 ```

@@ -137,6 +137,7 @@ const connectors: PRConnector[] = [
 | `resolvePRForBranch(repoCwd, branchName, baseBranch?, options?)` | Dispatch to the connectors that own this repo's remote, forwarding `options` (`PRResolveOptions`) untouched. |
 | `resolvePRByNumber(repoCwd, prNumber, options?)` | Same, for an explicit PR number, except that it is refused the secondary-remote fallback (see step 2 below). A caller that only needs the PR's state (`local-only-commits.ts`) omits `options`. |
 | `resolvePRByCommit(repoCwd, commitSha, branchHint?)` | Same, for a commit SHA. |
+| `commitAnchorSelfVerifies(repoCwd)` | True only when every commit-capable connector that owns this repo's remote verifies commit ownership itself. Picks owners the way `resolvePRByCommit` does, answers false on any uncertain path, and never throws. |
 
 The registry also re-exports the contract types and both error classes, so consumers have a single import surface.
 

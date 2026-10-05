@@ -443,7 +443,7 @@ Four types:
 |------|--------------|
 | **Send message to agent** | Types a message at the column's agent. Plain instructions or a slash command. |
 | **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
-| **Call webhook** | Calls a URL. Retries a transport error, 429 or 5xx up to three times. |
+| **Call webhook** | Calls a URL. Retries a transport error, 408, 429 or 5xx up to three times. |
 | **Notify me** | Raises one desktop notification. Clicking it opens the task. |
 
 **Adding one.** Each group has its own **Add automation** control, so where you add decides when
@@ -738,7 +738,7 @@ Command Terminals keep running when you hide the layer and when you switch proje
 
 Notifications fire when an agent needs attention and you cannot already see it. The two channels cover opposite halves of that, so between them nothing is missed and nothing is said twice.
 
-Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash.
+Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash. A newer desktop notification for a task replaces that task's older one in Windows Action Center or macOS Notification Center, so they do not stack. Command Terminal notifications are the exception and still stack.
 
 Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
 

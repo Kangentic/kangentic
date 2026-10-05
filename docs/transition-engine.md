@@ -92,7 +92,7 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 | `body` | string | Request body. Escaping is `json`. Empty means the default JSON envelope |
 | `headers` | Record<string, string> | Extra headers, authored one per line as `Name: Value` |
 
-30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 429 or 5xx through the shared `withBackoff`, honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
+30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the shared `withBackoff`, honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
 
 ### `notify` -- Notify me
 
@@ -107,7 +107,7 @@ One desktop notification through the same `showNotification` path `DesktopNotifi
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them."
 
-`send_command`, `kill_session`, `create_worktree`, `cleanup_worktree` and `create_pr` are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, `cleanup_worktree` did what a To Do move does, and `create_pr` was never implemented. A hand-written `kangentic.json` naming one is warned and skipped, matching what the migration did to the same row in the DB.
+`kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [configuration.md](configuration.md)).
 
 ## Every row is isolated, bounded and recorded
 

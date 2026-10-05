@@ -20,7 +20,6 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `removeHooks(directory, taskId?)` | Remove the per-directory config an adapter injected, on cleanup. `taskId` lets shared-file adapters (Codex, Gemini, Droid) reference-count so concurrent sessions in the same cwd do not clobber each other. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's refcount guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `clearSettingsCache()` | Clear cached merged settings |
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which lifts the shimmer overlay. A heuristic, not proof the agent is up - see First-Output Detection below |
-| `getExitSequence()` | Return PTY write sequence for graceful exit |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
 
 ### Required Properties
@@ -262,11 +261,11 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Qwen Code | `~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
 | Cursor CLI | N/A | Returns null - the location IS known (`~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl`, see [Command Injection](command-injection.md#cursor-located-not-yet-verified)) but is not wired in: the records carry no timestamp and the stored text is wrapped |
 | GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
-| Aider | N/A | Returns null (no native session files) |
+| Aider | `<cwd>/.aider.chat.history.md` | Direct path in the working directory, returned only when the file exists. One history file per project directory, with no session id in its name |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
 | Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
-| Droid | N/A | Returns null (no native session history file; activity flows through PTY-only detection) |
+| Droid | `~/.factory/sessions/<cwd-slug>/<sessionId>.jsonl` | Direct path construction, polled up to 10 times at 500 ms because Droid creates the file after the spawn returns |
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/updates.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). The attach-time `runtime.sessionHistory.locate` additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
 | Antigravity CLI | `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl` | Direct path computation from the conversation id, with a short existence poll (the transcript appears when the first turn starts) |
@@ -892,10 +891,10 @@ Per-session config is written to `<eventsOutputPath dir>/copilot-config/`, enabl
 | Mode | Flag | Copilot Mode |
 |------|------|--------------|
 | `plan` | `--plan` | Plan (Read-Only) |
-| `dontAsk` | `--plan` (non-interactive) | Plan Non-Interactive (CI) |
+| `dontAsk` | `--plan --no-ask-user` | Plan Non-Interactive (CI) |
 | `default` | (no flag) | Default (Confirm Actions) |
-| `acceptEdits` | (configured tool allowlist) | Allow All Tools |
-| `auto` | (configured tool allowlist) | Autopilot (Allow All Tools) |
+| `acceptEdits` | `--allow-all-tools` | Allow All Tools |
+| `auto` | `--allow-all-tools` | Autopilot (Allow All Tools) |
 | `bypassPermissions` | `--yolo` | YOLO (Full Access) |
 
 `defaultPermission` is `acceptEdits`.
