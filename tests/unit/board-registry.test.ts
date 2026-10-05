@@ -15,6 +15,9 @@ vi.mock('electron', () => ({
     isEncryptionAvailable: () => false,
     encryptString: (s: string) => Buffer.from(s, 'utf8'),
     decryptString: (b: Buffer) => b.toString('utf8'),
+    isAsyncEncryptionAvailable: async () => false,
+    encryptStringAsync: async (plainText: string) => Buffer.from(plainText, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => ({ result: buffer.toString('utf8'), shouldReEncrypt: false }),
     getSelectedStorageBackend: () => 'basic_text',
   },
 }));

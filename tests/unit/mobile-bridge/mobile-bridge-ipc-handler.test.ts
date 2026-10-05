@@ -46,6 +46,9 @@ import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 // ---------------------------------------------------------------------------
 
 class FakeMobileBridgeService extends EventEmitter {
+  /** Resolved by default; a test that needs to hold the warm-up open swaps in its own promise. */
+  storageReady: Promise<void> = Promise.resolve();
+  whenStorageReady = vi.fn(() => this.storageReady);
   getStatus = vi.fn(() => ({
     enabled: true,
     secureStorageAvailable: true,
@@ -89,14 +92,39 @@ describe('registerMobileBridgeHandlers - request/response channels', () => {
     capturedHandlers.clear();
   });
 
-  it('MOBILE_GET_STATUS forwards to service.getStatus() and returns its result verbatim', () => {
+  it('MOBILE_GET_STATUS forwards to service.getStatus() and returns its result verbatim', async () => {
     const context = makeContext();
     registerMobileBridgeHandlers(context);
 
-    const result = invokeHandler(IPC.MOBILE_GET_STATUS);
+    const result = await invokeHandler(IPC.MOBILE_GET_STATUS);
 
     expect(context.mobileBridgeService.getStatus).toHaveBeenCalledTimes(1);
     expect(result).toEqual(context.mobileBridgeService.getStatus.mock.results[0]!.value);
+  });
+
+  // The service reads its identity through safeStorage's ASYNC API once per run
+  // (whenStorageReady). A status or device list read before that warm-up ends
+  // would show "secure storage unavailable" or no devices for an install that
+  // has both, so both reads wait for it.
+  it.each([
+    ['MOBILE_GET_STATUS', IPC.MOBILE_GET_STATUS, 'getStatus'],
+    ['MOBILE_LIST_DEVICES', IPC.MOBILE_LIST_DEVICES, 'listDevices'],
+  ] as const)('%s waits for the secure-storage warm-up before reading', async (_label, channel, method) => {
+    const context = makeContext();
+    let finishWarmup: () => void = () => undefined;
+    context.mobileBridgeService.storageReady = new Promise<void>((resolve) => {
+      finishWarmup = resolve;
+    });
+    registerMobileBridgeHandlers(context);
+
+    const pending = invokeHandler(channel) as Promise<unknown>;
+    await Promise.resolve();
+    expect(context.mobileBridgeService.whenStorageReady).toHaveBeenCalledTimes(1);
+    expect(context.mobileBridgeService[method]).not.toHaveBeenCalled();
+
+    finishWarmup();
+    await pending;
+    expect(context.mobileBridgeService[method]).toHaveBeenCalledTimes(1);
   });
 
   it('MOBILE_START_PAIRING forwards to service.startPairing() and reshapes the result to { qrUri, expiresAt }', async () => {
@@ -120,13 +148,13 @@ describe('registerMobileBridgeHandlers - request/response channels', () => {
     expect(context.mobileBridgeService.cancelPairing).toHaveBeenCalledWith();
   });
 
-  it('MOBILE_LIST_DEVICES forwards to service.listDevices() and returns its result verbatim', () => {
+  it('MOBILE_LIST_DEVICES forwards to service.listDevices() and returns its result verbatim', async () => {
     const context = makeContext();
     const seeded = [{ deviceId: 'd1', displayName: 'Phone', capabilities: [], pairedAt: '2026-01-01T00:00:00.000Z' }];
     context.mobileBridgeService.listDevices.mockReturnValue(seeded);
     registerMobileBridgeHandlers(context);
 
-    const result = invokeHandler(IPC.MOBILE_LIST_DEVICES);
+    const result = await invokeHandler(IPC.MOBILE_LIST_DEVICES);
 
     expect(result).toBe(seeded);
   });

@@ -36,6 +36,12 @@ vi.mock('electron', () => ({
     isEncryptionAvailable: () => true,
     encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
     decryptString: (buffer: Buffer) => buffer.toString('utf8').replace(/^encrypted:/, ''),
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => ({
+      result: buffer.toString('utf8').replace(/^encrypted:/, ''),
+      shouldReEncrypt: false,
+    }),
     getSelectedStorageBackend: () => 'keychain',
   },
   ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
@@ -77,8 +83,8 @@ let rosterDevices: RosterDeviceEntry[] = [deviceA, deviceB];
 
 vi.mock('../../../src/main/mobile-bridge/identity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/mobile-bridge/identity')>()),
-  loadBridgeIdentity: () => fakeIdentity,
-  loadOrCreateBridgeIdentity: () => fakeIdentity,
+  loadBridgeIdentity: async () => fakeIdentity,
+  loadOrCreateBridgeIdentity: async () => fakeIdentity,
 }));
 
 // revokeDevice/setDeviceCapabilities are mocked as no-op spies (not passed
@@ -176,6 +182,9 @@ async function openSessions(service: MobileBridgeServiceInstance): Promise<Map<s
   // attachContext registers the resting park's MobileTerminalProbe, so the
   // fake session manager needs the registration seam (the probe stays unused).
   service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  // The identity and the secure-storage verdict load once, asynchronously,
+  // in the warm-up attachContext() starts; runSyncSessions() waits for it too.
+  await service.whenStorageReady();
   service.reconcile({ enabled: true, relayUrl: 'wss://relay.example.com' });
   await flushMicrotasks();
   const byDeviceId = new Map<string, FakeBridgeSession>();

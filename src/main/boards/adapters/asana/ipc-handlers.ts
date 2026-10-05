@@ -16,12 +16,12 @@ import { AsanaClient } from './client';
 export function registerAsanaIpcHandlers(): void {
   ipcMain.handle(IPC.BOARDS_ASANA_AUTH_STATUS, async (): Promise<AsanaAuthStatus> => {
     const client = new AsanaClient();
-    if (!client.hasCredential()) {
+    if (!(await client.hasCredential())) {
       return { connected: false };
     }
     return {
       connected: true,
-      email: client.getCredentialEmail() || undefined,
+      email: (await client.getCredentialEmail()) || undefined,
     };
   });
 
@@ -45,7 +45,7 @@ export function registerAsanaIpcHandlers(): void {
         const client = new AsanaClient();
         const user = await client.validateToken(token);
         const email = user.email ?? '';
-        client.saveCredential(token, email);
+        await client.saveCredential(token, email);
         return { ok: true, email: email || undefined };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Asana token validation failed.';

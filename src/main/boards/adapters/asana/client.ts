@@ -81,12 +81,12 @@ export class AsanaClient {
     this.credential = credential ?? null;
   }
 
-  hasCredential(): boolean {
-    return this.ensureCredential(false) !== null;
+  async hasCredential(): Promise<boolean> {
+    return (await this.ensureCredential(false)) !== null;
   }
 
-  getCredentialEmail(): string | null {
-    return this.ensureCredential(false)?.userEmail ?? null;
+  async getCredentialEmail(): Promise<string | null> {
+    return (await this.ensureCredential(false))?.userEmail ?? null;
   }
 
   /**
@@ -114,9 +114,9 @@ export class AsanaClient {
     return payload.data;
   }
 
-  private ensureCredential(required: boolean): AsanaCredential | null {
+  private async ensureCredential(required: boolean): Promise<AsanaCredential | null> {
     if (!this.credential) {
-      this.credential = loadAsanaCredential();
+      this.credential = await loadAsanaCredential();
     }
     if (!this.credential && required) {
       throw new Error('Not connected to Asana. Click "Connect Asana" to paste a Personal Access Token.');
@@ -330,7 +330,7 @@ export class AsanaClient {
    * so adding it here is safe even when the URL is already pre-signed.
    */
   private async downloadOne(url: string, filename: string): Promise<DownloadedAttachment | null> {
-    const credential = this.ensureCredential(false);
+    const credential = await this.ensureCredential(false);
     let host: string;
     try {
       host = new URL(url).host;
@@ -371,7 +371,7 @@ export class AsanaClient {
   }
 
   private async requestOnce<T>(method: 'GET' | 'POST', pathAndQuery: string, body?: unknown): Promise<T> {
-    const credential = this.ensureCredential(true)!;
+    const credential = (await this.ensureCredential(true))!;
     const response = await this.fetchWithAuth(method, pathAndQuery, credential.accessToken, body);
     if (response.status === 401) {
       // The user revoked the PAT or it was deleted. Drop the stored credential
@@ -422,13 +422,13 @@ export class AsanaClient {
   }
 
   /** Persist a validated PAT. Replaces any existing credential. */
-  saveCredential(accessToken: string, userEmail: string): AsanaCredential {
+  async saveCredential(accessToken: string, userEmail: string): Promise<AsanaCredential> {
     const credential: AsanaCredential = {
       accessToken,
       userEmail,
       savedAt: new Date().toISOString(),
     };
-    saveAsanaCredential(credential);
+    await saveAsanaCredential(credential);
     this.credential = credential;
     return credential;
   }

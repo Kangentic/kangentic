@@ -45,6 +45,15 @@ vi.mock('electron', () => ({
       if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
       throw new Error('safeStorage.decryptString: invalid ciphertext');
     },
+    // The async API the auth helpers now use. Its ciphertext carries a v11 tag
+    // (a real key), so the Linux "genuine encryption" probe passes on CI too.
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`v11:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => {
+      const raw = buffer.toString('utf8');
+      if (raw.startsWith('v11:')) return { result: raw.slice('v11:'.length), shouldReEncrypt: false };
+      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
+    },
     getSelectedStorageBackend: () => 'keychain',
   },
 }));
@@ -79,13 +88,13 @@ describe('call sites on an unwritable config directory', () => {
       '../../src/main/boards/adapters/asana/credential-store'
     );
 
-    expect(() =>
+    await expect(
       saveAsanaCredential({
         accessToken: 'token-value',
         userEmail: 'dev@example.com',
         savedAt: new Date().toISOString(),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(notifications).toHaveLength(1);
   });
@@ -100,14 +109,11 @@ describe('call sites on an unwritable config directory', () => {
 
     const { loadOrCreateBridgeIdentity } = await import('../../src/main/mobile-bridge/identity');
 
-    let identity: ReturnType<typeof loadOrCreateBridgeIdentity> | undefined;
-    expect(() => {
-      identity = loadOrCreateBridgeIdentity();
-    }).not.toThrow();
-
-    // A degraded disk write still returns the identity generated for THIS
-    // session - it is the persistence to disk that fails, not generation.
-    expect(identity?.staticKeyPair.secretKey).toHaveLength(32);
+    // Resolves rather than rejects: a degraded disk write still returns the
+    // identity generated for THIS session - it is the persistence to disk that
+    // fails, not generation.
+    const identity = await loadOrCreateBridgeIdentity();
+    expect(identity.staticKeyPair.secretKey).toHaveLength(32);
     expect(notifications).toHaveLength(1);
   });
 });
@@ -127,7 +133,7 @@ describe('saveAsanaCredential file mode on a writable directory (POSIX only)', (
       '../../src/main/boards/adapters/asana/credential-store'
     );
 
-    saveAsanaCredential({
+    await saveAsanaCredential({
       accessToken: 'token-value',
       userEmail: 'dev@example.com',
       savedAt: new Date().toISOString(),

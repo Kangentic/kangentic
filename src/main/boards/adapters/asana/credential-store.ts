@@ -32,30 +32,44 @@ function storePath(): string {
   return path.join(PATHS.configDir, STORE_FILENAME);
 }
 
-export function loadAsanaCredential(): AsanaCredential | null {
+export async function loadAsanaCredential(): Promise<AsanaCredential | null> {
   const filePath = storePath();
   if (!fs.existsSync(filePath)) return null;
+  let credential: AsanaCredential;
+  let shouldRewrite: boolean;
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(raw) as StoredShape;
     if (!parsed.encrypted) return null;
-    const decrypted = decryptSecret(parsed.encrypted);
-    const credential = JSON.parse(decrypted) as AsanaCredential;
+    const decrypted = await decryptSecret(parsed.encrypted);
+    credential = JSON.parse(decrypted.plaintext) as AsanaCredential;
+    shouldRewrite = decrypted.shouldRewrite;
     // Guard against legacy or malformed stored data. accessToken must be a
     // non-empty string, otherwise sending it as a Bearer header would silently
     // fail on the first Asana API call instead of surfacing "not connected".
     if (typeof credential?.accessToken !== 'string' || credential.accessToken.length === 0) {
       return null;
     }
-    return credential;
   } catch (error) {
     console.warn('[asana/credential-store] failed to load credential:', error);
     return null;
   }
+  // Written by the sync API under a key the async one does not hold, flagged
+  // for re-encryption, or stored in plaintext before encryption was available
+  // here (see decryptSecret). The credential in hand is good either way; a
+  // failed rewrite only means the same migration runs on the next load.
+  if (shouldRewrite) {
+    try {
+      await saveAsanaCredential(credential);
+    } catch (error) {
+      console.warn('[asana/credential-store] could not rewrite the credential in the current format:', error);
+    }
+  }
+  return credential;
 }
 
-export function saveAsanaCredential(credential: AsanaCredential): void {
-  const encrypted = encryptSecret(JSON.stringify(credential));
+export async function saveAsanaCredential(credential: AsanaCredential): Promise<void> {
+  const encrypted = await encryptSecret(JSON.stringify(credential));
   const payload: StoredShape = { encrypted };
   // mode 0o600 matches saveBridgeIdentity: the payload is already
   // safeStorage-encrypted, and this narrows who can read the ciphertext at

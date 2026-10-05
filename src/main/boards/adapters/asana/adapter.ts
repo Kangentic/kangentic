@@ -41,7 +41,7 @@ export class AsanaAdapter implements BoardAdapter {
   }
 
   async checkPrerequisites(): Promise<PrerequisiteResult> {
-    if (!this.client.hasCredential()) {
+    if (!(await this.client.hasCredential())) {
       return {
         cliOk: true,
         authOk: false,

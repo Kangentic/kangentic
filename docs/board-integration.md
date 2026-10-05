@@ -72,12 +72,26 @@ Opaque per-adapter credential bag (`Record<string, string>`). Each adapter's `au
 
 ### `safeStorage` semantics
 
-Credential helpers in `shared/auth.ts` use Electron's `safeStorage`:
+Credential helpers in `shared/auth.ts` use Electron's `safeStorage` through its ASYNC API
+(`encryptStringAsync` / `decryptStringAsync` / `isAsyncEncryptionAvailable`), so all three
+helpers return promises. The sync API is deprecated in Electron 45 and removed in 46.
 
 - All helpers must be called **after** `app.whenReady()` resolves.
 - macOS: Keychain Access (per-app key).
 - Windows: DPAPI (per-user protection).
-- Linux: depends on the secret store. If none is available, `getSelectedStorageBackend()` returns `'basic_text'` and we log a warning, then persist unencrypted (matching Electron's documented contract).
+- Linux: the Secret portal or the Secret Service (gnome-keyring, KeePassXC, KWallet), found on any
+  desktop. The sync API searched only Chromium's fixed desktop list, so on sway, i3 or WSLg it
+  reported `basic_text` even with a keyring running. With no secret store at all, the async API
+  still encrypts, under a hardcoded fallback key that protects nothing. `getSelectedStorageBackend()`
+  describes only the sync API and cannot see this, so `isGenuineEncryptionAvailable()` reads
+  Chromium's tag on a probe ciphertext instead: `v10` is the fallback key, `v11` the Secret
+  Service, `v12` the portal.
+- The stored format did not change: `'e'` + base64 for encrypted, `'p'` + base64 for plaintext (only
+  when no encryption is available). Sync and async share one ciphertext format wherever both work,
+  so credentials written before the migration still read. `decryptSecret` reports when a blob
+  should be written again (a key rotation, a legacy blob only the sync API could read, or
+  plaintext once genuine encryption exists), and the Asana store and the mobile bridge identity
+  rewrite it on load.
 
 ## Registry
 

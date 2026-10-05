@@ -24,7 +24,14 @@ const RELAY_TEST_TIMEOUT_MS = 5000;
 export function registerMobileBridgeHandlers(context: IpcContext): void {
   const service = context.mobileBridgeService;
 
-  ipcMain.handle(IPC.MOBILE_GET_STATUS, (): MobileBridgeStatus => service.getStatus());
+  // Both reads wait for the service's one-time secure-storage warm-up (the
+  // identity is read through safeStorage's async API), so a settings tab opened
+  // in the first moments of a run never shows "secure storage unavailable" or
+  // an empty device list that is only not loaded yet.
+  ipcMain.handle(IPC.MOBILE_GET_STATUS, async (): Promise<MobileBridgeStatus> => {
+    await service.whenStorageReady();
+    return service.getStatus();
+  });
 
   ipcMain.handle(IPC.MOBILE_START_PAIRING, async (): Promise<MobileStartPairingResult> => {
     const { qrUri, qrPayload } = await service.startPairing();
@@ -35,7 +42,10 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
     service.cancelPairing();
   });
 
-  ipcMain.handle(IPC.MOBILE_LIST_DEVICES, (): MobilePairedDevice[] => service.listDevices());
+  ipcMain.handle(IPC.MOBILE_LIST_DEVICES, async (): Promise<MobilePairedDevice[]> => {
+    await service.whenStorageReady();
+    return service.listDevices();
+  });
 
   // The set the bottom panel suspends its terminals for. The push below keeps
   // it current; this invoke seeds a renderer that mounts after the phone

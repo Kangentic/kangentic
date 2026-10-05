@@ -6,8 +6,11 @@
  * an Ed25519 master signing keypair) correctly, and - the load-bearing safety
  * property of this module - that loadOrCreateBridgeIdentity() REFUSES to
  * generate and persist a brand-new private key when genuine encryption is
- * unavailable (Linux basic_text safeStorage backend, or safeStorage disabled
- * entirely), rather than silently writing an unprotected key to disk.
+ * unavailable (no Linux secret store, so only safeStorage's hardcoded fallback
+ * key, or safeStorage disabled entirely), rather than silently writing an
+ * unprotected key to disk. Also pins the safeStorage migration: an identity
+ * decryptSecret flags for a rewrite is saved again, but ONLY under genuine
+ * encryption, the same bar creating one has to clear.
  *
  * Mirrors the mocking pattern from tests/unit/asana-credential-store.test.ts
  * and tests/unit/boards-auth.test.ts: the electron module is mocked so
@@ -19,14 +22,27 @@
  * the mocked safeStorage, so an encrypt-then-decrypt round trip through this
  * test exercises the real sentinel + JSON envelope logic end to end.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// --- Electron mock: a reversible "encrypted:<plaintext>" scheme so encryptSecret/
-// decryptSecret (which run for real) can genuinely round-trip through it. ---
+// --- Electron mock: reversible schemes so encryptSecret/decryptSecret (which run
+// for real) can genuinely round-trip. The sync API writes "encrypted:<plaintext>"
+// (the legacy format); the async API writes "<tag>:<plaintext>", where the tag
+// stands in for Chromium's key tag (v10 = Linux hardcoded fallback key). ---
 const mockElectronState = {
   isEncryptionAvailable: true,
+  isAsyncEncryptionAvailable: true,
+  asyncTag: 'v11',
+  shouldReEncrypt: false,
+  asyncDecryptThrows: false,
   storageBackend: 'keychain' as string,
 };
+
+function parseMockCiphertext(buffer: Buffer): string | null {
+  const raw = buffer.toString('utf8');
+  if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
+  const asyncMatch = /^v\d\d:/.exec(raw);
+  return asyncMatch ? raw.slice(asyncMatch[0].length) : null;
+}
 
 vi.mock('electron', () => ({
   app: {
@@ -40,6 +56,16 @@ vi.mock('electron', () => ({
       const raw = buffer.toString('utf8');
       if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
       throw new Error('safeStorage.decryptString: invalid ciphertext');
+    },
+    isAsyncEncryptionAvailable: async () => mockElectronState.isAsyncEncryptionAvailable,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`${mockElectronState.asyncTag}:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => {
+      if (mockElectronState.asyncDecryptThrows) {
+        throw new Error('safeStorage.decryptStringAsync: the key that encrypted this data is not available');
+      }
+      const result = parseMockCiphertext(buffer);
+      if (result === null) throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
+      return { result, shouldReEncrypt: mockElectronState.shouldReEncrypt };
     },
     getSelectedStorageBackend: () => mockElectronState.storageBackend,
   },
@@ -85,6 +111,27 @@ vi.mock('../../../src/main/config/paths', () => ({
 const { loadBridgeIdentity, loadOrCreateBridgeIdentity, clearBridgeIdentity } = await import(
   '../../../src/main/mobile-bridge/identity'
 );
+const { resetSecureStorageProbeForTests } = await import('../../../src/main/boards/shared/auth');
+
+const originalPlatform = process.platform;
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
+/** An identity envelope exactly as the OLD sync API wrote it: 'e' + base64("encrypted:<json>"). */
+function legacyEnvelopeFor(storedIdentity: Record<string, string>): string {
+  const cipherBuffer = Buffer.from(`encrypted:${JSON.stringify(storedIdentity)}`, 'utf8');
+  return JSON.stringify({ encrypted: 'e' + cipherBuffer.toString('base64') });
+}
+
+const VALID_STORED_IDENTITY = {
+  staticSecretKeyHex: '11'.repeat(32),
+  staticPublicKeyHex: '22'.repeat(32),
+  masterSigningSecretKeyHex: '33'.repeat(32),
+  masterSigningPublicKeyHex: '44'.repeat(32),
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
 
 beforeEach(() => {
   existsSyncSpy.mockReset();
@@ -94,21 +141,33 @@ beforeEach(() => {
   unlinkSyncSpy.mockReset();
   rmSyncSpy.mockReset();
   mockElectronState.isEncryptionAvailable = true;
+  mockElectronState.isAsyncEncryptionAvailable = true;
+  mockElectronState.asyncTag = 'v11';
+  mockElectronState.shouldReEncrypt = false;
+  mockElectronState.asyncDecryptThrows = false;
   mockElectronState.storageBackend = 'keychain';
+  resetSecureStorageProbeForTests();
+  // Pinned so a Linux CI runner does not take the Linux probe path in the
+  // platform-agnostic cases; the Linux cases set it themselves.
+  setPlatform('win32');
+});
+
+afterEach(() => {
+  setPlatform(originalPlatform);
 });
 
 describe('loadBridgeIdentity', () => {
-  it('returns null when the identity file does not exist', () => {
+  it('returns null when the identity file does not exist', async () => {
     existsSyncSpy.mockReturnValue(false);
-    expect(loadBridgeIdentity()).toBeNull();
+    expect(await loadBridgeIdentity()).toBeNull();
   });
 
-  it('returns null and logs a warning when the file contains invalid JSON', () => {
+  it('returns null and logs a warning when the file contains invalid JSON', async () => {
     existsSyncSpy.mockReturnValue(true);
     readFileSyncSpy.mockReturnValue('not-valid-json');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    const result = loadBridgeIdentity();
+    const result = await loadBridgeIdentity();
 
     expect(result).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(
@@ -118,48 +177,86 @@ describe('loadBridgeIdentity', () => {
     warnSpy.mockRestore();
   });
 
-  it('returns null when the JSON file has no encrypted field', () => {
+  it('returns null when the JSON file has no encrypted field', async () => {
     existsSyncSpy.mockReturnValue(true);
     readFileSyncSpy.mockReturnValue(JSON.stringify({ someOtherKey: 'value' }));
 
-    expect(loadBridgeIdentity()).toBeNull();
+    expect(await loadBridgeIdentity()).toBeNull();
   });
 
-  it('returns null when the decrypted JSON is missing staticSecretKeyHex', () => {
+  it('returns null when the decrypted JSON is missing staticSecretKeyHex', async () => {
     existsSyncSpy.mockReturnValue(true);
-    const malformed = { masterSigningSecretKeyHex: 'ab', createdAt: new Date().toISOString() };
-    // Build the stored envelope the way saveBridgeIdentity would: 'e' + base64(safeStorage output).
-    const cipherBuffer = Buffer.from(`encrypted:${JSON.stringify(malformed)}`, 'utf8');
     readFileSyncSpy.mockReturnValue(
-      JSON.stringify({ encrypted: 'e' + cipherBuffer.toString('base64') }),
+      legacyEnvelopeFor({ masterSigningSecretKeyHex: 'ab', createdAt: new Date().toISOString() }),
     );
 
-    expect(loadBridgeIdentity()).toBeNull();
+    expect(await loadBridgeIdentity()).toBeNull();
   });
 
-  it('returns null when the decrypted JSON has an empty staticSecretKeyHex', () => {
+  it('returns null when the decrypted JSON has an empty staticSecretKeyHex', async () => {
     existsSyncSpy.mockReturnValue(true);
-    const malformed = {
-      staticSecretKeyHex: '',
-      staticPublicKeyHex: 'ab',
-      masterSigningSecretKeyHex: 'ab',
-      masterSigningPublicKeyHex: 'ab',
-      createdAt: new Date().toISOString(),
-    };
-    const cipherBuffer = Buffer.from(`encrypted:${JSON.stringify(malformed)}`, 'utf8');
-    readFileSyncSpy.mockReturnValue(
-      JSON.stringify({ encrypted: 'e' + cipherBuffer.toString('base64') }),
-    );
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor({ ...VALID_STORED_IDENTITY, staticSecretKeyHex: '' }));
 
-    expect(loadBridgeIdentity()).toBeNull();
+    expect(await loadBridgeIdentity()).toBeNull();
+  });
+
+  it('reads an identity the old sync API wrote, without rewriting it when the key is current', async () => {
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(Buffer.from(identity!.staticKeyPair.secretKey).toString('hex')).toBe(VALID_STORED_IDENTITY.staticSecretKeyHex);
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadBridgeIdentity migration', () => {
+  it('rewrites an identity flagged for re-encryption under genuine encryption, and still returns it', async () => {
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+    mockElectronState.shouldReEncrypt = true;
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+    const written = JSON.parse(writeFileSyncSpy.mock.calls[0][1]) as { encrypted: string };
+    // Re-encrypted through the async API (the mock's v11 tag), not the legacy sync format.
+    expect(Buffer.from(written.encrypted.slice(1), 'base64').toString('utf8').startsWith('v11:')).toBe(true);
+  });
+
+  it('rewrites a legacy blob only the sync API can still read', async () => {
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+    mockElectronState.asyncDecryptThrows = true;
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('never rewrites without genuine encryption (Linux hardcoded fallback key), but still loads', async () => {
+    setPlatform('linux');
+    mockElectronState.asyncTag = 'v10';
+    existsSyncSpy.mockReturnValue(true);
+    readFileSyncSpy.mockReturnValue(legacyEnvelopeFor(VALID_STORED_IDENTITY));
+    mockElectronState.shouldReEncrypt = true;
+
+    const identity = await loadBridgeIdentity();
+
+    expect(identity).not.toBeNull();
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
   });
 });
 
 describe('loadOrCreateBridgeIdentity', () => {
-  it('generates and persists a new identity when none exists', () => {
+  it('generates and persists a new identity when none exists', async () => {
     existsSyncSpy.mockReturnValue(false);
 
-    const identity = loadOrCreateBridgeIdentity();
+    const identity = await loadOrCreateBridgeIdentity();
 
     expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
     expect(identity.staticKeyPair.secretKey).toHaveLength(32);
@@ -170,9 +267,9 @@ describe('loadOrCreateBridgeIdentity', () => {
     expect(() => new Date(identity.createdAt).toISOString()).not.toThrow();
   });
 
-  it('returns the existing identity without calling writeFileSync when one is already persisted', () => {
+  it('returns the existing identity without calling writeFileSync when one is already persisted', async () => {
     existsSyncSpy.mockReturnValue(false);
-    const created = loadOrCreateBridgeIdentity();
+    const created = await loadOrCreateBridgeIdentity();
     const writtenPayload = writeFileSyncSpy.mock.calls[0][1] as string;
 
     // Simulate a fresh process: the file now "exists" and readFileSync returns
@@ -181,7 +278,7 @@ describe('loadOrCreateBridgeIdentity', () => {
     existsSyncSpy.mockReturnValue(true);
     readFileSyncSpy.mockReturnValue(writtenPayload);
 
-    const loaded = loadOrCreateBridgeIdentity();
+    const loaded = await loadOrCreateBridgeIdentity();
 
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
     expect(Buffer.from(loaded.staticKeyPair.secretKey).toString('hex')).toBe(
@@ -199,26 +296,34 @@ describe('loadOrCreateBridgeIdentity', () => {
     expect(loaded.createdAt).toBe(created.createdAt);
   });
 
-  it('throws and does not call writeFileSync when safeStorage.isEncryptionAvailable() is false', () => {
+  it('throws and does not call writeFileSync when async encryption is unavailable', async () => {
     existsSyncSpy.mockReturnValue(false);
-    mockElectronState.isEncryptionAvailable = false;
+    mockElectronState.isAsyncEncryptionAvailable = false;
 
-    expect(() => loadOrCreateBridgeIdentity()).toThrow(/secure storage is unavailable/);
+    await expect(loadOrCreateBridgeIdentity()).rejects.toThrow(/secure storage is unavailable/);
     expect(writeFileSyncSpy).not.toHaveBeenCalled();
   });
 
-  it('throws and does not call writeFileSync on Linux with the basic_text storage backend', () => {
+  it('throws and does not call writeFileSync on Linux when only the hardcoded fallback key (v10) exists', async () => {
     existsSyncSpy.mockReturnValue(false);
-    mockElectronState.storageBackend = 'basic_text';
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    setPlatform('linux');
+    mockElectronState.asyncTag = 'v10';
 
-    try {
-      expect(() => loadOrCreateBridgeIdentity()).toThrow(/secure storage is unavailable/);
-      expect(writeFileSyncSpy).not.toHaveBeenCalled();
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    }
+    await expect(loadOrCreateBridgeIdentity()).rejects.toThrow(/secure storage is unavailable/);
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('creates the identity on Linux with a real Secret Service key (v11), whatever the sync backend says', async () => {
+    existsSyncSpy.mockReturnValue(false);
+    setPlatform('linux');
+    mockElectronState.asyncTag = 'v11';
+    mockElectronState.storageBackend = 'basic_text';
+    mockElectronState.isEncryptionAvailable = false;
+
+    const identity = await loadOrCreateBridgeIdentity();
+
+    expect(identity.staticKeyPair.secretKey).toHaveLength(32);
+    expect(writeFileSyncSpy).toHaveBeenCalledTimes(1);
   });
 });
 

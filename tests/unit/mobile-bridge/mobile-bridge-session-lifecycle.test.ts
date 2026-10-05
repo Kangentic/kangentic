@@ -43,6 +43,12 @@ vi.mock('electron', () => ({
     isEncryptionAvailable: () => true,
     encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
     decryptString: (buffer: Buffer) => buffer.toString('utf8').replace(/^encrypted:/, ''),
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => ({
+      result: buffer.toString('utf8').replace(/^encrypted:/, ''),
+      shouldReEncrypt: false,
+    }),
     getSelectedStorageBackend: () => 'keychain',
   },
   ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
@@ -78,8 +84,8 @@ const setDeviceCapabilitiesSpy = vi.fn();
 
 vi.mock('../../../src/main/mobile-bridge/identity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/mobile-bridge/identity')>()),
-  loadBridgeIdentity: () => fakeIdentity,
-  loadOrCreateBridgeIdentity: () => fakeIdentity,
+  loadBridgeIdentity: async () => fakeIdentity,
+  loadOrCreateBridgeIdentity: async () => fakeIdentity,
 }));
 
 vi.mock('../../../src/main/mobile-bridge/roster-store', async (importOriginal) => ({
@@ -151,6 +157,9 @@ async function openSession(service: MobileBridgeServiceInstance): Promise<FakeBr
   // no test here spawns a PTY).
   const fakeSessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
   service.attachContext({ sessionManager: fakeSessionManager, boardEvents: { emitBoardChanged: vi.fn() } } as never);
+  // The identity and the secure-storage verdict load once, asynchronously,
+  // in the warm-up attachContext() starts; runSyncSessions() waits for it too.
+  await service.whenStorageReady();
   service.reconcile({ enabled: true, relayUrl: 'wss://relay.example.com' });
   await flushMicrotasks();
   expect(createdSessions.length).toBe(countBefore + 1);
@@ -368,8 +377,11 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     service.dispose();
   });
 
-  it('revokeDevice() on an offline (session-less) device drops it without throwing', () => {
+  it('revokeDevice() on an offline (session-less) device drops it without throwing', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    // The identity is read in the async secure-storage warm-up; the
+    // synchronous roster edits serve that cached copy.
+    await service.whenStorageReady();
 
     expect(() => service.revokeDevice('device-A')).not.toThrow();
 
@@ -529,6 +541,9 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     try {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
       const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+      // The identity (and so the roster listDevices reads) loads in the async
+      // secure-storage warm-up.
+      await service.whenStorageReady();
 
       // No session has opened yet for the roster device.
       expect(service.listDevices()[0]).toMatchObject({

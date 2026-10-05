@@ -28,9 +28,13 @@ import {
  *
  * Unlike the Asana credential, the private key material here MUST be
  * genuinely protected: refuses to persist when isGenuineEncryptionAvailable()
- * is false (Linux basic_text backend), rather than falling back to
- * encryptSecret's own plaintext degradation. A mobile bridge identity
- * that can't be protected shouldn't silently exist on disk.
+ * is false (no Linux secret store, so only the hardcoded fallback key), rather
+ * than falling back to encryptSecret's own degradation. A mobile bridge
+ * identity that can't be protected shouldn't silently exist on disk.
+ *
+ * Load, save and create are async because safeStorage's async API is
+ * (src/main/boards/shared/auth.ts). MobileBridgeService loads the identity once
+ * when it warms up and serves its synchronous readers from that cache.
  */
 export interface BridgeIdentity {
   staticKeyPair: X25519KeyPair;
@@ -74,25 +78,40 @@ function fromStored(stored: StoredIdentity): BridgeIdentity {
   };
 }
 
-export function loadBridgeIdentity(): BridgeIdentity | null {
+export async function loadBridgeIdentity(): Promise<BridgeIdentity | null> {
   const filePath = identityPath();
   if (!fs.existsSync(filePath)) return null;
+  let identity: BridgeIdentity;
+  let shouldRewrite: boolean;
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(raw) as StoredShape;
     if (!parsed.encrypted) return null;
-    const decrypted = decryptSecret(parsed.encrypted);
-    const stored = JSON.parse(decrypted) as StoredIdentity;
+    const decrypted = await decryptSecret(parsed.encrypted);
+    const stored = JSON.parse(decrypted.plaintext) as StoredIdentity;
     if (typeof stored?.staticSecretKeyHex !== 'string' || stored.staticSecretKeyHex.length === 0) return null;
-    return fromStored(stored);
+    identity = fromStored(stored);
+    shouldRewrite = decrypted.shouldRewrite;
   } catch (error) {
     console.warn('[mobile-bridge/identity] failed to load identity:', error);
     return null;
   }
+  // Written by the sync API under a key the async one does not hold, or flagged
+  // for re-encryption (see decryptSecret). Only ever rewritten under GENUINE
+  // encryption, the same bar creating an identity has to clear. A failed
+  // rewrite only means the same migration runs on the next load.
+  if (shouldRewrite && (await isGenuineEncryptionAvailable())) {
+    try {
+      await saveBridgeIdentity(identity);
+    } catch (error) {
+      console.warn('[mobile-bridge/identity] could not rewrite the identity in the current format:', error);
+    }
+  }
+  return identity;
 }
 
-function saveBridgeIdentity(identity: BridgeIdentity): void {
-  const encrypted = encryptSecret(JSON.stringify(toStored(identity)));
+async function saveBridgeIdentity(identity: BridgeIdentity): Promise<void> {
+  const encrypted = await encryptSecret(JSON.stringify(toStored(identity)));
   const payload: StoredShape = { encrypted };
   // mode 0o600: best-effort defense-in-depth for the file holding the
   // encrypted private-key material (no-op on Windows, honored on POSIX at
@@ -110,13 +129,13 @@ function saveBridgeIdentity(identity: BridgeIdentity): void {
  * should check isGenuineEncryptionAvailable() first and surface a clear
  * "secure storage unavailable" status instead of calling this blindly.
  */
-export function loadOrCreateBridgeIdentity(): BridgeIdentity {
-  const existing = loadBridgeIdentity();
+export async function loadOrCreateBridgeIdentity(): Promise<BridgeIdentity> {
+  const existing = await loadBridgeIdentity();
   if (existing) return existing;
 
-  if (!isGenuineEncryptionAvailable()) {
+  if (!(await isGenuineEncryptionAvailable())) {
     throw new Error(
-      'Cannot create a mobile bridge identity: secure storage is unavailable (Linux basic_text backend or safeStorage disabled). Refusing to persist an unprotected private key.',
+      'Cannot create a mobile bridge identity: secure storage is unavailable (no Linux secret store, or safeStorage disabled). Refusing to persist an unprotected private key.',
     );
   }
 
@@ -125,7 +144,7 @@ export function loadOrCreateBridgeIdentity(): BridgeIdentity {
     masterSigningKeyPair: generateEd25519KeyPair(),
     createdAt: new Date().toISOString(),
   };
-  saveBridgeIdentity(identity);
+  await saveBridgeIdentity(identity);
   return identity;
 }
 
