@@ -100,10 +100,10 @@ jobs:
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       # --ignore-scripts: the tests need no Electron binary (the root postinstall's
       # only job), and the platform binaries vitest and koffi load arrive as
       # optional dependencies.

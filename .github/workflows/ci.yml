@@ -53,7 +53,14 @@ concurrency:
 # or publish-protocol run eats into it.
 #
 # node_modules is cached under one shared lockfile-keyed key, so npm ci runs only
-# on a lockfile change. setup-node deliberately does NOT set `cache: npm`: that
+# on a lockfile change. The key also names the Node major (`node24`): a tree
+# installed under another Node and npm is not this one, and keeping the old key
+# would restore it and never run npm ci on the new pair. Change the prefix in all
+# six jobs together when node-version moves. Node 24 (npm 11) runs the root
+# package's own postinstall, which is what fetches the Electron binary now that
+# Electron 42+ has no install script of its own; npm 11 only WARNS about a
+# dependency script allowScripts does not cover, where npm 12 blocks it.
+# setup-node deliberately does NOT set `cache: npm`: that
 # restores a ~366 MB ~/.npm tree which only `npm ci` reads, and `npm ci` only runs
 # on a node_modules cache MISS, so on the warm path it was ~5.3s of dead weight
 # per job (~106s of runner time per run) sitting on the pole's critical path.
@@ -108,16 +115,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -170,16 +177,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -215,16 +222,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -254,16 +261,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -299,10 +306,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       # Shared node_modules cache (keyed on the lockfile, same key as every tier):
       # on a hit the shard skips install entirely; on a miss it runs a full
       # npm ci. The native modules go unused by the headless UI tests, but keeping
@@ -313,7 +320,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -392,16 +399,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Cache node_modules (native prebuilds + Electron binary)
         id: cache-node-modules
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci, with the Electron binary)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci

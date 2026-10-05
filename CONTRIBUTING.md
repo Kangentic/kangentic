@@ -25,7 +25,7 @@ The CLA is modeled after the [Apache Individual Contributor License Agreement](h
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 22.14+ or 24+ (building from source; CI runs on the latest Node 22)
+- [Node.js](https://nodejs.org/) 22.14+ or 24+ (building from source; CI's test workflows run on the latest Node 24, the line Electron 44 bundles)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
 - Git 2.26+
 
