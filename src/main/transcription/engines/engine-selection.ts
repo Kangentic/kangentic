@@ -17,7 +17,8 @@ function slotModel(modelId: string, fallbackId: string): ModelDef | null {
   if (modelId === NO_MODEL) return null;
   const found = getModel(modelId);
   if (found) return found;
-  return fallbackId === NO_MODEL ? null : getModel(fallbackId) ?? null;
+  if (fallbackId === NO_MODEL) return null;
+  return getModel(fallbackId) ?? null;
 }
 
 /** The Best preset's refinement model for a language: what an on-device
