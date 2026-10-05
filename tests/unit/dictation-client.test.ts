@@ -27,7 +27,7 @@ import type { EngineSelection } from '../../src/main/transcription/engines/engin
 
 // Mirrors the private IDLE_SHUTDOWN_MS in dictation-client.ts: the recycle
 // window for a worker that has served a session (and so holds the accurate
-// model). A prewarm-only worker is never recycled.
+// model). A prewarm-only worker is recycled only once past the commit ceiling.
 const IDLE_SHUTDOWN_MS = 30 * 60_000;
 // Comfortably past the largest UtilityRestartPolicy backoff step.
 const BACKOFF_CLEAR_MS = 20_000;
@@ -93,7 +93,7 @@ async function serveSession(client: DictationClient, dictationSessionId = 'dicta
   const promise = client.createSession({
     dictationSessionId,
     ...fakeEnsureEngineRequest(),
-    sessionOptions: { language: 'en', punctuation: true },
+    sessionOptions: { language: 'en' },
   });
   const child = lastChild();
   child.emit('message', { type: 'result', id: lastRequestId(child) });
@@ -167,7 +167,7 @@ describe('DictationClient', () => {
     const promise = client.createSession({
       dictationSessionId: 'dictation-1',
       ...fakeEnsureEngineRequest(),
-      sessionOptions: { language: 'en', punctuation: true },
+      sessionOptions: { language: 'en' },
     });
     const child = lastChild();
     const id = lastRequestId(child);
@@ -176,7 +176,7 @@ describe('DictationClient', () => {
         type: 'createSession',
         id,
         dictationSessionId: 'dictation-1',
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       }),
     );
 
@@ -611,7 +611,7 @@ describe('DictationClient', () => {
       const failing = client.createSession({
         dictationSessionId: 'dictation-fail',
         ...fakeEnsureEngineRequest(),
-        sessionOptions: { language: 'en', punctuation: true },
+        sessionOptions: { language: 'en' },
       });
       const child = lastChild();
       const failAssertion = expect(failing).rejects.toThrow('boom');
@@ -693,6 +693,53 @@ describe('DictationClient', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    // Settings switches grow a worker that never dictates: each language or
+    // preset change pre-warms another engine, and a disposed one's arena stays
+    // reserved. Measured on Best, English to French and back left 2,083 MB.
+    describe('a prewarm-only worker', () => {
+      async function prewarmTwiceWithCommit(commitBytes: number): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
+        const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+        const client = new DictationClient(undefined, { readCommitBytes });
+        const recycled = vi.fn();
+        client.on('recycled', recycled);
+        const child = await warm(client);
+        child.pid = 4242;
+        // The switch: a second prewarm on the same worker, never a session.
+        await warm(client);
+        return { client, child, recycled };
+      }
+
+      it('is recycled at the short window once past the ceiling, and emits recycled so the service re-warms one engine', async () => {
+        vi.useFakeTimers();
+        try {
+          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES + 1);
+          await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+          expect(child.kill).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
+          child.emit('exit');
+          expect(client.crashed).toBe(false);
+          client.dispose();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('stays resident under the ceiling, however long it idles', async () => {
+        vi.useFakeTimers();
+        try {
+          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
+          expect(child.kill).not.toHaveBeenCalled();
+          expect(recycled).not.toHaveBeenCalled();
+          client.dispose();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
     });
 
     it('a pid missing from the process table keeps the long window', async () => {

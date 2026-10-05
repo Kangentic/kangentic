@@ -512,10 +512,10 @@ model rows read None whatever the config says. The dataset answers it instead wi
 `buildDictationInfo` (`src/main/transcription/dictation-info.ts`, the same function
 `TranscriptionService.getInfo` calls) over a seeded machine on the accurate tier
 (`DEMO_DICTATION_INFO`). The default config therefore selects what the desktop does: the Best
-accuracy preset, Streaming Zipformer live and Parakeet to refine, both cached and Ready.
+preset, Nemotron streaming live and Parakeet v3 to refine, both cached and Ready.
 `tests/unit/demo-dictation-info.test.ts` fails if that answer ever loses a model. The answer is
 fixed at the default config: after a visitor changes Mode, the dropdowns follow the new choice
-but the status row under them still names the default pair.
+but the model list under them still names the default pair.
 
 `dictation-field` resolves its target from `document.activeElement`, where `dictation` resolves
 it from the restored window's focus. So the scene needs DOM focus, which a boot `click` on a text

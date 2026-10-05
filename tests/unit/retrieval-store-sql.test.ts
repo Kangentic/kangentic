@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { CHUNKS_PER_TRANSACTION, DELETES_PER_TRANSACTION, RetrievalStore, type DocSumWrite } from '../../src/main/retrieval/retrieval-store';
 import { markVecCapable } from '../../src/main/retrieval/vec-support';
+import { localEmbedStoreAccess } from '../../src/main/retrieval/embedder/embed-store-access';
 import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/types';
 
 import { openTestDatabase } from './helpers/test-database';
@@ -961,6 +962,70 @@ describe('reconcileVecOrphans against a real vec0 table', () => {
     expect(new RetrievalStore(database).searchSemantic(vectorFor(1), 1, ['conversation'])[0]?.chunkId).toBe(keptIds[0]);
     // The new chunk is untouched: still waiting for its own embedding.
     expect(database.prepare('SELECT embedded_model AS model FROM memory_chunks WHERE id = ?').get(reusedIds[0])).toEqual({ model: null });
+  });
+});
+
+describe('a model switch at the same width resets the vec tables (real database)', () => {
+  // bge-base and Granite R2 are both 768-wide. The tables used to reset only on a
+  // width change, and the search does not filter by tag, so a re-embed drain left
+  // one table scoring queries against two models' vectors at once.
+  const DIMENSIONS = 4;
+  const modelA = { dimensions: DIMENSIONS, modelTag: 'model-a@4' };
+  const modelB = { dimensions: DIMENSIONS, modelTag: 'model-b@4' };
+  const vectorFor = (seed: number): Float32Array => new Float32Array([seed, seed + 0.5, -seed, 1]);
+
+  async function embeddedProject() {
+    const database = openTracked({ vec: true });
+    markVecCapable(database);
+    runProjectMigrations(database);
+    const access = localEmbedStoreAccess(() => database, (db) => new RetrievalStore(db));
+    new RetrievalStore(database).upsertDocument(ref, [chunk(0, 'hashA'), chunk(1, 'hashB')]);
+    const pending = await access.nextBatch('project', modelA, 10);
+    await access.write('project', (pending ?? []).map((stored, index) => ({
+      chunkId: stored.id, vector: vectorFor(index + 1), contentHash: stored.contentHash,
+    })), modelA.modelTag);
+    const embeddedTags = (): Array<string | null> => (database.prepare('SELECT embedded_model AS model FROM memory_chunks ORDER BY id').all() as Array<{ model: string | null }>)
+      .map((row) => row.model);
+    const vectorCount = (): number => (database.prepare('SELECT COUNT(*) AS count FROM memory_vec_conversation').get() as { count: number }).count;
+    return { database, access, embeddedTags, vectorCount };
+  }
+
+  it('resets when the model changes and the width does not', async () => {
+    const { access, embeddedTags, vectorCount } = await embeddedProject();
+    expect(embeddedTags()).toEqual([modelA.modelTag, modelA.modelTag]);
+    expect(vectorCount()).toBe(2);
+
+    const pending = await access.nextBatch('project', modelB, 10);
+
+    expect(pending?.length).toBe(2);
+    expect(embeddedTags()).toEqual([null, null]);
+    expect(vectorCount()).toBe(0);
+  });
+
+  it('keeps the vectors when the same model drains again', async () => {
+    const { access, embeddedTags, vectorCount } = await embeddedProject();
+
+    expect(await access.nextBatch('project', modelA, 10)).toEqual([]);
+    expect(embeddedTags()).toEqual([modelA.modelTag, modelA.modelTag]);
+    expect(vectorCount()).toBe(2);
+  });
+
+  it('keeps an index from before the model was recorded when its vectors are this model\'s', async () => {
+    const { database, access, vectorCount } = await embeddedProject();
+    database.prepare('DELETE FROM memory_meta WHERE key = ?').run('vec_model');
+
+    expect(await access.nextBatch('project', modelA, 10)).toEqual([]);
+    expect(vectorCount()).toBe(2);
+    expect(database.prepare('SELECT value FROM memory_meta WHERE key = ?').get('vec_model')).toEqual({ value: modelA.modelTag });
+  });
+
+  it('resets an index from before the model was recorded when its vectors are another model\'s', async () => {
+    const { database, access, embeddedTags, vectorCount } = await embeddedProject();
+    database.prepare('DELETE FROM memory_meta WHERE key = ?').run('vec_model');
+
+    expect((await access.nextBatch('project', modelB, 10))?.length).toBe(2);
+    expect(embeddedTags()).toEqual([null, null]);
+    expect(vectorCount()).toBe(0);
   });
 });
 

@@ -19,10 +19,11 @@ import type { ModelEngineKind } from '../models/model-registry';
  */
 
 /** A live model runs natively streaming (the transducer) or chunked (offline).
- *  The chunked offline path bakes the language into its recognizer. */
+ *  The chunked offline path bakes the language into its recognizer; the
+ *  streaming path pins each stream to it (a multilingual Nemotron reads it). */
 function liveEngineFactory(kind: ModelEngineKind, language: string): () => TranscriptionEngine {
   return kind === 'online-transducer'
-    ? () => new SherpaOnlineEngine()
+    ? () => new SherpaOnlineEngine(language)
     : () => new ChunkedOfflineEngine(language);
 }
 

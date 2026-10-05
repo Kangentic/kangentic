@@ -28,8 +28,9 @@ stated here and held by the components.
   settings registry.
 - **Every child of a card body is a tile.** Use `CardRow` for a control under its label,
   `CardToggleRow` for a label with a switch, `CardChoiceRow` for a choice between two named
-  options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, `CardGroupTile`
-  for a titled group of items that collapses (MCP Server's tool groups), and `CardTile`
+  options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, `CardLinkRow`
+  for a label whose value is links (a License line), `CardGroupTile` for a titled group of items
+  that collapses (MCP Server's tool groups), and `CardTile`
   for anything custom: an action row, a group of controls, a sortable list item. A component of your own may sit in a
   body when every one of its returns is a tile (`NotifyChannelRow`, `HotkeyRow`). Never put a raw
   element in a body, and never give a `CardTile` its own fill or padding (its `className` is for
@@ -40,14 +41,17 @@ stated here and held by the components.
   state passes `percent` for the track. `tone` is the only styling: `ready` puts a check beside the
   value, `caution` and `failure` tint the label and put a warning icon right before it, and
   the value stays neutral. Do not hand-roll a status line or a progress bar; the Knowledge
-  Graph and Dictation tabs read the same way because they share this row.
+  Graph's Local model row and the Index card's lines read the same way because they share these
+  states.
 - **A list of sources is one `CardSourceList`, one line per source.** Each line is the source's
   name, its value at the switches' edge, and its switch (a locked one, on, for a source that is
   always on). The value follows one pattern: the count with a check once caught up, the share and
   the time left over a track while it runs (no verb: the name says what runs), what it would cover
   while off (muted), and a tag in place of the value while a prerequisite is missing. A problem
   tints its state word and puts the icon before its name, as the status row does. The Knowledge
-  Graph tab's Index card is the one that exists; its line states are pure (`tabs/index-sources.ts`).
+  Graph tab's Index card is one; its line states are pure (`tabs/index-sources.ts`). Dictation's
+  model list is the other, `readOnly` (no switch column), one line per model slot with the model's
+  size, its download share, or None.
 - **The old row components are gone.** `SectionHeader`, `SettingRow`, `SettingToggleRow` and
   `CompactToggleList` were removed from `settings/shared.tsx` when every tab moved to cards. Do not
   bring them back. A card's title replaces a section heading.

@@ -586,7 +586,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:modelProgress` | on | Push: first-use model download progress |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
-| `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the accurate model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |
+| `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the refinement model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |
 
 ## Database
 

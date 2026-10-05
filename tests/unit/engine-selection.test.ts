@@ -50,14 +50,14 @@ describe('selectEngine - remote mode', () => {
     expect(result.finalModelId).toBeNull();
   });
 
-  it('remote mode: live model slot is kept (streaming Zipformer is the default live model)', () => {
-    // Cloud path keeps a local live preview via the streaming Zipformer.
-    // The live slot must not be null on the default remote config.
+  it('remote mode: live model slot is kept (the live model of the default preset)', () => {
+    // Cloud path keeps a local live preview: on a capable machine the Best
+    // preset's Nemotron. The live slot must not be null on the default remote config.
     const result = selectEngine(
       makeProfile(),
       makeConfig({ engineMode: 'remote' }),
     );
-    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.liveModelId).toBe('nemotron-streaming-0.6b-en');
   });
 
   it('remote mode: isRemote is true, which engine-build.ts routes to RemoteOpenAiEngine', () => {
@@ -86,26 +86,26 @@ describe('selectEngine - on-device (auto) mode', () => {
     expect(result.isRemote).toBe(false);
   });
 
-  it('capable machine default: live slot is streaming-zipformer-en, kind online-transducer', () => {
+  it('capable machine default: live slot is Nemotron streaming, kind online-transducer', () => {
     const result = selectEngine(
       makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
       makeConfig(),
     );
-    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.liveModelId).toBe('nemotron-streaming-0.6b-en');
     // engine-build.ts routes purely off this field - no ModelDef ever
     // crosses the process boundary - so a drift here silently mis-routes
     // the worker's live-slot construction.
     expect(result.liveModelKind).toBe('online-transducer');
   });
 
-  it('capable machine default (accurate-base tier): final model is parakeet-tdt-0.6b-en', () => {
-    // The accurate-base tier default is the first MODELS entry of that tier,
-    // which is Parakeet TDT 0.6B - the leaderboard-topping English model.
+  it('capable machine default (accurate-base tier): final model is Parakeet v3', () => {
+    // A capable machine gets the Best preset (TIER_DEFAULT_PRESET), whose
+    // refinement pass is Parakeet v3.
     const result = selectEngine(
       makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
       makeConfig(),
     );
-    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-en');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
   });
 
   it('a chunked (offline) live model reports its own engineKind, not the transducer one', () => {
@@ -129,17 +129,17 @@ describe('selectEngine - on-device (auto) mode', () => {
 
 describe('selectEngine - on-device slot guard (at least one slot always active)', () => {
   it('liveModelId none on streaming-tiny tier: guard populates final from accurateDefault', () => {
-    // On a weak machine (2 cores -> streaming-tiny tier), finalModelFor returns
-    // null because the streaming-tiny tier does not auto-pick an accurate model.
-    // With live also disabled, BOTH slots would be null. The guard kicks in and
-    // sets final = accurateDefault() = Parakeet so on-device always has a slot.
+    // On a weak machine (2 cores -> streaming-tiny tier) the default preset is
+    // Light, which has no refinement model. With live also disabled, BOTH slots
+    // would be null. The guard kicks in and sets final to the Best preset's
+    // refinement model (Parakeet v3) so on-device always has a slot.
     const result = selectEngine(
       makeProfile({ cpuCores: 2, totalRamGb: 8, gpu: 'none' }),
       makeConfig({ liveModelId: 'none' }),
     );
     expect(result.id).toBe('hybrid');
     expect(result.liveModelId).toBeNull();
-    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-en');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
   });
 
   it('both slots explicitly none: guard sets finalModelId to accurateDefault', () => {
@@ -150,20 +150,30 @@ describe('selectEngine - on-device slot guard (at least one slot always active)'
       makeConfig({ liveModelId: 'none', modelId: 'none' }),
     );
     expect(result.liveModelId).toBeNull();
-    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-en');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
   });
 });
 
 describe('selectEngine - language clamp (resolveLanguage)', () => {
-  it('fr with English-only live and final models clamps to en', () => {
-    // Both the streaming Zipformer (live default) and Parakeet (final default)
-    // are English-only. A stale config language of "fr" is not in the
-    // intersection, so it must be clamped to "en".
+  it('fr with English-only Custom live and final models clamps to en', () => {
+    // Both the streaming Zipformer and Parakeet v2 are English-only. A stale
+    // config language of "fr" is not in the intersection, so it must be
+    // clamped to "en".
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ mode: 'custom', language: 'fr', liveModelId: 'streaming-zipformer-en', modelId: 'parakeet-tdt-0.6b-en' }),
+    );
+    expect(result.language).toBe('en');
+  });
+
+  it('a preset resolves the models of the language, so fr passes through', () => {
     const result = selectEngine(
       makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
       makeConfig({ language: 'fr' }),
     );
-    expect(result.language).toBe('en');
+    expect(result.liveModelId).toBe('nemotron-3.5-streaming-0.6b');
+    expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
+    expect(result.language).toBe('fr');
   });
 
   it('fr with a multilingual live model and no final: passes the language through', () => {
@@ -209,7 +219,7 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
     // where resolveLanguage might ignore the live model's constraint.
     const result = selectEngine(
       makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
-      makeConfig({ language: 'fr', modelId: 'whisper-small-multi' }),
+      makeConfig({ language: 'fr', liveModelId: 'streaming-zipformer-en', modelId: 'whisper-small-multi' }),
     );
     expect(result.language).toBe('en');
   });

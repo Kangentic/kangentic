@@ -45,8 +45,8 @@ describe('buildDictationInfo - streaming-tiny tier (weak machine)', () => {
   });
 
   it('selects no refinement (final) model - the tier default is not accurate-base', () => {
-    // engine-selection.ts's finalModelFor: an absent modelId only auto-picks an accurate model
-    // on the accurate-base tier; streaming-tiny gets no final model at all.
+    // A weak machine's default preset is Light (TIER_DEFAULT_PRESET), which has no
+    // refinement model at all.
     expect(info.selectedFinalModelId).toBeNull();
   });
 
@@ -68,16 +68,16 @@ describe('buildDictationInfo - accurate-base tier (capable machine)', () => {
 
   it('resolves to the accurate-base tier and selects both a live and a final model', () => {
     expect(info.tier).toBe('accurate-base');
-    expect(info.selectedLiveModelId).toBe('streaming-zipformer-en');
-    expect(info.selectedFinalModelId).toBe('parakeet-tdt-0.6b-en');
+    expect(info.selectedLiveModelId).toBe('nemotron-streaming-0.6b-en');
+    expect(info.selectedFinalModelId).toBe('parakeet-tdt-0.6b-v3');
   });
 
   it('primaryModel prefers the offline (final) model over the live one', () => {
-    expect(info.selectedModelId).toBe('parakeet-tdt-0.6b-en');
+    expect(info.selectedModelId).toBe('parakeet-tdt-0.6b-v3');
   });
 
-  it('selectedModelSizeMb sums BOTH selected models (70 + 660), not just one', () => {
-    expect(info.selectedModelSizeMb).toBe(730);
+  it('selectedModelSizeMb sums BOTH selected models (631 + 639), not just one', () => {
+    expect(info.selectedModelSizeMb).toBe(1270);
   });
 });
 
@@ -116,7 +116,7 @@ describe('primaryModel', () => {
     engineKind: 'online-transducer',
     displayName: 'Live',
     license: 'Apache-2.0',
-    tier: 'streaming-tiny',
+    accuracy: { rank: 1, label: 'Basic accuracy' },
     approxSizeMb: 10,
     files: [],
     roles: {},
@@ -126,7 +126,7 @@ describe('primaryModel', () => {
     engineKind: 'offline-whisper',
     displayName: 'Offline',
     license: 'MIT',
-    tier: 'accurate-base',
+    accuracy: { rank: 1, label: 'Basic accuracy' },
     approxSizeMb: 20,
     files: [],
     roles: {},

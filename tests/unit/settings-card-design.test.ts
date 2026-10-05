@@ -423,7 +423,7 @@ describe('settings card design', () => {
     }
     // Components that render tiles are found wherever they live: a local one, an
     // imported helper, and the keybindings rows.
-    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow', 'AgentRows', 'DictationModelStatus', 'CardSourceList']) {
+    for (const component of ['NotifyChannelRow', 'AgentExecutionFields', 'AgentLaunchOptionFields', 'HotkeyRow', 'OsHotkeyBanner', 'SortableActionItem', 'ActionRow', 'AgentRows', 'EmbeddingModelStatus', 'CardSourceList', 'CardLinkRow']) {
       expect(tileComponents.has(component), `expected ${component} to be recognised as rendering tiles`).toBe(true);
     }
     const owners = descriptions.map((entry) => entry.owner);

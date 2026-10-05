@@ -73,8 +73,14 @@
  *   about code. A question naming an identifier ("Who calls
  *   requiresUserInteraction?") reads less like its code: two of seven peaked at
  *   0.41 to 0.42 with the answer file at 0.37 to 0.38, so it gets a lower floor.
- *   bge-base and bge-small calibrate to their own noise floors, but these
- *   floors were not measured on them.
+ *   Both floors hold on Granite R2, the default since October 2026. Measured
+ *   with `scripts/measure-embedding-models.mjs` (2026-10-05, one corpus, both
+ *   models), the best code relevance of a board question has p90 0.417 on
+ *   Granite against 0.407 on bge-large, so the floor keeps code out as before,
+ *   while a code question's median rises from 0.383 to 0.447, so more of them
+ *   clear it. Identifier questions clear 0.35 down to their p10 (0.407, against
+ *   0.250 on bge-large). bge-small calibrates to its own noise floor, but these
+ *   floors were not measured on it.
  */
 
 import type Database from 'better-sqlite3';

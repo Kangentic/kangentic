@@ -26,8 +26,8 @@ function makePreConfig(modelState: string, progress?: number, summaries?: object
     model: {
       id: 'bge-small',
       displayName: 'bge small',
-      tier: 'balanced',
-      approxSizeMb: 34,
+      tier: 'light',
+      approxSizeMb: 33,
       dimensions: 384,
       state: modelState,
       progress,
@@ -174,16 +174,19 @@ test.describe('Embedding model picker', () => {
     try {
       await openKnowledgeGraphTab(page);
 
-      const select = page.getByTestId('embedding-model-select');
-      await expect(select).toBeVisible();
-      // Three curated tiers, all bge-*-en-v1.5 (best-first) - the concrete
+      const choice = page.getByTestId('embedding-model-choice');
+      await expect(choice).toBeVisible();
+      // Two tiers, best-first, in the words dictation's Mode uses - the concrete
       // model name is NOT in the label.
-      await expect(select.locator('option')).toHaveText(['Best accuracy', 'Accurate', 'Balanced']);
+      await expect(choice.getByRole('radio')).toHaveText(['Best', 'Light']);
+      await expect(page.getByTestId('embedding-model-bge-small')).toHaveAttribute('aria-checked', 'true');
+      // The selected model's license, as a link under its status.
+      await expect(page.getByTestId('embedding-model-license-link')).toHaveText('MIT');
 
       // The status row carries the concrete model name, its size and where it runs.
       // "Local model", never "Model": the agent's Model row sits below it.
       await expect(page.getByTestId('embedding-model-card-label')).toHaveText('Local model');
-      await expect(page.getByTestId('embedding-model-ready')).toHaveText('bge small, 34 MB, DirectML (GPU)');
+      await expect(page.getByTestId('embedding-model-ready')).toHaveText('bge small, 33 MB, DirectML (GPU)');
       await expect(page.getByTestId('embedding-model-card').getByRole('progressbar')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -235,7 +238,7 @@ test.describe('Embedding model picker', () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {
       await openKnowledgeGraphTab(page);
-      await page.getByTestId('embedding-model-select').selectOption('bge-base');
+      await page.getByTestId('embedding-model-granite-r2').click();
 
       // The change flows through updateConfig -> config.set -> refetch, so the
       // config store reflects the new selection.
@@ -248,7 +251,7 @@ test.describe('Embedding model picker', () => {
             return stores?.config.getState().config.knowledgeGraph?.localModel;
           }),
         )
-        .toBe('bge-base');
+        .toBe('granite-r2');
     } finally {
       await browser.close();
     }
@@ -298,7 +301,7 @@ test.describe('Knowledge Graph card', () => {
       await openKnowledgeGraphTab(page);
       const card = page.getByTestId('knowledge-graph-card');
       const agentRow = page.getByTestId('knowledge-graph-answer-agent');
-      const qualityRow = page.getByTestId('embedding-model-select');
+      const qualityRow = page.getByTestId('embedding-model-choice');
 
       const description = 'Finds your work by meaning and answers questions.';
       // On: the local model's rows, then the agent's, in setup order. One agent

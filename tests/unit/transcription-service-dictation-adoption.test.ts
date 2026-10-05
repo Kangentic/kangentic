@@ -142,7 +142,6 @@ const PREWARM_CONFIG: DictationConfig = {
   engineMode: 'auto',
   modelId: null,
   liveModelId: null,
-  punctuation: true,
   language: 'en',
 };
 
@@ -164,7 +163,6 @@ import { TranscriptionService } from '../../src/main/transcription/transcription
 
 const START_OPTIONS: DictationStartOptions = {
   engineMode: 'auto',
-  punctuation: true,
   language: 'en',
 };
 
@@ -409,7 +407,6 @@ const INFO_CONFIG: DictationConfig = {
   engineMode: 'auto',
   modelId: null,
   liveModelId: null,
-  punctuation: true,
   language: 'en',
 };
 

@@ -7,12 +7,13 @@ import type {
 } from './transcription-engine';
 import { concatInt16ToFloat32 } from '../audio/pcm';
 import { SHERPA_WHISPER_INFO } from './engine-infos';
+import { isOfflineKind } from '../models/model-registry';
 
 /**
  * The accurate offline path, model-driven via sherpa-onnx `OfflineRecognizer`.
  * It runs whichever offline model the registry selected: an NVIDIA Parakeet
- * NeMo transducer (the default - leaderboard-topping English, very fast) or a
- * Whisper model. Both produce punctuation and casing. There are no live
+ * NeMo transducer (Parakeet v3 refines the presets), a Whisper or Moonshine
+ * model, or Cohere Transcribe. Each produces punctuation and casing. There are no live
  * partials (the popup shows the recording state, then the final text on
  * release). The model loads and decodes on a worker thread (createAsync /
  * decodeAsync), so the main process event loop is not blocked.
@@ -30,13 +31,7 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
   constructor(private readonly language: string = 'en') {}
 
   async load(models: ResolvedModel[]): Promise<void> {
-    const model =
-      models.find(
-        (entry) =>
-          entry.kind === 'offline-whisper' ||
-          entry.kind === 'offline-nemo-transducer' ||
-          entry.kind === 'offline-moonshine',
-      ) ?? models[0];
+    const model = models.find((entry) => isOfflineKind(entry.kind)) ?? models[0];
     if (!model) throw new Error('Offline engine requires a model');
     this.recognizer = await sherpa.OfflineRecognizer.createAsync(buildOfflineConfig(model, this.language));
   }
@@ -51,8 +46,11 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
      *  real to wait out. */
     let decodeInFlight: Promise<string> | null = null;
 
+    const language = this.language;
     const decode = async (samples: Float32Array): Promise<string> => {
       const stream = recognizer.createStream();
+      // Cohere Transcribe reads the language per stream; the other kinds ignore it.
+      stream.setOption('language', language);
       stream.acceptWaveform({ sampleRate: 16000, samples });
       const result = await recognizer.decodeAsync(stream);
       return result.text.trim();
@@ -99,8 +97,9 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
 /**
  * Build the `OfflineRecognizer` config for the resolved model's kind. A NeMo
  * transducer (Parakeet) uses `modelConfig.transducer` + `modelType:
- * 'nemo_transducer'`; Moonshine uses `modelConfig.moonshine` (preprocessor +
- * encoder + uncached/cached decoders); Whisper uses `modelConfig.whisper`.
+ * 'nemo_transducer'`; Cohere Transcribe uses `modelConfig.cohereTranscribe`;
+ * Moonshine uses `modelConfig.moonshine` (preprocessor + encoder +
+ * uncached/cached decoders); Whisper uses `modelConfig.whisper`.
  */
 export function buildOfflineConfig(model: ResolvedModel, language: string = 'en'): unknown {
   const featConfig = { sampleRate: 16000, featureDim: 80 };
@@ -117,6 +116,21 @@ export function buildOfflineConfig(model: ResolvedModel, language: string = 'en'
         modelType: 'nemo_transducer',
       },
       decodingMethod: 'greedy_search',
+    };
+  }
+  if (model.kind === 'offline-cohere-transcribe') {
+    // Punctuation on, and inverse text normalization so "five" is written "5".
+    // The language comes from each stream's `language` option, not the config.
+    const { encoder, decoder, tokens } = model.paths;
+    return {
+      featConfig,
+      modelConfig: {
+        cohereTranscribe: { encoder, decoder, usePunct: 1, useItn: 1 },
+        tokens,
+        numThreads: 4,
+        provider: 'cpu',
+        debug: 0,
+      },
     };
   }
   if (model.kind === 'offline-moonshine') {

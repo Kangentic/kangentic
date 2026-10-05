@@ -1,26 +1,33 @@
+import type { ModelLicenseId } from './model-licenses';
+
 /**
  * Registry of local embedding models for conversation memory. Mirrors the
  * dictation model-registry pattern (a small curated, tiered set of offline
  * models the user picks from in settings). Lives in `shared/` so the renderer's
- * settings dropdown and the main-process engine read one source of truth.
+ * settings control and the main-process engine read one source of truth.
  *
  * All models are ONNX (q8) sentence encoders that run keyless + offline via
  * transformers.js (onnxruntime); files are fetched once by our own downloader
- * into the persistent model cache. Selection is by MTEB-informed tier, all
- * three from the bge-*-en-v1.5 family (same CLS pooling, same query prefix -
- * only size/dimensions/accuracy scale):
- *   balanced - bge-small-en-v1.5 (34M, 384d).
- *   accurate - bge-base-en-v1.5 (110M, 768d).
- *   max      - bge-large-en-v1.5 (335M, 1024d): highest MTEB retrieval score.
+ * into the persistent model cache. Two tiers, each the model that measured best
+ * at its size (`node scripts/measure-embedding-models.mjs`, 2026-10-05, this
+ * repository's docs and code through the worker's exact pipeline):
+ *   best  - IBM granite-embedding-english-r2 (149M, 768d, ModernBERT, CLS, no
+ *           query prefix). MRR@10 0.550 on docs, 0.739 on code by description,
+ *           0.926 on code by name, against 0.454 / 0.510 / 0.577 for bge-large.
+ *   light - bge-small-en-v1.5 (34M, 384d). 0.450 / 0.709 / 0.873.
  *
- * A prior 'fast' tier (mxbai-embed-xsmall-v1, mean-pooled, no query prefix)
- * was removed: measured against our pipeline it scored short keyword queries
- * (e.g. a single word like "space") BELOW its own noise floor against a
- * genuinely relevant passage, i.e. worse than unrelated text - a real
- * semantic-search miss a user hit directly, not a tuning artifact. Symmetric,
- * un-prefixed, sub-30M models are not accurate enough for this product's
- * query shapes; every tier now uses the same well-behaved family instead of
- * trading correctness for a smaller download.
+ * bge-base and bge-large left the registry in that refresh: as the q8 builds
+ * we run, both measured below bge-small on code and below Granite on
+ * everything, so neither made an honest middle tier. A saved id for either
+ * falls back to the default (`resolveEmbeddingModel`).
+ *
+ * A one-word query must still find a passage about it. A prior 'fast' tier
+ * (mxbai-embed-xsmall-v1) was removed for scoring "space" BELOW its own noise
+ * floor against a genuinely relevant passage, i.e. worse than unrelated text.
+ * The measure script runs that check on every model: Granite R2 passes it best
+ * of all (the disk-space passage ranks 1st of 400), and granite-embedding-small
+ * -english-r2 fails it the same way (the Space-key passage below its floor,
+ * ranked 212th), so it is not offered despite its retrieval scores.
  *
  * Each model carries its OWN pooling (`mean` vs `cls`), query prefix, and
  * anisotropy `noiseFloor` here so the worker and the search filter read one
@@ -31,7 +38,7 @@
  * worker.
  */
 
-export type EmbeddingTier = 'balanced' | 'accurate' | 'max';
+export type EmbeddingTier = 'best' | 'light';
 
 export interface EmbeddingModelDef {
   /** Stable id persisted in config + as the chunk model-tag base. */
@@ -39,30 +46,43 @@ export interface EmbeddingModelDef {
   tier: EmbeddingTier;
   /** transformers.js model id (the on-disk subdir under the cache). */
   hfId: string;
+  /** The Hugging Face commit the files download from. The downloader skips a
+   *  file already on disk, so a re-upload under the same id would never reach an
+   *  installed user; a pin makes what ships what downloads. */
+  revision: string;
   /**
-   * Quality label shown in the SELECTION dropdown ('Balanced' | 'Accurate' |
-   * 'Best accuracy'). The concrete model name + size live in the status card,
-   * not the dropdown.
+   * The Search quality control's label ('Best' | 'Light'), the same words
+   * dictation's Mode uses. The concrete model name + size live in the status
+   * row, not the control.
    */
   tierLabel: string;
-  /** Plain model name for the status card (the card appends the size). */
+  /** Plain model name for the status row (the row appends the size). */
   displayName: string;
   dimensions: number;
   /** transformers.js dtype (q8 = the WASM default; ~4x smaller than fp32). */
   dtype: 'q8';
   /**
+   * The ONNX graph keeps its weights in a separate `.onnx_data` file beside it.
+   * Mirrors `use_external_data_format` in the repo's config.json, which tells
+   * transformers.js to load it; the downloader must fetch it too.
+   */
+  externalData: boolean;
+  /**
    * Sentence-pooling strategy the model was TRAINED for. `cls` uses the [CLS]
-   * token's last hidden state (bge, gte-v1.5, mxbai-large); `mean` averages all
-   * token states (mxbai-xsmall, MiniLM, original gte). Using the wrong one
-   * silently degrades retrieval, so it is declared per model, never assumed.
+   * token's last hidden state (bge, gte-v1.5, Granite R2); `mean` averages all
+   * token states (MiniLM, original gte). Using the wrong one silently degrades
+   * retrieval, so it is declared per model, never assumed. Read it from the
+   * model's `1_Pooling/config.json`, not the ONNX config, whose
+   * `classifier_pooling` is for a classification head.
    */
   pooling: 'mean' | 'cls';
+  /** Total download size in MiB, summed from the Hugging Face file listing. */
   approxSizeMb: number;
-  license: string;
+  license: ModelLicenseId;
   /**
-   * Instruction prepended to QUERY text before embedding. Retrieval-tuned
-   * models (bge/e5/gte) expect an asymmetric query instruction; symmetric
-   * models (MiniLM, mxbai) use ''. Passages (documents) never get a prefix.
+   * Instruction prepended to QUERY text before embedding. bge expects an
+   * asymmetric query instruction; Granite R2 and other symmetric models use ''.
+   * Passages (documents) never get a prefix.
    */
   queryPrefix: string;
   /**
@@ -72,15 +92,15 @@ export interface EmbeddingModelDef {
    * floor into a model-independent 0-1 relevance, so one relevance cutoff rejects
    * non-matches on every model.
    *
-   * MEASURED against our actual pipeline (q8 quantization + asymmetric query
-   * prefix + this model's pooling), NOT taken from the fp32/symmetric numbers on
-   * the model card - those run much higher (BAAI documents bge at ~0.6) and made
-   * the filter reject genuine matches. The floor sits a little above the observed
-   * unrelated-pair p90 so that, with the cutoff, the survive-cosine clears even a
-   * long, topically-mixed passage's inflated noise while genuine matches (~0.6+)
-   * pass with margin. Re-measure empirically if a model or its pooling changes
-   * (embed many mutually-unrelated query/passage pairs, take the p90 cosine);
-   * tune here, not in the filter.
+   * MEASURED against our actual pipeline (q8 quantization + the model's prefix
+   * policy + its pooling), NOT taken from the model card. Re-measure when a model
+   * or its pooling changes with `node scripts/measure-embedding-models.mjs`. Its
+   * corpus is one repository, so its unrelated pairs run hotter than fully
+   * unrelated text and an absolute p90 does not carry across models; instead a
+   * new model gets the floor that keeps the same share of unrelated pairs at the
+   * search cutoff as the shipped models keep at theirs (the script prints it as
+   * "calibrated"), and genuine-kept shares are then comparable. Tune here, not in
+   * the filter.
    */
   noiseFloor: number;
   /**
@@ -90,9 +110,11 @@ export interface EmbeddingModelDef {
    * computed (pooling, dtype, prefix policy). The `@q8-cls` / `@q8` suffix
    * encodes that: bumping it is how we invalidate stale embeddings after a
    * pooling fix (`noiseFloor` is query-time only, so it never needs a bump).
+   * A tag change also resets the project's vector table, so two models'
+   * vectors never share it (`syncVecTable`).
    */
   modelTag: string;
-  /** One-line tier blurb for the settings dropdown. */
+  /** One-line tier blurb. */
   blurb: string;
 }
 
@@ -102,50 +124,37 @@ const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passage
 // Best-first.
 export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
   {
-    id: 'bge-large',
-    tier: 'max',
-    hfId: 'Xenova/bge-large-en-v1.5',
-    tierLabel: 'Best accuracy',
-    displayName: 'bge large',
-    dimensions: 1024,
-    dtype: 'q8',
-    pooling: 'cls',
-    approxSizeMb: 337,
-    license: 'MIT',
-    queryPrefix: BGE_QUERY_PREFIX,
-    // Measured: unrelated-pair p90 ~0.39, genuine matches ~0.67-0.71 (q8, CLS, prefixed).
-    noiseFloor: 0.42,
-    modelTag: 'bge-large@q8-cls',
-    blurb: 'Highest quality. Largest download and most storage (1024-dim vectors).',
-  },
-  {
-    id: 'bge-base',
-    tier: 'accurate',
-    hfId: 'Xenova/bge-base-en-v1.5',
-    tierLabel: 'Accurate',
-    displayName: 'bge base',
+    id: 'granite-r2',
+    tier: 'best',
+    hfId: 'onnx-community/granite-embedding-english-r2-ONNX',
+    revision: '2a49b9c076aa627b14bc528b36b67462808ccc23',
+    tierLabel: 'Best',
+    displayName: 'Granite English R2',
     dimensions: 768,
     dtype: 'q8',
+    externalData: true,
     pooling: 'cls',
-    approxSizeMb: 110,
-    license: 'MIT',
-    queryPrefix: BGE_QUERY_PREFIX,
-    // Measured: unrelated-pair p90 ~0.34, genuine matches ~0.66-0.76 (q8, CLS, prefixed).
-    noiseFloor: 0.44,
-    // `-cls` suffix: bge now CLS-pools (was mean); the bump re-embeds stale indexes.
-    modelTag: 'bge-base@q8-cls',
-    blurb: 'Strong quality. Balanced download and storage (768-dim vectors).',
+    approxSizeMb: 153,
+    license: 'Apache-2.0',
+    queryPrefix: '',
+    // Measured: calibrated floor 0.658 keeps 12.3% of unrelated pairs and 87.8% of
+    // genuine ones (bge-small at its 0.52: 13.7% and 79.0%).
+    noiseFloor: 0.66,
+    modelTag: 'granite-r2@q8-cls',
+    blurb: 'Most accurate, on prose and on code. 768-dim vectors.',
   },
   {
     id: 'bge-small',
-    tier: 'balanced',
+    tier: 'light',
     hfId: 'Xenova/bge-small-en-v1.5',
-    tierLabel: 'Balanced',
+    revision: 'main',
+    tierLabel: 'Light',
     displayName: 'bge small',
     dimensions: 384,
     dtype: 'q8',
+    externalData: false,
     pooling: 'cls',
-    approxSizeMb: 34,
+    approxSizeMb: 33,
     license: 'MIT',
     queryPrefix: BGE_QUERY_PREFIX,
     // Measured: unrelated-pair p90 ~0.44 (bge-small is more anisotropic than base),
@@ -157,26 +166,28 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
   },
 ];
 
-export const DEFAULT_EMBEDDING_MODEL_ID = 'bge-base';
+export const DEFAULT_EMBEDDING_MODEL_ID = 'granite-r2';
 
 /** Resolve a config-selected model id to its definition, falling back to the
- *  default when the id is missing or unknown. */
+ *  default when the id is missing or unknown (bge-base and bge-large included). */
 export function resolveEmbeddingModel(id?: string | null): EmbeddingModelDef {
   const found = id ? EMBEDDING_MODELS.find((model) => model.id === id) : undefined;
   return found ?? EMBEDDING_MODELS.find((model) => model.id === DEFAULT_EMBEDDING_MODEL_ID)!;
 }
 
 /** transformers.js expects `<localModelPath>/<hfId>/{config,tokenizer,...}` and
- *  `<hfId>/onnx/model_quantized.onnx` for dtype q8. Paths are relative to the
- *  embeddings cache dir and include the model id. */
+ *  `<hfId>/onnx/model_quantized.onnx` for dtype q8, plus `model_quantized.onnx_data`
+ *  beside it for an external-data model. Paths are relative to the embeddings
+ *  cache dir and include the model id. */
 export function embeddingModelFiles(model: EmbeddingModelDef): Array<{ url: string; file: string }> {
-  const base = `https://huggingface.co/${model.hfId}/resolve/main`;
+  const base = `https://huggingface.co/${model.hfId}/resolve/${model.revision}`;
   const names = [
     'config.json',
     'tokenizer.json',
     'tokenizer_config.json',
     'special_tokens_map.json',
     'onnx/model_quantized.onnx',
+    ...(model.externalData ? ['onnx/model_quantized.onnx_data'] : []),
   ];
   return names.map((name) => ({ url: `${base}/${name}`, file: `${model.hfId}/${name}` }));
 }

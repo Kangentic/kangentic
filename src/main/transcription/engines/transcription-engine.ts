@@ -1,4 +1,4 @@
-import type { DictationEngineInfo } from '../../../shared/types';
+import type { DictationEngineInfo, DictationModelEngineKind } from '../../../shared/types';
 
 /**
  * A model resolved on disk and ready to load. `paths` holds the absolute
@@ -10,7 +10,7 @@ import type { DictationEngineInfo } from '../../../shared/types';
 export interface ResolvedModel {
   id: string;
   engineId: string;
-  kind: 'online-transducer' | 'offline-whisper' | 'offline-nemo-transducer' | 'offline-moonshine';
+  kind: DictationModelEngineKind;
   /** Absolute paths to the model's files, keyed by role. */
   paths: Record<string, string>;
 }
@@ -25,8 +25,6 @@ export interface CreateSessionOptions {
   /** Capture rate is fixed at 16 kHz mono; engines may assert on this. */
   sampleRate: 16000;
   language: string;
-  /** When true, the committed text should carry punctuation and casing. */
-  punctuation: boolean;
   onPartial: (text: string) => void;
 }
 

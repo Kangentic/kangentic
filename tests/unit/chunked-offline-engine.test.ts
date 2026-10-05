@@ -44,6 +44,7 @@ vi.mock('sherpa-onnx-node', () => {
     acceptWaveform(waveform: { samples: Float32Array; sampleRate: number }): void {
       this.sampleCount = waveform.samples.length;
     }
+    setOption(): void {}
   }
 
   class OfflineRecognizer {
@@ -127,7 +128,7 @@ describe('ChunkedOfflineEngine', () => {
     state.sampleCounts = [];
     state.decodeDurationMs = null;
     onPartial = vi.fn();
-    options = { sampleRate: 16000, language: 'en', punctuation: true, onPartial };
+    options = { sampleRate: 16000, language: 'en', onPartial };
     vi.useFakeTimers();
   });
 

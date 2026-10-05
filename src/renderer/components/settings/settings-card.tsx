@@ -1,6 +1,6 @@
 import type React from 'react';
-import { Children, useId } from 'react';
-import { Check, ChevronDown, Info, TriangleAlert } from 'lucide-react';
+import { Children, Fragment, useId } from 'react';
+import { Check, ChevronDown, ExternalLink, Info, TriangleAlert } from 'lucide-react';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { CountBadge } from '../CountBadge';
@@ -390,9 +390,10 @@ interface CardStatusRowProps {
 /**
  * One status row: what a feature is doing on the label's line, its figure at
  * the switch's edge, and a track while it runs. A card's own status takes this
- * shape (Search quality's model, Dictation's models), so two downloads read the
- * same way. A card's list of sources takes `CardSourceList`, which keeps the
- * same value, check, tone and track on one line per source.
+ * shape (Search quality's model), so a download reads the same everywhere. A
+ * card's list of sources or models takes `CardSourceList` (the Index card's
+ * sources, Dictation's live and refinement models), which keeps the same value,
+ * check, tone and track on one line per entry.
  *
  * A problem (caution, failure) tints the state word and puts its icon right
  * before it; the value stays neutral. Ready puts a green check by the value.
@@ -424,6 +425,46 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
         </span>
       </div>
       {percent !== null ? <ProgressTrack percent={width} label={progressLabel} /> : null}
+    </CardTile>
+  );
+}
+
+interface CardLinkRowProps {
+  /** What the links are: "License". */
+  label: string;
+  /** Each opens its `href`; two or more read "A and B". */
+  links: ReadonlyArray<{ label: string; href: string }>;
+  /** Opens a link outside the app. The tab passes the shell bridge. */
+  onOpen: (href: string) => void;
+  testId?: string;
+}
+
+/**
+ * A status row whose value is links: the label on the left, the links at the
+ * switches' edge, an external-link mark after the last. The Dictation and
+ * Knowledge Graph tabs name their models' licenses this way.
+ */
+export function CardLinkRow({ label, links, onOpen, testId }: CardLinkRowProps) {
+  return (
+    <CardTile className="flex items-center justify-between gap-3" testId={testId}>
+      <span className="flex-shrink-0 text-sm font-medium text-fg">{label}</span>
+      <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] text-fg-secondary">
+        {links.map((link, index) => (
+          <Fragment key={link.href}>
+            {index > 0 ? <span className="text-fg-muted">and</span> : null}
+            <button
+              type="button"
+              onClick={() => onOpen(link.href)}
+              title={link.href}
+              className="inline-flex cursor-pointer items-center gap-1 rounded text-accent hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              data-testid={testId ? `${testId}-link` : undefined}
+            >
+              {link.label}
+              {index === links.length - 1 ? <ExternalLink size={12} aria-hidden="true" /> : null}
+            </button>
+          </Fragment>
+        ))}
+      </span>
     </CardTile>
   );
 }

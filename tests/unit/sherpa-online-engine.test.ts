@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CreateSessionOptions, ResolvedModel } from '../../src/main/transcription/engines/transcription-engine';
 
 /**
- * SherpaOnlineEngine, the streaming Zipformer transducer that drives the default
- * live preview. It is the one engine that decodes synchronously inside push(),
+ * SherpaOnlineEngine, the streaming transducer (the Zipformer, or a NeMo model
+ * such as Nemotron) that drives the live preview. It is the one engine that decodes synchronously inside push(),
  * reuses a single OnlineStream for the whole utterance, and pads the tail on
  * finalize. None of that had coverage.
  *
@@ -19,6 +19,8 @@ const harness = vi.hoisted(() => ({
     /** Each entry is one acceptWaveform call's sample count. */
     acceptedLengths: [] as number[],
     inputFinishedCalls: 0,
+    /** Each setOption call, in order. */
+    options: [] as Array<[string, string]>,
     /** How many more times isReady() should return true. */
     readyRemaining: 0,
     resultText: '',
@@ -32,6 +34,9 @@ vi.mock('sherpa-onnx-node', () => {
     }
     inputFinished(): void {
       harness.state.inputFinishedCalls += 1;
+    }
+    setOption(key: string, value: string): void {
+      harness.state.options.push([key, value]);
     }
   }
 
@@ -85,10 +90,11 @@ describe('SherpaOnlineEngine', () => {
     state.decodeCalls = 0;
     state.acceptedLengths = [];
     state.inputFinishedCalls = 0;
+    state.options = [];
     state.readyRemaining = 0;
     state.resultText = '';
     onPartial = vi.fn();
-    options = { sampleRate: 16000, language: 'en', punctuation: false, onPartial };
+    options = { sampleRate: 16000, language: 'en', onPartial };
   });
 
   it('creates one stream per session and reuses it across pushes', async () => {
@@ -156,9 +162,39 @@ describe('SherpaOnlineEngine', () => {
     state.resultText = '  the whole utterance  ';
     await expect(session.finalize()).resolves.toBe('the whole utterance');
 
-    // 100ms of audio, then 8000 samples of padding (0.5s at 16 kHz).
-    expect(state.acceptedLengths).toEqual([1600, 8000]);
+    // The lead silence, 100ms of audio, then 8000 samples of padding (0.5s at 16 kHz).
+    expect(state.acceptedLengths).toEqual([9600, 1600, 8000]);
     expect(state.inputFinishedCalls).toBe(1);
+  });
+
+  // Nemotron 3.5 dropped a clip's first word when speech started at once; 0.6 s
+  // of silence ahead of it brought the word back. It is decoded at the press, so
+  // the first push carries none of it.
+  it('primes each stream with 0.6 s of silence before the first push', async () => {
+    const engine = await loadedEngine();
+    state.readyRemaining = 1;
+    engine.createSession(options);
+
+    expect(state.acceptedLengths).toEqual([9600]);
+    expect(state.decodeCalls).toBe(1);
+  });
+
+  // A multilingual Nemotron reads the stream's `language` option on every
+  // decode; leaving it unset would auto-detect instead of using the user's pick.
+  it('pins each stream to the engine\'s language', async () => {
+    const engine = new SherpaOnlineEngine('de');
+    await engine.load([MODEL]);
+    engine.createSession(options);
+    engine.createSession(options);
+
+    expect(state.options).toEqual([['language', 'de'], ['language', 'de']]);
+  });
+
+  it('pins the stream to English when no language is given', async () => {
+    const engine = await loadedEngine();
+    engine.createSession(options);
+
+    expect(state.options).toEqual([['language', 'en']]);
   });
 
   it('drains once more after the tail padding', async () => {

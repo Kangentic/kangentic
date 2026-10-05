@@ -65,7 +65,7 @@
   let memoryStatus = {
     indexingEnabled: true,
     semantic: 'disabled',
-    model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
+    model: { id: 'granite-r2', displayName: 'Granite English R2', tier: 'best', approxSizeMb: 153, dimensions: 768, state: 'absent' },
   };
   // Knowledge Graph fixture. null means "no projection cached yet", which is the
   // first-open state the surface must handle without looking broken. Seeded via

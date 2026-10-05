@@ -58,6 +58,7 @@ vi.mock('sherpa-onnx-node', () => {
     inputFinished(): void {
       harness.inputFinishedCalls++;
     }
+    setOption(): void {}
   }
 
   class OnlineRecognizer {
@@ -153,7 +154,7 @@ function nemoModel(): ResolvedModel {
 }
 
 function sessionOptions(onPartial: (text: string) => void = () => {}) {
-  return { sampleRate: 16000 as const, language: 'en', punctuation: true, onPartial };
+  return { sampleRate: 16000 as const, language: 'en', onPartial };
 }
 
 beforeEach(() => {
@@ -226,8 +227,10 @@ describe('SherpaOnlineEngine', () => {
 
     session.push(new Int16Array([32768 / 2, -32768]));
 
-    expect(harness.onlineWaveforms[0].sampleRate).toBe(16000);
-    expect(Array.from(harness.onlineWaveforms[0].samples)).toEqual([0.5, -1]);
+    // The first waveform is the lead silence the session primes the stream with.
+    const pushed = harness.onlineWaveforms.at(-1);
+    expect(pushed?.sampleRate).toBe(16000);
+    expect(Array.from(pushed?.samples ?? [])).toEqual([0.5, -1]);
   });
 
   it('flushes with half a second of tail padding before finishing input', async () => {

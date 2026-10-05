@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Database, RotateCcw, Brain } from 'lucide-react';
-import { Select, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, type CardSourceLineProps } from '../settings-card';
+import { useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
@@ -13,7 +13,8 @@ import { Combobox } from '../../dialogs/Combobox';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskSummariesOn } from '../../../../shared/answer-agent';
 import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
-import { EMBEDDING_MODELS } from '../../../../shared/embedding-models';
+import { EMBEDDING_MODELS, resolveEmbeddingModel } from '../../../../shared/embedding-models';
+import { MODEL_LICENSES } from '../../../../shared/model-licenses';
 import { alwaysOnLine, codeLine, CODE_INFO, sourceRequirements, SUMMARIES_INFO, summariesLine } from './index-sources';
 import type {
   AgentDetectionInfo, AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
@@ -53,8 +54,11 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   const indexingEnabled = globalConfig.knowledgeGraph?.indexingEnabled ?? true;
   // Default off when unset (matches DEFAULT_CONFIG.knowledgeGraph.enabled).
   const semanticEnabled = globalConfig.knowledgeGraph?.enabled ?? false;
-  // Default model when unset (matches DEFAULT_CONFIG.knowledgeGraph.localModel).
-  const embeddingModelId = globalConfig.knowledgeGraph?.localModel ?? 'bge-base';
+  // The model main runs: the saved id, or the default when it is unset or names a
+  // model the registry dropped (bge-base, bge-large), so the control always
+  // shows a selection.
+  const embeddingModel = resolveEmbeddingModel(globalConfig.knowledgeGraph?.localModel);
+  const embeddingModelId = embeddingModel.id;
   // Default acceleration when unset (matches DEFAULT_CONFIG.knowledgeGraph.acceleration).
   const acceleration = globalConfig.knowledgeGraph?.acceleration ?? 'auto';
   // Installed agents that declare `answerFromContext`. Read from the capability
@@ -224,22 +228,22 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
         {semanticReady ? (
           <>
             {/* The local model: it finds by meaning and draws the map. */}
-            <CardRow {...settingProps('knowledgeGraph.localModel')}>
-              <Select
-                value={embeddingModelId}
-                onChange={(event) => updateGlobal({ knowledgeGraph: { localModel: event.target.value } })}
-                data-testid="embedding-model-select"
-              >
-                {EMBEDDING_MODELS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.tierLabel}
-                  </option>
-                ))}
-              </Select>
-            </CardRow>
+            <CardChoiceRow
+              {...settingProps('knowledgeGraph.localModel')}
+              options={EMBEDDING_MODELS.map((option) => ({ value: option.id, label: option.tierLabel, testId: `embedding-model-${option.id}` }))}
+              value={embeddingModelId}
+              onChange={(next: string) => updateGlobal({ knowledgeGraph: { localModel: next } })}
+              testId="embedding-model-choice"
+            />
             {/* The chosen model's state, as a status row right under the
-                dropdown that picks it. */}
+                control that picks it, then the license it ships under. */}
             {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
+            <CardLinkRow
+              label="License"
+              links={[{ label: MODEL_LICENSES[embeddingModel.license].name, href: MODEL_LICENSES[embeddingModel.license].url }]}
+              onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
+              testId="embedding-model-license"
+            />
 
             <CardChoiceRow
               {...settingProps('knowledgeGraph.acceleration')}

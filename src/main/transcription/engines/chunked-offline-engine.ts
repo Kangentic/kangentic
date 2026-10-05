@@ -8,6 +8,7 @@ import type {
 import { concatInt16ToFloat32 } from '../audio/pcm';
 import { buildOfflineConfig } from './sherpa-whisper-engine';
 import { CHUNKED_OFFLINE_INFO } from './engine-infos';
+import { isOfflineKind } from '../models/model-registry';
 
 /** Floor on the gap between live decodes. A pass waits this long, or as long as
  *  the pass before it took, whichever is greater. */
@@ -77,13 +78,7 @@ export class ChunkedOfflineEngine implements TranscriptionEngine {
   constructor(private readonly language: string = 'en') {}
 
   async load(models: ResolvedModel[]): Promise<void> {
-    const model =
-      models.find(
-        (entry) =>
-          entry.kind === 'offline-whisper' ||
-          entry.kind === 'offline-nemo-transducer' ||
-          entry.kind === 'offline-moonshine',
-      ) ?? models[0];
+    const model = models.find((entry) => isOfflineKind(entry.kind)) ?? models[0];
     if (!model) throw new Error('Chunked-offline live engine requires an offline model');
     this.recognizer = await sherpa.OfflineRecognizer.createAsync(buildOfflineConfig(model, this.language));
   }

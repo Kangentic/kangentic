@@ -54,9 +54,9 @@ interface PreparedModels {
  *
  * Engines are kept WARM (in the worker), but only as far as they are cheap.
  * The renderer pre-warms the selected engine the moment dictation is enabled
- * (and on every model change), which loads the small streaming live model so
- * the first press streams partials at once. The 631 MB accurate model loads
- * on the first press itself, overlapped with the utterance (see
+ * (and on every model change), which loads the live model so the first press
+ * streams partials at once. The refinement model loads on the first press
+ * itself, overlapped with the utterance (see
  * engines/hybrid-engine.ts), and is then REUSED across presses - until the
  * worker has gone IDLE_SHUTDOWN_MS without a request, when DictationClient
  * recycles it (a process exit is the only thing that gives onnxruntime's
@@ -131,7 +131,7 @@ export class TranscriptionService extends EventEmitter {
         models: prepared.resolved,
         remote: config.remote,
         warmCap: this.warmCap(profile),
-        sessionOptions: { language: config.language ?? 'en', punctuation: config.punctuation ?? true },
+        sessionOptions: { language: config.language ?? 'en' },
       });
     } catch (error) {
       this.active.delete(dictationSessionId);
@@ -248,6 +248,12 @@ export class TranscriptionService extends EventEmitter {
    * two large models on a weak machine). Computed here (the profile comes from
    * detectHardware, which needs the `app` module) and passed to the worker
    * rather than re-derived there.
+   *
+   * Two stays right for 600 MB live models too. onnxruntime keeps a disposed
+   * engine's arena reserved in-process, so a cap of 1 frees nothing: measured
+   * on 2026-10-05, an English to French to English switch on Best went 716,
+   * 1,409, then 2,083 MB of commit with a cap of 1, where a cap of 2 serves
+   * the switch back from the warm engine.
    */
   private warmCap(profile: DictationHardwareProfile): number {
     return selectTier(profile) === 'streaming-tiny' ? 1 : 2;
@@ -275,7 +281,16 @@ export class TranscriptionService extends EventEmitter {
         const now = Date.now();
         if (now - lastEmitMs < 150 && downloadedBytes < totalBytes) return;
         lastEmitMs = now;
-        this.emitModelProgress({ modelId: model.id, status: 'downloading', downloadedBytes, totalBytes });
+        // The aggregate drives the popup's one bar; the per-model pair drives
+        // the Dictation tab's line for this model.
+        this.emitModelProgress({
+          modelId: model.id,
+          status: 'downloading',
+          downloadedBytes,
+          totalBytes,
+          modelDownloadedBytes: progress.downloadedBytes,
+          modelTotalBytes: progress.totalBytes,
+        });
       });
       priorBytes += Math.round(model.approxSizeMb * 1024 * 1024);
       resolved.push({ id: model.id, engineId, kind: resolvedPaths.kind, paths: resolvedPaths.paths });
@@ -423,9 +438,9 @@ function normalizeConfig(options: DictationStartOptions): DictationConfig {
   return {
     enabled: true,
     engineMode: options.engineMode,
+    mode: options.mode,
     modelId: options.modelId ?? null,
     liveModelId: options.liveModelId ?? null,
-    punctuation: options.punctuation,
     language: options.language,
   };
 }
