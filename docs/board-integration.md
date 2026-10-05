@@ -11,6 +11,7 @@ src/main/boards/
   shared/             # BoardAdapter interface + cross-provider helpers
     types.ts
     auth.ts
+    encrypted-secret-file.ts
     mapping.ts
     download-file.ts
     rate-limit.ts
@@ -79,24 +80,31 @@ helpers return promises. The sync API is deprecated in Electron 45 and removed i
 - All helpers must be called **after** `app.whenReady()` resolves.
 - macOS: Keychain Access (per-app key).
 - Windows: DPAPI (per-user protection).
-- Linux: the Secret portal or the Secret Service (gnome-keyring, KeePassXC, KWallet), found on any
-  desktop. The sync API searched only Chromium's fixed desktop list, so on sway, i3 or WSLg it
-  reported `basic_text` even with a keyring running. With no secret store at all, the async API
+- Linux: the async API asks the Secret portal or the Secret Service (gnome-keyring, KeePassXC),
+  on any desktop. The sync API searched only Chromium's fixed desktop list, so on sway, i3 or WSLg
+  it reported `basic_text` even with a keyring running. With no secret store at all, the async API
   still encrypts, under a hardcoded fallback key that protects nothing. `getSelectedStorageBackend()`
-  describes only the sync API and cannot see this, so `isGenuineEncryptionAvailable()` reads
-  Chromium's tag on a probe ciphertext instead: `v10` is the fallback key, `v11` the Secret
-  Service, `v12` the portal.
-- The sync API stays as a floor while Electron ships it. Where the async API does not genuinely
-  encrypt but the sync one does (KDE with KWallet, which the async providers do not ask; macOS,
-  not measured), `encryptSecret` writes through the sync API and the bridge keeps its paired
-  phones. `encryptSecret` picks the async API's real key, then the sync API's, then the async
-  fallback key, then plaintext.
+  describes only the sync API and cannot see this, so the async half of
+  `isGenuineEncryptionAvailable()` reads Chromium's tag on a probe ciphertext instead: `v10` is the
+  fallback key, `v11` the Secret Service, `v12` the portal.
+- The sync API stays as a floor while Electron ships it. `isGenuineEncryptionAvailable()` is true
+  when either API genuinely encrypts: the async one by the tag above, the sync one when
+  `isEncryptionAvailable()` holds and, on Linux, its backend is not `basic_text`. Where only the
+  sync API reaches a real key (KDE with KWallet, which the async providers may not reach; macOS,
+  not measured), `encryptSecret` writes through it and the bridge keeps its paired phones.
+  `encryptSecret` picks the async API's real key, then the sync API's, then the async fallback
+  key, then plaintext.
 - The stored format did not change: `'e'` + base64 for encrypted, `'p'` + base64 for plaintext (only
   when no encryption is available). Sync and async share one ciphertext format wherever both work,
   so credentials written before the migration still read. `decryptSecret` reports when a blob
-  should be written again (a key rotation, a legacy blob only the sync API could read, or
-  plaintext once genuine encryption exists), and the Asana store and the mobile bridge identity
-  rewrite it on load.
+  should be written again: a key rotation; a legacy blob only the sync API could read, but only
+  when the async API genuinely encrypts, since a rewrite through the floor would repeat on every
+  load; or plaintext once genuine encryption exists.
+- The Asana store and the mobile bridge identity both store their secret through
+  `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
+  `rewriteEncryptedSecretFile`), which does that rewrite on load. A rewrite writes only if the file
+  still holds the ciphertext it read, so a clear or a new save that lands during the awaits wins. A
+  failed rewrite is logged, and the next read tries again.
 
 ## Registry
 

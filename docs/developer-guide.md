@@ -488,6 +488,8 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | macOS | Disk image + ZIP | DMG |
 | Linux | Package | deb, rpm |
 
+The NSIS installer includes `build/installer.nsh`, which grants ALL APPLICATION PACKAGES read access on a per-user install folder; see [Windows install-folder ACL grant](cross-platform.md#windows-install-folder-acl-grant).
+
 Native modules:
 - `better-sqlite3` - Node-API (13+), shipping every platform's addon in the package as `prebuilds/<platform>-<arch>.node`, no rebuild needed. The same binary loads under Electron and under plain Node, which is what lets the unit tier open real databases with it. `build/afterPack.js` deletes every prebuild but the target's before its load probes run
 - `node-pty` - uses prebuilt NAPI binaries, no rebuild needed. It loads only in the `kangentic-pty-host` utility process, which runs from the unpacked tree, so all of `node_modules/node-pty/**` is in `asarUnpack` (which also lets the ConPTY conout worker load from a real directory), and the afterPack gate spawns a real process with it under the packaged Electron binary. The one exception to no-rebuild is its macOS `spawn-helper`: `build/afterPack.js` compiles Kangentic's own (`build/spawn-helper/spawn-helper.c`, via `build/install-spawn-helper.js`) over the prebuilt one. It clears the inherited mach exception ports before exec, and the afterPack and afterSign gates prove that on the built binary. A macOS package build therefore needs Xcode or the Command Line Tools installed
