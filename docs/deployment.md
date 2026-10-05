@@ -157,6 +157,20 @@ is left alone, which is what keeps an idempotent re-run of a finished release gr
 release that does not pass fails the run in seconds with `::error::` lines naming the recovery,
 instead of letting three platform builds run and skip every upload.
 
+### Macs Below the Minimum macOS Are Not Offered the Update
+
+`electron-updater` skips an update only when `latest-mac.yml` carries `minimumSystemVersion`, and
+electron-builder writes `mac.minimumSystemVersion` into `Info.plist` alone, never into the feed.
+Without the field, a Mac on a macOS the new Electron dropped (Electron 44 dropped macOS 12)
+downloads the update and macOS refuses to open the result. So `publish-release` runs
+`scripts/patch-mac-update-info.js` before the asset check. It derives the floor from
+`electron-builder.yml`, converts it to the Darwin version the updater compares against
+`os.release()` (macOS 13 is `22.0.0`; the updater lets anything that is not full semver through),
+replaces the draft's `latest-mac.yml` with `gh release upload --clobber`, and downloads it again to
+prove the field landed. A failure leaves the release a draft. Those Macs stay on the last build
+that runs on them. `node scripts/patch-mac-update-info.js vX.Y.Z --dry-run` prints the patched feed
+for any release without uploading.
+
 ### GitHub Actions Workflows
 
 | Workflow | Trigger | Purpose |
@@ -165,7 +179,7 @@ instead of letting three platform builds run and skip every upload.
 | `package-smoke.yml` | PRs touching packaging, the pty host, the retrieval worker or their clients; `workflow_dispatch` | `npm run package` on Windows, macOS (ad-hoc signed) and Linux, then `scripts/package-smoke.mjs` runs the packaged app: a terminal, a Knowledge Graph read, a task reap that must stop a detached process the task's terminal left, a user's quit, and a fail on any crash or fallback log line. Not a required check |
 | `macos-spawn-helper.yml` | PRs touching the spawn-helper, its gates or `package-lock.json` | Compiles and proves Kangentic's macOS spawn-helper on a real Mac. Not a required check |
 | `task-reap-real-processes.yml` | PRs and pushes to main touching `src/main/pty/process-tag/`, the source files outside it that its tests import (the host process table, the process-tree probe, `zombie-reaper.ts`, `process-liveness.ts`), its tests, `vitest.config.ts`, `package.json` or the lockfile (a koffi bump); `workflow_dispatch` | Runs the task leftover reap against real processes on Linux (with a display, tmux and xterm), macOS on Apple silicon and Intel, and Windows, including the visible-app case. Prints `csrutil status` on macOS: GitHub's runners have SIP off, so the test stands an `env -i` process in for the environment a SIP-on Mac hides. Not a required check |
-| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret is absent, create one draft Release, build + sign on all 3 platforms into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) |
+| `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret is absent, create one draft Release, build + sign on all 3 platforms into it, write the macOS floor into `latest-mac.yml`, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) |
 
 ### CI Build Matrix
 
