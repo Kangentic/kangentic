@@ -16,7 +16,8 @@ import { readRunSettings } from '../../../shared/workflow-run-settings';
  *
  * A workflow that has not started holds its planned tasks in `draft_json`
  * rather than as rows on the board, so every board read stays free of planned
- * work; Start validates the draft and creates the tasks (`workflow-start.ts`).
+ * work; Start validates the draft and creates the tasks (`startWorkflow` in
+ * `src/main/workflows/workflow-service.ts`).
  *
  * `revision` goes up on every write that changes what the workflow is, which is
  * what lets `kangentic_save_workflow` refuse a save built on a stale read.
@@ -136,21 +137,12 @@ export class WorkflowRepository {
     return [...bySource.values()];
   }
 
-  /** The engine's fast path: one indexed probe, so a board with no running workflow pays nothing more. */
-  hasRunning(): boolean {
-    return this.db.prepare("SELECT 1 FROM workflows WHERE state = 'running' LIMIT 1").get() !== undefined;
-  }
-
-  /** Any workflow running or paused: what the engine has to read at all. */
+  /**
+   * Any workflow running or paused: what the engine has to read at all. One
+   * indexed probe, so a board with no active workflow pays nothing more.
+   */
   hasActive(): boolean {
     return this.db.prepare("SELECT 1 FROM workflows WHERE state IN ('running', 'paused') LIMIT 1").get() !== undefined;
-  }
-
-  listRunning(): Workflow[] {
-    const rows = this.db
-      .prepare("SELECT * FROM workflows WHERE state = 'running' ORDER BY started_at ASC, rowid ASC")
-      .all() as WorkflowRow[];
-    return rows.map(mapRow);
   }
 
   create(input: { title?: string | null; brief?: string | null; sourceTaskId?: string | null }): Workflow {

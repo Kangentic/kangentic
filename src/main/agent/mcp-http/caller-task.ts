@@ -9,6 +9,12 @@ import type { BrowserToolDependencies } from './browser-tools';
  *
  * A missing lookup or an unknown session leaves it undefined, which degrades
  * the browser default to "the single pane in my project" rather than refusing.
+ *
+ * The segment is the caller's word, behind only the server's shared token: an
+ * agent that put another task's session id in its URL would read as that
+ * task's own agent. So the workflow lock it unlocks guards against mistakes
+ * (an agent moving the wrong card), not against an agent working to get round
+ * it, which the token already lets act on the whole board.
  */
 export function resolveCallerTaskId(caller: Pick<BrowserToolDependencies, 'callerSessionId' | 'sessions'>): string | undefined {
   const { callerSessionId, sessions } = caller;

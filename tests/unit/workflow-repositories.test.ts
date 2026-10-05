@@ -186,11 +186,11 @@ describe('workflow tables', () => {
     expect(started.state).toBe('running');
     expect(started.draft).toBeNull();
     expect(started.started_at).not.toBeNull();
-    expect(workflows.hasRunning()).toBe(true);
+    expect(workflows.hasActive()).toBe(true);
     workflows.setState(workflow.id, 'done');
     expect(workflows.getById(workflow.id)!.finished_at).not.toBeNull();
     expect(workflows.listOpen()).toEqual([]);
-    expect(workflows.hasRunning()).toBe(false);
+    expect(workflows.hasActive()).toBe(false);
   });
 
   describe('when a workflow was paused (`paused_at`)', () => {

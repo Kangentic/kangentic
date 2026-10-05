@@ -144,7 +144,9 @@ const STAT_TOTALS_LINE = /(\d+) files? changed\s*((?:, \d+ [^,]+){0,2})/;
  */
 export function parseDiffStatSummary(output: string): GitDiffSummary {
   const summary: GitDiffSummary = { changed: 0, insertions: 0, deletions: 0, files: [] };
-  for (const line of output.split('\n')) {
+  // `\r?\n`, as diff-service and git-remotes split: git writes `\n`, but a
+  // wrapper on PATH can hand back CRLF, which would fail every pattern.
+  for (const line of output.split(/\r?\n/)) {
     if (!line) continue;
     const textMatch = STAT_TEXT_LINE.exec(line);
     if (textMatch) {

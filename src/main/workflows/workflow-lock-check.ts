@@ -99,7 +99,10 @@ export function checkWorkflowMoveForAgent(
       humanGateTargetId: null,
     });
   } catch {
-    // The move path asks again inside the task lock, with the same rule.
+    // Fails open on purpose: the move path asks again inside the task lock,
+    // with the same rule, and refuses there. The cost is that an agent hears
+    // "Moving" for a move that is then refused, and the refusal is only logged;
+    // that needs the databases to fail between the two reads.
     return null;
   }
 }

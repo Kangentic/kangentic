@@ -94,6 +94,14 @@ describe('shouldPaste', () => {
     expect(needsPaste('/code-review\n/mock/screenshot.png')).toBe(true);
     expect(shouldPaste('/code-review\n/mock/screenshot.png')).toBe(false);
     expect(shouldPaste('  /code-review\n/mock/screenshot.png')).toBe(false);
+    expect(shouldPaste('/plugin:review now\nwith notes')).toBe(false);
+  });
+
+  it('pastes a multi-line reply that opens with a path: a path is not a slash command', () => {
+    // An agent reply carried by {{agentReply}} can start with a file path.
+    // Typed as keystrokes, its line breaks would be flattened to spaces.
+    expect(shouldPaste('/src/main/workflows/workflow-step.ts is the file.\nIt moves the task on.')).toBe(true);
+    expect(shouldPaste('/mock/screenshot.png\nshows the bug')).toBe(true);
   });
 });
 

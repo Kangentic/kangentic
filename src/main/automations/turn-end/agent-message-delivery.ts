@@ -46,9 +46,16 @@ export function needsPaste(message: string): boolean {
   return message.includes('\n') || message.length > PASTE_THRESHOLD_CHARS;
 }
 
+/**
+ * A slash command's first word: `/name` or `/plugin:name`. Never a path, which
+ * has a second slash, so a message that is an agent's reply and happens to
+ * open with `/src/main/...` is pasted whole rather than typed flat.
+ */
+const SLASH_COMMAND_HEAD = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
+
 /** The one decision every delivery path asks. See the module comment. */
 export function shouldPaste(message: string): boolean {
-  return needsPaste(message) && !message.trimStart().startsWith('/');
+  return needsPaste(message) && !SLASH_COMMAND_HEAD.test(message.trimStart());
 }
 
 interface AgentMessage {

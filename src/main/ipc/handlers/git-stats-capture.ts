@@ -25,7 +25,10 @@ const churnReadsInFlight = new Map<string, Promise<ChurnSummary>>();
  * running. A suspend fires two captures for the same stopped agent, one from
  * the move or Done branch and one from the session's exit handler, and each
  * read is six git processes. One asked for after the shared read settles runs
- * again, so a result is never reused past the overlap.
+ * again, so a result is never reused past the overlap. A capture that joins a
+ * read already running gets that read's figures, which can predate a change
+ * made while it ran; at worst a few lines of churn, and a stale empty result
+ * never overwrites a real capture (the zero-churn guard below).
  */
 function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSummary> {
   const directoryKey = process.platform === 'win32' ? gitDir.toLowerCase() : gitDir;

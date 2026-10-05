@@ -263,9 +263,11 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
-  // `--tools Read,Grep,Glob` plus `--strict-mcp-config` (command-builder.ts).
-  // `--tools` is the CLI's own restriction of the built-in set, honoured in an
-  // interactive session; unlike plan mode it does not reroute the model.
+  // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,
+  // which keeps ToolSearch so the deferred Kangentic tools stay reachable),
+  // plus `--strict-mcp-config`. `--tools` is the CLI's own restriction of the
+  // built-in set, honoured in an interactive session; unlike plan mode it does
+  // not reroute the model.
   readonly supportsReadOnlyLaunch = true;
   // `--add-dir` per directory (command-builder.ts): the CLI's own way to widen
   // what a session may read and search without a prompt.

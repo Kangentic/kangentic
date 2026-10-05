@@ -10,6 +10,10 @@ import { nodePortTop, type WorkflowFlowNode } from './WorkflowTaskNode';
  * anything up), grey while it still does. A link of the selected task is
  * drawn heavier, so its blockers and dependents stand out. The link a drag
  * just made is drawn in the accent until the selection moves on (board 10b).
+ *
+ * Its SVG is a drawing computed from the layout, not an icon, as the commit
+ * graph's is (`CommitGraphSvg.tsx`), so the Lucide-only icon rule
+ * (`ui-conventions.md`) does not cover it.
  */
 export interface WorkflowEdgeData extends Record<string, unknown> {
   waypoints: Point[];

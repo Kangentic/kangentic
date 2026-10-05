@@ -12,8 +12,11 @@ import { z } from 'zod/v4';
  *
  * The planning tools are also pinned to the agent's own workflow: their
  * `workflow` and `project` arguments are taken off the schema and filled in from
- * the caller's URL, so the agent never needs its workflow's id, and cannot reach
- * another workflow's plan by naming it.
+ * the caller's URL, so the agent never needs its workflow's id, and cannot change
+ * another workflow's plan by naming it. The read-only tools are not pinned: like
+ * any agent on the project, it can list the project's workflows and read their
+ * plans and agents' conversations (`kangentic_get_transcript` with `workflow`).
+ * Reading another plan changes nothing, and planning across workflows can need it.
  */
 
 /** Tools that shape the plan, on top of the read-only ones. */

@@ -20,6 +20,10 @@ import { linkPaths, type CardBox, type LinkRequest } from './workflow-links-geom
  * A board drag clears it (`useBoardDragDrop`), so a refused drop never leaves
  * it measuring under the next drag. Escape or a pointer press on empty board
  * space clears it too.
+ *
+ * The lines are an SVG drawn from measured card boxes, not an icon, as the
+ * commit graph's is (`CommitGraphSvg.tsx`), so the Lucide-only icon rule
+ * (`ui-conventions.md`) does not cover them.
  */
 
 interface Segment {
