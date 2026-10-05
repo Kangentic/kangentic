@@ -102,9 +102,11 @@ helpers return promises. The sync API is deprecated in Electron 45 and removed i
   load; or plaintext once genuine encryption exists.
 - The Asana store and the mobile bridge identity both store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
-  `rewriteEncryptedSecretFile`), which does that rewrite on load. A rewrite writes only if the file
-  still holds the ciphertext it read, so a clear or a new save that lands during the awaits wins. A
-  failed rewrite is logged, and the next read tries again.
+  `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite
+  on load when it is set; the identity also requires `isGenuineEncryptionAvailable()` first, the
+  same bar creating one has to clear. A rewrite writes only if the file still holds the ciphertext
+  it read, so a clear or a new save that lands during the awaits wins. A failed rewrite is logged,
+  and the next read tries again.
 
 ## Registry
 

@@ -242,9 +242,9 @@ in one Sentry org, one triage surface.
     (`'Utility' process exited with '<reason>'`). That event is tagged only with the process
     TYPE - `serviceName` / `name` / `exitCode` go into a breadcrumb added AFTER the capture, so it
     can never say which process died and no `beforeSend` could recover THAT event. Electron's internal
-    utility processes (network, audio, storage) are not ours to fix, and Kangentic's own two
-    workers now report themselves (see `utility_process` below), where the service name and exit
-    code are known. Scoped to `'Utility'` deliberately: renderer crashes come through the same
+    utility processes (network, audio, storage) are not ours to fix, and Kangentic's own utility
+    workers (embeddings, line count, dictation, retrieval, PTY host) report themselves (see
+    `utility_process` below), where the service name and exit code are known. Scoped to `'Utility'` deliberately: renderer crashes come through the same
     integration as `'renderer' process exited with ...` and must keep reporting. The breadcrumb
     survives the filter, so an internal utility crash still shows as context on later events.
   - The same SDK integration's GPU variant, but scoped narrower than the Utility filter:
