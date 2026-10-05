@@ -163,9 +163,7 @@ export function usePopoverPosition(
         // `right` when right-aligned, exactly as the absolute branch below does
         // with `bottom: 100%` / `right: 0`. Content that grows or shrinks after
         // this measurement (rows an async fetch delivers, a list the user
-        // filters) then moves only the far edge. The old form computed `top` /
-        // `left` from the size measured here, so a popover measured in its
-        // empty state grew DOWN over its own trigger and past the window.
+        // filters) then moves only the far edge, never over the trigger.
         // The fixed containing block is the viewport minus scrollbars, hence
         // the documentElement client size for the anchor math.
         const layoutWidth = document.documentElement.clientWidth;

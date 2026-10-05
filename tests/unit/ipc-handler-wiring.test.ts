@@ -29,10 +29,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // referenced inside a factory must be created with vi.hoisted().
 // ---------------------------------------------------------------------------
 
-const { mockHandle, mockOn, mockPersistPtyGrid } = vi.hoisted(() => ({
+const { mockHandle, mockOn, mockPersistPtyGrid, mockReadTranscriptToolResultTokens } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockOn: vi.fn(),
   mockPersistPtyGrid: vi.fn(),
+  mockReadTranscriptToolResultTokens: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,15 @@ vi.mock('node:crypto', () => ({ randomUUID: vi.fn(() => 'mock-uuid') }));
 // Internal heavy modules
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
-  SessionRepository: class { getLatestForTask = vi.fn(); updateStatus = vi.fn(); },
+  // Keeps the database it was built from, so a test can tell which project's it holds.
+  SessionRepository: class {
+    database: unknown;
+    getLatestForTask = vi.fn();
+    updateStatus = vi.fn();
+    constructor(database?: unknown) {
+      this.database = database;
+    }
+  },
 }));
 vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
   UsageHistoryRepository: class { record = vi.fn(); },
@@ -84,6 +93,7 @@ vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
   refineTranscriptTokens: vi.fn(),
   refineTranscriptToolCounts: vi.fn(),
+  readTranscriptToolResultTokens: mockReadTranscriptToolResultTokens,
 }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   applySuspendDbWrites: vi.fn(),
@@ -146,6 +156,8 @@ vi.mock('../../src/main/ipc/handlers/session-grid-persistence', () => ({
 // Import the modules under test AFTER all mocks are defined.
 // ---------------------------------------------------------------------------
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
+import { getProjectDb } from '../../src/main/db/database';
+import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import {
   getInFlightSpawnProgress,
   emitSpawnProgress,
@@ -422,5 +434,61 @@ describe('IPC handler wiring: the pty-resize grid write', () => {
 
     expect(mockPersistPtyGrid).toHaveBeenCalledTimes(1);
     expect(mockPersistPtyGrid).toHaveBeenCalledWith(context, 'sess-1', { cols: 210, rows: 48 }, 'park');
+  });
+});
+
+describe('IPC handler wiring: SESSION_GET_TOOL_RESULT_TOKENS', () => {
+  // The live tool-call popover asks by session id, and the id can belong to a
+  // project other than the one the user is looking at (a background project's
+  // session). readTranscriptToolResultTokens has its own tests; this pins the
+  // handler's one decision, which project's record it hands over.
+  beforeEach(() => {
+    mockHandle.mockClear();
+    mockReadTranscriptToolResultTokens.mockReset();
+    vi.mocked(getProjectDb).mockReset();
+    vi.mocked(getProjectDb).mockImplementation(((projectId: string) => ({ databaseOf: projectId })) as never);
+  });
+
+  function registerAndGetHandler(context: ReturnType<typeof makeContext>): (...args: unknown[]) => unknown {
+    registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+    const handler = getRegisteredHandler(IPC.SESSION_GET_TOOL_RESULT_TOKENS);
+    if (!handler) throw new Error('SESSION_GET_TOOL_RESULT_TOKENS handler was not registered');
+    return handler;
+  }
+
+  it('reads the record from the database of the project the session belongs to, not the current project', async () => {
+    mockReadTranscriptToolResultTokens.mockResolvedValue({ Read: 4200 });
+    const context = makeContext();
+    // The user is looking at 'proj-test'; the session runs in another project.
+    context.sessionManager.getSessionProjectId = vi.fn(() => 'proj-of-session');
+    const handler = registerAndGetHandler(context);
+
+    const tokens = await handler(null, 'sess-1');
+
+    expect(context.sessionManager.getSessionProjectId).toHaveBeenCalledWith('sess-1');
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getProjectDb)).toHaveBeenCalledWith('proj-of-session');
+    expect(mockReadTranscriptToolResultTokens).toHaveBeenCalledTimes(1);
+    const [sessionManager, sessionRepository, sessionId] = mockReadTranscriptToolResultTokens.mock.calls[0];
+    expect(sessionManager).toBe(context.sessionManager);
+    expect(sessionRepository).toBeInstanceOf(SessionRepository);
+    expect((sessionRepository as { database: unknown }).database).toEqual({ databaseOf: 'proj-of-session' });
+    expect(sessionId).toBe('sess-1');
+    expect(tokens).toEqual({ Read: 4200 });
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+  ])('resolves for a session with no known project (%s): no database is opened, and the read gets a null record', async (_label, unknownProject) => {
+    mockReadTranscriptToolResultTokens.mockResolvedValue(null);
+    const context = makeContext();
+    context.sessionManager.getSessionProjectId = vi.fn(() => unknownProject as string | undefined);
+    const handler = registerAndGetHandler(context);
+
+    await expect(Promise.resolve(handler(null, 'sess-gone'))).resolves.toBeNull();
+
+    expect(vi.mocked(getProjectDb)).not.toHaveBeenCalled();
+    expect(mockReadTranscriptToolResultTokens).toHaveBeenCalledWith(context.sessionManager, null, 'sess-gone');
   });
 });

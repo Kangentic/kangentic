@@ -563,7 +563,6 @@ test.describe('ContextBar tool-call breakdown popover', () => {
   test('getToolBreakdown is not called when popover is closed', async () => {
     // The popover fetches via useEffect only when mounted. While closed,
     // no IPC call should be in flight. Assert by counting calls.
-    let callCount = 0;
     await page.evaluate(() => {
       const original = (window as unknown as {
         electronAPI: { sessions: { getToolBreakdown: (_sessionId: string) => Promise<PerToolStat[]> } };
@@ -593,7 +592,7 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     // intentional fixed wait - we cannot poll for non-occurrence
     await page.waitForTimeout(300);
 
-    callCount = await page.evaluate(() =>
+    const callCount = await page.evaluate(() =>
       (window as unknown as {
         electronAPI: { sessions: { __toolBreakdownCallCount?: number } };
       }).electronAPI.sessions.__toolBreakdownCallCount ?? 0,

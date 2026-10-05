@@ -27,6 +27,11 @@
  *      applyConfigOnOpen()/exportFromDb() when the current project changed
  *      before the setImmediate callback fires, and runs both when it hasn't.
  *
+ * Section 6 adds a fourth: startToolBreakdownRepair (module-private) is started
+ * from all three open paths once recovery has run, with the project's own
+ * database and `<project>/.kangentic/sessions`, hands its replay to the
+ * retrieval worker, and never runs twice at once for one project.
+ *
  * Pattern: capture ipcMain.handle registrations (board-swimlane-update-restart
  * pattern) to invoke the real PROJECT_OPEN handler for #2; call the exported
  * activateAllProjects/openProjectByPath functions directly for #1/#3. Every
@@ -52,6 +57,11 @@ const state = vi.hoisted(() => ({
   cleanupGate: null as { promise: Promise<void>; resolve: () => void } | null,
   resumeError: null as Error | null,
   autoSpawnError: null as Error | null,
+  // One entry per repairToolBreakdownDurations call: the sessions directory it
+  // was handed and a copy of `callOrder` at that moment.
+  repairSnapshots: [] as Array<{ sessionsDir: string; callOrder: string[] }>,
+  // While set, a mocked repair run stays in flight until it resolves.
+  repairGate: null as { promise: Promise<void>; resolve: () => void } | null,
 }));
 
 // ---------------------------------------------------------------------------
@@ -86,23 +96,23 @@ vi.mock('../../src/main/ipc/handlers/project-relocate', () => ({
 }));
 
 vi.mock('../../src/main/transition-engine/session-startup', () => ({
-  resumeSuspendedSessions: vi.fn(async (...args: unknown[]) => {
+  resumeSuspendedSessions: vi.fn(async () => {
     state.callOrder.push('resumeSuspendedSessions');
     if (state.resumeError) throw state.resumeError;
   }),
-  autoSpawnTasks: vi.fn(async (...args: unknown[]) => {
+  autoSpawnTasks: vi.fn(async () => {
     state.callOrder.push('autoSpawnTasks');
     if (state.autoSpawnError) throw state.autoSpawnError;
   }),
 }));
 
 vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
-  cleanupStaleResourcesAsync: vi.fn(async (...args: unknown[]) => {
+  cleanupStaleResourcesAsync: vi.fn(async () => {
     state.callOrder.push('cleanupStaleResourcesAsync');
     if (state.cleanupGate) await state.cleanupGate.promise;
     if (state.cleanupError) throw state.cleanupError;
   }),
-  pruneOrphanedWorktreeTasks: vi.fn(async (...args: unknown[]) => {
+  pruneOrphanedWorktreeTasks: vi.fn(async () => {
     state.callOrder.push('pruneOrphanedWorktreeTasks');
     if (state.pruneResult instanceof Error) throw state.pruneResult;
     return state.pruneResult;
@@ -172,6 +182,33 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { startForProject: vi.fn(), stop: vi.fn(), reconcileEmbedWorker: vi.fn() },
 }));
 
+// The worker client: `call` carries the tool breakdown replay (section 6),
+// `closeProject` is awaited by cleanupProject.
+vi.mock('../../src/main/retrieval/retrieval-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/retrieval/retrieval-client')>()),
+  retrievalClient: {
+    call: vi.fn(async () => ({ breakdowns: {}, unreadable: [] })),
+    closeProject: vi.fn(async () => undefined),
+  },
+}));
+
+// The one-time duration repair. The real helper is covered against a real
+// database in tool-breakdown-repair.test.ts; here it only records that it was
+// started, with what, and after which recovery steps, then forwards one replay
+// to the worker the way the real one does.
+vi.mock('../../src/main/ipc/helpers/tool-breakdown-repair', () => ({
+  repairToolBreakdownDurations: vi.fn(async (
+    _database: unknown,
+    sessionsDir: string,
+    replay: (sessionsDir: string, sessionIds: string[]) => Promise<unknown>,
+  ) => {
+    state.repairSnapshots.push({ sessionsDir, callOrder: [...state.callOrder] });
+    if (state.repairGate) await state.repairGate.promise;
+    await replay(sessionsDir, ['record-1']);
+    return { completed: true, scanned: 1, repaired: 0, unreadable: 0 };
+  }),
+}));
+
 // The board_snapshot analytics callback (scheduleBoardSnapshot, reached from
 // openProjectByPath and the PROJECT_OPEN handler) is the ONE place in this
 // file's exercised code paths that calls swimlaneRepo.list() /
@@ -208,6 +245,9 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 import { trackEvent } from '../../src/main/analytics/analytics';
 import { isShuttingDown } from '../../src/main/shutdown-state';
 import { gitFetchScheduler } from '../../src/main/git/git-fetch-scheduler';
+import { getProjectDb } from '../../src/main/db/database';
+import { retrievalClient } from '../../src/main/retrieval/retrieval-client';
+import { repairToolBreakdownDurations } from '../../src/main/ipc/helpers/tool-breakdown-repair';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   registerProjectHandlers,
@@ -331,6 +371,8 @@ beforeEach(() => {
   state.cleanupGate = null;
   state.resumeError = null;
   state.autoSpawnError = null;
+  state.repairSnapshots = [];
+  state.repairGate = null;
   // mockReturnValue persists across tests (vi.clearAllMocks() resets call
   // history, not implementation), so reset both to their neutral defaults
   // here rather than letting one test's override leak into the next.
@@ -1269,5 +1311,194 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     ]));
 
     expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. startToolBreakdownRepair: the one-time repair of per-tool durations, fired
+//    from the three open paths once recovery has run. Every case uses its own
+//    project ids and counts only the repair calls made for that project's
+//    sessions directory, because the in-flight set is module-level and a
+//    neighbouring case's run must not be able to skip or inflate this one.
+// ---------------------------------------------------------------------------
+
+describe('startToolBreakdownRepair (the one-time tool breakdown duration repair)', () => {
+  const COLD_OPEN_RECOVERY = [
+    'pruneOrphanedWorktreeTasks',
+    'cleanupStaleResourcesAsync',
+    'resumeSuspendedSessions',
+    'autoSpawnTasks',
+  ];
+  const databases = new Map<string, object>();
+
+  /** A distinct database object per project id, so a repair handed the wrong project's database shows. */
+  function databaseFor(projectId: string): object {
+    let database = databases.get(projectId);
+    if (!database) {
+      database = { databaseOf: projectId };
+      databases.set(projectId, database);
+    }
+    return database;
+  }
+
+  function makeRepairProject(name: string): Project {
+    return makeProject({ id: `repair-${name}`, name: `Repair ${name}`, path: path.join(PROJECT_PATH, `repair-${name}`) });
+  }
+
+  function sessionsDirOf(project: Project): string {
+    return path.join(project.path, '.kangentic', 'sessions');
+  }
+
+  function repairCallsFor(project: Project) {
+    return vi.mocked(repairToolBreakdownDurations).mock.calls.filter((callArguments) => callArguments[1] === sessionsDirOf(project));
+  }
+
+  function resumeCallsFor(project: Project) {
+    return vi.mocked(resumeSuspendedSessions).mock.calls.filter((callArguments) => callArguments[0] === project.id);
+  }
+
+  function recoveryBeforeRepairOf(project: Project): string[] | undefined {
+    return state.repairSnapshots.find((snapshot) => snapshot.sessionsDir === sessionsDirOf(project))?.callOrder;
+  }
+
+  async function registerAndOpen(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.getById.mockReturnValue(project);
+    state.existingPaths.add(project.path);
+    registerProjectHandlers(asIpcContext(context));
+    const handler = capturedHandlers.get(IPC.PROJECT_OPEN);
+    if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
+    await handler(null, project.id);
+  }
+
+  function expectStartedOnceFor(project: Project): void {
+    const calls = repairCallsFor(project);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(databaseFor(project.id));
+    expect(calls[0][1]).toBe(path.join(project.path, '.kangentic', 'sessions'));
+    // The replay it is handed runs in the retrieval worker, with no time limit
+    // on a project's whole history.
+    expect(vi.mocked(retrievalClient.call)).toHaveBeenCalledWith(
+      'sessions.replayToolBreakdowns',
+      { sessionsDir: sessionsDirOf(project), sessionIds: ['record-1'] },
+      { timeoutMs: null },
+    );
+  }
+
+  beforeEach(() => {
+    databases.clear();
+    vi.mocked(getProjectDb).mockImplementation(((projectId: string) => databaseFor(projectId)) as never);
+  });
+
+  afterEach(() => {
+    // The top-level beforeEach clears call history, not a custom implementation.
+    vi.mocked(getProjectDb).mockImplementation((() => ({})) as never);
+    state.repairGate?.resolve();
+    state.repairGate = null;
+  });
+
+  it('openProjectByPath: a cold open starts it after prune, cleanup, resume and auto-spawn', async () => {
+    const context = createMockContext();
+    const project = makeRepairProject('open-by-path');
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+
+    await openProjectByPath(asIpcContext(context), project.path);
+    await vi.waitFor(() => {
+      expect(repairCallsFor(project)).toHaveLength(1);
+    }, { timeout: 2000 });
+
+    expectStartedOnceFor(project);
+    expect(recoveryBeforeRepairOf(project)).toEqual(COLD_OPEN_RECOVERY);
+  });
+
+  it('the PROJECT_OPEN handler: a cold open starts it after prune, cleanup, resume and auto-spawn', async () => {
+    const context = createMockContext();
+    const project = makeRepairProject('open-handler');
+
+    await registerAndOpen(context, project);
+    await vi.waitFor(() => {
+      expect(repairCallsFor(project)).toHaveLength(1);
+    }, { timeout: 2000 });
+
+    expectStartedOnceFor(project);
+    expect(recoveryBeforeRepairOf(project)).toEqual(COLD_OPEN_RECOVERY);
+  });
+
+  it('activateAllProjects: starts it for each other project with its own database and directory, and not for the current one', async () => {
+    const context = createMockContext();
+    const current = makeRepairProject('activate-current');
+    const otherA = makeRepairProject('activate-a');
+    const otherB = makeRepairProject('activate-b');
+    context.currentProjectId = current.id;
+    context.projectRepo.list.mockReturnValue([current, otherA, otherB]);
+    for (const project of [current, otherA, otherB]) state.existingPaths.add(project.path);
+
+    await activateAllProjects(asIpcContext(context));
+
+    expect(repairCallsFor(current)).toHaveLength(0);
+    expectStartedOnceFor(otherA);
+    expectStartedOnceFor(otherB);
+    // Each started after its own recovery chain had reached auto-spawn.
+    expect(recoveryBeforeRepairOf(otherA)).toContain('autoSpawnTasks');
+    expect(recoveryBeforeRepairOf(otherB)).toContain('autoSpawnTasks');
+  });
+
+  it('a warm reopen starts nothing: the repair belongs to a cold open', async () => {
+    const context = createMockContext();
+    const warmByHandler = makeRepairProject('warm-handler');
+    const warmByPath = makeRepairProject('warm-path');
+    context.recoveredProjects.add(warmByHandler.id);
+    context.recoveredProjects.add(warmByPath.id);
+    context.projectRepo.list.mockReturnValue([warmByPath]);
+    state.existingPaths.add(warmByPath.path);
+
+    await registerAndOpen(context, warmByHandler);
+    await openProjectByPath(asIpcContext(context), warmByPath.path);
+    // A call that must not happen cannot be polled for: two full rounds of the
+    // event loop are the budget for any latent start to land.
+    await flushSetImmediate();
+    await flushSetImmediate();
+
+    // Warm means recovery itself did not run for either project.
+    expect(resumeCallsFor(warmByHandler)).toHaveLength(0);
+    expect(resumeCallsFor(warmByPath)).toHaveLength(0);
+    expect(repairCallsFor(warmByHandler)).toHaveLength(0);
+    expect(repairCallsFor(warmByPath)).toHaveLength(0);
+  });
+
+  it('two overlapping starts for one project run one repair, leave other projects alone, and start again once the run settles', async () => {
+    const context = createMockContext();
+    const project = makeRepairProject('overlap');
+    const otherProject = makeRepairProject('overlap-other');
+    context.projectRepo.list.mockReturnValue([project, otherProject]);
+    state.existingPaths.add(project.path);
+    state.existingPaths.add(otherProject.path);
+
+    // The first start comes from a cold open, and its run is held in flight.
+    state.repairGate = createDeferred();
+    await openProjectByPath(asIpcContext(context), project.path);
+    await vi.waitFor(() => {
+      expect(repairCallsFor(project)).toHaveLength(1);
+    }, { timeout: 2000 });
+
+    // A second open path for the same project fires meanwhile. activateAllProjects
+    // does not skip a project that is already recovered, and the project it
+    // opened is no longer the current one. The other project is a control
+    // that the guard is per project and not global.
+    context.currentProjectId = 'a-different-project';
+    await activateAllProjects(asIpcContext(context));
+
+    // Both open paths ran their recovery for the project; only one repair started.
+    expect(resumeCallsFor(project)).toHaveLength(2);
+    expect(repairCallsFor(project)).toHaveLength(1);
+    expect(repairCallsFor(otherProject)).toHaveLength(1);
+
+    // The run settles; the in-flight mark goes with it.
+    state.repairGate.resolve();
+    state.repairGate = null;
+    await flushSetImmediate();
+
+    await activateAllProjects(asIpcContext(context));
+    expect(repairCallsFor(project)).toHaveLength(2);
   });
 });

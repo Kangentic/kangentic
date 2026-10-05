@@ -19,6 +19,7 @@ import { SessionRepository } from '../../src/main/db/repositories/session-reposi
 import {
   repairToolBreakdownDurations,
   toolBreakdownRepairRan,
+  TOOL_BREAKDOWN_REPAIR_RETRY,
   type ToolBreakdownReplay,
 } from '../../src/main/ipc/helpers/tool-breakdown-repair';
 import { replayToolBreakdowns } from '../../src/main/activity-engine/tool-breakdown-replay';
@@ -89,6 +90,46 @@ function setRawBreakdown(database: DatabaseType.Database, recordId: string, raw:
   database.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(raw, recordId);
 }
 
+/** The retry key's stored text, or null when the key is absent. */
+function rawRetryList(database: DatabaseType.Database): string | null {
+  const row = database.prepare('SELECT value FROM schema_meta WHERE key = ?').get(TOOL_BREAKDOWN_REPAIR_RETRY) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+/** The ids the retry key holds, or null when the key is absent. */
+function retryList(database: DatabaseType.Database): string[] | null {
+  const raw = rawRetryList(database);
+  return raw === null ? null : (JSON.parse(raw) as string[]);
+}
+
+function writeRawRetryList(database: DatabaseType.Database, raw: string): void {
+  database.prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)').run(TOOL_BREAKDOWN_REPAIR_RETRY, raw);
+}
+
+/** Pin a record's start time, so `listToolBreakdownRecordIds` (ORDER BY started_at) returns a known order. */
+function setStartedAt(database: DatabaseType.Database, recordId: string, startedAt: string): void {
+  database.prepare('UPDATE sessions SET started_at = ? WHERE id = ?').run(startedAt, recordId);
+}
+
+/** Make `<recordId>/events.jsonl` a directory: it exists, so a stat succeeds, but no read of it can finish. */
+function makeUnreadableLog(sessionsDir: string, recordId: string): void {
+  fs.mkdirSync(path.join(sessionsDir, recordId, 'events.jsonl'), { recursive: true });
+}
+
+/** A replay that records the ids of every batch it is asked for, then runs the real one. */
+function recordingReplay(askedBatches: string[][]): ToolBreakdownReplay {
+  return async (directory, ids) => {
+    askedBatches.push([...ids]);
+    return replayToolBreakdowns(directory, ids);
+  };
+}
+
+/** What `writeInflatingLog` replays to once ids pair the events. */
+const CORRECTED_ROWS: PerToolStat[] = [
+  { toolName: 'Bash', callCount: 3, totalDurationMs: 300, interruptedCount: 0 },
+  { toolName: 'Read', callCount: 1, totalDurationMs: 300, interruptedCount: 0 },
+];
+
 /** A log where a denied Bash start never ends, then three 100ms Bash calls 10s apart, and one Read. */
 function writeInflatingLog(sessionsDir: string, recordId: string): void {
   const directory = path.join(sessionsDir, recordId);
@@ -132,7 +173,7 @@ describeWithSqlite('repairToolBreakdownDurations (real database, real replay)', 
 
     const result = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
 
-    expect(result).toEqual({ completed: true, scanned: 1, repaired: 1 });
+    expect(result).toEqual({ completed: true, scanned: 1, repaired: 1, unreadable: 0 });
     expect(storedBreakdown(database, 'rec-inflated')).toEqual([
       { toolName: 'Bash', callCount: 3, totalDurationMs: 300, interruptedCount: 0, resultTokens: 900 },
       { toolName: 'Read', callCount: 1, totalDurationMs: 300, interruptedCount: 0, resultTokens: 1_400 },
@@ -188,7 +229,8 @@ describeWithSqlite('repairToolBreakdownDurations (real database, real replay)', 
 
     const result = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
 
-    expect(result).toEqual({ completed: true, scanned: 1, repaired: 0 });
+    // A record with no log at all is done, not unreadable: nothing to replay.
+    expect(result).toEqual({ completed: true, scanned: 1, repaired: 0, unreadable: 0 });
     expect(storedBreakdown(database, 'rec-running')[0].totalDurationMs).toBe(30_300);
     expect(storedBreakdown(database, 'rec-no-log')[0].totalDurationMs).toBe(30_300);
   });
@@ -205,7 +247,7 @@ describeWithSqlite('repairToolBreakdownDurations (real database, real replay)', 
     };
     const second = await repairToolBreakdownDurations(database, sessionsDir, countingReplay);
 
-    expect(second).toEqual({ completed: true, scanned: 0, repaired: 0 });
+    expect(second).toEqual({ completed: true, scanned: 0, repaired: 0, unreadable: 0 });
     expect(replayCalls).toBe(0);
   });
 
@@ -220,6 +262,176 @@ describeWithSqlite('repairToolBreakdownDurations (real database, real replay)', 
     expect(result.completed).toBe(false);
     expect(toolBreakdownRepairRan(database)).toBe(false);
     expect(storedBreakdown(database, 'rec-retry')[0].totalDurationMs).toBe(30_300);
+  });
+
+  describe('a log that exists but cannot be read to its end', () => {
+    it('patches the readable sibling, keeps the unreadable id for the next open, and leaves the flag unset', async () => {
+      insertRecord(database, 'rec-locked', 'exited', INFLATED, 4);
+      insertRecord(database, 'rec-readable', 'exited', INFLATED, 4);
+      makeUnreadableLog(sessionsDir, 'rec-locked');
+      writeInflatingLog(sessionsDir, 'rec-readable');
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+
+      expect(result).toEqual({ completed: false, scanned: 2, repaired: 1, unreadable: 1 });
+      expect(toolBreakdownRepairRan(database)).toBe(false);
+      expect(retryList(database)).toEqual(['rec-locked']);
+      // The unreadable one is not replayed from a partial read: it keeps what it had.
+      expect(storedBreakdown(database, 'rec-locked')[0].totalDurationMs).toBe(30_300);
+      expect(storedBreakdown(database, 'rec-readable')).toEqual([
+        { toolName: 'Bash', callCount: 3, totalDurationMs: 300, interruptedCount: 0, resultTokens: 900 },
+        { toolName: 'Read', callCount: 1, totalDurationMs: 300, interruptedCount: 0, resultTokens: 1_400 },
+      ]);
+    });
+
+    it('replays only the retry list on the next open, patches it, and clears the key and sets the flag', async () => {
+      insertRecord(database, 'rec-locked', 'exited', INFLATED, 4);
+      insertRecord(database, 'rec-readable', 'exited', INFLATED, 4);
+      makeUnreadableLog(sessionsDir, 'rec-locked');
+      writeInflatingLog(sessionsDir, 'rec-readable');
+      await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+      expect(retryList(database)).toEqual(['rec-locked']);
+
+      // The lock is gone: the same record now has a real log.
+      fs.rmSync(path.join(sessionsDir, 'rec-locked'), { recursive: true, force: true });
+      writeInflatingLog(sessionsDir, 'rec-locked');
+      const askedBatches: string[][] = [];
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, recordingReplay(askedBatches));
+
+      // The id list is the discriminator: re-patching the readable sibling would be
+      // idempotent, so only what the replay was asked for shows it was left out.
+      expect(askedBatches).toEqual([['rec-locked']]);
+      expect(result).toEqual({ completed: true, scanned: 1, repaired: 1, unreadable: 0 });
+      expect(storedBreakdown(database, 'rec-locked')[0].totalDurationMs).toBe(300);
+      expect(toolBreakdownRepairRan(database)).toBe(true);
+      expect(retryList(database)).toBeNull();
+    });
+
+    it('keeps an id on the retry list while its log stays unreadable, and still does not set the flag', async () => {
+      insertRecord(database, 'rec-locked', 'exited', INFLATED, 4);
+      insertRecord(database, 'rec-readable', 'exited', INFLATED, 4);
+      makeUnreadableLog(sessionsDir, 'rec-locked');
+      writeInflatingLog(sessionsDir, 'rec-readable');
+      await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+      const askedBatches: string[][] = [];
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, recordingReplay(askedBatches));
+
+      expect(askedBatches).toEqual([['rec-locked']]);
+      expect(result).toEqual({ completed: false, scanned: 1, repaired: 0, unreadable: 1 });
+      expect(retryList(database)).toEqual(['rec-locked']);
+      expect(toolBreakdownRepairRan(database)).toBe(false);
+    });
+
+    it('collects the unreadable ids of every batch, not just the last', async () => {
+      // 101 records is one full batch of 100 and a second of 1. The first and the
+      // last are unreadable, so a list rebuilt per batch would keep only 'rec-100'.
+      const recordIds = Array.from({ length: 101 }, (_, index) => `rec-${String(index).padStart(3, '0')}`);
+      recordIds.forEach((recordId, index) => {
+        insertRecord(database, recordId, 'exited', INFLATED, 4);
+        setStartedAt(database, recordId, new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString());
+      });
+      const askedBatches: string[][] = [];
+      const replayWithTwoUnreadable: ToolBreakdownReplay = async (_directory, ids) => {
+        askedBatches.push([...ids]);
+        return { breakdowns: {}, unreadable: ids.filter((id) => id === 'rec-000' || id === 'rec-100') };
+      };
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, replayWithTwoUnreadable);
+
+      expect(askedBatches.map((batch) => batch.length)).toEqual([100, 1]);
+      expect(result).toEqual({ completed: false, scanned: 101, repaired: 0, unreadable: 2 });
+      expect(retryList(database)).toEqual(['rec-000', 'rec-100']);
+      expect(toolBreakdownRepairRan(database)).toBe(false);
+    });
+  });
+
+  describe('a retry list that cannot be used', () => {
+    // Each falls back to every finished record, which the patch keeps idempotent.
+    it.each([
+      ['text that is not JSON', 'not json'],
+      ['a JSON value that is not an array', '{"a":1}'],
+      ['an array holding something other than ids', '["rec-a", 1]'],
+    ])('replays every finished record when the list is %s, then clears the key and sets the flag', async (_label, rawList) => {
+      insertRecord(database, 'rec-a', 'exited', INFLATED, 4);
+      insertRecord(database, 'rec-b', 'exited', INFLATED, 4);
+      writeInflatingLog(sessionsDir, 'rec-a');
+      writeInflatingLog(sessionsDir, 'rec-b');
+      writeRawRetryList(database, rawList);
+      const askedBatches: string[][] = [];
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, recordingReplay(askedBatches));
+
+      // One batch holding both ids. Sorted: two inserts can share a millisecond,
+      // and `ORDER BY started_at` then has no fixed order.
+      expect(askedBatches).toHaveLength(1);
+      expect([...askedBatches[0]].sort()).toEqual(['rec-a', 'rec-b']);
+      expect(result).toEqual({ completed: true, scanned: 2, repaired: 2, unreadable: 0 });
+      expect(storedBreakdown(database, 'rec-a')[0].totalDurationMs).toBe(300);
+      expect(storedBreakdown(database, 'rec-b')[0].totalDurationMs).toBe(300);
+      expect(toolBreakdownRepairRan(database)).toBe(true);
+      expect(rawRetryList(database)).toBeNull();
+    });
+  });
+
+  describe('a batch whose write fails', () => {
+    it('resolves with completed false, rolls the whole batch back, sets no flag, and the next open repairs both', async () => {
+      insertRecord(database, 'rec-first', 'exited', INFLATED, 4);
+      insertRecord(database, 'rec-poison', 'exited', INFLATED, 4);
+      // A known order: rec-first is patched, then rec-poison's UPDATE fails
+      // inside the same transaction, so rec-first's patch must be undone too.
+      setStartedAt(database, 'rec-first', '2026-01-01T00:00:00.000Z');
+      setStartedAt(database, 'rec-poison', '2026-01-02T00:00:00.000Z');
+      writeInflatingLog(sessionsDir, 'rec-first');
+      writeInflatingLog(sessionsDir, 'rec-poison');
+      // A real SQLite failure from a real UPDATE, not a stubbed repository.
+      database.exec(
+        `CREATE TRIGGER block_poison BEFORE UPDATE OF tool_breakdown ON sessions
+         WHEN NEW.id = 'rec-poison'
+         BEGIN SELECT RAISE(ABORT, 'forced write failure'); END`,
+      );
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+
+      // rec-first was patched inside the batch, but the batch rolled back, so
+      // nothing counts as repaired.
+      expect(result).toEqual({ completed: false, scanned: 0, repaired: 0, unreadable: 0 });
+      expect(toolBreakdownRepairRan(database)).toBe(false);
+      expect(rawRetryList(database)).toBeNull();
+      expect(storedBreakdown(database, 'rec-first')[0].totalDurationMs).toBe(30_300);
+      expect(storedBreakdown(database, 'rec-poison')[0].totalDurationMs).toBe(30_300);
+
+      database.exec('DROP TRIGGER block_poison');
+      const retried = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+
+      expect(retried).toEqual({ completed: true, scanned: 2, repaired: 2, unreadable: 0 });
+      expect(storedBreakdown(database, 'rec-first')[0].totalDurationMs).toBe(300);
+      expect(storedBreakdown(database, 'rec-poison')[0].totalDurationMs).toBe(300);
+      expect(toolBreakdownRepairRan(database)).toBe(true);
+    });
+
+    it('resolves with completed false when the flag write fails, and the next open sets it without patching again', async () => {
+      insertRecord(database, 'rec-flagless', 'exited', INFLATED, 4);
+      writeInflatingLog(sessionsDir, 'rec-flagless');
+      database.exec(
+        `CREATE TRIGGER block_flag BEFORE INSERT ON schema_meta
+         WHEN NEW.key = 'tool_breakdown_duration_repair'
+         BEGIN SELECT RAISE(ABORT, 'forced flag failure'); END`,
+      );
+
+      const result = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+
+      expect(result).toEqual({ completed: false, scanned: 1, repaired: 1, unreadable: 0 });
+      expect(toolBreakdownRepairRan(database)).toBe(false);
+      expect(storedBreakdown(database, 'rec-flagless')[0].totalDurationMs).toBe(300);
+
+      database.exec('DROP TRIGGER block_flag');
+      const retried = await repairToolBreakdownDurations(database, sessionsDir, replayToolBreakdowns);
+
+      expect(retried).toEqual({ completed: true, scanned: 1, repaired: 0, unreadable: 0 });
+      expect(toolBreakdownRepairRan(database)).toBe(true);
+    });
   });
 });
 
@@ -237,11 +449,50 @@ describe('replayToolBreakdowns', () => {
   it('rebuilds a breakdown with id pairing and leaves out ids it cannot read', async () => {
     writeInflatingLog(sessionsDir, 'rec-a');
     const replayed = await replayToolBreakdowns(sessionsDir, ['rec-a', 'rec-missing', '../escape']);
-    expect(Object.keys(replayed)).toEqual(['rec-a']);
-    expect(replayed['rec-a']).toEqual([
-      { toolName: 'Bash', callCount: 3, totalDurationMs: 300, interruptedCount: 0 },
-      { toolName: 'Read', callCount: 1, totalDurationMs: 300, interruptedCount: 0 },
-    ]);
+    expect(Object.keys(replayed.breakdowns)).toEqual(['rec-a']);
+    expect(replayed.breakdowns['rec-a']).toEqual(CORRECTED_ROWS);
+    // A missing log and a path-traversal id are in neither list: there is
+    // nothing to replay, which is not the same as a log that could not be read.
+    expect(replayed.unreadable).toEqual([]);
+  });
+
+  it('puts a log that exists but cannot be read in unreadable, never in breakdowns, and still replays its sibling', async () => {
+    makeUnreadableLog(sessionsDir, 'rec-locked');
+    writeInflatingLog(sessionsDir, 'rec-readable');
+
+    const replayed = await replayToolBreakdowns(sessionsDir, ['rec-locked', 'rec-readable']);
+
+    expect(replayed.unreadable).toEqual(['rec-locked']);
+    expect(Object.keys(replayed.breakdowns)).toEqual(['rec-readable']);
+    expect(replayed.breakdowns['rec-readable']).toEqual(CORRECTED_ROWS);
+  });
+
+  it('puts an id with no directory at all in neither list', async () => {
+    const replayed = await replayToolBreakdowns(sessionsDir, ['rec-no-directory']);
+
+    expect(replayed).toEqual({ breakdowns: {}, unreadable: [] });
+  });
+
+  it('treats an id whose directory is a plain file as missing, not unreadable (ENOTDIR on POSIX, ENOENT on Windows)', async () => {
+    fs.writeFileSync(path.join(sessionsDir, 'rec-is-a-file'), 'not a directory');
+
+    const replayed = await replayToolBreakdowns(sessionsDir, ['rec-is-a-file']);
+
+    expect(replayed).toEqual({ breakdowns: {}, unreadable: [] });
+  });
+
+  it('replays a log with CRLF line endings to the same rows as the same log with LF', async () => {
+    writeInflatingLog(sessionsDir, 'rec-lf');
+    const lfText = fs.readFileSync(path.join(sessionsDir, 'rec-lf', 'events.jsonl'), 'utf-8');
+    expect(lfText).not.toContain('\r');
+    fs.mkdirSync(path.join(sessionsDir, 'rec-crlf'), { recursive: true });
+    fs.writeFileSync(path.join(sessionsDir, 'rec-crlf', 'events.jsonl'), lfText.replace(/\n/g, '\r\n'));
+
+    const replayed = await replayToolBreakdowns(sessionsDir, ['rec-lf', 'rec-crlf']);
+
+    expect(replayed.unreadable).toEqual([]);
+    expect(replayed.breakdowns['rec-lf']).toEqual(CORRECTED_ROWS);
+    expect(replayed.breakdowns['rec-crlf']).toEqual(CORRECTED_ROWS);
   });
 
   // The cases above write their own events, so none of them shows that the field
@@ -265,8 +516,9 @@ describe('replayToolBreakdowns', () => {
 
     const replayed = await replayToolBreakdowns(sessionsDir, [sessionId]);
 
-    expect(Object.keys(replayed)).toEqual([sessionId]);
-    const rows = replayed[sessionId];
+    expect(replayed.unreadable).toEqual([]);
+    expect(Object.keys(replayed.breakdowns)).toEqual([sessionId]);
+    const rows = replayed.breakdowns[sessionId];
     const wallSpanMs = events[events.length - 1].ts - events[0].ts;
     expect(wallSpanMs).toBeGreaterThan(0);
 

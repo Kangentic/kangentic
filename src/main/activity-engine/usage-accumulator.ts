@@ -319,9 +319,8 @@ export class UsageAccumulator {
       // engine/event-handlers.ts applies to its own stack). Permission idles
       // are handled above: that tool resumes after approval. The id map is
       // NOT cleared: a background subagent's calls keep running past the main
-      // turn's Stop (about 750 of them in this repo's own session logs), and
-      // an orphaned id pairs with nothing, so keeping it costs memory only,
-      // which `MAX_PENDING_BY_ID` bounds.
+      // turn's Stop, and an orphaned id pairs with nothing, so keeping it
+      // costs memory only, which `MAX_PENDING_BY_ID` bounds.
       for (const accumulator of state.byTool.values()) accumulator.pendingStarts.length = 0;
       state.turnStartTs = event.ts;
       return;

@@ -226,7 +226,7 @@ export function FontCombobox({
         style={popoverStyle}
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
-        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-48 overflow-y-auto py-1"
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-[min(12rem,var(--popover-available-height,12rem))] overflow-y-auto py-1"
         data-testid={`${testId}-menu`}
       >
         {filteredFonts.length > 0 ? (

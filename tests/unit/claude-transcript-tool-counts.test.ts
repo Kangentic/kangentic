@@ -13,11 +13,13 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import fsPromises from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import {
   parseClaudeTranscriptToolCounts,
   parseClaudeTranscriptToolResultTokens,
   claudeProjectSlug,
-  resetToolCountsCursorsForTests,
+  resetToolCallCursorsForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 
@@ -148,15 +150,33 @@ function pngBase64(width: number, height: number, paddingBytes = 0): string {
   return Buffer.concat([header, Buffer.alloc(paddingBytes, 7)]).toString('base64');
 }
 
+/**
+ * Spy on every positioned `FileHandle.read`, which is how the parser reads a
+ * transcript. `mock.calls[n][3]` is the byte position of read n. The spy goes
+ * on the shared prototype, found through a throwaway handle, because each
+ * `fs.open` returns a new handle object.
+ */
+async function spyOnHandleReads(filePath: string) {
+  const probe = await fsPromises.open(filePath, 'r');
+  const handlePrototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  return vi.spyOn(handlePrototype, 'read');
+}
+
+function readPositions(readSpy: Awaited<ReturnType<typeof spyOnHandleReads>>): number[] {
+  return readSpy.mock.calls.map((callArguments) => (callArguments as unknown[])[3] as number);
+}
+
 describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
   let dir: string;
 
   beforeEach(() => {
-    resetToolCountsCursorsForTests();
+    resetToolCallCursorsForTests();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-transcript-result-tokens-'));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -396,6 +416,154 @@ describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
       { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 100 },
     ]);
   });
+
+  // The two cases below put a line across MORE than one chunk boundary, which
+  // the case above (one boundary) cannot: the middle chunk holds no newline at
+  // all, so the parser has to carry several pieces of one line and join them
+  // once, at the newline.
+  const CHUNK_BYTES = 4 * 1024 * 1024;
+  // About 9.4 MB of ASCII, a multiple of 4 so chars/4 is exact.
+  const MULTI_CHUNK_RESULT_CHARS = 2 * CHUNK_BYTES + 1024 * 1024;
+
+  it('counts a call and its result when the result line spans three read chunks, with the line after it intact', async () => {
+    const openingLine = assistantToolUse('big1', 'Read');
+    const resultLine = userToolResult('big1', 'y'.repeat(MULTI_CHUNK_RESULT_CHARS));
+    const resultStart = Buffer.byteLength(openingLine);
+    const resultEnd = resultStart + Buffer.byteLength(resultLine);
+    // Two chunk boundaries fall strictly inside the line, so a whole chunk of it holds no newline.
+    expect(resultStart).toBeLessThan(CHUNK_BYTES);
+    expect(resultEnd).toBeGreaterThan(2 * CHUNK_BYTES);
+
+    const filePath = path.join(dir, 'three-chunk-line.jsonl');
+    fs.writeFileSync(
+      filePath,
+      openingLine + resultLine + assistantToolUse('big2', 'Bash') + userToolResult('big2', 'z'.repeat(400)),
+    );
+
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    expect(counts!.toolCallCount).toBe(2);
+    expect(counts!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: MULTI_CHUNK_RESULT_CHARS / 4 },
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 100 },
+    ]);
+  }, 20_000);
+
+  it('does not consume a multi-chunk line that is still being written, and counts its result once the line is finished', async () => {
+    const openingLine = assistantToolUse('big1', 'Read');
+    const resultLine = userToolResult('big1', 'y'.repeat(MULTI_CHUNK_RESULT_CHARS));
+    // Cut inside the third chunk, so the unterminated part already spans two full chunks.
+    const cutAt = 2 * CHUNK_BYTES + 512;
+    const filePath = path.join(dir, 'three-chunk-line-in-progress.jsonl');
+    fs.writeFileSync(filePath, openingLine + resultLine.slice(0, cutAt));
+
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolCallCount).toBe(1);
+    expect(first!.toolBreakdown[0].resultTokens).toBeUndefined();
+
+    fs.appendFileSync(filePath, resultLine.slice(cutAt) + assistantToolUse('big2', 'Bash'));
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    expect(second!.toolCallCount).toBe(2);
+    expect(second!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: MULTI_CHUNK_RESULT_CHARS / 4 },
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+    ]);
+  }, 20_000);
+
+  it.each([
+    ['the same length', 3],
+    ['longer', 4],
+  ])('starts over when the file is rewritten in place to %s with a later mtime, which size, mtime and inode alone read as unchanged or appended', async (_label, rewrittenCallCount) => {
+    const filePath = path.join(dir, 'rewritten-in-place.jsonl');
+    // Every line is the same length ('Bash' and 'Read', one-character ids), so
+    // three Read lines are exactly as long as three Bash lines.
+    const originalContent = ['a', 'b', 'c'].map((id) => assistantToolUse(id, 'Bash')).join('');
+    const rewrittenContent = ['d', 'e', 'f', 'g'].slice(0, rewrittenCallCount).map((id) => assistantToolUse(id, 'Read')).join('');
+    const originalTime = new Date('2026-10-04T12:00:00.000Z');
+    fs.writeFileSync(filePath, originalContent);
+    fs.utimesSync(filePath, originalTime, originalTime);
+    const statBefore = fs.statSync(filePath);
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Bash', 3]]);
+
+    // 'r+' writes through the same inode on every OS; a rewrite through a new
+    // file would be caught by the inode check and prove nothing here.
+    const descriptor = fs.openSync(filePath, 'r+');
+    try {
+      fs.writeSync(descriptor, rewrittenContent, 0);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const laterTime = new Date(originalTime.getTime() + 60_000);
+    fs.utimesSync(filePath, laterTime, laterTime);
+
+    // The three checks the cursor made before the tail comparison all pass.
+    const statAfter = fs.statSync(filePath);
+    expect(statAfter.ino).toBe(statBefore.ino);
+    expect(statAfter.size).toBeGreaterThanOrEqual(statBefore.size);
+    expect(statAfter.mtimeMs).toBeGreaterThan(statBefore.mtimeMs);
+    // The only difference is in the bytes just before the old end.
+    const tailLength = 64;
+    const oldEnd = statBefore.size;
+    expect(
+      Buffer.from(rewrittenContent).subarray(oldEnd - tailLength, oldEnd)
+        .equals(Buffer.from(originalContent).subarray(oldEnd - tailLength, oldEnd)),
+    ).toBe(false);
+
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    // The new content only: none of the stale Bash rows.
+    expect(second!.toolCallCount).toBe(rewrittenCallCount);
+    expect(second!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: rewrittenCallCount, totalDurationMs: 0, interruptedCount: 0 },
+    ]);
+  });
+
+  it('resumes an append from the old end instead of re-reading the file, and counts exactly the appended calls', async () => {
+    const filePath = path.join(dir, 'append-resume.jsonl');
+    const initialCallCount = 20;
+    const initialContent = Array.from({ length: initialCallCount }, (_, index) => assistantToolUse(`t${index}`, 'Read')).join('');
+    fs.writeFileSync(filePath, initialContent);
+    const firstEnd = fs.statSync(filePath).size;
+    const readSpy = await spyOnHandleReads(filePath);
+
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolCallCount).toBe(initialCallCount);
+    // The first read starts at byte 0.
+    expect(Math.min(...readPositions(readSpy))).toBe(0);
+
+    readSpy.mockClear();
+    fs.appendFileSync(filePath, assistantToolUse('a1', 'Bash') + assistantToolUse('a2', 'Bash'));
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    expect(second!.toolCallCount).toBe(initialCallCount + 2);
+    expect(second!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Read', initialCallCount], ['Bash', 2]]);
+    // The tail check reads a few bytes back from the old end; a full re-read would start at 0.
+    const secondReadPositions = readPositions(readSpy);
+    expect(secondReadPositions.length).toBeGreaterThan(0);
+    expect(Math.min(...secondReadPositions)).toBeGreaterThanOrEqual(firstEnd - 256);
+
+    // And again: the tail was captured again after the first append.
+    const secondEnd = fs.statSync(filePath).size;
+    readSpy.mockClear();
+    fs.appendFileSync(filePath, assistantToolUse('a3', 'Bash'));
+    const third = await parseClaudeTranscriptToolCounts(filePath);
+    expect(third!.toolCallCount).toBe(initialCallCount + 3);
+    expect(Math.min(...readPositions(readSpy))).toBeGreaterThanOrEqual(secondEnd - 256);
+  });
+
+  it('answers a repeat call on an unchanged file without opening it', async () => {
+    const filePath = path.join(dir, 'unchanged.jsonl');
+    fs.writeFileSync(filePath, assistantToolUse('a', 'Read') + userToolResult('a', 'x'.repeat(400)));
+    const openSpy = vi.spyOn(fsPromises, 'open');
+
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    const tokens = await parseClaudeTranscriptToolResultTokens(filePath);
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(tokens).toEqual({ Read: 100 });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -445,7 +613,7 @@ describe('parseClaudeTranscriptToolCounts - real captured session', () => {
   }
 
   beforeEach(() => {
-    resetToolCountsCursorsForTests();
+    resetToolCallCursorsForTests();
   });
 
   it('counts the capture distinct tool_use ids and gives the tool whose result is in it a positive estimate', async () => {

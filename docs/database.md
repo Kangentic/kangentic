@@ -329,7 +329,7 @@ Key/value flags for data migrations that cannot answer "have I run" from the dat
 | key | TEXT | PRIMARY KEY | |
 | value | TEXT | NOT NULL | |
 
-Two keys so far. The automations migration writes one. That migration is one-way and deliberately
+Three keys so far. The automations migration writes one. That migration is one-way and deliberately
 leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
 presence of converted rows proves nothing: a board could legitimately have automations and no
 transitions, or both.
@@ -338,8 +338,13 @@ transitions, or both.
 saved while tool events were paired by name (`ipc/helpers/tool-breakdown-repair.ts`). After a cold
 project open, the retrieval worker replays each finished record's own
 `.kangentic/sessions/<id>/events.jsonl`, and main patches a row's `totalDurationMs` and
-`waitedCount` only where the replay saw the same call counts. A record whose log was already pruned keeps its stored values. The
-key is written only after every batch succeeds, so an open with the worker down retries next time.
+`waitedCount` only where the replay saw the same call counts. A record whose log was already pruned
+keeps its stored values. The key is written only after every batch succeeds and every log that
+exists was read to its end, so an open with the worker down retries the whole list next time.
+
+`tool_breakdown_duration_repair_retry` holds a JSON array of the record ids whose log exists but
+could not be read to its end (a lock, a permission error). The next open replays only those, and
+the key is deleted when the repair flag is written.
 
 Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
 mark) rather than migration bookkeeping.
