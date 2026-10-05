@@ -179,27 +179,61 @@ async function seedUsage(page: Page, toolCallCount = 42): Promise<void> {
 }
 
 /**
+ * What the `getToolResultTokens` mock does: resolve estimates, resolve null (the
+ * agent's transcript is not readable), or reject (the retrieval worker threw).
+ */
+type ResultTokensMock = Record<string, number> | null | 'reject';
+
+type ToolMockWindow = {
+  /** Calls to the `getToolResultTokens` mock since the last `setToolMocks`. */
+  __toolResultTokensCalls?: number;
+  electronAPI: {
+    sessions: {
+      getToolBreakdown: (_sessionId: string) => Promise<PerToolStat[]>;
+      getToolResultTokens: (_sessionId: string) => Promise<Record<string, number> | null>;
+    };
+  };
+};
+
+/**
  * Replaces both per-tool pulls the popover merges. The popover reads them on
  * open and again whenever the live tool-call count changes, so calling this and
- * then `seedUsage` with a new count drives a refetch.
+ * then `seedUsage` with a new count drives a refetch. The result-tokens mock
+ * counts its calls (reset here), so a case can wait for a refetch to have run.
  */
 async function setToolMocks(
   page: Page,
   rows: PerToolStat[],
-  resultTokens: Record<string, number> | null,
+  resultTokens: ResultTokensMock,
 ): Promise<void> {
   await page.evaluate((mocks) => {
-    const sessions = (window as unknown as {
-      electronAPI: {
-        sessions: {
-          getToolBreakdown: (_sessionId: string) => Promise<PerToolStat[]>;
-          getToolResultTokens: (_sessionId: string) => Promise<Record<string, number> | null>;
-        };
-      };
-    }).electronAPI.sessions;
-    sessions.getToolBreakdown = async () => mocks.rows;
-    sessions.getToolResultTokens = async () => mocks.resultTokens;
+    const mockWindow = window as unknown as ToolMockWindow;
+    mockWindow.__toolResultTokensCalls = 0;
+    mockWindow.electronAPI.sessions.getToolBreakdown = async () => mocks.rows;
+    mockWindow.electronAPI.sessions.getToolResultTokens = async () => {
+      mockWindow.__toolResultTokensCalls = (mockWindow.__toolResultTokensCalls ?? 0) + 1;
+      if (mocks.resultTokens === 'reject') throw new Error('transcript unreadable');
+      return mocks.resultTokens;
+    };
   }, { rows, resultTokens });
+}
+
+/** How many times the popover has called the `getToolResultTokens` mock since `setToolMocks`. */
+async function readResultTokensCalls(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as ToolMockWindow).__toolResultTokensCalls ?? 0);
+}
+
+/**
+ * Resolves once React has painted whatever the pending promise callbacks set.
+ * A state update outside an event handler renders on a scheduler task, so a
+ * negative check ("the column is still there") made right after a fetch settles
+ * could read the DOM before a wrongly cleared state has re-rendered, and pass
+ * against broken code. Two animation frames land after that render.
+ */
+async function flushRender(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
 }
 
 /** `count` breakdown rows with distinct names and descending call counts. */
@@ -559,6 +593,47 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     await expect(page.locator('[data-testid="by-tool-sort-tokens"]')).toHaveCount(0);
     await expect(callsHeader).toHaveAttribute('aria-sort', 'descending');
   });
+
+  // A refetch whose transcript read fails must keep the Tokens column and its last
+  // estimates on screen: a null result means "no readable transcript right now", and
+  // a rejection is the worker failing mid-read, neither of which is evidence the
+  // estimates are gone. The rows still refresh from the other pull.
+  const UNREADABLE_TRANSCRIPT_CASES: Array<{ outcome: string; resultTokens: ResultTokensMock }> = [
+    { outcome: 'resolves null', resultTokens: null },
+    { outcome: 'rejects', resultTokens: 'reject' },
+  ];
+
+  for (const { outcome, resultTokens } of UNREADABLE_TRANSCRIPT_CASES) {
+    test(`a refetch whose result-token read ${outcome} keeps the Tokens column and its estimates`, async () => {
+      await setToolMocks(page, [
+        { toolName: 'Read', callCount: 4, totalDurationMs: 1_200, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 2, totalDurationMs: 3_000, interruptedCount: 0 },
+      ], { Read: 12_400 });
+      await seedUsage(page);
+
+      await page.locator('[data-testid="context-bar-tool-calls-trigger"]').click();
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const tokensHeader = page.locator('[data-testid="by-tool-sort-tokens"]');
+      const readRow = table.locator('tbody tr', { hasText: 'Read' });
+      await expect(tokensHeader).toBeVisible({ timeout: 3000 });
+      await expect(readRow).toContainText('12.4k');
+
+      // The live count moves and the transcript read now fails. Read gains a call,
+      // which is what proves the refetch ran and its rows landed.
+      await setToolMocks(page, [
+        { toolName: 'Read', callCount: 5, totalDurationMs: 1_500, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 2, totalDurationMs: 3_000, interruptedCount: 0 },
+      ], resultTokens);
+      await seedUsage(page, 43);
+
+      await expect.poll(() => readResultTokensCalls(page), { timeout: 3000 }).toBeGreaterThan(0);
+      await expect(readRow.locator('td').nth(1)).toHaveText('5');
+      await flushRender(page);
+
+      await expect(tokensHeader).toBeVisible();
+      await expect(readRow).toContainText('12.4k');
+    });
+  }
 
   test('getToolBreakdown is not called when popover is closed', async () => {
     // The popover fetches via useEffect only when mounted. While closed,

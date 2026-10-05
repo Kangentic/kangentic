@@ -39,7 +39,10 @@ export function ToolBreakdownPopover({
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<PerToolStat[]>([]);
-  const [resultTokensByTool, setResultTokensByTool] = useState<Record<string, number> | null>(null);
+  // Tagged with the session they were read for, so a `sessionId` change never
+  // merges the previous session's estimates while the new one has none.
+  const [resultTokens, setResultTokens] = useState<{ sessionId: string; byTool: Record<string, number> } | null>(null);
+  const resultTokensByTool = resultTokens?.sessionId === sessionId ? resultTokens.byTool : null;
   // Portal + fixed, matching ContextBarPopover. `fixed` alone is not enough
   // here: the ContextBar's own container carries `[transform:translateZ(0)]`,
   // which makes it a containing block for fixed descendants, so the popover has
@@ -70,7 +73,7 @@ export function ToolBreakdownPopover({
       try {
         const result = await window.electronAPI.sessions.getToolResultTokens(sessionId);
         // Null means no readable transcript: keep the last-known estimates.
-        if (!cancelled && result) setResultTokensByTool(result);
+        if (!cancelled && result) setResultTokens({ sessionId, byTool: result });
       } catch {
         // Best-effort: the table renders without the Tokens column.
       }
