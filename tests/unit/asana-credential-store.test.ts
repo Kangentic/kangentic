@@ -17,30 +17,17 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// --- Electron mock (required by auth.ts which credential-store.ts imports from) ---
-vi.mock('electron', () => ({
-  app: {
-    isReady: () => true,
-    whenReady: () => Promise.resolve(),
-  },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
-      throw new Error('safeStorage.decryptString: invalid ciphertext');
+// --- Electron mock (required by auth.ts, which the mocked module below wraps) ---
+vi.mock('electron', async () => {
+  const { createFakeSafeStorage } = await import('./helpers/fake-safe-storage');
+  return {
+    app: {
+      isReady: () => true,
+      whenReady: () => Promise.resolve(),
     },
-    isAsyncEncryptionAvailable: async () => true,
-    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptStringAsync: async (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return { result: raw.slice('encrypted:'.length), shouldReEncrypt: false };
-      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
-    },
-    getSelectedStorageBackend: () => 'keychain',
-  },
-}));
+    safeStorage: createFakeSafeStorage(),
+  };
+});
 
 // --- Mock the fs module so no real file I/O occurs ---
 // node:fs is imported as a default (CJS-style), so the mock must include both
@@ -73,14 +60,16 @@ const safeWriteJsonSpy = vi.hoisted(() =>
 );
 vi.mock('../../src/main/safe-write', () => ({ safeWriteJson: safeWriteJsonSpy }));
 
-// --- Mock decryptSecret / encryptSecret from the shared barrel so we control the payloads ---
+// --- Mock decryptSecret / encryptSecret in auth.ts so we control the payloads ---
+// auth.ts itself, not the boards/shared barrel: the store reads and writes through
+// boards/shared/encrypted-secret-file.ts, which imports them from './auth'.
 const decryptSecretSpy = vi.hoisted(() =>
   vi.fn<(ciphertext: string) => Promise<{ plaintext: string; shouldRewrite: boolean }>>(),
 );
 const encryptSecretSpy = vi.hoisted(() => vi.fn<(plaintext: string) => Promise<string>>());
 
-vi.mock('../../src/main/boards/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/main/boards/shared')>();
+vi.mock('../../src/main/boards/shared/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/boards/shared/auth')>();
   return { ...actual, decryptSecret: decryptSecretSpy, encryptSecret: encryptSecretSpy };
 });
 

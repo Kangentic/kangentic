@@ -967,6 +967,7 @@ src/main/boards/
   shared/             # BoardAdapter interface + cross-provider helpers
     types.ts          # interface, Credentials, RemoteIssue, PrerequisiteResult
     auth.ts           # safeStorage credential helpers
+    encrypted-secret-file.ts # one-secret JSON file (Asana token, mobile bridge identity)
     mapping.ts        # extractInlineImageUrls and other mapping helpers
     download-file.ts  # authenticated HTTP downloader with size cap + redirects
     rate-limit.ts     # withBackoff helper for HTTP-based providers

@@ -1,8 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { PATHS } from '../config/paths';
-import { decryptSecret, encryptSecret, isGenuineEncryptionAvailable } from '../boards/shared/auth';
-import { safeWriteJson } from '../safe-write';
+import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
+import {
+  readEncryptedSecretFile,
+  rewriteEncryptedSecretFile,
+  writeEncryptedSecretFile,
+  type EncryptedSecretFile,
+} from '../boards/shared/encrypted-secret-file';
 import {
   bytesToHex,
   generateEd25519KeyPair,
@@ -19,12 +24,12 @@ import {
  * persisted globally (machine-wide, not per-project - the identity
  * represents this desktop installation, like the Asana credential).
  *
- * Mirrors src/main/boards/adapters/asana/credential-store.ts's
- * file-in-PATHS.configDir pattern: a JSON envelope whose single
- * `encrypted` field is encryptSecret(JSON.stringify(secretMaterial)).
- * Reuses encryptSecret/decryptSecret/isGenuineEncryptionAvailable from
- * src/main/boards/shared/auth.ts verbatim - they are generic string-in/
- * string-out helpers despite living under boards/.
+ * Stored like the Asana credential (src/main/boards/adapters/asana/credential-store.ts),
+ * through the same file helper in src/main/boards/shared/encrypted-secret-file.ts:
+ * a JSON envelope in PATHS.configDir whose single `encrypted` field is
+ * encryptSecret(JSON.stringify(secretMaterial)). That helper and
+ * isGenuineEncryptionAvailable (boards/shared/auth.ts) are generic despite living
+ * under boards/.
  *
  * Unlike the Asana credential, the private key material here MUST be
  * genuinely protected: refuses to persist when isGenuineEncryptionAvailable()
@@ -50,14 +55,19 @@ interface StoredIdentity {
   createdAt: string;
 }
 
-interface StoredShape {
-  encrypted: string;
-}
-
 const IDENTITY_FILENAME = 'mobile-bridge-identity.json';
 
 function identityPath(): string {
   return path.join(PATHS.configDir, IDENTITY_FILENAME);
+}
+
+function identityFile(): EncryptedSecretFile {
+  return {
+    filePath: identityPath(),
+    writeSource: 'mobile_bridge_identity',
+    logPrefix: '[mobile-bridge/identity]',
+    noun: 'identity',
+  };
 }
 
 function toStored(identity: BridgeIdentity): StoredIdentity {
@@ -78,57 +88,36 @@ function fromStored(stored: StoredIdentity): BridgeIdentity {
   };
 }
 
+function parseIdentity(plaintext: string): BridgeIdentity | null {
+  const stored = JSON.parse(plaintext) as StoredIdentity;
+  if (typeof stored?.staticSecretKeyHex !== 'string' || stored.staticSecretKeyHex.length === 0) return null;
+  return fromStored(stored);
+}
+
 export async function loadBridgeIdentity(): Promise<BridgeIdentity | null> {
-  const filePath = identityPath();
-  if (!fs.existsSync(filePath)) return null;
-  let identity: BridgeIdentity;
-  let shouldRewrite: boolean;
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(raw) as StoredShape;
-    if (!parsed.encrypted) return null;
-    const decrypted = await decryptSecret(parsed.encrypted);
-    const stored = JSON.parse(decrypted.plaintext) as StoredIdentity;
-    if (typeof stored?.staticSecretKeyHex !== 'string' || stored.staticSecretKeyHex.length === 0) return null;
-    identity = fromStored(stored);
-    shouldRewrite = decrypted.shouldRewrite;
-  } catch (error) {
-    console.warn('[mobile-bridge/identity] failed to load identity:', error);
-    return null;
-  }
+  const file = identityFile();
+  const read = await readEncryptedSecretFile(file, parseIdentity);
+  if (!read) return null;
   // Written by the sync API under a key the async one does not hold, or flagged
   // for re-encryption (see decryptSecret). Only ever rewritten under GENUINE
-  // encryption, the same bar creating an identity has to clear. A failed
-  // rewrite only means the same migration runs on the next load.
-  if (shouldRewrite && (await isGenuineEncryptionAvailable())) {
-    try {
-      await saveBridgeIdentity(identity);
-    } catch (error) {
-      console.warn('[mobile-bridge/identity] could not rewrite the identity in the current format:', error);
-    }
+  // encryption, the same bar creating an identity has to clear.
+  if (read.shouldRewrite && (await isGenuineEncryptionAvailable())) {
+    await rewriteEncryptedSecretFile(file, read);
   }
-  return identity;
+  return read.value;
 }
 
 async function saveBridgeIdentity(identity: BridgeIdentity): Promise<void> {
-  const encrypted = await encryptSecret(JSON.stringify(toStored(identity)));
-  const payload: StoredShape = { encrypted };
-  // mode 0o600: best-effort defense-in-depth for the file holding the
-  // encrypted private-key material (no-op on Windows, honored on POSIX at
-  // create time). The payload is already safeStorage-encrypted; this just
-  // narrows who can read the ciphertext at rest. Degrades rather than throws
-  // (see safe-write.ts) - an unwritable config directory must not reject
-  // pairing, and the shared write-failure-notice latch tells the user once.
-  safeWriteJson(identityPath(), payload, 'mobile_bridge_identity', { mode: 0o600 });
+  await writeEncryptedSecretFile(identityFile(), JSON.stringify(toStored(identity)));
 }
 
 /**
  * Loads the existing identity, or generates and persists a new one.
  * Throws rather than persisting unprotected private key material when
  * genuine encryption is unavailable (no Linux secret store, or safeStorage
- * disabled) - callers
- * should check isGenuineEncryptionAvailable() first and surface a clear
- * "secure storage unavailable" status instead of calling this blindly.
+ * disabled) - callers should check isGenuineEncryptionAvailable() first and
+ * surface a clear "secure storage unavailable" status instead of calling this
+ * blindly.
  */
 export async function loadOrCreateBridgeIdentity(): Promise<BridgeIdentity> {
   const existing = await loadBridgeIdentity();
