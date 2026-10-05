@@ -62,7 +62,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
-import { archivedClonePath, scratchClonePath } from './lib/demo-archived-clone.mjs';
+import { archivedClonePath, scratchClonePath, scratchRootFromArgv } from './lib/demo-archived-clone.mjs';
 import { gitOutput } from './lib/git-output.mjs';
 
 const require = createRequire(import.meta.url);
@@ -83,7 +83,7 @@ const force = argv.includes('--force');
 const prune = argv.includes('--prune');
 const remeasure = argv.includes('--remeasure');
 const jobs = Math.max(1, Number(readFlag('--jobs') ?? 1));
-const scratchRoot = readFlag('--root') ?? os.homedir();
+const scratchRoot = scratchRootFromArgv(argv);
 const settings = manifest.archived;
 if (!settings || !settings.model || !settings.permissionMode) throw new Error('[archived] manifest.json has no "archived" block with a model and a permissionMode');
 

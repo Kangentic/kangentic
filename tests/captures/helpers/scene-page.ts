@@ -117,8 +117,9 @@ async function playStep(page: Page, step: DemoBootStep | RigStep): Promise<void>
 }
 
 /**
- * What a surface shows in place of its 3D drawing when the browser gives it no WebGL context. A
- * poster of one is a picture of the fallback, never of the feature, so the rig refuses to write it.
+ * What a 3D view (the Knowledge Graph map) shows in place of its drawing when the browser gives it
+ * no WebGL context. A poster of one is a picture of the fallback, never of the feature, so the rig
+ * refuses to write it.
  */
 export const NO_GPU_FALLBACKS = ['[data-testid="knowledge-graph-webgl-unavailable"]'] as const;
 

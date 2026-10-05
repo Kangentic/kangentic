@@ -26,13 +26,12 @@ import { SessionRepository } from '../../src/main/db/repositories/session-reposi
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../src/main/db/repositories/backlog-repository';
 import type { DevSeedKnowledgeGraphDemoPlan, DevSeedKnowledgeGraphDemoResult } from '../../src/shared/types';
-import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 type PlannedProject = DevSeedKnowledgeGraphDemoPlan['projects'][number];
 
 const projectRepo = new ProjectRepository();
 // The seeder reads `projectRepo` off the context and nothing else, so that is all this supplies.
-const context = { projectRepo } as unknown as IpcContext;
+const context = { projectRepo };
 
 let pathCounter = 0;
 /** A path no other test in this file uses. It is only a string: the seeder never touches the disk. */
@@ -99,6 +98,14 @@ describe('seedKnowledgeGraphDemo refuses a plan before writing anything', () => 
     const bad = buildProjectPlan('refuse-dup-bad', { path: spelledDifferently });
 
     expectRefusal({ projects: [good, bad] }, `A project is already registered at ${spelledDifferently}`);
+  });
+
+  it('refuses two planned projects at one path, however the path is spelled', () => {
+    const good = buildProjectPlan('refuse-shared-good');
+    const sharedPath = good.path + path.sep;
+    const bad = buildProjectPlan('refuse-shared-bad', { path: sharedPath });
+
+    expectRefusal({ projects: [good, bad] }, `Sample refuse-shared-bad: the plan puts it at ${sharedPath}, where it also puts Sample refuse-shared-good`);
   });
 
   it('refuses an agent with no adapter', () => {
