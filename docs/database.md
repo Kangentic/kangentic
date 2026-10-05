@@ -329,7 +329,7 @@ Key/value flags for data migrations that cannot answer "have I run" from the dat
 | key | TEXT | PRIMARY KEY | |
 | value | TEXT | NOT NULL | |
 
-Three keys so far. The automations migration writes one. That migration is one-way and deliberately
+Three keys so far. The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
 leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
 presence of converted rows proves nothing: a board could legitimately have automations and no
 transitions, or both.

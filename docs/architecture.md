@@ -29,8 +29,10 @@ with a crash policy and stderr capture:
   See `.claude/rules/pty-host-out-of-process.md`.
 - **`kangentic-retrieval`** (`src/main/retrieval/worker/retrieval-worker.ts`) runs every read and
   write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger,
-  spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, and the
-  parse and stitch of agent transcripts for the Conversation window, the phone and MCP. It opens
+  spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, the
+  parse and stitch of agent transcripts for the Conversation window, the phone and MCP, the
+  per-tool call counts and result-token estimates read from a transcript, and the event-log replay
+  behind the one-time tool duration repair. It opens
   the project database on its own connection, after main has migrated it, and runs the WAL's
   PASSIVE checkpoints. Main sends requests through `retrievalClient` and relays the JSON replies.
   See `.claude/rules/retrieval-out-of-process.md`.
@@ -229,7 +231,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `automation:runFailed` | on | Push event when a run failed or was interrupted, rationed per automation |
 | `automation:runsInterrupted` | on | Push event after the project-open sweep, one summary per open |
 
-### Sessions (42 channels)
+### Sessions (43 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
