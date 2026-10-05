@@ -387,7 +387,7 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 **Shipped (Bridge Phase 1 - protocol, pairing & secure relay transport):**
 
 - `@kangentic/protocol` package: wire schema, Noise KK + IKpsk0 implementations, secretstream framing, capability verb list, roster signing, QR payload encode/decode, transport interface.
-- Device identity (encrypted at rest via Electron `safeStorage`, refuses to persist unprotected).
+- Device identity (encrypted at rest via Electron `safeStorage`'s async API, refuses to persist unprotected). The service reads the identity and the secure-storage verdict once per run (`whenStorageReady()`), runs the capability migration before any session opens, and serves its synchronous readers from that cache; the status and device-list IPC handlers await the same warm-up. Concurrent first pairings share one identity creation. On Linux, a Secret Service on any desktop now counts, which is what lets a desktop outside Chromium's list (sway, i3, WSLg) pair a phone; the hardcoded fallback key never does (see [board integration](board-integration.md#safestorage-semantics)).
 - Signed device roster with revoke-drop (rekey-on-revoke is scaffolded but the full multi-device re-provisioning flow is deferred).
 - QR pairing ceremony (token-bound Noise PSK + SAS confirmation) with desktop settings UI.
 - The desktop's outbound relay CLIENT connection with reconnect/backoff.

@@ -43,6 +43,13 @@ vi.mock('electron', () => ({
       if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
       throw new Error('safeStorage.decryptString: invalid ciphertext');
     },
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => {
+      const raw = buffer.toString('utf8');
+      if (raw.startsWith('encrypted:')) return { result: raw.slice('encrypted:'.length), shouldReEncrypt: false };
+      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
+    },
     getSelectedStorageBackend: () => 'keychain',
   },
 }));

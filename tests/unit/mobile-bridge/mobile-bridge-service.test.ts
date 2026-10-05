@@ -28,6 +28,10 @@ import {
 } from '@kangentic/protocol';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 
+// The async API the auth helpers use. `asyncEncryptionAvailable` lets a test
+// put the service in the "secure storage unavailable" state.
+const mockSafeStorageState = vi.hoisted(() => ({ asyncEncryptionAvailable: true }));
+
 vi.mock('electron', () => ({
   app: {
     isReady: () => true,
@@ -40,6 +44,13 @@ vi.mock('electron', () => ({
       const raw = buffer.toString('utf8');
       if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
       throw new Error('safeStorage.decryptString: invalid ciphertext');
+    },
+    isAsyncEncryptionAvailable: async () => mockSafeStorageState.asyncEncryptionAvailable,
+    encryptStringAsync: async (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
+    decryptStringAsync: async (buffer: Buffer) => {
+      const raw = buffer.toString('utf8');
+      if (raw.startsWith('encrypted:')) return { result: raw.slice('encrypted:'.length), shouldReEncrypt: false };
+      throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
     },
     getSelectedStorageBackend: () => 'keychain',
   },
@@ -155,7 +166,7 @@ async function seedServiceWithOnePairedDevice(
   const identityJson = identityWriteCall[1] as string;
   existsSyncSpy.mockImplementation((filePath: string) => filePath.includes('mobile-bridge-identity.json'));
   readFileSyncSpy.mockReturnValue(identityJson);
-  const identity = loadBridgeIdentity();
+  const identity = await loadBridgeIdentity();
   if (!identity) throw new Error('test setup: could not read back the persisted identity');
 
   writeFileSyncSpy.mockClear();
@@ -194,6 +205,7 @@ beforeEach(() => {
   mkdirSyncSpy.mockReset();
   unlinkSyncSpy.mockReset();
   existsSyncSpy.mockReturnValue(false); // no identity/roster file exists yet, by default
+  mockSafeStorageState.asyncEncryptionAvailable = true;
   fakeTransport.connect.mockClear();
   fakeTransport.send.mockClear();
   fakeTransport.close.mockClear();
@@ -459,22 +471,30 @@ describe('MobileBridgeService pairing ceremony wiring (real crypto over the mock
   });
 });
 
+// The migration runs inside the one-per-run secure-storage warm-up, which
+// attachContext() starts and which loads the PERSISTED identity. So each test
+// seeds an identity and roster with one service (the previous run), then boots a
+// FRESH service against them (this run), as a real launch does.
+function attachMinimalContext(service: InstanceType<typeof MobileBridgeService>): void {
+  service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+}
+
 describe('MobileBridgeService.attachContext() migrates pre-existing devices to the full capability grant', () => {
   it('upgrades a device paired under the old read-only default, before the first reconcile() opens any session', async () => {
-    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const previousRunService = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
 
     // Create + persist a real identity the same way a genuine "Pair a
     // device" click would (startPairing() is the only identity-creation
     // trigger), then read it back through the same mocked filesystem to get
     // a real BridgeIdentity this test can sign a legacy roster entry with.
-    await service.startPairing();
-    service.cancelPairing();
+    await previousRunService.startPairing();
+    previousRunService.cancelPairing();
     const identityWriteCall = writeFileSyncSpy.mock.calls.find(([filePath]) => (filePath as string).includes('mobile-bridge-identity.json'));
     if (!identityWriteCall) throw new Error('test setup: identity was not persisted');
     const identityJson = identityWriteCall[1] as string;
     existsSyncSpy.mockImplementation((filePath: string) => filePath.includes('mobile-bridge-identity.json'));
     readFileSyncSpy.mockReturnValue(identityJson);
-    const identity = loadBridgeIdentity();
+    const identity = await loadBridgeIdentity();
     if (!identity) throw new Error('test setup: could not read back the persisted identity');
 
     // Seed a "legacy" roster entry: the pre-overhaul read-only default
@@ -493,7 +513,9 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     existsSyncSpy.mockImplementation((filePath: string) => filePath.includes('mobile-bridge-identity.json') || filePath.includes('mobile-bridge-roster.json'));
     readFileSyncSpy.mockImplementation((filePath: string) => (filePath.includes('mobile-bridge-roster.json') ? rosterJson : identityJson));
 
-    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    attachMinimalContext(service);
+    await service.whenStorageReady();
 
     // Re-point the mock at whatever the migration itself just wrote -
     // otherwise listDevices() below would read back the STALE pre-migration
@@ -512,17 +534,23 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     expect(devices[0].capabilities).toEqual(CAPABILITY_VERBS);
 
     service.dispose();
+    previousRunService.dispose();
   });
 
   it('does not re-sign a device that already holds the full every-verb capability grant', async () => {
-    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
-    await seedServiceWithOnePairedDevice(service, {
+    const previousRunService = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    await seedServiceWithOnePairedDevice(previousRunService, {
       deviceId: 'already-full-grant-device',
       capabilities: [...CAPABILITY_VERBS],
     });
 
     writeFileSyncSpy.mockClear();
-    service.attachContext({ sessionManager: Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() }), boardEvents: { emitBoardChanged: vi.fn() } } as never);
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    attachMinimalContext(service);
+    await service.whenStorageReady();
+    // The warm-up must actually have loaded the seeded identity, or this test
+    // passes vacuously with nothing to migrate.
+    expect(service.listDevices().map((device) => device.deviceId)).toEqual(['already-full-grant-device']);
 
     // No roster write at all means migrateDevicesToFullCapabilityGrant()
     // correctly skipped this device instead of re-signing an entry that was
@@ -530,6 +558,138 @@ describe('MobileBridgeService.attachContext() migrates pre-existing devices to t
     const rosterWriteCalls = writeFileSyncSpy.mock.calls.filter(([filePath]) => (filePath as string).includes('mobile-bridge-roster.json'));
     expect(rosterWriteCalls).toHaveLength(0);
 
+    service.dispose();
+    previousRunService.dispose();
+  });
+});
+
+describe('MobileBridgeService secure-storage warm-up', () => {
+  it('reports secure storage unavailable until the warm-up resolves, then the real verdict', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    expect(service.getStatus().secureStorageAvailable).toBe(false);
+
+    await service.whenStorageReady();
+
+    expect(service.getStatus().secureStorageAvailable).toBe(true);
+  });
+
+  it('reports secure storage unavailable after the warm-up when safeStorage cannot genuinely encrypt', async () => {
+    mockSafeStorageState.asyncEncryptionAvailable = false;
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+
+    await service.whenStorageReady();
+
+    expect(service.getStatus().secureStorageAvailable).toBe(false);
+  });
+
+  it('loads a persisted identity in the warm-up, so the synchronous readers see it', async () => {
+    const previousRunService = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const { identity, deviceId } = await seedServiceWithOnePairedDevice(previousRunService);
+
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    // Before the warm-up nothing has been read, and nothing is created either.
+    expect(service.getStatus().identityFingerprint).toBeNull();
+    expect(service.listDevices()).toEqual([]);
+
+    await service.whenStorageReady();
+
+    expect(service.getStatus().identityFingerprint).toBe(bytesToHex(identity.staticKeyPair.publicKey));
+    expect(service.listDevices().map((device) => device.deviceId)).toEqual([deviceId]);
+    previousRunService.dispose();
+    service.dispose();
+  });
+
+  it('emits stateChanged once the warm-up finishes, so a settings tab that rendered early re-reads', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const stateChangedListener = vi.fn();
+    service.on('stateChanged', stateChangedListener);
+
+    await service.whenStorageReady();
+
+    expect(stateChangedListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one warm-up between callers', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    expect(service.whenStorageReady()).toBe(service.whenStorageReady());
+    await service.whenStorageReady();
+  });
+});
+
+describe('MobileBridgeService.startPairing() concurrent clicks', () => {
+  it('leaves exactly one active ceremony and closes the first one\'s transport when two start together', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    // An identity already exists, as for any pairing after the first: both
+    // calls then wait on the same warm-up and resume back to back.
+    await seedServiceWithOnePairedDevice(service);
+
+    // A's dial hangs (an unreachable relay), so nothing on A's own path will
+    // ever close its transport. Only B superseding it can.
+    const transportA = {
+      state: 'connecting' as const,
+      connect: vi.fn(() => new Promise<void>(() => undefined)),
+      send: vi.fn(),
+      close: vi.fn(),
+      onFrame: vi.fn(() => () => undefined),
+      onStateChange: vi.fn(() => () => undefined),
+    };
+    const transportB = {
+      state: 'connected' as const,
+      connect: vi.fn(async () => undefined),
+      send: vi.fn(),
+      close: vi.fn(),
+      onFrame: vi.fn(() => () => undefined),
+      onStateChange: vi.fn(() => () => undefined),
+    };
+    vi.mocked(createTransport).mockImplementationOnce(() => transportA).mockImplementationOnce(() => transportB);
+
+    // Both calls pass the top-of-function supersede check while activePairing
+    // is still null, then both wait on ensureIdentity(). A resumes first,
+    // installs its ceremony and parks in connect(); B resumes after it.
+    void service.startPairing();
+    await expect(service.startPairing()).resolves.toBeDefined();
+
+    // The re-check after ensureIdentity()'s await is what closes A here.
+    // Without it B would overwrite activePairing and A's transport would stay
+    // open (dialing, or reconnecting) with nothing left that could close it.
+    expect(transportA.close).toHaveBeenCalledTimes(1);
+    expect(transportB.close).not.toHaveBeenCalled();
+    expect(service.getStatus().pairingInProgress).toBe(true);
+
+    service.cancelPairing();
+    expect(transportB.close).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  // Creating the identity is async since the safeStorage migration, so two first-ever clicks
+  // used to each generate and save a keypair. One ceremony then signed the roster with a key
+  // that was not the one on disk, and after a restart the roster failed to verify and the phone
+  // was dropped. Concurrent callers now share one creation.
+  it('creates ONE identity when the first two pairing clicks race on a fresh install', async () => {
+    existsSyncSpy.mockReturnValue(false);
+    writeFileSyncSpy.mockClear();
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+
+    // The second click supersedes the first ceremony, which rejects as it always has; what
+    // matters is which key the surviving ceremony carries.
+    const results = await Promise.allSettled([service.startPairing(), service.startPairing()]);
+    const surviving = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+    expect(surviving).toHaveLength(1);
+
+    const identityWrites = writeFileSyncSpy.mock.calls.filter(([filePath]) =>
+      String(filePath).includes('mobile-bridge-identity.json'),
+    );
+    expect(identityWrites).toHaveLength(1);
+
+    existsSyncSpy.mockImplementation((filePath: string) => filePath.includes('mobile-bridge-identity.json'));
+    readFileSyncSpy.mockReturnValue(identityWrites[0][1] as string);
+    const persisted = await loadBridgeIdentity();
+    expect(persisted).not.toBeNull();
+    expect(bytesToHex(surviving[0].qrPayload.desktopStaticPublicKey)).toBe(
+      bytesToHex(persisted!.staticKeyPair.publicKey),
+    );
+
+    service.cancelPairing();
     service.dispose();
   });
 });

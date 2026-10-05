@@ -127,7 +127,17 @@ export interface PairedDeviceSummary {
 export class MobileBridgeService extends EventEmitter {
   readonly capabilityRouter = new CapabilityRouter();
   private config: MobileBridgeConfig;
+  /**
+   * The identity and the secure-storage verdict are read through safeStorage's
+   * ASYNC API (boards/shared/auth.ts), once per run, by whenStorageReady(). The
+   * synchronous readers (getStatus, listDevices, the push notifier's key
+   * lookup, the roster edits) serve these cached values; the IPC handlers await
+   * whenStorageReady() first so the settings tab never sees the pre-warm state.
+   */
   private identity: BridgeIdentity | null = null;
+  private secureStorageAvailable = false;
+  private storageWarmup: Promise<void> | null = null;
+  private capabilityMigrationDone = false;
   private activePairing: PairingService | null = null;
   private readonly sessions = new Map<string, BridgeSession>();
   private readonly subscriptionsByDevice = new Map<string, SubscriptionRegistry>();
@@ -186,7 +196,12 @@ export class MobileBridgeService extends EventEmitter {
     this.config = config;
     this.devQuickPair = __KANGENTIC_DEV__
       ? new DevQuickPair({
-          getIdentity: () => this.ensureIdentity(),
+          // reconcileDevQuickPair() creates the identity before it enables the
+          // quick pair, so the cached one is always there when this is read.
+          getIdentity: () => {
+            if (!this.identity) throw new Error('Dev quick pair read the identity before it was loaded');
+            return this.identity;
+          },
           getRelayUrl: () => this.config.relayUrl,
           onRosterChanged: () => {
             void this.syncSessions();
@@ -280,10 +295,39 @@ export class MobileBridgeService extends EventEmitter {
       onStall: (taskId) => this.pushNotifier?.notifyTaskStalled(taskId),
     });
     this.spawnStallWatcher.start();
-    // Runs exactly once, before the first reconcile()'s syncSessions() opens
-    // any BridgeSession - see the method's own doc comment for why this
-    // cannot be a plain roster field mutation.
-    this.migrateDevicesToFullCapabilityGrant();
+    // Loads the identity and runs the one-shot capability migration
+    // (migrateDevicesToFullCapabilityGrant) before any BridgeSession opens:
+    // runSyncSessions() awaits the same warm-up before it opens one.
+    void this.whenStorageReady();
+  }
+
+  /**
+   * Resolves the secure-storage verdict and loads the identity, once per run,
+   * then runs the capability migration. Every path that needs either awaits
+   * this; a failure (say, called before app ready) is logged and the next call
+   * tries again.
+   */
+  whenStorageReady(): Promise<void> {
+    if (!this.storageWarmup) {
+      this.storageWarmup = this.warmSecureStorage().catch((error: unknown) => {
+        console.warn('[mobile-bridge] could not read secure storage:', error);
+        this.storageWarmup = null;
+      });
+    }
+    return this.storageWarmup;
+  }
+
+  private async warmSecureStorage(): Promise<void> {
+    this.secureStorageAvailable = await isGenuineEncryptionAvailable();
+    if (!this.identity) this.identity = await loadBridgeIdentity();
+    if (this.identity && !this.capabilityMigrationDone) {
+      this.capabilityMigrationDone = true;
+      // See the method's own doc comment for why this cannot be a plain roster
+      // field mutation.
+      this.migrateDevicesToFullCapabilityGrant();
+    }
+    // A settings tab that rendered before the warm-up re-reads now.
+    this.emitStateChanged();
   }
 
   /**
@@ -371,7 +415,7 @@ export class MobileBridgeService extends EventEmitter {
       // config.relayUrl is always resolved (see src/shared/relay.ts's
       // resolveRelayUrl at both reconcile() call sites) and therefore never
       // '', so there is no longer a meaningful empty-URL case to gate on here.
-      this.devQuickPair?.reconcile(config.enabled && isGenuineEncryptionAvailable());
+      this.reconcileDevQuickPair();
     }
     if (!config.enabled && wasEnabled) {
       this.cancelPairing('Mobile bridge disabled');
@@ -425,7 +469,8 @@ export class MobileBridgeService extends EventEmitter {
    */
   private async runSyncSessions(): Promise<void> {
     if (!this.ipcContext) return;
-    if (!this.config.enabled || !isGenuineEncryptionAvailable()) {
+    await this.whenStorageReady();
+    if (!this.config.enabled || !this.secureStorageAvailable) {
       this.disposeAllSessions();
       return;
     }
@@ -708,27 +753,73 @@ export class MobileBridgeService extends EventEmitter {
     this.connectionStateSinceByDevice.delete(deviceId);
   }
 
-  /** Creates a new identity if none exists. Only called from startPairing() - a deliberate user action - never from a read path. */
-  private ensureIdentity(): BridgeIdentity {
-    if (!this.identity) this.identity = loadOrCreateBridgeIdentity();
+  /** In-flight identity creation, shared by concurrent ensureIdentity() callers. */
+  private identityCreation: Promise<BridgeIdentity> | null = null;
+
+  /**
+   * Creates a new identity if none exists. Only called from startPairing() and
+   * the dev quick pair - deliberate user actions - never from a read path.
+   * Concurrent callers share ONE creation: creating is async now, and two
+   * first-ever "Pair a device" clicks each generating and saving a keypair left
+   * one ceremony signing the roster with a key that was not the one on disk, so
+   * after a restart the roster failed to verify and the phone was dropped.
+   */
+  private async ensureIdentity(): Promise<BridgeIdentity> {
+    await this.whenStorageReady();
+    if (this.identity) return this.identity;
+    if (!this.identityCreation) {
+      this.identityCreation = loadOrCreateBridgeIdentity()
+        .then((identity) => {
+          this.identity = identity;
+          return identity;
+        })
+        .finally(() => {
+          this.identityCreation = null;
+        });
+    }
+    return this.identityCreation;
+  }
+
+  /**
+   * The identity WITHOUT creating one: the one whenStorageReady() loaded, or
+   * null before it has. Merely checking status, listing devices, or opening the
+   * settings tab must never have the side effect of generating and persisting a
+   * new device keypair - only startPairing() (a deliberate "Pair a device"
+   * click) does that.
+   */
+  private tryLoadIdentity(): BridgeIdentity | null {
     return this.identity;
   }
 
   /**
-   * Reads the identity WITHOUT creating one. Merely checking status,
-   * listing devices, or opening the settings tab must never have the side
-   * effect of generating and persisting a new device keypair - only
-   * startPairing() (a deliberate "Pair a device" click) does that.
+   * Dev builds only. Enables the quick pair once secure storage is confirmed and
+   * the identity exists (creating it, which is as deliberate as "Pair a
+   * device"), because the quick pair reads that identity synchronously.
    */
-  private tryLoadIdentity(): BridgeIdentity | null {
-    if (this.identity) return this.identity;
-    const loaded = loadBridgeIdentity();
-    if (loaded) this.identity = loaded;
-    return loaded;
+  private reconcileDevQuickPair(): void {
+    // Lets esbuild strip this body from production, as it strips DevQuickPair.
+    if (!__KANGENTIC_DEV__) return;
+    const devQuickPair = this.devQuickPair;
+    if (!devQuickPair) return;
+    if (!this.config.enabled) {
+      devQuickPair.reconcile(false);
+      return;
+    }
+    void (async () => {
+      await this.whenStorageReady();
+      if (!this.config.enabled || !this.secureStorageAvailable) {
+        devQuickPair.reconcile(false);
+        return;
+      }
+      await this.ensureIdentity();
+      devQuickPair.reconcile(true);
+    })().catch((error: unknown) => {
+      console.warn('[mobile-bridge] dev quick pair could not start:', error);
+    });
   }
 
   getStatus(): MobileBridgeStatus {
-    const secureStorageAvailable = isGenuineEncryptionAvailable();
+    const secureStorageAvailable = this.secureStorageAvailable;
     let identityFingerprint: string | null = null;
     let pairedDeviceCount = 0;
     if (secureStorageAvailable) {
@@ -834,7 +925,11 @@ export class MobileBridgeService extends EventEmitter {
     const relayValidation = validateRelayUrl(this.config.relayUrl);
     if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${relayValidation.reason}`);
 
-    const identity = this.ensureIdentity();
+    const identity = await this.ensureIdentity();
+    // ensureIdentity() awaits, so a second click can have started its own
+    // ceremony in the gap. Supersede it here as above, or the first one's
+    // transport would stay open with nothing left to close it.
+    if (this.activePairing) this.cancelPairing('Superseded by a new pairing attempt');
     const pairingService = new PairingService(identity);
     const token = pairingService.mintToken();
     this.activePairing = pairingService;

@@ -79,15 +79,46 @@ describe('dev-quick-pair stays gated to dev builds', () => {
     ).toBe(true);
   });
 
-  it('devQuickPair?.reconcile() is called only inside an if (__KANGENTIC_DEV__) block', () => {
+  // The quick pair is reconciled through one helper, reconcileDevQuickPair(), because enabling it
+  // now waits for the async secure-storage warm-up and the identity first. So the invariant has
+  // two halves: every `.reconcile(` on the quick pair lives inside that helper, and the helper is
+  // called only from inside an `if (__KANGENTIC_DEV__)` block.
+  it('the dev quick pair is reconciled only through a helper called inside an if (__KANGENTIC_DEV__) block', () => {
     const source = fs.readFileSync(SERVICE_PATH, 'utf-8');
-    const callIndex = source.indexOf('this.devQuickPair?.reconcile(');
-    expect(callIndex, 'could not find the devQuickPair?.reconcile() call site in mobile-bridge-service.ts - has it moved?').toBeGreaterThan(-1);
+
+    const definitionIndex = source.indexOf('private reconcileDevQuickPair(');
+    expect(definitionIndex, 'could not find reconcileDevQuickPair() in mobile-bridge-service.ts - has it moved?').toBeGreaterThan(-1);
+    const bodyStart = source.indexOf('{', definitionIndex);
+    let depth = 0;
+    let bodyEnd = -1;
+    for (let index = bodyStart; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1;
+      if (source[index] === '}') depth -= 1;
+      if (depth === 0) {
+        bodyEnd = index;
+        break;
+      }
+    }
+    expect(bodyEnd, 'could not find the end of reconcileDevQuickPair()').toBeGreaterThan(bodyStart);
+
+    const reconcileCalls = [...source.matchAll(/devQuickPair\??\.reconcile\(/g)].map((match) => match.index ?? -1);
+    expect(reconcileCalls.length, 'no dev quick pair reconcile() call found - this test would be vacuous').toBeGreaterThan(0);
+    for (const callIndex of reconcileCalls) {
+      expect(
+        callIndex > bodyStart && callIndex < bodyEnd,
+        'every dev quick pair reconcile() call must stay inside reconcileDevQuickPair(), the one helper the ' +
+          '`if (__KANGENTIC_DEV__)` gate below covers',
+      ).toBe(true);
+    }
+
+    const helperCalls = [...source.matchAll(/this\.reconcileDevQuickPair\(/g)].map((match) => match.index ?? -1);
+    expect(helperCalls, 'expected exactly one call to reconcileDevQuickPair()').toHaveLength(1);
+    const callIndex = helperCalls[0];
 
     const guardIndex = source.lastIndexOf('if (__KANGENTIC_DEV__)', callIndex);
     expect(
       guardIndex,
-      'devQuickPair?.reconcile() must stay inside an `if (__KANGENTIC_DEV__)` block - this is a ' +
+      'reconcileDevQuickPair() must be called only inside an `if (__KANGENTIC_DEV__)` block - this is a ' +
         'deliberate dev-only backdoor (see dev-quick-pair.ts header) that must be dead-code-eliminated ' +
         'from production builds.',
     ).toBeGreaterThan(-1);

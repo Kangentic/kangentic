@@ -1,23 +1,57 @@
 import { app, safeStorage } from 'electron';
 
 /**
- * Credential storage helpers built on Electron's safeStorage.
+ * Credential storage helpers built on Electron's safeStorage, through its ASYNC
+ * API. Used by the Asana credential store and the mobile bridge identity.
  *
- * Platform semantics:
- * - macOS: Keychain Access (per-app encryption key).
- * - Windows: DPAPI (per-user protection).
- * - Linux: varies by secret store (kwallet / gnome-libsecret). If no secret
- *   store is available, safeStorage falls back to a hardcoded plaintext
- *   password and getSelectedStorageBackend() returns 'basic_text'. In that
- *   case we log a warning but still persist, matching Electron's documented
- *   contract.
+ * Why async. Electron 44 recommends `encryptStringAsync` / `decryptStringAsync`
+ * / `isAsyncEncryptionAvailable`; the synchronous trio is deprecated in 45 and
+ * removed in 46. The async API also finds a Linux secret store the sync one
+ * misses: the sync API only looks for a keyring on a fixed list of desktops, so
+ * on any other (sway, i3, WSLg) it settles for `basic_text` even with a Secret
+ * Service running, while the async API asks the Secret Service (or the portal)
+ * directly. Measured on Electron 44.5.1 under WSLg with gnome-keyring running:
+ * sync reported `basic_text` and refused to encrypt, async stored its key in the
+ * keyring and encrypted for real.
  *
- * All methods must be called after app.whenReady() resolves. isEncryptionAvailable()
- * is not valid before 'ready' on Linux/Windows.
+ * Stored format, unchanged. A credential is a one-character sentinel plus
+ * base64: 'e' for an encrypted blob, 'p' for plaintext (written only when no
+ * encryption is available at all). Async-written blobs keep the 'e' sentinel
+ * because the two APIs share one ciphertext format wherever both work: measured
+ * on 44.5.1, async decrypts sync-written blobs and sync decrypts async-written
+ * ones, on Windows (DPAPI, tag `v10`) and on Linux with a keyring (`v11`).
+ * Electron's own docs say the same for sync-written data on every platform.
  *
- * Currently unused: scaffolded for the first stub adapter to ship its own auth
- * flow (Linear and Jira are the most likely first consumers; see #480-#483).
+ * Migration. `decryptSecret` reports a blob that should be written again:
+ * - an 'e' blob the async API could not read but the sync API could (the async
+ *   key provider differs from the one that wrote it), read through the sync
+ *   API while it still exists;
+ * - an 'e' blob Electron says should be re-encrypted (a rotated key, or a key
+ *   with a better security level now available);
+ * - a 'p' blob, once encryption is genuine, so a token saved in plaintext on a
+ *   machine that had no secret store gets encrypted when one appears. On Linux
+ *   that includes every desktop the sync API never searched for a keyring.
+ * The two callers re-save on that signal. A downgrade to a build older than this
+ * change is not supported; the format did not change, so one still reads these
+ * blobs wherever its sync API can.
+ *
+ * Linux and "genuine" encryption. With no secret store, the async API still
+ * reports encryption as available: it falls back to a key derived from a
+ * hardcoded password (Chromium's PosixKeyProvider), which protects nothing.
+ * `getSelectedStorageBackend()` cannot tell that apart, because it describes
+ * the SYNC API only and kept saying `basic_text` while the async API was using
+ * a real keyring. The ciphertext can: Chromium tags Linux ciphertext with the
+ * key that made it, `v10` for the hardcoded password, `v11` for the Secret
+ * Service, `v12` for the Secret portal. So on Linux, genuine means a probe
+ * encryption is NOT tagged `v10`.
+ *
+ * All functions require app.whenReady(): the async encryptor initializes
+ * lazily after `ready`.
  */
+
+/** Chromium's Linux tag for ciphertext under the hardcoded fallback password. */
+const LINUX_HARDCODED_KEY_TAG = 'v10';
+const ENCRYPTION_TAG_LENGTH = 3;
 
 function assertAppReady(): void {
   if (!app.isReady()) {
@@ -25,44 +59,65 @@ function assertAppReady(): void {
   }
 }
 
-function isLinuxBasicTextBackend(): boolean {
-  if (process.platform !== 'linux') return false;
-  if (typeof safeStorage.getSelectedStorageBackend !== 'function') return false;
-  return safeStorage.getSelectedStorageBackend() === 'basic_text';
-}
+/**
+ * The key provider does not change during a run, so the Linux probe runs once.
+ * Cached as the promise so concurrent first callers share one probe.
+ */
+let linuxGenuineProbe: Promise<boolean> | null = null;
 
-/** Whether safeStorage can genuinely encrypt (vs falling back to plaintext on Linux). */
-export function isGenuineEncryptionAvailable(): boolean {
-  assertAppReady();
-  if (!safeStorage.isEncryptionAvailable()) return false;
-  return !isLinuxBasicTextBackend();
+async function probeLinuxGenuineEncryption(): Promise<boolean> {
+  const probe = await safeStorage.encryptStringAsync('kangentic-secure-storage-probe');
+  return probe.subarray(0, ENCRYPTION_TAG_LENGTH).toString('latin1') !== LINUX_HARDCODED_KEY_TAG;
 }
 
 /**
- * Encrypt a string, returning a base64-encoded ciphertext suitable for JSON storage.
- * The returned value is prefixed with a single byte sentinel: 'e' (0x65) for an
- * encrypted blob, 'p' (0x70) for plaintext. decryptSecret reads the sentinel to
- * know whether to invoke safeStorage or just base64-decode.
+ * Whether safeStorage genuinely encrypts here, rather than not at all or (on
+ * Linux) with the hardcoded fallback key. The mobile bridge refuses to persist
+ * its private key unless this is true.
  */
-export function encryptSecret(plaintext: string): string {
+export async function isGenuineEncryptionAvailable(): Promise<boolean> {
   assertAppReady();
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return false;
+  if (process.platform !== 'linux') return true;
+  if (!linuxGenuineProbe) {
+    linuxGenuineProbe = probeLinuxGenuineEncryption().catch((error: unknown) => {
+      console.warn('[boards/auth] could not probe the Linux secret store; treating it as unavailable:', error);
+      linuxGenuineProbe = null;
+      return false;
+    });
+  }
+  return linuxGenuineProbe;
+}
+
+/**
+ * Encrypt a string for JSON storage: 'e' + base64 ciphertext, or 'p' + base64
+ * plaintext when no encryption is available at all.
+ */
+export async function encryptSecret(plaintext: string): Promise<string> {
+  assertAppReady();
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
     console.warn('[boards/auth] safeStorage encryption unavailable; persisting unencrypted');
     return 'p' + Buffer.from(plaintext, 'utf8').toString('base64');
   }
-  if (isLinuxBasicTextBackend()) {
-    console.warn('[boards/auth] Linux secret store unavailable; safeStorage will use plaintext backend');
+  if (!(await isGenuineEncryptionAvailable())) {
+    console.warn('[boards/auth] Linux secret store unavailable; safeStorage will use its hardcoded fallback key');
   }
-  const buffer = safeStorage.encryptString(plaintext);
+  const buffer = await safeStorage.encryptStringAsync(plaintext);
   return 'e' + buffer.toString('base64');
 }
 
+export interface DecryptedSecret {
+  plaintext: string;
+  /** True when the stored blob should be written again with `encryptSecret`. See the module comment. */
+  shouldRewrite: boolean;
+}
+
 /**
- * Decrypt a credential previously produced by encryptSecret. Throws if the
- * blob was encrypted but decryption fails - we never silently return garbage
- * because that garbage would be sent as a token to a remote API.
+ * Decrypt a credential previously produced by encryptSecret (any version).
+ * Throws if an encrypted blob cannot be decrypted - we never silently return
+ * garbage, because that garbage would be sent as a token to a remote API.
  */
-export function decryptSecret(ciphertext: string): string {
+export async function decryptSecret(ciphertext: string): Promise<DecryptedSecret> {
   assertAppReady();
   if (!ciphertext) {
     throw new Error('decryptSecret called with empty ciphertext');
@@ -70,13 +125,38 @@ export function decryptSecret(ciphertext: string): string {
   const sentinel = ciphertext[0];
   const body = ciphertext.slice(1);
   if (sentinel === 'p') {
-    return Buffer.from(body, 'base64').toString('utf8');
+    // Rewritten only once encryption is GENUINE: on Linux with no secret store
+    // the async API would only re-wrap it under the hardcoded fallback key,
+    // which protects nothing and changes the file for no gain.
+    return {
+      plaintext: Buffer.from(body, 'base64').toString('utf8'),
+      shouldRewrite: await isGenuineEncryptionAvailable(),
+    };
   }
   if (sentinel === 'e') {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('Stored credential is encrypted but safeStorage is unavailable in this session');
+    const encrypted = Buffer.from(body, 'base64');
+    let asyncError: unknown = null;
+    if (await safeStorage.isAsyncEncryptionAvailable()) {
+      try {
+        const decrypted = await safeStorage.decryptStringAsync(encrypted);
+        return { plaintext: decrypted.result, shouldRewrite: decrypted.shouldReEncrypt };
+      } catch (error) {
+        asyncError = error;
+      }
     }
-    return safeStorage.decryptString(Buffer.from(body, 'base64'));
+    // A blob the sync API wrote under a key the async provider does not hold.
+    // Read it the old way while that API exists, and have the caller rewrite it
+    // so the next read needs only the async API.
+    if (safeStorage.isEncryptionAvailable()) {
+      return { plaintext: safeStorage.decryptString(encrypted), shouldRewrite: true };
+    }
+    if (asyncError) throw asyncError;
+    throw new Error('Stored credential is encrypted but safeStorage is unavailable in this session');
   }
   throw new Error(`Unknown credential format sentinel: ${sentinel}`);
+}
+
+/** For tests: forget the cached Linux probe. */
+export function resetSecureStorageProbeForTests(): void {
+  linuxGenuineProbe = null;
 }
