@@ -41,6 +41,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+// The REAL enum and reader, through the ESM loader, which the require.cache fake below does not
+// touch. The fake hands afterPack.js this same enum, so a fuse added to @electron/fuses is a fuse
+// the config is checked against.
+import { FuseV1Options as RealFuseV1Options, FuseVersion as RealFuseVersion, getCurrentFuseWire } from '@electron/fuses';
 
 const require = createRequire(import.meta.url);
 const ELECTRON_FUSES_RESOLVED_PATH = require.resolve('@electron/fuses');
@@ -93,22 +97,19 @@ function buildFakeContext(overrides: {
  *  the fake into a sibling test. */
 function installFakeElectronFuses(): {
   calls: FakeFlipFusesCall[];
+  /** The fuse config afterPack.js passed, one per flipFuses call. */
+  configs: Record<string, unknown>[];
   restore: () => void;
 } {
   const calls: FakeFlipFusesCall[] = [];
+  const configs: Record<string, unknown>[] = [];
   const fakeModule = {
-    flipFuses: async (electronBinaryPath: string): Promise<void> => {
+    flipFuses: async (electronBinaryPath: string, fuseConfig: Record<string, unknown>): Promise<void> => {
       calls.push({ electronBinaryPath });
+      configs.push(fuseConfig);
     },
-    FuseVersion: { V1: 'v1' },
-    FuseV1Options: {
-      RunAsNode: 'RunAsNode',
-      EnableCookieEncryption: 'EnableCookieEncryption',
-      EnableNodeOptionsEnvironmentVariable: 'EnableNodeOptionsEnvironmentVariable',
-      EnableNodeCliInspectArguments: 'EnableNodeCliInspectArguments',
-      EnableEmbeddedAsarIntegrityValidation: 'EnableEmbeddedAsarIntegrityValidation',
-      OnlyLoadAppFromAsar: 'OnlyLoadAppFromAsar',
-    },
+    FuseVersion: RealFuseVersion,
+    FuseV1Options: RealFuseV1Options,
   };
 
   const originalCacheEntry = require.cache[ELECTRON_FUSES_RESOLVED_PATH];
@@ -121,6 +122,7 @@ function installFakeElectronFuses(): {
 
   return {
     calls,
+    configs,
     restore: () => {
       if (originalCacheEntry) {
         require.cache[ELECTRON_FUSES_RESOLVED_PATH] = originalCacheEntry;
@@ -399,6 +401,80 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       fakeVerify.restore();
       fakeSpawnHelper.restore();
     }
+  });
+});
+
+// Every fuse is set explicitly, and flipFuses is told to refuse a binary carrying one it was not
+// given (strictlyRequireAllFuses). Without that, a fuse a future Electron adds ships at whatever
+// default it came with and the build stays green. The values are decisions, so they are pinned
+// by name; the members are read from the REAL enum, so a fuse @electron/fuses learns about fails
+// here until it is decided.
+const DECIDED_FUSE_VALUES: Record<string, boolean> = {
+  RunAsNode: false,
+  EnableCookieEncryption: true,
+  EnableNodeOptionsEnvironmentVariable: false,
+  EnableNodeCliInspectArguments: false,
+  EnableEmbeddedAsarIntegrityValidation: true,
+  OnlyLoadAppFromAsar: true,
+  // The next three are Electron's own defaults, read off the 44.5.1 binary's fuse wire.
+  LoadBrowserProcessSpecificV8Snapshot: false,
+  // Load-bearing: the renderer, its lazy chunks and the Monaco workers load over file://.
+  GrantFileProtocolExtraPrivileges: true,
+  WasmTrapHandlers: true,
+};
+
+/** Every fuse name the installed @electron/fuses knows (the enum's numeric members). */
+function knownFuseNames(): string[] {
+  return Object.keys(RealFuseV1Options).filter((key) => Number.isNaN(Number(key)));
+}
+
+describe('afterPack: fuse configuration', () => {
+  async function flipFusesConfig(): Promise<Record<string, unknown>> {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      await afterPack(buildFakeContext({ platform: 'win32', appOutDir: path.join('afterpack-fake-out', 'fuses') }));
+      expect(fakeFuses.configs).toHaveLength(1);
+      return fakeFuses.configs[0];
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  }
+
+  it('sets every fuse @electron/fuses knows and asks flipFuses to refuse any it was not given', async () => {
+    const config = await flipFusesConfig();
+    expect(config.version).toBe(RealFuseVersion.V1);
+    expect(config.strictlyRequireAllFuses).toBe(true);
+    const unset = knownFuseNames().filter(
+      (name) => typeof config[RealFuseV1Options[name as keyof typeof RealFuseV1Options]] !== 'boolean'
+    );
+    expect(unset, 'build/afterPack.js does not set these fuses; decide each one and add it to DECIDED_FUSE_VALUES too').toEqual([]);
+  });
+
+  it('keeps each fuse at its decided value, and decides no fuse the enum does not have', async () => {
+    const config = await flipFusesConfig();
+    expect(Object.keys(DECIDED_FUSE_VALUES).sort()).toEqual(knownFuseNames().sort());
+    for (const [name, expected] of Object.entries(DECIDED_FUSE_VALUES)) {
+      expect(config[RealFuseV1Options[name as keyof typeof RealFuseV1Options]], name).toBe(expected);
+    }
+  });
+
+  // The installed Electron's own wire, read without writing. flipFuses with strictlyRequireAllFuses
+  // already fails a PACKAGED build on a fuse it was not given, but packaging runs in the release
+  // and package-smoke jobs only; this says so on the Electron bump itself.
+  it('matches the installed Electron binary: no fuse there that @electron/fuses does not know', async () => {
+    const electronBinaryPath = require('electron') as unknown as string;
+    const wire = await getCurrentFuseWire(electronBinaryPath);
+    const wireLength = Object.keys(wire).filter((key) => key !== 'version').length;
+    expect(
+      wireLength,
+      `Electron's fuse wire has ${wireLength} fuses and @electron/fuses knows ${knownFuseNames().length}. ` +
+        'Update @electron/fuses, then decide the new fuse in build/afterPack.js.'
+    ).toBe(knownFuseNames().length);
   });
 });
 

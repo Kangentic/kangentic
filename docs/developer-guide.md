@@ -499,7 +499,7 @@ Native modules:
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 - `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
 
-Security fuses enabled: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation.
+Security fuses: no RunAsNode, no NodeOptions, no inspection, cookie encryption, ASAR integrity validation, asar-only loading. Every fuse is set explicitly with `strictlyRequireAllFuses`, so a new Electron fuse fails the build; see [Security Fuses](cross-platform.md#security-fuses).
 
 ```bash
 npm run package    # Package for current platform

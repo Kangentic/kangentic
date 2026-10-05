@@ -410,14 +410,26 @@ Release notes are not gated by that guard either. The post-update "What's New" d
 
 ## Security Fuses
 
-Electron fuses enabled for production builds:
+`build/afterPack.js` sets every Electron fuse explicitly and passes `strictlyRequireAllFuses`, so
+`flipFuses` fails the build when an Electron upgrade adds a fuse the config does not set, rather
+than shipping it at whatever default it came with.
 
-- **RunAsNode disabled** -- prevents using the app binary as a Node.js runtime
-- **NodeOptions disabled** -- blocks `NODE_OPTIONS` env var injection
-- **Inspection disabled** -- no `--inspect` debugging in production
-- **Cookie encryption enabled** -- encrypts stored cookies
-- **ASAR integrity validation** -- verifies archive hasn't been tampered with
-- **OnlyLoadAppFromAsar** -- prevents loading code from extracted directories
+- **RunAsNode disabled.** The app binary cannot be used as a Node.js runtime.
+- **NodeOptions disabled.** Blocks `NODE_OPTIONS` injection.
+- **Inspection disabled.** No `--inspect` debugging in production.
+- **Cookie encryption enabled.** Encrypts stored cookies.
+- **ASAR integrity validation enabled.** Verifies the archive has not been tampered with.
+- **OnlyLoadAppFromAsar enabled.** Code loads only from the asar, never from an extracted directory.
+- **LoadBrowserProcessSpecificV8Snapshot disabled**, Electron's default. No browser-process
+  snapshot is built.
+- **GrantFileProtocolExtraPrivileges enabled**, Electron's default, and load-bearing: every window
+  loads the renderer over `file://` through `loadFile`, its lazy chunks and the Monaco workers
+  included. Turning it off needs a `protocol.handle` migration first.
+- **WasmTrapHandlers enabled**, Electron's default.
+
+`tests/unit/afterpack-unpacked-worker-verification.test.ts` pins each value by name, fails when
+`@electron/fuses` knows a fuse the config does not set, and reads the installed Electron binary's
+fuse wire so a bump that adds a fuse fails before any packaging run.
 
 ## Windows Long Paths
 
