@@ -60,6 +60,8 @@ const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No own-record row, so applySuspendDbWrites falls back to getLatestForTask.
+    findByAnyId = vi.fn(() => undefined);
     getLatestForTask = mockGetLatestForTask;
     compareAndUpdateStatus = vi.fn(() => true);
     updateMetrics = vi.fn();

@@ -5,6 +5,8 @@
  * - spawn() returns status='queued' when at concurrency limit
  * - queued sessions emit 'session-changed' with queued status on creation
  * - the session ID is preserved across queue promotion
+ * - a queued row carries the spawn's permission mode, so
+ *   getSessionPermissionMode answers for a session whose PTY does not exist yet
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -100,6 +102,44 @@ describe('SessionManager queued status', () => {
       (event) => event.sessionId === queued.id && event.status === 'queued',
     );
     expect(queuedEvent).toBeDefined();
+  });
+
+  it('a queued spawn\'s registry row carries its permission mode while it is still queued', async () => {
+    const firstMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(firstMock.mockPty as unknown as pty.IPty);
+    await manager.spawn({ taskId: 'task-1', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+
+    const queued = await manager.spawn({
+      taskId: 'task-2',
+      projectId: 'project-1',
+      command: '',
+      cwd: '/tmp/test',
+      permissionMode: 'plan',
+    });
+
+    // Still queued: the row was built by the queued branch of spawn(), not by doSpawn().
+    expect(queued.status).toBe('queued');
+    expect(manager.getSession(queued.id)?.status).toBe('queued');
+    expect(manager.getSessionPermissionMode(queued.id)).toBe('plan');
+  });
+
+  it('a queued spawn with no permission mode reads null, not a default or another spawn\'s mode', async () => {
+    const firstMock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(firstMock.mockPty as unknown as pty.IPty);
+    await manager.spawn({
+      taskId: 'task-1',
+      projectId: 'project-1',
+      command: '',
+      cwd: '/tmp/test',
+      permissionMode: 'acceptEdits',
+    });
+
+    const queued = await manager.spawn({ taskId: 'task-2', projectId: 'project-1', command: '', cwd: '/tmp/test' });
+
+    // The row exists and is queued, so a null here is the row's own value rather
+    // than the registry's answer for a session it does not know.
+    expect(manager.getSession(queued.id)?.status).toBe('queued');
+    expect(manager.getSessionPermissionMode(queued.id)).toBeNull();
   });
 
   it('queued session transitions to running on promotion and preserves session ID', async () => {

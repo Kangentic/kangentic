@@ -1,4 +1,5 @@
 import type { SessionRepository } from '../db/repositories/session-repository';
+import { resolveOwnSessionRecord } from '../db/repositories/session-own-record';
 import type { SuspendedBy } from '../../shared/types';
 import { destroyLanesForSession } from '../browser/browser-lane-manager';
 import { releaseViewportOverridesForSession } from '../browser/viewport-override';
@@ -159,14 +160,10 @@ export function recoverStaleSessionId(
   taskId: string,
   agentReportedId: string,
 ): boolean {
-  // Target the EXACT live record by its id (the PTY session id is the record's
-  // primary key). This is isolation-safe: a task can hold multiple session records
-  // (its main session + per-column isolated sessions), so resolving by "latest for
-  // task" could misattribute the captured id to a different session. Fall back to
-  // getLatestForTask only for the pre-insert window where the record row does not
-  // exist yet (the same coarse behavior as before, see session-spawn-flow.ts's
-  // attach() note).
-  const record = sessionRepo.findByAnyId(sessionId) ?? sessionRepo.getLatestForTask(taskId);
+  // Target the EXACT live record, so the captured id never lands on the task's
+  // other track (see resolveOwnSessionRecord; session-spawn-flow.ts's attach()
+  // note covers the pre-insert fallback).
+  const record = resolveOwnSessionRecord(sessionRepo, sessionId, taskId);
   if (!record) return false;
 
   // Fresh capture: agent_session_id was null, now we have the real ID

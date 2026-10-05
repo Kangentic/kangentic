@@ -50,6 +50,8 @@ vi.mock('simple-git', () => ({
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No own-record row, so the capture sites fall back to getLatestForTask.
+    findByAnyId = vi.fn(() => undefined);
     getLatestForTask = vi.fn(() => null);
     insert = vi.fn();
     updateStatus = vi.fn();

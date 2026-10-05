@@ -1,4 +1,5 @@
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
@@ -37,7 +38,7 @@ export function applySuspendDbWrites(
   const db = getProjectDb(projectId);
   const sessionRepo = new SessionRepository(db);
   const usageHistoryRepo = new UsageHistoryRepository(db);
-  const record = sessionRepo.getLatestForTask(taskId);
+  const record = resolveOwnSessionRecord(sessionRepo, task.session_id, taskId);
   const action = decideSuspendDbAction(record);
   if (record && action === 'suspend') {
     captureSessionMetrics(

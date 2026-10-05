@@ -271,6 +271,7 @@ export async function autoSpawnTasks(
         agentName: input.adapter.name,
         agentSessionId: input.agentSessionId,
         isolatedSwimlaneId: input.isolatedSwimlaneId,
+        permissionMode: input.permissionMode,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
 

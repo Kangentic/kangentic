@@ -432,6 +432,15 @@ export function runProjectMigrations(db: Database.Database): void {
     }
   }
 
+  // Migration: record when a transcript read for a record's per-tool Tokens
+  // estimates answered and gave this record nothing to keep, so the earlier-run
+  // Tokens fill (fillEarlierRunResultTokens) does not read that transcript again
+  // on every launch. A UTC ISO timestamp; NULL = never read, or the read wrote
+  // estimates (which the fill sees on the rows themselves).
+  if (!sessionColumnNames.has('result_tokens_read_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN result_tokens_read_at TEXT DEFAULT NULL');
+  }
+
   // Migration: rename permission_strategy column -> permission_mode
   const currentSwimlaneCols = new Set(
     (db.pragma('table_info(swimlanes)') as Array<{ name: string }>).map((col) => col.name),

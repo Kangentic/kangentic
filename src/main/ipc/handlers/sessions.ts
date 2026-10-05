@@ -2,6 +2,7 @@ import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
@@ -313,18 +314,19 @@ export function registerSessionHandlers(context: IpcContext): void {
     return retrievalClient.call('sessions.summaries', { projectId: context.currentProjectId });
   });
 
-  // Live per-tool breakdown for an active session. Unlike the summary handlers
-  // above, this reads the in-memory accumulator (no DB / project lookup), so it
-  // works mid-session and survives the bounded event cache.
+  // Per-tool breakdown for an active session's track: its earlier runs' stored
+  // rows (one indexed read of the session's records) merged with the live
+  // accumulator, which works mid-session and survives the bounded event cache.
   ipcMain.handle(IPC.SESSION_GET_TOOL_BREAKDOWN, (_, sessionId: string) => {
-    return context.sessionManager.getToolBreakdown(sessionId);
+    return context.sessionManager.refreshToolBreakdownAcrossRuns(sessionId);
   });
 
-  // The per-tool result-token estimates the live accumulator cannot have (hook
-  // events carry no token data). A separate read so the breakdown above stays
-  // instant while the transcript is read in the retrieval worker. The session's
-  // own project resolves its record, which only matters when no transcript
-  // path has been reported yet.
+  // The per-tool result-token estimates for the session's track: the earlier
+  // runs' (filled from their transcripts where a record has none) plus the live
+  // run's, which the live accumulator cannot have (hook events carry no token
+  // data). A separate read so the breakdown above stays instant while the
+  // transcripts are read in the retrieval worker. The session's own project
+  // resolves its records.
   ipcMain.handle(IPC.SESSION_GET_TOOL_RESULT_TOKENS, (_, sessionId: string) => {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     const sessionRepo = projectId ? new SessionRepository(getProjectDb(projectId)) : null;
@@ -582,8 +584,13 @@ export function registerSessionHandlers(context: IpcContext): void {
       // Analytics: track spawn intent on the first running transition. Model
       // is not known yet (arrives later via status.json) and is omitted here -
       // session_exit / task_complete carry the model. permissionMode (the
-      // resolved mode the session record spawned under, not the task's raw
-      // override) and worktree ride the same event as budget-neutral props.
+      // resolved mode the session spawned under, not the task's raw override)
+      // and worktree ride the same event as budget-neutral props.
+      // permissionMode is read off the session itself: this event fires
+      // inside spawn(), before the caller inserts the session's record, so a
+      // record read here found the task's PREVIOUS record, whose mode can be
+      // stale or belong to the task's other track (a main and an isolated
+      // session).
       // This listener sees EVERY spawn path (board move, create, recovery,
       // transient), which also makes it the one chokepoint for the
       // worktree/profile adoption signals and the first_spawn milestone.
@@ -595,6 +602,8 @@ export function registerSessionHandlers(context: IpcContext): void {
             agent: spawnAgentName,
             isTransient: !!session.transient,
           };
+          const spawnPermissionMode = context.sessionManager.getSessionPermissionMode(sessionId);
+          if (spawnPermissionMode) spawnProps.permissionMode = spawnPermissionMode;
           try {
             const spawnProjectId = context.sessionManager.getSessionProjectId(sessionId);
             // Not during shutdown: getProjectDb silently REOPENS a just-closed
@@ -602,8 +611,6 @@ export function registerSessionHandlers(context: IpcContext): void {
             // constructs a fresh connection nothing ever closes again).
             if (!isShuttingDown() && spawnProjectId && session.taskId) {
               const database = getProjectDb(spawnProjectId);
-              const spawnRecord = new SessionRepository(database).getLatestForTask(session.taskId);
-              if (spawnRecord?.permission_mode) spawnProps.permissionMode = spawnRecord.permission_mode;
               const taskRow = new TaskRepository(database).getById(session.taskId);
               if (taskRow) {
                 spawnProps.worktree = !!taskRow.worktree_path;
@@ -627,7 +634,7 @@ export function registerSessionHandlers(context: IpcContext): void {
           const sessionRepo = new SessionRepository(database);
           const managedSession = context.sessionManager.getSession(sessionId);
           if (managedSession) {
-            const record = sessionRepo.getLatestForTask(managedSession.taskId);
+            const record = resolveOwnSessionRecord(sessionRepo, sessionId, managedSession.taskId);
             if (record) {
               promoteRecord(sessionRepo, record.id);
             }

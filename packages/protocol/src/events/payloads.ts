@@ -135,6 +135,12 @@ export interface SessionUsageWire {
     totalCostUsd: number;
     totalDurationMs: number;
   };
+  /**
+   * Completed tool calls across every run of the session. A resume (an app
+   * restart, a pause and resume) is a new run, and the desktop adds the
+   * session's earlier runs to the live count. Optional: an older desktop
+   * omits it.
+   */
   toolCallCount?: number;
   model: {
     id: string;

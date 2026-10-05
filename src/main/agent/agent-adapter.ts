@@ -643,33 +643,42 @@ export interface AgentAdapter {
    * ToolStart/ToolEnd pairing to derive them from), and may carry
    * `resultTokens`. `sinceMs`, when given, counts only calls made at or after
    * it: a transcript can span several runs (Claude appends across `--resume`),
-   * while a session record covers one. An adapter that cannot scope by time
-   * ignores it. Implemented only by adapters whose CLI writes a parseable
-   * transcript; other adapters are a no-op.
+   * while a session record covers one. `untilMs`, when given, counts only calls
+   * made before it, so a run read after a later one began stays its own. An
+   * adapter that cannot scope by time ignores both. Implemented only by
+   * adapters whose CLI writes a parseable transcript; other adapters are a
+   * no-op.
    */
   transcriptToolCounts?(input: {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
     sinceMs?: number | null;
+    untilMs?: number | null;
   }): Promise<TranscriptToolCounts | null>;
 
   /**
    * Optional: estimated result tokens per tool name, for the calls made at or
-   * after `sinceMs` (the current run's start), read from the agent's own
-   * transcript. Feeds the live tool-call popover's Tokens column, which
-   * refetches on every tool call, so an implementation must be cheap to call
-   * repeatedly (Claude resumes a per-path cursor and reads only appended
-   * bytes). Same location contract as `transcriptUsage`; must not throw;
-   * returns null when the transcript cannot be read. An adapter that cannot
-   * estimate result tokens leaves this unimplemented, and its transcript is
-   * then never read for them.
+   * after `sinceMs` (a run's start) and, when given, before `untilMs` (the next
+   * run's start), read from the agent's own transcript. Feeds the tool-call
+   * popover's Tokens column: open-ended for the live run, which refetches on
+   * every tool call, and closed for an earlier run whose record has no
+   * estimates yet. So an implementation must be cheap to call repeatedly
+   * (Claude resumes a per-path cursor and reads only appended bytes). The
+   * earlier-run fill relies on a closed window holding only that run's calls,
+   * so it reads only from an adapter that also declares
+   * `scopesTranscriptReadsByTime`. Same location contract as `transcriptUsage`;
+   * must not throw; returns null when the transcript cannot be read, and an
+   * object (possibly empty) when it was read. An adapter that cannot estimate
+   * result tokens leaves this unimplemented, and its transcript is then never
+   * read for them.
    */
   transcriptToolResultTokens?(input: {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
     sinceMs?: number | null;
+    untilMs?: number | null;
   }): Promise<Record<string, number> | null>;
 
   /**
@@ -872,6 +881,19 @@ export interface AgentAdapter {
    * another agent's account limits.
    */
   readonly reportsRateLimits?: boolean;
+
+  /**
+   * Set by adapters whose transcript reads (`transcriptToolCounts`,
+   * `transcriptToolResultTokens`) honor `sinceMs` and `untilMs`, so a read can
+   * hold exactly one run's calls even though the CLI writes every resume of a
+   * conversation to the same transcript (Claude). Two callers depend on it:
+   * the run-end count backfill, which may only take a whole-transcript count
+   * for the conversation's first run when the adapter cannot scope, or it adds
+   * earlier runs' calls to this run's record; and the earlier-run Tokens fill,
+   * which reads only from adapters that scope. Omit (falsy) when the reads
+   * ignore both bounds.
+   */
+  readonly scopesTranscriptReadsByTime?: boolean;
 
   /**
    * Image file extensions (lowercase, no dot) the CLI attaches natively when

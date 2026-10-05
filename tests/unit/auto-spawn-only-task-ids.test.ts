@@ -472,6 +472,10 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
       expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
       expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
       expect(mockSessionInsert).toHaveBeenCalledWith(expect.objectContaining({ cwd: WORKTREE }));
+      // The spawn analytics event reads the mode off the session, before this
+      // record exists, so the spawn and the record carry the same one.
+      expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'acceptEdits' }));
+      expect(mockSessionInsert).toHaveBeenCalledWith(expect.objectContaining({ permission_mode: 'acceptEdits' }));
     });
   });
 });

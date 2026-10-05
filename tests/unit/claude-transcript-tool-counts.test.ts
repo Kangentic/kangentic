@@ -403,6 +403,35 @@ describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
     expect(scoped!.toolCallCount).toBe(1);
   });
 
+  it('leaves a call with no timestamp out of a closed window, which cannot place it', async () => {
+    const filePath = path.join(dir, 'no-timestamp-closed.jsonl');
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('untimed', 'Read') +
+        assistantToolUse('timed', 'Bash', ',"timestamp":"2026-10-04T22:52:20.000Z"'),
+    );
+    const windowStart = Date.parse('2026-10-04T22:50:00.000Z');
+    const windowEnd = Date.parse('2026-10-04T22:55:00.000Z');
+
+    const closed = await parseClaudeTranscriptToolCounts(filePath, windowStart, windowEnd);
+    expect(closed!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Bash', 1]]);
+  });
+
+  it('excludes a call at exactly untilMs, which belongs to the next run', async () => {
+    const filePath = path.join(dir, 'boundary.jsonl');
+    const boundary = '2026-10-04T22:56:53.959Z';
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('before', 'Read', ',"timestamp":"2026-10-04T22:56:53.958Z"') +
+        assistantToolUse('at', 'Bash', `,"timestamp":"${boundary}"`),
+    );
+
+    const earlierRun = await parseClaudeTranscriptToolCounts(filePath, null, Date.parse(boundary));
+    const laterRun = await parseClaudeTranscriptToolCounts(filePath, Date.parse(boundary));
+    expect(earlierRun!.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Read']);
+    expect(laterRun!.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Bash']);
+  });
+
   it('treats a NaN sinceMs as no scope, so the whole file counts', async () => {
     const filePath = path.join(dir, 'nan-since.jsonl');
     const earlier = ',"timestamp":"2026-10-04T22:52:20.000Z"';
@@ -814,6 +843,110 @@ describe('parseClaudeTranscriptToolCounts - real captured session', () => {
     expect(fromFirst!.toolCallCount).toBe(facts.toolNameByUseId.size);
     expect(await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, facts.lastToolUseMs + 1)).toBeNull();
   });
+
+  it('places a result estimate in the closed window that holds its call, by the call\'s timestamp and not the result line\'s', async () => {
+    // One call in this capture, so a window either holds it or does not.
+    const facts = readCapturedFacts();
+    expect(facts.toolNameByUseId.size).toBe(1);
+    const callMs = facts.firstToolUseMs;
+    const open = await parseClaudeTranscriptToolResultTokens(REAL_SESSION_FIXTURE);
+    const [toolName] = Object.keys(open!);
+    expect(open![toolName]).toBeGreaterThan(0);
+
+    // The window ends 1 ms past the call, long before the result line the
+    // capture wrote a second later. The estimate follows the call.
+    const holdingCall = await parseClaudeTranscriptToolResultTokens(REAL_SESSION_FIXTURE, callMs, callMs + 1);
+    expect(holdingCall).toEqual(open);
+    expect((await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, callMs, callMs + 1))!.toolCallCount).toBe(1);
+
+    // Ending exactly at the call, the window belongs to the run before it.
+    expect(await parseClaudeTranscriptToolResultTokens(REAL_SESSION_FIXTURE, null, callMs)).toEqual({});
+    expect(await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, null, callMs)).toBeNull();
+    // Starting after it, the window belongs to the run after.
+    expect(await parseClaudeTranscriptToolResultTokens(REAL_SESSION_FIXTURE, callMs + 1, callMs + 60_000)).toEqual({});
+    expect(await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, callMs + 1, callMs + 60_000)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two halves of one pinned transcript. The closed-window cases above build
+// their lines from templates, so they cannot show that a window cut at a
+// timestamp a fixture carries hands every call to exactly one run. The calls and
+// their timestamps are read from the fixture's own lines here, not from the
+// parser. The fixture is the pinned tool-use sample: the real session capture
+// holds a single call, which no window can split, and the sample has no
+// tool_result lines, so the result estimates are covered on the capture above.
+// ---------------------------------------------------------------------------
+
+describe('parseClaudeTranscriptToolCounts - a pinned transcript cut into two closed windows', () => {
+  interface FixtureCall {
+    toolName: string;
+    timestampMs: number;
+  }
+
+  /** Each distinct `tool_use` id once, at the timestamp of the first line that carries it. */
+  function readFixtureCalls(): FixtureCall[] {
+    const callByUseId = new Map<string, FixtureCall>();
+    for (const line of fs.readFileSync(FIXTURE_PATH, 'utf-8').split('\n')) {
+      let record: { type?: string; timestamp?: string; message?: { content?: unknown } };
+      try {
+        record = JSON.parse(line) as typeof record;
+      } catch {
+        // The fixture carries a deliberately malformed line, and the file ends in a newline.
+        continue;
+      }
+      const rawContent = record.message?.content;
+      const content = Array.isArray(rawContent) ? (rawContent as Array<Record<string, unknown>>) : [];
+      for (const block of content) {
+        if (record.type !== 'assistant' || block.type !== 'tool_use') continue;
+        if (typeof block.id !== 'string' || typeof block.name !== 'string' || typeof record.timestamp !== 'string') continue;
+        if (!callByUseId.has(block.id)) callByUseId.set(block.id, { toolName: block.name, timestampMs: Date.parse(record.timestamp) });
+      }
+    }
+    return Array.from(callByUseId.values()).sort((first, second) => first.timestampMs - second.timestampMs);
+  }
+
+  function callCountByTool(calls: FixtureCall[]): Record<string, number> {
+    const countByTool: Record<string, number> = {};
+    for (const call of calls) countByTool[call.toolName] = (countByTool[call.toolName] ?? 0) + 1;
+    return countByTool;
+  }
+
+  beforeEach(() => {
+    resetToolCallCursorsForTests();
+  });
+
+  it('hands every call to exactly one half, and a call at the cut to the later one', async () => {
+    const calls = readFixtureCalls();
+    expect(calls).toHaveLength(6);
+    // The cut falls exactly on a call's own timestamp: the Read and Write that
+    // share it start the later run, and the Bash and Grep before it end the earlier.
+    const cutMs = calls[Math.floor(calls.length / 2)].timestampMs;
+    const earlierCalls = calls.filter((call) => call.timestampMs < cutMs);
+    const laterCalls = calls.filter((call) => call.timestampMs >= cutMs);
+    expect(earlierCalls).toHaveLength(2);
+    expect(laterCalls).toHaveLength(4);
+
+    const whole = await parseClaudeTranscriptToolCounts(FIXTURE_PATH);
+    const earlier = await parseClaudeTranscriptToolCounts(FIXTURE_PATH, calls[0].timestampMs, cutMs);
+    const later = await parseClaudeTranscriptToolCounts(FIXTURE_PATH, cutMs, calls[calls.length - 1].timestampMs + 1);
+
+    expect(earlier!.toolCallCount).toBe(earlierCalls.length);
+    expect(later!.toolCallCount).toBe(laterCalls.length);
+    expect(earlier!.toolCallCount + later!.toolCallCount).toBe(whole!.toolCallCount);
+
+    const countsOf = (counts: NonNullable<typeof whole>): Record<string, number> => Object.fromEntries(
+      counts.toolBreakdown.map((stat) => [stat.toolName, stat.callCount]),
+    );
+    expect(countsOf(earlier!)).toEqual(callCountByTool(earlierCalls));
+    expect(countsOf(later!)).toEqual(callCountByTool(laterCalls));
+    // Summed by tool, the halves the parser returned are the whole it returned.
+    const summedHalves: Record<string, number> = {};
+    for (const half of [earlier!, later!]) {
+      for (const stat of half.toolBreakdown) summedHalves[stat.toolName] = (summedHalves[stat.toolName] ?? 0) + stat.callCount;
+    }
+    expect(summedHalves).toEqual(countsOf(whole!));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -975,6 +1108,18 @@ describe('ClaudeAdapter run-scoped transcript reads', () => {
     expect(await adapter.transcriptToolResultTokens({ transcriptPath, sinceMs: secondRunStart })).toEqual({ Bash: 200 });
     expect(await adapter.transcriptToolResultTokens({ transcriptPath })).toEqual({ Read: 1000, Bash: 200 });
     expect(await adapter.transcriptToolResultTokens({ transcriptPath, sinceMs: null })).toEqual({ Read: 1000, Bash: 200 });
+  });
+
+  it('a closed window holds only the earlier run, read after the later run began', async () => {
+    // An earlier run that ended at app quit, read once its successor is
+    // running: the window ends at the successor's start.
+    const adapter = new ClaudeAdapter();
+    const firstRunStart = Date.parse('2026-10-04T22:50:00.000Z');
+
+    expect(await adapter.transcriptToolResultTokens({ transcriptPath, sinceMs: firstRunStart, untilMs: secondRunStart }))
+      .toEqual({ Read: 1000 });
+    const counts = await adapter.transcriptToolCounts({ transcriptPath, sinceMs: firstRunStart, untilMs: secondRunStart });
+    expect(counts!.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Read']);
   });
 
   it('transcriptToolResultTokens returns null when no transcript can be located or read', async () => {

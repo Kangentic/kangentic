@@ -444,9 +444,10 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       {showCost && <span ref={costRef} className={`${pill} text-fg-muted tabular-nums`} title="Session API cost">{formatCost(usage.cost.totalCostUsd)}</span>}
 
       {/* Activity stats sit directly to the left of the token counts. Tool
-          calls is the live cumulative count stamped onto the usage payload
-          (the renderer's own event cache is bounded, so it cannot count past
-          500 events itself). */}
+          calls is the cumulative count main stamps onto the usage payload:
+          this run's calls plus the session's earlier runs, since every resume
+          is a new run (the renderer's own event cache is bounded, so it could
+          not count past 500 events itself either). */}
       {showToolCalls && (
         <span className="relative inline-flex">
           <button
@@ -454,7 +455,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             type="button"
             onClick={() => setOpenToolBreakdown((previous) => !previous)}
             className={`${pill} text-fg-muted tabular-nums inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover`}
-            title="Tool calls this session - click for the per-tool breakdown"
+            title="Tool calls across every run of this session - click for the per-tool breakdown"
             aria-expanded={openToolBreakdown}
             data-testid="context-bar-tool-calls-trigger"
           >

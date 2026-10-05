@@ -30,7 +30,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 }));
 
 // Partial SessionRecord shape: shutdown.ts only reads `id` and `status` on the
-// getLatestForTask return. If shutdown.ts starts inspecting more fields, this
+// findByAnyId return. If shutdown.ts starts inspecting more fields, this
 // mock will naturally fail fast.
 //
 // The returned record status is driven by the module-level
@@ -38,7 +38,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 const sessionRecordStatusRef = { current: 'running' as 'running' | 'queued' };
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
-    getLatestForTask = vi.fn(() => ({
+    findByAnyId = vi.fn(() => ({
       id: 'record-1',
       status: sessionRecordStatusRef.current,
     }));
@@ -76,6 +76,7 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     stopAnnouncementTimers: vi.fn(),
     clearPendingTimers: vi.fn(),
     isEphemeral: false,
+    isRestartRequested: () => false,
     allowGrace: false,
   };
 }

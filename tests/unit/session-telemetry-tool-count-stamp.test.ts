@@ -262,3 +262,132 @@ describe('SessionTelemetry: setSessionUsage stamps toolCallCount', () => {
     expect(emitted!.model.id).toBe('codex-mini');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test suite 3: the earlier runs' count (a resumed session is a new record)
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: the stamp adds the earlier runs\' tool calls', () => {
+  const SESSION_ID = 'sess-resumed';
+  let emittedUsages: SessionUsage[];
+  let tracker: SessionTelemetry;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    emittedUsages = [];
+    tracker = makeTracker((sessionId, usage) => {
+      if (sessionId === SESSION_ID) emittedUsages.push({ ...usage });
+    });
+    tracker.initSession(SESSION_ID);
+  });
+
+  afterEach(() => {
+    tracker.dispose();
+    vi.useRealTimers();
+  });
+
+  it('shows the earlier runs\' count on the first usage, before any new call', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+
+    tracker.processStatusUpdate(SESSION_ID, minimalUsage());
+
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(482);
+  });
+
+  it('adds this run\'s calls on both stamp paths', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+    tracker.ingestEvents(SESSION_ID, [
+      toolStartEvent('Read', 1), toolEndEvent('Read', 2),
+      toolStartEvent('Bash', 3), toolEndEvent('Bash', 4),
+    ]);
+
+    tracker.processStatusUpdate(SESSION_ID, minimalUsage());
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(484);
+
+    tracker.setSessionUsage(SESSION_ID, { cost: { totalCostUsd: 0.01, totalDurationMs: 1_000 } });
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(484);
+  });
+
+  it('keeps the per-run reads per run, so no record stores another run\'s calls', () => {
+    // captureSessionMetrics writes these to this run's record and the Session
+    // Summary sums records: an earlier count here would be stored twice.
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+    tracker.ingestEvents(SESSION_ID, [toolStartEvent('Read', 1), toolEndEvent('Read', 2)]);
+
+    expect(tracker.getToolCallCount(SESSION_ID)).toBe(1);
+    expect(tracker.getToolBreakdown(SESSION_ID).map((stat) => stat.callCount)).toEqual([1]);
+  });
+
+  it('re-emits a usage already on screen when the earlier count changes, and only then', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 30);
+    tracker.processStatusUpdate(SESSION_ID, minimalUsage());
+    const emitsBefore = emittedUsages.length;
+
+    // The popover's fresh read found a backfill that landed after the spawn.
+    tracker.setEarlierToolCallCount(SESSION_ID, 36);
+    expect(emittedUsages).toHaveLength(emitsBefore + 1);
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(36);
+    expect(tracker.getUsageCache()[SESSION_ID].toolCallCount).toBe(36);
+
+    tracker.setEarlierToolCallCount(SESSION_ID, 36);
+    expect(emittedUsages).toHaveLength(emitsBefore + 1);
+  });
+
+  it('re-stamps a usage the known-window backfill re-emits with this run plus the earlier runs', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+    tracker.ingestEvents(SESSION_ID, [
+      toolStartEvent('Read', 1), toolEndEvent('Read', 2),
+      toolStartEvent('Bash', 3), toolEndEvent('Bash', 4),
+    ]);
+    // A parked session's transcript fallback: tokens and a model, no window yet.
+    tracker.setSessionUsage(SESSION_ID, {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 200_000,
+        cacheTokens: 0,
+        totalInputTokens: 200_000,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    });
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(484);
+
+    // More calls land after that emit. Ingesting events re-stamps nothing, so the
+    // cached usage still carries the 484 it was stamped with. Without this gap
+    // the cache would already hold the right number and the re-emit below could
+    // not tell a fresh stamp from a stale one.
+    tracker.ingestEvents(SESSION_ID, [
+      toolStartEvent('Grep', 5), toolEndEvent('Grep', 6),
+      toolStartEvent('Edit', 7), toolEndEvent('Edit', 8),
+      toolStartEvent('Write', 9), toolEndEvent('Write', 10),
+    ]);
+    expect(tracker.getUsageCache()[SESSION_ID].toolCallCount).toBe(484);
+    const emitsBefore = emittedUsages.length;
+
+    // The window learned at project open back-fills the parked session.
+    tracker.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 }]);
+
+    expect(emittedUsages).toHaveLength(emitsBefore + 1);
+    // The back-fill path ran: the window is filled in on the re-emitted usage.
+    expect(emittedUsages.at(-1)?.contextWindow.contextWindowSize).toBe(1_000_000);
+    // 5 calls this run plus the 482 earlier ones.
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(487);
+  });
+
+  it('emits nothing before the first usage exists', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+
+    expect(emittedUsages).toHaveLength(0);
+  });
+
+  it('forgets the earlier count when the session is removed', () => {
+    tracker.setEarlierToolCallCount(SESSION_ID, 482);
+    tracker.removeSession(SESSION_ID);
+    tracker.initSession(SESSION_ID);
+
+    tracker.processStatusUpdate(SESSION_ID, minimalUsage());
+
+    expect(emittedUsages.at(-1)?.toolCallCount).toBe(0);
+  });
+});

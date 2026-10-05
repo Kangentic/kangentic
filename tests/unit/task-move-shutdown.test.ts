@@ -53,6 +53,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No own-record row, so the capture sites fall back to getLatestForTask.
+    findByAnyId = vi.fn(() => undefined);
     getLatestForTask = vi.fn(() => null);
     getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();

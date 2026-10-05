@@ -36,7 +36,7 @@ vi.mock('../../src/main/db/database', () => ({
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    getLatestForTask = vi.fn(() => null);
+    findByAnyId = vi.fn(() => null);
     compareAndUpdateStatus = vi.fn(() => true);
     updateMetrics = vi.fn();
     updateStatus = vi.fn();

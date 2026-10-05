@@ -42,7 +42,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Session, SessionRecord, Task } from '../../src/shared/types';
+import type { PermissionMode, Session, SessionRecord, Task } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks (must be declared before any imports of the mocked modules)
@@ -68,6 +68,8 @@ const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    // No own-record row, so the queued-to-running promotion falls back to getLatestForTask.
+    findByAnyId = vi.fn(() => undefined);
     getLatestForTask = mockGetLatestForTask;
     compareAndUpdateStatus = vi.fn(() => true);
     updateMetrics = vi.fn();
@@ -78,6 +80,9 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 }));
 
 const mockTaskGetById = vi.fn(() => null as Task | null);
+
+/** The resolved permission mode the spawn carried onto the session. */
+const sessionPermissionMode = { current: null as PermissionMode | null };
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
@@ -199,6 +204,7 @@ function buildMockContext(sessionId: string, agentName: string | undefined) {
       getSessionTaskId: vi.fn(() => null as string | null),
       getSessionProjectId: vi.fn(() => 'proj-test' as string | undefined),
       getSessionAgentName: vi.fn((id: string) => (id === sessionId ? agentName : undefined)),
+      getSessionPermissionMode: vi.fn((id: string) => (id === sessionId ? sessionPermissionMode.current : null)),
       getUsageCache: vi.fn(() => ({} as Record<string, unknown>)),
       getToolCallCount: vi.fn(() => 0),
       getUsageCacheForProject: vi.fn(() => ({})),
@@ -317,17 +323,15 @@ describe('session-changed listener - session_spawn fires exactly once per sessio
 // #1b - Enrichment branch: permissionMode/worktree props + trackFeatureUsed
 // ---------------------------------------------------------------------------
 //
-// The `sessionSpawnAnalyticsFired` fire-once branch performs a best-effort DB
-// read (SessionRepository.getLatestForTask + TaskRepository.getById) to
-// enrich session_spawn's props and fire trackFeatureUsed for worktree/profile
-// adoption. Every test above this point leaves both repository mocks at their
-// declared default (getLatestForTask -> null, TaskRepository.getById -> null),
-// so `if (spawnRecord?.permission_mode)` / `if (taskRow) {...}` never execute
-// and this whole branch is untested - the exact-match `toHaveBeenCalledWith`
-// assertions above pass only because the enrichment adds nothing. Red-green:
-// deleting the enrichment block from sessions.ts would leave
-// `session_spawn`'s props at the bare `{ agent, isTransient }` shape and this
-// test would fail on the missing permissionMode/worktree keys.
+// The `sessionSpawnAnalyticsFired` fire-once branch enriches session_spawn's
+// props with the session's own permission mode (sessionManager
+// .getSessionPermissionMode) and a best-effort task read (TaskRepository
+// .getById) for worktree/profile adoption. Every test above this point leaves
+// both at their declared default (no mode, no task row), so the enrichment
+// adds nothing and the exact-match `toHaveBeenCalledWith` assertions above
+// pass on the bare shape. Red-green: deleting the enrichment block from
+// sessions.ts would leave `session_spawn`'s props at `{ agent, isTransient }`
+// and this test would fail on the missing permissionMode/worktree keys.
 
 describe('session-changed listener - enrichment reads permission mode, worktree, and profile', () => {
   beforeEach(() => {
@@ -336,6 +340,7 @@ describe('session-changed listener - enrichment reads permission mode, worktree,
     capturedSessionEventHandlers.clear();
     mockGetLatestForTask.mockReturnValue(null);
     mockTaskGetById.mockReturnValue(null);
+    sessionPermissionMode.current = null;
 
     mockGetProjectRepos.mockReturnValue({
       tasks: { getById: vi.fn(() => null), update: vi.fn() },
@@ -347,7 +352,7 @@ describe('session-changed listener - enrichment reads permission mode, worktree,
 
   it('adds permissionMode + worktree:true to session_spawn props and fires trackFeatureUsed for worktree_session and board_profile', () => {
     const sessionId = 'analytics-enrichment-full-unique-id-010';
-    mockGetLatestForTask.mockReturnValue({ permission_mode: 'plan' } as unknown as SessionRecord);
+    sessionPermissionMode.current = 'plan';
     mockTaskGetById.mockReturnValue({
       id: 'task-analytics-001',
       worktree_path: '/mock/project/.kangentic/worktrees/task',
@@ -398,6 +403,29 @@ describe('session-changed listener - enrichment reads permission mode, worktree,
       worktree: false,
     });
     expect(vi.mocked(trackFeatureUsed)).not.toHaveBeenCalled();
+  });
+
+  it('reports the mode the session spawned under, never the task\'s newest record\'s', () => {
+    // The event fires inside spawn(), before the caller inserts this session's
+    // record, so the task's newest record is a PREVIOUS one: here the task's
+    // isolated review session, under a different mode.
+    const sessionId = 'analytics-enrichment-own-mode-unique-id-018';
+    sessionPermissionMode.current = 'acceptEdits';
+    mockGetLatestForTask.mockReturnValue({ permission_mode: 'plan' } as unknown as SessionRecord);
+
+    const context = createMockContext(sessionId, 'claude');
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+
+    expect(vi.mocked(trackEvent)).toHaveBeenCalledWith('session_spawn', {
+      agent: 'claude',
+      isTransient: false,
+      permissionMode: 'acceptEdits',
+    });
   });
 
   it('omits both permissionMode and worktree when no task row is found at all', () => {

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy } from '../../../shared/types';
+import { mergeToolBreakdowns, type ToolCallTotals } from '../../../shared/tool-call-totals';
 import { writeTransaction } from '../transaction';
 
 /**
@@ -10,7 +11,7 @@ import { writeTransaction } from '../transaction';
  * the PTY grid (set via updatePtyGrid from the session manager's grid events).
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at'
 >;
 
 export interface SessionMetricsInput {
@@ -55,7 +56,7 @@ function isPerToolStat(value: unknown): value is PerToolStat {
  * fail the shape guard are dropped silently rather than rendered as blank
  * rows with undefined React keys.
  */
-function parseToolBreakdown(raw: string | null): PerToolStat[] {
+export function parseToolBreakdown(raw: string | null): PerToolStat[] {
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -64,6 +65,28 @@ function parseToolBreakdown(raw: string | null): PerToolStat[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The columns of an earlier run's record that the track's tool totals and the
+ * earlier-run Tokens fill read. The tool-call popover reads its track on every
+ * tool call, so the large text columns (`prompt`, `command`) are not selected.
+ */
+export type EarlierRunRecord = Pick<SessionRecord,
+  'id' | 'session_type' | 'agent_session_id' | 'cwd' | 'started_at' | 'tool_call_count' | 'tool_breakdown' | 'result_tokens_read_at'
+>;
+
+/**
+ * Sum the stored tool columns of several records: the count from
+ * `tool_call_count`, the rows merged by tool name. Each record holds one run.
+ */
+function sumRecordToolTotals(records: Array<Pick<SessionRecord, 'tool_call_count' | 'tool_breakdown'>>): ToolCallTotals {
+  let toolCallCount = 0;
+  for (const record of records) toolCallCount += record.tool_call_count ?? 0;
+  return {
+    toolCallCount,
+    toolBreakdown: mergeToolBreakdowns(records.map((record) => parseToolBreakdown(record.tool_breakdown))),
+  };
 }
 
 export class SessionRepository {
@@ -108,6 +131,7 @@ export class SessionRepository {
       compaction_count: 0,
       last_pty_cols: null,
       last_pty_rows: null,
+      result_tokens_read_at: null,
     };
   }
 
@@ -283,6 +307,42 @@ export class SessionRepository {
   }
 
   /**
+   * Every record on a session track except one, oldest first. A track is the
+   * task plus its isolated swimlane (null = the main session), across agents:
+   * the records a resumed session continues from. The excluded id is the live
+   * record, whose stored tool columns are a snapshot of the live accumulator
+   * and would otherwise count twice. `IS ?` matches a null swimlane.
+   */
+  listEarlierRunRecords(taskId: string, isolatedSwimlaneId: string | null, excludeRecordId: string): EarlierRunRecord[] {
+    return this.db.prepare(
+      `SELECT id, session_type, agent_session_id, cwd, started_at, tool_call_count, tool_breakdown, result_tokens_read_at
+       FROM sessions WHERE task_id = ? AND isolated_swimlane_id IS ? AND id != ? ORDER BY started_at`
+    ).all(taskId, isolatedSwimlaneId, excludeRecordId) as EarlierRunRecord[];
+  }
+
+  /**
+   * Whether a record that started before this one belongs to the same agent
+   * conversation (`agent_session_id`), which makes this record a resume of it.
+   * The CLI writes every run of a conversation to one transcript, so an agent
+   * that cannot scope a transcript read by time counts those earlier runs'
+   * calls too.
+   */
+  hasEarlierRecordOfConversation(recordId: string, agentSessionId: string): boolean {
+    const row = this.db.prepare(
+      `SELECT 1 AS found FROM sessions
+       WHERE agent_session_id = ? AND id != ?
+         AND started_at < (SELECT started_at FROM sessions WHERE id = ?)
+       LIMIT 1`
+    ).get(agentSessionId, recordId, recordId);
+    return row !== undefined;
+  }
+
+  /** The stored tool totals of a track's earlier runs (see `listEarlierRunRecords`). */
+  getEarlierRunToolTotals(taskId: string, isolatedSwimlaneId: string | null, excludeRecordId: string): ToolCallTotals {
+    return sumRecordToolTotals(this.listEarlierRunRecords(taskId, isolatedSwimlaneId, excludeRecordId));
+  }
+
+  /**
    * Find a session record by either its Kangentic id or its agent_session_id.
    * Used by lookup paths that accept "any session identifier" - e.g. the
    * MCP get_transcript handler accepting either flavor of UUID. Picks the
@@ -417,23 +477,51 @@ export class SessionRepository {
     );
     if (filled.changes > 0) return;
 
-    const resultTokensByTool = new Map<string, number>();
+    const resultTokensByTool: Record<string, number> = {};
     for (const stat of counts.toolBreakdown) {
-      if (typeof stat.resultTokens === 'number') resultTokensByTool.set(stat.toolName, stat.resultTokens);
+      if (typeof stat.resultTokens === 'number') resultTokensByTool[stat.toolName] = stat.resultTokens;
     }
-    if (resultTokensByTool.size === 0) return;
-    const liveRows = this.readToolBreakdownForUpdate(id);
-    if (!liveRows) return;
+    this.mergeTranscriptResultTokens(id, resultTokensByTool);
+  }
+
+  /**
+   * Put transcript-derived `resultTokens` estimates onto a record's stored
+   * rows, matched by tool name. Counts, durations and every other field stay
+   * as stored, and a tool with no stored row is dropped. Returns true when the
+   * row changed.
+   *
+   * SETS each value, never adds to it. Two writers can reach the same record:
+   * the run-end refine and the earlier-run Tokens fill
+   * (`fillEarlierRunResultTokens`), both reading the same run's window, and
+   * only setting keeps the second write from doubling the first.
+   */
+  mergeTranscriptResultTokens(id: string, resultTokensByTool: Record<string, number>): boolean {
+    if (Object.keys(resultTokensByTool).length === 0) return false;
+    const storedRows = this.readToolBreakdownForUpdate(id);
+    if (!storedRows) return false;
     let changed = false;
-    for (const liveRow of liveRows) {
-      const resultTokens = resultTokensByTool.get(liveRow.toolName);
-      if (resultTokens !== undefined && liveRow.resultTokens !== resultTokens) {
-        liveRow.resultTokens = resultTokens;
+    for (const storedRow of storedRows) {
+      // Own keys only: a tool named like an Object.prototype member must not
+      // read the inherited function.
+      if (!Object.hasOwn(resultTokensByTool, storedRow.toolName)) continue;
+      const resultTokens = resultTokensByTool[storedRow.toolName];
+      if (typeof resultTokens === 'number' && storedRow.resultTokens !== resultTokens) {
+        storedRow.resultTokens = resultTokens;
         changed = true;
       }
     }
-    if (!changed) return;
-    this.db.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(JSON.stringify(liveRows), id);
+    if (!changed) return false;
+    this.db.prepare('UPDATE sessions SET tool_breakdown = ? WHERE id = ?').run(JSON.stringify(storedRows), id);
+    return true;
+  }
+
+  /**
+   * Record that a transcript read for this record's Tokens estimates answered
+   * and left it nothing to keep, so the earlier-run fill does not read that
+   * transcript again (see `SessionRecord.result_tokens_read_at`).
+   */
+  markResultTokensRead(id: string): void {
+    this.db.prepare('UPDATE sessions SET result_tokens_read_at = ? WHERE id = ?').run(new Date().toISOString(), id);
   }
 
   /**
@@ -567,8 +655,10 @@ export class SessionRepository {
    *     row would double-count a session resumed across restarts, so we take the
    *     latest row per `agent_session_id` and SUM across distinct sessions
    *     (additive over a task's main + isolated-swimlane sessions).
-   *   - model / exit code / tool breakdown come from the latest record (the most
-   *     recent run's values), and the timeline spans the task's whole life.
+   *   - the tool breakdown merges every row's per-tool stats by tool name, over
+   *     the same records the tool-call count sums, so the table adds up to it;
+   *   - model / exit code come from the latest record (the most recent run's
+   *     values), and the timeline spans the task's whole life.
    */
   getSummaryForTask(taskId: string): SessionSummary | null {
     const latestRecord = this.db.prepare(
@@ -636,8 +726,32 @@ export class SessionRepository {
       startedAt: aggregated.earliest_started_at,
       exitedAt: aggregated.latest_ended_at,
       exitCode: latestRecord.exit_code,
-      toolBreakdown: parseToolBreakdown(latestRecord.tool_breakdown),
+      toolBreakdown: this.mergedToolBreakdownsByTask(taskId).get(taskId) ?? [],
     };
+  }
+
+  /**
+   * Every costed record's per-tool rows merged by tool name, keyed by task:
+   * the record set the summaries' `tool_call_count` sum covers, so each task's
+   * table adds up to its count. One task's when `taskId` is given, else every
+   * task's. Parsed in JS with the shared merge, so a malformed entry is dropped
+   * the same way for both summaries.
+   */
+  private mergedToolBreakdownsByTask(taskId?: string): Map<string, PerToolStat[]> {
+    const statement = this.db.prepare(
+      `SELECT task_id, tool_breakdown FROM sessions
+       WHERE total_cost_usd IS NOT NULL AND tool_breakdown IS NOT NULL${taskId === undefined ? '' : ' AND task_id = ?'}`
+    );
+    const breakdownRows = (taskId === undefined ? statement.all() : statement.all(taskId)) as Array<{ task_id: string; tool_breakdown: string }>;
+    const breakdownsByTask = new Map<string, PerToolStat[][]>();
+    for (const breakdownRow of breakdownRows) {
+      const groups = breakdownsByTask.get(breakdownRow.task_id) ?? [];
+      groups.push(parseToolBreakdown(breakdownRow.tool_breakdown));
+      breakdownsByTask.set(breakdownRow.task_id, groups);
+    }
+    const mergedByTask = new Map<string, PerToolStat[]>();
+    for (const [groupTaskId, groups] of breakdownsByTask) mergedByTask.set(groupTaskId, mergeToolBreakdowns(groups));
+    return mergedByTask;
   }
 
   /**
@@ -651,7 +765,11 @@ export class SessionRepository {
    * MAX files_changed, MIN/MAX timeline; tokens take the latest row per session
    * lineage (COALESCE(agent_session_id, id)) summed across lineages, because a
    * flat SUM would double-count a session resumed across restarts; scalars
-   * (model / exit code / tool breakdown) come from the latest record.
+   * (model / exit code) come from the latest record. The tool breakdown merges
+   * every costed row's stats by tool name, in JS with the shared merge, so a
+   * malformed entry is dropped exactly as getSummaryForTask drops it; that
+   * parse is O(rows with a breakdown), which is why this runs in the
+   * retrieval worker.
    */
   listAllSummaries(): Record<string, SessionSummary> {
     const rows = this.db.prepare(
@@ -659,7 +777,7 @@ export class SessionRepository {
          SELECT id, task_id, agent_session_id, total_cost_usd, total_input_tokens,
                 total_output_tokens, model_display_name, total_duration_ms, exit_code,
                 started_at, exited_at, suspended_at, tool_call_count, lines_added,
-                lines_removed, files_changed, tool_breakdown, compaction_count
+                lines_removed, files_changed, compaction_count
          FROM sessions
          WHERE total_cost_usd IS NOT NULL
        ),
@@ -696,7 +814,7 @@ export class SessionRepository {
        ),
        latest AS (
          SELECT task_id, agent_session_id, id AS record_id, model_display_name,
-                exit_code, tool_breakdown,
+                exit_code,
                 ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC) AS rn
          FROM costed
        )
@@ -717,8 +835,7 @@ export class SessionRepository {
          latest.agent_session_id,
          latest.record_id,
          latest.model_display_name,
-         latest.exit_code,
-         latest.tool_breakdown
+         latest.exit_code
        FROM agg
        JOIN lineage_tokens ON lineage_tokens.task_id = agg.task_id
        JOIN latest ON latest.task_id = agg.task_id AND latest.rn = 1
@@ -741,9 +858,9 @@ export class SessionRepository {
       record_id: string;
       model_display_name: string | null;
       exit_code: number | null;
-      tool_breakdown: string | null;
     }>;
 
+    const mergedBreakdownsByTask = this.mergedToolBreakdownsByTask();
     const result: Record<string, SessionSummary> = {};
     for (const row of rows) {
       result[row.task_id] = {
@@ -762,7 +879,7 @@ export class SessionRepository {
         startedAt: row.earliest_started_at,
         exitedAt: row.latest_ended_at,
         exitCode: row.exit_code,
-        toolBreakdown: parseToolBreakdown(row.tool_breakdown),
+        toolBreakdown: mergedBreakdownsByTask.get(row.task_id) ?? [],
       };
     }
     return result;

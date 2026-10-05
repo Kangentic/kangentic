@@ -378,15 +378,38 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
 }
 
 /**
+ * Marker a filled clone keeps inside its `.git`. dev.js wipes the whole data dir
+ * on every real launch, so the marker only ever survives an in-app restart, which
+ * is exactly when the fill must not run again.
+ */
+const PREVIEW_FILLED_MARKER = 'kangentic-preview-filled';
+
+/**
  * Populate a preview clone's working tree from HEAD (the slow checkout, ~seconds on
  * Windows). Call this AFTER the board is open so it never contends with the project
  * open or delays boot. Resolves when done; swallows errors (best-effort).
+ *
+ * Runs once per clone. After an in-app restart (dev.js respawns Electron on the same
+ * data dir) the boot adopts the clone and calls this again, and a second
+ * `reset --hard` would land under an agent the restart just resumed and discard its
+ * uncommitted work. The marker written after the first fill turns that call into a
+ * no-op.
  */
 export async function fillPreviewClone(clonePath: string): Promise<void> {
+  const markerPath = path.join(clonePath, '.git', PREVIEW_FILLED_MARKER);
+  if (fs.existsSync(markerPath)) return;
   try {
     await runPreviewGit(clonePath, ['reset', '--hard', 'HEAD']);
   } catch (fillError) {
     console.warn(`[DEV] Background working-tree fill failed for ${clonePath}:`, fillError);
+    return;
+  }
+  // Its own try: the tree is filled by now, so a failed marker write must not
+  // report a failed fill. The next in-app restart will fill again.
+  try {
+    await fs.promises.writeFile(markerPath, new Date().toISOString());
+  } catch (markerError) {
+    console.warn(`[DEV] Working tree filled, but the fill marker could not be written for ${clonePath}:`, markerError);
   }
 }
 

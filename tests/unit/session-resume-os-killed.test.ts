@@ -337,6 +337,11 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
 
       // The fresh-spawn fallback was NOT taken (resume mode, not null).
       expect(spawnArg.agentSessionId).not.toBeNull();
+
+      // The spawn analytics event reads the mode off the session, before the
+      // new record exists, so the spawn and the record carry the same one.
+      expect(spawnArg.permissionMode).toBe('default');
+      expect(sessionRepoInsert).toHaveBeenCalledWith(expect.objectContaining({ permission_mode: 'default' }));
     });
   });
 

@@ -125,6 +125,23 @@ describe('preview clone git isolation', () => {
     ).rejects.toThrow();
   });
 
+  it('fills a clone once, so an in-app restart does not reset an agent\'s work in it', async () => {
+    // After an in-app restart the boot adopts the same clone and calls the fill
+    // again, while the agent the restart resumed may have uncommitted edits there.
+    const realClone = path.join(previewProjectsDir, 'project-3');
+    git(tempDir, ['clone', '--no-checkout', '--local', outerRepo, realClone]);
+    git(realClone, ['config', 'core.autocrlf', 'false']);
+
+    await fillPreviewClone(realClone);
+    expect(fs.readFileSync(path.join(realClone, 'tracked.txt'), 'utf-8')).toBe('committed\n');
+
+    fs.writeFileSync(path.join(realClone, 'tracked.txt'), 'the resumed agent\'s edit\n');
+    await fillPreviewClone(realClone);
+
+    expect(fs.readFileSync(path.join(realClone, 'tracked.txt'), 'utf-8')).toBe('the resumed agent\'s edit\n');
+    expectOuterWorkIntact();
+  });
+
   it('still fills a real clone and resolves its task worktrees', async () => {
     const realClone = path.join(previewProjectsDir, 'project-2');
     git(tempDir, ['clone', '--no-checkout', '--local', outerRepo, realClone]);

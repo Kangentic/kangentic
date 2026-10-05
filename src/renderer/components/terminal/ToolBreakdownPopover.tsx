@@ -6,17 +6,21 @@ import { ByToolTable } from '../shared/ByToolTable';
 import type { PerToolStat } from '../../../shared/types';
 
 /**
- * Live per-tool breakdown popover for the ContextBar's tool-call pill.
+ * Per-tool breakdown popover for the ContextBar's tool-call pill, covering
+ * every run of the session: a resume is a new run, and the earlier runs' rows
+ * are merged in by main.
  *
  * Mirrors ContextBarPopover's positioning (opens above, since the bar is
  * pinned to the bottom of its container) and dismissal (capture-phase
  * outside-click + Escape with stopPropagation so the parent dialog does not
  * also close), but renders the shared `ByToolTable` fed by two on-demand
- * pulls: `sessions.getToolBreakdown` (the live counts and durations, instant)
- * and `sessions.getToolResultTokens` (per-tool result-token estimates read from
- * the agent's transcript in the retrieval worker, merged on by tool name). Both
- * refetch whenever `refreshSignal` (the live tool-call count) changes, so the
- * table stays current while open; nothing runs while it is closed.
+ * pulls: `sessions.getToolBreakdown` (counts and durations across runs,
+ * instant, with the Tokens earlier runs already stored) and
+ * `sessions.getToolResultTokens` (the Tokens total across runs, read from the
+ * agent's transcripts in the retrieval worker, which replaces each row's value
+ * by tool name). Both refetch whenever `refreshSignal` (the tool-call count)
+ * changes, so the table stays current while open; nothing runs while it is
+ * closed.
  *
  * The rows arrive after the popover has mounted and been measured in its empty
  * state. `usePopoverPosition` anchors the fixed popover on its trigger-facing
@@ -32,7 +36,7 @@ export function ToolBreakdownPopover({
 }: {
   triggerRef: React.RefObject<HTMLElement | null>;
   sessionId: string;
-  /** Live tool-call count; a change triggers a refetch so the table stays current. */
+  /** The pill's tool-call count; a change triggers a refetch so the table stays current. */
   refreshSignal: number;
   onClose: () => void;
   testId?: string;

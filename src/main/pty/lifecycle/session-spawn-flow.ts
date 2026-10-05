@@ -95,6 +95,15 @@ export interface SpawnFlowContext {
   restoredGrid?: (grid: { cols: number; rows: number }) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
   /**
+   * Load what the session's earlier runs (earlier records of its task and
+   * isolated swimlane) add to its tool-call count, so a resumed session's pill
+   * does not start at zero. Called once the row is registered and telemetry
+   * initialised, before the status-file reader can stamp a first usage. The
+   * caller skips a transient session (a Command Terminal, which has no track)
+   * and never throws. A context built without this counts this run alone.
+   */
+  loadEarlierRuns?: (sessionId: string) => void;
+  /**
    * True once a teardown aimed at this session or its task (a kill, remove or
    * suspend, by id or task-wide) has landed while it spawns. SessionManager
    * tracks every spawn it starts; a context built without this never cancels.
@@ -422,6 +431,7 @@ export async function performSpawn(
     exitSequence: input.exitSequence ?? ['\x03'],
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
+    permissionMode: input.permissionMode ?? null,
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
   };
 
@@ -451,6 +461,7 @@ export async function performSpawn(
   // prompt - so the indicator does not flash idle during boot. Resumes and
   // transient command terminals start idle: they wait for the user.
   context.telemetry.initSession(id, input.agentParser, !input.resuming && !input.transient);
+  context.loadEarlierRuns?.(id);
 
   // Dev-only trace recorder: register the session directory so passive
   // PTY-chunk and status-delta recording can target the right files.

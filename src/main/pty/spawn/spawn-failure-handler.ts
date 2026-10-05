@@ -90,6 +90,7 @@ export function handleSpawnFailure(
     isolatedSwimlaneId: input.isolatedSwimlaneId,
     exitSequence: input.exitSequence ?? ['\x03'],
     agentParser: input.agentParser,
+    permissionMode: input.permissionMode ?? null,
   };
   context.registry.set(id, failedSession);
   // Seed the host's ring with the diagnostic scrollback, so the failed

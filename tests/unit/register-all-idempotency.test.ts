@@ -63,6 +63,8 @@ vi.mock('../../src/main/pty/session-manager', () => {
       spawn = vi.fn();
       kill = vi.fn();
       enableTranscripts = vi.fn();
+      // registerAllIpc wires where a resumed session's earlier runs come from.
+      setEarlierRunsSource = vi.fn();
       // The pty-host-lost listener files each lost session under its project.
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
     },

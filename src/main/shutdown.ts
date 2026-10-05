@@ -28,6 +28,14 @@ interface ShutdownDependencies {
   clearPendingTimers: () => void;
   isEphemeral: boolean;
   /**
+   * Whether this quit is a restart the app asked for (app-relaunch.ts). An
+   * ephemeral preview keeps its open project in the index then: the relaunch
+   * adopts the same project row and resumes its suspended sessions. Required,
+   * so a dependency object that drops it fails the typecheck instead of
+   * quietly deleting the preview's project on every in-app restart.
+   */
+  isRestartRequested: () => boolean;
+  /**
    * Whether a young session's force-kill may ride the before-quit drain's
    * timer (see SessionManager.killAll). True only on a route where that drain
    * runs: a user quit and the macOS/Linux powerMonitor shutdown. False for a
@@ -170,7 +178,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
           const usageHistoryRepo = new UsageHistoryRepository(db);
           const taskRepo = new TaskRepository(db);
           for (const session of sessions) {
-            const record = sessionRepo.getLatestForTask(session.taskId);
+            // The session's own record with no fallback (see
+            // resolveOwnSessionRecord). A Command Terminal has no record and
+            // is skipped.
+            const record = sessionRepo.findByAnyId(session.id);
             if (record && record.status === 'running') {
               // Flush in-flight metrics from usageCache to the DB BEFORE
               // marking suspended. captureSessionMetrics is fully synchronous
@@ -218,12 +229,17 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     // The worktree directory cleanup (async) is skipped here - pruneStaleWorktreeProjects()
     // handles it on next launch of the main app.
     //
+    // Not on a restart the app asked for: dev.js respawns Electron on the same
+    // data dir, the boot adopts the project row by path, and the sessions
+    // suspended above resume into it. Deleting the row here made every in-app
+    // restart of a preview come back to an empty board.
+    //
     // Wrapped for the same reason the pre-kill steps are: this writes to the
     // global index DB, which can be read-only (Sentry DESKTOP-9), and an
     // unwrapped throw here lands in the outer catch and skips closeAll() below.
     // Open SQLite handles keep the libuv loop referenced past a clean quit,
     // which is the leak class that ends in the 6s hard failsafe exiting with 1.
-    if (dependencies.isEphemeral) {
+    if (dependencies.isEphemeral && !dependencies.isRestartRequested()) {
       runCleanupStep('deleteEphemeralProject', () => {
         const projectId = dependencies.getCurrentProjectId();
         if (projectId) {

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { PtyDisposable, PtyHandle } from './host/pty-host-client';
 import type {
   AgentParser,
+  PermissionMode,
   Session,
   SessionAttachment,
   SessionRecord,
@@ -87,6 +88,10 @@ export interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
+  /** The resolved permission mode the session spawned under (see
+   *  `SpawnSessionInput.permissionMode`). Null for a Command Terminal and any
+   *  spawn that does not pass one. */
+  permissionMode?: PermissionMode | null;
   /** Per-session telemetry parser for adapters that emit machine-readable
    *  output over the PTY (e.g. Cursor's stream-json). Built on first PTY
    *  data via `agentParser.runtime.streamOutput.createParser()`. */
@@ -439,6 +444,10 @@ export class SessionRegistry {
     return this.sessions.get(sessionId)?.agentName;
   }
 
+  getSessionPermissionMode(sessionId: string): PermissionMode | null {
+    return this.sessions.get(sessionId)?.permissionMode ?? null;
+  }
+
   getSession(sessionId: string): Session | undefined {
     const session = this.sessions.get(sessionId);
     return session ? toSession(session) : undefined;
@@ -550,6 +559,8 @@ export class SessionRegistry {
       resuming: false,
       transient: false,
       exitSequence: ['\x03'],
+      // A placeholder spawned nothing, so it runs under no mode.
+      permissionMode: null,
     };
     this.sessions.set(id, session);
     return toSession(session);
