@@ -7,6 +7,18 @@ import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared
 import { installConsoleCapture } from './diagnostics/console-capture';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 
+// Decodes the standard base64 main writes with `Buffer.from(text, 'utf-8').toString('base64')`.
+// Web APIs only, never `Buffer`: this preload is sandboxed, and Electron 45 removes `Buffer`,
+// `setImmediate` and the `events` / `timers` / `url` shims from sandboxed preloads. A `Buffer`
+// here would throw inside the descriptor read's try and silently boot every pop-out as the full
+// app. tests/unit/preload-web-apis-only.test.ts keeps Node globals out of src/preload.
+function decodeBase64Utf8(encoded: string): string {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return new TextDecoder().decode(bytes);
+}
+
 // Pop-out descriptor: `--kangentic-popout=<base64 JSON>` is appended to a pop-out window's
 // additionalArguments by the main process (pop-out-window-manager.ts). Read once at preload
 // time; null for the main window, which never carries this flag. Malformed input degrades to
@@ -15,7 +27,7 @@ function readPopOutDescriptor(): PopOutDescriptor | null {
   const arg = process.argv.find((value) => value.startsWith(POPOUT_ARG_PREFIX));
   if (!arg) return null;
   try {
-    return JSON.parse(Buffer.from(arg.slice(POPOUT_ARG_PREFIX.length), 'base64').toString('utf-8')) as PopOutDescriptor;
+    return JSON.parse(decodeBase64Utf8(arg.slice(POPOUT_ARG_PREFIX.length))) as PopOutDescriptor;
   } catch {
     return null;
   }
@@ -860,7 +872,7 @@ if (__KANGENTIC_DEV__) {
   const PREVIEW_TITLE_FLAG = '--kangentic-preview-task-title=';
   const previewTitleArg = process.argv.find((arg) => arg.startsWith(PREVIEW_TITLE_FLAG));
   const previewTaskTitle = previewTitleArg
-    ? Buffer.from(previewTitleArg.slice(PREVIEW_TITLE_FLAG.length), 'base64').toString('utf-8')
+    ? decodeBase64Utf8(previewTitleArg.slice(PREVIEW_TITLE_FLAG.length))
     : null;
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
