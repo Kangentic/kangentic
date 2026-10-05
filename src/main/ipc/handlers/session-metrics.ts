@@ -4,6 +4,7 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { SessionManager } from '../../pty/session-manager';
+import type { SessionRecord } from '../../../shared/types';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -130,6 +131,44 @@ export function drainTranscriptReadQueueForTests(): Promise<void> {
   return transcriptReadQueue.onIdle();
 }
 
+/** The adapter methods that read a run's transcript in the retrieval worker. */
+type TranscriptReadCapability = 'transcriptUsage' | 'transcriptToolCounts' | 'transcriptToolResultTokens';
+
+interface RunTranscriptLocation {
+  agentName: string;
+  transcriptPath: string | null;
+  agentSessionId: string | null;
+  cwd: string | null;
+  record: SessionRecord | null;
+}
+
+/**
+ * Where `sessionId`'s transcript is, for a read through `capability`. The path
+ * the agent reported in status.json when there is one, else the record's agent
+ * session id and cwd for the adapter to derive it from. Null when the session
+ * has no agent, its adapter lacks the capability (so its transcript is never
+ * read), or neither source exists. The adapter is resolved from the session's
+ * recorded agent name, with no agent-name branching
+ * (agent-adapters-boundary rule).
+ */
+function locateRunTranscript(
+  sessionManager: SessionManager,
+  sessionRepo: SessionRepository | null,
+  sessionId: string,
+  recordId: string,
+  capability: TranscriptReadCapability,
+): RunTranscriptLocation | null {
+  const agentName = sessionManager.getSessionAgentName(sessionId);
+  if (!agentName) return null;
+  if (!agentRegistry.get(agentName)?.[capability]) return null;
+  const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
+  const record = sessionRepo?.findByAnyId(recordId) ?? null;
+  const agentSessionId = record?.agent_session_id ?? null;
+  const cwd = record?.cwd ?? null;
+  if (!transcriptPath && !(agentSessionId && cwd)) return null;
+  return { agentName, transcriptPath, agentSessionId, cwd, record };
+}
+
 /**
  * Fire-and-forget refinement of a session record's cumulative token columns from
  * the agent's transcript (the authoritative lifetime token source; the snapshot
@@ -158,16 +197,9 @@ export function refineTranscriptTokens(
   // must never throw into the caller (suspend / move / reconcile run this right
   // before marking the record suspended), so the whole body is guarded.
   try {
-    const agentName = sessionManager.getSessionAgentName(sessionId);
-    if (!agentName) return;
-    const adapter = agentRegistry.get(agentName);
-    if (!adapter?.transcriptUsage) return;
-
-    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
-    const record = sessionRepo.findByAnyId(recordId);
-    const agentSessionId = record?.agent_session_id ?? null;
-    const cwd = record?.cwd ?? null;
-    if (!transcriptPath && !(agentSessionId && cwd)) return;
+    const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, recordId, 'transcriptUsage');
+    if (!located) return;
+    const { agentName, transcriptPath, agentSessionId, cwd } = located;
 
     // Read in the retrieval worker: a whole-file parse of a transcript that
     // can run to hundreds of MB, which used to stream through main.
@@ -232,16 +264,9 @@ export async function readTranscriptToolResultTokens(
   sessionId: string,
 ): Promise<Record<string, number> | null> {
   try {
-    const agentName = sessionManager.getSessionAgentName(sessionId);
-    if (!agentName) return null;
-    const adapter = agentRegistry.get(agentName);
-    if (!adapter?.transcriptToolResultTokens) return null;
-
-    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
-    const record = sessionRepo?.findByAnyId(sessionId) ?? null;
-    const agentSessionId = record?.agent_session_id ?? null;
-    const cwd = record?.cwd ?? null;
-    if (!transcriptPath && !(agentSessionId && cwd)) return null;
+    const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, sessionId, 'transcriptToolResultTokens');
+    if (!located) return null;
+    const { agentName, transcriptPath, agentSessionId, cwd, record } = located;
 
     return await retrievalClient.call(
       'transcript.toolResultTokens',
@@ -296,16 +321,9 @@ export function refineTranscriptToolCounts(
   recordId: string,
 ): void {
   try {
-    const agentName = sessionManager.getSessionAgentName(sessionId);
-    if (!agentName) return;
-    const adapter = agentRegistry.get(agentName);
-    if (!adapter?.transcriptToolCounts) return;
-
-    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
-    const record = sessionRepo.findByAnyId(recordId);
-    const agentSessionId = record?.agent_session_id ?? null;
-    const cwd = record?.cwd ?? null;
-    if (!transcriptPath && !(agentSessionId && cwd)) return;
+    const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, recordId, 'transcriptToolCounts');
+    if (!located) return;
+    const { agentName, transcriptPath, agentSessionId, cwd, record } = located;
 
     // Scoped to this run: the transcript can hold every `--resume` of the
     // conversation, and this record (like the live count it backfills or

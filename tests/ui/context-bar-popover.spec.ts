@@ -405,12 +405,12 @@ test.describe('ContextBar model/effort popover', () => {
 
   test('pre-persist failure rolls back optimistic update and shows a "Could not apply" toast', async () => {
     // The handler returns ok:false with a reason that does NOT start with
-    // 'suspend failed', 'respawn failed', or 'respawn aborted' — meaning the DB
+    // 'suspend failed', 'respawn failed', or 'respawn aborted', so the DB
     // write never happened. The store must roll back the optimistic update so
     // the visible pill stays in sync with the DB.
     await applyClaudeUsage(page, SESSION_ID, 'opus', 'Opus 4.7 (1M context)', 'xhigh');
 
-    // Snapshot the task's model_override before any click — should be null.
+    // Snapshot the task's model_override before any click. It should be null.
     const overrideBefore = await page.evaluate((taskId) => {
       const stores = (window as unknown as {
         __zustandStores?: { board: { getState: () => { tasks: Array<{ id: string; model_override: string | null }> } } };
@@ -451,8 +451,8 @@ test.describe('ContextBar model/effort popover', () => {
   });
 
   test('post-persist failure keeps optimistic update and shows a "Saved, but..." toast', async () => {
-    // The handler returns ok:false with a reason starting with 'suspend failed:'
-    // — meaning the DB write DID happen, but applying the change to the live
+    // The handler returns ok:false with a reason starting with 'suspend failed:',
+    // so the DB write DID happen, but applying the change to the live
     // session failed. The store must KEEP the optimistic update (so the pill
     // stays in sync with what the DB now has) and show the recovery toast.
     await applyClaudeUsage(page, SESSION_ID, 'opus', 'Opus 4.7 (1M context)', 'xhigh');
@@ -711,6 +711,108 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
       await setTaskModelOverride('claude-opus-4-7');
       await modelTrigger.click();
       await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-7"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// Own page: this case resizes the window, which must not leak into the shared one,
+// and it needs a model list long enough to outgrow the popover's 340px cap, which
+// is injected before the app boots like the grouped-models case above.
+test.describe('ContextBar model popover - short window', () => {
+  /** Room left above the trigger, under the popover's 340px cap so the cap must give. */
+  const TARGET_TRIGGER_TOP_PX = 200;
+  /** Slack for sub-pixel rounding, which differs between Windows and headless Linux. */
+  const PLACEMENT_TOLERANCE_PX = 2;
+  /** `usePopoverPosition`'s gap to the trigger plus its padding to the window edge. */
+  const PUBLISHED_HEIGHT_INSET_PX = 16;
+  /** The popover's own cap, `max-h-[min(340px,...)]`. */
+  const POPOVER_CAP_PX = 340;
+  /**
+   * Twelve families with no digits, so none is a superseded generation of another
+   * and every one is a top-level row (about 38px each: well over the cap).
+   */
+  const MODEL_IDS = [
+    'model-alpha', 'model-bravo', 'model-charlie', 'model-delta', 'model-echo', 'model-foxtrot',
+    'model-golf', 'model-hotel', 'model-india', 'model-juliet', 'model-kilo', 'model-lima',
+  ];
+
+  test('caps itself to the room above the trigger and scrolls inside', async () => {
+    const preconfig = `
+      window.__mockAgentListOverrides = {
+        claude: {
+          capabilities: {
+            effortLevels: ['low', 'medium', 'high'],
+            supportsModelOverride: true,
+            models: ${JSON.stringify(MODEL_IDS)},
+          },
+        },
+      };
+      ${CLAUDE_RUNNING_PRECONFIG}
+    `;
+    const { browser, page } = await launchWithState(preconfig);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await applyClaudeUsage(page, SESSION_ID, 'model-alpha', 'Model Alpha', 'high');
+
+      const trigger = page.locator('[data-testid="context-bar-model-trigger"]');
+      await expect(trigger).toBeVisible({ timeout: 5000 });
+      // The bar is pinned to the bottom of its pane, so read its distance from the
+      // window bottom and shrink the window around it.
+      const viewport = page.viewportSize()!;
+      const startBox = await trigger.boundingBox();
+      if (!startBox) throw new Error('model trigger has no box');
+      const distanceFromBottom = viewport.height - startBox.y;
+      await page.setViewportSize({ width: viewport.width, height: Math.round(distanceFromBottom + TARGET_TRIGGER_TOP_PX) });
+      // The popover anchors to where the trigger is at open and nothing re-measures
+      // while it is open, so wait for the trigger to hold still, not just to move.
+      let previousTop = Number.NaN;
+      await expect.poll(async () => {
+        const top = (await trigger.boundingBox())?.y ?? Number.POSITIVE_INFINITY;
+        const steady = top === previousTop;
+        previousTop = top;
+        return steady && top < POPOVER_CAP_PX;
+      }, { timeout: 5000, intervals: [100] }).toBe(true);
+
+      await trigger.click();
+      const popover = page.locator('[data-testid="context-bar-model-popover"]');
+      await expect(popover).toBeVisible({ timeout: 3000 });
+      await expect(popover.locator('[data-testid^="context-bar-model-popover-option-"]')).toHaveCount(MODEL_IDS.length);
+      // The popover's own grow-in, so the rect read below is the settled one.
+      await popover.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+      });
+
+      const geometry = await page.evaluate(() => {
+        const popoverElement = document.querySelector<HTMLElement>('[data-testid="context-bar-model-popover"]');
+        const triggerElement = document.querySelector('[data-testid="context-bar-model-trigger"]');
+        if (!popoverElement || !triggerElement) throw new Error('popover or trigger is not in the page');
+        const popoverRect = popoverElement.getBoundingClientRect();
+        const triggerRect = triggerElement.getBoundingClientRect();
+        return {
+          popoverTop: popoverRect.top,
+          popoverBottom: popoverRect.bottom,
+          popoverOffsetHeight: popoverElement.offsetHeight,
+          triggerTop: triggerRect.top,
+          scrollHeight: popoverElement.scrollHeight,
+          clientHeight: popoverElement.clientHeight,
+          publishedHeight: getComputedStyle(popoverElement).getPropertyValue('--popover-available-height'),
+        };
+      });
+      const publishedHeight = parseFloat(geometry.publishedHeight);
+
+      // Preconditions, so the case cannot pass vacuously: the room above the
+      // trigger is under the popover's cap, and the list is taller than the room.
+      expect(publishedHeight).toBeGreaterThan(0);
+      expect(publishedHeight).toBeLessThan(POPOVER_CAP_PX - PUBLISHED_HEIGHT_INSET_PX);
+      expect(geometry.scrollHeight).toBeGreaterThan(publishedHeight);
+
+      // Above the trigger, inside the window, no taller than the room, scrolling.
+      expect(geometry.popoverBottom).toBeLessThanOrEqual(geometry.triggerTop + PLACEMENT_TOLERANCE_PX);
+      expect(geometry.popoverTop).toBeGreaterThanOrEqual(-PLACEMENT_TOLERANCE_PX);
+      expect(geometry.popoverOffsetHeight).toBeLessThanOrEqual(publishedHeight + PLACEMENT_TOLERANCE_PX);
+      expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
     } finally {
       await browser.close();
     }

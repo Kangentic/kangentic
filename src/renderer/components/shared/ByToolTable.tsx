@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
@@ -84,6 +84,30 @@ function compareRows(left: PerToolStat, right: PerToolStat, sort: SortState): nu
   const difference = sort.direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
   return difference || byName;
 }
+
+const VALUE_CELL_CLASS = 'py-1 pr-3 last:pr-0 text-right text-fg-secondary';
+
+function formatOptionalValue(value: number | undefined, format: (value: number) => string): string {
+  return typeof value === 'number' ? format(value) : '-';
+}
+
+/** A sortable column after Tool and Calls, shown only when some row has a value for it. */
+interface ValueColumn {
+  key: Exclude<NumericSortKey, 'calls'>;
+  label: string;
+  /** Header tooltip, given the table's count of calls that waited on the user. */
+  title?: (waitedCalls: number) => string;
+  cell: (row: PerToolStat) => ReactNode;
+}
+
+const VALUE_COLUMNS: ValueColumn[] = [
+  { key: 'time', label: 'Time', title: timeColumnTitle, cell: (row) => formatOptionalDuration(runTimeMs(row)) },
+  { key: 'avg', label: 'Avg', title: () => AVG_COLUMN_TITLE, cell: (row) => formatOptionalDuration(averageDurationMs(row)) },
+  { key: 'tokens', label: 'Tokens', title: () => TOKENS_COLUMN_TITLE, cell: (row) => formatOptionalValue(row.resultTokens, formatTokenCount) },
+  { key: 'cost', label: 'Cost', cell: (row) => formatOptionalValue(row.costUsd, formatCost) },
+  { key: 'inputTokens', label: 'In', cell: (row) => formatOptionalValue(row.inputTokens, formatTokenCount) },
+  { key: 'outputTokens', label: 'Out', cell: (row) => formatOptionalValue(row.outputTokens, formatTokenCount) },
+];
 
 function SortableHeader({
   label,
@@ -179,6 +203,8 @@ export function ByToolTable({ rows }: ByToolTableProps) {
       : { key, direction: key === 'tool' ? 'asc' : 'desc' });
   };
 
+  const valueColumns = VALUE_COLUMNS.filter((column) => columnShown[column.key]);
+
   return (
     <div
       data-testid="session-summary-by-tool"
@@ -189,12 +215,16 @@ export function ByToolTable({ rows }: ByToolTableProps) {
           <tr className="text-fg-faint">
             <SortableHeader label="Tool" sortKey="tool" sort={sort} onSort={handleSort} align="left" />
             <SortableHeader label="Calls" sortKey="calls" sort={sort} onSort={handleSort} />
-            {hasDurations && <SortableHeader label="Time" sortKey="time" sort={sort} onSort={handleSort} title={timeColumnTitle(waitedCalls)} />}
-            {hasDurations && <SortableHeader label="Avg" sortKey="avg" sort={sort} onSort={handleSort} title={AVG_COLUMN_TITLE} />}
-            {anyResultTokens && <SortableHeader label="Tokens" sortKey="tokens" sort={sort} onSort={handleSort} title={TOKENS_COLUMN_TITLE} />}
-            {anyCost && <SortableHeader label="Cost" sortKey="cost" sort={sort} onSort={handleSort} />}
-            {anyInputTokens && <SortableHeader label="In" sortKey="inputTokens" sort={sort} onSort={handleSort} />}
-            {anyOutputTokens && <SortableHeader label="Out" sortKey="outputTokens" sort={sort} onSort={handleSort} />}
+            {valueColumns.map((column) => (
+              <SortableHeader
+                key={column.key}
+                label={column.label}
+                sortKey={column.key}
+                sort={sort}
+                onSort={handleSort}
+                title={column.title?.(waitedCalls)}
+              />
+            ))}
             {anyInterrupted && <th className="text-right font-normal pt-2 pb-1">Failed</th>}
           </tr>
         </thead>
@@ -204,33 +234,10 @@ export function ByToolTable({ rows }: ByToolTableProps) {
               <td className="py-1 pr-3 last:pr-0 text-fg-secondary font-mono max-w-[180px] truncate" title={row.toolName}>
                 {row.toolName}
               </td>
-              <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">{row.callCount}</td>
-              {hasDurations && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">{formatOptionalDuration(runTimeMs(row))}</td>
-              )}
-              {hasDurations && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">{formatOptionalDuration(averageDurationMs(row))}</td>
-              )}
-              {anyResultTokens && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">
-                  {typeof row.resultTokens === 'number' ? formatTokenCount(row.resultTokens) : '-'}
-                </td>
-              )}
-              {anyCost && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">
-                  {typeof row.costUsd === 'number' ? formatCost(row.costUsd) : '-'}
-                </td>
-              )}
-              {anyInputTokens && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">
-                  {typeof row.inputTokens === 'number' ? formatTokenCount(row.inputTokens) : '-'}
-                </td>
-              )}
-              {anyOutputTokens && (
-                <td className="py-1 pr-3 last:pr-0 text-right text-fg-secondary">
-                  {typeof row.outputTokens === 'number' ? formatTokenCount(row.outputTokens) : '-'}
-                </td>
-              )}
+              <td className={VALUE_CELL_CLASS}>{row.callCount}</td>
+              {valueColumns.map((column) => (
+                <td key={column.key} className={VALUE_CELL_CLASS}>{column.cell(row)}</td>
+              ))}
               {anyInterrupted && (
                 <td className="py-1 text-right">
                   {row.interruptedCount > 0

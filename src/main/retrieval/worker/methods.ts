@@ -32,7 +32,6 @@ import type {
   KnowledgeGraphBuildProgress,
   KnowledgeGraphQueryHit,
   KnowledgeGraphSnapshotWire,
-  PerToolStat,
   SessionSummary,
   SubagentUsageTotals,
   TaskFanOut,
@@ -52,7 +51,7 @@ import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-
 import { readSummaryFingerprint, type SummaryCandidate } from '../summary/summary-sources';
 import { localUsageReader, type UsageReadName } from '../../usage-stats/project-usage-reader';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { replayToolBreakdowns } from '../../activity-engine/tool-breakdown-replay';
+import { replayToolBreakdowns, type ToolBreakdownReplayResult } from '../../activity-engine/tool-breakdown-replay';
 
 const indexStatus = createIndexStatusReader();
 
@@ -159,11 +158,12 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
     result: Record<string, SessionSummary>;
   };
   /** Finished sessions' per-tool breakdowns rebuilt from their own event logs
-   *  (`replayToolBreakdowns`), for the one-time duration repair. Ids with no
-   *  readable log are absent. Reads files only; main writes the rows. */
+   *  (`replayToolBreakdowns`), for the one-time duration repair, plus the ids
+   *  whose log exists but could not be read to its end. Ids with no log are
+   *  in neither. Reads files only; main writes the rows. */
   'sessions.replayToolBreakdowns': {
     params: { sessionsDir: string; sessionIds: string[] };
-    result: Record<string, PerToolStat[]>;
+    result: ToolBreakdownReplayResult;
   };
   /** One of the usage dashboard's per-project reads (`ProjectUsageReader`),
    *  by name: main's `AsyncProjectUsageReader` types each result. */

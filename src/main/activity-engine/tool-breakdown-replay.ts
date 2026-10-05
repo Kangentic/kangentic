@@ -1,7 +1,19 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { UsageAccumulator } from './usage-accumulator';
 import { streamJsonlRecords } from '../agent/shared/history-scan';
 import type { PerToolStat, SessionEvent } from '../../shared/types';
+
+export interface ToolBreakdownReplayResult {
+  /** Rebuilt breakdowns, by session id, for every log read to its end. */
+  breakdowns: Record<string, PerToolStat[]>;
+  /**
+   * Ids whose log exists but could not be read to its end (a lock, a
+   * permission error, a read that failed partway), so the caller can try them
+   * again rather than treat them as done.
+   */
+  unreadable: string[];
+}
 
 /**
  * Rebuild finished sessions' per-tool breakdowns from their own event logs
@@ -12,30 +24,46 @@ import type { PerToolStat, SessionEvent } from '../../shared/types';
  * logs run to a hundred MB or more, and parsing them is work for off main.
  * Each log is streamed line by line, so the peak is one line, not one log.
  *
- * A session id that is not a plain id, or has no log readable to its end, is
- * left out of the result rather than answered with an empty or partial
- * breakdown, so the caller can tell "nothing to replay" from "replayed to
- * nothing".
+ * An id is in neither list when it is not a plain id or has no log at all:
+ * there is nothing to replay. A log that exists but cannot be read to its end
+ * goes in `unreadable`, never in `breakdowns`, since a partial replay would be
+ * a wrong answer, not a smaller one.
  */
 export async function replayToolBreakdowns(
   sessionsDir: string,
   sessionIds: readonly string[],
-): Promise<Record<string, PerToolStat[]>> {
-  const replayed: Record<string, PerToolStat[]> = {};
+): Promise<ToolBreakdownReplayResult> {
+  const breakdowns: Record<string, PerToolStat[]> = {};
+  const unreadable: string[] = [];
   for (const sessionId of sessionIds) {
     // Ids come from the sessions table, but this is a path segment.
     if (!SESSION_ID_PATTERN.test(sessionId)) continue;
+    const logPath = path.join(sessionsDir, sessionId, 'events.jsonl');
+    try {
+      await fs.stat(logPath);
+    } catch (error) {
+      if (!isMissingFileError(error)) unreadable.push(sessionId);
+      continue;
+    }
     const accumulator = new UsageAccumulator();
-    const readWholeLog = await streamJsonlRecords(path.join(sessionsDir, sessionId, 'events.jsonl'), (record) => {
+    const readWholeLog = await streamJsonlRecords(logPath, (record) => {
       if (isReplayableEvent(record)) accumulator.recordToolEvent(sessionId, record);
     });
-    if (!readWholeLog) continue;
-    replayed[sessionId] = accumulator.getToolBreakdown(sessionId);
+    if (!readWholeLog) {
+      unreadable.push(sessionId);
+      continue;
+    }
+    breakdowns[sessionId] = accumulator.getToolBreakdown(sessionId);
   }
-  return replayed;
+  return { breakdowns, unreadable };
 }
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9-]+$/;
+
+function isMissingFileError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
 
 function isReplayableEvent(value: Record<string, unknown>): value is Record<string, unknown> & SessionEvent {
   return typeof value.ts === 'number' && typeof value.type === 'string';

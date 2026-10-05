@@ -28,7 +28,7 @@ import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import { retrievalClient } from '../../retrieval/retrieval-client';
-import { repairToolBreakdownDurations, toolBreakdownRepairRan } from '../helpers/tool-breakdown-repair';
+import { repairToolBreakdownDurations } from '../helpers/tool-breakdown-repair';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -634,15 +634,15 @@ const toolBreakdownRepairsInFlight = new Set<string>();
  * and best-effort: the event logs are read in the retrieval worker, only
  * durations are ever patched, and a run that cannot finish leaves the
  * `schema_meta` flag unset so the next open tries again
- * (`helpers/tool-breakdown-repair.ts`). The flag is written only when a run
- * ends, so a second open path that fires while one runs would pass the flag
- * check and replay every log again; `toolBreakdownRepairsInFlight` skips it.
+ * (`helpers/tool-breakdown-repair.ts`, which returns at once once the flag is
+ * set). The flag is written only when a run ends, so a second open path that
+ * fires while one runs would replay every log again;
+ * `toolBreakdownRepairsInFlight` skips it.
  */
 function startToolBreakdownRepair(project: Project): void {
   if (toolBreakdownRepairsInFlight.has(project.id)) return;
   try {
     const db = getProjectDb(project.id);
-    if (toolBreakdownRepairRan(db)) return;
     toolBreakdownRepairsInFlight.add(project.id);
     void repairToolBreakdownDurations(
       db,
@@ -656,6 +656,9 @@ function startToolBreakdownRepair(project: Project): void {
       .then((result) => {
         if (result.repaired > 0) {
           console.log(`[TOOL-BREAKDOWN-REPAIR] ${project.name}: corrected tool durations on ${result.repaired} of ${result.scanned} session records`);
+        }
+        if (result.unreadable > 0) {
+          console.warn(`[TOOL-BREAKDOWN-REPAIR] ${project.name}: ${result.unreadable} event logs could not be read; the next open retries them`);
         }
       })
       .catch((error) => console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error))

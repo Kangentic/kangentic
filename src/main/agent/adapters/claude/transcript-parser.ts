@@ -662,7 +662,7 @@ export async function parseClaudeTranscriptUsage(filePath: string): Promise<Tran
   return { inputTokens, outputTokens };
 }
 
-/** One distinct tool call in a transcript, as the tool-count cursor holds it. */
+/** One distinct tool call in a transcript, as the tool-call cursor holds it. */
 interface ToolCallEntry {
   /** The assistant line's timestamp; +Infinity when it carried none, so the
    *  call counts under any `sinceMs` rather than vanishing. */
@@ -682,40 +682,51 @@ interface ToolCallEntry {
  * run: Claude appends every `--resume` of a conversation to the same file,
  * while a Kangentic session (and its record) covers a single run.
  */
-interface ToolCountsCursor {
+interface ToolCallCursor {
   /** File identity at the last read; a different inode is a replaced file. */
   ino: number;
   mtimeMs: number;
   /** First byte not yet consumed: always just past a complete line. */
   offset: number;
+  /**
+   * The bytes just before `offset` at the last read. A resume first checks
+   * they are unchanged, which catches what size, mtime and inode miss: a file
+   * rewritten in place to at least its old length, or a replacement whose
+   * inode reads the same (NTFS file ids past 2^53 lose precision as numbers,
+   * and some filesystems report 0).
+   */
+  tail: Buffer;
   calls: ToolCallEntry[];
   /** Calls by `tool_use` id: dedupes re-emitted messages and finds a result's call. */
   callById: Map<string, ToolCallEntry>;
 }
 
-const toolCountsCursorByPath = new Map<string, ToolCountsCursor>();
+const toolCallCursorByPath = new Map<string, ToolCallCursor>();
 /** Each path's latest read. A new call chains onto it rather than starting a
  *  second read of the same file, so overlapping popover refetches never stream
  *  a long transcript twice: the second one reads only the bytes appended since. */
-const toolCountsReadByPath = new Map<string, Promise<void>>();
+const toolCallReadByPath = new Map<string, Promise<void>>();
 
 /** Paths whose cursor is retained (the live popover's session, plus run-end
  *  backfills of recently ended sessions). */
-const TOOL_COUNTS_CURSOR_LIMIT = 16;
-/** Rough retained bytes per call (the entry plus its id's Map slot). */
-const TOOL_COUNTS_BYTES_PER_CALL = 128;
-const TOOL_COUNTS_CURSOR_BYTE_BUDGET = 32 * 1024 * 1024;
+const TOOL_CALL_CURSOR_LIMIT = 16;
+/** Retained bytes per call (the entry plus its id's Map slot). Measured at
+ *  about 88 in Node without pointer compression, so this leaves headroom. */
+const TOOL_CALL_BYTES_PER_CALL = 128;
+const TOOL_CALL_CURSOR_BYTE_BUDGET = 32 * 1024 * 1024;
 /** Bytes read per positioned read: bounds the peak to a chunk plus one line. */
-const TOOL_COUNTS_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+const TOOL_CALL_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+/** Length of `ToolCallCursor.tail`. */
+const TOOL_CALL_TAIL_BYTES = 64;
 
-function toolCountsCursorBytes(cursor: ToolCountsCursor): number {
-  return cursor.calls.length * TOOL_COUNTS_BYTES_PER_CALL;
+function toolCallCursorBytes(cursor: ToolCallCursor): number {
+  return cursor.calls.length * TOOL_CALL_BYTES_PER_CALL;
 }
 
-/** Test-only: drop every tool-count cursor between cases. */
-export function resetToolCountsCursorsForTests(): void {
-  toolCountsCursorByPath.clear();
-  toolCountsReadByPath.clear();
+/** Test-only: drop every tool-call cursor between cases. */
+export function resetToolCallCursorsForTests(): void {
+  toolCallCursorByPath.clear();
+  toolCallReadByPath.clear();
 }
 
 /**
@@ -743,10 +754,10 @@ export function resetToolCountsCursorsForTests(): void {
  * RESUMABLE. A per-path cursor keeps one entry per call and the byte offset of
  * the last complete line, so a repeat call reads only what was appended. Not
  * `parseClaudeTranscript`'s incremental cache, which is tail-windowed at 16 MB
- * and cannot see a whole session. A shrink, an mtime going backwards, or a new
- * inode resets to a full re-read; a failed read drops the cursor. Reads go in
- * fixed-size chunks, so the peak is one chunk plus the longest line, never the
- * whole file.
+ * and cannot see a whole session. A shrink, an mtime going backwards, a new
+ * inode, or changed bytes just before the offset resets to a full re-read; a
+ * failed read drops the cursor. Reads go in fixed-size chunks, so the peak is
+ * one chunk plus the longest line, never the whole file.
  *
  * Returns null when the file is missing/unreadable, a read failed partway, or
  * no tool_use falls in scope, so the caller keeps the live count. A partial
@@ -757,7 +768,7 @@ export function parseClaudeTranscriptToolCounts(
   filePath: string,
   sinceMs?: number | null,
 ): Promise<TranscriptToolCounts | null> {
-  return withToolCountsCursor(filePath, (cursor) => {
+  return withToolCallCursor(filePath, (cursor) => {
     const countByTool = new Map<string, number>();
     const resultTokensByTool = new Map<string, number>();
     let toolCallCount = 0;
@@ -790,7 +801,7 @@ export function parseClaudeTranscriptToolResultTokens(
   filePath: string,
   sinceMs?: number | null,
 ): Promise<Record<string, number> | null> {
-  return withToolCountsCursor(filePath, (cursor) => {
+  return withToolCallCursor(filePath, (cursor) => {
     const resultTokensByTool: Record<string, number> = {};
     for (const call of callsSince(cursor, sinceMs)) {
       if (call.resultTokens === undefined) continue;
@@ -800,7 +811,7 @@ export function parseClaudeTranscriptToolResultTokens(
   });
 }
 
-function* callsSince(cursor: ToolCountsCursor, sinceMs: number | null | undefined): Generator<ToolCallEntry> {
+function* callsSince(cursor: ToolCallCursor, sinceMs: number | null | undefined): Generator<ToolCallEntry> {
   const since = typeof sinceMs === 'number' && Number.isFinite(sinceMs) ? sinceMs : Number.NEGATIVE_INFINITY;
   for (const call of cursor.calls) {
     if (call.ts >= since) yield call;
@@ -812,59 +823,86 @@ function* callsSince(cursor: ToolCountsCursor, sinceMs: number | null | undefine
  * it, inside the same step so no later read can move the cursor in between.
  * Steps for one path run one after another. Null when the read failed.
  */
-function withToolCountsCursor<T>(filePath: string, view: (cursor: ToolCountsCursor) => T | null): Promise<T | null> {
-  const previous = toolCountsReadByPath.get(filePath) ?? Promise.resolve();
+function withToolCallCursor<T>(filePath: string, view: (cursor: ToolCallCursor) => T | null): Promise<T | null> {
+  const previous = toolCallReadByPath.get(filePath) ?? Promise.resolve();
   const step = async (): Promise<T | null> => {
-    const cursor = await advanceToolCountsCursor(filePath);
+    const cursor = await advanceToolCallCursor(filePath);
     return cursor ? view(cursor) : null;
   };
   // Run after the previous read either way: a failure there must not fail this one.
   const next = previous.then(step, step);
   const settled = next.then(() => undefined, () => undefined);
-  toolCountsReadByPath.set(filePath, settled);
+  toolCallReadByPath.set(filePath, settled);
   void settled.then(() => {
-    if (toolCountsReadByPath.get(filePath) === settled) toolCountsReadByPath.delete(filePath);
+    if (toolCallReadByPath.get(filePath) === settled) toolCallReadByPath.delete(filePath);
   });
   return next;
 }
 
-async function advanceToolCountsCursor(filePath: string): Promise<ToolCountsCursor | null> {
+async function advanceToolCallCursor(filePath: string): Promise<ToolCallCursor | null> {
   let stat: Awaited<ReturnType<typeof fs.stat>>;
   try {
     stat = await fs.stat(filePath);
   } catch {
-    toolCountsCursorByPath.delete(filePath);
+    toolCallCursorByPath.delete(filePath);
     return null;
   }
   const size = Number(stat.size);
   const mtimeMs = Number(stat.mtimeMs);
   const ino = Number(stat.ino);
-  let cursor = toolCountsCursorByPath.get(filePath);
-  if (!cursor || size < cursor.offset || mtimeMs < cursor.mtimeMs || ino !== cursor.ino) {
-    cursor = { ino, mtimeMs, offset: 0, calls: [], callById: new Map() };
+  const existing = toolCallCursorByPath.get(filePath);
+  // Nothing changed since the last read: answer without opening the file,
+  // which is the common case for a popover refetch.
+  if (existing && size === existing.offset && mtimeMs === existing.mtimeMs && ino === existing.ino) {
+    retainToolCallCursor(filePath, existing);
+    return existing;
   }
-  const advancing = cursor;
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
-    advancing.offset = await forEachCompleteLine(filePath, advancing.offset, size, (line) => {
-      applyToolCountsLine(advancing, line);
+    handle = await fs.open(filePath, 'r');
+    let cursor = existing;
+    if (!cursor || size < cursor.offset || mtimeMs < cursor.mtimeMs || ino !== cursor.ino
+        || !(await readTail(handle, cursor.offset)).equals(cursor.tail)) {
+      cursor = { ino, mtimeMs, offset: 0, tail: Buffer.alloc(0), calls: [], callById: new Map() };
+    }
+    const advancing = cursor;
+    advancing.offset = await forEachCompleteLine(handle, filePath, advancing.offset, size, (line) => {
+      applyToolCallLine(advancing, line);
     });
+    advancing.tail = await readTail(handle, advancing.offset);
+    advancing.ino = ino;
+    advancing.mtimeMs = mtimeMs;
+    retainToolCallCursor(filePath, advancing);
+    return advancing;
   } catch {
-    toolCountsCursorByPath.delete(filePath);
+    toolCallCursorByPath.delete(filePath);
     return null;
+  } finally {
+    await handle?.close();
   }
-  advancing.mtimeMs = mtimeMs;
-  touchBounded(toolCountsCursorByPath, filePath, advancing, {
-    limit: TOOL_COUNTS_CURSOR_LIMIT,
-    byteBudget: TOOL_COUNTS_CURSOR_BYTE_BUDGET,
-    sizeOf: toolCountsCursorBytes,
+}
+
+function retainToolCallCursor(filePath: string, cursor: ToolCallCursor): void {
+  touchBounded(toolCallCursorByPath, filePath, cursor, {
+    limit: TOOL_CALL_CURSOR_LIMIT,
+    byteBudget: TOOL_CALL_CURSOR_BYTE_BUDGET,
+    sizeOf: toolCallCursorBytes,
     // A session big enough to pass the budget alone is the one being polled
     // live; evicting it would re-read the whole file on the next refetch.
     minRetained: 1,
   });
-  return advancing;
 }
 
-function applyToolCountsLine(cursor: ToolCountsCursor, line: string): void {
+/** The up to `TOOL_CALL_TAIL_BYTES` bytes that end at `offset`. A short read returns fewer. */
+async function readTail(handle: Awaited<ReturnType<typeof fs.open>>, offset: number): Promise<Buffer> {
+  const length = Math.min(TOOL_CALL_TAIL_BYTES, offset);
+  if (length === 0) return Buffer.alloc(0);
+  const buffer = Buffer.alloc(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, offset - length);
+  return buffer.subarray(0, bytesRead);
+}
+
+function applyToolCallLine(cursor: ToolCallCursor, line: string): void {
   // Most lines carry neither block; skip their JSON.parse entirely.
   const mayHoldToolUse = line.includes('"tool_use"');
   if (!mayHoldToolUse && !line.includes('"tool_result"')) return;
@@ -914,50 +952,69 @@ function applyToolCountsLine(cursor: ToolCountsCursor, line: string): void {
  * for the next read. A final line with no newline is consumed only when it
  * parses as JSON, which a half-written record cannot. Throws on a short read
  * (the file was truncated mid-read), so the caller can drop its state.
+ *
+ * A line longer than a chunk is kept as a list of its pieces and joined once,
+ * when its newline arrives, so its bytes are copied once rather than once per
+ * chunk it spans.
  */
 async function forEachCompleteLine(
+  handle: Awaited<ReturnType<typeof fs.open>>,
   filePath: string,
   startByte: number,
   endByte: number,
   onLine: (line: string) => void,
 ): Promise<number> {
-  if (endByte <= startByte) return startByte;
-  const handle = await fs.open(filePath, 'r');
-  try {
-    let position = startByte;
-    let carry = Buffer.alloc(0);
-    let consumedTo = startByte;
-    while (position < endByte) {
-      const length = Math.min(TOOL_COUNTS_READ_CHUNK_BYTES, endByte - position);
-      const chunk = Buffer.alloc(length);
-      const { bytesRead } = await handle.read(chunk, 0, length, position);
-      if (bytesRead < length) {
-        throw new Error(`short read on ${filePath}: expected ${length} bytes, got ${bytesRead}`);
-      }
-      const bufferStart = position - carry.length;
-      position += bytesRead;
-      const buffer = carry.length > 0 ? Buffer.concat([carry, chunk]) : chunk;
-      let lineStart = 0;
-      let newlineIndex = buffer.indexOf(0x0a, lineStart);
-      while (newlineIndex !== -1) {
-        if (newlineIndex > lineStart) onLine(buffer.toString('utf-8', lineStart, newlineIndex));
-        lineStart = newlineIndex + 1;
-        newlineIndex = buffer.indexOf(0x0a, lineStart);
-      }
-      consumedTo = bufferStart + lineStart;
-      carry = Buffer.from(buffer.subarray(lineStart));
+  let position = startByte;
+  let consumedTo = startByte;
+  // The bytes from `consumedTo` to `position`: the start of a line whose
+  // newline has not been read yet.
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
+  while (position < endByte) {
+    const length = Math.min(TOOL_CALL_READ_CHUNK_BYTES, endByte - position);
+    const chunk = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(chunk, 0, length, position);
+    if (bytesRead < length) {
+      throw new Error(`short read on ${filePath}: expected ${length} bytes, got ${bytesRead}`);
     }
-    if (carry.length > 0) {
-      const tail = carry.toString('utf-8');
-      if (isCompleteJsonLine(tail)) {
-        onLine(tail);
-        consumedTo += carry.length;
-      }
+    const chunkStart = position;
+    position += bytesRead;
+    let newlineIndex = chunk.indexOf(0x0a);
+    if (newlineIndex === -1) {
+      pending.push(chunk);
+      pendingBytes += chunk.length;
+      continue;
     }
-    return consumedTo;
-  } finally {
-    await handle.close();
+    if (pendingBytes > 0) {
+      onLine(Buffer.concat([...pending, chunk.subarray(0, newlineIndex)]).toString('utf-8'));
+      pending = [];
+      pendingBytes = 0;
+    } else if (newlineIndex > 0) {
+      onLine(chunk.toString('utf-8', 0, newlineIndex));
+    }
+    let lineStart = newlineIndex + 1;
+    newlineIndex = chunk.indexOf(0x0a, lineStart);
+    while (newlineIndex !== -1) {
+      if (newlineIndex > lineStart) onLine(chunk.toString('utf-8', lineStart, newlineIndex));
+      lineStart = newlineIndex + 1;
+      newlineIndex = chunk.indexOf(0x0a, lineStart);
+    }
+    consumedTo = chunkStart + lineStart;
+    if (lineStart < chunk.length) {
+      // A copy, so the rest of the 4 MB chunk can be collected.
+      const remainder = Buffer.from(chunk.subarray(lineStart));
+      pending.push(remainder);
+      pendingBytes += remainder.length;
+    }
   }
+  if (pendingBytes > 0) {
+    const tail = Buffer.concat(pending).toString('utf-8');
+    if (isCompleteJsonLine(tail)) {
+      onLine(tail);
+      consumedTo += pendingBytes;
+    }
+  }
+  return consumedTo;
 }
 
 function isCompleteJsonLine(text: string): boolean {

@@ -117,6 +117,12 @@ A popover with no clipping ancestor at any mount site may stay in flow with a
   opens the popover right-aligned and asserts its right edge stays on the trigger's while the
   arriving table widens it, which reads red against the old `left` computed from the measured
   width.
+- **Test (available-room caps, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` shrinks
+  the window around the Settings > Git `BranchPicker` and the Settings > Agent `Combobox` and asserts
+  each menu stays inside the window and scrolls, and that a fixed popover opening above or below
+  publishes `--popover-available-height` and `--popover-available-width` matching the room on that
+  side. `tests/ui/context-bar-popover.spec.ts` does the same for `ContextBarPopover`. Each reads red
+  with its consumer's cap put back to the fixed value.
 - **Test (first-open width, behavior):** `tests/ui/popover-first-open-alignment.spec.ts` opens
   the Settings > Agent comboboxes on a fresh page at 1920x1080 and asserts the menu's left edge
   and width match the field on the FIRST open (then again after a close). Each test owns its
