@@ -440,7 +440,7 @@ export class UsageAccumulator {
       if (accumulator.hasOutputTokens) stat.outputTokens = accumulator.outputTokens;
       rows.push(stat);
     }
-    rows.sort((a, b) => (b.callCount - a.callCount) || a.toolName.localeCompare(b.toolName));
+    rows.sort((left, right) => (right.callCount - left.callCount) || left.toolName.localeCompare(right.toolName));
     return rows;
   }
 

@@ -155,15 +155,15 @@ const CLAUDE_RUNNING_PRECONFIG = `
 // Mirrors applyClaudeUsage from context-bar-popover.spec.ts.
 // ---------------------------------------------------------------------------
 
-async function seedUsage(page: Page): Promise<void> {
-  await page.evaluate((sessionId) => {
+async function seedUsage(page: Page, toolCallCount = 42): Promise<void> {
+  await page.evaluate(({ sessionId, liveToolCallCount }) => {
     const stores = (window as unknown as {
       __zustandStores?: {
         session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
       };
     }).__zustandStores;
     stores?.session.getState().updateUsage(sessionId, {
-      toolCallCount: 42,
+      toolCallCount: liveToolCallCount,
       model: { id: 'sonnet', displayName: 'Claude Sonnet' },
       contextWindow: {
         usedPercentage: 20,
@@ -175,7 +175,31 @@ async function seedUsage(page: Page): Promise<void> {
       },
       cost: { totalCostUsd: 0.05, totalDurationMs: 3_000 },
     });
-  }, SESSION_ID);
+  }, { sessionId: SESSION_ID, liveToolCallCount: toolCallCount });
+}
+
+/**
+ * Replaces both per-tool pulls the popover merges. The popover reads them on
+ * open and again whenever the live tool-call count changes, so calling this and
+ * then `seedUsage` with a new count drives a refetch.
+ */
+async function setToolMocks(
+  page: Page,
+  rows: PerToolStat[],
+  resultTokens: Record<string, number> | null,
+): Promise<void> {
+  await page.evaluate((mocks) => {
+    const sessions = (window as unknown as {
+      electronAPI: {
+        sessions: {
+          getToolBreakdown: (_sessionId: string) => Promise<PerToolStat[]>;
+          getToolResultTokens: (_sessionId: string) => Promise<Record<string, number> | null>;
+        };
+      };
+    }).electronAPI.sessions;
+    sessions.getToolBreakdown = async () => mocks.rows;
+    sessions.getToolResultTokens = async () => mocks.resultTokens;
+  }, { rows, resultTokens });
 }
 
 /** `count` breakdown rows with distinct names and descending call counts. */
@@ -500,6 +524,42 @@ test.describe('ContextBar tool-call breakdown popover', () => {
     await expect(table.locator('tbody tr', { hasText: 'Bash' }).locator('td').last()).toHaveText('-');
   });
 
+  test('a sort on a column that a refetch removes falls back to Calls, most first', async () => {
+    // First fetch: Read has an estimate, so Tokens shows and can be sorted on.
+    await setToolMocks(page, [
+      { toolName: 'Read', callCount: 4, totalDurationMs: 1_200, interruptedCount: 0 },
+      { toolName: 'Bash', callCount: 9, totalDurationMs: 3_000, interruptedCount: 0 },
+    ], { Read: 12_400 });
+    await seedUsage(page);
+
+    await page.locator('[data-testid="context-bar-tool-calls-trigger"]').click();
+    const table = page.locator('[data-testid="session-summary-by-tool"]');
+    const toolCells = table.locator('tbody tr td:first-child');
+    const callsHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') });
+    await expect(toolCells).toHaveText(['Bash', 'Read']);
+
+    await page.locator('[data-testid="by-tool-sort-tokens"]').click();
+    await expect(toolCells).toHaveText(['Read', 'Bash']);
+    await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tokens"]') }))
+      .toHaveAttribute('aria-sort', 'descending');
+    await expect(callsHeader).toHaveAttribute('aria-sort', 'none');
+
+    // The live count moves and the refetch brings tools the kept estimates do not
+    // name, so no row carries result tokens. Name order (Glob, Grep) is also what a
+    // stuck Tokens sort would show, since every row then lacks a value and ties on
+    // the name, so only the fallback to Calls puts Grep (8 calls) ahead of Glob (2).
+    await setToolMocks(page, [
+      { toolName: 'Glob', callCount: 2, totalDurationMs: 400, interruptedCount: 0 },
+      { toolName: 'Grep', callCount: 8, totalDurationMs: 900, interruptedCount: 0 },
+    ], { Read: 12_400 });
+    await seedUsage(page, 43);
+
+    await expect(toolCells).toHaveText(['Grep', 'Glob']);
+    await expect(table.locator('thead')).not.toContainText('Tokens');
+    await expect(page.locator('[data-testid="by-tool-sort-tokens"]')).toHaveCount(0);
+    await expect(callsHeader).toHaveAttribute('aria-sort', 'descending');
+  });
+
   test('getToolBreakdown is not called when popover is closed', async () => {
     // The popover fetches via useEffect only when mounted. While closed,
     // no IPC call should be in flight. Assert by counting calls.
@@ -591,6 +651,81 @@ test.describe('ContextBar tool-call popover in a short window', () => {
       const scrolls = await page.locator('[data-testid="context-bar-tool-breakdown-popover"]')
         .evaluate((element) => element.scrollHeight > element.clientHeight);
       expect(scrolls).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// Own page: this case resizes the window, which must not leak into the shared one.
+test.describe('ContextBar tool-call popover right-aligned to its trigger', () => {
+  /** The trigger sits about 650px in, so a window under 1300px wide puts it past the midpoint and right-aligns the popover. */
+  const NARROW_VIEWPORT_WIDTH_PX = 1000;
+  /** The table is far wider than the "No tool calls yet" state; a smaller change would let the case pass without moving an edge. */
+  const MIN_WIDTH_GROWTH_PX = 40;
+
+  /** Held fetches: resolving them is the test's cue that "the rows arrived". */
+  type HeldFetchWindow = {
+    __heldToolBreakdowns?: Array<(rows: PerToolStat[]) => void>;
+    electronAPI: { sessions: { getToolBreakdown: (_sessionId: string) => Promise<PerToolStat[]> } };
+  };
+
+  test('keeps its trailing edge on the trigger when the table arrives and widens it', async () => {
+    const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.setViewportSize({ width: NARROW_VIEWPORT_WIDTH_PX, height: 1080 });
+      // Held until the test resolves it, so the popover is measured in its narrow
+      // empty state first, as the real IPC does, with no timer to race.
+      await page.evaluate(() => {
+        const held = window as unknown as HeldFetchWindow;
+        const resolvers: Array<(rows: PerToolStat[]) => void> = [];
+        held.__heldToolBreakdowns = resolvers;
+        held.electronAPI.sessions.getToolBreakdown = () => new Promise((resolve) => { resolvers.push(resolve); });
+      });
+      await seedUsage(page);
+
+      const trigger = page.locator('[data-testid="context-bar-tool-calls-trigger"]');
+      await expect(trigger).toBeVisible({ timeout: 5000 });
+      // Precondition, so the case cannot pass vacuously: the trigger holds still
+      // past the window midpoint (the popover anchors where the trigger is at open
+      // and nothing re-measures), which is what right-aligns the popover.
+      let previousLeft = Number.NaN;
+      await expect.poll(async () => {
+        const box = await trigger.boundingBox();
+        const left = box?.x ?? Number.NaN;
+        const steady = left === previousLeft;
+        previousLeft = left;
+        return steady && box !== null && box.x + box.width / 2 > NARROW_VIEWPORT_WIDTH_PX / 2;
+      }, { timeout: 5000, intervals: [100] }).toBe(true);
+
+      await trigger.click();
+      const popover = page.locator('[data-testid="context-bar-tool-breakdown-popover"]');
+      await expect(popover).toContainText('No tool calls yet');
+      // offsetWidth is a layout size, so the grow-in animation's scale does not skew it.
+      const emptyStateWidth = await popover.evaluate((element) => (element as HTMLElement).offsetWidth);
+
+      await expect.poll(() => page.evaluate(
+        () => (window as unknown as HeldFetchWindow).__heldToolBreakdowns?.length ?? 0,
+      ), { timeout: 3000 }).toBeGreaterThan(0);
+      await page.evaluate((rows: PerToolStat[]) => {
+        for (const resolve of (window as unknown as HeldFetchWindow).__heldToolBreakdowns ?? []) resolve(rows);
+      }, makeToolRows(12));
+      await expect(page.locator('[data-testid="session-summary-by-tool"]')).toBeVisible({ timeout: 3000 });
+
+      // Polled: the grow-in animation settles a frame or two after the rows paint.
+      await expect.poll(() => page.evaluate(({ tolerance, minimumGrowth, previousWidth }) => {
+        const popoverElement = document.querySelector('[data-testid="context-bar-tool-breakdown-popover"]');
+        const triggerElement = document.querySelector('[data-testid="context-bar-tool-calls-trigger"]');
+        if (!popoverElement || !triggerElement) return null;
+        return {
+          trailingEdgeOnTrigger: Math.abs(
+            popoverElement.getBoundingClientRect().right - triggerElement.getBoundingClientRect().right,
+          ) <= tolerance,
+          widened: (popoverElement as HTMLElement).offsetWidth - previousWidth >= minimumGrowth,
+        };
+      }, { tolerance: PLACEMENT_TOLERANCE_PX, minimumGrowth: MIN_WIDTH_GROWTH_PX, previousWidth: emptyStateWidth }),
+      { timeout: 3000 }).toEqual({ trailingEdgeOnTrigger: true, widened: true });
     } finally {
       await browser.close();
     }

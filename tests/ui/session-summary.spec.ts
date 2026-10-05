@@ -476,6 +476,77 @@ test.describe('Session Summary Panel', () => {
     }
   });
 
+  test('the Tool header sorts A to Z on the first click and Z to A on the second', async () => {
+    // Calls order is Edit, Bash, Read, so neither name order matches the default
+    // and each click is told apart from the one before it.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Read', callCount: 3, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'Edit', callCount: 12, totalDurationMs: 9_000, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 7, totalDurationMs: 4_200, interruptedCount: 0 },
+      ],
+    }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+      await page.locator('[data-testid="session-summary-tool-calls-toggle"]').click();
+
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      const toolHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tool"]') });
+      const callsHeader = table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') });
+      await expect(toolCells).toHaveText(['Edit', 'Bash', 'Read']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'none');
+
+      await page.locator('[data-testid="by-tool-sort-tool"]').click();
+      await expect(toolCells).toHaveText(['Bash', 'Edit', 'Read']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'ascending');
+      await expect(callsHeader).toHaveAttribute('aria-sort', 'none');
+
+      await page.locator('[data-testid="by-tool-sort-tool"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Edit', 'Bash']);
+      await expect(toolHeader).toHaveAttribute('aria-sort', 'descending');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row with no result tokens sorts last under the Tokens header in both directions', async () => {
+    // Edit has the most calls and no estimate, so it leads the default order and
+    // only a "no value sorts last" rule moves it to the bottom. Ascending is the
+    // direction that tells that rule from treating a missing value as zero.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Edit', callCount: 20, totalDurationMs: 0, interruptedCount: 0 },
+        { toolName: 'Read', callCount: 9, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 },
+        { toolName: 'Bash', callCount: 4, totalDurationMs: 0, interruptedCount: 0, resultTokens: 2_300 },
+      ],
+    }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+      await page.locator('[data-testid="session-summary-tool-calls-toggle"]').click();
+
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      await expect(toolCells).toHaveText(['Edit', 'Read', 'Bash']);
+
+      await page.locator('[data-testid="by-tool-sort-tokens"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Bash', 'Edit']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tokens"]') }))
+        .toHaveAttribute('aria-sort', 'descending');
+
+      await page.locator('[data-testid="by-tool-sort-tokens"]').click();
+      await expect(toolCells).toHaveText(['Bash', 'Read', 'Edit']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-tokens"]') }))
+        .toHaveAttribute('aria-sort', 'ascending');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('calls that waited on the user are left out of Time and Avg, and the header says how many', async () => {
     // Bash: 3 calls, 1 waited, so Avg divides its 4.2s by the 2 that ran.
     // AskUserQuestion: every call waited, so it has no run time at all.

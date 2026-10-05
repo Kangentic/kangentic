@@ -625,18 +625,25 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   return project;
 }
 
+/** Project ids whose duration repair is running (see `startToolBreakdownRepair`). */
+const toolBreakdownRepairsInFlight = new Set<string>();
+
 /**
  * Fire the one-time repair of per-tool durations saved before tool events were
  * paired by id, once a cold open has finished its own recovery. Background
  * and best-effort: the event logs are read in the retrieval worker, only
  * durations are ever patched, and a run that cannot finish leaves the
  * `schema_meta` flag unset so the next open tries again
- * (`helpers/tool-breakdown-repair.ts`).
+ * (`helpers/tool-breakdown-repair.ts`). The flag is written only when a run
+ * ends, so a second open path that fires while one runs would pass the flag
+ * check and replay every log again; `toolBreakdownRepairsInFlight` skips it.
  */
 function startToolBreakdownRepair(project: Project): void {
+  if (toolBreakdownRepairsInFlight.has(project.id)) return;
   try {
     const db = getProjectDb(project.id);
     if (toolBreakdownRepairRan(db)) return;
+    toolBreakdownRepairsInFlight.add(project.id);
     void repairToolBreakdownDurations(
       db,
       path.join(project.path, '.kangentic', 'sessions'),
@@ -651,8 +658,10 @@ function startToolBreakdownRepair(project: Project): void {
           console.log(`[TOOL-BREAKDOWN-REPAIR] ${project.name}: corrected tool durations on ${result.repaired} of ${result.scanned} session records`);
         }
       })
-      .catch((error) => console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error));
+      .catch((error) => console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} failed:`, error))
+      .finally(() => toolBreakdownRepairsInFlight.delete(project.id));
   } catch (error) {
+    toolBreakdownRepairsInFlight.delete(project.id);
     console.error(`[TOOL-BREAKDOWN-REPAIR] ${project.name} could not start:`, error);
   }
 }

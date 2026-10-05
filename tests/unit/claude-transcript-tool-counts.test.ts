@@ -267,6 +267,215 @@ describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
     expect(first!.toolBreakdown[0]).toMatchObject({ callCount: 1, resultTokens: 100 });
     expect(second!.toolBreakdown[0]).toMatchObject({ callCount: 1, resultTokens: 100 });
   });
+
+  it('starts over when the mtime goes backwards, even though the file did not shrink', async () => {
+    const filePath = path.join(dir, 'older-mtime.jsonl');
+    const firstContent = assistantToolUse('a', 'Bash') + assistantToolUse('b', 'Bash') + assistantToolUse('c', 'Bash');
+    // Same byte length on purpose: only the mtime tells this apart from an unchanged file.
+    const secondContent = assistantToolUse('d', 'Read') + assistantToolUse('e', 'Read') + assistantToolUse('f', 'Read');
+    expect(Buffer.byteLength(secondContent)).toBeGreaterThanOrEqual(Buffer.byteLength(firstContent));
+
+    fs.writeFileSync(filePath, firstContent);
+    const newer = new Date('2026-10-04T12:00:00.000Z');
+    fs.utimesSync(filePath, newer, newer);
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Bash']);
+
+    fs.writeFileSync(filePath, secondContent);
+    const older = new Date(newer.getTime() - 60_000);
+    fs.utimesSync(filePath, older, older);
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+
+    // A full re-read of the new content only: not the stale Bash rows, not old plus new.
+    expect(second!.toolCallCount).toBe(3);
+    expect(second!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 3, totalDurationMs: 0, interruptedCount: 0 },
+    ]);
+  });
+
+  it('returns null once the file is deleted, and counts a recreated file from scratch', async () => {
+    const filePath = path.join(dir, 'deleted.jsonl');
+    fs.writeFileSync(filePath, assistantToolUse('a', 'Bash') + assistantToolUse('b', 'Bash'));
+    expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(2);
+
+    fs.rmSync(filePath, { force: true });
+    expect(await parseClaudeTranscriptToolCounts(filePath)).toBeNull();
+    expect(await parseClaudeTranscriptToolResultTokens(filePath)).toBeNull();
+
+    // Larger than the old file, so a leftover cursor could not be told apart by size.
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('c', 'Read') + assistantToolUse('d', 'Read') + assistantToolUse('e', 'Read') + assistantToolUse('f', 'Grep'),
+    );
+    const recreated = await parseClaudeTranscriptToolCounts(filePath);
+    expect(recreated!.toolCallCount).toBe(4);
+    expect(recreated!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Read', 3], ['Grep', 1]]);
+  });
+
+  it('consumes a complete final line that has no trailing newline, and does not count it again after an append', async () => {
+    const filePath = path.join(dir, 'no-trailing-newline.jsonl');
+    // No tool_use id on the last line: an id would let the dedupe hide a re-read.
+    const unterminatedLine = '{"type":"assistant","message":{"id":"msg_tail","content":[{"type":"tool_use","name":"Grep","input":{}}]}}';
+    fs.writeFileSync(filePath, assistantToolUse('a', 'Read') + unterminatedLine);
+
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolCallCount).toBe(2);
+
+    fs.appendFileSync(filePath, '\n' + assistantToolUse('b', 'Bash'));
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    expect(second!.toolCallCount).toBe(3);
+    expect(second!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Read', 1], ['Grep', 1], ['Bash', 1]]);
+  });
+
+  it('counts a tool_use line with no timestamp under any sinceMs', async () => {
+    const filePath = path.join(dir, 'no-timestamp.jsonl');
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('untimed', 'Read') +
+        assistantToolUse('timed', 'Bash', ',"timestamp":"2026-10-04T22:52:20.000Z"'),
+    );
+    const farFuture = Date.parse('2099-01-01T00:00:00.000Z');
+
+    const scoped = await parseClaudeTranscriptToolCounts(filePath, farFuture);
+    expect(scoped!.toolBreakdown.map((stat) => [stat.toolName, stat.callCount])).toEqual([['Read', 1]]);
+    // The timed call is still excluded by a later start.
+    expect(scoped!.toolCallCount).toBe(1);
+  });
+
+  it('treats a NaN sinceMs as no scope, so the whole file counts', async () => {
+    const filePath = path.join(dir, 'nan-since.jsonl');
+    const earlier = ',"timestamp":"2026-10-04T22:52:20.000Z"';
+    const later = ',"timestamp":"2026-10-04T22:57:40.000Z"';
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('r1', 'Read', earlier) + userToolResult('r1', 'x'.repeat(400), earlier) +
+        assistantToolUse('b1', 'Bash', later) + userToolResult('b1', 'y'.repeat(80), later),
+    );
+
+    const counts = await parseClaudeTranscriptToolCounts(filePath, Number.NaN);
+    expect(counts!.toolCallCount).toBe(2);
+    expect(await parseClaudeTranscriptToolResultTokens(filePath, Number.NaN)).toEqual({ Read: 100, Bash: 20 });
+  });
+
+  it('counts a call and its result when the result line spans the 4 MB read-chunk boundary', async () => {
+    // Test-local mirror of the parser's private chunk size. The straddle is
+    // asserted below, so a change to the real constant shows up as a stale mirror.
+    const chunkBytes = 4 * 1024 * 1024;
+    const fillerPrefix = '{"type":"summary","summary":"';
+    const fillerSuffix = '"}\n';
+    const fillerLine = (totalBytes: number): string =>
+      fillerPrefix + 'f'.repeat(totalBytes - Buffer.byteLength(fillerPrefix + fillerSuffix)) + fillerSuffix;
+
+    const openingLine = assistantToolUse('big1', 'Read');
+    const resultLine = userToolResult('big1', 'y'.repeat(4000));
+    // Start the result line so the chunk boundary falls in its middle.
+    const resultStart = chunkBytes - Math.floor(Buffer.byteLength(resultLine) / 2);
+    const pieces: string[] = [openingLine];
+    let written = Buffer.byteLength(openingLine);
+    while (resultStart - written > 128 * 1024) {
+      pieces.push(fillerLine(64 * 1024));
+      written += 64 * 1024;
+    }
+    pieces.push(fillerLine(resultStart - written));
+    written = resultStart;
+    pieces.push(resultLine);
+    const resultEnd = written + Buffer.byteLength(resultLine);
+    pieces.push(assistantToolUse('big2', 'Bash') + userToolResult('big2', 'z'.repeat(400)));
+
+    expect(resultStart).toBeLessThan(chunkBytes);
+    expect(resultEnd).toBeGreaterThan(chunkBytes);
+
+    const filePath = path.join(dir, 'chunk-boundary.jsonl');
+    fs.writeFileSync(filePath, pieces.join(''));
+
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    expect(counts!.toolCallCount).toBe(2);
+    // chars/4: 4000 -> 1000, 400 -> 100.
+    expect(counts!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 1000 },
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 100 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A sanitized capture of a real Claude session. The cases above build their JSONL
+// from templates, so none of them shows that the field names and literals the
+// parser reads (`assistant`/`user` types, `tool_use`, `tool_result`, `tool_use_id`,
+// `timestamp`) match what Claude writes. Expectations come from the capture itself.
+// ---------------------------------------------------------------------------
+
+describe('parseClaudeTranscriptToolCounts - real captured session', () => {
+  const REAL_SESSION_FIXTURE = path.join(__dirname, '..', 'fixtures', 'claude-real-session.jsonl');
+
+  interface CapturedFacts {
+    /** Distinct `tool_use` ids in assistant lines, with the tool each names. */
+    toolNameByUseId: Map<string, string>;
+    /** `tool_use_id` of every `tool_result` block in user lines. */
+    resultUseIds: string[];
+    /** Earliest and latest assistant `tool_use` line timestamps, in ms. */
+    firstToolUseMs: number;
+    lastToolUseMs: number;
+  }
+
+  function readCapturedFacts(): CapturedFacts {
+    const toolNameByUseId = new Map<string, string>();
+    const resultUseIds: string[] = [];
+    let firstToolUseMs = Number.POSITIVE_INFINITY;
+    let lastToolUseMs = Number.NEGATIVE_INFINITY;
+    for (const line of fs.readFileSync(REAL_SESSION_FIXTURE, 'utf-8').split('\n')) {
+      if (line.length === 0) continue;
+      const record = JSON.parse(line) as { type?: string; timestamp?: string; message?: { content?: unknown } };
+      const rawContent = record.message?.content;
+      const content = Array.isArray(rawContent) ? (rawContent as Array<Record<string, unknown>>) : [];
+      for (const block of content) {
+        if (record.type === 'assistant' && block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+          toolNameByUseId.set(block.id, block.name);
+          if (typeof record.timestamp === 'string') {
+            firstToolUseMs = Math.min(firstToolUseMs, Date.parse(record.timestamp));
+            lastToolUseMs = Math.max(lastToolUseMs, Date.parse(record.timestamp));
+          }
+        }
+        if (record.type === 'user' && block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+          resultUseIds.push(block.tool_use_id);
+        }
+      }
+    }
+    return { toolNameByUseId, resultUseIds, firstToolUseMs, lastToolUseMs };
+  }
+
+  beforeEach(() => {
+    resetToolCountsCursorsForTests();
+  });
+
+  it('counts the capture distinct tool_use ids and gives the tool whose result is in it a positive estimate', async () => {
+    const facts = readCapturedFacts();
+    expect(facts.toolNameByUseId.size).toBeGreaterThan(0);
+    expect(facts.resultUseIds.length).toBeGreaterThan(0);
+    const resultToolName = facts.toolNameByUseId.get(facts.resultUseIds[0]);
+    expect(resultToolName).toBeDefined();
+
+    const resultTokens = await parseClaudeTranscriptToolResultTokens(REAL_SESSION_FIXTURE);
+    expect(resultTokens).not.toBeNull();
+    expect(resultTokens![resultToolName!]).toBeGreaterThan(0);
+
+    const counts = await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE);
+    expect(counts).not.toBeNull();
+    expect(counts!.toolCallCount).toBe(facts.toolNameByUseId.size);
+    const resultRow = counts!.toolBreakdown.find((stat) => stat.toolName === resultToolName);
+    const expectedCallsForTool = Array.from(facts.toolNameByUseId.values()).filter((name) => name === resultToolName).length;
+    expect(resultRow!.callCount).toBe(expectedCallsForTool);
+    expect(resultRow!.resultTokens).toBe(resultTokens![resultToolName!]);
+  });
+
+  it('scopes by the timestamps the capture carries: every call counts from the first, none after the last', async () => {
+    const facts = readCapturedFacts();
+    expect(Number.isFinite(facts.firstToolUseMs)).toBe(true);
+
+    const fromFirst = await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, facts.firstToolUseMs);
+    expect(fromFirst!.toolCallCount).toBe(facts.toolNameByUseId.size);
+    expect(await parseClaudeTranscriptToolCounts(REAL_SESSION_FIXTURE, facts.lastToolUseMs + 1)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
