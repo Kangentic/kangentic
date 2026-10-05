@@ -923,3 +923,65 @@ describe('ClaudeAdapter.transcriptToolCounts', () => {
     expect(await adapter.transcriptToolCounts({ agentSessionId: null, cwd: '/some/path' })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ClaudeAdapter run-scoped reads. The session-metrics tests prove `sinceMs`
+// reaches a stubbed adapter and the parser cases above prove the parser honours
+// it; these prove the real adapter hands it on. Without that, a resumed
+// session's popover and run-end backfill read the whole conversation again.
+// ---------------------------------------------------------------------------
+
+describe('ClaudeAdapter run-scoped transcript reads', () => {
+  let dir: string;
+  let transcriptPath: string;
+  const secondRunStart = Date.parse('2026-10-04T22:56:53.959Z');
+
+  beforeEach(() => {
+    resetToolCallCursorsForTests();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-adapter-run-scope-'));
+    transcriptPath = path.join(dir, 'two-runs.jsonl');
+    // Claude appends every --resume to one file: a Read in the first run, a
+    // Bash in the second.
+    const firstRun = ',"timestamp":"2026-10-04T22:52:20.000Z"';
+    const secondRun = ',"timestamp":"2026-10-04T22:57:40.000Z"';
+    fs.writeFileSync(
+      transcriptPath,
+      assistantToolUse('r1', 'Read', firstRun) + userToolResult('r1', 'x'.repeat(4000), firstRun) +
+        assistantToolUse('b1', 'Bash', secondRun) + userToolResult('b1', 'y'.repeat(800), secondRun),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('transcriptToolCounts counts only the calls at or after sinceMs', async () => {
+    const adapter = new ClaudeAdapter();
+
+    const scoped = await adapter.transcriptToolCounts({ transcriptPath, sinceMs: secondRunStart });
+    expect(scoped!.toolCallCount).toBe(1);
+    expect(scoped!.toolBreakdown).toEqual([
+      { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 200 },
+    ]);
+
+    // No sinceMs (or null) keeps the whole conversation.
+    expect((await adapter.transcriptToolCounts({ transcriptPath }))!.toolCallCount).toBe(2);
+    expect((await adapter.transcriptToolCounts({ transcriptPath, sinceMs: null }))!.toolCallCount).toBe(2);
+  });
+
+  it('transcriptToolResultTokens returns the per-tool estimates of the run that starts at sinceMs', async () => {
+    const adapter = new ClaudeAdapter();
+
+    expect(await adapter.transcriptToolResultTokens({ transcriptPath, sinceMs: secondRunStart })).toEqual({ Bash: 200 });
+    expect(await adapter.transcriptToolResultTokens({ transcriptPath })).toEqual({ Read: 1000, Bash: 200 });
+    expect(await adapter.transcriptToolResultTokens({ transcriptPath, sinceMs: null })).toEqual({ Read: 1000, Bash: 200 });
+  });
+
+  it('transcriptToolResultTokens returns null when no transcript can be located or read', async () => {
+    const adapter = new ClaudeAdapter();
+
+    expect(await adapter.transcriptToolResultTokens({})).toBeNull();
+    expect(await adapter.transcriptToolResultTokens({ agentSessionId: 'some-id', cwd: null })).toBeNull();
+    expect(await adapter.transcriptToolResultTokens({ transcriptPath: path.join(dir, 'missing.jsonl') })).toBeNull();
+  });
+});

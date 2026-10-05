@@ -155,7 +155,7 @@ const CLAUDE_RUNNING_PRECONFIG = `
 // Mirrors applyClaudeUsage from context-bar-popover.spec.ts.
 // ---------------------------------------------------------------------------
 
-async function seedUsage(page: Page, toolCallCount = 42): Promise<void> {
+async function seedUsage(page: Page, toolCallCount = 42, targetSessionId = SESSION_ID): Promise<void> {
   await page.evaluate(({ sessionId, liveToolCallCount }) => {
     const stores = (window as unknown as {
       __zustandStores?: {
@@ -175,7 +175,7 @@ async function seedUsage(page: Page, toolCallCount = 42): Promise<void> {
       },
       cost: { totalCostUsd: 0.05, totalDurationMs: 3_000 },
     });
-  }, { sessionId: SESSION_ID, liveToolCallCount: toolCallCount });
+  }, { sessionId: targetSessionId, liveToolCallCount: toolCallCount });
 }
 
 /**
@@ -248,6 +248,8 @@ function makeToolRows(count: number): PerToolStat[] {
 
 /** Pixels of slack for sub-pixel rounding, which differs between Windows and headless Linux. */
 const PLACEMENT_TOLERANCE_PX = 2;
+/** What `usePopoverPosition` leaves between a popover and the window edge (its default `viewportPadding`). */
+const WINDOW_PADDING_PX = 8;
 
 /**
  * Where the open popover sits relative to its trigger and the window, as
@@ -800,6 +802,158 @@ test.describe('ContextBar tool-call popover right-aligned to its trigger', () =>
         };
       }, { tolerance: PLACEMENT_TOLERANCE_PX, minimumGrowth: MIN_WIDTH_GROWTH_PX, previousWidth: emptyStateWidth }),
       { timeout: 3000 }).toEqual({ trailingEdgeOnTrigger: true, widened: true });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The popover caps its width with `max-w-[min(480px,var(--popover-available-width,480px))]`.
+  // A right-aligned popover grows leftward from its trigger's right edge, so the room it
+  // has is what lies LEFT of that edge, less the window padding. The left-aligned figure
+  // (window width less the trigger's left edge) is hundreds of pixels off here.
+  test('publishes the room to the left of its trigger as --popover-available-width', async () => {
+    const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.setViewportSize({ width: NARROW_VIEWPORT_WIDTH_PX, height: 1080 });
+      await seedUsage(page);
+
+      const trigger = page.locator('[data-testid="context-bar-tool-calls-trigger"]');
+      await expect(trigger).toBeVisible({ timeout: 5000 });
+      // Same precondition as above: the trigger holds still past the window midpoint,
+      // which is what right-aligns the popover.
+      let previousLeft = Number.NaN;
+      await expect.poll(async () => {
+        const box = await trigger.boundingBox();
+        const left = box?.x ?? Number.NaN;
+        const steady = left === previousLeft;
+        previousLeft = left;
+        return steady && box !== null && box.x + box.width / 2 > NARROW_VIEWPORT_WIDTH_PX / 2;
+      }, { timeout: 5000, intervals: [100] }).toBe(true);
+
+      await trigger.click();
+      await expect(page.locator('[data-testid="context-bar-tool-breakdown-popover"]')).toBeVisible({ timeout: 3000 });
+
+      const geometry = await page.evaluate(() => {
+        const popoverElement = document.querySelector('[data-testid="context-bar-tool-breakdown-popover"]');
+        const triggerElement = document.querySelector('[data-testid="context-bar-tool-calls-trigger"]');
+        if (!popoverElement || !triggerElement) return null;
+        const triggerRect = triggerElement.getBoundingClientRect();
+        return {
+          publishedWidth: getComputedStyle(popoverElement).getPropertyValue('--popover-available-width'),
+          triggerLeft: triggerRect.left,
+          triggerRight: triggerRect.right,
+          windowWidth: window.innerWidth,
+        };
+      });
+      expect(geometry).not.toBeNull();
+      const { publishedWidth, triggerLeft, triggerRight, windowWidth } = geometry!;
+
+      // Precondition, so the case cannot pass vacuously: the two formulas differ by far
+      // more than the tolerance at this trigger position.
+      const leftAlignedRoom = windowWidth - triggerLeft - WINDOW_PADDING_PX;
+      const rightAlignedRoom = triggerRight - WINDOW_PADDING_PX;
+      expect(Math.abs(leftAlignedRoom - rightAlignedRoom)).toBeGreaterThan(100);
+
+      expect(publishedWidth).toMatch(/^\s*\d+(\.\d+)?px\s*$/);
+      expect(Math.abs(parseFloat(publishedWidth) - rightAlignedRoom)).toBeLessThanOrEqual(PLACEMENT_TOLERANCE_PX);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// Own page: this case adds a second session and swaps the panel's active one, which must
+// not leak into the shared page.
+test.describe('ContextBar tool-call popover when the bar moves to another session', () => {
+  const OTHER_SESSION_ID = 'sess-tool-breakdown-other';
+
+  type SessionAwareMockWindow = {
+    /** Session ids `getToolResultTokens` was called with, in order. */
+    __resultTokensSessionIds?: string[];
+    electronAPI: {
+      sessions: {
+        getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
+        getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
+      };
+    };
+  };
+
+  // The bar is one component that re-points at another session when the panel's active tab
+  // changes (the session it showed ends, or a restart gives the task a new session id), and
+  // an open popover stays mounted across that. Its result-token estimates are read from a
+  // different session's transcript, so they must not be merged onto the new session's rows
+  // while the new session has none of its own (its read resolves null, "no readable
+  // transcript", which keeps last-known estimates and so would keep the OLD session's).
+  test('does not merge the previous session\'s result tokens onto the new session\'s rows', async () => {
+    const { browser, page } = await launchWithState(CLAUDE_RUNNING_PRECONFIG);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.evaluate(({ firstSessionId, otherSessionId }) => {
+        const mockWindow = window as unknown as SessionAwareMockWindow;
+        mockWindow.__resultTokensSessionIds = [];
+        // Both sessions have a Read row, so only the session tag keeps the first
+        // session's estimate off the second session's.
+        mockWindow.electronAPI.sessions.getToolBreakdown = async (sessionId: string) => [
+          { toolName: 'Read', callCount: sessionId === firstSessionId ? 4 : 2, totalDurationMs: 1_200, interruptedCount: 0 },
+        ];
+        mockWindow.electronAPI.sessions.getToolResultTokens = async (sessionId: string) => {
+          mockWindow.__resultTokensSessionIds?.push(sessionId);
+          return sessionId === firstSessionId ? { Read: 12_400 } : null;
+        };
+        const stores = (window as unknown as {
+          __zustandStores: { session: { setState: (updater: (state: { sessions: unknown[] }) => unknown) => void } };
+        }).__zustandStores;
+        stores.session.setState((state) => ({
+          sessions: [
+            ...state.sessions,
+            {
+              id: otherSessionId,
+              taskId: 'task-tool-breakdown-other',
+              projectId: 'proj-tool-breakdown',
+              pid: 9998,
+              status: 'running',
+              shell: 'bash',
+              cwd: '/mock/tool-breakdown',
+              startedAt: new Date().toISOString(),
+              exitCode: null,
+              resuming: false,
+            },
+          ],
+        }));
+      }, { firstSessionId: SESSION_ID, otherSessionId: OTHER_SESSION_ID });
+      // Usage for both, so the bar resolves past its spinner for the new session too:
+      // a bar that fell back to the spinner would unmount the popover and prove nothing.
+      await seedUsage(page, 42, SESSION_ID);
+      await seedUsage(page, 7, OTHER_SESSION_ID);
+
+      await page.locator('[data-testid="context-bar-tool-calls-trigger"]').click();
+      const popover = page.locator('[data-testid="context-bar-tool-breakdown-popover"]');
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const readRow = table.locator('tbody tr', { hasText: 'Read' });
+      await expect(readRow).toContainText('12.4k');
+      await expect(table.locator('thead')).toContainText('Tokens');
+
+      // A store action, not a tab click: a click is an outside click and closes the popover.
+      await page.evaluate((otherSessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores: { session: { getState: () => { setActiveSession: (id: string) => void } } };
+        }).__zustandStores;
+        stores.session.getState().setActiveSession(otherSessionId);
+      }, OTHER_SESSION_ID);
+
+      // The popover survived the switch and refetched for the new session: it now
+      // shows that session's two Read calls, and its result-token read has run.
+      await expect(popover).toBeVisible();
+      await expect(readRow.locator('td').nth(1)).toHaveText('2');
+      await expect.poll(
+        () => page.evaluate(() => (window as unknown as SessionAwareMockWindow).__resultTokensSessionIds ?? []),
+        { timeout: 3000 },
+      ).toContain(OTHER_SESSION_ID);
+      await flushRender(page);
+
+      await expect(table.locator('thead')).not.toContainText('Tokens');
+      await expect(readRow).not.toContainText('12.4k');
     } finally {
       await browser.close();
     }
