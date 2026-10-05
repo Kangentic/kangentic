@@ -29,20 +29,24 @@ jobs:
           fetch-depth: 0
 
       - name: Create and push tag
+        env:
+          # Through the environment, never spliced into the script text: the input
+          # is free text, which the shell would otherwise run.
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "Tag v${{ inputs.version }} already exists, skipping creation"
+          if git rev-parse "v${INPUT_VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${INPUT_VERSION} already exists, skipping creation"
             exit 0
           fi
           PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$PKG_VERSION" != "${{ inputs.version }}" ]; then
-            echo "::error::Input version (${{ inputs.version }}) does not match package.json ($PKG_VERSION)"
+          if [ "$PKG_VERSION" != "$INPUT_VERSION" ]; then
+            echo "::error::Input version (${INPUT_VERSION}) does not match package.json ($PKG_VERSION)"
             exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          git tag -a "v${INPUT_VERSION}" -m "Release v${INPUT_VERSION}"
+          git push origin "v${INPUT_VERSION}"
 
   # Prove the Sentry upload token exists BEFORE anything is built or drafted.
   #
@@ -118,9 +122,11 @@ jobs:
       - name: Determine version tag
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
@@ -153,9 +159,12 @@ jobs:
       - name: Create the draft release if absent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment, never spliced into the script text: a ref name
+          # may contain `"`, `$` or a backtick, which the shell would then run.
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          tag="${{ steps.version.outputs.tag }}"
+          tag="$RELEASE_TAG"
           # `--arg tag`, not the tag spliced into the jq program text. A ref name may legally
           # contain a double quote, which would close the jq string early and abort the step on
           # a parse error instead of on anything meaningful. gh api's own --jq takes no --arg,
@@ -631,9 +640,11 @@ jobs:
       - name: Determine version tag
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
@@ -646,23 +657,28 @@ jobs:
       # from electron-builder.yml so the two cannot drift. It runs here rather than
       # in the mac leg because this job runs after every leg, so a re-run of the mac
       # leg cannot put the unpatched file back before publishing. Before
-      # --draft=false, so a failure leaves the release a draft.
+      # --draft=false, so a failure leaves the release a draft. The tag reaches
+      # this step and the two after it through the environment, as in the draft
+      # step above, never spliced into the script text.
       - name: Block macOS updates below the minimum system version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/patch-mac-update-info.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: node scripts/patch-mac-update-info.js "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
 
       # Must run BEFORE --draft=false: a failure here has to leave the release
       # unpublished rather than roll one back.
       - name: Verify the release carries every expected asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/verify-release-assets.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: node scripts/verify-release-assets.js "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
 
       - name: Publish release with notes (remove draft status)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --notes-file RELEASE_NOTES.md --repo ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --notes-file RELEASE_NOTES.md --repo "$GITHUB_REPOSITORY"
 
   # Redeploy the web demo from the tag that just shipped, so the demo at
   # https://kangentic.github.io/kangentic/ always shows the released app.
@@ -731,9 +747,11 @@ jobs:
       - name: Determine version tag
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
