@@ -23,7 +23,7 @@ import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
   archivedRunPromptOf,
 } from '../../tests/captures/helpers/demo-dataset';
-import { archivedClonePath, archivedCloneSegments } from '../../scripts/lib/demo-archived-clone.mjs';
+import { archivedClonePath, archivedCloneSegments, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
@@ -218,5 +218,23 @@ describe('demo archived run clone path', () => {
   it('roots the clone under the directory it is given', () => {
     const root = path.join(os.tmpdir(), 'demo-home');
     expect(archivedClonePath(root, contosoPath, 'task-cw-done-deploy')).toBe(path.join(root, 'work', 'contoso-web-cw-done-deploy'));
+  });
+});
+
+describe('demo capture scratch root', () => {
+  it('is the home directory when no --root is given', () => {
+    expect(scratchRootFromArgv(['--check'])).toBe(os.homedir());
+  });
+
+  it('is the directory after --root', () => {
+    const root = path.join(os.tmpdir(), 'demo-scratch');
+    expect(scratchRootFromArgv(['--force', '--root', root, '--check'])).toBe(root);
+  });
+
+  it.each([
+    ['nothing after it', ['--root']],
+    ['another flag after it', ['--root', '--check']],
+  ])('refuses a --root with %s rather than falling back to the home directory', (_label, argv) => {
+    expect(() => scratchRootFromArgv(argv)).toThrow('--root needs a directory after it');
   });
 });
