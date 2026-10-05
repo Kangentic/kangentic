@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
+import { placeContextMenu, type MenuPlacement } from './context-menu-placement';
 
 /**
  * Inline context menu shown on right-click of a task card. Offers
@@ -23,30 +24,6 @@ import type { Task, Swimlane } from '../../../shared/types';
 const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2 text-fg-secondary';
 const LIVE_ROW_CLASS = `${ROW_CLASS} hover:bg-surface-hover/40`;
 const DISABLED_ROW_CLASS = `${ROW_CLASS} opacity-40 cursor-not-allowed`;
-
-/** The menu's distance from the window's edges once it is moved inside. */
-const VIEWPORT_MARGIN = 8;
-
-interface MenuPlacement {
-  left: number;
-  top: number;
-  maxHeight: number | undefined;
-}
-
-/** Where a menu of this size goes for a press at this point, kept inside the window. */
-function placeContextMenu(
-  pointer: { x: number; y: number },
-  menuSize: { width: number; height: number },
-  viewport: { width: number; height: number },
-): MenuPlacement {
-  const availableHeight = viewport.height - VIEWPORT_MARGIN * 2;
-  const height = Math.min(menuSize.height, availableHeight);
-  return {
-    left: Math.max(VIEWPORT_MARGIN, Math.min(pointer.x, viewport.width - menuSize.width - VIEWPORT_MARGIN)),
-    top: Math.max(VIEWPORT_MARGIN, Math.min(pointer.y, viewport.height - height - VIEWPORT_MARGIN)),
-    maxHeight: menuSize.height > availableHeight ? availableHeight : undefined,
-  };
-}
 
 export function TaskContextMenu({
   position,

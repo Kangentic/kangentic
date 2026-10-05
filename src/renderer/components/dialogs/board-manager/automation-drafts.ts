@@ -11,6 +11,7 @@
  */
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGER_LABELS,
   AUTOMATION_TRIGGERS,
   canColumnRun,
   stableAutomationTypes,
@@ -48,12 +49,12 @@ export interface AutomationDraft {
 
 export type AutomationDraftsByColumn = Record<string, AutomationDraft[]>;
 
-/** Each label names who acts: the task enters, the agent ends a turn, the task leaves. */
-export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
-  enter: 'On task enter',
-  turn_end: 'On agent turn end',
-  exit: 'On task exit',
-};
+/**
+ * Each label names who acts: the task enters, the agent ends a turn, the task
+ * leaves. The shared table, so the pane and an agent's MCP listing word a group
+ * the same way.
+ */
+export const TRIGGER_LABELS: Record<AutomationTrigger, string> = AUTOMATION_TRIGGER_LABELS;
 
 /** The groups, in the order the pane stacks them and a task meets them. */
 export const TRIGGERS: readonly AutomationTrigger[] = AUTOMATION_TRIGGERS;
