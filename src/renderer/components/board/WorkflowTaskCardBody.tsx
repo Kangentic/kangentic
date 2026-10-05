@@ -8,14 +8,15 @@ import { useProjectStore } from '../../stores/project-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { boardWaiting, boardWorkflowSource, isLockedOnBoard, toBoardWorkflow, type BoardWorkflow } from '../../utils/board-workflow';
 import { workflowColor } from '../workflows/workflow-graph';
-import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from '../workflows/WorkflowStrip';
+import { WorkflowCardStrip, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
- * (its workflow's icon in the workflow's color, the name, the step track with
- * the column's own marker, the lock), then the board's own card, whose footer
- * says what a task in To Do waits for. Mounted only for a task in a workflow, so an ordinary card pays
+ * (its workflow's icon in the workflow's color, the name, the step track, the
+ * lock), then the board's own card, whose footer says what a task in To Do
+ * waits for. The track's current step is a bar here, not the column's marker
+ * the Workflows canvas draws: the lane the card sits in already names it. Mounted only for a task in a workflow, so an ordinary card pays
  * for none of these subscriptions.
  *
  * The strip and the footer are memoized on the task row: dnd-kit re-renders
@@ -49,11 +50,6 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
   // The board store keeps an unchanged task's object across reloads, so this
   // recomputes on a real change to the row or the board's columns only.
   const steps = useMemo(() => routeSteps(swimlanes, task), [swimlanes, task]);
-  // In To Do or Done the task is off its route: the track is that lane's own marker.
-  const outsideRoute = useMemo((): OutsideRouteColumn | null => {
-    const lane = swimlanes.find((swimlane) => swimlane.id === task.swimlane_id);
-    return lane?.role ? { role: lane.role, name: lane.name, icon: lane.icon } : null;
-  }, [swimlanes, task.swimlane_id]);
   if (!workflow) return null;
   return (
     <div
@@ -72,7 +68,8 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
           />
         )}
         steps={steps}
-        outsideRoute={outsideRoute}
+        // The lane the card sits in names its column, so the board keeps the bar.
+        currentStep="bar"
         lockedTitle={isLockedOnBoard(workflow) ? 'Moved by its workflow' : null}
       />
     </div>

@@ -7,11 +7,12 @@ import { ColumnGlyph } from '../../utils/swimlane-icons';
  * The strip on top of a workflow task's card: on the left whatever the card
  * belongs to (its workflow on the board; its project on the Workflows canvas
  * once the workflow spans boards; nothing otherwise), on the right the step
- * track and the lock. The column is named by the track itself: its current
- * step is the column's own marker, and the name is the marker's tooltip and
- * accessible name. The title row under the strip is the board's, unchanged:
- * new information goes in this strip, never into an existing row. The phone
- * app draws the same strip at the same sizes.
+ * track and the lock. On the canvas the column is named by the track itself:
+ * its current step is the column's own marker, and the name is the marker's
+ * tooltip and accessible name. On the board the lane names the column, so the
+ * current step stays a bar. The title row under the strip is the board's,
+ * unchanged: new information goes in this strip, never into an existing row.
+ * The phone app draws the canvas strip at the same sizes.
  */
 
 const AHEAD_COLOR = 'var(--color-edge)';
@@ -57,15 +58,24 @@ function StepMarker({ column, color, label, testState }: {
 }
 
 /**
- * One mark per step the task visits: done, the current column's marker, then
- * the steps ahead. Skipped columns are not drawn. A task in To Do or Done is
- * not on its route: its track is that column's marker alone.
+ * How the track draws the step the task is on. `marker` is the column's own
+ * marker, for a surface where nothing else names the column (the Workflows
+ * canvas, the phone). `bar` is a wider, brighter bar, for the board, where the
+ * lane the card sits in already names it.
  */
-export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, outsideRoute = null }: {
+export type CurrentStepStyle = 'marker' | 'bar';
+
+/**
+ * One mark per step the task visits: done, the current step, then the steps
+ * ahead. Skipped columns are not drawn. With the `marker` style a task in To Do
+ * or Done is not on its route, and its track is that column's marker alone.
+ */
+export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, outsideRoute = null, currentStep = 'marker' }: {
   steps: readonly WorkflowRouteStep[];
   outsideRoute?: OutsideRouteColumn | null;
+  currentStep?: CurrentStepStyle;
 }) {
-  if (outsideRoute) {
+  if (outsideRoute && currentStep === 'marker') {
     return (
       <span className="inline-flex items-center gap-0.5 shrink-0" data-testid="workflow-step-track">
         <StepMarker
@@ -83,6 +93,17 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
     <span className="inline-flex items-center gap-0.5 shrink-0" data-testid="workflow-step-track">
       {visited.map((step) => {
         const color = step.color ?? UNCOLORED;
+        if (step.state === 'current' && currentStep === 'bar') {
+          return (
+            <i
+              key={step.swimlaneId}
+              title={`${step.name}: now`}
+              data-step-state="current"
+              className="block w-[15px] h-[6px] rounded-[3px]"
+              style={{ background: color, boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 18%, transparent)` }}
+            />
+          );
+        }
         if (step.state === 'current') {
           return (
             <StepMarker
@@ -131,13 +152,15 @@ interface WorkflowCardStripProps {
   /** The left side: the workflow on a board card, the project on a canvas card of a workflow across boards. */
   leading?: React.ReactNode;
   steps: readonly WorkflowRouteStep[];
-  /** Set for a task in To Do or Done, whose track is that column's marker alone. */
+  /** Set for a task in To Do or Done, whose track is that column's marker alone (the `marker` style). */
   outsideRoute?: OutsideRouteColumn | null;
+  /** How the step the task is on is drawn: the column's marker, or the board's bar. */
+  currentStep?: CurrentStepStyle;
   /** Set while the workflow runs: the card moves by its workflow, not by hand. */
   lockedTitle?: string | null;
 }
 
-export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, outsideRoute = null, lockedTitle }: WorkflowCardStripProps) {
+export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, outsideRoute = null, currentStep = 'marker', lockedTitle }: WorkflowCardStripProps) {
   return (
     <div
       className="h-[29px] px-2.5 flex items-center justify-between gap-2 border-b border-edge bg-surface/30 shrink-0"
@@ -145,7 +168,7 @@ export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading
     >
       {leading ?? <span aria-hidden="true" />}
       <span className="inline-flex items-center gap-[7px] shrink-0">
-        <WorkflowStepTrack steps={steps} outsideRoute={outsideRoute} />
+        <WorkflowStepTrack steps={steps} outsideRoute={outsideRoute} currentStep={currentStep} />
         {lockedTitle && (
           <span className="inline-flex text-fg-faint" title={lockedTitle} data-testid="workflow-card-lock">
             <Lock size={12} aria-label={lockedTitle} />
