@@ -674,11 +674,11 @@ test.describe('Workflows inspector', () => {
     try {
       const executingColor = await computedColor(page, '#3b82f6');
 
-      // #414 works in Executing, which has no icon.
+      // #414 works in Executing, which has no icon: its marker holds the dot.
       const executingStrip = card(page, 't414').locator('[data-testid="workflow-card-strip"]');
-      const stripDot = executingStrip.locator('[data-testid="column-glyph-dot"]');
+      const stripDot = executingStrip.locator('[data-testid="workflow-step-marker"] [data-testid="column-glyph-dot"]');
       await expect(stripDot).toHaveCount(1);
-      // The dot is 8px, centered in the strip's 12px glyph box, as the phone draws it.
+      // The dot is 8px, centered in the marker's 12px glyph box, as the phone draws it.
       await expect(stripDot).toHaveCSS('width', '12px');
       await expect(stripDot.locator('span')).toHaveCSS('width', '8px');
       await expect(stripDot.locator('span')).toHaveCSS('background-color', executingColor);
@@ -694,6 +694,39 @@ test.describe('Workflows inspector', () => {
       await expect(executingRow.locator('[data-testid="column-glyph-dot"]')).toHaveCount(1);
       const mergeRow = page.locator('[data-testid="workflow-route-row"]').filter({ hasText: 'Merge' });
       await expect(mergeRow.locator('[data-testid="column-glyph-dot"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The phone's strip design, matched: the track's current step is the
+  // column's own marker, so the strip names no column, and a task off its
+  // route (To Do, Done) shows that column's marker alone, uncolored.
+  test('a canvas card names its column by the marker in its track, never in words', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      // #414 works in Executing: no column name on the strip, the name on the marker.
+      const strip = card(page, 't414').locator('[data-testid="workflow-card-strip"]');
+      await expect(strip).not.toContainText('Executing');
+      const marker = strip.locator('[data-testid="workflow-step-marker"]');
+      await expect(marker).toHaveAttribute('data-step-state', 'current');
+      await expect(marker).toHaveAttribute('aria-label', 'Executing: now');
+      await expect(marker).toHaveCSS('background-color', await computedColor(page, 'color-mix(in srgb, #3b82f6 18%, transparent)'));
+      await expect(marker.locator('svg')).toHaveCSS('color', await computedColor(page, '#3b82f6'));
+
+      // #415 waits in To Do: the To Do marker alone, in the faint grey, with no step marks.
+      const toDoTrack = card(page, 't415').locator('[data-testid="workflow-step-track"]');
+      const toDoMarker = toDoTrack.locator('[data-testid="workflow-step-marker"]');
+      await expect(toDoMarker).toHaveAttribute('data-outside-route', 'todo');
+      await expect(toDoMarker).toHaveAttribute('aria-label', 'To Do');
+      await expect(toDoMarker.locator('svg')).toHaveCSS('color', await computedColor(page, 'var(--color-fg-faint)'));
+      await expect(toDoTrack.locator('[data-step-state]')).toHaveCount(0);
+      await expect(card(page, 't415').locator('[data-testid="workflow-card-strip"]')).not.toContainText('To Do');
+
+      // #411 is done: the Done marker alone.
+      const doneMarker = card(page, 't411').locator('[data-testid="workflow-step-marker"]');
+      await expect(doneMarker).toHaveAttribute('data-outside-route', 'done');
+      await expect(doneMarker).toHaveAttribute('aria-label', 'Done');
     } finally {
       await browser.close();
     }

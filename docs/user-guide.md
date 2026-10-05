@@ -595,8 +595,11 @@ that finishes a plan moves on when you approve the plan. Without an Automation a
 column with no agent, you drag the card on yourself.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name, a step track
-(one segment per column it visits) and a lock while the workflow runs, and a card in To Do says
-what it waits for ("Blocked by #413..."). Its right-click menu leads with Open workflow and Show
+and a lock while the workflow runs, and a card in To Do says what it waits for ("Blocked by
+#413..."). The track has a short bar for each column the task has finished or has ahead of it, and
+the column it is in now is that column's icon on a tint of its color (a dot when the column has no
+icon); hover it for the column's name. A task in To Do or Done shows that column's icon alone. The
+canvas cards carry the same strip, with the task's project on the left once a workflow spans boards. Its right-click menu leads with Open workflow and Show
 workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
 a click on empty board space clears them. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the

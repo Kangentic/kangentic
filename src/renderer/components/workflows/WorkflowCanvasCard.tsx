@@ -1,12 +1,10 @@
 import React, { useMemo } from 'react';
 import { Folder } from 'lucide-react';
-import type { AppConfig, SwimlaneRole, Task, WorkflowViewTask } from '../../../shared/types';
-import { PROJECT_ROW_HEIGHT } from './workflow-layout';
-import { ColumnGlyph } from '../../utils/swimlane-icons';
+import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
-import { WorkflowCardStrip } from './WorkflowStrip';
+import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from './WorkflowStrip';
 
 /**
  * A workflow task's card on the canvas: the board's own card content
@@ -26,28 +24,25 @@ export const CANVAS_DONE_CARD_HEIGHT = 132;
 /** A selected card's border, on every card: 2px inside the card, in the muted grey. */
 const SELECTED_BORDER_CLASS = '!border-2 !border-fg-muted/75';
 
-export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity'], withProjectRow = false): number {
-  const base = task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
-  return withProjectRow ? base + PROJECT_ROW_HEIGHT : base;
+/** A card's height on the canvas: one per density, and the Done card's. Naming its project costs nothing, since the name sits in the strip. */
+export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity']): number {
+  return task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
 }
 
 /**
- * The card's project, on a row of its own above the strip (board 17): shown on
- * every card once any task of the workflow is on another board, and on none
- * while they all share one, where the name would say nothing.
+ * The card's project, in the strip's left side (board 17, folded into the
+ * strip as the phone draws it): shown on every card once any task of the
+ * workflow is on another board, and on none while they all share one, where
+ * the name would say nothing.
  */
-function ProjectRow({ name }: { name: string }) {
+function ProjectLabel({ name }: { name: string }) {
   return (
-    // The strip's own faint fill, so the two rows read as the card's header.
-    <div
-      className="flex items-center gap-1.5 px-2.5 border-b border-edge/50 bg-surface/30 text-xs text-fg-tertiary min-w-0"
-      style={{ height: PROJECT_ROW_HEIGHT }}
-      title={name}
-      data-testid="workflow-card-project"
-    >
-      <Folder size={12} className="shrink-0 text-fg-muted" />
-      <span className="truncate">{name}</span>
-    </div>
+    <WorkflowStripLabel
+      icon={<Folder size={12} className="text-fg-muted" />}
+      label={name}
+      className="gap-1.5 text-fg-tertiary"
+      testId="workflow-card-project"
+    />
   );
 }
 
@@ -108,15 +103,15 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
   };
 }
 
-/** The column the strip names: where the task is, or To Do until it starts. */
-function stripColumn(viewTask: WorkflowViewTask): { name: string; color: string | null; icon: string | null; role: SwimlaneRole | null } {
-  if (viewTask.place === 'planned' || viewTask.place === 'todo') return { name: 'To Do', color: null, icon: null, role: 'todo' };
-  if (viewTask.place === 'done') return { name: 'Done', color: null, icon: null, role: 'done' };
-  const current = viewTask.steps.find((step) => step.state === 'current');
-  return current
-    ? { name: current.name, color: current.color, icon: current.icon, role: null }
-    : { name: viewTask.task ? 'Another column' : 'To Do', color: null, icon: null, role: null };
+/** Where a task off its route is: To Do until it starts, Done once it finishes. A task at work is on its route. */
+function outsideRouteOf(viewTask: WorkflowViewTask): OutsideRouteColumn | null {
+  if (viewTask.place === 'planned' || viewTask.place === 'todo') return TO_DO_COLUMN;
+  if (viewTask.place === 'done') return DONE_COLUMN;
+  return null;
 }
+
+const TO_DO_COLUMN: OutsideRouteColumn = { role: 'todo', name: 'To Do' };
+const DONE_COLUMN: OutsideRouteColumn = { role: 'done', name: 'Done' };
 
 interface WorkflowCanvasCardProps {
   viewTask: WorkflowViewTask;
@@ -152,16 +147,16 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   const snapshotTask = useMemo(() => viewTask.task ?? plannedAsTask(viewTask), [viewTask]);
   const task = liveTask ?? snapshotTask;
   const view = useTaskCardViewModel(task);
-  const column = stripColumn(viewTask);
   const planned = viewTask.place === 'planned';
-  const height = canvasCardHeight(viewTask, view.cardDensity, projectName !== null);
-  const projectRow = projectName !== null ? <ProjectRow name={projectName} /> : null;
+  const height = canvasCardHeight(viewTask, view.cardDensity);
 
+  // The column is the track's own marker, so the strip names no column; its
+  // left side holds the project while the workflow spans boards, else nothing.
   const strip = (
     <WorkflowCardStrip
-      icon={<ColumnGlyph column={column} size={12} color={column.color ?? 'var(--color-fg-faint)'} />}
-      label={column.name}
+      leading={projectName !== null ? <ProjectLabel name={projectName} /> : null}
       steps={viewTask.steps}
+      outsideRoute={outsideRouteOf(viewTask)}
       lockedTitle={locked ? 'Moved by its workflow' : null}
     />
   );
@@ -184,7 +179,6 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
         data-selected={selected}
         data-testid="workflow-canvas-card"
       >
-        {projectRow}
         {strip}
         <div className={`${bodyPadding} min-h-0 overflow-hidden`}>
           <TaskCardCompactBody task={task} view={view} />
@@ -215,7 +209,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
       data-selected={selected}
       data-testid="workflow-canvas-card"
     >
-      <div className={`${headerInset} mb-2`}>{projectRow}{strip}</div>
+      <div className={`${headerInset} mb-2`}>{strip}</div>
       <TaskCardBody task={task} view={view} density={view.cardDensity} hideDisplayId={planned} idleFooter={idleFooter} fill />
     </div>
   );

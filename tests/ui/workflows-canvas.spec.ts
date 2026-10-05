@@ -208,17 +208,18 @@ test.describe('Workflows canvas', () => {
       await expect(card(page, 'task-1').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-canvas');
       await expect(card(page, 'task-3').locator('[data-testid="workflow-card-project"]')).toHaveText('workflows-mobile');
       await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(3);
-      // The project row (24px) pushes the title row down, and the ports with it:
-      // 49 + 24 = 73px on every card, the home ones as well as the other board's.
+      // The project sits in the strip's left side, where the phone puts it, so
+      // the title row and the ports stay where they are on one board: 49px down.
       for (const key of ['task-1', 'task-2', 'task-3']) {
-        await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(73));
-        await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(73));
+        await expect(card(page, key).locator('[data-testid="workflow-card-strip"] [data-testid="workflow-card-project"]')).toHaveCount(1);
+        await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(49));
+        await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(49));
       }
-      // The row reads at 12px on a faint fill, its folder in the muted grey.
-      const projectRow = card(page, 'task-1').locator('[data-testid="workflow-card-project"]');
-      await expect(projectRow).toHaveCSS('font-size', '12px');
-      await expect(projectRow).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-      await expect(projectRow.locator('svg')).toHaveCSS('color', await tokenColor(page, '--color-fg-muted'));
+      // The name reads at 12px in the tertiary grey, its folder in the muted grey.
+      const projectLabel = card(page, 'task-1').locator('[data-testid="workflow-card-project"]');
+      await expect(projectLabel).toHaveCSS('font-size', '12px');
+      await expect(projectLabel).toHaveCSS('color', await tokenColor(page, '--color-fg-tertiary'));
+      await expect(projectLabel.locator('svg')).toHaveCSS('color', await tokenColor(page, '--color-fg-muted'));
     } finally {
       await browser.close();
     }

@@ -1,7 +1,7 @@
 import React from 'react';
 import { BaseEdge, Position, getBezierPath, type ConnectionLineComponentProps, type Edge, type EdgeProps } from '@xyflow/react';
-import { smoothPath, type Point } from './workflow-layout';
-import { nodePortTop, type WorkflowFlowNode } from './WorkflowTaskNode';
+import { PORT_OFFSET_Y, smoothPath, type Point } from './workflow-layout';
+import type { WorkflowFlowNode } from './WorkflowTaskNode';
 
 /**
  * A link on the canvas: from the blocker's title row to the waiting task's,
@@ -88,7 +88,7 @@ const CONNECTION_LINE_STYLE: React.CSSProperties = {
  */
 export function WorkflowConnectionLine({ fromX, fromY, fromPosition, toX, toY, toPosition, toNode, connectionStatus }: ConnectionLineComponentProps<WorkflowFlowNode>) {
   const target = connectionStatus === 'valid' && toNode
-    ? { x: toNode.internals.positionAbsolute.x, y: toNode.internals.positionAbsolute.y + nodePortTop(toNode.data) }
+    ? { x: toNode.internals.positionAbsolute.x, y: toNode.internals.positionAbsolute.y + PORT_OFFSET_Y }
     : { x: toX, y: toY };
   const [path] = getBezierPath({
     sourceX: fromX,

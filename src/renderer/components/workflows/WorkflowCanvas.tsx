@@ -147,12 +147,12 @@ export function WorkflowCanvas({
   // The blocker a link is being drawn from, or null. Changes at the two ends of the gesture only.
   const linkingFrom = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
 
-  // Once any task is on another board, every card names its board (board 17).
+  // Once any task is on another board, every card names its board in its strip (board 17).
   const acrossBoards = useMemo(() => detail.tasks.some((task) => task.projectId !== detail.homeProjectId), [detail.tasks, detail.homeProjectId]);
   const layout = useMemo(() => layoutWorkflow(
-    detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density, acrossBoards), canvasX: task.canvasX, canvasY: task.canvasY })),
+    detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density), canvasX: task.canvasX, canvasY: task.canvasY })),
     detail.links,
-  ), [detail.tasks, detail.links, density, acrossBoards]);
+  ), [detail.tasks, detail.links, density]);
 
   const locked = detail.workflow.state === 'running';
   const derivedNodes = useMemo<WorkflowFlowNode[]>(() => detail.tasks.map((task) => ({

@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
 import type { WorkflowViewTask } from '../../../shared/types';
-import { PORT_OFFSET_Y, PROJECT_ROW_HEIGHT } from './workflow-layout';
+import { PORT_OFFSET_Y } from './workflow-layout';
 import { WorkflowCanvasCard, type WorkflowWaiting } from './WorkflowCanvasCard';
 import { WorkflowDetailContext } from './workflow-canvas-context';
 import { findTask, linkRefusal, taskLabel } from './workflow-graph';
@@ -42,7 +42,7 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   canBlock: boolean;
   /** Ports are drawn only while the canvas is editable. */
   editable: boolean;
-  /** The task's board, named while the workflow spans boards (board 17); null while it is on one. */
+  /** The task's board, named in its strip while the workflow spans boards (board 17); null while it is on one. */
   projectName: string | null;
   /** A task on another board than the home: that board's Done color, which its Done card wears. Null on the home board. */
   doneColor: string | null;
@@ -62,11 +62,6 @@ const CARD_TARGET_CLASS = 'workflow-card-target !absolute !inset-0 !w-full !h-fu
  * alike (board 10b).
  */
 export const LINK_HINT_CLASS = 'workflow-link-hint pointer-events-none whitespace-nowrap px-2.5 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-xs text-fg-tertiary';
-
-/** Where a card's ports sit: the middle of its title row, which the project row moves down. */
-export function nodePortTop(data: Pick<WorkflowNodeData, 'projectName'>): number {
-  return PORT_OFFSET_Y + (data.projectName !== null ? PROJECT_ROW_HEIGHT : 0);
-}
 
 /** What releasing the link being drawn over this card would do. */
 function LinkDropHint({ nodeId, portTop }: { nodeId: string; portTop: number }) {
@@ -117,7 +112,8 @@ function sameCard(previous: NodeProps<WorkflowFlowNode>, next: NodeProps<Workflo
 export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data, selected }: NodeProps<WorkflowFlowNode>) {
   const showTarget = data.editable && data.canWait;
   const showSource = data.editable && data.canBlock;
-  const portTop = nodePortTop(data);
+  // The middle of the title row, the same on every card: a card's project sits in its strip.
+  const portTop = PORT_OFFSET_Y;
   return (
     // `workflow-node` carries the lift while React Flow drags the card (index.css).
     <div className="workflow-node relative rounded-md" style={{ width: 256 }}>

@@ -804,9 +804,10 @@ async function visibleTodoCardDrag() {
     const centre = { x: canvas.left + canvas.width / 2, y: canvas.top + canvas.height / 2 };
     for (const card of document.querySelectorAll('[data-testid="workflow-canvas-card"]')) {
       const box = card.getBoundingClientRect();
-      const strip = card.querySelector('[data-testid="workflow-card-strip"]');
+      // A task in To Do: its strip's track is the To Do marker alone.
+      const toDoMarker = card.querySelector('[data-testid="workflow-card-strip"] [data-testid="workflow-step-marker"][data-outside-route="todo"]');
       const inView = box.left > canvas.left + 20 && box.right < canvas.right - 20 && box.top > canvas.top + 20 && box.bottom < canvas.bottom - 20;
-      if (!inView || !strip || !strip.textContent.includes('To Do')) continue;
+      if (!inView || !toDoMarker) continue;
       const from = { x: box.left + box.width / 2, y: box.top + 40 };
       const length = Math.hypot(centre.x - from.x, centre.y - from.y) || 1;
       const reach = Math.min(300, length);

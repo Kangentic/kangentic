@@ -226,7 +226,19 @@ test.describe('Workflow tasks on the board', () => {
       await expect(strip.locator('svg').first()).toHaveAttribute('stroke-width', '2');
       // Planning done, Executing current, Code Review, Testing and Merge ahead.
       await expect(strip.locator('[data-step-state]')).toHaveCount(5);
-      await expect(strip.locator('[data-step-state="current"]')).toHaveAttribute('title', 'Executing: now');
+      // The current step is the column's own marker: an 18px rounded square
+      // tinted with its color, holding its icon, and named for a screen reader.
+      const marker = strip.locator('[data-step-state="current"]');
+      await expect(marker).toHaveAttribute('title', 'Executing: now');
+      await expect(marker).toHaveAttribute('aria-label', 'Executing: now');
+      await expect(marker).toHaveCSS('width', '18px');
+      await expect(marker).toHaveCSS('height', '18px');
+      await expect(marker).toHaveCSS('border-top-left-radius', '5px');
+      await expect(marker.locator('svg')).toHaveCount(1);
+      // A card in To Do is off its route: its track is the To Do marker alone.
+      const toDoTrack = boardCard(page, 't415').locator('[data-testid="workflow-step-track"]');
+      await expect(toDoTrack.locator('[data-testid="workflow-step-marker"]')).toHaveAttribute('data-outside-route', 'todo');
+      await expect(toDoTrack.locator('[data-step-state]')).toHaveCount(0);
       await expect(strip.locator('[data-testid="workflow-card-lock"]')).toHaveAttribute('title', 'Moved by its workflow');
       await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
       await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);

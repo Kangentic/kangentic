@@ -31,14 +31,12 @@ export const ROW_GAP = 20;
 export const LANE_GAP = 12;
 /** How far a lane runs from the edge of any card in its column, above or below it. */
 export const LANE_CLEARANCE = 12;
-/** Where a link meets a card: the middle of its title row, under the workflow strip. */
-export const PORT_OFFSET_Y = 49;
 /**
- * The row naming a card's project, above the strip, on every card of a
- * workflow with a task on another board (#732 board 17). It moves the title
- * row, and with it the ports, down by its height.
+ * Where a link meets a card: the middle of its title row, under the workflow
+ * strip. The same on every card: a card that names its project (#732 board 17)
+ * names it in the strip.
  */
-export const PROJECT_ROW_HEIGHT = 24;
+export const PORT_OFFSET_Y = 49;
 /** How far apart two links leaving or arriving at one card start. */
 export const PORT_SPREAD = 8;
 
