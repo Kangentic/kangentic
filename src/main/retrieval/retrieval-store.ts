@@ -1010,13 +1010,30 @@ export class RetrievalStore {
   }
 
   /**
-   * The nearest chunks across `corpora`, closest first.
+   * True when the vec tables hold `modelTag`'s vectors, so a query embedded with
+   * that model can be scored against them. `vec_model` names the tables' model
+   * once the drain has synced them (`embed-store-access.ts`); an index from
+   * before it was kept holds the model only when no stored vector came from
+   * another one.
+   */
+  vecHoldsModel(modelTag: string): boolean {
+    const storedModel = this.getMeta('vec_model');
+    return storedModel === undefined ? !this.hasEmbeddingsFromOtherModel(modelTag) : storedModel === modelTag;
+  }
+
+  /**
+   * The nearest chunks across `corpora`, closest first, for a query embedded by
+   * `modelTag`.
    *
    * Each corpus is its own vec0 table, so each is searched for its own top
    * `limit` and the lists merge by distance. Every table holds the same model's
-   * vectors, so distances compare across them.
+   * vectors, so distances compare across them. None come back while the tables
+   * hold another model's: after a switch to a model of the same width they
+   * would score without an error until the drain resets them, and the search
+   * answers by keyword alone meanwhile.
    */
-  searchSemantic(query: Float32Array, limit: number, corpora: ReadonlyArray<IndexCorpus>): SemanticHit[] {
+  searchSemantic(query: Float32Array, limit: number, corpora: ReadonlyArray<IndexCorpus>, modelTag: string): SemanticHit[] {
+    if (!this.vecHoldsModel(modelTag)) return [];
     const buffer = Buffer.from(query.buffer, query.byteOffset, query.byteLength);
     const merged: Array<{ id: number; distance: number }> = [];
     for (const corpus of corpora) {

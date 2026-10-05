@@ -14,7 +14,7 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, taskSummariesOn } from '../../../../shared/answer-agent';
 import { SUMMARY_BATCH_SIZE } from '../../../../shared/task-summaries';
 import { EMBEDDING_MODELS, resolveEmbeddingModel } from '../../../../shared/embedding-models';
-import { MODEL_LICENSES } from '../../../../shared/model-licenses';
+import { licenseLinks } from '../../../../shared/model-licenses';
 import { alwaysOnLine, codeLine, CODE_INFO, sourceRequirements, SUMMARIES_INFO, summariesLine } from './index-sources';
 import type {
   AgentDetectionInfo, AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
@@ -240,7 +240,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
             {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
             <CardLinkRow
               label="License"
-              links={[{ label: MODEL_LICENSES[embeddingModel.license].name, href: MODEL_LICENSES[embeddingModel.license].url }]}
+              links={licenseLinks([embeddingModel.license])}
               onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
               testId="embedding-model-license"
             />

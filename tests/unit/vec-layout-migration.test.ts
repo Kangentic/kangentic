@@ -56,7 +56,7 @@ describe('conversation vectors move to chunk size 128', () => {
   it('reads the old table until the switch, keeps writes and deletes made mid-copy, and frees the old table', () => {
     const { database, store, ids } = legacyProject(300);
     expect(vecLayout(database).conversationTable).toBe('memory_chunks_vec');
-    expect(store.searchSemantic(vectorFor(7), 1, ['conversation'])[0]?.chunkId).toBe(ids[7]);
+    expect(store.searchSemantic(vectorFor(7), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(ids[7]);
 
     expect(store.beginConversationVecCopy()).toBe(true);
     expect(database.prepare("SELECT sql FROM sqlite_master WHERE name = 'memory_vec_conversation'").get()).toMatchObject({ sql: expect.stringContaining('chunk_size=128') });
@@ -70,7 +70,7 @@ describe('conversation vectors move to chunk size 128', () => {
     ], 'model@4');
     other.upsertDocument(ref, Array.from({ length: 299 }, (_, index) => chunk(index)));
     // Reads still use the old table.
-    expect(store.searchSemantic(vectorFor(1000), 1, ['conversation'])[0]?.chunkId).toBe(ids[10]);
+    expect(store.searchSemantic(vectorFor(1000), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(ids[10]);
     while (store.copyConversationVecBatch(100) > 0) { /* copy through */ }
     store.finishConversationVecCopy();
 
@@ -81,7 +81,7 @@ describe('conversation vectors move to chunk size 128', () => {
     expect(copied.size).toBe(299);
     expect(copied.get(ids[10])).toEqual(Array.from(vectorFor(1000)));
     expect(copied.has(ids[299])).toBe(false);
-    expect(store.searchSemantic(vectorFor(2500), 1, ['conversation'])[0]?.chunkId).toBe(ids[250]);
+    expect(store.searchSemantic(vectorFor(2500), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(ids[250]);
 
     let steps = 0;
     while (store.freeLegacyConversationVecStep()) steps += 1;
@@ -89,7 +89,7 @@ describe('conversation vectors move to chunk size 128', () => {
     expect(tableExists(database, 'memory_chunks_vec')).toBe(false);
     expect(tableExists(database, 'memory_chunks_vec_rowids')).toBe(false);
     // A new connection reads the new layout from the schema.
-    expect(new RetrievalStore(database).searchSemantic(vectorFor(3), 1, ['conversation'])[0]?.chunkId).toBe(ids[3]);
+    expect(new RetrievalStore(database).searchSemantic(vectorFor(3), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(ids[3]);
   });
 
   it('runs as one worker job that resumes where it stopped', async () => {
@@ -105,7 +105,7 @@ describe('conversation vectors move to chunk size 128', () => {
     expect(vectorsIn(database, 'memory_vec_conversation').size).toBe(150);
     expect(tableExists(database, 'memory_chunks_vec')).toBe(false);
     expect(database.prepare("SELECT COUNT(*) AS count FROM memory_meta WHERE key = 'vec_conversation_copy_through'").get()).toEqual({ count: 0 });
-    expect(new RetrievalStore(database).searchSemantic(vectorFor(42), 1, ['conversation'])[0]?.chunkId).toBe(ids[42]);
+    expect(new RetrievalStore(database).searchSemantic(vectorFor(42), 1, ['conversation'], 'model@4')[0]?.chunkId).toBe(ids[42]);
     // Done: a second run has nothing to do.
     await expect(indexHandlers['vec.migrateLayout']({ projectId: 'project-1' }, context)).resolves.toEqual({ copied: 0, switched: false, freedBlocks: 0 });
   });

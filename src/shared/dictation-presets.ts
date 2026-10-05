@@ -118,17 +118,21 @@ export function effectiveMode(config: DictationConfig, tier: DictationEngineTier
 
 /**
  * The live and refinement model ids a config runs. A preset resolves through
- * `presetModels`; Custom keeps the saved ids and fills an unset slot from the
- * machine's default preset. Ids are not checked against the registry here
- * (this module is shared); main falls back for an unknown one.
+ * `presetModels`; Custom keeps the saved ids. Ids are not checked against the
+ * registry here (this module is shared); main falls back for an unknown one.
+ *
+ * Only an older config leaves a Custom slot unset, since the tab saves both ids
+ * on the switch to Custom. Such a config ran the Zipformer for an empty live
+ * slot, so it gets the Light preset's live model, never a larger download it
+ * did not ask for. An empty refinement slot takes the machine's default
+ * preset's, as it took the tier default before.
  */
 export function resolveDictationSlots(config: DictationConfig, tier: DictationEngineTier): DictationSlotIds {
   const language = config.language ?? 'en';
   const mode = effectiveMode(config, tier);
   if (mode !== 'custom') return presetModels(mode, language);
-  const fallback = presetModels(TIER_DEFAULT_PRESET[tier], language);
   return {
-    liveModelId: config.liveModelId ?? fallback.liveModelId,
-    modelId: config.modelId ?? fallback.modelId,
+    liveModelId: config.liveModelId ?? presetModels('fast', language).liveModelId,
+    modelId: config.modelId ?? presetModels(TIER_DEFAULT_PRESET[tier], language).modelId,
   };
 }

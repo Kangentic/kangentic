@@ -102,6 +102,7 @@ export async function searchConversationMemory(
 
   // Embed the query once for all projects (semantic path).
   let queryVector: Float32Array | null = null;
+  const queryModelTag = input.embedder?.modelTag ?? '';
   if (input.embedder) {
     try {
       const vectors = await input.embedder.embed([query], { timeoutMs: input.embedWaitMs, isQuery: true });
@@ -137,7 +138,7 @@ export async function searchConversationMemory(
     const lexical = matchQuery ? timeSyncWork('search:lexical', () => safeLexical(store, matchQuery, input.taskId)) : [];
     let semantic = queryVector
       ? timeSyncWork('search:semantic', () => relevantSemantic(
-        store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT,
+        store, queryVector, queryModelTag, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT,
       ))
       : [];
     if (taskChunkIds) {
@@ -232,9 +233,9 @@ function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string)
   }
 }
 
-function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: number) {
+function safeSemantic(store: RetrievalStore, queryVector: Float32Array, modelTag: string, limit: number) {
   try {
-    return store.searchSemantic(queryVector, limit, CONVERSATION_CORPUS);
+    return store.searchSemantic(queryVector, limit, CONVERSATION_CORPUS, modelTag);
   } catch {
     return [];
   }
@@ -260,8 +261,8 @@ export const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
  *  model-independent relevance `(cos - floor) / (1 - floor)`, clamped implicitly
  *  by the cutoff, so gibberish (which lands at the floor -> relevance ~0) is
  *  dropped on every model. A floor <= 0 (or >= 1) disables the filter. */
-function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, noiseFloor: number, limit: number) {
-  const hits = safeSemantic(store, queryVector, limit);
+function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, modelTag: string, noiseFloor: number, limit: number) {
+  const hits = safeSemantic(store, queryVector, modelTag, limit);
   const denom = 1 - noiseFloor;
   if (!(noiseFloor > 0) || denom <= 0) return hits;
   return hits

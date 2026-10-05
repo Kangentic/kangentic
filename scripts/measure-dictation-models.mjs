@@ -102,10 +102,30 @@ async function fetchTo(url, dest) {
   if (fs.existsSync(dest)) return;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   process.stdout.write(`downloading ${path.basename(dest)}...\n`);
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(`${dest}.part`));
-  fs.renameSync(`${dest}.part`, dest);
+  const partPath = `${dest}.part`;
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(partPath));
+  } catch (error) {
+    fs.rmSync(partPath, { force: true });
+    throw error;
+  }
+  await renameWithRetry(partPath, dest);
+}
+
+// Windows antivirus and the search indexer can hold a large file that was just
+// written, so the rename retries on a lock before it gives up.
+async function renameWithRetry(fromPath, toPath) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      fs.renameSync(fromPath, toPath);
+      return;
+    } catch (error) {
+      if (attempt >= 5 || (error.code !== 'EPERM' && error.code !== 'EBUSY')) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
 }
 
 async function modelDir(name, spec) {
@@ -120,12 +140,16 @@ async function modelDir(name, spec) {
 
 async function dictatedClips() {
   const kokoro = path.join(root, 'kokoro-en-v0_19');
-  if (!fs.existsSync(path.join(kokoro, 'model.onnx'))) {
+  // Written once tar returns, so an extraction cut short runs again rather than
+  // passing on whichever file happened to land first.
+  const extractedMarker = path.join(kokoro, '.extracted');
+  if (!fs.existsSync(extractedMarker)) {
     const archive = path.join(root, 'kokoro-en-v0_19.tar.bz2');
     await fetchTo('https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2', archive);
     // A relative archive name: GNU tar (Git Bash) reads `C:` in an absolute
     // Windows path as a remote host.
     execFileSync('tar', ['-xjf', path.basename(archive)], { cwd: root });
+    fs.writeFileSync(extractedMarker, '');
   }
   const clipDir = path.join(root, 'measure-clips');
   fs.mkdirSync(clipDir, { recursive: true });

@@ -110,4 +110,43 @@ describe('resolveDictationSlots', () => {
     expect(resolveDictationSlots(config, 'streaming-tiny')).toEqual({ liveModelId: 'whisper-tiny-en', modelId: NO_MODEL });
     expect(resolveDictationSlots(config, 'accurate-base')).toEqual({ liveModelId: 'whisper-tiny-en', modelId: 'parakeet-tdt-0.6b-v3' });
   });
+
+  // An older Custom config left the live slot unset and ran the Zipformer for it.
+  // It must get the Light preset's live model, never the machine's default
+  // preset's: on a capable machine that is Nemotron, a 600 MB download the user
+  // never asked for. The refinement slot still follows the default preset.
+  describe('an unset Custom live slot takes the Light preset\'s live model, not the machine\'s default preset\'s', () => {
+    it('resolves to the Zipformer for English on a capable machine', () => {
+      expect(getModel('whisper-small-en'), 'the refinement id must be registered').toBeDefined();
+      expect(presetModels(TIER_DEFAULT_PRESET['accurate-base'], 'en').liveModelId).not.toBe(PRESET_MODEL_IDS.zipformer);
+
+      const config: DictationConfig = { mode: 'custom', language: 'en', modelId: 'whisper-small-en' };
+
+      expect(resolveDictationSlots(config, 'accurate-base')).toEqual({ liveModelId: 'streaming-zipformer-en', modelId: 'whisper-small-en' });
+    });
+
+    it('resolves to Whisper base multilingual for a language the Zipformer does not cover', () => {
+      expect(getModel('whisper-small-multi'), 'the refinement id must be registered').toBeDefined();
+      expect(presetModels(TIER_DEFAULT_PRESET['accurate-base'], 'fr').liveModelId).not.toBe(PRESET_MODEL_IDS.whisperBaseMulti);
+
+      const config: DictationConfig = { mode: 'custom', language: 'fr', modelId: 'whisper-small-multi' };
+
+      expect(resolveDictationSlots(config, 'accurate-base')).toEqual({ liveModelId: 'whisper-base-multi', modelId: 'whisper-small-multi' });
+    });
+
+    it('resolves a legacy config with no mode and only a refinement model the same way', () => {
+      const config: DictationConfig = { language: 'en', modelId: 'parakeet-tdt-0.6b-en' };
+
+      // No mode and a lone refinement id match no preset pair, so the config reads as custom.
+      expect(effectiveMode(config, 'accurate-base')).toBe('custom');
+      expect(resolveDictationSlots(config, 'accurate-base')).toEqual({ liveModelId: 'streaming-zipformer-en', modelId: 'parakeet-tdt-0.6b-en' });
+    });
+
+    it('still takes an unset refinement slot from the machine\'s default preset', () => {
+      const config: DictationConfig = { mode: 'custom', language: 'en' };
+
+      expect(resolveDictationSlots(config, 'accurate-base')).toEqual({ liveModelId: 'streaming-zipformer-en', modelId: 'parakeet-tdt-0.6b-v3' });
+      expect(resolveDictationSlots(config, 'streaming-tiny')).toEqual({ liveModelId: 'streaming-zipformer-en', modelId: NO_MODEL });
+    });
+  });
 });

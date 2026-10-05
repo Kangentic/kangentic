@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 /**
@@ -234,5 +234,109 @@ describe('TranscriptionService model-progress: per-model byte counts beside the 
     expect(firstModelTwoEvent.modelDownloadedBytes).toBeLessThan(lastModelOneEvent.modelDownloadedBytes as number);
     expect(firstModelTwoEvent.downloadedBytes).toBeGreaterThan(lastModelOneEvent.downloadedBytes);
     expect(firstModelTwoEvent.downloadedBytes).toBeGreaterThan(MODEL_ONE_NOMINAL_BYTES);
+  });
+});
+
+/**
+ * A failed download names the model that failed, so the Dictation tab marks only
+ * that model's line. `ensureModels` tags the failure with the model it was on,
+ * and both error paths (`downloadModel`, and `reportPrepareFailure` behind
+ * `start` and `prewarm`) read the tag. A failure with no single model to blame
+ * (the worker failing to load the engine) names the first model of the selection.
+ * The message the user reads stays the cause's own.
+ */
+describe('TranscriptionService model-progress: an error event names the model that failed', () => {
+  // The module-level afterEach restores a Date.now spy; these tests never drive
+  // the clock, so a pass-through spy gives it something to restore.
+  beforeEach(() => {
+    vi.spyOn(Date, 'now');
+  });
+
+  function resolvedPathsOf(model: ModelDef) {
+    return { modelId: model.id, kind: model.engineKind, dir: '/mock/dir', paths: {} };
+  }
+
+  /** `ensureModel` resolves for every model except `failingModelId`, which rejects with `message`. */
+  function failEnsureModelFor(failingModelId: string, message: string): void {
+    vi.mocked(ensureModel).mockImplementation(async (model) => {
+      if (model.id === failingModelId) throw new Error(message);
+      return resolvedPathsOf(model);
+    });
+  }
+
+  function errorEventsOf(service: TranscriptionService): DictationModelProgress[] {
+    const errorEvents: DictationModelProgress[] = [];
+    service.on('model-progress', (progress: DictationModelProgress) => {
+      if (progress.status === 'error') errorEvents.push(progress);
+    });
+    return errorEvents;
+  }
+
+  it('downloadModel: model two failing after model one succeeded names model two, with the cause\'s message', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    failEnsureModelFor(MODEL_TWO.id, 'disk full');
+    const service = new TranscriptionService(makeFakeClient());
+    const errorEvents = errorEventsOf(service);
+
+    await expect(service.downloadModel(DOWNLOAD_CONFIG)).rejects.toThrow(/^disk full$/);
+
+    expect(errorEvents).toEqual([
+      { modelId: MODEL_TWO.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'disk full' },
+    ]);
+  });
+
+  it('downloadModel: model one failing names model one and never starts model two', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    failEnsureModelFor(MODEL_ONE.id, 'network unreachable');
+    const service = new TranscriptionService(makeFakeClient());
+    const errorEvents = errorEventsOf(service);
+
+    await expect(service.downloadModel(DOWNLOAD_CONFIG)).rejects.toThrow(/^network unreachable$/);
+
+    expect(errorEvents).toEqual([
+      { modelId: MODEL_ONE.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'network unreachable' },
+    ]);
+    expect(vi.mocked(ensureModel)).toHaveBeenCalledTimes(1);
+  });
+
+  it('start: model two failing names model two (the reportPrepareFailure path), and start rejects with the cause\'s message', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    failEnsureModelFor(MODEL_TWO.id, 'disk full');
+    const service = new TranscriptionService(makeFakeClient());
+    const errorEvents = errorEventsOf(service);
+
+    await expect(service.start({ engineMode: 'auto', language: 'en' })).rejects.toThrow(/^disk full$/);
+
+    expect(errorEvents).toEqual([
+      { modelId: MODEL_TWO.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'disk full' },
+    ]);
+  });
+
+  it('prewarm: model two failing names model two (the reportPrepareFailure path)', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    failEnsureModelFor(MODEL_TWO.id, 'disk full');
+    const service = new TranscriptionService(makeFakeClient());
+    const errorEvents = errorEventsOf(service);
+
+    await service.prewarm(DOWNLOAD_CONFIG);
+
+    expect(errorEvents).toEqual([
+      { modelId: MODEL_TWO.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'disk full' },
+    ]);
+  });
+
+  it('prewarm: a worker load failure with both models downloaded names the first model, with the worker\'s message', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    vi.mocked(ensureModel).mockImplementation(async (model) => resolvedPathsOf(model));
+    const client = makeFakeClient();
+    (client.ensureWarm as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('worker did not respond'));
+    const service = new TranscriptionService(client);
+    const errorEvents = errorEventsOf(service);
+
+    await service.prewarm(DOWNLOAD_CONFIG);
+
+    expect(errorEvents).toEqual([
+      { modelId: MODEL_ONE.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'worker did not respond' },
+    ]);
   });
 });

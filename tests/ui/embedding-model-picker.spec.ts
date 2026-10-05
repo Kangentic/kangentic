@@ -257,6 +257,32 @@ test.describe('Embedding model picker', () => {
     }
   });
 
+  // bge-base and bge-large left the registry. A config still holding either id
+  // runs the default model in main (`resolveEmbeddingModel`), so the picker has
+  // to show that model as selected and the License line has to name ITS license.
+  // The selected segment alone cannot tell a resolved id from the raw one: the
+  // SegmentedControl falls back to its first option (Granite) for an unknown value.
+  for (const retiredModelId of ['bge-base', 'bge-large']) {
+    test(`a stored retired model (${retiredModelId}) reads as the default: Granite selected, with its license`, async () => {
+      const { browser, page } = await launchWithState(makePreConfig('ready'));
+      try {
+        await setKnowledgeGraph(page, { localModel: retiredModelId });
+        // The config really holds the retired id, so the picker is resolving it.
+        expect(await page.evaluate(async () => (await window.electronAPI.config.get()).knowledgeGraph?.localModel))
+          .toBe(retiredModelId);
+        await openKnowledgeGraphTab(page);
+
+        await expect(page.getByTestId('embedding-model-choice')).toBeVisible();
+        await expect(page.getByTestId('embedding-model-granite-r2')).toHaveAttribute('aria-checked', 'true');
+        await expect(page.getByTestId('embedding-model-bge-small')).toHaveAttribute('aria-checked', 'false');
+        // Granite R2 ships under Apache-2.0 (bge small is MIT).
+        await expect(page.getByTestId('embedding-model-license-link')).toHaveText('Apache-2.0');
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
   test('lists the acceleration options, defaults to Auto, and names the active backend', async () => {
     const { browser, page } = await launchWithState(makePreConfig('ready'));
     try {

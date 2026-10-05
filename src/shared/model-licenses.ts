@@ -37,7 +37,11 @@ export const MODEL_LICENSES: Readonly<Record<ModelLicenseId, ModelLicense>> = {
   'OpenMDW-1.1': { name: 'OpenMDW-1.1', url: 'https://openmdw.ai/license/1-1/' },
 };
 
-/** The distinct licenses of a set of models, in first-seen order. */
-export function distinctLicenses(licenseIds: readonly ModelLicenseId[]): ModelLicense[] {
-  return [...new Set(licenseIds)].map((licenseId) => MODEL_LICENSES[licenseId]);
+/** The distinct licenses of a set of models, in first-seen order, as the links
+ *  a settings License line shows. */
+export function licenseLinks(licenseIds: readonly ModelLicenseId[]): Array<{ label: string; href: string }> {
+  return [...new Set(licenseIds)].map((licenseId) => ({
+    label: MODEL_LICENSES[licenseId].name,
+    href: MODEL_LICENSES[licenseId].url,
+  }));
 }
