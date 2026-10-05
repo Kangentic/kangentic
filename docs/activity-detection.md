@@ -74,7 +74,7 @@ Surrounding infrastructure:
 |------|------|
 | `src/main/activity-engine/session-telemetry.ts` | Wires the engine to event ingestion + PTY tracker + watchers + user-interrupt coordinator |
 | `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
-| `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, cost, tokens) |
+| `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, run time paired by `toolId`, calls that waited on the user, cost, tokens) |
 | `src/main/activity-engine/pr-command-detector.ts` | PR command pattern detector |
 | `src/main/activity-engine/push-command-detector.ts` | `git push` destination capture: remembers the branch a Bash push named on ToolStart, reports it on that call's ToolEnd (paired by `toolId`) as the task's `pushed_branch` PR anchor; parser in `src/main/git/push-command.ts` |
 | `src/main/activity-engine/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
