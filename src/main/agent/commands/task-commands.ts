@@ -7,6 +7,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
 import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
 import {
@@ -927,9 +928,6 @@ export const handleMoveTask: CommandHandler = (
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
   };
 };
-
-/** The longest message a move hands on: a whole review verdict fits with room to spare. */
-export const MOVE_MESSAGE_MAX_CHARS = 20_000;
 
 /** Cap on how many tasks a reorder echoes back before truncating. */
 const REORDER_ECHO_LIMIT = 25;

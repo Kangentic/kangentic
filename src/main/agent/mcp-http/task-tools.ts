@@ -4,7 +4,8 @@ import { callHandler, runHandler, withProject, appendNoticeLine, detectCrossProj
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
-import { MOVE_MESSAGE_MAX_CHARS, TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
+import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
+import { MOVE_MESSAGE_MAX_CHARS } from '../commands/move-message-limit';
 import { resolveSpacedModelName, resolveEffortSelector } from '../../../shared/model-id';
 import { validateSpawnOverrides } from './spawn-override-validation';
 import { resolveColumn } from '../commands/column-resolver';
