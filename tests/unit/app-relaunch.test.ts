@@ -145,6 +145,32 @@ describe('isRestartRequested', () => {
     expect(isRestartRequested()).toBe(true);
   });
 
+  it('is already true when the packaged quit runs, since before-quit fires inside the quit call', () => {
+    let requestedWhenQuitRan: boolean | null = null;
+    const { dependencies } = recordingDependencies({
+      quit: () => { requestedWhenQuitRan = isRestartRequested(); },
+    });
+
+    relaunchApp(dependencies);
+
+    expect(requestedWhenQuitRan).toBe(true);
+  });
+
+  it('is already true when control passes to the update installer, which is the call that quits the app', () => {
+    let requestedWhenInstallRan: boolean | null = null;
+    const { dependencies } = recordingDependencies({
+      installPendingUpdateAndRelaunch: () => {
+        requestedWhenInstallRan = isRestartRequested();
+        return true;
+      },
+    });
+
+    expect(relaunchApp(dependencies)).toBe('update-install');
+
+    expect(requestedWhenInstallRan).toBe(true);
+    expect(isRestartRequested()).toBe(true);
+  });
+
   it('stays false when the restart is skipped in a test run or its request cannot be written', () => {
     relaunchApp(recordingDependencies({ isTest: true, devRestartFile: '/mock/restart' }).dependencies);
     expect(isRestartRequested()).toBe(false);

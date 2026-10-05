@@ -89,6 +89,22 @@ describe('fillPreviewClone marker', () => {
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
+  it('still resolves, and says the tree is filled, when only the marker write fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Only the marker goes through fs.promises.writeFile; git writes the working tree
+    // from its own child process, so this fails the marker and nothing else.
+    vi.spyOn(fs.promises, 'writeFile').mockRejectedValue(new Error('EACCES'));
+
+    await expect(fillPreviewClone(cloneDir)).resolves.toBeUndefined();
+
+    // The reset succeeded, so the tree is filled and the failure is reported as a
+    // marker failure, not as a failed fill.
+    expect(fs.readFileSync(path.join(cloneDir, 'tracked.txt'), 'utf-8')).toBe('committed\n');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('fill marker could not be written'), expect.anything());
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Background working-tree fill failed'), expect.anything());
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
   it('retries on the next call once the failure is gone, so a failed fill is not remembered', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     fs.writeFileSync(lockPath, '');
