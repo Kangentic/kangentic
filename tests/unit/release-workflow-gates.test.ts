@@ -290,9 +290,8 @@ describe('release.yml job graph', () => {
   // (value, Darwin mapping, feed shape) is pinned in patch-mac-update-info.test.ts.
   it('patches latest-mac.yml with the minimum system version before verifying and publishing', () => {
     const patch = stepBody('publish-release', 'Block macOS updates below the minimum system version');
-    expect(patch).toContain(
-      'node scripts/patch-mac-update-info.js "${{ steps.version.outputs.tag }}" --repo ${{ github.repository }}'
-    );
+    expect(patch).toContain('node scripts/patch-mac-update-info.js "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"');
+    expect(patch).toContain('RELEASE_TAG: ${{ steps.version.outputs.tag }}');
     expect(patch).toContain('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}');
     expect(patch).not.toContain('--dry-run');
 
@@ -304,6 +303,25 @@ describe('release.yml job graph', () => {
     expect(patchAt).toBeLessThan(verifyAt);
     expect(verifyAt).toBeLessThan(publishAt);
     expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'patch-mac-update-info.js'))).toBe(true);
+  });
+
+  // A git ref name may contain `"`, `$` and a backtick, a dispatch's version input is free text,
+  // and a `${{ }}` expression is pasted into the script text before the shell parses it, so either
+  // value spliced into a `run:` line can run whatever it carries. Both only ever reach a step
+  // through an env assignment. The one other place the input appears is the create-tag job's
+  // `outputs:` value, which no shell reads.
+  it('never splices the release tag or the version input into a run script', () => {
+    const lines = workflowSource.split(/\r?\n/);
+    for (const expression of ['${{ steps.version.outputs.tag }}', '${{ inputs.version }}']) {
+      const uses = lines.filter((line) => line.includes(expression));
+      expect(uses.length, `${expression} is no longer read at all; update this pin`).toBeGreaterThan(0);
+      for (const line of uses) {
+        const isEnvAssignment = line.trim() === `${line.trim().split(':')[0]}: ${expression}`
+          && /^[A-Z_]+$/.test(line.trim().split(':')[0]);
+        const isJobOutput = line.trim() === `tag: v${expression}`;
+        expect(isEnvAssignment || isJobOutput, `${expression} is spliced into script text: ${line.trim()}`).toBe(true);
+      }
+    }
   });
 
   // The landing page shows the posters with no live frame beside them, so the job installs a face
