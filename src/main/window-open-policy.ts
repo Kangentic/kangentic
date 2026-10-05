@@ -277,11 +277,12 @@ export function hardenWebviewPopupWindow(
   popupContents.on('did-navigate', applyOriginTitle);
   popupContents.on('did-navigate-in-page', applyOriginTitle);
 
-  // Same navigation policy as the guest that opened it.
-  popupContents.on('will-navigate', (navigationEvent, urlString) => {
-    if (isAllowedExternalUrl(urlString, EMBEDDED_BROWSER_SCHEMES)) return;
+  // Same navigation policy as the guest that opened it. The URL comes from the
+  // event's details: Electron 44 deprecates the positional `url` argument.
+  popupContents.on('will-navigate', (navigationEvent) => {
+    if (isAllowedExternalUrl(navigationEvent.url, EMBEDDED_BROWSER_SCHEMES)) return;
     navigationEvent.preventDefault();
-    console.warn(`[WINDOW_OPEN] Blocked popup navigation to disallowed URL: ${urlString}`);
+    console.warn(`[WINDOW_OPEN] Blocked popup navigation to disallowed URL: ${navigationEvent.url}`);
   });
 
   // A popup may open one more popup under the identical policy, budget-capped.
