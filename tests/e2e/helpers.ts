@@ -391,16 +391,22 @@ async function watchProcessDeaths(app: ElectronApplication, page: Page): Promise
   page.on('crash', () => console.error(`${PROCESS_DEATH_TAG} Playwright saw the page crash`));
   try {
     await app.evaluate(({ app: electronApp, webContents }, tag) => {
-      const freeMemoryKb = (): number => process.getSystemMemoryInfo().free;
+      // On Linux (CI's runner) `free` is MemFree, which excludes page cache and reads near
+      // zero on a healthy machine; `available` (MemAvailable, Linux only) is the pressure
+      // figure. JSON.stringify drops it where it is undefined.
+      const memoryKb = (): { freeMemoryKb: number; availableMemoryKb?: number } => {
+        const info = process.getSystemMemoryInfo();
+        return { freeMemoryKb: info.free, availableMemoryKb: info.available };
+      };
       const watch = (contents: Electron.WebContents): void => {
         contents.on('render-process-gone', (_event, details) => {
-          console.error(`${tag} renderer ${JSON.stringify({ ...details, url: contents.getURL(), freeMemoryKb: freeMemoryKb() })}`);
+          console.error(`${tag} renderer ${JSON.stringify({ ...details, url: contents.getURL(), ...memoryKb() })}`);
         });
       };
       for (const contents of webContents.getAllWebContents()) watch(contents);
       electronApp.on('web-contents-created', (_event, contents) => watch(contents));
       electronApp.on('child-process-gone', (_event, details) => {
-        console.error(`${tag} child ${JSON.stringify({ ...details, freeMemoryKb: freeMemoryKb() })}`);
+        console.error(`${tag} child ${JSON.stringify({ ...details, ...memoryKb() })}`);
       });
     }, PROCESS_DEATH_TAG);
   } catch (error) {

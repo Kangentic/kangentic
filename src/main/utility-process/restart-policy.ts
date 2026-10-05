@@ -68,6 +68,14 @@ const DEFAULT_MAX_CRASHES = 3;
  */
 const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
 const DEFAULT_DECAY_MS = 5 * 60_000;
+/**
+ * How long a crash's log line and latch report wait for the dying worker's
+ * stderr pipe to end. Electron 44.5.0 drains a utility process's output after
+ * `exit`, so the exception text that explains the crash can arrive just after
+ * it is recorded; measured on 44.5.1, `end` follows `exit` by about 3 ms. The
+ * bound is only for a pipe that never ends.
+ */
+export const STDERR_DRAIN_BOUND_MS = 500;
 
 type CrashPhase = 'first' | 'latched';
 
@@ -152,49 +160,80 @@ export class UtilityRestartPolicy {
       while (this.stderrSources.length > this.maxCrashes) this.stderrSources.shift();
     }
 
-    // Every crash leaves its stderr in the main console, which the log mirror
-    // persists (warn is never gated) to <project>/.kangentic/logs/<date>.log,
-    // so the text survives locally even with error reporting off.
-    const tail = this.latestStderr();
-    console.warn(
-      `[utility-process] ${this.service} exited with code ${exitCode ?? 'unknown'} (crash ${this.crashCount} of ${this.maxCrashes})`,
-      tail ? `\n${tail}` : '(no stderr captured)',
-    );
-
+    // Everything that decides the subsystem's state stays synchronous: the
+    // count and backoff above, the telemetry, and whether this crash latches.
+    // Only the two places that PRINT the stderr wait for it (below).
+    const crashNumber = this.crashCount;
     this.trackCrashOnce('first', exitCode);
 
-    if (this.crashCount >= this.maxCrashes && !this.reportedLatch) {
+    const latchesNow = this.crashCount >= this.maxCrashes && !this.reportedLatch;
+    if (latchesNow) {
       this.reportedLatch = true;
-      // The same moment as the Sentry report, so the two surfaces stay aligned
-      // on when a subsystem gave up.
+      // The same moment as the Sentry report is decided, so the two surfaces
+      // stay aligned on when a subsystem gave up.
       this.trackCrashOnce('latched', exitCode);
-      // Reported from here rather than from the SDK's app-level
-      // `child-process-gone` listener because only this side knows the service
-      // name, the exit code, and that the exit was unintentional. The SDK's own
-      // utility-process event is filtered out in error-reporting.ts precisely
-      // because it can carry none of that.
-      reportHandledError(
-        new Error(`${this.service} worker exited repeatedly (exit code ${exitCode ?? 'unknown'})`),
-        {
-          source: 'utility_process',
-          service: this.service,
-          exitCode: String(exitCode ?? 'unknown'),
-          crashCount: String(this.crashCount),
-        },
-        // The stderr is content, so it goes in a context, never a tag or the
-        // message: a tag would fragment grouping and a varying message would
-        // split the issue. This is what turns "exit code 1" into the module
-        // name or stack that explains it.
-        {
-          utility_process: {
-            service: this.service,
-            exitCode: exitCode ?? null,
-            crashCount: this.crashCount,
-            stderrTail: this.latestStderr() ?? '(no stderr captured)',
-          },
-        },
-      );
     }
+
+    const emit = (): void => {
+      this.logCrash(exitCode, crashNumber);
+      if (latchesNow) this.reportLatch(exitCode, crashNumber);
+    };
+
+    // The dying worker's stderr can still be arriving (see
+    // STDERR_DRAIN_BOUND_MS), so the log line and the report wait for the pipe
+    // to end, bounded. A source with nothing pending answers null and both run
+    // now. A report deferred by the bound is lost if the app quits inside those
+    // 500 ms; that is acceptable, because intentional exits (quit, dispose, an
+    // idle recycle) never reach recordCrash, so the only loss is a crash that
+    // happens to coincide with the user quitting.
+    const drained = stderr?.whenDrained?.(STDERR_DRAIN_BOUND_MS) ?? null;
+    if (drained === null) {
+      emit();
+      return;
+    }
+    void drained.then(emit).catch((error: unknown) => {
+      console.error('[utility-process] could not log a worker crash:', error);
+    });
+  }
+
+  /** Every crash leaves its stderr in the main console, which the log mirror
+   *  persists (warn is never gated) to <project>/.kangentic/logs/<date>.log,
+   *  so the text survives locally even with error reporting off. */
+  private logCrash(exitCode: number | null | undefined, crashNumber: number): void {
+    const tail = this.latestStderr();
+    console.warn(
+      `[utility-process] ${this.service} exited with code ${exitCode ?? 'unknown'} (crash ${crashNumber} of ${this.maxCrashes})`,
+      tail ? `\n${tail}` : '(no stderr captured)',
+    );
+  }
+
+  /** Reported from here rather than from the SDK's app-level
+   *  `child-process-gone` listener because only this side knows the service
+   *  name, the exit code, and that the exit was unintentional. The SDK's own
+   *  utility-process event is filtered out in error-reporting.ts precisely
+   *  because it can carry none of that. */
+  private reportLatch(exitCode: number | null | undefined, crashNumber: number): void {
+    reportHandledError(
+      new Error(`${this.service} worker exited repeatedly (exit code ${exitCode ?? 'unknown'})`),
+      {
+        source: 'utility_process',
+        service: this.service,
+        exitCode: String(exitCode ?? 'unknown'),
+        crashCount: String(crashNumber),
+      },
+      // The stderr is content, so it goes in a context, never a tag or the
+      // message: a tag would fragment grouping and a varying message would
+      // split the issue. This is what turns "exit code 1" into the module
+      // name or stack that explains it.
+      {
+        utility_process: {
+          service: this.service,
+          exitCode: exitCode ?? null,
+          crashCount: crashNumber,
+          stderrTail: this.latestStderr() ?? '(no stderr captured)',
+        },
+      },
+    );
   }
 
   /** Send the Aptabase event for `phase` once per service per app run. The

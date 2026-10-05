@@ -73,6 +73,7 @@ function sample(overrides: Partial<HostMemorySample> = {}): HostMemorySample {
     commitRemainingBytes: 2_256_896,
     physicalTotalBytes: 34_060_931_072,
     physicalFreeBytes: 5_005_045_760,
+    physicalAvailableBytes: null,
     ...overrides,
   };
 }
@@ -87,7 +88,25 @@ describe('formatHostMemoryDetailLine', () => {
     expect(formatHostMemoryDetailLine(null)).toBeNull();
   });
 
-  it('returns null when the platform has no commit reading, rather than printing "unknown"', () => {
+  it('returns null when the platform has neither reading, rather than printing "unknown"', () => {
     expect(formatHostMemoryDetailLine(sample({ platform: 'darwin', commitRemainingBytes: null }))).toBeNull();
+  });
+
+  it('reports Linux MemAvailable when there is no commit reading', () => {
+    const line = formatHostMemoryDetailLine(
+      sample({
+        platform: 'linux',
+        commitLimitBytes: null,
+        commitRemainingBytes: null,
+        physicalFreeBytes: 120 * 1024 * 1024,
+        physicalAvailableBytes: 3_072 * 1024 * 1024,
+      }),
+    );
+    expect(line).toBe('Available system memory at the time: 3072 MB.');
+  });
+
+  it('prefers the commit reading when both are present', () => {
+    const line = formatHostMemoryDetailLine(sample({ commitRemainingBytes: 2_256_896, physicalAvailableBytes: 9 * 1024 * 1024 }));
+    expect(line).toContain('(commit)');
   });
 });

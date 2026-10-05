@@ -106,6 +106,7 @@ describe('crash-capture: host memory attachment (Sentry DESKTOP-16)', () => {
       commitRemainingBytes: 2_256_896,
       physicalTotalBytes: 34_060_931_072,
       physicalFreeBytes: 5_005_045_760,
+      physicalAvailableBytes: null,
     };
 
     expect(renderProcessGoneHandler).not.toBeNull();
@@ -136,6 +137,7 @@ describe('crash-capture: host memory attachment (Sentry DESKTOP-16)', () => {
       commitRemainingBytes: 2_256_896,
       physicalTotalBytes: 34_060_931_072,
       physicalFreeBytes: 5_005_045_760,
+      physicalAvailableBytes: null,
     };
 
     renderProcessGoneHandler!({}, { reason: 'oom', exitCode: 1 });

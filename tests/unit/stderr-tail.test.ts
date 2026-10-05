@@ -198,6 +198,82 @@ describe('captureWorkerStderr', () => {
   });
 });
 
+// Electron 44.5.0 drains a utility process's stderr after `exit`, so the text that explains a
+// crash can land just after the crash is recorded. The restart policy waits on whenDrained before
+// it logs; these pin when that wait ends.
+describe('StderrTail.whenDrained', () => {
+  function makeStream(): EventEmitter & { asReadable: () => NodeJS.ReadableStream } {
+    const emitter = new EventEmitter() as EventEmitter & { asReadable: () => NodeJS.ReadableStream };
+    emitter.asReadable = () => emitter as unknown as NodeJS.ReadableStream;
+    return emitter;
+  }
+
+  it('answers null when no stream feeds the tail, so a caller reads at once', () => {
+    expect(makeTail().whenDrained(500)).toBeNull();
+    const childWithoutStderr = makeTail();
+    captureWorkerStderr({ stderr: null }, childWithoutStderr, false);
+    expect(childWithoutStderr.whenDrained(500)).toBeNull();
+  });
+
+  it.each(['end', 'close'] as const)('resolves on the stream\'s %s, after text that arrived late', async (eventName) => {
+    const stream = makeStream();
+    const tail = makeTail();
+    captureWorkerStderr({ stderr: stream.asReadable() }, tail, false);
+    const drained = tail.whenDrained(500);
+    expect(drained).toBeInstanceOf(Promise);
+
+    stream.emit('data', 'Error: the worker died\n');
+    stream.emit(eventName);
+    await drained;
+
+    expect(tail.snapshot()).toBe('Error: the worker died');
+    expect(tail.whenDrained(500)).toBeNull();
+  });
+
+  it('resolves on a broken pipe, since nothing more will arrive', async () => {
+    const stream = makeStream();
+    const tail = makeTail();
+    captureWorkerStderr({ stderr: stream.asReadable() }, tail, false);
+    const drained = tail.whenDrained(500);
+    stream.emit('error', new Error('EPIPE'));
+    await expect(drained).resolves.toBeUndefined();
+  });
+
+  it('resolves at the bound when the stream never ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = makeStream();
+      const tail = makeTail();
+      captureWorkerStderr({ stderr: stream.asReadable() }, tail, false);
+      let resolved = false;
+      void tail.whenDrained(500)?.then(() => {
+        resolved = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(499);
+      expect(resolved).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes the bytes the decoder was holding when the stream ends mid-character', () => {
+    const stream = makeStream();
+    const tail = makeTail();
+    captureWorkerStderr({ stderr: stream.asReadable() }, tail, false);
+    const encoded = Buffer.from('café', 'utf8');
+    // A child killed mid-write: the last chunk stops inside the two-byte character, and the
+    // decoder holds that byte back waiting for the rest.
+    stream.emit('data', encoded.subarray(0, encoded.length - 1));
+    expect(tail.snapshot()).toBe('caf');
+    stream.emit('end');
+    // The held byte is flushed (as U+FFFD) rather than silently dropped.
+    expect(tail.snapshot()).toBe('caf�');
+  });
+});
+
 describe('UTILITY_PROCESS_STDIO', () => {
   it('pipes stderr only, with stdin and stdout ignored', () => {
     expect(UTILITY_PROCESS_STDIO).toEqual(['ignore', 'ignore', 'pipe']);

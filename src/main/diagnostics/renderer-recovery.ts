@@ -53,12 +53,21 @@ export function isRecoverableRendererDeath(reason: RendererDeathReason): boolean
   return reason === 'oom' || reason === 'crashed';
 }
 
-/** One line for the give-up dialog naming the last known commit headroom, or
- *  null when there is no sample yet or the platform has no commit reading -
- *  in which case the caller omits the line entirely rather than printing a
- *  confusing "unknown". */
+const BYTES_PER_MB = 1024 * 1024;
+
+/** One line for the give-up dialog naming the last known memory headroom:
+ *  commit remaining on Windows, MemAvailable on Linux. Null when there is no
+ *  sample yet or the platform has neither reading (macOS), in which case the
+ *  caller omits the line entirely rather than printing a confusing "unknown". */
 export function formatHostMemoryDetailLine(sample: HostMemorySample | null): string | null {
-  if (!sample || sample.commitRemainingBytes === null) return null;
-  const remainingMb = Math.round(sample.commitRemainingBytes / (1024 * 1024));
-  return `Free system memory (commit) at the time: ${remainingMb} MB.`;
+  if (!sample) return null;
+  if (sample.commitRemainingBytes !== null) {
+    const remainingMb = Math.round(sample.commitRemainingBytes / BYTES_PER_MB);
+    return `Free system memory (commit) at the time: ${remainingMb} MB.`;
+  }
+  if (sample.physicalAvailableBytes !== null) {
+    const availableMb = Math.round(sample.physicalAvailableBytes / BYTES_PER_MB);
+    return `Available system memory at the time: ${availableMb} MB.`;
+  }
+  return null;
 }
