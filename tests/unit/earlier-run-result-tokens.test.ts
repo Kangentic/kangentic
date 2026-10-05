@@ -151,6 +151,43 @@ describe('fillEarlierRunResultTokens', () => {
     expect(readStoredToolRows(db, 'run-1')[0]).not.toHaveProperty('resultTokens');
   });
 
+  it.each<[string, PerToolStat[] | null]>([
+    ['no stored table', null],
+    ['an empty stored table', []],
+  ])('never reads the transcript of an earlier run with %s, since it has no row to take an estimate', async (_label, toolBreakdown) => {
+    // Otherwise eligible: a scoped agent, an agent session id and a cwd. Reading would
+    // parse a whole transcript to find nothing a row could keep, then stamp it read.
+    insertSessionRecord(db, { id: 'run-1', startedAt: RUN_1_STARTED_AT, toolBreakdown });
+    insertSessionRecord(db, { id: LIVE_SESSION_ID, startedAt: LIVE_STARTED_AT, toolBreakdown: null });
+    const transcriptToolResultTokens = vi.fn().mockResolvedValue({ Read: 57_900 });
+    stubScopedAdapter(transcriptToolResultTokens);
+
+    const changed = await fillEarlierRunResultTokens(makeManager(), repository, LIVE_SESSION_ID, { queued: false });
+
+    expect(changed).toBe(false);
+    expect(transcriptToolResultTokens).not.toHaveBeenCalled();
+    expect(readResultTokensReadAt(db, 'run-1')).toBeNull();
+  });
+
+  it('skips an earlier run of an agent type the registry no longer knows, and still fills the other runs', async () => {
+    insertSessionRecord(db, { id: 'run-1', sessionType: 'removed_agent', agentSessionId: 'conversation-removed', startedAt: RUN_1_STARTED_AT, toolBreakdown: QUIT_ENDED_ROWS });
+    insertSessionRecord(db, { id: 'run-2', startedAt: RUN_2_STARTED_AT, toolBreakdown: QUIT_ENDED_ROWS });
+    insertSessionRecord(db, { id: LIVE_SESSION_ID, startedAt: LIVE_STARTED_AT, toolBreakdown: null });
+    const transcriptToolResultTokens = vi.fn().mockResolvedValue({ Read: 57_900, Grep: 13_700 });
+    stubScopedAdapter(transcriptToolResultTokens);
+    // Only the stub's own session type resolves, as after an agent was dropped from the product.
+    const stubAdapter = agentRegistry.getBySessionType('stub_agent');
+    vi.mocked(agentRegistry.getBySessionType).mockImplementation((sessionType) => (sessionType === 'stub_agent' ? stubAdapter : undefined));
+
+    const changed = await fillEarlierRunResultTokens(makeManager(), repository, LIVE_SESSION_ID, { queued: false });
+
+    expect(changed).toBe(true);
+    expect(transcriptToolResultTokens).toHaveBeenCalledOnce();
+    expect(transcriptToolResultTokens).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'conversation-1' }));
+    expect(readStoredToolRows(db, 'run-1')[0]).not.toHaveProperty('resultTokens');
+    expect(readStoredToolRows(db, 'run-2')[0].resultTokens).toBe(57_900);
+  });
+
   it('shares one read between concurrent callers', async () => {
     insertSessionRecord(db, { id: 'run-1', startedAt: RUN_1_STARTED_AT, toolBreakdown: QUIT_ENDED_ROWS });
     insertSessionRecord(db, { id: LIVE_SESSION_ID, startedAt: LIVE_STARTED_AT, toolBreakdown: null });
@@ -428,6 +465,19 @@ describe('readTranscriptToolResultTokens across runs', () => {
     const tokens = await readTranscriptToolResultTokens(makeManager('counts-only'), repository, LIVE_SESSION_ID);
 
     expect(tokens).toEqual({ Read: 57_900 });
+  });
+
+  it('still answers with the live run\'s estimates when reading the earlier runs throws', async () => {
+    insertSessionRecord(db, { id: 'run-1', startedAt: RUN_1_STARTED_AT, toolBreakdown: QUIT_ENDED_ROWS });
+    insertSessionRecord(db, { id: LIVE_SESSION_ID, startedAt: LIVE_STARTED_AT, toolBreakdown: null });
+    stubScopedAdapter(vi.fn(async () => ({ Read: 5, Write: 43 })));
+    vi.spyOn(repository, 'getEarlierRunToolTotals').mockImplementation(() => {
+      throw new Error('The database connection is not open');
+    });
+
+    const tokens = await readTranscriptToolResultTokens(makeManager(), repository, LIVE_SESSION_ID);
+
+    expect(tokens).toEqual({ Read: 5, Write: 43 });
   });
 
   it('is null when no run has an estimate', async () => {

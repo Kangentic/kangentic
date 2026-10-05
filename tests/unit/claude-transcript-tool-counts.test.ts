@@ -447,6 +447,21 @@ describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
     expect(await parseClaudeTranscriptToolResultTokens(filePath, Number.NaN)).toEqual({ Read: 100, Bash: 20 });
   });
 
+  it('treats a NaN untilMs as no upper bound, not as a window that closes before every call', async () => {
+    const filePath = path.join(dir, 'nan-until.jsonl');
+    const earlier = ',"timestamp":"2026-10-04T22:52:20.000Z"';
+    const later = ',"timestamp":"2026-10-04T22:57:40.000Z"';
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('r1', 'Read', earlier) + userToolResult('r1', 'x'.repeat(400), earlier) +
+        assistantToolUse('b1', 'Bash', later) + userToolResult('b1', 'y'.repeat(80), later),
+    );
+
+    const counts = await parseClaudeTranscriptToolCounts(filePath, null, Number.NaN);
+    expect(counts!.toolCallCount).toBe(2);
+    expect(await parseClaudeTranscriptToolResultTokens(filePath, null, Number.NaN)).toEqual({ Read: 100, Bash: 20 });
+  });
+
   it('counts a call and its result when the result line spans the 4 MB read-chunk boundary', async () => {
     // Test-local mirror of the parser's private chunk size. The straddle is
     // asserted below, so a change to the real constant shows up as a stale mirror.
