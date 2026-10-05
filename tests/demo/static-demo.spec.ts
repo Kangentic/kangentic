@@ -19,8 +19,9 @@ import path from 'node:path';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { SCENES } from '../captures/scenes';
+import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
 import {
-  DEMO_ARCHIVED_SUMMARIES, DEMO_LANES_BY_PROJECT, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
+  DEMO_ARCHIVED_SUMMARIES, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_WEBSOCKET, TASK_MIDDLEWARE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 
@@ -98,6 +99,16 @@ async function gotoScene(page: Page, params: Record<string, string>): Promise<vo
 
 /** The scenes the web build can boot by name; a driver scene is the rig's and is refused here. */
 const BOOTABLE_SCENES = Object.values(SCENES).filter((scene) => scene.reach !== 'driver');
+
+/**
+ * The text of every element matching `selector` that a drawn frame has shown. The Knowledge Graph's
+ * labels sit at zero inline opacity until a frame of the WebGL scene places them.
+ */
+async function shownTexts(page: Page, selector: string): Promise<string[]> {
+  return page.locator(selector).evaluateAll((elements) => elements
+    .filter((element) => Number((element as HTMLElement).style.opacity) > 0)
+    .map((element) => element.textContent?.trim() ?? ''));
+}
 
 /**
  * Deeper assertions for the scenes other tests in this file build on, beyond the `ready` selector
@@ -227,6 +238,38 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     const summarized = new Set(DEMO_ARCHIVED_SUMMARIES.map((summary) => summary.taskId));
     for (const task of contosoArchived) expect(summarized.has(task.id), `${task.id} has no summary`).toBe(true);
   },
+  'knowledge-graph': async (page) => {
+    // The map drew in a real 3D context. This tier runs on the headless shell the release's
+    // poster job shoots with, so this is the proof the poster gets one, not the no-map card.
+    for (const fallback of NO_GPU_FALLBACKS) await expect(page.locator(fallback)).toHaveCount(0);
+    // One island per project, each labelled. An island label's inline opacity is written only by
+    // a frame the WebGL scene drew (positionLabels), so `1` is a frame landing, not a mount.
+    const projectIds = Object.keys(DEMO_KNOWLEDGE_GRAPH.projects);
+    const islandLabels = page.locator('[data-testid="knowledge-graph-island-label"]');
+    await expect(islandLabels).toHaveCount(projectIds.length);
+    const islandOpacities = await islandLabels.evaluateAll((elements) => elements.map((element) => (element as HTMLElement).style.opacity));
+    expect(islandOpacities).toEqual(projectIds.map(() => '1'));
+    // Named regions showing: at least one pill drawn, and every drawn pill carries a region name
+    // the fixture holds, never a placeholder.
+    const regionNames = new Set(Object.values(DEMO_KNOWLEDGE_GRAPH.projects).flatMap((project) => project.projection.clusterings.flatMap((clustering) => clustering.regions.map((region) => region.label))));
+    const shownPills = await shownTexts(page, '[data-testid="knowledge-graph-cluster-label"]');
+    expect(shownPills.length).toBeGreaterThan(0);
+    for (const pill of shownPills) expect(regionNames.has(pill), `region pill "${pill}"`).toBe(true);
+  },
+  // One project's map alone: framed close enough that conversation titles show, each one of that
+  // project's own task titles, and no island labels (a single map is not an island).
+  ...Object.fromEntries(DEMO_PROJECTS.map((project) => [`knowledge-graph-${project.name}`, async (page: Page) => {
+    for (const fallback of NO_GPU_FALLBACKS) await expect(page.locator(fallback)).toHaveCount(0);
+    await expect(page.locator('[data-testid="knowledge-graph-island-label"]')).toHaveCount(0);
+    const ownTitles = new Set(DEMO_TASKS.filter((task) => task.projectId === project.id).map((task) => task.title));
+    const shownTitles = await shownTexts(page, '[data-testid="knowledge-graph-node-title"]');
+    expect(shownTitles.length, `${project.name} shows no conversation title`).toBeGreaterThan(0);
+    // A chip may truncate a long title with an ellipsis, so it is matched as a prefix.
+    for (const shown of shownTitles) {
+      const prefix = shown.replace(/…$|\.\.\.$/, '').trim();
+      expect([...ownTitles].some((title) => title.startsWith(prefix)), `${project.name} shows "${shown}", not one of its own tasks`).toBe(true);
+    }
+  }])),
   'activity-overlay': async (page) => {
     const overlay = page.locator('[data-testid="activity-debug-overlay"]');
     // `ready` only waits for this element to mount, which happens as soon as ANY session in the
@@ -280,6 +323,9 @@ for (const scene of BOOTABLE_SCENES) {
     });
     expect(rootVeilStyles, `${scene.name} has no #root`).not.toBeNull();
     expect(rootVeilStyles, `${scene.name} left the boot veil applied to #root`).toEqual({ visibility: '', opacity: '', pointerEvents: '' });
+    // The rig's own wait (helpers/scene-page.ts), so a scene the posters shoot after its motion
+    // settles boots to that settled frame here first, on the same headless shell CI runs.
+    if (scene.settle) await waitForSettled(page, scene.settle);
     const deepMarker = SCENE_MARKERS[scene.name];
     if (deepMarker) await deepMarker(page);
     if (scene.focus) {

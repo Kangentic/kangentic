@@ -1,0 +1,1911 @@
+{
+  "$comment": "The sample install's older history: Done tasks behind the archived ones, each with one real headless Claude run (scripts/capture-demo-archived-runs.mjs) that the Knowledge Graph indexes. The upstream samples' tasks are their own merged commits, each run at that commit's parent so the work is real; contoso-web has no upstream history, so its tasks were drafted and reviewed. Archive dates spread from the day after each project was added to the install (at most 90 days back) to four days ago, oldest commits oldest. model and effort are the runs'.",
+  "model": "claude-sonnet-5-5",
+  "effort": "low",
+  "tasks": [
+    {
+      "id": "task-cw-h01",
+      "project": "contoso-web",
+      "title": "Add a health check endpoint",
+      "description": "GET /api/health with uptime and version for the load balancer",
+      "archivedDaysAgo": 90,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h02",
+      "project": "contoso-web",
+      "title": "Hash stored passwords",
+      "description": "The store keeps passwords in plain text; hash them and compare hashes on login",
+      "archivedDaysAgo": 88,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h60",
+      "project": "contoso-web",
+      "title": "Validate the login request body",
+      "description": "Answer 400 naming the field when email or password is missing or not a string",
+      "archivedDaysAgo": 87,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h04",
+      "project": "contoso-web",
+      "title": "Paginate the invoices endpoint",
+      "description": "Add limit and cursor parameters to GET /api/invoices",
+      "archivedDaysAgo": 85,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h05",
+      "project": "contoso-web",
+      "title": "Allow CORS for the dashboard origin",
+      "description": "Allow the Vite dev origin and the production domain only",
+      "archivedDaysAgo": 84,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h06",
+      "project": "contoso-web",
+      "title": "Add request IDs to API responses",
+      "description": "An X-Request-Id header on every response, echoed from the request when present",
+      "archivedDaysAgo": 82,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h07",
+      "project": "contoso-web",
+      "title": "Shut the API server down gracefully",
+      "description": "Drain in-flight requests on SIGTERM before exiting",
+      "archivedDaysAgo": 80,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h08",
+      "project": "contoso-web",
+      "title": "Add a logout endpoint",
+      "description": "POST /api/logout that revokes the current token",
+      "archivedDaysAgo": 79,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h09",
+      "project": "contoso-web",
+      "title": "Add refresh tokens",
+      "description": "Issue a refresh token at login and an endpoint that exchanges it for a new access token",
+      "archivedDaysAgo": 77,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h10",
+      "project": "contoso-web",
+      "title": "Restrict the admin routes to admins",
+      "description": "Only the admin role may list every subscription",
+      "archivedDaysAgo": 76,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h56",
+      "project": "contoso-web",
+      "title": "Add an invoices section to the dashboard",
+      "description": "App only renders subscriptions; list the signed-in user's invoices beside them",
+      "archivedDaysAgo": 74,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h12",
+      "project": "contoso-web",
+      "title": "Cancel a subscription",
+      "description": "POST /api/subscriptions/:id/cancel, recording when it was cancelled",
+      "archivedDaysAgo": 72,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h13",
+      "project": "contoso-web",
+      "title": "Add an invoice detail endpoint",
+      "description": "GET /api/invoices/:id, scoped to the signed-in user",
+      "archivedDaysAgo": 71,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h14",
+      "project": "contoso-web",
+      "title": "Add a dev seed data script",
+      "description": "Load sample users, subscriptions, and invoices for local development",
+      "archivedDaysAgo": 69,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h61",
+      "project": "contoso-web",
+      "title": "Refuse to cancel a cancelled subscription",
+      "description": "Answer 409 when the subscription is already cancelled",
+      "archivedDaysAgo": 68,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h62",
+      "project": "contoso-web",
+      "title": "Cap the size of JSON request bodies",
+      "description": "Limit bodies to 100 KB and answer 413 beyond it",
+      "archivedDaysAgo": 66,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h17",
+      "project": "contoso-web",
+      "title": "Add loading skeletons to the dashboard",
+      "description": "Placeholder rows while subscriptions and invoices load",
+      "archivedDaysAgo": 65,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h18",
+      "project": "contoso-web",
+      "title": "Persist the session across reloads",
+      "description": "Keep the token in sessionStorage and restore it on load",
+      "archivedDaysAgo": 63,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h19",
+      "project": "contoso-web",
+      "title": "Add a 404 page",
+      "description": "Unknown routes render a not-found page instead of a blank screen",
+      "archivedDaysAgo": 61,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h20",
+      "project": "contoso-web",
+      "title": "Add an error boundary around the dashboard",
+      "description": "A render error blanks the app; show a fallback with a retry",
+      "archivedDaysAgo": 60,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h57",
+      "project": "contoso-web",
+      "title": "Show subscription renewal dates",
+      "description": "The dashboard lists subscriptions without when they renew; show each renewal date",
+      "archivedDaysAgo": 58,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h22",
+      "project": "contoso-web",
+      "title": "Sort invoices by date",
+      "description": "Newest first, with a toggle for oldest first",
+      "archivedDaysAgo": 57,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h23",
+      "project": "contoso-web",
+      "title": "Add visible focus styles",
+      "description": "Focus rings on every button and link",
+      "archivedDaysAgo": 55,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h58",
+      "project": "contoso-web",
+      "title": "Move the route handlers into controllers",
+      "description": "routes.ts holds every handler inline; move them into server/controllers/ by resource",
+      "archivedDaysAgo": 53,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h25",
+      "project": "contoso-web",
+      "title": "Show a toast when the live connection drops",
+      "description": "Surface the websocket's disconnected state to the user",
+      "archivedDaysAgo": 52,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h59",
+      "project": "contoso-web",
+      "title": "Return readonly arrays from the store",
+      "description": "Callers can mutate the in-memory arrays the store hands out; return readonly copies",
+      "archivedDaysAgo": 50,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h27",
+      "project": "contoso-web",
+      "title": "Add page titles and a favicon",
+      "description": "A document title per route and a favicon",
+      "archivedDaysAgo": 49,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h28",
+      "project": "contoso-web",
+      "title": "Debounce the dashboard search",
+      "description": "Filter after typing pauses instead of on every key",
+      "archivedDaysAgo": 47,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h29",
+      "project": "contoso-web",
+      "title": "Abort in-flight requests on unmount",
+      "description": "Pass an AbortSignal through apiFetch",
+      "archivedDaysAgo": 45,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h30",
+      "project": "contoso-web",
+      "title": "Honor Retry-After on 429 responses",
+      "description": "apiFetch retries on a fixed backoff; wait as long as the server asks",
+      "archivedDaysAgo": 44,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h31",
+      "project": "contoso-web",
+      "title": "Throw typed errors from apiFetch",
+      "description": "An ApiError with the status and error code instead of a bare Error",
+      "archivedDaysAgo": 42,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h32",
+      "project": "contoso-web",
+      "title": "Add unit tests for the store",
+      "description": "Cover listInvoices and listSubscriptions filtering by user",
+      "archivedDaysAgo": 41,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h33",
+      "project": "contoso-web",
+      "title": "Add tests for the login route",
+      "description": "A successful login, a wrong password, and an unknown email",
+      "archivedDaysAgo": 39,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h63",
+      "project": "contoso-web",
+      "title": "Test that expired tokens are rejected",
+      "description": "Sign a token that has already expired and assert verifyJwt throws",
+      "archivedDaysAgo": 37,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h64",
+      "project": "contoso-web",
+      "title": "Add tests for user lookup by email",
+      "description": "Mixed-case and unknown emails",
+      "archivedDaysAgo": 36,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h65",
+      "project": "contoso-web",
+      "title": "Mark past-due subscriptions on the dashboard",
+      "description": "Show past-due subscriptions with a warning so they stand out",
+      "archivedDaysAgo": 34,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h66",
+      "project": "contoso-web",
+      "title": "Return the user's email from /api/me",
+      "description": "Include the email beside the id and role",
+      "archivedDaysAgo": 33,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h67",
+      "project": "contoso-web",
+      "title": "Count subscriptions by status in the summary",
+      "description": "Say how many are past due, not only the total",
+      "archivedDaysAgo": 31,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h68",
+      "project": "contoso-web",
+      "title": "Add a check script for typecheck and tests",
+      "description": "npm run check, for CI and before pushing",
+      "archivedDaysAgo": 29,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h40",
+      "project": "contoso-web",
+      "title": "Add a Dockerfile for the API",
+      "description": "A multi-stage image that runs the Express server",
+      "archivedDaysAgo": 28,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h41",
+      "project": "contoso-web",
+      "title": "Add docker-compose for local development",
+      "description": "The API and the front end with hot reload",
+      "archivedDaysAgo": 26,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h42",
+      "project": "contoso-web",
+      "title": "Pin the Node version",
+      "description": "An .nvmrc and an engines field in package.json",
+      "archivedDaysAgo": 25,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h43",
+      "project": "contoso-web",
+      "title": "Read config from a .env file",
+      "description": "PORT and the JWT secret from the environment, with development defaults",
+      "archivedDaysAgo": 23,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h44",
+      "project": "contoso-web",
+      "title": "Enable noUncheckedIndexedAccess",
+      "description": "Turn on the compiler option and fix the errors it reports",
+      "archivedDaysAgo": 22,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h45",
+      "project": "contoso-web",
+      "title": "Add path aliases for src imports",
+      "description": "An @/ alias in tsconfig and the Vite config",
+      "archivedDaysAgo": 20,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h69",
+      "project": "contoso-web",
+      "title": "Log failed login attempts",
+      "description": "The email and time of each failure, never the password",
+      "archivedDaysAgo": 18,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h47",
+      "project": "contoso-web",
+      "title": "Add a Renovate config",
+      "description": "Weekly grouped dependency updates",
+      "archivedDaysAgo": 17,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h48",
+      "project": "contoso-web",
+      "title": "Log each API request with its duration",
+      "description": "Method, path, status, and duration for every request",
+      "archivedDaysAgo": 15,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h49",
+      "project": "contoso-web",
+      "title": "Expose Prometheus metrics",
+      "description": "GET /metrics with request counts and latencies",
+      "archivedDaysAgo": 14,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h50",
+      "project": "contoso-web",
+      "title": "Report front-end errors to the API",
+      "description": "POST unhandled errors and rejections to /api/client-errors",
+      "archivedDaysAgo": 12,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h51",
+      "project": "contoso-web",
+      "title": "Show plan names on subscriptions",
+      "description": "Starter, Team, or Business instead of the plan id",
+      "archivedDaysAgo": 10,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h52",
+      "project": "contoso-web",
+      "title": "Badge overdue invoices",
+      "description": "Mark invoices that are past their due date",
+      "archivedDaysAgo": 9,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h53",
+      "project": "contoso-web",
+      "title": "Export invoices as CSV",
+      "description": "Download the invoices list as a CSV file",
+      "archivedDaysAgo": 7,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h54",
+      "project": "contoso-web",
+      "title": "Send receipt emails through a mailer interface",
+      "description": "A Mailer interface with a console implementation, called when a payment succeeds",
+      "archivedDaysAgo": 6,
+      "upstream": null
+    },
+    {
+      "id": "task-cw-h55",
+      "project": "contoso-web",
+      "title": "Add seat counts to team plans",
+      "description": "Track and show the seats each team subscription includes",
+      "archivedDaysAgo": 4,
+      "upstream": null
+    },
+    {
+      "id": "task-pc-h01",
+      "project": "spring-petclinic",
+      "title": "Convert the styles to SCSS and Bootstrap 5",
+      "description": "",
+      "archivedDaysAgo": 60,
+      "upstream": {
+        "commit": "1095a15f0e42cf5ebf0df942022c62fcf4c82e86",
+        "parent": "4f2f8fab73b35ed79fae3fa249d08011984e3745",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h02",
+      "project": "spring-petclinic",
+      "title": "Use the date input type for date fields",
+      "description": "In 2021 we really should be using the browser's own date picker.",
+      "archivedDaysAgo": 59,
+      "upstream": {
+        "commit": "eff7c9529f0ec709e4443c334732afdb82acb301",
+        "parent": "67c8bf6a1f3dc44cc4a529b89c7f3ea1757e2c9c",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h03",
+      "project": "spring-petclinic",
+      "title": "Move Visit to the owner package",
+      "description": "",
+      "archivedDaysAgo": 58,
+      "upstream": {
+        "commit": "423a3375434eb90d1631a47849fd5e56700585f7",
+        "parent": "58fe6298f83615fbcc14d55b47d09c947d9a958d",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h04",
+      "project": "spring-petclinic",
+      "title": "Remove PetRepository and use Owner as the aggregate",
+      "description": "Owner is really the aggregate root in DDD terms and there is no need to directly access the Pet entity.",
+      "archivedDaysAgo": 57,
+      "upstream": {
+        "commit": "c9534421c8d4f29b7d2d78636bb42f58b7cdebaa",
+        "parent": "778161f0183d44df8f58b6eaee64fc085b64b69c",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h05",
+      "project": "spring-petclinic",
+      "title": "Fix the lazy loading issue in owner details",
+      "description": "",
+      "archivedDaysAgo": 56,
+      "upstream": {
+        "commit": "e765e3ffe16002beb30c6a5c6f06409816259bf4",
+        "parent": "8a28801d1a484d93ad3ddc00888fac7835f00eca",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h06",
+      "project": "spring-petclinic",
+      "title": "Migrate to Spring Boot 3",
+      "description": "",
+      "archivedDaysAgo": 55,
+      "upstream": {
+        "commit": "1315cf6e1f1e88e4850e5573388a89ba4469df07",
+        "parent": "9ecdc1111e3da388a750ace41a125287d9620534",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h60",
+      "project": "spring-petclinic",
+      "title": "Add a validation test for Person.lastName",
+      "description": "",
+      "archivedDaysAgo": 54,
+      "upstream": {
+        "commit": "a6efbed773f61a271c071461326940786998722e",
+        "parent": "c7ee170434ec3e369fdc9201290ba2ea4c92b557",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h08",
+      "project": "spring-petclinic",
+      "title": "Make Owner.addVisit return void",
+      "description": "",
+      "archivedDaysAgo": 53,
+      "upstream": {
+        "commit": "8a5a14e88a07665c97638dd81a31fb4e6c336194",
+        "parent": "6e71aaa44cbd147a000d3a7b4bd5db55244948bf",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h09",
+      "project": "spring-petclinic",
+      "title": "Skip the integration tests when Docker is unavailable",
+      "description": "",
+      "archivedDaysAgo": 52,
+      "upstream": {
+        "commit": "029de905b3e9493df193d6f949d733be59a78f51",
+        "parent": "ca2d8dbc0950f1c0faca8cad8988a554e3154866",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h10",
+      "project": "spring-petclinic",
+      "title": "Add birth date validation",
+      "description": "",
+      "archivedDaysAgo": 51,
+      "upstream": {
+        "commit": "3be289517d320a47bb8f359acc1d1daf0829ed0b",
+        "parent": "b4efc934b2cfcdb3ca6ca2fde0adb40b99dbb19d",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h11",
+      "project": "spring-petclinic",
+      "title": "Validate the pet name when editing a pet",
+      "description": "",
+      "archivedDaysAgo": 50,
+      "upstream": {
+        "commit": "3a6127557dc05d9a6462fcea67d0f329e7286245",
+        "parent": "3be289517d320a47bb8f359acc1d1daf0829ed0b",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h12",
+      "project": "spring-petclinic",
+      "title": "Handle a missing owner id without a null pointer",
+      "description": "",
+      "archivedDaysAgo": 49,
+      "upstream": {
+        "commit": "0a529015bc7933bcd724a5ae92605f0e9ee0e3f7",
+        "parent": "3a6127557dc05d9a6462fcea67d0f329e7286245",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h13",
+      "project": "spring-petclinic",
+      "title": "Change validation annotations and whitespace handling",
+      "description": "",
+      "archivedDaysAgo": 48,
+      "upstream": {
+        "commit": "4926e292700f79260a58d6faf55b232ce075b70e",
+        "parent": "0a529015bc7933bcd724a5ae92605f0e9ee0e3f7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h14",
+      "project": "spring-petclinic",
+      "title": "Add a Korean message file",
+      "description": "",
+      "archivedDaysAgo": 47,
+      "upstream": {
+        "commit": "18266fec8b33664444efbc45ad5d641b3210a58c",
+        "parent": "4926e292700f79260a58d6faf55b232ce075b70e",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h15",
+      "project": "spring-petclinic",
+      "title": "Show confirmation messages after add, edit and update",
+      "description": "",
+      "archivedDaysAgo": 46,
+      "upstream": {
+        "commit": "2fe96130c083f5ed26832040468d58a7383ab79f",
+        "parent": "6fe21e5d0b457b3396d8fe422da33c24b54b4df5",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h61",
+      "project": "spring-petclinic",
+      "title": "Use versionless WebJars URLs",
+      "description": "",
+      "archivedDaysAgo": 46,
+      "upstream": {
+        "commit": "91f55a4f7134409a832435de2c6df231102d5898",
+        "parent": "9f1cda1c08e6563c71edec907460af8f2e21d7db",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h17",
+      "project": "spring-petclinic",
+      "title": "Add Checkstyle to the Gradle build",
+      "description": "",
+      "archivedDaysAgo": 45,
+      "upstream": {
+        "commit": "ee6573cee08f7aae79fac21e15a55e5ff43b5483",
+        "parent": "836d111e9950f6abedb4fef7b4a94941b8dfedd8",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h18",
+      "project": "spring-petclinic",
+      "title": "Share the Checkstyle configuration between Maven and Gradle",
+      "description": "",
+      "archivedDaysAgo": 44,
+      "upstream": {
+        "commit": "a2f1ad5503a7987a94cdc18a9bc2af2ef8d52af7",
+        "parent": "da1c93d367223dd3e648d3861f95fb9c40314f8a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h19",
+      "project": "spring-petclinic",
+      "title": "Add a user friendly error message",
+      "description": "",
+      "archivedDaysAgo": 43,
+      "upstream": {
+        "commit": "405cdc635b10770a2f5ed70be973cdf905cfa736",
+        "parent": "c7bc8b1ae618bf63ba097c1ff8e0ea5235baadb4",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h20",
+      "project": "spring-petclinic",
+      "title": "Fix 404s from leading spaces in visit and webjar URLs",
+      "description": "",
+      "archivedDaysAgo": 42,
+      "upstream": {
+        "commit": "395356afc6c86f04b34cfc1b1eeb789a37488490",
+        "parent": "8f799263e00b9fcf0d8ca78d864d8b46ce3b8aea",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h21",
+      "project": "spring-petclinic",
+      "title": "Disable JPA open session in view",
+      "description": "With the current codebase, it does not seems to be needed anymore, so we disable it to provide better performances.",
+      "archivedDaysAgo": 41,
+      "upstream": {
+        "commit": "d90e284621d60378e2578afe2ec26084bc2237c7",
+        "parent": "f6f923bd39fe9a2e8001c9a45c8628a80d1aa62b",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h68",
+      "project": "spring-petclinic",
+      "title": "Remove unused imports",
+      "description": "",
+      "archivedDaysAgo": 40,
+      "upstream": {
+        "commit": "cf2931f881cd80786fcd2fbe10d0f68a67f1d25a",
+        "parent": "196e5aa4b086a047850db2b05976020e725f565a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h23",
+      "project": "spring-petclinic",
+      "title": "Fix an occasional stale volume in the Postgres tests",
+      "description": "",
+      "archivedDaysAgo": 39,
+      "upstream": {
+        "commit": "3b90fac983bafce882f6f5ef2bffdb7a177a3590",
+        "parent": "300597fc6cc765a8f167c2daff33cf165abd17b9",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h24",
+      "project": "spring-petclinic",
+      "title": "Add Portuguese language support",
+      "description": "",
+      "archivedDaysAgo": 38,
+      "upstream": {
+        "commit": "bbb237928fa9ef24a09ce57ad01075e4b7eb78c8",
+        "parent": "912de1648e32012706eb8623af1e42f334d7964a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h25",
+      "project": "spring-petclinic",
+      "title": "Reject an owner form whose id differs from the URL",
+      "description": "",
+      "archivedDaysAgo": 37,
+      "upstream": {
+        "commit": "14af47d4e5b4e12e0ca28e5c2c8437528546c25d",
+        "parent": "fdc40a7048843bc900d5a1b56a60350dffc93c9b",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h63",
+      "project": "spring-petclinic",
+      "title": "Remove an unnecessary model attribute",
+      "description": "",
+      "archivedDaysAgo": 36,
+      "upstream": {
+        "commit": "b298af380dfe37cbab19fe8328e89adb0cdded1a",
+        "parent": "ca055dbbe1f05a91c355242552a0b7ed20569a60",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h27",
+      "project": "spring-petclinic",
+      "title": "Make OwnerRepository a JpaRepository",
+      "description": "",
+      "archivedDaysAgo": 35,
+      "upstream": {
+        "commit": "668629d5bda4e6a87fb43425c7eb95ffa19b47c7",
+        "parent": "a3026bddbb3ee267d64f3362554088a80e9398c7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h28",
+      "project": "spring-petclinic",
+      "title": "Simplify findByLastName with Spring Data JPA",
+      "description": "",
+      "archivedDaysAgo": 34,
+      "upstream": {
+        "commit": "1cad4124b7685d3e66ac376f44874a3d5319cb06",
+        "parent": "668629d5bda4e6a87fb43425c7eb95ffa19b47c7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h29",
+      "project": "spring-petclinic",
+      "title": "Add a PetValidator unit test",
+      "description": "",
+      "archivedDaysAgo": 33,
+      "upstream": {
+        "commit": "40a41375e6b55d5cf246c483d63fa9380ccb9ff1",
+        "parent": "214a8fb87f5fb7124010b31f04f9591b9a0aa9e4",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h30",
+      "project": "spring-petclinic",
+      "title": "Add Persian and Turkish localization",
+      "description": "",
+      "archivedDaysAgo": 32,
+      "upstream": {
+        "commit": "22caee3d036b6ec34d6045dc7354185919a9d4fc",
+        "parent": "42e2c74b0bcccd3f547b33ce9856a615c3a821b8",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h64",
+      "project": "spring-petclinic",
+      "title": "Remove manual id management in the child entities",
+      "description": "",
+      "archivedDaysAgo": 31,
+      "upstream": {
+        "commit": "b559077f14b6f1e197228ff6cb7395514f09326f",
+        "parent": "43beff91a355f0b86f4c239ada0570faddf7e737",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h32",
+      "project": "spring-petclinic",
+      "title": "Fix pet edits not persisting the type or name",
+      "description": "",
+      "archivedDaysAgo": 30,
+      "upstream": {
+        "commit": "2aa53f929d32b0d41e0fe0391b8385eabe9a3432",
+        "parent": "6328d2c9dc8eb2c367c6a613a1ae959c994003c7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h33",
+      "project": "spring-petclinic",
+      "title": "Sort specialties by name with a stream",
+      "description": "",
+      "archivedDaysAgo": 29,
+      "upstream": {
+        "commit": "73d73609b5dafb11e070f19150f66a4fc679d314",
+        "parent": "b46b97a3e702c2f3bf03d85ef5d9d593ab9297dc",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h34",
+      "project": "spring-petclinic",
+      "title": "Associate each label with its form control",
+      "description": "",
+      "archivedDaysAgo": 28,
+      "upstream": {
+        "commit": "fceca7754ad5e529c9da62f06be3150e5a7d5fde",
+        "parent": "7f1af268ec0fc13d27f19b8d3fb58f0011fd1509",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h35",
+      "project": "spring-petclinic",
+      "title": "Remove the unnecessary @Autowired from PetTypeFormatter",
+      "description": "",
+      "archivedDaysAgo": 27,
+      "upstream": {
+        "commit": "7f1af268ec0fc13d27f19b8d3fb58f0011fd1509",
+        "parent": "2aa53f929d32b0d41e0fe0391b8385eabe9a3432",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h36",
+      "project": "spring-petclinic",
+      "title": "Use List.of() instead of the AssertJ Lists class",
+      "description": "",
+      "archivedDaysAgo": 26,
+      "upstream": {
+        "commit": "d7cc02f3d7dc1205128f40dc433b2dfcfa1fca51",
+        "parent": "fceca7754ad5e529c9da62f06be3150e5a7d5fde",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h65",
+      "project": "spring-petclinic",
+      "title": "Avoid dropping the Postgres schema on startup",
+      "description": "",
+      "archivedDaysAgo": 25,
+      "upstream": {
+        "commit": "43beff91a355f0b86f4c239ada0570faddf7e737",
+        "parent": "423a3375434eb90d1631a47849fd5e56700585f7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h38",
+      "project": "spring-petclinic",
+      "title": "Remove the unused findAll method from OwnerRepository",
+      "description": "",
+      "archivedDaysAgo": 24,
+      "upstream": {
+        "commit": "3a931080d40e7daf14bd2fdd06204550ca66f6ff",
+        "parent": "c5af32d5a144bde2aac3741a1f082529d4d50bda",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h39",
+      "project": "spring-petclinic",
+      "title": "Extract findPetTypes",
+      "description": "",
+      "archivedDaysAgo": 23,
+      "upstream": {
+        "commit": "142321aa3ed056eeda0662c1987b76db25b3d736",
+        "parent": "b21890c126176dad14e7985575dbb78e2c6fcf6d",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h40",
+      "project": "spring-petclinic",
+      "title": "Localize the error page messages for each status code",
+      "description": "",
+      "archivedDaysAgo": 22,
+      "upstream": {
+        "commit": "b2aee1d14ac2792be6bbd80f0fc6842227ae187b",
+        "parent": "438adfd4d8d9e0e9f46fe152b0a34c7d4c026cdb",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h41",
+      "project": "spring-petclinic",
+      "title": "Add NullAway and JSpecify annotations",
+      "description": "",
+      "archivedDaysAgo": 21,
+      "upstream": {
+        "commit": "a0aea8e8f8ccc8ff85e97f418484ca9d0d29012f",
+        "parent": "3aa79e3944ab1b626288f5d0629e61643ab8fb4a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h42",
+      "project": "spring-petclinic",
+      "title": "Update MySQL user creation for MySQL 8.0 and later",
+      "description": "",
+      "archivedDaysAgo": 20,
+      "upstream": {
+        "commit": "8f08b38f2c8412b9298f63e79e5e830ae247cd6e",
+        "parent": "37d53152a08a5de9d225c7f25f41b77c5d8b3cae",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h43",
+      "project": "spring-petclinic",
+      "title": "Use the snake case physical naming strategy",
+      "description": "Use snake case physical naming strategy to reduce the need to specify column names.",
+      "archivedDaysAgo": 19,
+      "upstream": {
+        "commit": "fd4361b118931e07a7a1bde04750ec32a5fdb56e",
+        "parent": "3e1ce239f4488f20abda24441388a515ea55a815",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h66",
+      "project": "spring-petclinic",
+      "title": "Drop jQuery",
+      "description": "",
+      "archivedDaysAgo": 18,
+      "upstream": {
+        "commit": "4d4727fce189f0c5fbddc1fa38b4ef4b4e480f99",
+        "parent": "1095a15f0e42cf5ebf0df942022c62fcf4c82e86",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h45",
+      "project": "spring-petclinic",
+      "title": "Fix the main method for Docker Compose",
+      "description": "",
+      "archivedDaysAgo": 18,
+      "upstream": {
+        "commit": "a4fcf04c932031463dc7eb1ed9f1e05b402c13c0",
+        "parent": "ab1d5364a0a49d260b52bea2bfdfe804d8a36f7a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h46",
+      "project": "spring-petclinic",
+      "title": "Set the fetch size for Hibernate",
+      "description": "Solves the N+1 problem for this size of dataset and the standard repository queries. Much simpler than messing with the queries or with the default fetch type.",
+      "archivedDaysAgo": 17,
+      "upstream": {
+        "commit": "e316074300de4761f7b100a21423525e8b8ecdc5",
+        "parent": "a4fcf04c932031463dc7eb1ed9f1e05b402c13c0",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h47",
+      "project": "spring-petclinic",
+      "title": "Add @Size validation on Person first and last name",
+      "description": "",
+      "archivedDaysAgo": 16,
+      "upstream": {
+        "commit": "3c06fbfc1e42eb40802e0d0ca989bc9226755804",
+        "parent": "45649e015752726c9db0e1a33128b367a92a97be",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h48",
+      "project": "spring-petclinic",
+      "title": "Be more careful with allowed fields in binders",
+      "description": "",
+      "archivedDaysAgo": 15,
+      "upstream": {
+        "commit": "c7ee170434ec3e369fdc9201290ba2ea4c92b557",
+        "parent": "f1e0e22b883e185e680d44b264fb73a8efcff8b9",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h49",
+      "project": "spring-petclinic",
+      "title": "Register native resource hints for the nested db scripts",
+      "description": "",
+      "archivedDaysAgo": 14,
+      "upstream": {
+        "commit": "a2c2ef994340d3970eb6db51247456a51bb161f8",
+        "parent": "753d35c2f84432d88c0f3b61c9302a16069b78dd",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h50",
+      "project": "spring-petclinic",
+      "title": "Remove the unused Vets object from VetController",
+      "description": "",
+      "archivedDaysAgo": 13,
+      "upstream": {
+        "commit": "1312314e4ef7493f11596313d40c7ecb8429aed3",
+        "parent": "9a5d50cf5343558e12b528f7299af8698fb753fc",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h51",
+      "project": "spring-petclinic",
+      "title": "Validate future visit dates",
+      "description": "",
+      "archivedDaysAgo": 12,
+      "upstream": {
+        "commit": "753d35c2f84432d88c0f3b61c9302a16069b78dd",
+        "parent": "3c06fbfc1e42eb40802e0d0ca989bc9226755804",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h52",
+      "project": "spring-petclinic",
+      "title": "Add a test for a duplicate pet name during update",
+      "description": "",
+      "archivedDaysAgo": 11,
+      "upstream": {
+        "commit": "b3ee2c53e76e9267f03551a7cd36b0983c859c56",
+        "parent": "b11afec3af05e8ff5156566aa014f2036b276647",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h53",
+      "project": "spring-petclinic",
+      "title": "Add WelcomeController and PetValidator supports() tests",
+      "description": "",
+      "archivedDaysAgo": 10,
+      "upstream": {
+        "commit": "51045d1648dad955df586150c1a1a6e22ef400c2",
+        "parent": "b3ee2c53e76e9267f03551a7cd36b0983c859c56",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h67",
+      "project": "spring-petclinic",
+      "title": "Add a delimiter to the list of pets",
+      "description": "",
+      "archivedDaysAgo": 9,
+      "upstream": {
+        "commit": "25ba1621a9d7440df013f7737ce070f44014ecb1",
+        "parent": "11f1234b424fe2c55e5c02ad5683913090966ffa",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h55",
+      "project": "spring-petclinic",
+      "title": "Add a Hindi translation",
+      "description": "",
+      "archivedDaysAgo": 8,
+      "upstream": {
+        "commit": "f182358d02e4a68e52bdbabf55ca7800288511e7",
+        "parent": "e0db9b184e028d41bcb626f3cbf03a942f67e104",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h56",
+      "project": "spring-petclinic",
+      "title": "Add a Japanese translation",
+      "description": "",
+      "archivedDaysAgo": 7,
+      "upstream": {
+        "commit": "0f6e8614047bd74cf6223b4d8a858d2ed2824f8a",
+        "parent": "f182358d02e4a68e52bdbabf55ca7800288511e7",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h57",
+      "project": "spring-petclinic",
+      "title": "Fix the unique_owner_pet_name relation already existing in PostgreSQL",
+      "description": "",
+      "archivedDaysAgo": 6,
+      "upstream": {
+        "commit": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+        "parent": "bb37aad8c332264723817d855e8b3b96b7c392bc",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h58",
+      "project": "spring-petclinic",
+      "title": "Normalize whitespace in the owner search",
+      "description": "Trim surrounding whitespace before owner surname lookup.",
+      "archivedDaysAgo": 5,
+      "upstream": {
+        "commit": "bb37aad8c332264723817d855e8b3b96b7c392bc",
+        "parent": "0f6e8614047bd74cf6223b4d8a858d2ed2824f8a",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-pc-h59",
+      "project": "spring-petclinic",
+      "title": "Fix persisted pet association and enforce pet name length",
+      "description": "",
+      "archivedDaysAgo": 4,
+      "upstream": {
+        "commit": "676db04515ee5f289641cea6cb379dc02b40f67f",
+        "parent": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+        "pr": null
+      }
+    },
+    {
+      "id": "task-ob-h01",
+      "project": "online-boutique",
+      "title": "Match the currency logo to the currency",
+      "description": "",
+      "archivedDaysAgo": 23,
+      "upstream": {
+        "commit": "4d732ba68a8ce5460dc8f646bad651a435c2937d",
+        "parent": "168f8d37c84b9535e5a6cf6a4ae0fbc2d59a2ce5",
+        "pr": 530
+      }
+    },
+    {
+      "id": "task-ob-h02",
+      "project": "online-boutique",
+      "title": "Improve the cartservice Redis reconnection policy",
+      "description": "",
+      "archivedDaysAgo": 23,
+      "upstream": {
+        "commit": "efeba9e75269a8fa306eb9c7cc8ce65131a14a59",
+        "parent": "47c5f102b7bc81b0e88b948f143a0500eb66692b",
+        "pr": 578
+      }
+    },
+    {
+      "id": "task-ob-h03",
+      "project": "online-boutique",
+      "title": "Use context.WithTimeout instead of grpc.WithTimeout",
+      "description": "",
+      "archivedDaysAgo": 22,
+      "upstream": {
+        "commit": "c0457b0f522aa2c63ad4bbff0d0a6bc172ff8ad8",
+        "parent": "faef8b8800e8e8c9c91fbbbb413a73b2c1042fcf",
+        "pr": 610
+      }
+    },
+    {
+      "id": "task-ob-h04",
+      "project": "online-boutique",
+      "title": "Add cluster, pod and zone details to the page footer",
+      "description": "",
+      "archivedDaysAgo": 22,
+      "upstream": {
+        "commit": "09956ca431a02be0829ca29ed64c45d7c08c8dac",
+        "parent": "3f437db38680ee8aa9e1a0b195ccd2d6bb30deaf",
+        "pr": 636
+      }
+    },
+    {
+      "id": "task-ob-h05",
+      "project": "online-boutique",
+      "title": "Make the shipping fee a flat rate",
+      "description": "",
+      "archivedDaysAgo": 22,
+      "upstream": {
+        "commit": "af0515f7c94044cec0ff7faab5e7c32bf09ab7bf",
+        "parent": "e1c04f89be61b9af59f6a277539757675b1a60df",
+        "pr": 694
+      }
+    },
+    {
+      "id": "task-ob-h06",
+      "project": "online-boutique",
+      "title": "Remove the free shipping banner",
+      "description": "",
+      "archivedDaysAgo": 21,
+      "upstream": {
+        "commit": "6bbe8cc405735a9155bc4303c9bf9290ab501a8f",
+        "parent": "289f0239b3d198f90d00ab665ddb56a0eb18f0cc",
+        "pr": 800
+      }
+    },
+    {
+      "id": "task-ob-h07",
+      "project": "online-boutique",
+      "title": "Implement IDistributedCache in cartservice",
+      "description": "",
+      "archivedDaysAgo": 21,
+      "upstream": {
+        "commit": "65b552273a26714f730253a89321ac8f381882fc",
+        "parent": "8e4855e5b14106d9ce297239cfbe63bc0c655a7e",
+        "pr": 838
+      }
+    },
+    {
+      "id": "task-ob-h08",
+      "project": "online-boutique",
+      "title": "Harden the containers with securityContext",
+      "description": "",
+      "archivedDaysAgo": 21,
+      "upstream": {
+        "commit": "b3debab534540b97152bb11ee7d4a59fe0310ea9",
+        "parent": "958fc7a4f9a9395b34ed8a45c05380a1610b06d6",
+        "pr": 887
+      }
+    },
+    {
+      "id": "task-ob-h09",
+      "project": "online-boutique",
+      "title": "Add a Memorystore for Redis deployment variation",
+      "description": "",
+      "archivedDaysAgo": 21,
+      "upstream": {
+        "commit": "5dd985caa1169c3bfbe55b0d9cb46ae75763ed9e",
+        "parent": "615cf60672951b9ab46c1c2176306fc8f86f4986",
+        "pr": 949
+      }
+    },
+    {
+      "id": "task-ob-h10",
+      "project": "online-boutique",
+      "title": "Keep one user id across sessions",
+      "description": "",
+      "archivedDaysAgo": 20,
+      "upstream": {
+        "commit": "c04cf77a7550d932821f5a5c5c6936ab02402fea",
+        "parent": "60d35d42a285f8ea585ea221afea813211a16f3a",
+        "pr": 1023
+      }
+    },
+    {
+      "id": "task-ob-h11",
+      "project": "online-boutique",
+      "title": "Move paymentservice to uuid v9",
+      "description": "",
+      "archivedDaysAgo": 20,
+      "upstream": {
+        "commit": "8d3868377edd84aad056308b36f516447c5bdaf8",
+        "parent": "43cfb482bb3d32d613c82af1d5d65e54adb5e846",
+        "pr": 1071
+      }
+    },
+    {
+      "id": "task-ob-h12",
+      "project": "online-boutique",
+      "title": "Port the NetworkPolicy flavour to Kustomize",
+      "description": "",
+      "archivedDaysAgo": 20,
+      "upstream": {
+        "commit": "99934c7d291b53fdc1e79c1d5678c0adce1a7428",
+        "parent": "de79a447b243b76d976ac69286e1eb53bafb9c09",
+        "pr": 1081
+      }
+    },
+    {
+      "id": "task-ob-h13",
+      "project": "online-boutique",
+      "title": "Add Spanner as a cartservice database option",
+      "description": "",
+      "archivedDaysAgo": 19,
+      "upstream": {
+        "commit": "079678f0b1712d707b0e4fa2499b351837b9aa1e",
+        "parent": "9b27883e7753795619668234e4ff06635f2c3b3a",
+        "pr": 1109
+      }
+    },
+    {
+      "id": "task-ob-h14",
+      "project": "online-boutique",
+      "title": "Add a Kustomize overlay for Spanner",
+      "description": "",
+      "archivedDaysAgo": 19,
+      "upstream": {
+        "commit": "b6327d8ccad73696964586e0b48336bdb3422523",
+        "parent": "ceb787acc4706d270b596f355a072a70b9203d00",
+        "pr": 1152
+      }
+    },
+    {
+      "id": "task-ob-h15",
+      "project": "online-boutique",
+      "title": "Add an OpenTelemetry Collector",
+      "description": "",
+      "archivedDaysAgo": 19,
+      "upstream": {
+        "commit": "fe14c3cb65f423e74617e751f20f8e7700e6a98a",
+        "parent": "a0d87b11e87c8a02797bd8ea792ae617802ff235",
+        "pr": 1167
+      }
+    },
+    {
+      "id": "task-ob-h16",
+      "project": "online-boutique",
+      "title": "Vary the Cymbal button styles by state",
+      "description": "",
+      "archivedDaysAgo": 18,
+      "upstream": {
+        "commit": "78d0f09b77a55b6f15ccaf13586940059042b76b",
+        "parent": "7cbf0b857a919e9f6224125d32c6319eb4c53eb3",
+        "pr": 1304
+      }
+    },
+    {
+      "id": "task-ob-h17",
+      "project": "online-boutique",
+      "title": "Pin container base images by digest",
+      "description": "",
+      "archivedDaysAgo": 18,
+      "upstream": {
+        "commit": "dca2c0d80a4cf14bbf86692b721e489135c53616",
+        "parent": "d3816d5ff5f282876ab02fef415154e59eb8e2c4",
+        "pr": 1312
+      }
+    },
+    {
+      "id": "task-ob-h18",
+      "project": "online-boutique",
+      "title": "Remove Google Cloud Debugger",
+      "description": "",
+      "archivedDaysAgo": 18,
+      "upstream": {
+        "commit": "5de83be7c3bbcc48bf41185b29c16200bfee6b39",
+        "parent": "6a38ffd810389dc2bc85a56432cf943cb397c025",
+        "pr": 1281
+      }
+    },
+    {
+      "id": "task-ob-h19",
+      "project": "online-boutique",
+      "title": "Make the recommendation service optional",
+      "description": "",
+      "archivedDaysAgo": 17,
+      "upstream": {
+        "commit": "dfc78b9310d0f2c9c0fa4288733dc7386d29ae2b",
+        "parent": "919b08870b6756ccf7a1d72b05aeb6aac45010a7",
+        "pr": 1332
+      }
+    },
+    {
+      "id": "task-ob-h20",
+      "project": "online-boutique",
+      "title": "Add IPv6 support",
+      "description": "",
+      "archivedDaysAgo": 17,
+      "upstream": {
+        "commit": "7fbbe038fb6ddcf753660d61821a0223d4287a47",
+        "parent": "5ffb5ea99d5e083c09ac948763a9720cc44525c7",
+        "pr": 1340
+      }
+    },
+    {
+      "id": "task-ob-h21",
+      "project": "online-boutique",
+      "title": "Add a Helm chart for Online Boutique",
+      "description": "",
+      "archivedDaysAgo": 17,
+      "upstream": {
+        "commit": "f8e290019aea0b0e056e4765e624ce19541e886a",
+        "parent": "ee72e8dbb3dc22c2ad97e20bbb0f1c7b24172a41",
+        "pr": 1353
+      }
+    },
+    {
+      "id": "task-ob-h64",
+      "project": "online-boutique",
+      "title": "Change the logo colour from cyan to maroon",
+      "description": "",
+      "archivedDaysAgo": 17,
+      "upstream": {
+        "commit": "7cbf0b857a919e9f6224125d32c6319eb4c53eb3",
+        "parent": "6c2e3ed4b510c06924c09c01d266ff674259bc07",
+        "pr": 1303
+      }
+    },
+    {
+      "id": "task-ob-h23",
+      "project": "online-boutique",
+      "title": "Support overriding resource limits",
+      "description": "",
+      "archivedDaysAgo": 16,
+      "upstream": {
+        "commit": "2d8e966a24b9a13b2f687c3f1fe323ad5f96407a",
+        "parent": "3b39b0750e705ee3cda3952ab32e7c6a71d6d3ad",
+        "pr": 1600
+      }
+    },
+    {
+      "id": "task-ob-h24",
+      "project": "online-boutique",
+      "title": "Add an Istio service mesh Kustomize component",
+      "description": "",
+      "archivedDaysAgo": 16,
+      "upstream": {
+        "commit": "34da24cb6d51e3039c835841eda4d4dae5daf716",
+        "parent": "51116a8f811b6f323374b8a70d8df52220659030",
+        "pr": 1601
+      }
+    },
+    {
+      "id": "task-ob-h25",
+      "project": "online-boutique",
+      "title": "Add AlloyDB as a Kustomize backend option",
+      "description": "",
+      "archivedDaysAgo": 16,
+      "upstream": {
+        "commit": "51116a8f811b6f323374b8a70d8df52220659030",
+        "parent": "2d8e966a24b9a13b2f687c3f1fe323ad5f96407a",
+        "pr": 1578
+      }
+    },
+    {
+      "id": "task-ob-h26",
+      "project": "online-boutique",
+      "title": "Replace patchesStrategicMerge with patches",
+      "description": "",
+      "archivedDaysAgo": 15,
+      "upstream": {
+        "commit": "bf30937d424b7a1f8c782c6e6496394e1ef50ec3",
+        "parent": "5462a7f89949fe8241d9b6ed043508d833705ae6",
+        "pr": 1689
+      }
+    },
+    {
+      "id": "task-ob-h27",
+      "project": "online-boutique",
+      "title": "Add the FRONTEND_MESSAGE environment variable",
+      "description": "",
+      "archivedDaysAgo": 15,
+      "upstream": {
+        "commit": "03e209e9e79a439dc1e85747c1cf5b32c4cc8d57",
+        "parent": "ab1ce4471ed2fe7baa21b3bbaad1a5d6fc52e2b2",
+        "pr": 1773
+      }
+    },
+    {
+      "id": "task-ob-h28",
+      "project": "online-boutique",
+      "title": "Stop using the gRPC health probe binary",
+      "description": "",
+      "archivedDaysAgo": 15,
+      "upstream": {
+        "commit": "157ef700208683999b756e2c55454ca82a5a2994",
+        "parent": "9607fefa0488aea3762c0d2f7b22f0ea54111f8c",
+        "pr": 1837
+      }
+    },
+    {
+      "id": "task-ob-h29",
+      "project": "online-boutique",
+      "title": "Remove nativeGrpcHealthCheck from the Helm chart",
+      "description": "",
+      "archivedDaysAgo": 14,
+      "upstream": {
+        "commit": "bdc0e512f9719ca918fd9459aaa6e46df7f2a997",
+        "parent": "1cb111211f87f463279cb373cedb03e68b5c94ce",
+        "pr": 1840
+      }
+    },
+    {
+      "id": "task-ob-h30",
+      "project": "online-boutique",
+      "title": "Add unit tests for productcatalogservice",
+      "description": "",
+      "archivedDaysAgo": 14,
+      "upstream": {
+        "commit": "b7040418d68472bf68fe55cc50b7a734c0e07b0b",
+        "parent": "11bb10b5cdf0f5000c23960f77b08fb842144a48",
+        "pr": 1915
+      }
+    },
+    {
+      "id": "task-ob-h31",
+      "project": "online-boutique",
+      "title": "Fix deprecated methods in productcatalogservice",
+      "description": "",
+      "archivedDaysAgo": 14,
+      "upstream": {
+        "commit": "83ce58ee84674a3ce633ef594e136890c926ac53",
+        "parent": "ea303e9db7e91d258e87adc11b75afec9a94ebae",
+        "pr": 2013
+      }
+    },
+    {
+      "id": "task-ob-h32",
+      "project": "online-boutique",
+      "title": "Move cartservice to .NET 8",
+      "description": "",
+      "archivedDaysAgo": 14,
+      "upstream": {
+        "commit": "9b19a45b37e8a9f981053aeec77c78fa51476c40",
+        "parent": "5d4bad9840845d4005b20e7f6b66ad9867d6b32b",
+        "pr": 2102
+      }
+    },
+    {
+      "id": "task-ob-h33",
+      "project": "online-boutique",
+      "title": "Use Memorystore for Redis 7.0 in cartservice",
+      "description": "",
+      "archivedDaysAgo": 13,
+      "upstream": {
+        "commit": "ca3552eb4001c53bf172de3cfa08c30def9491d3",
+        "parent": "2ad0e9a9fdc14917cb90049bb4f0f4b5ef98436b",
+        "pr": 2168
+      }
+    },
+    {
+      "id": "task-ob-h34",
+      "project": "online-boutique",
+      "title": "Set the OpenTelemetry service name in the Node.js services",
+      "description": "",
+      "archivedDaysAgo": 13,
+      "upstream": {
+        "commit": "57b41ae9f3dc3ed8d4d565671688c1cbad7aa8c8",
+        "parent": "d3b57054fff13468732d5941726f4e3366233afa",
+        "pr": 2194
+      }
+    },
+    {
+      "id": "task-ob-h35",
+      "project": "online-boutique",
+      "title": "Use pino instead of console.log",
+      "description": "",
+      "archivedDaysAgo": 13,
+      "upstream": {
+        "commit": "515f5c5e6c995d7d6ccf75fed1bd056976fa3efa",
+        "parent": "d1ce3ea05598970e10209b99020b68f0c7e6ddb4",
+        "pr": 2263
+      }
+    },
+    {
+      "id": "task-ob-h36",
+      "project": "online-boutique",
+      "title": "Add support for a packaging service",
+      "description": "",
+      "archivedDaysAgo": 12,
+      "upstream": {
+        "commit": "6b38a1979117360ed34e28f1261620d9d8a8d207",
+        "parent": "5e8a2b77693040f7e1d1e4737067ec3ebb003f53",
+        "pr": 2275
+      }
+    },
+    {
+      "id": "task-ob-h37",
+      "project": "online-boutique",
+      "title": "Add an app label to the Deployment and Service objects",
+      "description": "",
+      "archivedDaysAgo": 12,
+      "upstream": {
+        "commit": "02c59db9d0c5a5bbd18b25f1362cf0d63ed3e048",
+        "parent": "80bea9bfd97bec107361d4663e207aa8d3f312c6",
+        "pr": 2323
+      }
+    },
+    {
+      "id": "task-ob-h38",
+      "project": "online-boutique",
+      "title": "Show the service name in Cloud Trace",
+      "description": "",
+      "archivedDaysAgo": 12,
+      "upstream": {
+        "commit": "02015ee81d1c10287615bc4bd9e2e03b747cbec2",
+        "parent": "8f4e06dc48139560d186ef80cfd381fa99df6238",
+        "pr": 2350
+      }
+    },
+    {
+      "id": "task-ob-h39",
+      "project": "online-boutique",
+      "title": "Remove a potentially unsafe external link",
+      "description": "",
+      "archivedDaysAgo": 11,
+      "upstream": {
+        "commit": "000ac1bb17bc743eb6bbb932eb0530b9489b517a",
+        "parent": "3d2f47eb64b79428985bc0c31f711d5ebb272b7e",
+        "pr": 2410
+      }
+    },
+    {
+      "id": "task-ob-h40",
+      "project": "online-boutique",
+      "title": "Strengthen the load generator with fuzz input",
+      "description": "",
+      "archivedDaysAgo": 11,
+      "upstream": {
+        "commit": "b01d229e6f1fe13b763e1ae15a02b9a123f218fa",
+        "parent": "0ec2427f636585ee6949c5bf68c2cf8398e47ed1",
+        "pr": 2398
+      }
+    },
+    {
+      "id": "task-ob-h41",
+      "project": "online-boutique",
+      "title": "Validate HTTP form values in the frontend",
+      "description": "",
+      "archivedDaysAgo": 11,
+      "upstream": {
+        "commit": "98624593239980537ece0250d5698cbf6aab6a1d",
+        "parent": "8c0353bc0aff625c9e67e5c4114756bb6d9101d1",
+        "pr": 2438
+      }
+    },
+    {
+      "id": "task-ob-h65",
+      "project": "online-boutique",
+      "title": "Pass is_cymbal_brand to renderHTTPError",
+      "description": "",
+      "archivedDaysAgo": 10,
+      "upstream": {
+        "commit": "8214fcd4734cef687a24f06c9a45be53ee4ae1af",
+        "parent": "5945f5e08b1657d1db504888e440eb25445b09b5",
+        "pr": 1186
+      }
+    },
+    {
+      "id": "task-ob-h43",
+      "project": "online-boutique",
+      "title": "Refactor the common default templating payload in the frontend",
+      "description": "",
+      "archivedDaysAgo": 10,
+      "upstream": {
+        "commit": "f1cfac111d00c79baf762f09953753a888ba8d2e",
+        "parent": "1f0b9be2d7a1d3798b7d5ae3bc1ff2d272ca5995",
+        "pr": 2473
+      }
+    },
+    {
+      "id": "task-ob-h44",
+      "project": "online-boutique",
+      "title": "Improve the load generator init container",
+      "description": "",
+      "archivedDaysAgo": 10,
+      "upstream": {
+        "commit": "a80fbd63546dfbb3f09efa218053eb6e4154da6d",
+        "parent": "64086c00a84679252618076dccae6aa3b7b31d1a",
+        "pr": 2493
+      }
+    },
+    {
+      "id": "task-ob-h45",
+      "project": "online-boutique",
+      "title": "Replace HttpUser with FastHttpUser in the load generator",
+      "description": "",
+      "archivedDaysAgo": 10,
+      "upstream": {
+        "commit": "3fefee73ec304dedcbddfcd0ec3027e167b9189a",
+        "parent": "3e59008ea170cecc4a4f106e13f9a31296b20f88",
+        "pr": 2495
+      }
+    },
+    {
+      "id": "task-ob-h46",
+      "project": "online-boutique",
+      "title": "Use scratch images for checkout, frontend, productcatalog and shipping",
+      "description": "",
+      "archivedDaysAgo": 9,
+      "upstream": {
+        "commit": "6d78542783f083f55913c75521230a09470b410a",
+        "parent": "f25c88c3d874b5b2f44d3f5ab3f1491b3aa4fd99",
+        "pr": 2512
+      }
+    },
+    {
+      "id": "task-ob-h47",
+      "project": "online-boutique",
+      "title": "Optimize the Node container images",
+      "description": "",
+      "archivedDaysAgo": 9,
+      "upstream": {
+        "commit": "46405eed26bc2e0b48bc7c2e76dce039bf30f714",
+        "parent": "912468a8aeb5ec095f36ff177f7b4876f192f84a",
+        "pr": 2538
+      }
+    },
+    {
+      "id": "task-ob-h48",
+      "project": "online-boutique",
+      "title": "Move cartservice to a noble-chiseled base image",
+      "description": "",
+      "archivedDaysAgo": 9,
+      "upstream": {
+        "commit": "5dc6736623a674fc4c632b02942964de4ca3c11f",
+        "parent": "2ab6aa6c7bf72e07f9d3cbc8c736e5ca10cd49d3",
+        "pr": 2568
+      }
+    },
+    {
+      "id": "task-ob-h49",
+      "project": "online-boutique",
+      "title": "Fix the patch in the without-loadgenerator component",
+      "description": "",
+      "archivedDaysAgo": 8,
+      "upstream": {
+        "commit": "f23e0cede3ffef5447c34ae241a982a2be1a8a82",
+        "parent": "87d949353c4864b4e6d20440005ce257791926c5",
+        "pr": 2578
+      }
+    },
+    {
+      "id": "task-ob-h50",
+      "project": "online-boutique",
+      "title": "Add support for a base URL",
+      "description": "",
+      "archivedDaysAgo": 8,
+      "upstream": {
+        "commit": "7ac4a1e0af2e432cb6621497ee6e39c392af5d8b",
+        "parent": "d4f6ce817f7fd702a41660deb352a4aeb827327f",
+        "pr": 2609
+      }
+    },
+    {
+      "id": "task-ob-h51",
+      "project": "online-boutique",
+      "title": "Fix the shopping assistant demo",
+      "description": "",
+      "archivedDaysAgo": 8,
+      "upstream": {
+        "commit": "9cdbc60fddc05faeec5a75c2d67cf5b088a8c0f3",
+        "parent": "3b46ec0b193af43e2ea041016c69fcb2b5df8385",
+        "pr": 2675
+      }
+    },
+    {
+      "id": "task-ob-h52",
+      "project": "online-boutique",
+      "title": "Add an opt-in for securityContext in the Helm chart",
+      "description": "",
+      "archivedDaysAgo": 7,
+      "upstream": {
+        "commit": "b6ab75e675ea1e1c3b856327d6116b832b60e88f",
+        "parent": "e422343ff2cb8b89cd7030879e380a90f57be26d",
+        "pr": 2758
+      }
+    },
+    {
+      "id": "task-ob-h53",
+      "project": "online-boutique",
+      "title": "Shrink the emailservice base image to Alpine",
+      "description": "",
+      "archivedDaysAgo": 7,
+      "upstream": {
+        "commit": "4c5100379f495dd2cfe2ef3dca61904a2e4b8eac",
+        "parent": "a070582b9069c9d6bafa5797acd0292ffbf9dc56",
+        "pr": 2813
+      }
+    },
+    {
+      "id": "task-ob-h54",
+      "project": "online-boutique",
+      "title": "Make the Locust rate configurable",
+      "description": "",
+      "archivedDaysAgo": 7,
+      "upstream": {
+        "commit": "40e5400ed93da874ccf16a9bb36ccc965449d8fa",
+        "parent": "4c5100379f495dd2cfe2ef3dca61904a2e4b8eac",
+        "pr": 2806
+      }
+    },
+    {
+      "id": "task-ob-h55",
+      "project": "online-boutique",
+      "title": "Shrink the recommendationservice base image to Alpine",
+      "description": "",
+      "archivedDaysAgo": 6,
+      "upstream": {
+        "commit": "7c430c03ead7a4946e8bf733c723225e0a61fd45",
+        "parent": "d35762709e9307208db3144687869e51520d91e7",
+        "pr": 2832
+      }
+    },
+    {
+      "id": "task-ob-h56",
+      "project": "online-boutique",
+      "title": "Add support for arm64",
+      "description": "",
+      "archivedDaysAgo": 6,
+      "upstream": {
+        "commit": "916eeac8e730f26a5a11d80dba17d65257fa749a",
+        "parent": "4dd196ce51b092e280d6c9d08233a411e62592eb",
+        "pr": 2589
+      }
+    },
+    {
+      "id": "task-ob-h57",
+      "project": "online-boutique",
+      "title": "Nest the seccompProfile and securityContext Helm values correctly",
+      "description": "",
+      "archivedDaysAgo": 6,
+      "upstream": {
+        "commit": "342916bac6b256ee5d8f949c5616fb1627a8992d",
+        "parent": "f5d62b0c088283d67bb150ddb4a155a5e71c0734",
+        "pr": 2874
+      }
+    },
+    {
+      "id": "task-ob-h66",
+      "project": "online-boutique",
+      "title": "Run cartservice as an explicit non-root user",
+      "description": "",
+      "archivedDaysAgo": 6,
+      "upstream": {
+        "commit": "1e59363aa78dd1131c6ec0f9334fcd621f0629ff",
+        "parent": "27400d2fe54d40f949b49205d9c82fc7bd08e850",
+        "pr": 1032
+      }
+    },
+    {
+      "id": "task-ob-h59",
+      "project": "online-boutique",
+      "title": "Mend the tracing instrumentation for the Node services",
+      "description": "",
+      "archivedDaysAgo": 5,
+      "upstream": {
+        "commit": "e94eb63b1a184c25b4d31af97b4fbb84b783614e",
+        "parent": "dc88f8d87315253c5c4aa2effcada14a94b65781",
+        "pr": 3028
+      }
+    },
+    {
+      "id": "task-ob-h60",
+      "project": "online-boutique",
+      "title": "Hide the database credentials and handle duplicate inserts on AlloyDB",
+      "description": "",
+      "archivedDaysAgo": 5,
+      "upstream": {
+        "commit": "dc88f8d87315253c5c4aa2effcada14a94b65781",
+        "parent": "896f214dcdc04a9dd445cddf655909d2e0269d4a",
+        "pr": 3021
+      }
+    },
+    {
+      "id": "task-ob-h61",
+      "project": "online-boutique",
+      "title": "Fix invalid Helm templating for the containers block",
+      "description": "",
+      "archivedDaysAgo": 5,
+      "upstream": {
+        "commit": "896f214dcdc04a9dd445cddf655909d2e0269d4a",
+        "parent": "6167f318745b1e9d1a3fa43e2c4dfa7b1e5d46d2",
+        "pr": 3031
+      }
+    },
+    {
+      "id": "task-ob-h62",
+      "project": "online-boutique",
+      "title": "Clean up shippingservice: remove the deprecated API, fix the quote logic, improve the tests",
+      "description": "",
+      "archivedDaysAgo": 4,
+      "upstream": {
+        "commit": "fc3a1f72ed3b66bc593bedb184a1544016171f89",
+        "parent": "3b0690b507480ca2a64e9cf5eed035f07abfc3d6",
+        "pr": 3276
+      }
+    },
+    {
+      "id": "task-ob-h63",
+      "project": "online-boutique",
+      "title": "Avoid redundant parseCatalog calls in GetProduct",
+      "description": "",
+      "archivedDaysAgo": 4,
+      "upstream": {
+        "commit": "48edfe9780a95b4649603560633b88584403e621",
+        "parent": "05cc368f96c8fb982be0d75e62c7ba50646fc742",
+        "pr": 3280
+      }
+    }
+  ]
+}

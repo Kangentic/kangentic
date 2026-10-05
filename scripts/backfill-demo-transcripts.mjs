@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
 
 const require = createRequire(import.meta.url);
@@ -42,7 +42,7 @@ const only = onlyIndex === -1 ? null : argv[onlyIndex + 1];
 // Node cannot import the adapter transcript parsers directly (extensionless relative specifiers),
 // so the derivation is bundled first. See scripts/lib/bundle-ts-module.mjs.
 const extract = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'message-trail-extract.ts'));
-const dataset = await import(pathToFileURL(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts')).href);
+const dataset = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts'));
 
 const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8'));
 

@@ -227,7 +227,11 @@ for a working session, how that peek changes over the recording, the agent messa
 card prints under the default Card Preview, and the scaffolded project's git history, blame, and
 per-commit diffs from `tests/captures/fixtures/demo/history/`, captured by
 `scripts/capture-demo-history.mjs` from the repo `scripts/lib/demo-scaffold-repo.mjs` builds
-out of the scaffold's `commits.json`). The
+out of the scaffold's `commits.json`, the Knowledge Graph each project's map draws from
+`tests/captures/fixtures/demo/graph/`, built by main's own pipeline in a preview through
+`scripts/capture-demo-knowledge-graph.mjs`, and the archived tasks' Completed Tasks rows from
+`tests/captures/fixtures/demo/archived/`, real headless runs recorded by
+`scripts/capture-demo-archived-runs.mjs`). The
 plugin also emits every
 recording's timed byte stream under `recordings/`, which the live frame fetches when a terminal
 mounts to replay the session as it happened, the agent boots a drag or a new Command
@@ -252,7 +256,9 @@ The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run 
 the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
 screenshots it per theme into the gitignored `captures/<timestamp>/scenes/`, playing the gesture
 a `driver` scene needs (a held drag, a right-click) with Playwright. The rig has no scene applier
-of its own; `demo/boot.js` is the applier for both consumers. `npm run demo:posters`
+of its own; `demo/boot.js` is the applier for both consumers. A scene whose subject keeps moving
+after `ready` (the Knowledge Graph's camera flight) names `settle`, and the rig shoots only once
+those elements hold still; it refuses a poster of the map's no-GPU card. `npm run demo:posters`
 (`demo/posters.mjs`) drives that same rig for the site's docs figures: every scene in the `clay`
 and `rust` themes at the frame's 2x (`CAPTURE_THEMES`, `CAPTURE_RESOLUTIONS`, and
 `CAPTURE_OUTPUT_ROOT` into `dist/demo-posters/`), checked against the build's own `scenes.json`

@@ -28,6 +28,7 @@ export const IPC = {
   DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
   DEV_SEED_KNOWLEDGE_GRAPH: 'dev:seedKnowledgeGraph',
   DEV_SEED_KNOWLEDGE_GRAPH_REAL: 'dev:seedKnowledgeGraphReal',
+  DEV_SEED_KNOWLEDGE_GRAPH_DEMO: 'dev:seedKnowledgeGraphDemo',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',

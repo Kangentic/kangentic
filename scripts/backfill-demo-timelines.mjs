@@ -24,7 +24,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { importTsModule } from './lib/bundle-ts-module.mjs';
 
 const require = createRequire(import.meta.url);
 const { computeReplayTimelines, createReplayTerminal, peekFromTerminal } = require('./lib/demo-replay-timelines.js');
@@ -32,8 +33,9 @@ const { serializePhysicalRows, CURSOR_SUFFIX } = require('./lib/demo-frame-seria
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
-// Node strips the types itself; the dataset module has no Node imports by design.
-const dataset = await import(pathToFileURL(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts')).href);
+// Bundled, not imported: the dataset reaches extensionless app modules and imports JSON fixtures,
+// neither of which Node's own type stripping resolves (scripts/lib/bundle-ts-module.mjs).
+const dataset = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts'));
 const force = process.argv.includes('--force');
 const checkOnly = process.argv.includes('--check');
 

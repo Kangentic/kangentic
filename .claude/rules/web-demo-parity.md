@@ -145,6 +145,12 @@ three things staying in step, and each is enforced rather than remembered.
   wrote, sanitized whole, committed because the source lives on the recording machine), and the
   seed serves it through `transcripts.get` when a viewer opens. Every other session falls through
   to the mock's empty response, which is what the desktop shows once a history file is gone.
+- **The Knowledge Graph is main's pipeline over the recordings, never placed by hand.** A preview
+  indexes, embeds, lays out and names the sample install's recorded conversations, and the
+  snapshots are committed (`graph/knowledge-graph.json`); a node's title, cost and times are joined
+  from the dataset's rows at seed time. An archived task's Completed Tasks row is its own recorded
+  run (`archived/runs.json`). A scene whose subject keeps moving after `ready` names what to wait
+  on in `settle`, and the rig refuses a poster of the no-GPU card.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)
@@ -171,6 +177,13 @@ three things staying in step, and each is enforced rather than remembered.
   in the parser's shape, when its entries are not the run the card's trail came from (the trail's
   uuids are transcript uuids), when a marked manifest entry has no file or a file no mark, and when
   the build or the seed stops reading them. Runs via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/demo-knowledge-graph-seeded.test.ts` fails when the
+  Knowledge Graph fixture lacks a project, draws a conversation the sample install does not record,
+  leaves a recorded one neither drawn nor named with a reason, points an edge, neighbour or region
+  out of range, leaves a region unnamed, or counts task records or commits other than the dataset's
+  rows and the History pane's; `tests/unit/demo-archived-summaries.test.ts` holds each Completed
+  Tasks row to its task's recorded run, and `tests/unit/archived-run-metrics.test.ts` replays a real
+  headless result and a real advisor turn through the recorder's readers. Run via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/demo-guest-pages.test.ts` reads every `guest_page`
   `DEMO_PROJECTS` names and fails when the file is missing, references anything off-origin, reads
   `prefers-color-scheme`, or declares an animation or transition. Runs via `npm run test:unit`.
@@ -203,8 +216,9 @@ three things staying in step, and each is enforced rather than remembered.
   seeds, when a config key is not an `AppConfig` key (the mock's `Object.assign` accepts any key
   and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
   one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
-  names a session the recordings index does not carry, and when `boot.js`'s
-  `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type. Runs via
+  names a session the recordings index does not carry, when `boot.js`'s
+  `STATE_KEYS` or `demo/vite.config.mts`'s `scenes.json` fields drift from the type, and when
+  `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. Runs via
   `npm run test:unit`.
 - **Test (behavior, CI):** `tests/demo/static-demo.spec.ts` boots EVERY bootable scene in the
   registry from a static server (the loop iterates `SCENES`, so a new entry is covered with no
@@ -212,7 +226,8 @@ three things staying in step, and each is enforced rather than remembered.
   visible and, where the scene names a `focus`, that the element exists and covers a real region
   of the frame (not empty, not the whole frame: the Quick Find scenes once named the palette's
   full-frame backdrop, which crops to nothing) and that each selector in it matches exactly one
-  element, that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
+  element, that a scene naming `settle` settles, that the Knowledge Graph draws in a 3D context
+  (no no-GPU card, island labels placed by a drawn frame, named region pills), that a `driver` scene is refused by name, that `scenes.json` is served, lists exactly
   the registry, and names the frame's version, that the ready message posted to an iframe host
   carries a dialog scene's focus rect (the same rect `__demoBoot.focusRectOf` hands the poster
   rig) and null for a scene without one, the embed and theme

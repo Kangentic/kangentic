@@ -28,7 +28,7 @@ import path from 'node:path';
 import { startDemoServer } from '../../../demo/static-server.mjs';
 import { SCENES } from '../scenes';
 import { hideDevOnlyChrome, launchCaptureBrowser } from '../helpers/capture-page';
-import { openScene, SCENE_THEMES, type SceneTheme } from '../helpers/scene-page';
+import { NO_GPU_FALLBACKS, openScene, SCENE_THEMES, type SceneTheme } from '../helpers/scene-page';
 import { frame, hero, inline, thumbnail, type Resolution } from '../helpers/resolutions';
 import { getOutputDir } from '../helpers/output-dir';
 
@@ -88,6 +88,12 @@ test.describe('Scene captures', () => {
           await hideDevOnlyChrome(page);
           try {
             await openScene(page, scene, { baseUrl: server.url, theme });
+            // A surface that got no WebGL context shows its fallback card instead of its drawing.
+            // A poster of that is a picture of the card, so none is written; the release's poster
+            // job then fails loudly rather than shipping the card under the feature's caption.
+            for (const fallback of NO_GPU_FALLBACKS) {
+              if (await page.locator(fallback).count() > 0) throw new Error(`Scene ${name} shows ${fallback} in ${theme}: the browser gave it no WebGL context`);
+            }
             await page.screenshot({
               path: path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.png`),
               fullPage: false,

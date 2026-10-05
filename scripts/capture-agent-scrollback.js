@@ -50,6 +50,8 @@ const path = require('node:path');
 // Shared with scripts/backfill-demo-message-trails.mjs, which writes into recordings already on
 // disk and must rewrite identity exactly the way a record-time write does.
 const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanitizer');
+// Shared with scripts/capture-demo-archived-runs.mjs, which starts the same CLIs headless.
+const { toSpawnable } = require('./lib/spawnable');
 
 function parseArgs(argv) {
   const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null };
@@ -145,68 +147,16 @@ function buildCommand(agent, cwd, prompt, mode, model, resume) {
   }
 }
 
-/**
- * node-pty needs a real path on Windows, and several CLIs install as .ps1 or .cmd shims that
- * ConPTY cannot start directly. Resolve through PATH and wrap a shim in its interpreter.
- */
-function toSpawnable(exe, args) {
-  const { execFileSync } = require('node:child_process');
-  let resolved = exe;
-  if (process.platform === 'win32') {
-    const lookup = execFileSync('where.exe', [exe], { encoding: 'utf-8' }).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (lookup.length === 0) throw new Error(`Could not find ${exe} on PATH`);
-    // npm installs three shims side by side (an extensionless shell script, .cmd, .ps1). Prefer
-    // a native executable, then .cmd, then .ps1; the shell script cannot start as a process.
-    const rank = (candidate) => (/\.exe$/i.test(candidate) ? 0 : /\.cmd$/i.test(candidate) ? 1 : /\.ps1$/i.test(candidate) ? 2 : 3);
-    resolved = lookup.slice().sort((left, right) => rank(left) - rank(right))[0];
-  }
-  if (/\.ps1$/i.test(resolved)) {
-    return { file: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolved, ...args] };
-  }
-  if (/\.(cmd|bat)$/i.test(resolved)) {
-    return { file: 'cmd.exe', args: ['/d', '/c', resolved, ...args] };
-  }
-  return { file: resolved, args };
-}
-
 // ---------------------------------------------------------------- trust pre-seeding
-function withClaudeJsonLock(work) {
-  const lockDir = path.join(os.homedir(), '.claude.json.lock');
-  const deadline = Date.now() + 5000;
-  for (;;) {
-    try {
-      fs.mkdirSync(lockDir);
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (Date.now() > deadline) {
-        console.error('[capture] ~/.claude.json.lock is held; skipping the trust write (Claude will show one trust prompt)');
-        return false;
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-    }
-  }
-  try {
-    work();
-    return true;
-  } finally {
-    fs.rmSync(lockDir, { recursive: true, force: true });
-  }
-}
-
-function seedTrust(agent, cwd) {
+async function seedTrust(agent, cwd) {
   const resolved = forwardSlash(path.resolve(cwd));
   if (agent === 'claude') {
-    withClaudeJsonLock(() => {
-      const claudeJsonPath = path.join(os.homedir(), '.claude.json');
-      let data = {};
-      try { data = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')); } catch { data = {}; }
-      if (!data.projects || typeof data.projects !== 'object') data.projects = {};
-      if (data.projects[resolved]?.hasTrustDialogAccepted === true) return;
-      data.projects[resolved] = { allowedTools: [], enabledMcpjsonServers: [], disabledMcpjsonServers: [], ...(data.projects[resolved] || {}), hasTrustDialogAccepted: true };
-      fs.writeFileSync(claudeJsonPath, JSON.stringify(data, null, 2), 'utf-8');
-      console.error('[capture] trusted the scratch repo in ~/.claude.json');
-    });
+    // The adapter's own writer, run before every desktop spawn: Claude's ~/.claude.json.lock with
+    // its stale break, a temp-file rename, and a skip (one trust prompt) when the lock stays held.
+    const { importTsModule } = await import('./lib/bundle-ts-module.mjs');
+    const trust = await importTsModule(path.join(__dirname, '..', 'src', 'main', 'agent', 'adapters', 'claude', 'trust-manager.ts'));
+    await trust.ensureWorktreeTrust(cwd);
+    console.error('[capture] trusted the scratch repo in ~/.claude.json');
   } else if (agent === 'codex') {
     const configPath = path.join(os.homedir(), '.codex', 'config.toml');
     let toml = '';
@@ -363,7 +313,7 @@ async function main() {
     throw error;
   }
   const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume);
-  if (options.trust) seedTrust(options.agent, options.cwd);
+  if (options.trust) await seedTrust(options.agent, options.cwd);
   const sanitizer = buildSanitizer(options);
 
   console.error(`[capture] ${options.agent} in ${options.cwd} (${options.cols}x${options.rows})`);
