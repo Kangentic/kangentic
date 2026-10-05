@@ -132,6 +132,10 @@ nsis:
   oneClick: true
   perMachine: false
   artifactName: "${productName}-Setup-${version}.${ext}"
+  # Grants ALL APPLICATION PACKAGES read access to the per-user install folder on
+  # every install and update; Electron 44.5+ aborts startup without it on machines
+  # whose folder ACL carries an AppContainer entry. See the file for why.
+  include: build/installer.nsh
 
 
 mac:
