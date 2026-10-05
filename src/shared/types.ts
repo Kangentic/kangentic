@@ -1187,14 +1187,38 @@ export interface SessionRecord {
 export interface PerToolStat {
   toolName: string;
   callCount: number;
-  /** Sum of (ToolEnd.ts - matching ToolStart.ts) over completed pairs. */
+  /**
+   * Sum of (ToolEnd.ts - matching ToolStart.ts) over paired calls that did not
+   * wait on the user. A call that paused for an answer or an approval is left
+   * out (see `waitedCount`), so this is the tools' own run time.
+   */
   totalDurationMs: number;
   /** Count of `interrupted` events (PostToolUseFailure). Subset of pairs that did not finish cleanly. */
   interruptedCount: number;
-  /** Optional - reserved for adapters that emit per-tool cost. */
+  /**
+   * Optional - calls that paused for the user's answer or approval, a subset of
+   * `callCount + interruptedCount`. Their time is not in `totalDurationMs`,
+   * because nothing marks the moment the user answers. A call is credited with
+   * a wait the way the activity engine credits a permission prompt: to the most
+   * recently started call still running. Unset when no call waited, and on rows
+   * saved before waits were tracked.
+   */
+  waitedCount?: number;
+  /**
+   * Optional - reserved for adapters that report REAL per-tool cost and token
+   * usage. Never an estimate: the table labels these In/Out, which on a tool
+   * row reads as the model's input and output.
+   */
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /**
+   * Optional ESTIMATE of the tokens this tool's results added to the main
+   * conversation's context, summed over its calls, from the size of each
+   * result in the agent's transcript. Not billed tokens, and subagent calls are
+   * not counted. Adapters without a transcript leave it unset.
+   */
+  resultTokens?: number;
 }
 
 /** Record of a cross-agent context handoff. */
@@ -1862,9 +1886,11 @@ export interface TranscriptUsage {
  * transcript. Backfills the live UsageAccumulator count for sessions whose
  * ToolStart/ToolEnd hook events never reached it (e.g. a suspended/parked
  * session), which otherwise reports 0 despite real cost/tokens. Produced by
- * `AgentAdapter.transcriptToolCounts`. `toolBreakdown` entries are
- * callCount-only (`totalDurationMs`/`interruptedCount` are 0 - the transcript
- * has no ToolStart/ToolEnd pairing to derive them from).
+ * `AgentAdapter.transcriptToolCounts`. `toolBreakdown` entries carry no timing
+ * (`totalDurationMs`/`interruptedCount` are 0 - the transcript has no
+ * ToolStart/ToolEnd pairing to derive them from), and carry `resultTokens` when
+ * the adapter can estimate them. The run-end backfill also merges those
+ * `resultTokens` onto a healthy live breakdown by tool name.
  */
 export interface TranscriptToolCounts {
   toolCallCount: number;
@@ -6043,6 +6069,13 @@ export interface ElectronAPI {
     listSummaries: () => Promise<Record<string, SessionSummary>>;
     /** Live per-tool breakdown for an active session (from the in-memory accumulator, not the DB). */
     getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
+    /**
+     * Estimated result tokens per tool name for an active session's current run,
+     * read from the agent's transcript in the retrieval worker. Null when the
+     * agent cannot estimate them or keeps no readable transcript. Merged onto
+     * `getToolBreakdown`'s rows as `resultTokens`.
+     */
+    getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
     /** Record a transient session's auto-derived name on main, so it survives a

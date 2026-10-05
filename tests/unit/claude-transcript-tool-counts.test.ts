@@ -9,13 +9,15 @@
  * tool_use.id math is locked.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   parseClaudeTranscriptToolCounts,
+  parseClaudeTranscriptToolResultTokens,
   claudeProjectSlug,
+  resetToolCountsCursorsForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 
@@ -119,6 +121,151 @@ describe('parseClaudeTranscriptToolCounts', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Result tokens and the resumable cursor.
+// ---------------------------------------------------------------------------
+
+function assistantToolUse(id: string, name: string, extra = ''): string {
+  return `{"type":"assistant"${extra},"message":{"id":"msg_${id}","content":[{"type":"tool_use","id":"${id}","name":"${name}","input":{}}]}}\n`;
+}
+
+function userToolResult(id: string, content: unknown, extra = ''): string {
+  return `{"type":"user"${extra},"message":{"content":[{"type":"tool_result","tool_use_id":"${id}","content":${JSON.stringify(content)}}]}}\n`;
+}
+
+/** A base64 PNG whose header says `width` x `height`, padded with `paddingBytes` of filler. */
+function pngBase64(width: number, height: number, paddingBytes = 0): string {
+  const header = Buffer.alloc(24);
+  header.writeUInt32BE(0x89504e47, 0);
+  header.writeUInt32BE(0x0d0a1a0a, 4);
+  header.writeUInt32BE(13, 8);
+  header.write('IHDR', 12, 'ascii');
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  return Buffer.concat([header, Buffer.alloc(paddingBytes, 7)]).toString('base64');
+}
+
+describe('parseClaudeTranscriptToolCounts - result tokens and resume', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    resetToolCountsCursorsForTests();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-transcript-result-tokens-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('sizes each tool_result by id and sums it per tool', async () => {
+    const filePath = path.join(dir, 'results.jsonl');
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('r1', 'Read') + userToolResult('r1', 'x'.repeat(400)) +
+        assistantToolUse('r2', 'Read') + userToolResult('r2', [{ type: 'text', text: 'y'.repeat(80) }]) +
+        assistantToolUse('b1', 'Bash'),
+    );
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    const byName = new Map(counts!.toolBreakdown.map((stat) => [stat.toolName, stat]));
+    // chars/4: 400 -> 100, 80 -> 20.
+    expect(byName.get('Read')).toMatchObject({ callCount: 2, resultTokens: 120 });
+    // Bash has no result yet, so it carries no estimate rather than a 0.
+    expect(byName.get('Bash')?.resultTokens).toBeUndefined();
+  });
+
+  it('prices an image from its header dimensions, never by base64 length', async () => {
+    const filePath = path.join(dir, 'image.jsonl');
+    // 1000 x 600 -> 36 x 22 patches of 28px = 792 tokens. 300 KB of payload
+    // would read as ~100k tokens through the character estimate.
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: pngBase64(1000, 600, 300_000) } };
+    fs.writeFileSync(filePath, assistantToolUse('s1', 'Screenshot') + userToolResult('s1', [image]));
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    expect(counts!.toolBreakdown[0].resultTokens).toBe(792);
+  });
+
+  it('adds no result tokens for sidechain lines', async () => {
+    const filePath = path.join(dir, 'sidechain.jsonl');
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('side', 'Read', ',"isSidechain":true') +
+        userToolResult('side', 'z'.repeat(400), ',"isSidechain":true'),
+    );
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    expect(counts!.toolBreakdown[0]).toMatchObject({ toolName: 'Read', callCount: 1 });
+    expect(counts!.toolBreakdown[0].resultTokens).toBeUndefined();
+  });
+
+  it('resumes after an append, including a line that was half-written at the first read', async () => {
+    const filePath = path.join(dir, 'append.jsonl');
+    const resultLine = userToolResult('r1', 'x'.repeat(400));
+    const splitAt = Math.floor(resultLine.length / 2);
+    fs.writeFileSync(filePath, assistantToolUse('r1', 'Read') + resultLine.slice(0, splitAt));
+    const first = await parseClaudeTranscriptToolCounts(filePath);
+    expect(first!.toolBreakdown[0]).toMatchObject({ callCount: 1 });
+    expect(first!.toolBreakdown[0].resultTokens).toBeUndefined();
+
+    fs.appendFileSync(filePath, resultLine.slice(splitAt) + assistantToolUse('r2', 'Read') + userToolResult('r2', 'y'.repeat(40)));
+    const second = await parseClaudeTranscriptToolCounts(filePath);
+    expect(second!.toolCallCount).toBe(2);
+    expect(second!.toolBreakdown[0]).toMatchObject({ toolName: 'Read', callCount: 2, resultTokens: 110 });
+  });
+
+  it('starts over when the file shrinks (a rewrite, not an append)', async () => {
+    const filePath = path.join(dir, 'rewrite.jsonl');
+    fs.writeFileSync(filePath, assistantToolUse('a', 'Bash') + assistantToolUse('b', 'Bash') + assistantToolUse('c', 'Bash'));
+    expect((await parseClaudeTranscriptToolCounts(filePath))!.toolCallCount).toBe(3);
+    fs.writeFileSync(filePath, assistantToolUse('d', 'Read'));
+    const counts = await parseClaudeTranscriptToolCounts(filePath);
+    expect(counts!.toolCallCount).toBe(1);
+    expect(counts!.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Read']);
+  });
+
+  it('scopes counts and result tokens to one run of a transcript that holds two', async () => {
+    // Claude appends every --resume to the same file; a session covers one run.
+    const filePath = path.join(dir, 'two-runs.jsonl');
+    const firstRun = ',"timestamp":"2026-10-04T22:52:20.000Z"';
+    const secondRun = ',"timestamp":"2026-10-04T22:57:40.000Z"';
+    fs.writeFileSync(
+      filePath,
+      assistantToolUse('r1', 'Read', firstRun) + userToolResult('r1', 'x'.repeat(4000), firstRun) +
+        assistantToolUse('b1', 'Bash', firstRun) + userToolResult('b1', 'y'.repeat(400), firstRun) +
+        assistantToolUse('r2', 'Read', secondRun) + userToolResult('r2', 'z'.repeat(800), secondRun),
+    );
+    const secondRunStart = Date.parse('2026-10-04T22:56:53.959Z');
+
+    const scoped = await parseClaudeTranscriptToolCounts(filePath, secondRunStart);
+    expect(scoped!.toolCallCount).toBe(1);
+    expect(scoped!.toolBreakdown).toEqual([
+      { toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 200 },
+    ]);
+    expect(await parseClaudeTranscriptToolResultTokens(filePath, secondRunStart)).toEqual({ Read: 200 });
+
+    // Unscoped, the whole file counts.
+    const whole = await parseClaudeTranscriptToolCounts(filePath);
+    expect(whole!.toolCallCount).toBe(3);
+    expect(await parseClaudeTranscriptToolResultTokens(filePath)).toEqual({ Read: 1200, Bash: 100 });
+
+    // A run with no calls yet has nothing to report.
+    expect(await parseClaudeTranscriptToolCounts(filePath, Date.parse('2026-10-05T00:00:00.000Z'))).toBeNull();
+    expect(await parseClaudeTranscriptToolResultTokens(filePath, Date.parse('2026-10-05T00:00:00.000Z'))).toEqual({});
+  });
+
+  it('returns null result tokens for a missing transcript', async () => {
+    expect(await parseClaudeTranscriptToolResultTokens(path.join(dir, 'missing.jsonl'), null)).toBeNull();
+  });
+
+  it('overlapping calls on one path agree and do not double count', async () => {
+    const filePath = path.join(dir, 'overlap.jsonl');
+    fs.writeFileSync(filePath, assistantToolUse('r1', 'Read') + userToolResult('r1', 'x'.repeat(400)));
+    const [first, second] = await Promise.all([
+      parseClaudeTranscriptToolCounts(filePath),
+      parseClaudeTranscriptToolCounts(filePath),
+    ]);
+    expect(first!.toolBreakdown[0]).toMatchObject({ callCount: 1, resultTokens: 100 });
+    expect(second!.toolBreakdown[0]).toMatchObject({ callCount: 1, resultTokens: 100 });
   });
 });
 

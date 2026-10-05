@@ -32,6 +32,7 @@ import type {
   KnowledgeGraphBuildProgress,
   KnowledgeGraphQueryHit,
   KnowledgeGraphSnapshotWire,
+  PerToolStat,
   SessionSummary,
   SubagentUsageTotals,
   TaskFanOut,
@@ -51,6 +52,7 @@ import { localSummaryPassStore, type SummaryRow } from '../summary/summary-pass-
 import { readSummaryFingerprint, type SummaryCandidate } from '../summary/summary-sources';
 import { localUsageReader, type UsageReadName } from '../../usage-stats/project-usage-reader';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { replayToolBreakdowns } from '../../activity-engine/tool-breakdown-replay';
 
 const indexStatus = createIndexStatusReader();
 
@@ -155,6 +157,13 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, DevIn
   'sessions.summaries': {
     params: { projectId: string };
     result: Record<string, SessionSummary>;
+  };
+  /** Finished sessions' per-tool breakdowns rebuilt from their own event logs
+   *  (`replayToolBreakdowns`), for the one-time duration repair. Ids with no
+   *  readable log are absent. Reads files only; main writes the rows. */
+  'sessions.replayToolBreakdowns': {
+    params: { sessionsDir: string; sessionIds: string[] };
+    result: Record<string, PerToolStat[]>;
   };
   /** One of the usage dashboard's per-project reads (`ProjectUsageReader`),
    *  by name: main's `AsyncProjectUsageReader` types each result. */
@@ -365,6 +374,7 @@ export const retrievalHandlers: RetrievalHandlers = {
   'summary.candidates': ({ projectId, skip }, context) => summaryStoreFor(context).candidates(projectId, skip),
   'summary.save': ({ projectId, rows }, context) => summaryStoreFor(context).save(projectId, rows),
   'sessions.summaries': ({ projectId }, context) => new SessionRepository(context.getDb(projectId)).listAllSummaries(),
+  'sessions.replayToolBreakdowns': ({ sessionsDir, sessionIds }) => replayToolBreakdowns(sessionsDir, sessionIds),
   'usage.read': ({ projectId, read, args }, context) => {
     const reader = localUsageReader(context.getDb(projectId));
     if (!Object.hasOwn(reader, read)) throw new Error(`Unknown usage read: ${String(read)}`);

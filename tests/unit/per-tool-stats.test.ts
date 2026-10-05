@@ -1,13 +1,13 @@
 /**
  * Per-tool aggregator tests. Drives `SessionTelemetry.ingestEvents` with synthetic
  * events and asserts the snapshots returned by `getToolBreakdown` /
- * `getToolCallCount`. Covers FIFO pairing, interleaved tool names, interrupted
- * pairs, the optional cost/token fields on ToolEnd, and the bounded-cache
+ * `getToolCallCount`. Covers id-less FIFO pairing, pairing by toolId, interleaved
+ * tool names, interrupted pairs, the optional cost/token fields on ToolEnd, and the bounded-cache
  * resilience that motivated the standalone counter (see audit failure mode #5).
  */
 import { describe, it, expect } from 'vitest';
 import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
-import { EventType } from '../../src/shared/types';
+import { EventType, IdleReason } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 
 function makeTracker(): SessionTelemetry {
@@ -114,28 +114,45 @@ describe('SessionTelemetry per-tool aggregator', () => {
     expect(readRow?.outputTokens).toBeUndefined();
   });
 
-  it('sorts by cost descending when any row carries cost, otherwise by duration', () => {
+  it('sorts by call count descending, whatever the cost or duration', () => {
     const tracker = makeTracker();
     tracker.initSession(SID);
     tracker.ingestEvents(SID, [
-      start('Cheap', 0),
-      end('Cheap', 1_000, { costUsd: 0.01 }),
       start('Expensive', 0),
-      end('Expensive', 100, { costUsd: 0.50 }),
+      end('Expensive', 5_000, { costUsd: 0.50 }),
+      start('Frequent', 0),
+      end('Frequent', 10),
+      start('Frequent', 20),
+      end('Frequent', 30),
     ]);
-    const withCost = tracker.getToolBreakdown(SID);
-    expect(withCost.map((row) => row.toolName)).toEqual(['Expensive', 'Cheap']);
+    const rows = tracker.getToolBreakdown(SID);
+    expect(rows.map((row) => row.toolName)).toEqual(['Frequent', 'Expensive']);
+  });
 
-    const noCostTracker = makeTracker();
-    noCostTracker.initSession('session-2');
-    noCostTracker.ingestEvents('session-2', [
-      start('Slow', 0),
-      end('Slow', 5_000),
-      start('Fast', 0),
-      end('Fast', 50),
+  it('pairs by toolId through ingestEvents, so a denied start cannot inflate later calls', () => {
+    const tracker = makeTracker();
+    tracker.initSession(SID);
+    tracker.ingestEvents(SID, [
+      { ts: 0, type: EventType.ToolStart, tool: 'Bash', toolId: 'denied' },
+      { ts: 10_000, type: EventType.ToolStart, tool: 'Bash', toolId: 'b1' },
+      { ts: 10_050, type: EventType.ToolEnd, tool: 'Bash', toolId: 'b1' },
     ]);
-    const byDuration = noCostTracker.getToolBreakdown('session-2');
-    expect(byDuration.map((row) => row.toolName)).toEqual(['Slow', 'Fast']);
+    const [bashRow] = tracker.getToolBreakdown(SID);
+    expect(bashRow).toMatchObject({ callCount: 1, totalDurationMs: 50 });
+  });
+
+  it('forwards a permission Idle through ingestEvents, so a live call that waited is left out of the time', () => {
+    const tracker = makeTracker();
+    tracker.initSession(SID);
+    tracker.ingestEvents(SID, [
+      { ts: 0, type: EventType.ToolStart, tool: 'Bash', toolId: 'b1' },
+      { ts: 80, type: EventType.ToolEnd, tool: 'Bash', toolId: 'b1' },
+      { ts: 1_000, type: EventType.ToolStart, tool: 'Bash', toolId: 'b2' },
+      { ts: 1_050, type: EventType.Idle, detail: IdleReason.Permission },
+      { ts: 90_000, type: EventType.ToolEnd, tool: 'Bash', toolId: 'b2' },
+    ]);
+    const [bashRow] = tracker.getToolBreakdown(SID);
+    expect(bashRow).toMatchObject({ callCount: 2, waitedCount: 1, totalDurationMs: 80 });
   });
 
   it('getToolCallCount sums all ToolEnd events across tools', () => {

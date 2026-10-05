@@ -10,6 +10,7 @@ import {
   parseClaudeTranscriptWindow,
   parseClaudeTranscriptUsage,
   parseClaudeTranscriptToolCounts,
+  parseClaudeTranscriptToolResultTokens,
 } from './transcript-parser';
 import {
   CLAUDE_SUBAGENT_SPAWN_TOOL,
@@ -498,13 +499,28 @@ export class ClaudeAdapter implements AgentAdapter {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    sinceMs?: number | null;
   }): Promise<TranscriptToolCounts | null> {
     const filePath = input.transcriptPath
       ?? (input.agentSessionId && input.cwd
         ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
         : null);
     if (!filePath) return null;
-    return parseClaudeTranscriptToolCounts(filePath);
+    return parseClaudeTranscriptToolCounts(filePath, input.sinceMs);
+  }
+
+  async transcriptToolResultTokens(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+  }): Promise<Record<string, number> | null> {
+    const filePath = input.transcriptPath
+      ?? (input.agentSessionId && input.cwd
+        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
+        : null);
+    if (!filePath) return null;
+    return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs);
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {

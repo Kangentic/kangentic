@@ -50,9 +50,11 @@ function makePreConfig(options: {
     callCount: number;
     totalDurationMs: number;
     interruptedCount: number;
+    waitedCount?: number;
     costUsd?: number;
     inputTokens?: number;
     outputTokens?: number;
+    resultTokens?: number;
   }>;
 }): string {
   const exitCode = options.exitCode !== undefined ? options.exitCode : 0;
@@ -385,7 +387,7 @@ test.describe('Session Summary Panel', () => {
       await expect(table).toContainText('Bash');
       await expect(table).toContainText('Read');
       await expect(table).toContainText('Calls');
-      await expect(table).toContainText('Total');
+      await expect(table).toContainText('Time');
       await expect(table).toContainText('Avg');
 
       // Click again collapses.
@@ -438,6 +440,110 @@ test.describe('Session Summary Panel', () => {
       await expect(headerRow).toContainText('Failed');
       const readRow = page.locator('[data-testid="session-summary-by-tool"] table tbody tr', { hasText: 'Read' });
       await expect(readRow).toContainText('-');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('rows default to Calls, most first, and a header click re-sorts and then reverses', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 3, totalDurationMs: 4_200, interruptedCount: 0 },
+        { toolName: 'Read', callCount: 12, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'Edit', callCount: 7, totalDurationMs: 9_000, interruptedCount: 0 },
+      ],
+    }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+      await page.locator('[data-testid="session-summary-tool-calls-toggle"]').click();
+
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const toolCells = table.locator('tbody tr td:first-child');
+      await expect(toolCells).toHaveText(['Read', 'Edit', 'Bash']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-calls"]') }))
+        .toHaveAttribute('aria-sort', 'descending');
+
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Edit', 'Bash', 'Read']);
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Bash', 'Edit']);
+      await expect(table.locator('th', { has: page.locator('[data-testid="by-tool-sort-time"]') }))
+        .toHaveAttribute('aria-sort', 'ascending');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('calls that waited on the user are left out of Time and Avg, and the header says how many', async () => {
+    // Bash: 3 calls, 1 waited, so Avg divides its 4.2s by the 2 that ran.
+    // AskUserQuestion: every call waited, so it has no run time at all.
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 3, totalDurationMs: 4_200, interruptedCount: 0, waitedCount: 1 },
+        { toolName: 'Read', callCount: 12, totalDurationMs: 850, interruptedCount: 0 },
+        { toolName: 'AskUserQuestion', callCount: 2, totalDurationMs: 0, interruptedCount: 0, waitedCount: 2 },
+      ],
+    }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+      await page.locator('[data-testid="session-summary-tool-calls-toggle"]').click();
+
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const headerRow = table.locator('thead tr');
+      await expect(headerRow).toContainText('Time');
+      await expect(headerRow).not.toContainText('Total');
+      await expect(page.locator('[data-testid="by-tool-sort-time"]')).toHaveAttribute(
+        'title',
+        'How long each tool ran. Leaves out the 3 calls that waited for your answer or approval.',
+      );
+
+      // Columns: Tool, Calls, Time, Avg.
+      const askRow = table.locator('tbody tr', { hasText: 'AskUserQuestion' });
+      await expect(askRow.locator('td').nth(2)).toHaveText('-');
+      await expect(askRow.locator('td').nth(3)).toHaveText('-');
+      const bashRow = table.locator('tbody tr', { hasText: 'Bash' });
+      await expect(bashRow.locator('td').nth(2)).toHaveText('4.2s');
+      await expect(bashRow.locator('td').nth(3)).toHaveText('2.1s');
+
+      // No run time sorts last in both directions.
+      const toolCells = table.locator('tbody tr td:first-child');
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Bash', 'Read', 'AskUserQuestion']);
+      await page.locator('[data-testid="by-tool-sort-time"]').click();
+      await expect(toolCells).toHaveText(['Read', 'Bash', 'AskUserQuestion']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('count-only rows hide Time and Avg and still show estimated result tokens', async () => {
+    // The transcript backfill writes rows with no timing: a 0 there means "not
+    // measured", so the columns go rather than reading as "0ms".
+    const { browser, page } = await launchWithState(makePreConfig({
+      withSummary: true,
+      toolBreakdown: [
+        { toolName: 'Bash', callCount: 4, totalDurationMs: 0, interruptedCount: 0, resultTokens: 2_300 },
+        { toolName: 'Read', callCount: 9, totalDurationMs: 0, interruptedCount: 0, resultTokens: 41_000 },
+      ],
+    }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+      await page.locator('[data-testid="session-summary-tool-calls-toggle"]').click();
+
+      const table = page.locator('[data-testid="session-summary-by-tool"]');
+      const headerRow = table.locator('thead tr');
+      await expect(headerRow).toContainText('Calls');
+      await expect(headerRow).toContainText('Tokens');
+      await expect(headerRow).not.toContainText('Time');
+      await expect(headerRow).not.toContainText('Avg');
+      await expect(table.locator('tbody tr', { hasText: 'Read' })).toContainText('41k');
+      await expect(table.locator('tbody tr', { hasText: 'Read' })).not.toContainText('~');
+      await expect(table.locator('tbody tr td:first-child')).toHaveText(['Read', 'Bash']);
     } finally {
       await browser.close();
     }

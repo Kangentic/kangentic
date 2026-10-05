@@ -32,6 +32,10 @@ interface PopoverOptions {
    * - `'fixed'`: `position: fixed` viewport coordinates computed from the trigger
    *   rect. Use together with a body portal so the popover escapes a clipping
    *   ancestor (e.g. a window frame's `overflow-hidden`). Flyout mode is unaffected.
+   *   The side is decided once, at open, but the popover is anchored on the edge
+   *   facing its trigger, so content that arrives later grows away from it. The
+   *   room on the chosen side is published as `--popover-available-height` and
+   *   `--popover-available-width` on the popover for its own max-size classes.
    */
   strategy?: 'absolute' | 'fixed';
   /**
@@ -65,6 +69,9 @@ interface PopoverPosition {
   style: CSSProperties;
   placement: PopoverPlacement;
 }
+
+/** Space between a dropdown and its trigger. */
+const POPOVER_GAP = 8;
 
 const HIDDEN: CSSProperties = { visibility: 'hidden' };
 const EMPTY: CSSProperties = {};
@@ -151,17 +158,47 @@ export function usePopoverPosition(
       if (strategy === 'fixed') {
         // Viewport coordinates so the popover can be portaled out of a clipping
         // ancestor (the trigger-relative `100%`/`0` offsets below cannot).
+        //
+        // Anchored on the edge that FACES the trigger: `bottom` when above,
+        // `right` when right-aligned, exactly as the absolute branch below does
+        // with `bottom: 100%` / `right: 0`. Content that grows or shrinks after
+        // this measurement (rows an async fetch delivers, a list the user
+        // filters) then moves only the far edge. The old form computed `top` /
+        // `left` from the size measured here, so a popover measured in its
+        // empty state grew DOWN over its own trigger and past the window.
+        // The fixed containing block is the viewport minus scrollbars, hence
+        // the documentElement client size for the anchor math.
+        const layoutWidth = document.documentElement.clientWidth;
+        const layoutHeight = document.documentElement.clientHeight;
         popover.style.position = 'fixed';
-        popover.style.bottom = '';
-        popover.style.right = '';
         popover.style.marginTop = '';
         popover.style.marginBottom = '';
-        popover.style.top = openAbove
-          ? `${triggerRect.top - popoverHeight - 8}px`
-          : `${triggerRect.bottom + 8}px`;
-        popover.style.left = alignRight
-          ? `${triggerRect.right - popoverWidth}px`
-          : `${triggerRect.left}px`;
+        if (openAbove) {
+          popover.style.top = '';
+          popover.style.bottom = `${layoutHeight - triggerRect.top + POPOVER_GAP}px`;
+        } else {
+          popover.style.bottom = '';
+          popover.style.top = `${triggerRect.bottom + POPOVER_GAP}px`;
+        }
+        if (alignRight) {
+          popover.style.left = '';
+          popover.style.right = `${layoutWidth - triggerRect.right}px`;
+        } else {
+          popover.style.right = '';
+          popover.style.left = `${triggerRect.left}px`;
+        }
+        // The room on the chosen side, for a consumer to cap itself with
+        // (`max-h-[min(340px,var(--popover-available-height,340px))]`) so a
+        // short window scrolls inside the popover instead of spilling out of
+        // it. Variables, not an inline max-height: an inline value would
+        // override every consumer's own class cap, and a popover without
+        // `overflow-y-auto` would spill its content out of a clamped box.
+        const availableHeight = (openAbove ? spaceAbove : spaceBelow) - POPOVER_GAP;
+        const availableWidth = alignRight
+          ? triggerRect.right - viewportPadding
+          : viewportWidth - triggerRect.left - viewportPadding;
+        popover.style.setProperty('--popover-available-height', `${Math.max(0, availableHeight)}px`);
+        popover.style.setProperty('--popover-available-width', `${Math.max(0, availableWidth)}px`);
       } else {
         if (openAbove) {
           popover.style.bottom = '100%';

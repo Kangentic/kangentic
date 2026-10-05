@@ -189,16 +189,84 @@ export function refineTranscriptTokens(
 }
 
 /**
+ * When this run of `sessionId` began, as epoch ms, for scoping a transcript
+ * read to it: a transcript can hold every `--resume` of a conversation while a
+ * session (and its record) covers one run, and the live accumulator restarts
+ * at each spawn. The in-memory session's start, else the record's, else null
+ * (whole transcript).
+ */
+function runStartMs(
+  sessionManager: SessionManager,
+  sessionId: string,
+  record: { started_at: string } | null | undefined,
+): number | null {
+  const startedAt = sessionManager.getSession(sessionId)?.startedAt ?? record?.started_at;
+  if (!startedAt) return null;
+  const parsed = Date.parse(startedAt);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Live per-tool result-token estimates for the current run of a session, keyed
+ * by tool name, for the ContextBar tool-call popover to merge onto the live
+ * breakdown. The live hook events carry no token data, so this is the only
+ * source. Scoped to the run (see {@link runStartMs}), so a resumed session's
+ * popover never pairs its own call counts with an earlier run's results.
+ *
+ * Gated on the adapter's `transcriptToolResultTokens` capability, so an agent
+ * that cannot estimate them never has its transcript read here; the popover
+ * refetches on every tool call. The adapter's cursor resumes from where its
+ * last read stopped, so each refetch reads only the appended bytes.
+ * Deliberately NOT queued on `transcriptReadQueue`: this is a user-initiated
+ * read, and queueing it behind a run-end backfill of another session would
+ * leave the popover's column blank for no reason. No timeout either, matching
+ * the run-end caller: a first read of a very long transcript is legitimate
+ * work, and the interactive budget would restart the worker over it.
+ *
+ * Resolves null when the agent lacks the capability, no transcript can be
+ * located, or the read failed; a tool with no result yet is absent.
+ */
+export async function readTranscriptToolResultTokens(
+  sessionManager: SessionManager,
+  sessionRepo: SessionRepository | null,
+  sessionId: string,
+): Promise<Record<string, number> | null> {
+  try {
+    const agentName = sessionManager.getSessionAgentName(sessionId);
+    if (!agentName) return null;
+    const adapter = agentRegistry.get(agentName);
+    if (!adapter?.transcriptToolResultTokens) return null;
+
+    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
+    const record = sessionRepo?.findByAnyId(sessionId) ?? null;
+    const agentSessionId = record?.agent_session_id ?? null;
+    const cwd = record?.cwd ?? null;
+    if (!transcriptPath && !(agentSessionId && cwd)) return null;
+
+    return await retrievalClient.call(
+      'transcript.toolResultTokens',
+      { agentName, transcriptPath, agentSessionId, cwd, sinceMs: runStartMs(sessionManager, sessionId, record) },
+      { timeoutMs: null },
+    );
+  } catch {
+    // Best-effort: the popover keeps its live rows without the column.
+    return null;
+  }
+}
+
+/**
  * Fire-and-forget backfill of a session record's tool-count columns from the
  * agent's transcript. Mirrors {@link refineTranscriptTokens} exactly (same
  * adapter-resolution, path-sourcing, and best-effort structure); call it right
  * after that function on the same run-ending paths.
  *
- * Backfills ONLY an empty live count (see
+ * Backfills the counts ONLY over an empty live count (see
  * `SessionRepository.updateTranscriptToolCounts`'s guard) - it corrects
  * sessions whose ToolStart/ToolEnd hook events never reached the live
  * `UsageAccumulator` (a parked/suspended session reads 0 despite real cost and
- * tokens) without ever regressing a healthy live count.
+ * tokens) without ever regressing a healthy live count. Over a healthy live
+ * count it merges only the transcript's per-tool `resultTokens` estimates.
+ * Both are scoped to this run's calls (see {@link runStartMs}).
  *
  * SCOPE NOTE: a record whose `total_cost_usd` stayed NULL (a session that exited
  * before any status.json appeared) is excluded from the `getSummaryForTask` /
@@ -239,9 +307,14 @@ export function refineTranscriptToolCounts(
     const cwd = record?.cwd ?? null;
     if (!transcriptPath && !(agentSessionId && cwd)) return;
 
+    // Scoped to this run: the transcript can hold every `--resume` of the
+    // conversation, and this record (like the live count it backfills or
+    // merges onto) covers one.
+    const sinceMs = runStartMs(sessionManager, sessionId, record);
+
     // Read in the retrieval worker, as in refineTranscriptTokens.
     void transcriptReadQueue
-      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd }, { timeoutMs: null }))
+      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd, sinceMs }, { timeoutMs: null }))
       .then((counts) => {
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);

@@ -2414,6 +2414,11 @@
         // breakdown override this stub per-test.
         return [];
       },
+      getToolResultTokens: async function (_sessionId) {
+        // No transcript exists in the mock, which is main's null answer for an
+        // agent with no readable transcript. Specs override it per-test.
+        return null;
+      },
       spawnTransient: async function (input) {
         var id = crypto.randomUUID();
         var branch = input.branch || 'main';

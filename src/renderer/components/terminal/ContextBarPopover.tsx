@@ -255,7 +255,7 @@ export function ContextBarPopover({
       // pathological CLI-reported names with ellipsis truncation so they
       // can't push the popover off-screen; the full value still surfaces in
       // the button's title attribute.
-      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[340px] overflow-y-auto overlay-popover-in"
+      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[min(340px,var(--popover-available-height,340px))] overflow-y-auto overlay-popover-in"
       data-testid={testId}
       // `data-dismissable-layer`: consistency with every other menu (portaled ones get it
       // from `OverlayPopover`). The body portal above already puts this outside the board

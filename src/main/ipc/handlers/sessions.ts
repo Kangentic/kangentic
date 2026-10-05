@@ -16,7 +16,7 @@ import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
 import { parseModelId } from '../../../shared/model-id';
-import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
+import { captureSessionMetrics, readTranscriptToolResultTokens, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
@@ -318,6 +318,17 @@ export function registerSessionHandlers(context: IpcContext): void {
   // works mid-session and survives the bounded event cache.
   ipcMain.handle(IPC.SESSION_GET_TOOL_BREAKDOWN, (_, sessionId: string) => {
     return context.sessionManager.getToolBreakdown(sessionId);
+  });
+
+  // The per-tool result-token estimates the live accumulator cannot have (hook
+  // events carry no token data). A separate read so the breakdown above stays
+  // instant while the transcript is read in the retrieval worker. The session's
+  // own project resolves its record, which only matters when no transcript
+  // path has been reported yet.
+  ipcMain.handle(IPC.SESSION_GET_TOOL_RESULT_TOKENS, (_, sessionId: string) => {
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    const sessionRepo = projectId ? new SessionRepository(getProjectDb(projectId)) : null;
+    return readTranscriptToolResultTokens(context.sessionManager, sessionRepo, sessionId);
   });
 
   // Set which sessions are visible in the renderer (terminal panel + command bar overlay).
