@@ -7,7 +7,9 @@
  * The picker fixtures mirror two empirically captured layouts: Claude Code
  * 2.1.170 (probe run 2026-06-09), whose family rows carry a bare alias label,
  * and Claude Code 2.1.284 on a Claude Max account (probe run 2026-09-28),
- * whose rows are all versioned names and which scrolls past ten rows.
+ * whose rows are all versioned names and which scrolls past ten rows. The
+ * input box, the typed `/model`, the picker and the screen after Esc are the
+ * 2.1.290 capture (2026-10-05, `*_SCREEN_2_1_290`).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -25,6 +27,7 @@ vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({
 }));
 
 import * as pty from 'node-pty';
+import { ensureWorktreeTrust } from '../../src/main/agent/adapters/claude/trust-manager';
 import {
   VirtualScreen,
   parseModelPickerScreen,
@@ -32,6 +35,9 @@ import {
   probeModelPickerModels,
   getCachedModelPickerModels,
   peekModelPickerAliasIds,
+  inputBoxPromptLine,
+  isSelectDialogShowing,
+  probeScreenTail,
   resetModelPickerProbeForTests,
   setModelPickerProbeTimingsForTests,
   setModelPickerProbeScanFileForTests,
@@ -42,7 +48,8 @@ const spawnMock = pty.spawn as unknown as ReturnType<typeof vi.fn>;
 
 interface FakePtyProcess {
   emitData: (data: string) => void;
-  emitExit: () => void;
+  /** Fires the exit listener with the event shape OffMainPty delivers. */
+  emitExit: (exitCode?: number) => void;
   writes: string[];
   /** performance.now() at the moment each entry in `writes` was recorded. */
   writeTimestamps: number[];
@@ -51,17 +58,20 @@ interface FakePtyProcess {
 
 /**
  * Install a scripted fake PTY. `onWrite` sees every chunk the probe sends
- * and can emit response frames, mimicking the TUI round trip.
+ * and can emit response frames, mimicking the TUI round trip. Like the real
+ * input box, it echoes a typed `/model` as `❯ /model` (the probe sends Enter
+ * only after seeing that) unless `echoModelCommand` is false.
  */
 function installFakePty(
   onSpawn?: (fake: FakePtyProcess) => void,
   onWrite?: (input: string, fake: FakePtyProcess) => void,
+  { echoModelCommand = true }: { echoModelCommand?: boolean } = {},
 ): FakePtyProcess {
   let dataCallback: ((data: string) => void) | null = null;
-  let exitCallback: (() => void) | null = null;
+  let exitCallback: ((event: { exitCode: number }) => void) | null = null;
   const fake: FakePtyProcess = {
     emitData: (data: string) => dataCallback?.(data),
-    emitExit: () => exitCallback?.(),
+    emitExit: (exitCode = 0) => exitCallback?.({ exitCode }),
     writes: [],
     writeTimestamps: [],
     killMock: vi.fn(),
@@ -74,12 +84,13 @@ function installFakePty(
       onData: (callback: (data: string) => void) => {
         dataCallback = callback;
       },
-      onExit: (callback: () => void) => {
+      onExit: (callback: (event: { exitCode: number }) => void) => {
         exitCallback = callback;
       },
       write: (input: string) => {
         fake.writes.push(input);
         fake.writeTimestamps.push(performance.now());
+        if (echoModelCommand && input === '/model') fake.emitData(TYPED_MODEL_FRAME);
         onWrite?.(input, fake);
       },
       kill: fake.killMock,
@@ -88,7 +99,136 @@ function installFakePty(
   return fake;
 }
 
-const PROMPT_FRAME = '❯ Try "how does <filepath> work?"\r\n';
+/** The full-width rule 2.1.290 draws above and below its input box, at the probe's 200 columns. */
+const RULE_2_1_290 = '─'.repeat(200);
+/*
+ * The screens the probe reads, captured from Claude Code 2.1.290 on a Claude
+ * Max account (2026-10-05) the way the probe drives it: a 200x50
+ * VirtualScreen, --safe-mode, the classic renderer, TERM=xterm-256color, the
+ * probe's scratch cwd. Copied verbatim from the grid, trailing blank rows
+ * dropped; replayed as one repaint (`asRepaint`), each renders back to the
+ * same grid. Rows that showed this account's mode and feature state (the
+ * status row under the box, the later suggestion rows) are cut, and each cut
+ * is named where it happens.
+ */
+/** The input box ready for keys, under the three-line header. The status row under the box is cut. */
+const BOOT_SCREEN_2_1_290 = [
+  ' ▐▛███▛█   Claude Code v2.1.290',
+  '▝▜██████▀  Opus 5.5 with high effort · Claude Max',
+  ' ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\kangentic-model-probe',
+  '',
+  '⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and more)',
+  '  Restart without --safe-mode to re-enable',
+  '',
+  RULE_2_1_290,
+  '❯ Try "how do I log an error?"',
+  RULE_2_1_290,
+];
+/**
+ * After `/model` is typed: the box's own line holds the text, and the
+ * suggestion list under the box repeats it, indented, with its own `❯`. The
+ * list is cut after that first row.
+ */
+const TYPED_SCREEN_2_1_290 = [
+  ' ▐▛███▛█   Claude Code v2.1.290',
+  '▝▜██████▀  Opus 5.5 with high effort · Claude Max',
+  ' ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\kangentic-model-probe',
+  '',
+  '⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and more)',
+  '  Restart without --safe-mode to re-enable',
+  '',
+  RULE_2_1_290,
+  '❯ /model',
+  RULE_2_1_290,
+  '  ❯ /model' + ' '.repeat(22) + 'Set the AI model for Claude Code (currently Opus 5.5)',
+];
+/**
+ * The picker after Enter. It is itself a select dialog: the submitted
+ * `❯ /model` stays in column 0 with a blank row, not a rule, above it.
+ */
+const PICKER_SCREEN_2_1_290 = [
+  ' ▐▛███▛█   Claude Code v2.1.290',
+  '▝▜██████▀  Opus 5.5 with high effort · Claude Max',
+  ' ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\kangentic-model-probe',
+  '',
+  '⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and more)',
+  '  Restart without --safe-mode to re-enable',
+  '',
+  '❯ /model',
+  '',
+  RULE_2_1_290,
+  '  Select model',
+  '  Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.',
+  '',
+  '  ❯ 1.  Default (recommended) ✔  Opus 5.5 · Best for everyday, complex tasks',
+  '    2.  Opus 5.5                 For complex work and everyday tasks',
+  '    3.  Fable 5.1                For your toughest challenges',
+  '    4.  Sonnet 5.5               Most efficient for simpler tasks',
+  '    5.  Haiku 4.5                Fastest for quick answers',
+  '    6.  Sonnet 5                 Efficient for routine tasks',
+  '    7.  Opus 5                   Best for everyday, complex tasks',
+  '    8.  Fable 5                  Most capable for your hardest and longest-running tasks',
+  '    9.  Opus 4.8                 Best for everyday, complex tasks',
+  '  ↓ 10. Opus 4.7                 Best for everyday, complex tasks',
+  '     … +2 models',
+  '',
+  '  ● High effort ←/→ to adjust',
+  '',
+  '  Enter to set as default · s to use this session only · Esc to cancel',
+];
+/**
+ * After Esc closes the picker: the empty input box is back, below the
+ * transcript's own column-0 `❯ /model`. The status row under the box is cut.
+ */
+const AFTER_ESCAPE_SCREEN_2_1_290 = [
+  ' ▐▛███▛█   Claude Code v2.1.290',
+  '▝▜██████▀  Opus 5.5 with high effort · Claude Max',
+  ' ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\kangentic-model-probe',
+  '',
+  '⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and more)',
+  '  Restart without --safe-mode to re-enable',
+  '',
+  '❯ /model',
+  '  ⎿  Kept model as Opus 5.5 (default)',
+  '',
+  RULE_2_1_290,
+  '❯',
+  RULE_2_1_290,
+];
+/** A captured screen as the PTY output that paints it: clear, home, the rows. */
+function asRepaint(screenLines: string[]): string {
+  return '\x1b[2J\x1b[H' + screenLines.join('\r\n');
+}
+
+const PROMPT_FRAME = asRepaint(BOOT_SCREEN_2_1_290);
+const TYPED_MODEL_FRAME = asRepaint(TYPED_SCREEN_2_1_290);
+/**
+ * SYNTHETIC frames, not captured from the CLI: the boxed input layout the
+ * prompt patterns also accept. The rules carry corners and the prompt line
+ * sits behind the box's left border (`│ ❯`).
+ */
+const BOXED_TOP_RULE = `╭${'─'.repeat(120)}╮`;
+const BOXED_BOTTOM_RULE = `╰${'─'.repeat(120)}╯`;
+const BOXED_PROMPT_LINE = '│ ❯ Try "how does <filepath> work?"';
+const BOXED_PROMPT_FRAME = [BOXED_TOP_RULE, BOXED_PROMPT_LINE, BOXED_BOTTOM_RULE, ''].join('\r\n');
+/** The boxed repaint after `/model` is typed: the box's own line holds the text. */
+const BOXED_TYPED_MODEL_FRAME = ['\x1b[2J\x1b[H' + BOXED_TOP_RULE, '│ ❯ /model', BOXED_BOTTOM_RULE, ''].join('\r\n');
+/**
+ * The "use this API key?" dialog as 2.1.290 draws it when ANTHROPIC_API_KEY
+ * is set and not yet answered (a preview run with a fake key, 2026-10-05, key
+ * elided). Its options carry no number, and it replaces the input box. Enter
+ * here records the answer in ~/.claude.json.
+ */
+const API_KEY_DIALOG_FRAME = [
+  RULE_2_1_290,
+  '  Detected a custom API key in your environment',
+  '  ANTHROPIC_API_KEY: sk-ant-...example-key-tail',
+  '  Do you want to use this API key?',
+  '    Yes',
+  '  ❯ No (recommended)',
+  '  Enter to confirm · Esc to cancel',
+  '',
+].join('\r\n');
 
 const PICKER_FRAME = [
   '',
@@ -449,6 +589,32 @@ describe('probeModelPickerModels', () => {
     expect(fake.writes).toEqual(['/model', '\r', '\x1b', '/exit\r']);
   });
 
+  // Every screen is the 2.1.290 capture: the real box, the real echo, the real
+  // picker. The picker never scrolls here, so the scan is the visible rows.
+  it('drives the captured 2.1.290 screens end to end', async () => {
+    setFastScrollTimings();
+    const fake = installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(asRepaint(PICKER_SCREEN_2_1_290));
+      },
+    );
+
+    const scan = await probeModelPickerModels('/usr/bin/claude');
+    expect(fake.writes.slice(0, 2)).toEqual(['/model', '\r']);
+    expect(scan?.models).toEqual([
+      'claude-opus-5-5',
+      'claude-fable-5-1',
+      'claude-sonnet-5-5',
+      'claude-haiku-4-5',
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+    ]);
+  });
+
   it('waits the settle delay between closing the picker and sending /exit, so Esc and /exit cannot coalesce into one escape burst', async () => {
     // A larger, explicit typeDelayMs than the shared beforeEach default, so
     // the gap is comfortably measurable above event-loop jitter on a slow
@@ -517,6 +683,33 @@ describe('probeModelPickerModels', () => {
     expect(options.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('1');
   });
 
+  // Claude Code draws its prompt as `❯` only when its Unicode check passes,
+  // and on Windows that check reads TERM among a few env vars. A packaged app
+  // started from the Start menu has no TERM, so the CLI drew `>` and the probe
+  // timed out. A user's own TERM must not win either: the probe's terminal is
+  // our xterm grid.
+  it.each([
+    ['absent', undefined],
+    ['dumb', 'dumb'],
+    ['cygwin', 'cygwin'],
+  ])('spawns the CLI with TERM=xterm-256color when the app TERM is %s', async (_label, appTerm) => {
+    vi.stubEnv('TERM', appTerm);
+    try {
+      installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input, self) => {
+          if (input === '\r') self.emitData(PICKER_FRAME);
+        },
+      );
+
+      await probeModelPickerModels('/usr/bin/claude');
+      const [, , options] = spawnMock.mock.calls[0];
+      expect(options.env.TERM).toBe('xterm-256color');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('spawns the CLI with --safe-mode in the scratch cwd', async () => {
     installFakePty(
       (self) => self.emitData(PROMPT_FRAME),
@@ -546,11 +739,82 @@ describe('probeModelPickerModels', () => {
     expect(models).toBeUndefined();
     expect(fake.writes).not.toContain('/model');
     expect(fake.writes).not.toContain('\r');
-    // No `/exit` either: its Enter would accept the trust dialog. With no
-    // prompt ever reached, nothing booted far enough to arm a canary, so the
-    // plain kill lands synchronously.
+    // No Esc and no `/exit` either: Esc can record a choice on a dialog, and
+    // the `/exit` Enter would accept trust. With no prompt ever reached,
+    // nothing booted far enough to arm a canary, so the plain kill lands
+    // synchronously.
+    expect(fake.writes).not.toContain('\x1b');
     expect(fake.writes).not.toContain('/exit\r');
     expect(fake.killMock).toHaveBeenCalled();
+  });
+
+  // Once the CLI draws `❯`, every select dialog draws it too. Enter on one
+  // accepts its highlighted option (the custom API key prompt persists the
+  // answer), so the probe sends no key at all while one is on screen.
+  it('bails without keystrokes when a numbered select dialog renders instead of the prompt', async () => {
+    const fake = installFakePty((self) =>
+      self.emitData('Detected a custom API key in your environment\r\n ❯ 1. Yes\r\n   2. No (recommended)\r\n'),
+    );
+
+    const models = await probeModelPickerModels('/usr/bin/claude');
+    expect(models).toBeUndefined();
+    expect(fake.writes).toEqual([]);
+    expect(fake.killMock).toHaveBeenCalled();
+  });
+
+  // The real "use this API key?" dialog numbers nothing. A first version of
+  // the guard keyed on `❯ N.`, read `❯ No (recommended)` as the prompt, and
+  // typed /model into it (preview run with a fake key, 2026-10-05).
+  it('bails without keystrokes on the real, unnumbered API key dialog', async () => {
+    const fake = installFakePty((self) => self.emitData(API_KEY_DIALOG_FRAME));
+
+    const models = await probeModelPickerModels('/usr/bin/claude');
+    expect(models).toBeUndefined();
+    expect(fake.writes).toEqual([]);
+    expect(fake.killMock).toHaveBeenCalled();
+  });
+
+  it('sends no Enter when a dialog takes the typed /model instead of the input box', async () => {
+    const fake = installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '/model') self.emitData('\x1b[2J\x1b[HSwitch to the new model?\r\n ❯ 1. Yes\r\n   2. No\r\n');
+      },
+      { echoModelCommand: false },
+    );
+
+    const models = await probeModelPickerModels('/usr/bin/claude');
+    expect(models).toBeUndefined();
+    expect(fake.writes).toEqual(['/model']);
+    expect(fake.killMock).toHaveBeenCalled();
+  });
+
+  it('sends no Enter when the typed /model never shows in the input box', async () => {
+    setShortTimeoutTimings();
+    const fake = installFakePty((self) => self.emitData(PROMPT_FRAME), undefined, { echoModelCommand: false });
+
+    const models = await probeModelPickerModels('/usr/bin/claude');
+    expect(models).toBeUndefined();
+    expect(fake.writes).toEqual(['/model']);
+    expect(fake.killMock).toHaveBeenCalled();
+  });
+
+  // SYNTHETIC boxed frames (see BOXED_PROMPT_FRAME). The default unboxed echo
+  // is off, so only the boxed branch of the echo pattern can let Enter follow.
+  it('sends Enter once a boxed input box echoes the typed /model', async () => {
+    const fake = installFakePty(
+      (self) => self.emitData(BOXED_PROMPT_FRAME),
+      (input, self) => {
+        if (input === '/model') self.emitData(BOXED_TYPED_MODEL_FRAME);
+        if (input === '\r') self.emitData(PICKER_FRAME);
+      },
+      { echoModelCommand: false },
+    );
+
+    const scan = await probeModelPickerModels('/usr/bin/claude');
+    expect(scan?.models).toHaveLength(4);
+    await expectFallbackKill(fake);
+    expect(fake.writes.slice(0, 2)).toEqual(['/model', '\r']);
   });
 
   it('times out to undefined when the picker never renders', async () => {
@@ -565,7 +829,7 @@ describe('probeModelPickerModels', () => {
 
     const models = await probeModelPickerModels('/usr/bin/claude');
     expect(models).toBeUndefined();
-    // The prompt was reached, so the teardown still exits gracefully first.
+    // `/model` was submitted, so the teardown still exits gracefully first.
     await expectFallbackKill(fake);
     expect(fake.writes).toContain('/exit\r');
   });
@@ -795,6 +1059,21 @@ function setFastScrollTimings(): void {
     overallTimeoutMs: 10000,
     exitGraceMs: 5,
     scrollSettleMs: 2,
+  });
+}
+
+/**
+ * For a probe that is meant to run out its clock: the whole run gets 100 ms.
+ * Every field is restated, the setter merging onto the defaults and not onto
+ * the shared beforeEach's timings.
+ */
+function setShortTimeoutTimings(): void {
+  setModelPickerProbeTimingsForTests({
+    pollIntervalMs: 5,
+    typeDelayMs: 5,
+    settleIntervalMs: 5,
+    overallTimeoutMs: 100,
+    exitGraceMs: 5,
   });
 }
 
@@ -1035,6 +1314,372 @@ describe('probeModelPickerModels scrolling', () => {
       stopChurn();
       fs.rmSync(scanDirectory, { recursive: true, force: true });
     }
+  });
+});
+
+// A failed probe used to leave nothing behind, so a report from another
+// machine could not say which stage stopped it. Each failed or partial run now
+// writes one local warning with the stage and the bottom of the CLI's screen.
+describe('the probe failure log line', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  function probeLines(): string[] {
+    return warnSpy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith('[model-picker-probe]'));
+  }
+
+  it('names the no-prompt stage and carries the screen tail, with paths and emails redacted', async () => {
+    setShortTimeoutTimings();
+    // The screen a Start-menu launch got before the TERM fix: the prompt drawn
+    // with the ASCII fallback, so no '❯' ever appeared.
+    installFakePty((self) =>
+      self.emitData(
+        'Welcome back dev@example.com\r\n  cwd: C:\\Users\\dev\\project\r\n> Try "how do I log an error?"\r\n',
+      ),
+    );
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[model-picker-probe\] failed at no-prompt after \d+ ms \(timed out\)/);
+    expect(lines[0]).toContain('> Try "how do I log an error?"');
+    expect(lines[0]).toContain('Welcome back <name>');
+    expect(lines[0]).toContain('cwd: <path>');
+    expect(lines[0]).not.toContain('dev@example.com');
+    expect(lines[0]).not.toContain('\\Users\\');
+  });
+
+  it('names the select-dialog stage, with the API key the dialog prints redacted', async () => {
+    installFakePty((self) => self.emitData(API_KEY_DIALOG_FRAME));
+
+    await probeModelPickerModels('/usr/bin/claude');
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('failed at select-dialog');
+    expect(lines[0]).toContain('❯ No (recommended)');
+    expect(lines[0]).toContain('ANTHROPIC_API_KEY: <api-key>');
+    expect(lines[0]).not.toContain('example-key-tail');
+  });
+
+  it('names the spawn stage without a screen when the CLI cannot start', async () => {
+    spawnMock.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    await probeModelPickerModels('/missing/claude');
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('failed at spawn');
+    expect(lines[0]).not.toContain('screen');
+  });
+
+  it('names the spawn stage with the error code and a message free of paths', async () => {
+    spawnMock.mockImplementation(() => {
+      throw Object.assign(new Error('spawn C:\\Users\\dev\\app\\claude.exe EACCES'), { code: 'EACCES' });
+    });
+
+    await probeModelPickerModels('/missing/claude');
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('failed at spawn');
+    expect(lines[0]).toContain('Error(EACCES)');
+    expect(lines[0]).toContain('<path>');
+    expect(lines[0]).not.toContain('\\Users\\');
+  });
+
+  it('names the scratch-setup stage without a screen when the scratch directory cannot be trusted', async () => {
+    const ensureTrustMock = vi.mocked(ensureWorktreeTrust);
+    ensureTrustMock.mockRejectedValueOnce(new Error('EPERM: operation not permitted'));
+    try {
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('failed at scratch-setup');
+      expect(lines[0]).toContain('Error: EPERM');
+      expect(lines[0]).not.toContain('screen');
+      // The run stopped before the spawn.
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      // Back to the file-level stub, so no later test sees this rejection.
+      ensureTrustMock.mockReset();
+      ensureTrustMock.mockImplementation(async () => undefined);
+    }
+  });
+
+  it('names the no-prompt stage with the exit code when the CLI exits before drawing the input box', async () => {
+    installFakePty((self) => self.emitExit(3));
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('failed at no-prompt');
+    expect(lines[0]).toContain('cli exited with code 3');
+  });
+
+  it('names the select-dialog stage as before Enter when a dialog takes the typed /model', async () => {
+    installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '/model') self.emitData('\x1b[2J\x1b[HSwitch to the new model?\r\n ❯ 1. Yes\r\n   2. No\r\n');
+      },
+      { echoModelCommand: false },
+    );
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('failed at select-dialog');
+    // Past the prompt stage, whose line says `no keys sent`.
+    expect(lines[0]).toContain('before Enter');
+  });
+
+  it('names the input-not-echoed stage when the typed /model never shows in the input box', async () => {
+    setShortTimeoutTimings();
+    installFakePty((self) => self.emitData(PROMPT_FRAME), undefined, { echoModelCommand: false });
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/failed at input-not-echoed after \d+ ms \(timed out\)/);
+  });
+
+  // Enter was sent, then something other than the picker answered. Whatever now
+  // holds the keyboard would take the teardown's Esc and `/exit` Enter as its
+  // answer, so these runs end on the plain kill with no further key.
+  describe('when Enter does not open the picker', () => {
+    const TRUST_DIALOG_AFTER_CLEAR = '\x1b[2J\x1b[HAccessing workspace\r\n❯ 1. Yes, I trust this folder\r\n2. No, exit';
+
+    it('sends no Esc and no /exit, and kills at once, when the trust dialog replaces the screen', async () => {
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input, self) => {
+          if (input === '\r') self.emitData(TRUST_DIALOG_AFTER_CLEAR);
+        },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      // The plain kill is synchronous. The graceful path reaches its fallback
+      // kill only after the type delay and the exit grace.
+      expect(fake.killMock).toHaveBeenCalled();
+      // A graceful exit's `/exit` lands a type delay after the Esc. Absence
+      // cannot be polled for: give it a fixed budget.
+      await allowStrayWriteBudget();
+      expect(fake.writes).toEqual(['/model', '\r']);
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('failed at trust-dialog');
+      expect(lines[0]).toContain('after Enter');
+    });
+
+    it('sends no Esc and no /exit when the trust text shows while the input box is still on screen', async () => {
+      // No clear: the box and the `❯ /model` suggestion stay, so no select
+      // dialog is detected and the trust text alone ends the run.
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input, self) => {
+          if (input === '\r') self.emitData('Accessing workspace\r\n  Yes, I trust this folder\r\n');
+        },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      expect(fake.killMock).toHaveBeenCalled();
+      await allowStrayWriteBudget();
+      expect(fake.writes).toEqual(['/model', '\r']);
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('failed at trust-dialog');
+      expect(lines[0]).toContain('after Enter');
+    });
+
+    it('sends no Esc and no /exit, and kills at once, when a select dialog replaces the input box', async () => {
+      setShortTimeoutTimings();
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input, self) => {
+          if (input === '\r') self.emitData('\x1b[2J\x1b[HSwitch to the new model?\r\n ❯ 1. Yes\r\n   2. No\r\n');
+        },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      expect(fake.killMock).toHaveBeenCalled();
+      await allowStrayWriteBudget();
+      expect(fake.writes).toEqual(['/model', '\r']);
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('failed at picker-not-rendered');
+    });
+
+    it('plain-kills with no /exit when the CLI exits before the picker renders', async () => {
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input, self) => {
+          if (input === '\r') self.emitExit(0);
+        },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      // The graceful path would wait out the type delay and the grace first.
+      expect(fake.killMock).toHaveBeenCalled();
+      // `/exit` to a process that already exited would land a type delay
+      // later. Absence cannot be polled for: give it a fixed budget.
+      await allowStrayWriteBudget();
+      expect(fake.writes).not.toContain('/exit\r');
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('picker-not-rendered');
+      expect(lines[0]).toContain('cli exited with code 0');
+    });
+  });
+
+  it('logs a partial scan as scroll-incomplete', async () => {
+    setFastScrollTimings();
+    installStaticPickerPty(NEVER_ENDING_PICKER_LINES);
+
+    const scan = await probeModelPickerModels('/usr/bin/claude');
+    expect(scan?.models).toEqual(PARTIAL_MODELS);
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('returned a partial scan at scroll-incomplete');
+    expect(lines[0]).toContain('40 presses, 2 models');
+  });
+
+  it('logs nothing for a complete scan', async () => {
+    installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+      },
+    );
+
+    expect((await probeModelPickerModels('/usr/bin/claude'))?.models).toHaveLength(4);
+    expect(probeLines()).toEqual([]);
+  });
+});
+
+describe('inputBoxPromptLine and isSelectDialogShowing', () => {
+  // Grid text the way VirtualScreen reports it: one line per row, CRLF gone.
+  const asScreen = (frame: string): string => {
+    const screen = new VirtualScreen(200, 50);
+    screen.write(frame);
+    return screen.text();
+  };
+
+  it('finds the box line on the captured ready prompt, and no dialog', () => {
+    const screen = asScreen(PROMPT_FRAME);
+    expect(inputBoxPromptLine(screen)).toBe('❯ Try "how do I log an error?"');
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+
+  it("takes the box's own line after /model is typed, not the indented suggestion that repeats it", () => {
+    const screen = asScreen(TYPED_MODEL_FRAME);
+    expect(inputBoxPromptLine(screen)).toBe('❯ /model');
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+
+  // Why the wait for the picker runs unguarded: the picker reads as a dialog.
+  it('reads the captured picker as a select dialog, not taking the column-0 `❯ /model` above it for the box', () => {
+    const screen = asScreen(asRepaint(PICKER_SCREEN_2_1_290));
+    expect(inputBoxPromptLine(screen)).toBeNull();
+    expect(isSelectDialogShowing(screen)).toBe(true);
+  });
+
+  it('finds the empty box after Esc, below the transcript line that repeats `❯ /model`', () => {
+    const screen = asScreen(asRepaint(AFTER_ESCAPE_SCREEN_2_1_290));
+    expect(inputBoxPromptLine(screen)).toBe('❯');
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+
+  it('finds no box under the API key dialog, and reports the dialog', () => {
+    const screen = asScreen(API_KEY_DIALOG_FRAME);
+    expect(inputBoxPromptLine(screen)).toBeNull();
+    expect(isSelectDialogShowing(screen)).toBe(true);
+  });
+
+  it('does not take a column-0 `❯` that has no rule above it', () => {
+    const screen = asScreen('Accessing workspace\r\n❯ 1. Yes, I trust this folder\r\n2. No, exit');
+    expect(inputBoxPromptLine(screen)).toBeNull();
+    expect(isSelectDialogShowing(screen)).toBe(true);
+  });
+
+  it('reports nothing while the screen has no `❯` yet', () => {
+    const screen = asScreen('> Try "how do I log an error?"\r\n');
+    expect(inputBoxPromptLine(screen)).toBeNull();
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+
+  // SYNTHETIC frame (BOXED_PROMPT_FRAME), not captured from the CLI: corner
+  // glyphs on the rules and the prompt behind the box's left border.
+  it('finds the prompt line of a boxed input box, and no dialog', () => {
+    const screen = asScreen(BOXED_PROMPT_FRAME);
+    expect(inputBoxPromptLine(screen)).toBe(BOXED_PROMPT_LINE);
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+
+  it.each([5, 9])('does not take a column-0 `❯` under a rule of only %i `─`', (ruleLength) => {
+    const screen = asScreen(`${'─'.repeat(ruleLength)}\r\n❯ Try "how does <filepath> work?"\r\n`);
+    expect(inputBoxPromptLine(screen)).toBeNull();
+    expect(isSelectDialogShowing(screen)).toBe(true);
+  });
+
+  it('takes a column-0 `❯` under a rule of exactly ten `─`', () => {
+    const promptLine = '❯ Try "how does <filepath> work?"';
+    const screen = asScreen(`${'─'.repeat(10)}\r\n${promptLine}\r\n`);
+    expect(inputBoxPromptLine(screen)).toBe(promptLine);
+    expect(isSelectDialogShowing(screen)).toBe(false);
+  });
+});
+
+describe('probeScreenTail', () => {
+  it('keeps the last six non-blank lines, trimmed at the end', () => {
+    const screen = ['one', '', 'two', 'three  ', '   ', 'four', 'five', 'six', 'seven', ''].join('\n');
+    expect(probeScreenTail(screen)).toEqual(['two', 'three', 'four', 'five', 'six', 'seven']);
+  });
+
+  it('caps each line', () => {
+    expect(probeScreenTail('x'.repeat(500))[0]).toHaveLength(160);
+  });
+
+  it('replaces an email address with a placeholder', () => {
+    expect(probeScreenTail('Logged in as dev@example.com')).toEqual(['Logged in as <email>']);
+  });
+
+  it('replaces the name a welcome box greets, up to its `!`', () => {
+    expect(probeScreenTail('│   Welcome back Dev Example!   │')).toEqual(['│   Welcome back <name>!   │']);
+  });
+
+  // The captured 2.1.290 header names no one, so the tail of the boot screen
+  // passes through as the CLI drew it.
+  it('leaves the captured 2.1.290 boot screen tail unchanged', () => {
+    expect(probeScreenTail(BOOT_SCREEN_2_1_290.join('\n'))).toEqual(
+      BOOT_SCREEN_2_1_290.filter((line) => line.trim().length > 0)
+        .slice(-6)
+        .map((line) => line.trimEnd().slice(0, 160)),
+    );
+  });
+
+  // The key's characters are not all base64url (`+` and `=` here): none of it
+  // may survive, whether the line is labeled or not.
+  it('masks a labeled key through its last character, `+` and `=` included', () => {
+    expect(probeScreenTail('ANTHROPIC_API_KEY: sk-ant-...ab+cd=ef')).toEqual(['ANTHROPIC_API_KEY: <api-key>']);
+  });
+
+  it('masks an unlabeled sk- key through its last character, up to the next space', () => {
+    expect(probeScreenTail('Using sk-ant-...ab+cd=ef from the environment')).toEqual([
+      'Using <api-key> from the environment',
+    ]);
+  });
+
+  it('masks the value after an API key label even when it has no sk- prefix', () => {
+    expect(probeScreenTail('ANTHROPIC_API_KEY: gw-0123456789abcdefghij')).toEqual(['ANTHROPIC_API_KEY: <api-key>']);
   });
 });
 

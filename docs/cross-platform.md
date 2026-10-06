@@ -602,6 +602,16 @@ no TERM at all and capability-detecting TUIs (Antigravity's agy) render monochro
 gives Windows children the same environment POSIX children already get; an explicit TERM in the
 environment always wins.
 
+The Claude `/model` picker probe (`model-picker-probe.ts`) does not use `buildSpawnEnv` and sets
+`TERM=xterm-256color` unconditionally instead of defaulting it. Its PTY's terminal is Kangentic's
+own `VirtualScreen` grid, so a user's TERM describes a terminal it is not. TERM matters to it for
+the glyph, not for color: Claude Code draws its prompt and select-row markers with the `figures`
+pointer, `❯` only when its Unicode check passes, and on Windows that check reads only the
+environment (`WT_SESSION`, `TERM_PROGRAM=vscode`, `TERM=xterm-256color`, and a few others). A
+packaged app started from the Start menu has none of them, so the CLI drew `>`, the probe's wait
+for `❯` timed out, and the pickers lost their Latest group. `npm start` from Windows Terminal
+inherited `WT_SESSION`, which is why the dev build never showed it.
+
 `COLORTERM` and `TERM_PROGRAM` are deliberately not defaulted, even though VS Code's integrated
 terminal exports both unconditionally. Claude Code already selects truecolor from
 `TERM=xterm-256color` alone (measured 2026-08-28 at claude 2.1.250: 222 truecolor SGR sequences,

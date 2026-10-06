@@ -37,7 +37,7 @@ import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-ses
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
-import { configuredModelFromClaudeCommand, buildModelCapabilityFields, toClaudeModelArgument } from './model-display-name';
+import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
   AgentAdapter,
@@ -428,6 +428,12 @@ export class ClaudeAdapter implements AgentAdapter {
 
   configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
     return configuredModelFromClaudeCommand(command);
+  }
+
+  // The same humanizer buildModelDisplayNames applies to discovered ids, so a
+  // telemetry-learned row reads like its neighbours ("Opus 4.1", not the id).
+  modelDisplayName(modelId: string): string | null {
+    return humanizeClaudeModelId(modelId);
   }
 
   async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {

@@ -78,6 +78,7 @@ type MockAdapter = {
   detect: () => Promise<{ found: boolean; path: string | null; version: string | null }>;
   probeAuth?: () => Promise<boolean | null>;
   discoverCapabilities?: (cliPath: string, forceRefresh?: boolean) => Promise<unknown>;
+  modelDisplayName?: (modelId: string) => string | null;
   invalidateDetectionCache: () => void;
   remoteExecution?: {
     info: AgentRemoteExecutionInfo;
@@ -496,6 +497,97 @@ describe('AGENT_LIST IPC handler - caching', () => {
     await invokeAgentList();
 
     expect(detect).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The pickers union the ids the app learned from live telemetry
+// (config.discoveredModelsByAgent) into every list, but only discovery's own
+// ids had display names, so a learned-only id rendered raw. The handler asks
+// the adapter to name those, per call, on top of the cached inventory.
+describe('AGENT_LIST IPC handler - learned model names', () => {
+  let learnedModelsByAgent: Record<string, string[]> = {};
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    mockRegistryAdapters = [];
+    learnedModelsByAgent = {};
+    resetAgentListForTests();
+    const context = makeContext();
+    const baseConfig = context.configManager.load();
+    context.configManager.load = vi.fn(() => ({ ...baseConfig, discoveredModelsByAgent: learnedModelsByAgent }));
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  const humanize = (modelId: string): string | null =>
+    modelId.startsWith('claude-') ? `Named ${modelId.slice('claude-'.length)}` : null;
+
+  it("names a learned id that discovery did not list, and keeps discovery's own names", async () => {
+    learnedModelsByAgent = { claude: ['claude-opus-4-1-20250805', 'claude-opus-5-5'] };
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'claude',
+        discoverCapabilities: vi.fn(async () => ({
+          models: ['claude-opus-5-5'],
+          modelDisplayNames: { 'claude-opus-5-5': 'Opus 5.5' },
+        })),
+        modelDisplayName: vi.fn(humanize),
+      }),
+    ];
+
+    const [claude] = await invokeAgentList();
+    expect(claude.capabilities?.modelDisplayNames).toEqual({
+      'claude-opus-5-5': 'Opus 5.5',
+      'claude-opus-4-1-20250805': 'Named opus-4-1-20250805',
+    });
+    // Learned ids are named, not listed: the renderer unions them itself.
+    expect(claude.capabilities?.models).toEqual(['claude-opus-5-5']);
+  });
+
+  it('leaves a learned id unnamed when the adapter has no modelDisplayName, or returns null', async () => {
+    learnedModelsByAgent = { codex: ['gpt-5.5'], claude: ['gateway-model'] };
+    mockRegistryAdapters = [
+      makeAdapter({ name: 'codex', discoverCapabilities: vi.fn(async () => ({ models: ['gpt-5'] })) }),
+      makeAdapter({
+        name: 'claude',
+        discoverCapabilities: vi.fn(async () => ({ models: ['claude-opus-5-5'] })),
+        modelDisplayName: vi.fn(humanize),
+      }),
+    ];
+
+    const [codex, claude] = await invokeAgentList();
+    expect(codex.capabilities?.modelDisplayNames).toBeUndefined();
+    expect(claude.capabilities?.modelDisplayNames).toBeUndefined();
+  });
+
+  it('leaves an agent whose CLI was not found without capabilities', async () => {
+    learnedModelsByAgent = { claude: ['claude-opus-5-5'] };
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'claude',
+        detect: vi.fn(async () => ({ found: false, path: null, version: null })),
+        modelDisplayName: vi.fn(humanize),
+      }),
+    ];
+
+    const [claude] = await invokeAgentList();
+    expect(claude.capabilities).toBeUndefined();
+  });
+
+  it('names an id learned after the inventory was cached, without mutating the cached build', async () => {
+    const discoverCapabilities = vi.fn(async () => ({ models: ['claude-opus-5-5'] }));
+    mockRegistryAdapters = [
+      makeAdapter({ name: 'claude', discoverCapabilities, modelDisplayName: vi.fn(humanize) }),
+    ];
+
+    learnedModelsByAgent = { claude: ['claude-sonnet-5-5'] };
+    const [first] = await invokeAgentList();
+    expect(first.capabilities?.modelDisplayNames).toEqual({ 'claude-sonnet-5-5': 'Named sonnet-5-5' });
+
+    learnedModelsByAgent = { claude: ['claude-haiku-4-5'] };
+    const [second] = await invokeAgentList();
+    expect(discoverCapabilities).toHaveBeenCalledTimes(1);
+    // The first call's label is gone: it lived on a copy, not on the cache.
+    expect(second.capabilities?.modelDisplayNames).toEqual({ 'claude-haiku-4-5': 'Named haiku-4-5' });
   });
 });
 

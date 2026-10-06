@@ -319,8 +319,13 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
       // updates immediately instead of requiring an app restart. CONFIG_SET
       // already invalidated the detection + list caches server-side, so a
       // plain (non-forced) reload is enough to pick up the new cliPaths.
-      if (partial.agent) {
-        get().loadAgentList();
+      // A newly learned model id (`rememberDiscoveredModel`) reloads too: main
+      // labels learned ids per list request (`nameLearnedModels`), so without
+      // this the new row stays raw until something else asks for the list.
+      // That reload is unforced, so it never forces a re-probe, and a failed
+      // one keeps the list already shown.
+      if (partial.agent || partial.discoveredModelsByAgent) {
+        get().loadAgentList().catch(() => undefined);
       }
       return result;
     },
