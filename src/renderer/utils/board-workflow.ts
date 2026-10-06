@@ -71,9 +71,18 @@ export function boardWorkflowOf(
   return source ? toBoardWorkflow(source) : null;
 }
 
+/**
+ * A workflow task is locked while its workflow runs, except in a human gate,
+ * where a person drags it on. The board card and the canvas card both ask
+ * this, so the lock means the same in both places.
+ */
+export function isWorkflowTaskLocked(state: WorkflowState, humanGateTargetId: string | null): boolean {
+  return state === 'running' && humanGateTargetId === null;
+}
+
 /** The card shows the lock while only its workflow may move it. */
 export function isLockedOnBoard(workflow: BoardWorkflow): boolean {
-  return workflow.state === 'running' && workflow.humanGateTargetId === null;
+  return isWorkflowTaskLocked(workflow.state, workflow.humanGateTargetId);
 }
 
 /** Why a person may not move this card to that column, in main's own words; null allows it. */

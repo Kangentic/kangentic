@@ -335,6 +335,19 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('the canvas card drops the lock in a human gate too, as the board card does', async () => {
+    const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
+    try {
+      await byTestId(page, 'view-toggle-workflows').click();
+      const canvasLock = (id: number) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="t${id}"] [data-testid="workflow-card-lock"]`);
+      // #413 in Merge moves by its workflow; #414 waits in Code Review for a person to drag it on.
+      await expect(canvasLock(413)).toHaveCount(1);
+      await expect(canvasLock(414)).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a refused drag stays in its column, says why with Open workflow, and shows the card\'s links', async () => {
     const { browser, page } = await launch();
     try {

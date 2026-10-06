@@ -5,8 +5,8 @@ import { ColumnGlyph } from '../../utils/swimlane-icons';
 
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
- * belongs to (its workflow on the board; its project on the Workflows canvas
- * once the workflow spans boards; nothing otherwise), on the right the step
+ * belongs to (its workflow on the board; its project on the Workflows
+ * canvas), on the right the step
  * track and the lock. On the canvas the column is named by the track itself:
  * its current step is the column's own marker, and the name is the marker's
  * tooltip and accessible name. On the board the lane names the column, so the

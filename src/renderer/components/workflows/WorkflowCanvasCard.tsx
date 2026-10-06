@@ -13,10 +13,17 @@ import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from '
  * content changes. A task in Done is the Done column's compact card.
  */
 
+/**
+ * Sized for the busiest card the board draws: a PR row, the agent's trail, one
+ * row of labels and the context bar together, which measured 131, 234 and 268
+ * in the real renderer, plus a few pixels for font differences across
+ * platforms. More labels than fit one row are clipped above the footer, which
+ * stays whole. `workflows-canvas-card-fit.spec.ts` holds it.
+ */
 export const CANVAS_CARD_HEIGHT: Record<AppConfig['cardDensity'], number> = {
-  compact: 128,
-  default: 204,
-  comfortable: 224,
+  compact: 136,
+  default: 238,
+  comfortable: 272,
 };
 /** The strip over the Done column's compact card (title, a line, labels, when it finished), measured at 127. */
 export const CANVAS_DONE_CARD_HEIGHT = 132;
@@ -31,9 +38,10 @@ export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density:
 
 /**
  * The card's project, in the strip's left side (board 17, folded into the
- * strip as the phone draws it): shown on every card once any task of the
- * workflow is on another board, and on none while they all share one, where
- * the name would say nothing.
+ * strip as the phone draws it): on every card, on one board or several, so a
+ * card has one shape whatever the workflow spans and none changes when a task
+ * on another board joins (sign-off 4b). It costs no height: the strip's left
+ * side is otherwise empty on the canvas.
  */
 function ProjectLabel({ name }: { name: string }) {
   return (
@@ -116,12 +124,12 @@ const DONE_COLUMN: OutsideRouteColumn = { role: 'done', name: 'Done' };
 interface WorkflowCanvasCardProps {
   viewTask: WorkflowViewTask;
   selected: boolean;
-  /** The workflow runs: the card moves by its workflow, not by hand. */
+  /** The card moves by its workflow, not by hand: it runs, and the task is not in a human gate. */
   locked: boolean;
   /** What the footer says while the task waits in To Do ("Blocked by #413...", "Queued...", "Paused"). */
   waiting: WorkflowWaiting | null;
-  /** The task's board, named while the workflow spans boards; null while it is on one. */
-  projectName: string | null;
+  /** The task's board, named in its strip on every card. */
+  projectName: string;
   /**
    * A task on another board: that board's Done column color, which its Done
    * border wears. Null on the home board, whose live color the canvas sets as
@@ -151,10 +159,10 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   const height = canvasCardHeight(viewTask, view.cardDensity);
 
   // The column is the track's own marker, so the strip names no column; its
-  // left side holds the project while the workflow spans boards, else nothing.
+  // left side holds the task's project.
   const strip = (
     <WorkflowCardStrip
-      leading={projectName !== null ? <ProjectLabel name={projectName} /> : null}
+      leading={<ProjectLabel name={projectName} />}
       steps={viewTask.steps}
       outsideRoute={outsideRouteOf(viewTask)}
       lockedTitle={locked ? 'Moved by its workflow' : null}

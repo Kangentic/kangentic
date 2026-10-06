@@ -16,8 +16,9 @@ import {
   type NodeMouseHandler,
   type OnNodeDrag,
 } from '@xyflow/react';
-import type { WorkflowDetail } from '../../../shared/types';
+import type { WorkflowBoardTask, WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
+import { isWorkflowTaskLocked } from '../../utils/board-workflow';
 import { layoutWorkflow } from './workflow-layout';
 import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
 import { canvasCardHeight } from './WorkflowCanvasCard';
@@ -124,6 +125,12 @@ interface WorkflowCanvasProps {
    * board's color itself (`otherBoardDoneColor`).
    */
   doneColumnColor: string;
+  /**
+   * Each started task's board facts, from the workflow's summary (null until
+   * it loads). The lock follows the board's rule from them: none while a task
+   * sits in a human gate, where a person drags it on.
+   */
+  boardFacts: Readonly<Record<string, WorkflowBoardTask>> | null;
 }
 
 export function WorkflowCanvas({
@@ -141,20 +148,18 @@ export function WorkflowCanvas({
   onAutoLayout,
   onCardContextMenu,
   doneColumnColor,
+  boardFacts,
 }: WorkflowCanvasProps) {
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
   // The blocker a link is being drawn from, or null. Changes at the two ends of the gesture only.
   const linkingFrom = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
 
-  // Once any task is on another board, every card names its board in its strip (board 17).
-  const acrossBoards = useMemo(() => detail.tasks.some((task) => task.projectId !== detail.homeProjectId), [detail.tasks, detail.homeProjectId]);
   const layout = useMemo(() => layoutWorkflow(
     detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density), canvasX: task.canvasX, canvasY: task.canvasY })),
     detail.links,
   ), [detail.tasks, detail.links, density]);
 
-  const locked = detail.workflow.state === 'running';
   const derivedNodes = useMemo<WorkflowFlowNode[]>(() => detail.tasks.map((task) => ({
     id: task.key,
     type: 'workflowTask',
@@ -165,15 +170,18 @@ export function WorkflowCanvas({
     connectable: editable && !planHeld,
     data: {
       viewTask: task,
-      locked: locked && task.place !== 'done',
+      locked: task.place !== 'done'
+        && isWorkflowTaskLocked(detail.workflow.state, (task.task ? boardFacts?.[task.task.id]?.humanGateTargetId : null) ?? null),
       waiting: waitingOf(detail, task),
       canWait: canWait(task),
       canBlock: canBlock(task),
       editable: editable && !planHeld,
-      projectName: acrossBoards ? detail.projectNames[task.projectId] ?? 'Another project' : null,
+      // Every card names its project, on one board or several, so a card has
+      // one shape whatever the workflow spans (sign-off 4b).
+      projectName: detail.projectNames[task.projectId] ?? 'Another project',
       doneColor: otherBoardDoneColor(detail, task),
     },
-  })), [detail, layout, selectedTaskKey, editable, planHeld, locked, visibleKeys, acrossBoards]);
+  })), [detail, layout, selectedTaskKey, editable, planHeld, boardFacts, visibleKeys]);
 
   // Controlled nodes: React Flow writes positions during a drag through
   // `onNodesChange`, and the layout re-seeds them whenever the workflow

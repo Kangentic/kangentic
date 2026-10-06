@@ -597,11 +597,12 @@ column with no agent, you drag the card on yourself.
 **On the board.** A workflow task's card carries a strip with its workflow's name, a step track
 (one bar per column it visits; done ones grey, the current one wider and in its column's color)
 and a lock while the workflow
-runs, and a card in To Do says what it waits for ("Blocked by #413..."). On the Workflows canvas
-the strip names no column: the current step is that column's icon on a tint of its color (a dot
-when the column has no icon), and hovering it names the column. A task in To Do or Done shows that
-column's icon alone, and once a workflow spans boards the strip's left side names the task's
-project. Its right-click menu leads with Open workflow and Show
+moves it (none while it waits in a column no agent works, for you to drag it on), and a card in To
+Do says what it waits for ("Blocked by #413..."). On the Workflows canvas the strip names no
+column: the current step is that column's icon on a tint of its color (a dot when the column has
+no icon), and hovering it names the column. A task in To Do or Done shows that column's icon
+alone, the strip's left side names the task's project, and the lock follows the board's rule. Its
+right-click menu leads with Open workflow and Show
 workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
 a click on empty board space clears them. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the

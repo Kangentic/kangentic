@@ -178,10 +178,12 @@ test.describe('Workflows canvas', () => {
       await expect(page.locator('.react-flow__edge')).toHaveCount(2);
       // A not-started task has no ticket number yet.
       await expect(card(page, 'task-1')).not.toContainText('#');
-      // Every task on one board: no card names its project (board 17).
-      await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(0);
-      // So the title row is the first thing under the strip, and the link ports
-      // stay at the middle of it, 49px down.
+      // Every task on one board, and every card still names its project
+      // (sign-off 4b), so a card has one shape whatever the workflow spans.
+      await expect(page.locator('[data-testid="workflow-card-project"]')).toHaveCount(3);
+      await expect(card(page, 'task-1').locator('[data-testid="workflow-card-strip"] [data-testid="workflow-card-project"]')).toHaveText('workflows-canvas');
+      // The name sits in the strip, so the title row is the first thing under
+      // it, and the link ports stay at the middle of it, 49px down.
       for (const key of ['task-1', 'task-2', 'task-3']) {
         await expect(port(page, key, 'left')).toHaveAttribute('style', portTop(49));
         await expect(port(page, key, 'right')).toHaveAttribute('style', portTop(49));

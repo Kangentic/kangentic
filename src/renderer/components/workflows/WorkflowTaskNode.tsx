@@ -42,8 +42,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   canBlock: boolean;
   /** Ports are drawn only while the canvas is editable. */
   editable: boolean;
-  /** The task's board, named in its strip while the workflow spans boards (board 17); null while it is on one. */
-  projectName: string | null;
+  /** The task's board, named in its strip on every card (board 17, then sign-off 4b). */
+  projectName: string;
   /** A task on another board than the home: that board's Done color, which its Done card wears. Null on the home board. */
   doneColor: string | null;
 }

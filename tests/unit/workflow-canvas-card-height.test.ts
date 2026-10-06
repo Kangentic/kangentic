@@ -3,10 +3,11 @@
  * (`canvasCardHeight`, #732 board 17).
  *
  * The canvas gives every card a fixed height per density so the layout never
- * jumps when a card's content changes. Once any task of a workflow is on another
- * board, every card names its project, and it names it in the strip's left side
- * (where the phone puts it), not on a row of its own, so naming it costs no
- * height: the layout reserves the same height on one board or several.
+ * jumps when a card's content changes. Every card names its project, and it
+ * names it in the strip's left side (where the phone puts it), not on a row of
+ * its own, so naming it costs no height. Whether the heights hold the busiest
+ * card is a layout question, checked in the UI tier
+ * (`tests/ui/workflows-canvas-card-fit.spec.ts`).
  */
 import { describe, it, expect } from 'vitest';
 import {
