@@ -39,6 +39,9 @@ import { emitSpawnProgress, emitSpawnWaiting, __resetSpawnProgressForTest } from
 /** A spawn-progress feed that never fires, for the tests that are not about it. */
 const noSpawnProgressFeed = { onTaskSpawnProgressChanged: vi.fn(() => vi.fn()) };
 
+/** What the fake session registry lists; `resumable` reads it once per snapshot. */
+let registryRows: Array<{ id: string; taskId: string; status: string; transient?: boolean }> = [];
+
 /** A spawn-progress feed whose listener the test can fire, and whose release it can observe. */
 function controllableSpawnProgressFeed(): {
   feed: { onTaskSpawnProgressChanged: (listener: SpawnProgressChangedListener) => () => void };
@@ -84,6 +87,7 @@ describe('handleReadBoard', () => {
     // getInFlightSpawnProgress() reads a module-level singleton; a label left
     // by one test would decorate another's snapshot.
     __resetSpawnProgressForTest();
+    registryRows = [];
   });
 
   it('with no projectId, returns the project bootstrap list (with derived accent colors, group and position) and never touches task repos', async () => {
@@ -138,6 +142,7 @@ describe('handleReadBoard', () => {
     const context = {
       projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged },
+      sessionManager: { listSessions: () => registryRows },
       configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: false })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
@@ -149,7 +154,7 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null }],
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -177,6 +182,7 @@ describe('handleReadBoard', () => {
       return {
         projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
         boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
+        sessionManager: { listSessions: () => registryRows },
         configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
       } as unknown as IpcContext;
     }
@@ -249,6 +255,7 @@ describe('handleReadBoard', () => {
     const context = {
       projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged: vi.fn(() => unsubscribe) },
+      sessionManager: { listSessions: () => registryRows },
       configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
@@ -263,11 +270,79 @@ describe('handleReadBoard', () => {
     expect(subscriptions.has('board:proj-1')).toBe(false);
   });
 
+  describe('resumable on the board row (protocol 0.16.0)', () => {
+    function boardContext(): IpcContext {
+      return {
+        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
+        boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
+        sessionManager: { listSessions: () => registryRows },
+        configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
+      } as unknown as IpcContext;
+    }
+
+    beforeEach(() => {
+      swimlanesList.mockReturnValue([
+        { id: 'lane-review', role: null, auto_spawn: false },
+        { id: 'lane-todo', role: 'todo', auto_spawn: false },
+        { id: 'lane-done', role: 'done', auto_spawn: false },
+      ]);
+      // A desktop pause clears session_id, so every paused task here has none:
+      // the registry row is the only thing that says it is paused.
+      tasksList.mockReturnValue([
+        { id: 't-paused', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-paused-todo', swimlane_id: 'lane-todo', session_id: null, archived_at: null },
+        { id: 't-paused-done', swimlane_id: 'lane-done', session_id: null, archived_at: null },
+        { id: 't-paused-archived', swimlane_id: 'lane-review', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' },
+        { id: 't-ended', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-running', swimlane_id: 'lane-review', session_id: 'sess-run', archived_at: null },
+        { id: 't-fresh', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+      ]);
+      registryRows = [
+        { id: 'sess-1', taskId: 't-paused', status: 'suspended' },
+        { id: 'sess-2', taskId: 't-paused-todo', status: 'suspended' },
+        { id: 'sess-3', taskId: 't-paused-done', status: 'suspended' },
+        { id: 'sess-4', taskId: 't-paused-archived', status: 'suspended' },
+        { id: 'sess-5', taskId: 't-ended', status: 'exited' },
+        { id: 'sess-run', taskId: 't-running', status: 'running' },
+        // A Command Terminal session never makes a task resumable.
+        { id: 'sess-terminal', taskId: 't-fresh', status: 'suspended', transient: true },
+      ];
+    });
+
+    it('is true only for a paused task in a column that offers Resume, and false otherwise', async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; resumable: boolean | null }> }).tasks;
+      expect(Object.fromEntries(tasks.map((task) => [task.id, task.resumable]))).toEqual({
+        't-paused': true,
+        't-paused-todo': false,
+        't-paused-done': false,
+        't-paused-archived': false,
+        't-ended': false,
+        't-running': false,
+        't-fresh': false,
+      });
+    });
+
+    it('the archived page never offers Resume', async () => {
+      tasksListArchivedPage.mockReturnValue({
+        tasks: [{ id: 't-paused-archived', swimlane_id: 'lane-done', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' }],
+        totalCount: 1,
+      });
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const archived = (response.payload as { archivedTasks: Array<{ resumable: boolean | null }> }).archivedTasks;
+      expect(archived[0].resumable).toBe(false);
+    });
+  });
+
   describe('spawn progress (protocol 0.16.0)', () => {
     function boardContext(): IpcContext {
       return {
         projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
         boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
+        sessionManager: { listSessions: () => registryRows },
         configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
       } as unknown as IpcContext;
     }

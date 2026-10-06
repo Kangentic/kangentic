@@ -13,6 +13,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
+import { isResumeOffered } from '../../../shared/session-resume-eligibility';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -78,7 +79,26 @@ export async function handleReadBoard(
   const repos = getProjectRepos(context, projectId);
   // Read once per response: each call also sweeps TTL-expired labels.
   const spawnProgressByTaskId = getInFlightSpawnProgress();
-  const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null);
+  // `resumable` needs each task's paused session and its column. The registry
+  // is read once per response, not per task. A pause, a resume, a move and an
+  // archive each already fire a board event, so a phone re-reads this.
+  const swimlaneRows = repos.swimlanes.list();
+  const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
+  const pausedTaskIds = new Set(
+    context.sessionManager.listSessions()
+      .filter((session) => session.status === 'suspended' && session.transient !== true)
+      .map((session) => session.taskId),
+  );
+  const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(
+    task,
+    spawnProgressByTaskId[task.id] ?? null,
+    isResumeOffered({
+      hasPausedSession: pausedTaskIds.has(task.id),
+      laneRole: laneRoleById.get(task.swimlane_id),
+      // Truthiness, not `!== null`: see resumeBlockReason.
+      isArchived: Boolean(task.archived_at),
+    }),
+  );
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot
   // and NOT subscribed: a board subscription re-snapshots on every board
@@ -122,7 +142,7 @@ export async function handleReadBoard(
 
   const responsePayload: ReadBoardResponsePayload = {
     projectId,
-    columns: repos.swimlanes.list().map(toBoardColumnWire),
+    columns: swimlaneRows.map(toBoardColumnWire),
     tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null || typeof task.spawn_progress === 'string') : allTasks,
     ...(backlog !== undefined ? { backlog } : {}),
     projectColor: deriveProjectAccentColor(projectId),

@@ -127,26 +127,17 @@ export interface ReadStreamResponsePayload {
    */
   resuming?: boolean;
   /**
-   * True when this session is paused (`suspended`) and the desktop's own task
-   * view would offer Resume for it: the task is not in To Do or Done and not
-   * archived. It is the desktop's promise that `start-session` for this task
-   * resumes the session exactly as its Resume button does: the same
-   * conversation, the column's model, effort and permission, a "Resuming
-   * session..." label, and NO enter automations or column message. Gate a
-   * phone's Resume control on it.
-   *
-   * Explicit on purpose, never inferred from another field: a pre-0.16.0
-   * desktop answers `start-session` by STARTING the column, which re-runs its
-   * enter automations and resends its message (a paused task in Code Review
-   * would get `/code-review` again). Absent from those desktops, so a client
-   * reads absent as "offer no Resume".
+   * The streamed session's copy of `BoardTaskWire.resumable`: true when this
+   * session is paused (`suspended`) and the desktop's own task view would
+   * offer Resume for it. Gate a Resume control on the BOARD ROW's field, not
+   * this one: a desktop pause clears the task's `session_id`, so a phone holds
+   * no stream on a paused session once its board refreshes. This copy keeps a
+   * session screen that is open during the suspend current until then, and it
+   * carries the same promise: `start-session` resumes rather than starts.
    *
    * Recomputed on every `status` push, which the desktop also sends when this
-   * value alone changes. It describes the session, so a live `spawn_progress`
-   * label on the task's board row still takes precedence for display, as it
-   * does over `suspended`. `start-session` re-checks the column itself and
-   * refuses a To Do, Done or archived task with the desktop's Resume copy, so
-   * a value overtaken by a move is safe to act on.
+   * value alone changes. Absent from pre-0.16.0 desktops, which a client
+   * reads as "offer no Resume".
    */
   resumable?: boolean;
 }

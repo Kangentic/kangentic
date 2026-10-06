@@ -61,6 +61,7 @@ const boardTaskFixture: JsonValue = {
   created_at: '2026-07-13T00:00:00.000Z',
   updated_at: '2026-07-13T00:00:00.000Z',
   spawn_progress: null,
+  resumable: false,
 };
 
 describe('parseTranscriptEntriesWire', () => {
@@ -307,6 +308,18 @@ describe('board row guards', () => {
     delete withoutLabel.spawn_progress;
     expect(parseBoardTaskWire(withoutLabel).spawn_progress).toBeNull();
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), spawn_progress: 42 }).spawn_progress).toBeNull();
+  });
+
+  it('passes resumable through as true or false, and reads an absent or non-boolean one as null (pre-0.16.0 desktop)', () => {
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), resumable: true }).resumable).toBe(true);
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), resumable: false }).resumable).toBe(false);
+    // Null, not false: an older desktop answers start-session by starting the
+    // column, so "no promise" must stay distinguishable from "not resumable"
+    // and a client offers no Resume for either.
+    const withoutResumable = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutResumable.resumable;
+    expect(parseBoardTaskWire(withoutResumable).resumable).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), resumable: 'yes' }).resumable).toBeNull();
   });
 
   it('parses a column row', () => {

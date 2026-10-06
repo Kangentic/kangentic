@@ -9,7 +9,7 @@ import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatu
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
-import { resumeBlockReason } from '../../../shared/session-resume-eligibility';
+import { isResumeOffered } from '../../../shared/session-resume-eligibility';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
@@ -118,12 +118,12 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
 }
 
 /**
- * Whether the desktop's own task view would offer Resume for this session: the
- * `resumable` a phone gates its Resume on. Mirrors the resume direction of
- * `canToggle` in `useTaskSessionState.ts`: the session is suspended, and the
- * task is not in To Do or Done and not archived (`resumeBlockReason`). Those
- * are also exactly the cases `startTaskSession` sends down the Resume
- * button's path rather than starting the column.
+ * Whether the desktop's own task view would offer Resume for this session
+ * (`isResumeOffered`). The streamed session's copy of the board row's
+ * `resumable`: a pause clears the task's `session_id`, so a phone holds no
+ * stream on a paused session for long, and the board row is the copy it
+ * gates Resume on. This one keeps an open session screen current through
+ * the suspend itself.
  *
  * Reads the task only for a suspended session, so a running feed costs no
  * lookup. A Command Terminal session belongs to no task and is never
@@ -139,7 +139,7 @@ function isSessionResumable(context: IpcContext, session: Session): boolean {
     const lane = swimlanes.getById(task.swimlane_id);
     // Truthiness, not `!== null`: a Task assembled without the column carries
     // `undefined` in `archived_at`, which `!== null` would read as archived.
-    return resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) }) === null;
+    return isResumeOffered({ hasPausedSession: true, laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
   } catch {
     return false;
   }
