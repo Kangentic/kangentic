@@ -303,16 +303,33 @@ export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
 export const SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH = 120;
 
 /**
- * A spawn-progress label as it may leave the desktop. The label can carry a
- * raw git progress line (createProgressCallback passes unknown phases through
- * verbatim), so escape sequences and control characters are stripped, tabs and
- * line breaks become spaces, and the result is capped at
- * SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH with a trailing "...". A label with
+ * Characters that change how a label renders without showing anything: the
+ * bidi embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069), the
+ * left-to-right and right-to-left marks (U+200E, U+200F), the zero-width space
+ * (U+200B) and the byte order mark (U+FEFF). A bidi override can make one
+ * string read as another. The zero-width joiner and non-joiner stay: emoji
+ * sequences and several scripts need them.
+ */
+const INVISIBLE_FORMAT_CHARACTERS = /[\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}\u{FEFF}]/gu;
+
+/**
+ * A spawn-progress label as it may leave the desktop. Most labels are the
+ * desktop's own phase text, but createProgressCallback passes an unknown phase
+ * through verbatim, and the automation runner uses that to show `Running
+ * "<automation name>"...`. That name comes from the column's config, which a
+ * team shares in a committed `kangentic.json`, so it is text another person
+ * wrote. Escape sequences, control characters and invisible format characters
+ * are stripped, tabs and line breaks become spaces, and the result is capped
+ * at SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH with a trailing "...". A label with
  * nothing left to show is null, which the phone reads as no spawn in flight.
  */
 export function toSpawnProgressLabelWire(label: string | null): string | null {
   if (label === null) return null;
-  const cleaned = stripAnsiControlCodes(label).replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  const cleaned = stripAnsiControlCodes(label)
+    .replace(INVISIBLE_FORMAT_CHARACTERS, '')
+    .replace(/[\t\r\n]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
   if (cleaned === '') return null;
   const characters = Array.from(cleaned);
   if (characters.length <= SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH) return cleaned;

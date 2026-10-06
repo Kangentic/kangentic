@@ -338,10 +338,13 @@ export interface BoardTaskWire {
    *
    * Untrusted display text, the same terms as `session-ended`'s
    * `spawnProgressLabel`: never parse it or switch on it, and fall back to
-   * generic copy. It can be a raw git progress line. From 0.16.0 the desktop
-   * strips escape sequences and control characters, turns line breaks and
-   * tabs into spaces, and caps it at 120 characters ending in "...", but a
-   * client still caps it for its own layout.
+   * generic copy. It can carry text the desktop did not write: a column
+   * automation's name, in `Running "<name>"...`, from a config a team may
+   * share. From 0.16.0 the desktop strips escape sequences, control characters
+   * and invisible format characters (bidi controls, the zero-width space, the
+   * byte order mark), turns line breaks and tabs into spaces, and caps it at
+   * 120 characters ending in "...", but a client still caps it for its own
+   * layout.
    *
    * Precedence, matching the desktop card: a label overrides a `suspended`
    * session status (a respawn is in flight behind a session that was just

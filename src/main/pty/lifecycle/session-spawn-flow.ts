@@ -387,7 +387,8 @@ export async function performSpawn(
   // session's own.
   //
   // This drain emits no 'session-removed' for a sibling, and it runs before
-  // the new session's 'session-changed'. The mobile bridge's read-stream
+  // the new session's 'session-changed'. session-replica-contract.md names it
+  // as the one exception to its removal rule. The mobile bridge's read-stream
   // successor hop (mobile-bridge/handlers/read-stream.ts) relies on both to
   // name the resumed session to a paired phone; session-spawn-flow.test.ts
   // pins them. Change the two together.
