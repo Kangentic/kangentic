@@ -3535,39 +3535,93 @@
       },
       // Image bytes for the Changes panel's image view, mirroring
       // DiffService.getImageContent. A fixture entry carries the bytes as
-      // `originalImageBase64` / `modifiedImageBase64`; `originalImageSize` /
-      // `modifiedImageSize` override the reported size, and a size over the
-      // 10 MB preview cap reports 'too-large' with no bytes, as main does. A
-      // side with no base64 reads 'unreadable', and bytes that start with the
-      // Git LFS pointer header read 'lfs-pointer'. Added/Untracked have no
-      // original side and Deleted has no modified side.
+      // `originalImageBase64` / `modifiedImageBase64`; an SVG entry with no
+      // base64 is read from its `original` / `modified` text, UTF-8 encoded,
+      // as main reads the file. `originalImageSize` / `modifiedImageSize`
+      // override the reported size, and a size over the 10 MB preview cap
+      // reports 'too-large' with no bytes, as main does. A side with neither
+      // reads 'unreadable', and bytes that start with the Git LFS pointer
+      // header read 'lfs-pointer'. Added/Untracked have no original side and
+      // Deleted has no modified side.
+      //
+      // Each side's fingerprint is derived from its bytes, so a side whose
+      // fixture bytes were swapped reads as changed, and a side matching the
+      // request's `knownFingerprints` answers 'unchanged' with no bytes, as
+      // main does. Test hooks: every call is recorded in
+      // window.__mockGitFileImageCalls ({ filePath, knownFingerprints, result },
+      // each result side reduced to its kind and fingerprint),
+      // and window.__mockGitFileImageDeferred = true holds the next call until
+      // window.__mockGitFileImageResolve() is called.
       fileImage: async function (request) {
+        if (typeof window !== 'undefined' && window.__mockGitFileImageDeferred) {
+          window.__mockGitFileImageDeferred = false;
+          var resolveImageRef;
+          var pendingImage = new Promise(function (res) { resolveImageRef = res; });
+          window.__mockGitFileImageResolve = resolveImageRef;
+          await pendingImage;
+        }
         var IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
         var LFS_POINTER_PREFIX = 'version https://git-lfs.github.com/spec/';
         var status = (request && request.status) || 'M';
+        var filePath = (request && request.filePath) || '';
+        var knownFingerprints = (request && request.knownFingerprints) || {};
         var fixture = resolveGitDiffFixture(request);
         var match = fixture && Array.isArray(fixture.files)
-          ? fixture.files.find(function (entry) { return entry.path === (request && request.filePath); })
+          ? fixture.files.find(function (entry) { return entry.path === filePath; })
           : null;
-        function readSide(base64, sizeOverride) {
+        function bytesOf(base64, svgText) {
+          if (base64) {
+            var binary = atob(base64);
+            var decoded = new Uint8Array(binary.length);
+            for (var byteIndex = 0; byteIndex < binary.length; byteIndex++) decoded[byteIndex] = binary.charCodeAt(byteIndex);
+            return decoded;
+          }
+          if (typeof svgText === 'string' && /\.svg$/i.test(filePath)) return new TextEncoder().encode(svgText);
+          return null;
+        }
+        function fingerprintOf(bytes) {
+          var hash = 5381;
+          for (var hashIndex = 0; hashIndex < bytes.length; hashIndex++) hash = ((hash * 33) ^ bytes[hashIndex]) >>> 0;
+          return 'mock:' + bytes.length + ':' + hash.toString(16);
+        }
+        function readSide(base64, svgText, sizeOverride, knownFingerprint) {
           if (typeof sizeOverride === 'number' && sizeOverride > IMAGE_PREVIEW_MAX_BYTES) {
-            return { kind: 'too-large', size: sizeOverride };
+            var tooLargeFingerprint = 'mock-size:' + sizeOverride;
+            if (tooLargeFingerprint === knownFingerprint) return { kind: 'unchanged', fingerprint: tooLargeFingerprint };
+            return { kind: 'too-large', size: sizeOverride, fingerprint: tooLargeFingerprint };
           }
-          if (!base64) return { kind: 'unreadable' };
-          var binary = atob(base64);
-          var bytes = new Uint8Array(binary.length);
-          for (var byteIndex = 0; byteIndex < binary.length; byteIndex++) bytes[byteIndex] = binary.charCodeAt(byteIndex);
-          if (binary.length <= 1024 && binary.indexOf(LFS_POINTER_PREFIX) === 0) {
-            return { kind: 'lfs-pointer', size: bytes.length };
+          var bytes = bytesOf(base64, svgText);
+          if (bytes === null) return { kind: 'unreadable' };
+          var fingerprint = fingerprintOf(bytes);
+          if (fingerprint === knownFingerprint) return { kind: 'unchanged', fingerprint: fingerprint };
+          var head = String.fromCharCode.apply(null, Array.prototype.slice.call(bytes, 0, LFS_POINTER_PREFIX.length));
+          if (bytes.length <= 1024 && head === LFS_POINTER_PREFIX) {
+            return { kind: 'lfs-pointer', size: bytes.length, fingerprint: fingerprint };
           }
-          return { kind: 'bytes', size: typeof sizeOverride === 'number' ? sizeOverride : bytes.length, bytes: bytes };
+          return { kind: 'bytes', size: typeof sizeOverride === 'number' ? sizeOverride : bytes.length, bytes: bytes, fingerprint: fingerprint };
         }
         var needsOriginal = status !== 'A' && status !== 'U';
         var needsModified = status !== 'D';
-        return {
-          original: needsOriginal ? readSide(match && match.originalImageBase64, match && match.originalImageSize) : null,
-          modified: needsModified ? readSide(match && match.modifiedImageBase64, match && match.modifiedImageSize) : null,
+        var result = {
+          original: needsOriginal
+            ? readSide(match && match.originalImageBase64, match && match.original, match && match.originalImageSize, knownFingerprints.original)
+            : null,
+          modified: needsModified
+            ? readSide(match && match.modifiedImageBase64, match && match.modified, match && match.modifiedImageSize, knownFingerprints.modified)
+            : null,
         };
+        if (typeof window !== 'undefined') {
+          // Kinds and fingerprints only: the log outlives the call, and this
+          // mock is also the web demo's bridge, so it must not hold every image.
+          var summarize = function (side) { return side === null ? null : { kind: side.kind, fingerprint: side.fingerprint }; };
+          window.__mockGitFileImageCalls = window.__mockGitFileImageCalls || [];
+          window.__mockGitFileImageCalls.push({
+            filePath: filePath,
+            knownFingerprints: request && request.knownFingerprints,
+            result: { original: summarize(result.original), modified: summarize(result.modified) },
+          });
+        }
+        return result;
       },
       subscribeDiff: function () {},
       unsubscribeDiff: function () {},

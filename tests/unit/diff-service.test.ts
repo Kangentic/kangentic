@@ -12,6 +12,7 @@ const mockGit = {
   show: vi.fn(),
   showBuffer: vi.fn(),
   catFile: vi.fn(),
+  revparse: vi.fn(),
   raw: vi.fn(),
   status: vi.fn(),
 };
@@ -40,7 +41,7 @@ vi.mock('../../src/main/git/line-count/line-count-client', () => ({
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DiffService } from '../../src/main/git/diff-service';
+import { DiffService, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
 
 /** Backs the countFileLines bounded stat+open read path (see
@@ -1136,11 +1137,14 @@ describe('DiffService', () => {
   });
 
   // The image view's byte reader. Same per-scope revisions as getFileContent;
-  // what differs is that no side is ever decoded as text, and a side's size is
-  // checked before its bytes are read.
+  // what differs is that no side is ever decoded as text, a side is
+  // fingerprinted before anything else is read, and its size is checked
+  // before its bytes are read.
   describe('getImageContent', () => {
     const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
     const OVER_CAP = 10 * 1024 * 1024 + 1;
+    /** A modified time well outside RECENT_WRITE_WINDOW_MS, so a match is trusted. */
+    const SETTLED_MTIME_MS = Date.now() - 60_000;
     const baseInput = {
       projectPath: '/project',
       worktreePath: '/project/wt',
@@ -1148,12 +1152,24 @@ describe('DiffService', () => {
       filePath: 'img/a.png',
     } as const;
 
-    /** Answers `cat-file -s <spec>` and `show <spec>` from one table keyed by object spec. */
+    /** The blob id `rev-parse` reports for an object spec in routeObjects. */
+    function objectIdOf(spec: string): string {
+      return `oid-${spec}`;
+    }
+
+    /**
+     * Answers `rev-parse --verify <spec>`, then `cat-file -s <object id>` and
+     * `show <spec>`, from one table keyed by object spec.
+     */
     function routeObjects(objects: Record<string, Buffer>): void {
+      mockGit.revparse.mockImplementation(async (args: string[]) => {
+        if (!objects[args[1]]) throw new Error(`fatal: path does not exist: ${args[1]}`);
+        return objectIdOf(args[1]);
+      });
       mockGit.catFile.mockImplementation(async (args: string[]) => {
-        const bytes = objects[args[1]];
-        if (!bytes) throw new Error(`fatal: path does not exist: ${args[1]}`);
-        return `${bytes.length}\n`;
+        const spec = Object.keys(objects).find((candidate) => objectIdOf(candidate) === args[1]);
+        if (spec === undefined) throw new Error(`fatal: not a valid object name ${args[1]}`);
+        return `${objects[spec].length}\n`;
       });
       mockGit.showBuffer.mockImplementation(async (args: string[]) => {
         const bytes = objects[args[0]];
@@ -1162,8 +1178,8 @@ describe('DiffService', () => {
       });
     }
 
-    function mockDiskFile(bytes: Buffer): void {
-      vi.mocked(fs.promises.stat).mockResolvedValue({ size: bytes.length } as never);
+    function mockDiskFile(bytes: Buffer, mtimeMs: number = SETTLED_MTIME_MS): void {
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: bytes.length, mtimeMs } as never);
       vi.mocked(fs.promises.readFile).mockResolvedValue(bytes as never);
     }
 
@@ -1173,13 +1189,88 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'working' });
 
-      expect(mockGit.catFile).toHaveBeenCalledWith(['-s', ':img/a.png']);
+      expect(mockGit.revparse).toHaveBeenCalledWith(['--verify', ':img/a.png']);
+      expect(mockGit.catFile).toHaveBeenCalledWith(['-s', objectIdOf(':img/a.png')]);
       expect(mockGit.showBuffer).toHaveBeenCalledWith([':img/a.png']);
       expect(fs.promises.readFile).toHaveBeenCalledWith(expect.stringMatching(/img[/\\]a\.png$/));
       expect(vi.mocked(fs.promises.readFile).mock.calls[0]).toHaveLength(1);
-      expect(result.original).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES });
-      expect(result.modified).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES });
+      expect(result.original).toEqual({
+        kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: `blob:${objectIdOf(':img/a.png')}`,
+      });
+      expect(result.modified).toEqual({
+        kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: `file:${PNG_BYTES.length}:${SETTLED_MTIME_MS}`,
+      });
       expect(mockGit.show).not.toHaveBeenCalled();
+    });
+
+    it('a git side whose blob id matches the caller\'s fingerprint answers unchanged and is never read', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+      const originalFingerprint = `blob:${objectIdOf('abc123:img/a.png')}`;
+
+      const result = await service.getImageContent({
+        ...baseInput, status: 'M', knownFingerprints: { original: originalFingerprint },
+      });
+
+      expect(result.original).toEqual({ kind: 'unchanged', fingerprint: originalFingerprint });
+      expect(mockGit.catFile).not.toHaveBeenCalled();
+      expect(mockGit.showBuffer).not.toHaveBeenCalled();
+      // The side with no known fingerprint is read as usual.
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
+    it('a disk side whose size and modified time match answers unchanged and is never read', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+      const modifiedFingerprint = `file:${PNG_BYTES.length}:${SETTLED_MTIME_MS}`;
+
+      const result = await service.getImageContent({
+        ...baseInput, status: 'M', knownFingerprints: { modified: modifiedFingerprint },
+      });
+
+      expect(result.modified).toEqual({ kind: 'unchanged', fingerprint: modifiedFingerprint });
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+      expect(result.original?.kind).toBe('bytes');
+    });
+
+    it('a disk side written inside the recent-write window is reread even when its fingerprint matches', async () => {
+      // A second write in the same timestamp tick keeps size and modified time
+      // equal, so a match this fresh cannot be trusted. The clock is pinned, so
+      // the gap between the two reads of it cannot carry the case out of the window.
+      const nowMs = 1_800_000_000_000;
+      const recentMtimeMs = nowMs - Math.floor(RECENT_WRITE_WINDOW_MS / 4);
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(nowMs);
+      try {
+        routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+        mockDiskFile(PNG_BYTES, recentMtimeMs);
+        const modifiedFingerprint = `file:${PNG_BYTES.length}:${recentMtimeMs}`;
+
+        const result = await service.getImageContent({
+          ...baseInput, status: 'M', knownFingerprints: { modified: modifiedFingerprint },
+        });
+
+        expect(result.modified).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: modifiedFingerprint });
+        expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a fingerprint that no longer matches reads the side again', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({
+        ...baseInput,
+        status: 'M',
+        knownFingerprints: { original: 'blob:an-older-blob', modified: `file:${PNG_BYTES.length}:${SETTLED_MTIME_MS - 1}` },
+      });
+
+      expect(result.original?.kind).toBe('bytes');
+      expect(result.modified?.kind).toBe('bytes');
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
+      expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
     });
 
     it('staged scope: original is HEAD, modified is the index blob, nothing from disk', async () => {
@@ -1243,13 +1334,14 @@ describe('DiffService', () => {
     });
 
     it('a side over the 10 MB cap reports its size and is never read', async () => {
+      mockGit.revparse.mockResolvedValue('big-blob\n');
       mockGit.catFile.mockResolvedValue(`${OVER_CAP}\n`);
-      vi.mocked(fs.promises.stat).mockResolvedValue({ size: OVER_CAP } as never);
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: OVER_CAP, mtimeMs: SETTLED_MTIME_MS } as never);
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(result.original).toEqual({ kind: 'too-large', size: OVER_CAP });
-      expect(result.modified).toEqual({ kind: 'too-large', size: OVER_CAP });
+      expect(result.original).toEqual({ kind: 'too-large', size: OVER_CAP, fingerprint: 'blob:big-blob' });
+      expect(result.modified).toEqual({ kind: 'too-large', size: OVER_CAP, fingerprint: `file:${OVER_CAP}:${SETTLED_MTIME_MS}` });
       expect(mockGit.showBuffer).not.toHaveBeenCalled();
       expect(fs.promises.readFile).not.toHaveBeenCalled();
     });
@@ -1259,9 +1351,10 @@ describe('DiffService', () => {
       // a small buffer, so the test never allocates 10 MB. The size check runs on
       // what `cat-file -s` and `stat` report, before any read, so a `>=` in the cap
       // comparison would turn both sides into `too-large` and skip both reads.
+      mockGit.revparse.mockResolvedValue('cap-blob\n');
       mockGit.catFile.mockResolvedValue(`${IMAGE_PREVIEW_MAX_BYTES}\n`);
       mockGit.showBuffer.mockResolvedValue(PNG_BYTES);
-      vi.mocked(fs.promises.stat).mockResolvedValue({ size: IMAGE_PREVIEW_MAX_BYTES } as never);
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: IMAGE_PREVIEW_MAX_BYTES, mtimeMs: SETTLED_MTIME_MS } as never);
       vi.mocked(fs.promises.readFile).mockResolvedValue(PNG_BYTES as never);
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
@@ -1279,12 +1372,14 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(result.original).toEqual({ kind: 'lfs-pointer', size: pointer.length });
+      expect(result.original).toEqual({
+        kind: 'lfs-pointer', size: pointer.length, fingerprint: `blob:${objectIdOf('abc123:img/a.png')}`,
+      });
       expect(result.modified?.kind).toBe('bytes');
     });
 
     it('a failed read on either side is unreadable, not an exception', async () => {
-      mockGit.catFile.mockRejectedValue(new Error('fatal: bad object'));
+      mockGit.revparse.mockRejectedValue(new Error('fatal: bad object'));
       vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });

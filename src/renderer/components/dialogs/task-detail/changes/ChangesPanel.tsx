@@ -292,7 +292,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       if (cached.generation === cacheGenerationRef.current) {
         return; // Fresh entry - no refetch needed
       }
-      // Stale entry - show cached content now, refetch in background
+      // Stale entry - show cached content now, refetch in background. The
+      // cached result is this same file and selection (the cache key), so its
+      // image fingerprints let main skip resending an image that did not change.
       const currentGeneration = cacheGenerationRef.current;
       const fileEntry = filesRef.current.find((entry) => entry.path === filePath);
       fetchDiffContent({
@@ -304,7 +306,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         oldPath: fileEntry?.oldPath,
         scope,
         commitOid: changesSelectedCommit ?? undefined,
-      }, fileEntry?.binary ?? false).then((freshResult) => {
+      }, fileEntry?.binary ?? false, cached.result).then((freshResult) => {
         storeInCache({ result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually
         // changed. Images compare byte for byte (diffContentEqual), so a

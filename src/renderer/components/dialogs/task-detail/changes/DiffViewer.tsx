@@ -20,8 +20,8 @@ import { copyDiffSelection } from '../../../../utils/diff-clipboard';
 import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funnel';
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
 import { snapshotDiffViewer } from './diff-viewer-snapshot';
-import { ImageDiffView, type ImageCompareMode } from './ImageDiffView';
-import { statusHasModified, statusHasOriginal, type DiffImageContent } from './diff-content';
+import { ImageDiffView } from './ImageDiffView';
+import { imageCompareState, type DiffImageContent, type ImageCompareMode } from './diff-content';
 import { imageKindForPath } from '../../../../../shared/image-preview';
 
 interface DiffViewerProps {
@@ -141,6 +141,8 @@ export function DiffViewer({
   const isPreviewableSvg = imageKind === 'svg' && !binary;
   const [showPreview, setShowPreview] = useState(false);
   const previewActive = (isMarkdown || isPreviewableSvg) && showPreview;
+  // The one preview that is neither the diff editor nor the image view.
+  const markdownPreviewActive = isMarkdown && showPreview;
 
   // The image view replaces the text diff for a raster image (no text form at
   // all), for an SVG `.gitattributes` marks binary (no text diff to show), and
@@ -153,17 +155,18 @@ export function DiffViewer({
   // Not reset per file: stepping through a branch of screenshots keeps the
   // chosen comparison. Never persisted, the way GitHub opens on 2-up each time.
   const [imageCompareMode, setImageCompareMode] = useState<ImageCompareMode>('side-by-side');
-  const hasBothImageSides = statusHasOriginal(status) && statusHasModified(status);
   // Decoding happens while fetching (diff-content.ts), so whether both sides
-  // are real images is known here. The overlay modes need both; without them
-  // the view shows Side by side, and the toolbar has to agree.
-  const decodedImageSideCount = image === null
-    ? 0
-    : [image.original, image.modified].filter((side) => side?.kind === 'image').length;
+  // are real images is known here, and imageCompareState is the same rule the
+  // view draws by, so the toolbar always agrees with it.
+  //
+  // Decided from the image's own sides, never from `status`: while the next
+  // file loads, `image` is still the previous file's, and pairing it with the
+  // new file's status flipped the toggle ahead of the content. Read from the
+  // sides alone, it keeps the previous file's answer until the new content
+  // arrives, then changes once, together with the view.
   const showImageLayoutToggle = imageViewActive
-    && hasBothImageSides
-    && decodedImageSideCount > 0
-    && (imageCompareMode === 'side-by-side' || decodedImageSideCount < 2);
+    && image !== null
+    && imageCompareState(image, imageCompareMode).showsLayoutToggle;
 
   // Blame gutter: off by default, toggled per file (reset below on file switch).
   const [blameOn, setBlameOn] = useState(false);
@@ -646,8 +649,10 @@ export function DiffViewer({
   // request. Clear it here, or it would wait for the next text file the user
   // CLICKS and jump that one to its first change instead of restoring its scroll.
   useEffect(() => {
-    if (diffEditorHidden && !previewActive && pendingChangeFocus) onPendingChangeFocusConsumed?.();
-  }, [diffEditorHidden, previewActive, pendingChangeFocus, onPendingChangeFocusConsumed]);
+    // An SVG preview has no editor either, so it clears too. A roll-in never
+    // arrives in one, since a file change resets the preview to the diff.
+    if (diffEditorHidden && !markdownPreviewActive && pendingChangeFocus) onPendingChangeFocusConsumed?.();
+  }, [diffEditorHidden, markdownPreviewActive, pendingChangeFocus, onPendingChangeFocusConsumed]);
 
   // Apply whitespace changes to the live editor so a toolbar or settings toggle
   // takes effect immediately, not just on the next file open.
@@ -731,7 +736,7 @@ export function DiffViewer({
   // keeps the keys: with no editor, navigateChange rolls straight to the
   // adjacent file, which is how a branch of screenshots is stepped through.
   // Bound here because the diff editor owns the line changes.
-  const changeNavigationEnabled = isFocused && (!previewActive || imageViewActive);
+  const changeNavigationEnabled = isFocused && !markdownPreviewActive;
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: changeNavigationEnabled });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: changeNavigationEnabled });
   // Live combo strings for the nav-button tooltips ('' when unbound).

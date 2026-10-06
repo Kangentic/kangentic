@@ -63,6 +63,10 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
 
   // Guard out-of-order resolutions: only the newest fetch may commit state.
   const fetchGenerationRef = useRef(0);
+  // The last content shown. This window shows one file at one scope, so it is
+  // always the same file the next fetch asks for, and its image fingerprints
+  // let main skip resending an image that did not change.
+  const lastResultRef = useRef<DiffContent | null>(null);
   const runFetch = useCallback(async (seedEntry: GitDiffFileEntry | null) => {
     const generation = ++fetchGenerationRef.current;
     const applyContent = async (fileEntry: GitDiffFileEntry) => {
@@ -75,8 +79,9 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
         oldPath: fileEntry.oldPath,
         scope,
         commitOid,
-      }, fileEntry.binary);
+      }, fileEntry.binary, lastResultRef.current);
       if (generation !== fetchGenerationRef.current) return;
+      lastResultRef.current = result;
       setContent({ result, filePath });
       setLoadError(null);
     };
@@ -97,6 +102,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
       setEntry(matched);
       if (!matched) {
         // Reverted / no longer changed: the empty state below. Window stays open.
+        lastResultRef.current = null;
         setContent(null);
         setLoadError(null);
         return;

@@ -10,7 +10,7 @@ import { getFileHistory } from '../../git/file-history';
 import { getBlame } from '../../git/blame';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitPendingChangesInput, GitPendingChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
+import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitFileImageInput, GitPendingChangesInput, GitPendingChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 
@@ -137,7 +137,7 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return service.getFileContent(input);
   });
 
-  ipcMain.handle(IPC.GIT_FILE_IMAGE, async (_, input: GitFileContentInput) => {
+  ipcMain.handle(IPC.GIT_FILE_IMAGE, async (_, input: GitFileImageInput) => {
     const service = getOrCreateService(input.worktreePath ?? input.projectPath);
     return service.getImageContent(input);
   });

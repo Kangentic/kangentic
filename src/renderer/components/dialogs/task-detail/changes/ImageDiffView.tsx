@@ -3,7 +3,7 @@ import { Blend, ChevronsLeftRight, Columns2, ImageOff, Loader2, Rows2, ScanSearc
 import type { LucideIcon } from 'lucide-react';
 import { formatBytes } from '../../../../lib/format-bytes';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../../../../shared/image-preview';
-import type { DiffImageContent, DiffImageSide } from './diff-content';
+import { imageCompareState, type DiffImageContent, type DiffImageSide, type ImageCompareMode } from './diff-content';
 import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type DecodedImageSide, type PixelDiffState } from './pixel-diff-client';
 
 /**
@@ -21,9 +21,10 @@ import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type DecodedImageSide, type PixelDi
  * dragged-narrow pane reaches before its 240px floor, the mode row drops to
  * icons (each keeps its name in `aria-label` and `title`) and the tiles stack
  * one per line, so no value clips.
+ *
+ * The file exports only the component, so it stays a Fast Refresh boundary:
+ * the compare-mode type and rules live in diff-content.ts.
  */
-
-export type ImageCompareMode = 'side-by-side' | 'slider' | 'overlay' | 'diff';
 
 interface ImageDiffViewProps {
   image: DiffImageContent;
@@ -91,15 +92,13 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
   const decodedOriginal = original?.kind === 'image' ? original : null;
   const decodedModified = modified?.kind === 'image' ? modified : null;
   // Slider, Overlay and Diff draw both images on one canvas, so they need both decoded.
-  const comparable = decodedOriginal !== null && decodedModified !== null;
-  const effectiveMode: ImageCompareMode = comparable ? mode : 'side-by-side';
+  const { comparable, effectiveMode, showsModeRow } = imageCompareState(image, mode);
   const [sliderPosition, setSliderPosition] = useState(50);
   const [overlayOpacity, setOverlayOpacity] = useState(50);
   const pixelDiff = usePixelDiff(decodedOriginal, decodedModified, effectiveMode === 'diff', scalable);
 
   const presentSides = [original, modified].filter((side): side is DiffImageSide => side !== null);
   const everySideTooLarge = presentSides.length > 0 && presentSides.every((side) => side.kind === 'too-large');
-  const showModeRow = hasBothSides && (decodedOriginal !== null || decodedModified !== null);
 
   let stage: ReactNode;
   if (everySideTooLarge) {
@@ -164,7 +163,7 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
           <span>After</span>
         </div>
       )}
-      {showModeRow && (
+      {showsModeRow && (
         <div className="flex-shrink-0 px-2 pb-1.5">
           <div
             role="radiogroup"
