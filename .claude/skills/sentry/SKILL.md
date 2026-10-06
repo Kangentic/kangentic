@@ -163,9 +163,10 @@ handled forwards), release, environment, and the anonymous install id under `use
   restart policy's report site and the tail is what the worker printed before it died. Its
   `crashes` list and the `cause` tag say whether each crash was an exit or a worker that hung
   (`ready_timeout`, or `request_timeout` with the method that did not answer and what else was
-  pending). On a retrieval timeout, look in the tail for `event loop held <n> s in <step>`. The
-  worker's watchdog thread writes it when the loop stops for about 5 s, naming the step that held
-  it. A timeout with no such line means the worker was not held, so look at what was pending.
+  pending). On a retrieval timeout, look in the tail for `event loop held <n> s`, which ends in
+  `in <step>` or `outside any labelled step`. The worker's watchdog thread writes it when the loop
+  stops for about 5 s. A timeout with no such line usually means the worker was not held, so look
+  at what was pending.
 - **Symbolication caveat:** packaged-release events resolve to real file/line only once a
   release build uploaded sourcemaps (`KANGENTIC_SENTRY_TOKEN` set during `npm run build`;
   `SENTRY_AUTH_TOKEN` is accepted as the fallback). A dev
