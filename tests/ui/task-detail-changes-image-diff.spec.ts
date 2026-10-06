@@ -22,8 +22,9 @@
  *
  * The "Diff mode outcomes and copy" describe pins what the pixel comparison
  * reports: a remembered result is not compared again, a canvas over the pixel
- * cap reads as failed, an SVG compares at its scaled-up size, and the stat and
- * size-change copy for the small-change and shrinking-file cases.
+ * cap reads as failed, an SVG compares at its scaled-up size, the stat and
+ * size-change copy for the small-change and shrinking-file cases, and that a
+ * raster image is decoded by the worker while an SVG is decoded on the page.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -1157,6 +1158,52 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
     expect(changedPixels).toBeLessThan(42000);
     await expect(pixelStat()).toHaveText(/^3\.\d% of pixels changed$/);
     await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
+
+    await closeChanges();
+  });
+
+  test('a raster pair reaches the worker undecoded and an SVG pair decoded, so no raster decode runs on the main thread', async () => {
+    // createImageBitmap on an <img> decodes on the calling thread, and a pair of
+    // 3840 x 2160 screenshots dropped a frame on every comparison that way. A
+    // raster side is posted as its data URL for the worker to decode. An SVG,
+    // which no worker can decode, is posted as the bitmap this thread drew.
+    await page.evaluate(() => {
+      const recorder = window as unknown as { __pixelDiffSources: string[]; __restoreSourcesPostMessage: () => void };
+      recorder.__pixelDiffSources = [];
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: unknown) {
+        if (message !== null && typeof message === 'object' && 'before' in message && 'after' in message) {
+          const { before, after } = message as { before: unknown; after: unknown };
+          for (const source of [before, after]) {
+            if (typeof source === 'string') recorder.__pixelDiffSources.push(source.startsWith('data:image/png;base64,') ? 'png data URL' : 'other string');
+            else recorder.__pixelDiffSources.push(source instanceof ImageBitmap ? 'bitmap' : 'other object');
+          }
+        }
+        return (originalPostMessage as (this: Worker, message: unknown, transfer?: unknown) => void).call(this, message, transfer);
+      } as Worker['postMessage'];
+      recorder.__restoreSourcesPostMessage = () => { Worker.prototype.postMessage = originalPostMessage; };
+    });
+    const postedSources = () => page.evaluate(() => (window as unknown as { __pixelDiffSources: string[] }).__pixelDiffSources);
+    const rasterPath = 'shots/posted-raster.png';
+    const vectorPath = 'assets/posted-vector.svg';
+
+    try {
+      await openChanges([
+        pngFile(rasterPath),
+        { path: vectorPath, status: 'M', binary: true, original: SVG_BEFORE, modified: SVG_AFTER, language: 'xml' },
+      ], rasterPath);
+      await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+      await diffModeButton().click();
+      await expect(pixelStat()).toHaveText('32.5% of pixels changed', { timeout: 10000 });
+      expect(await postedSources()).toEqual(['png data URL', 'png data URL']);
+
+      // Diff mode stays on across files, so the SVG is compared as soon as it shows.
+      await selectFile(vectorPath);
+      await expect(pixelStat()).toHaveAttribute('title', /of 1,?048,?576 pixels differ$/, { timeout: 10000 });
+      expect(await postedSources()).toEqual(['png data URL', 'png data URL', 'bitmap', 'bitmap']);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreSourcesPostMessage: () => void }).__restoreSourcesPostMessage());
+    }
 
     await closeChanges();
   });

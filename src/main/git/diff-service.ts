@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
 import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-preview';
 import { countFileLines } from './line-count/count-lines';
+import { readGitObject } from './git-object-reader';
 import { lineCountClient } from './line-count/line-count-client';
 
 /** Above this combined untracked-file byte size, counting is delegated to the
@@ -385,15 +386,16 @@ export class DiffService {
   }
 
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
-    const git = simpleGit(this.gitDirectory);
     const language = inferLanguage(input.filePath);
+    if (!isSafeContentInput(input)) return { original: '', modified: '', language };
+    const git = simpleGit(this.gitDirectory);
     const { needsOriginal, needsModified } = sidesForStatus(input.status);
 
     // Fetch original and modified in parallel - independent I/O whose overlap
     // cuts latency for modified files (the common case) by ~30-50%.
     const [original, modified] = await Promise.all([
       needsOriginal ? readSideAsText(git, () => this.resolveOriginalSource(git, input)) : '',
-      needsModified ? readSideAsText(git, async () => resolveModifiedSource(input)) : '',
+      needsModified ? readSideAsText(git, () => resolveModifiedSource(input)) : '',
     ]);
 
     return { original, modified, language };
@@ -402,19 +404,23 @@ export class DiffService {
   /**
    * Both sides of a changed image as bytes, for the Changes panel's image
    * view. Same per-scope revisions as {@link getFileContent}; only the readers
-   * differ. Each side is fingerprinted first (`git rev-parse` or `stat`), so a
-   * side the caller already holds is answered `unchanged` without being read,
-   * and its size is checked next, so a side over IMAGE_PREVIEW_MAX_BYTES is
-   * never read into memory or sent over IPC.
+   * differ. A side the caller already holds is answered `unchanged` without
+   * being read, and a side over IMAGE_PREVIEW_MAX_BYTES is never read into
+   * memory or sent over IPC: a git object stops at its header (one
+   * `cat-file --batch` process, see git-object-reader.ts), a working-tree file
+   * at its `stat`.
    */
   async getImageContent(input: GitFileImageInput): Promise<GitImageContentResult> {
-    const git = simpleGit(this.gitDirectory);
     const { needsOriginal, needsModified } = sidesForStatus(input.status);
+    if (!isSafeContentInput(input)) {
+      return { original: needsOriginal ? { kind: 'unreadable' } : null, modified: needsModified ? { kind: 'unreadable' } : null };
+    }
+    const git = simpleGit(this.gitDirectory);
     const known = input.knownFingerprints;
 
     const [original, modified] = await Promise.all([
-      needsOriginal ? readSideAsImage(git, () => this.resolveOriginalSource(git, input), known?.original) : null,
-      needsModified ? readSideAsImage(git, async () => resolveModifiedSource(input), known?.modified) : null,
+      needsOriginal ? readSideAsImage(this.gitDirectory, () => this.resolveOriginalSource(git, input), known?.original) : null,
+      needsModified ? readSideAsImage(this.gitDirectory, () => resolveModifiedSource(input), known?.modified) : null,
     ]);
 
     return { original, modified };
@@ -456,6 +462,27 @@ function sidesForStatus(status: GitDiffStatus): { needsOriginal: boolean; needsM
   return { needsOriginal: status !== 'A' && status !== 'U', needsModified: status !== 'D' };
 }
 
+/** A path from the diff list: relative, with no `..` segment, so a read can never leave the worktree. */
+function isRepoRelativePath(filePath: string): boolean {
+  if (filePath === '' || path.posix.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) return false;
+  return !filePath.split(/[\\/]/).includes('..');
+}
+
+const COMMIT_OID_PATTERN = /^[0-9a-f]{4,64}$/i;
+
+/**
+ * The content readers take their paths and commit from the caller, the
+ * renderer over IPC or the phone through the mobile bridge, and join the
+ * paths onto the worktree. Every legitimate input names a file the diff list
+ * reported and a commit from the history, so anything else is refused before
+ * any read.
+ */
+function isSafeContentInput(input: GitFileContentInput): boolean {
+  if (!isRepoRelativePath(input.filePath)) return false;
+  if (input.oldPath !== undefined && !isRepoRelativePath(input.oldPath)) return false;
+  return input.commitOid === undefined || COMMIT_OID_PATTERN.test(input.commitOid);
+}
+
 /**
  * The "modified" (right) side reads from disk for working/branch, from the
  * staged index blob for the staged scope, and from the commit tree itself
@@ -468,8 +495,11 @@ function resolveModifiedSource(input: GitFileContentInput): FileSideSource {
   return { kind: 'disk', absolutePath: path.join(workingDirectory, input.filePath) };
 }
 
+/** Where a side lives. The original side can need git to say (a merge base, a parent commit), so it may be async. */
+type SideSourceResolver = () => FileSideSource | Promise<FileSideSource>;
+
 /** Any failure (missing object, missing file, unresolvable merge base) reads as empty text. */
-async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: () => Promise<FileSideSource>): Promise<string> {
+async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: SideSourceResolver): Promise<string> {
   try {
     const source = await resolveSource();
     if (source.kind === 'revision') return await git.show([source.spec]);
@@ -493,41 +523,61 @@ async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: 
 export const RECENT_WRITE_WINDOW_MS = 2000;
 export const RACY_FINGERPRINT_SUFFIX = ':racy';
 
+/** A blob id names its exact bytes, so a match on it is always safe to trust. */
+const BLOB_FINGERPRINT_PREFIX = 'blob:';
+
+/**
+ * One side of an image. A side that does not exist where the scope looks
+ * (no such object, no such file) reads unreadable quietly; any other failure
+ * also reads unreadable but is logged, since it means git or the disk failed.
+ */
 async function readSideAsImage(
-  git: ReturnType<typeof simpleGit>,
-  resolveSource: () => Promise<FileSideSource>,
+  gitDirectory: string,
+  resolveSource: SideSourceResolver,
   knownFingerprint: string | undefined,
 ): Promise<GitImageSide> {
   try {
     const source = await resolveSource();
-    let fingerprint: string;
-    let size: number;
-    if (source.kind === 'revision') {
-      // A blob id names its exact bytes, so a match is always safe to trust.
-      const objectId = (await git.revparse(['--verify', source.spec])).trim();
-      fingerprint = `blob:${objectId}`;
-      if (fingerprint === knownFingerprint) return { kind: 'unchanged', fingerprint };
-      size = Number.parseInt((await git.catFile(['-s', objectId])).trim(), 10);
-    } else {
-      const stats = await fs.promises.stat(source.absolutePath);
-      const settledFingerprint = `file:${stats.size}:${stats.mtimeMs}`;
-      // The comparison checks the window too, which only matters if the
-      // clock stepped back since the caller's copy was read.
-      const writtenRecently = Date.now() - stats.mtimeMs < RECENT_WRITE_WINDOW_MS;
-      if (settledFingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint: settledFingerprint };
-      fingerprint = writtenRecently ? `${settledFingerprint}${RACY_FINGERPRINT_SUFFIX}` : settledFingerprint;
-      size = stats.size;
-    }
-    if (!Number.isFinite(size)) return { kind: 'unreadable' };
-    if (size > IMAGE_PREVIEW_MAX_BYTES) return { kind: 'too-large', size, fingerprint };
-    // No encoding on either reader: the bytes must arrive untouched. Electron
-    // delivers a Buffer to the renderer as a Uint8Array.
-    const bytes = source.kind === 'revision'
-      ? await git.showBuffer([source.spec])
-      : await fs.promises.readFile(source.absolutePath);
-    if (isGitLfsPointer(bytes)) return { kind: 'lfs-pointer', size: bytes.length, fingerprint };
-    return { kind: 'bytes', size: bytes.length, bytes, fingerprint };
-  } catch {
+    return source.kind === 'revision'
+      ? await readRevisionImage(gitDirectory, source.spec, knownFingerprint)
+      : await readWorkingTreeImage(source.absolutePath, knownFingerprint);
+  } catch (error) {
+    if (!isMissingFileError(error)) console.warn('[DIFF] Could not read an image side:', error);
     return { kind: 'unreadable' };
   }
+}
+
+async function readRevisionImage(gitDirectory: string, spec: string, knownFingerprint: string | undefined): Promise<GitImageSide> {
+  const knownObjectId = knownFingerprint?.startsWith(BLOB_FINGERPRINT_PREFIX)
+    ? knownFingerprint.slice(BLOB_FINGERPRINT_PREFIX.length)
+    : undefined;
+  const read = await readGitObject(gitDirectory, spec, { knownObjectId, maxBytes: IMAGE_PREVIEW_MAX_BYTES });
+  if (read.kind === 'missing') return { kind: 'unreadable' };
+  const fingerprint = `${BLOB_FINGERPRINT_PREFIX}${read.objectId}`;
+  if (read.kind === 'unchanged') return { kind: 'unchanged', fingerprint };
+  if (read.kind === 'too-large') return { kind: 'too-large', size: read.size, fingerprint };
+  return imageSideFromBytes(read.bytes, fingerprint);
+}
+
+async function readWorkingTreeImage(absolutePath: string, knownFingerprint: string | undefined): Promise<GitImageSide> {
+  const stats = await fs.promises.stat(absolutePath);
+  const settledFingerprint = `file:${stats.size}:${stats.mtimeMs}`;
+  // The comparison checks the window too, which only matters if the clock
+  // stepped back since the caller's copy was read.
+  const writtenRecently = Date.now() - stats.mtimeMs < RECENT_WRITE_WINDOW_MS;
+  if (settledFingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint: settledFingerprint };
+  const fingerprint = writtenRecently ? `${settledFingerprint}${RACY_FINGERPRINT_SUFFIX}` : settledFingerprint;
+  if (stats.size > IMAGE_PREVIEW_MAX_BYTES) return { kind: 'too-large', size: stats.size, fingerprint };
+  // No encoding: the bytes must arrive untouched. Electron delivers a Buffer
+  // to the renderer as a Uint8Array.
+  return imageSideFromBytes(await fs.promises.readFile(absolutePath), fingerprint);
+}
+
+function imageSideFromBytes(bytes: Buffer, fingerprint: string): GitImageSide {
+  if (isGitLfsPointer(bytes)) return { kind: 'lfs-pointer', size: bytes.length, fingerprint };
+  return { kind: 'bytes', size: bytes.length, bytes, fingerprint };
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }

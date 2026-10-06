@@ -1,5 +1,6 @@
 import type { GitFileContentInput, GitFileContentResult, GitImageSide } from '../../../../../shared/types';
 import { imageKindForPath, imageMimeTypeForPath } from '../../../../../shared/image-preview';
+import { readAsDataUrl } from '../../../../lib/read-as-data-url';
 
 /**
  * What the Changes panel fetches for one selected file, shared by its two
@@ -12,20 +13,35 @@ import { imageKindForPath, imageMimeTypeForPath } from '../../../../../shared/im
  * worked out here, in the async fetch path, so the image view itself holds no
  * effect-driven state: a data URL (no object URL to revoke), and the natural
  * size from a real decode, which also catches bytes the browser cannot read.
- * `fingerprint` is main's name for the bytes, sent back on the next fetch of
- * the same file so main can answer that the side has not changed.
  */
 export type DiffImageSide =
-  | { kind: 'image'; size: number; dataUrl: string; width: number; height: number; fingerprint: string }
-  | { kind: 'too-large'; size: number; fingerprint: string }
-  | { kind: 'lfs-pointer'; size: number; fingerprint: string }
-  | { kind: 'undecodable'; size: number; fingerprint: string }
+  | { kind: 'image'; size: number; dataUrl: string; width: number; height: number }
+  | { kind: 'too-large'; size: number }
+  | { kind: 'lfs-pointer'; size: number }
+  | { kind: 'undecodable'; size: number }
   | { kind: 'unreadable' };
+
+/** A side that decoded, so it can be drawn and compared pixel by pixel. */
+export type DecodedImageSide = Extract<DiffImageSide, { kind: 'image' }>;
+
+/** Main's name for each side's bytes. A side main could not read has none. */
+export interface DiffImageFingerprints {
+  original?: string;
+  modified?: string;
+}
 
 /** Both sides of a changed image. A side is null when the file's status has none. */
 export interface DiffImageContent {
   original: DiffImageSide | null;
   modified: DiffImageSide | null;
+  /**
+   * Sent back on the next fetch of the same file, so main can answer that a
+   * side has not changed. Kept off the sides themselves: bytes main resends
+   * unchanged (a working-tree read inside the racy window) then keep the side
+   * object they already had, and the pixel diff's cache, keyed on side
+   * identity, still hits.
+   */
+  fingerprints: DiffImageFingerprints;
 }
 
 export interface DiffContent {
@@ -55,10 +71,9 @@ const IMAGE_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
  * empty file, and reports the file's real byte size.
  *
  * `previous` is content already fetched for this same file and scope. Its
- * image sides' fingerprints go to main, and a side main answers `unchanged`
- * is that same side object, so a refresh that changed nothing neither resends
- * nor re-decodes an image, and the pixel diff's cache, keyed on side
- * identity, still hits.
+ * image fingerprints go to main, and a side main answers `unchanged`, or
+ * resends byte for byte, is that same side object, so a refresh that changed
+ * nothing neither re-decodes an image nor misses the pixel diff's cache.
  */
 export async function fetchDiffContent(
   input: GitFileContentInput,
@@ -83,42 +98,54 @@ export async function fetchDiffContent(
   return { text: await window.electronAPI.git.fileContent(input), image: null };
 }
 
-function fingerprintOf(side: DiffImageSide | null): string | undefined {
-  return side === null || side.kind === 'unreadable' ? undefined : side.fingerprint;
-}
-
 async function fetchImageSides(input: GitFileContentInput, previous: DiffImageContent | null): Promise<DiffImageContent> {
-  const previousOriginal = previous?.original ?? null;
-  const previousModified = previous?.modified ?? null;
+  const known = previous?.fingerprints ?? {};
   const result = await window.electronAPI.git.fileImage({
     ...input,
-    knownFingerprints: { original: fingerprintOf(previousOriginal), modified: fingerprintOf(previousModified) },
+    knownFingerprints: { original: known.original, modified: known.modified },
   });
   const mimeType = imageMimeTypeForPath(input.filePath) ?? 'application/octet-stream';
   const [original, modified] = await Promise.all([
-    prepareImageSide(result.original, previousOriginal, mimeType),
-    prepareImageSide(result.modified, previousModified, mimeType),
+    prepareImageSide(result.original, previous?.original ?? null, known.original, mimeType),
+    prepareImageSide(result.modified, previous?.modified ?? null, known.modified, mimeType),
   ]);
-  return { original, modified };
+  return {
+    original: original.side,
+    modified: modified.side,
+    fingerprints: { original: original.fingerprint, modified: modified.fingerprint },
+  };
+}
+
+interface PreparedSide {
+  side: DiffImageSide | null;
+  fingerprint?: string;
 }
 
 async function prepareImageSide(
   side: GitImageSide | null,
   previous: DiffImageSide | null,
+  previousFingerprint: string | undefined,
   mimeType: string,
-): Promise<DiffImageSide | null> {
-  if (side === null) return null;
-  if (side.kind === 'unreadable') return { kind: 'unreadable' };
+): Promise<PreparedSide> {
+  if (side === null) return { side: null };
+  if (side.kind === 'unreadable') return { side: { kind: 'unreadable' } };
   if (side.kind === 'unchanged') {
     // Main matched the fingerprint this fetch sent, which came from `previous`.
     // A mismatch here would mean main answered for a side this caller never
     // held; showing nothing is safer than showing the wrong image.
-    if (previous !== null && previous.kind !== 'unreadable' && previous.fingerprint === side.fingerprint) return previous;
-    return { kind: 'unreadable' };
+    if (previous !== null && previous.kind !== 'unreadable' && previousFingerprint === side.fingerprint) {
+      return { side: previous, fingerprint: side.fingerprint };
+    }
+    return { side: { kind: 'unreadable' } };
   }
-  if (side.kind !== 'bytes') return { kind: side.kind, size: side.size, fingerprint: side.fingerprint };
+  if (side.kind !== 'bytes') return { side: { kind: side.kind, size: side.size }, fingerprint: side.fingerprint };
   const dataUrl = await readAsDataUrl(new Blob([arrayBufferBacked(side.bytes)], { type: mimeType }));
-  return decodeSide(dataUrl, side.size, side.fingerprint);
+  // The same bytes again (main resends a working-tree side read inside its
+  // racy window): keep the side already held rather than decode a copy.
+  if (previous !== null && previous.kind === 'image' && previous.dataUrl === dataUrl) {
+    return { side: previous, fingerprint: side.fingerprint };
+  }
+  return { side: await decodeSide(dataUrl, side.size), fingerprint: side.fingerprint };
 }
 
 /**
@@ -138,24 +165,15 @@ export function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 }
 
 /** Load once up front: the result carries the natural size, and a failure means the bytes are not an image. */
-async function decodeSide(dataUrl: string, size: number, fingerprint: string): Promise<DiffImageSide> {
+async function decodeSide(dataUrl: string, size: number): Promise<DiffImageSide> {
   let image: HTMLImageElement;
   try {
     image = await loadImage(dataUrl);
   } catch {
-    return { kind: 'undecodable', size, fingerprint };
+    return { kind: 'undecodable', size };
   }
-  if (image.naturalWidth === 0 || image.naturalHeight === 0) return { kind: 'undecodable', size, fingerprint };
-  return { kind: 'image', size, dataUrl, width: image.naturalWidth, height: image.naturalHeight, fingerprint };
-}
-
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read image bytes'));
-    reader.readAsDataURL(blob);
-  });
+  if (image.naturalWidth === 0 || image.naturalHeight === 0) return { kind: 'undecodable', size };
+  return { kind: 'image', size, dataUrl, width: image.naturalWidth, height: image.naturalHeight };
 }
 
 /** IPC's structured clone always hands the renderer an ArrayBuffer-backed view; copy only if it did not. */
@@ -180,6 +198,7 @@ function imageSideEqual(first: DiffImageSide | null, second: DiffImageSide | nul
  * which encodes every byte, so a regenerated PNG of the same size still counts
  * as changed. A side main answered `unchanged` is the previous side itself,
  * whose data URL is the same string, so that comparison is immediate.
+ * Fingerprints are not compared: they name the bytes, they are not drawn.
  */
 export function diffContentEqual(first: DiffContent, second: DiffContent): boolean {
   if (first.text.original !== second.text.original) return false;
@@ -210,8 +229,9 @@ export function diffContentImageBytes(content: DiffContent): number {
 /**
  * Drop the least recently used image entries until the cache's images fit the
  * budget. Relies on Map insertion order, so a cache hit must re-insert its key
- * to count as recently used. Text-only entries are never evicted here, and
- * neither is the newest entry, which is the file on screen.
+ * to count as recently used (DiffContentCache does). Text-only entries are
+ * never evicted here, and neither is the newest entry, which is the file on
+ * screen.
  */
 export function trimImageCache<Entry extends { result: DiffContent }>(
   cache: Map<string, Entry>,
@@ -229,6 +249,40 @@ export function trimImageCache<Entry extends { result: DiffContent }>(
     if (weight === 0) continue;
     cache.delete(key);
     total -= weight;
+  }
+}
+
+/**
+ * The in-app panel's content cache, least recently used first. A read counts
+ * as a use, so the order trimImageCache evicts by is kept by the cache itself
+ * rather than by every caller remembering to re-insert what it read.
+ */
+export class DiffContentCache<Entry extends { result: DiffContent }> {
+  private readonly entries = new Map<string, Entry>();
+  private readonly imageBudgetBytes: number;
+
+  constructor(imageBudgetBytes: number = IMAGE_CACHE_BUDGET_BYTES) {
+    this.imageBudgetBytes = imageBudgetBytes;
+  }
+
+  get(key: string): Entry | undefined {
+    const entry = this.entries.get(key);
+    if (entry !== undefined) {
+      this.entries.delete(key);
+      this.entries.set(key, entry);
+    }
+    return entry;
+  }
+
+  set(key: string, entry: Entry): void {
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    trimImageCache(this.entries, this.imageBudgetBytes);
+  }
+
+  /** The cached keys, least recently used first. Listing them is not a use. */
+  keys(): string[] {
+    return [...this.entries.keys()];
   }
 }
 

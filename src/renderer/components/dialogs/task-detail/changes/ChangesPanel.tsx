@@ -17,7 +17,7 @@ import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybindin
 import { MousePointerClick } from 'lucide-react';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileHistoryCommit, Task } from '../../../../../shared/types';
-import { EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, trimImageCache, type DiffContent } from './diff-content';
+import { DiffContentCache, EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, type DiffContent } from './diff-content';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
@@ -211,8 +211,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // Stale-while-revalidate content cache. Each entry stores the fetch result
   // and the generation it was fetched in. When fs.watch fires, the generation
   // increments - stale entries are served immediately while a background
-  // refetch runs, so content updates without any loading indicators.
-  const contentCacheRef = useRef(new Map<string, ContentCacheEntry>());
+  // refetch runs, so content updates without any loading indicators. Image
+  // payloads are budgeted, and the cache evicts the least recently used.
+  const contentCacheRef = useRef(new DiffContentCache<ContentCacheEntry>());
   const cacheGenerationRef = useRef(0);
 
   // Tracks whether the initial file list fetch has completed, used to gate
@@ -276,19 +277,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     // Key the cache by selection (commit OID or scope) so a file's diffs never
     // bleed across a scope switch or a different commit selection.
     const cacheKey = changesSelectedCommit ? `commit:${changesSelectedCommit}:${filePath}` : `scope:${scope}:${filePath}`;
-    // Image payloads are budgeted (trimImageCache), so every write re-inserts
-    // its key at the end of the Map's order: the least recently used image is
-    // the one evicted.
-    const storeInCache = (entry: ContentCacheEntry) => {
-      contentCacheRef.current.delete(cacheKey);
-      contentCacheRef.current.set(cacheKey, entry);
-      trimImageCache(contentCacheRef.current);
-    };
     const cached = contentCacheRef.current.get(cacheKey);
     if (cached) {
       // Always serve cached content immediately (stale-while-revalidate)
       setFileContent({ result: cached.result, filePath });
-      storeInCache(cached);
       if (cached.generation === cacheGenerationRef.current) {
         return; // Fresh entry - no refetch needed
       }
@@ -307,7 +299,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         scope,
         commitOid: changesSelectedCommit ?? undefined,
       }, fileEntry?.binary ?? false, cached.result).then((freshResult) => {
-        storeInCache({ result: freshResult, generation: currentGeneration });
+        contentCacheRef.current.set(cacheKey, { result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually
         // changed. Images compare byte for byte (diffContentEqual), so a
         // regenerated screenshot repaints even when its text is empty both times.
@@ -335,7 +327,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         scope,
         commitOid: changesSelectedCommit ?? undefined,
       }, file.binary);
-      storeInCache({ result, generation: cacheGenerationRef.current });
+      contentCacheRef.current.set(cacheKey, { result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
       // display this result if its file is still selected, mirroring the
       // background-refetch path above.

@@ -3,8 +3,8 @@ import { Blend, ChevronsLeftRight, Columns2, ImageOff, Loader2, Rows2, ScanSearc
 import type { LucideIcon } from 'lucide-react';
 import { formatBytes } from '../../../../lib/format-bytes';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../../../../shared/image-preview';
-import { imageCompareState, type DiffImageContent, type DiffImageSide, type ImageCompareMode } from './diff-content';
-import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type DecodedImageSide, type PixelDiffState } from './pixel-diff-client';
+import { imageCompareState, type DecodedImageSide, type DiffImageContent, type DiffImageSide, type ImageCompareMode } from './diff-content';
+import { PIXEL_DIFF_COLOR_CSS, usePixelDiff, type PixelDiffState } from './pixel-diff-client';
 
 /**
  * The Changes panel's image view: before and after images in place of a text
