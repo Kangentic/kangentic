@@ -24,7 +24,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import { clearSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
+import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -194,9 +194,14 @@ export function registerSessionHandlers(context: IpcContext): void {
         // label also rides the paused session's `session-ended` to a paired
         // phone, which then reads the swap as a respawn rather than a stop.
         // Emitted only now that the resume will spawn: the self-heal return
-        // above spawns nothing. One `finally` retires it on every exit, the
-        // abort included.
-        const onProgress = createProgressCallback(context.mainWindow, taskId);
+        // above spawns nothing. One `finally` releases it on every exit, the
+        // abort included. A claim rather than a plain clear: a phone Start
+        // registers alongside this resume without aborting it, and a newer
+        // resume aborts this one and labels the task before this one unwinds,
+        // so an unconditional clear here would wipe the label the other spawn
+        // is still showing.
+        const progress = claimSpawnProgress(context.mainWindow, taskId);
+        const onProgress = progress.onProgress;
         onProgress('resuming');
         try {
           // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
@@ -260,7 +265,7 @@ export function registerSessionHandlers(context: IpcContext): void {
             return newSession;
           });
         } finally {
-          clearSpawnProgress(context.mainWindow, taskId);
+          progress.release();
         }
       } catch (error) {
         if (isAbortError(error)) {

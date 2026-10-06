@@ -22,6 +22,7 @@ import {
   toReadStreamSessionStatusWire,
   toSessionEventWire,
   toSessionUsageWire,
+  toSpawnProgressLabelWire,
   toTerminalDimensionsWire,
   toWireJson,
 } from './wire-mappers';
@@ -387,7 +388,8 @@ function subscribeReadStream(
     // Annotated, not inferred: getInFlightSpawnProgress()'s Record<string,
     // string> index signature erases the missing-key case, which is the
     // common one here (a park with no respawn in flight).
-    const spawnProgressLabel: string | undefined = getInFlightSpawnProgress()[taskId];
+    const inFlightLabel: string | undefined = getInFlightSpawnProgress()[taskId];
+    const spawnProgressLabel = toSpawnProgressLabelWire(inFlightLabel ?? null);
     sendEvent(session, {
       kind: 'activity',
       sessionId,

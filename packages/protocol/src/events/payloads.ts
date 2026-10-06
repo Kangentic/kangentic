@@ -328,8 +328,8 @@ export interface BoardTaskWire {
   created_at: string;
   updated_at: string;
   /**
-   * The task's in-flight spawn-progress label, exactly as the desktop card's
-   * preparing footer shows it: "Creating worktree...", "Fetching latest...",
+   * The task's in-flight spawn-progress label, the text of the desktop card's
+   * preparing footer: "Creating worktree...", "Fetching latest...",
    * "Waiting (2 ahead)", "Switching model...", "Starting agent...", a git-queue
    * wait with its elapsed time, and any staleness note the desktop appends
    * ("Starting agent... (base 3 behind)"). The desktop announces every change
@@ -337,9 +337,11 @@ export interface BoardTaskWire {
    * second per task.
    *
    * Untrusted display text, the same terms as `session-ended`'s
-   * `spawnProgressLabel`: cap its length, never parse it or switch on it, and
-   * fall back to generic copy. It includes raw git progress lines passed
-   * through verbatim.
+   * `spawnProgressLabel`: never parse it or switch on it, and fall back to
+   * generic copy. It can be a raw git progress line. From 0.16.0 the desktop
+   * strips escape sequences and control characters, turns line breaks and
+   * tabs into spaces, and caps it at 120 characters ending in "...", but a
+   * client still caps it for its own layout.
    *
    * Precedence, matching the desktop card: a label overrides a `suspended`
    * session status (a respawn is in flight behind a session that was just

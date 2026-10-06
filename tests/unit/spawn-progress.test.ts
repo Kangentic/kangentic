@@ -5,6 +5,7 @@
  * Contract:
  *  - emit/createProgressCallback set the in-flight map AND push IPC.
  *  - clear deletes from the map AND pushes a null label.
+ *  - a claim's release clears only while the claim still owns the label.
  *  - createProgressCallback resolves known phases to labels and passes
  *    unknown strings (raw git progress) through verbatim.
  *  - getInFlightSpawnProgress() prunes TTL-expired entries on read.
@@ -19,6 +20,7 @@ import {
   emitSpawnProgress,
   emitSpawnWaiting,
   createProgressCallback,
+  claimSpawnProgress,
   clearSpawnProgress,
   getInFlightSpawnProgress,
   onSpawnProgressTransition,
@@ -332,6 +334,110 @@ describe('spawn-progress queryable map', () => {
     // At 270_001ms: pruned (past TTL from the last push at 150s).
     nowSpy.mockReturnValue(150_000 + 120_001);
     expect(getInFlightSpawnProgress()['task-seq']).toBeUndefined();
+  });
+});
+
+describe('claimSpawnProgress: a region clears only its own label', () => {
+  beforeEach(() => {
+    __resetSpawnProgressForTest();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('release clears the claim\'s own label and pushes null', () => {
+    const { window, send } = makeWindow();
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('resuming');
+    claim.onProgress('Receiving objects: 45%');
+    expect(getInFlightSpawnProgress()).toEqual({ 'task-1': 'Receiving objects: 45%' });
+
+    claim.release();
+
+    expect(getInFlightSpawnProgress()).toEqual({});
+    expect(send).toHaveBeenLastCalledWith('task:spawnProgress', 'task-1', null);
+  });
+
+  it.each([
+    ['a second claim', (window: BrowserWindow) => claimSpawnProgress(window, 'task-1').onProgress('resuming')],
+    ['createProgressCallback', (window: BrowserWindow) => createProgressCallback(window, 'task-1')('fetching')],
+    ['emitSpawnProgress', (window: BrowserWindow) => emitSpawnProgress(window, 'task-1', 'switching-model')],
+    ['emitSpawnWaiting', (window: BrowserWindow) => emitSpawnWaiting(window, 'task-1', 2)],
+  ])('release leaves the label alone once %s has labelled the task since', (_label, labelFromAnotherPath) => {
+    const { window, send } = makeWindow();
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('resuming');
+    labelFromAnotherPath(window);
+    const otherLabel = getInFlightSpawnProgress()['task-1'];
+    send.mockClear();
+
+    claim.release();
+
+    expect(getInFlightSpawnProgress()['task-1']).toBe(otherLabel);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('the claim that labelled last still releases its own label after an older one stood aside', () => {
+    const { window } = makeWindow();
+    const olderClaim = claimSpawnProgress(window, 'task-1');
+    olderClaim.onProgress('resuming');
+    const newerClaim = claimSpawnProgress(window, 'task-1');
+    newerClaim.onProgress('resuming');
+
+    olderClaim.release();
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Resuming session...');
+
+    newerClaim.release();
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('a stale-note decoration keeps the claim as owner, so release still clears', () => {
+    const { window } = makeWindow();
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('starting-agent');
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Starting agent... (base 3 behind)');
+
+    claim.release();
+
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('with no label left, release still pushes null (a TTL sweep pushed nothing to the renderer)', () => {
+    const { window, send } = makeWindow();
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1_000);
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('resuming');
+    nowSpy.mockReturnValue(1_000 + 120_001);
+    expect(getInFlightSpawnProgress()).toEqual({});
+    send.mockClear();
+
+    claim.release();
+
+    expect(send).toHaveBeenCalledWith('task:spawnProgress', 'task-1', null);
+  });
+
+  it('an unconditional clearSpawnProgress still clears a claim\'s label (ownership protects one direction only)', () => {
+    const { window } = makeWindow();
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('resuming');
+
+    clearSpawnProgress(window, 'task-1');
+
+    expect(getInFlightSpawnProgress()).toEqual({});
+  });
+
+  it('a label on another task never blocks the release', () => {
+    const { window } = makeWindow();
+    const claim = claimSpawnProgress(window, 'task-1');
+    claim.onProgress('resuming');
+    emitSpawnProgress(window, 'task-2', 'fetching');
+
+    claim.release();
+
+    expect(getInFlightSpawnProgress()).toEqual({ 'task-2': 'Fetching latest...' });
   });
 });
 

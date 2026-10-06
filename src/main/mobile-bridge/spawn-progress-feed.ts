@@ -25,7 +25,7 @@
 import { onSpawnProgressChange, SPAWN_PROGRESS_TTL_MS } from '../transition-engine/spawn-progress';
 
 /** Window after an emit during which further changes coalesce into one trailing emit. */
-const DEFAULT_THROTTLE_MS = 1000;
+const THROTTLE_MS = 1000;
 
 /**
  * A TTL expiry in getInFlightSpawnProgress() drops a label without a push, so
@@ -49,13 +49,10 @@ export type SpawnProgressChangedListener = (projectId: string, taskId: string) =
 export interface SpawnProgressFeedOptions {
   /** Which project owns a task, or null when none does (deleted, or a project whose database will not open). */
   resolveProjectIdForTask: (taskId: string) => string | null;
-  /** Defaults to 1000ms. */
-  throttleMs?: number;
 }
 
 export class SpawnProgressFeed {
   private readonly resolveProjectIdForTask: (taskId: string) => string | null;
-  private readonly throttleMs: number;
   private readonly states = new Map<string, TaskThrottleState>();
   private readonly listeners = new Set<SpawnProgressChangedListener>();
   private unsubscribe: (() => void) | null = null;
@@ -63,7 +60,6 @@ export class SpawnProgressFeed {
 
   constructor(options: SpawnProgressFeedOptions) {
     this.resolveProjectIdForTask = options.resolveProjectIdForTask;
-    this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
   }
 
   start(): void {
@@ -107,7 +103,7 @@ export class SpawnProgressFeed {
       state.windowTimer = null;
       if (this.disposed) return;
       this.deliver(taskId, state);
-    }, this.throttleMs);
+    }, THROTTLE_MS);
     windowTimer.unref?.();
     state.windowTimer = windowTimer;
   }

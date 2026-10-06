@@ -6,7 +6,13 @@
  * or Swimlane.
  */
 import { describe, it, expect } from 'vitest';
-import { columnSpawnsSession, toBoardColumnWire, toBoardTaskWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
+import {
+  columnSpawnsSession,
+  SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH,
+  toBoardColumnWire,
+  toBoardTaskWire,
+  toSpawnProgressLabelWire,
+} from '../../../src/main/mobile-bridge/handlers/wire-mappers';
 import { parseBoardColumnWire, parseBoardTaskWire } from '@kangentic/protocol';
 import type { JsonValue } from '@kangentic/protocol';
 import type { Swimlane, Task } from '../../../src/shared/types';
@@ -63,6 +69,50 @@ describe('toBoardTaskWire', () => {
   it('the label survives the phone-side parse', () => {
     const wire = toBoardTaskWire(makeTask(), 'Switching model...');
     expect(parseBoardTaskWire(wire as unknown as JsonValue).spawn_progress).toBe('Switching model...');
+  });
+
+  it('sanitizes the label it puts on the wire, so a raw git line never reaches the phone as-is', () => {
+    const wire = toBoardTaskWire(makeTask(), '\u001b[32mReceiving objects:\u001b[0m 45%\r');
+    expect(wire.spawn_progress).toBe('Receiving objects: 45%');
+  });
+});
+
+describe('toSpawnProgressLabelWire', () => {
+  it('leaves an ordinary label untouched', () => {
+    expect(toSpawnProgressLabelWire('Starting agent... (base 3 behind)')).toBe('Starting agent... (base 3 behind)');
+  });
+
+  it('passes null through', () => {
+    expect(toSpawnProgressLabelWire(null)).toBeNull();
+  });
+
+  it('strips color codes, an OSC title sequence, and stray control characters', () => {
+    const raw = '\u001b]0;title\u0007\u001b[1;33mResolving deltas:\u001b[0m\u0008 100%\u0000';
+    expect(toSpawnProgressLabelWire(raw)).toBe('Resolving deltas: 100%');
+  });
+
+  it('turns carriage returns, line feeds and tabs into single spaces and trims the ends', () => {
+    expect(toSpawnProgressLabelWire('\rCounting objects:\t 10%\r\nCounting objects: 20%\n')).toBe('Counting objects: 10% Counting objects: 20%');
+  });
+
+  it('a label with nothing printable left is null', () => {
+    expect(toSpawnProgressLabelWire('\u001b[2K\r  \n')).toBeNull();
+  });
+
+  it(`caps a long label at ${SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH} code points, ending in "..."`, () => {
+    const capped = toSpawnProgressLabelWire('x'.repeat(500));
+    expect(capped).toBe(`${'x'.repeat(SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3)}...`);
+  });
+
+  it('counts code points, so the cap never splits an emoji in half', () => {
+    const capped = toSpawnProgressLabelWire('\u{1F680}'.repeat(200));
+    expect(capped).toBe(`${'\u{1F680}'.repeat(SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3)}...`);
+    expect(Array.from(capped ?? '')).toHaveLength(SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH);
+  });
+
+  it('a label exactly at the cap is not truncated', () => {
+    const atCap = 'y'.repeat(SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH);
+    expect(toSpawnProgressLabelWire(atCap)).toBe(atCap);
   });
 });
 
