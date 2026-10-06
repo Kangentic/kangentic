@@ -17,7 +17,7 @@ vi.mock('../../../src/main/retrieval/retrieval-client', async () => (
   (await import('../helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
 ));
 
-import type { CapabilityRequestMessage } from '@kangentic/protocol';
+import { isBridgeEvent, parseActivityEventPayload, type CapabilityRequestMessage, type JsonValue } from '@kangentic/protocol';
 import type { BrowserWindow } from 'electron';
 import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile-bridge/handlers/read-stream';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
@@ -520,13 +520,35 @@ describe('handleReadStream', () => {
   });
 
   describe('resuming, live status, and the successor hop', () => {
-    /** Every activity payload this bridge session was sent, in order. */
-    function sentActivityPayloads(session: BridgeSession): Array<Record<string, unknown>> {
+    /** Every activity event (envelope included) this bridge session was sent, in order. */
+    function sentActivityEvents(session: BridgeSession): Array<{ kind: string; sessionId: string; taskId: string; payload: Record<string, unknown> }> {
       return vi
         .mocked(session.sendMessage)
-        .mock.calls.map((call) => call[0] as { event?: { kind?: string; payload?: Record<string, unknown> } })
+        .mock.calls.map((call) => call[0] as { event?: { kind: string; sessionId: string; taskId: string; payload: Record<string, unknown> } })
         .filter((message) => message.event?.kind === 'activity')
-        .map((message) => message.event?.payload ?? {});
+        .map((message) => message.event as { kind: string; sessionId: string; taskId: string; payload: Record<string, unknown> });
+    }
+
+    /** Every activity payload this bridge session was sent, in order. */
+    function sentActivityPayloads(session: BridgeSession): Array<Record<string, unknown>> {
+      return sentActivityEvents(session).map((event) => event.payload);
+    }
+
+    /**
+     * The producer-to-parser round trip: what the phone's feed router does with
+     * each event the desktop sent. The envelope must pass `isBridgeEvent` (a
+     * false return drops the event on the phone), and narrowing the payload
+     * must give back exactly what was sent, so a field the desktop emits but
+     * the parser does not copy (or the reverse) fails here instead of vanishing
+     * on a phone.
+     */
+    function expectPhoneAcceptsEveryActivityEvent(session: BridgeSession): void {
+      const events = sentActivityEvents(session);
+      expect(events.length).toBeGreaterThan(0);
+      for (const event of events) {
+        expect(isBridgeEvent(event)).toBe(true);
+        expect(parseActivityEventPayload(event.payload as JsonValue)).toEqual(event.payload);
+      }
     }
 
     it('the snapshot carries resuming from the session row', async () => {
@@ -570,6 +592,23 @@ describe('handleReadStream', () => {
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
       expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: false }]);
+      expectPhoneAcceptsEveryActivityEvent(session);
+    });
+
+    it('a resuming-only flip (status unchanged) pushes exactly one status event, and a repeat pushes none', async () => {
+      // The row stays 'running'; only `resuming` goes false -> true, as it does
+      // when a resumed session's agent is still replaying its transcript.
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, new SubscriptionRegistry());
+
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: true }]);
+
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
+      expect(sentActivityPayloads(session)).toHaveLength(1);
+      expectPhoneAcceptsEveryActivityEvent(session);
     });
 
     it('running -> suspended pushes status before the exit\'s session-ended, then tears down', async () => {
@@ -587,6 +626,7 @@ describe('handleReadStream', () => {
         { type: 'session-ended', intentional: true },
       ]);
       expect(subscriptions.has('stream:sess-1')).toBe(false);
+      expectPhoneAcceptsEveryActivityEvent(session);
     });
 
     it('an exited status (the agent-absence sweep) is pushed without tearing the feed down; the exit that follows ends it', async () => {
@@ -625,6 +665,7 @@ describe('handleReadStream', () => {
       ]);
       expect(subscriptions.has('stream:sess-1')).toBe(false);
       expect(sessionManager.listenerCount('session-changed')).toBe(0);
+      expectPhoneAcceptsEveryActivityEvent(session);
     });
 
     it('a successor that appears while the paused row still exists (queue full) sends nothing until the row is dropped', async () => {
@@ -647,6 +688,7 @@ describe('handleReadStream', () => {
       expect(sentActivityPayloads(session)).toEqual([
         { type: 'session-ended', intentional: true, successorSessionId: 'sess-2' },
       ]);
+      expectPhoneAcceptsEveryActivityEvent(session);
     });
 
     it('a removed paused row ends the feed with no successor', async () => {
@@ -699,6 +741,114 @@ describe('handleReadStream', () => {
 
       expect(sentActivityPayloads(session)).toEqual([]);
       expect(subscriptions.has('stream:sess-1')).toBe(true);
+    });
+
+    describe('with the feed\'s own row already gone from the registry', () => {
+      type RegistryRow = { id: string; taskId: string; status: string; resuming: boolean; transient?: boolean };
+
+      /** Subscribes a list-only feed on `sess-1`; the caller then drops the row (`getSession` -> undefined) the way the spawn flow's sibling drain does. */
+      async function subscribeFeed(snapshotRow: RegistryRow = { id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false }) {
+        sessionManager.getSession.mockReturnValue(snapshotRow);
+        const session = fakeSession();
+        const subscriptions = new SubscriptionRegistry();
+        const context = { sessionManager } as unknown as IpcContext;
+        await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+        return { session, subscriptions };
+      }
+
+      it('an exited same-task newcomer ends the feed as intentional with no successor id at all', async () => {
+        const { session, subscriptions } = await subscribeFeed();
+
+        // A newcomer that is already 'exited' is no live successor to name.
+        sessionManager.getSession.mockReturnValue(undefined);
+        sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'exited', resuming: false });
+
+        const payloads = sentActivityPayloads(session);
+        expect(payloads).toEqual([{ type: 'session-ended', intentional: true }]);
+        // toEqual treats a key set to undefined as absent, so pin the absence.
+        expect('successorSessionId' in payloads[0]).toBe(false);
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+        expectPhoneAcceptsEveryActivityEvent(session);
+      });
+
+      it('a transient same-task newcomer is never taken for a successor', async () => {
+        // The feed's own row is a normal task session, so only the newcomer's
+        // transient flag can be what holds the feed in place.
+        const { session, subscriptions } = await subscribeFeed();
+
+        sessionManager.getSession.mockReturnValue(undefined);
+        sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'running', resuming: false, transient: true });
+
+        expect(sentActivityPayloads(session)).toEqual([]);
+        expect(subscriptions.has('stream:sess-1')).toBe(true);
+        expect(sessionManager.listenerCount('session-changed')).toBe(1);
+
+        // Control: the same event without the flag does end the feed, so the
+        // flag was the only thing standing in the way.
+        sessionManager.emit('session-changed', 'sess-3', { id: 'sess-3', taskId: 'task-1', status: 'running', resuming: false });
+        expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true, successorSessionId: 'sess-3' }]);
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+      });
+
+      it('a new session of a different task sends nothing and leaves the subscription in place', async () => {
+        const { session, subscriptions } = await subscribeFeed();
+
+        sessionManager.getSession.mockReturnValue(undefined);
+        sessionManager.emit('session-changed', 'sess-9', { id: 'sess-9', taskId: 'task-9', status: 'running', resuming: false });
+
+        expect(sentActivityPayloads(session)).toEqual([]);
+        expect(subscriptions.has('stream:sess-1')).toBe(true);
+        expect(sessionManager.listenerCount('session-changed')).toBe(1);
+
+        // Control: the same event for this feed's own task does end it, so the
+        // task check was the only thing standing in the way.
+        sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'running', resuming: false });
+        expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true, successorSessionId: 'sess-2' }]);
+      });
+
+      it('an exit of a session of a different task sends nothing and leaves the subscription in place', async () => {
+        const { session, subscriptions } = await subscribeFeed();
+        const taskIdBySession: Record<string, string> = { 'sess-1': 'task-1', 'sess-2': 'task-1', 'sess-9': 'task-9' };
+        sessionManager.getSessionTaskId.mockImplementation((id: string) => taskIdBySession[id]);
+
+        sessionManager.getSession.mockReturnValue(undefined);
+        sessionManager.emit('exit', 'sess-9', -1);
+
+        expect(sentActivityPayloads(session)).toEqual([]);
+        expect(subscriptions.has('stream:sess-1')).toBe(true);
+        expect(sessionManager.listenerCount('exit')).toBe(1);
+
+        // Control: a same-task exit does end it, so the task check was the only
+        // thing standing in the way.
+        sessionManager.emit('exit', 'sess-2', -1);
+        expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+      });
+
+      // Each case removes exactly one half of
+      // `tracksSuccessor = taskId !== '' && snapshotSession.transient !== true`
+      // from the picture: the newcomer is shaped to pass every OTHER guard, so
+      // only that half can be what holds the feed in place. The Command Terminal
+      // test above sets both halves at once, so it cannot tell them apart.
+      it.each([
+        ['the feed\'s own row is transient but carries a task id', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false, transient: true }, 'task-1'],
+        ['the feed\'s own row has no task id and is not transient', { id: 'sess-1', taskId: '', status: 'running', resuming: false }, ''],
+      ])('never treats another session as its successor when %s', async (_label, snapshotRow, sharedTaskId) => {
+        const { session, subscriptions } = await subscribeFeed(snapshotRow);
+        sessionManager.getSession.mockReturnValue(undefined);
+        // Same task id as the feed's own row, not transient, so the newcomer
+        // passes the task and transient checks a real successor passes.
+        sessionManager.getSessionTaskId.mockImplementation((id: string) => (id === 'sess-2' ? sharedTaskId : undefined));
+
+        sessionManager.emit('exit', 'sess-2', -1);
+        expect(sentActivityPayloads(session)).toEqual([]);
+        expect(subscriptions.has('stream:sess-1')).toBe(true);
+
+        sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: sharedTaskId, status: 'running', resuming: false });
+        expect(sentActivityPayloads(session)).toEqual([]);
+        expect(subscriptions.has('stream:sess-1')).toBe(true);
+        expect(sessionManager.listenerCount('session-changed')).toBe(1);
+      });
     });
   });
 

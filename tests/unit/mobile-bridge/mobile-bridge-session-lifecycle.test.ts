@@ -32,10 +32,12 @@
  * EventEmitter so tests can emit 'message' / 'remoteClosed' the same way the
  * real BridgeSession would.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import type { BrowserWindow } from 'electron';
 import type { CapabilityRequestMessage, CapabilityResponseMessage, RosterDeviceEntry, TransportState } from '@kangentic/protocol';
 import type { MobileDeviceConnectionState } from '../../../src/shared/types';
+import { emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
 
 vi.mock('electron', async () => {
   const { createFakeSafeStorage } = await import('../helpers/fake-safe-storage');
@@ -124,6 +126,50 @@ const fakeTransport = {
 vi.mock('../../../src/main/mobile-bridge/transport/transport-factory', () => ({
   createTransport: vi.fn(() => fakeTransport),
 }));
+
+// Seams for the attachContext() wiring cases at the bottom of the file. Each
+// wrapper below passes straight through to the real module unless a case sets
+// the matching field, so every other case in this file runs unchanged.
+const attachCapture = vi.hoisted(() => ({
+  /** The options attachContext() built its PushNotifier from. */
+  pushNotifierOptions: null as { resolveTaskContextByTaskId: (taskId: string) => { projectId: string; taskId: string; taskTitle: string } | null } | null,
+  /** The deps attachContext() registered the capability handlers with. */
+  handlerDeps: null as { spawnProgressFeed: { onTaskSpawnProgressChanged: (listener: (projectId: string, taskId: string) => void) => () => void } } | null,
+  /** Stands in for getProjectRepos when set: the fake repos of one project, or a throw. */
+  projectRepos: null as ((projectId: string) => unknown) | null,
+}));
+
+vi.mock('../../../src/main/ipc/helpers/project-repos', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/ipc/helpers/project-repos')>();
+  return {
+    ...actual,
+    getProjectRepos: (...args: Parameters<typeof actual.getProjectRepos>) => (
+      attachCapture.projectRepos ? attachCapture.projectRepos(args[1] ?? '') : actual.getProjectRepos(...args)
+    ),
+  };
+});
+
+vi.mock('../../../src/main/mobile-bridge/push/push-notifier', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/mobile-bridge/push/push-notifier')>();
+  class CapturingPushNotifier extends actual.PushNotifier {
+    constructor(options: ConstructorParameters<typeof actual.PushNotifier>[0]) {
+      super(options);
+      attachCapture.pushNotifierOptions = options;
+    }
+  }
+  return { ...actual, PushNotifier: CapturingPushNotifier };
+});
+
+vi.mock('../../../src/main/mobile-bridge/handlers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/mobile-bridge/handlers')>();
+  return {
+    ...actual,
+    registerCapabilityHandlers: (...args: Parameters<typeof actual.registerCapabilityHandlers>) => {
+      attachCapture.handlerDeps = args[1];
+      return actual.registerCapabilityHandlers(...args);
+    },
+  };
+});
 
 const { MobileBridgeService, resetForcedRedialTelemetryForTests } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
 const { trackEvent } = await import('../../../src/main/analytics/analytics');
@@ -606,5 +652,121 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     expect(vi.mocked(createTransport)).toHaveBeenCalledWith(expect.objectContaining({ logLabel: fakeDevice.deviceId.slice(0, 8) }));
 
     service.dispose();
+  });
+});
+
+describe('MobileBridgeService.attachContext() task-owner and spawn-progress wiring', () => {
+  /** Task titles by task id for each fake project, or 'throws' for a project whose repos will not open. */
+  type FakeProjects = Record<string, Record<string, string> | 'throws'>;
+
+  const servicesToDispose: Array<InstanceType<typeof MobileBridgeService>> = [];
+
+  /** attachContext() over a fake project list, with `getProjectRepos` answering from `projects` in list order. */
+  function attachWithProjects(projects: FakeProjects): InstanceType<typeof MobileBridgeService> {
+    attachCapture.projectRepos = (projectId) => {
+      const tasks = projects[projectId];
+      if (tasks === 'throws') throw new Error('this project database will not open');
+      return {
+        tasks: { getById: (taskId: string) => (tasks && taskId in tasks ? { id: taskId, title: tasks[taskId] } : undefined) },
+      };
+    };
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    servicesToDispose.push(service);
+    const sessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
+    const projectRepo = { list: () => Object.keys(projects).map((id) => ({ id })) };
+    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn() }, projectRepo } as never);
+    return service;
+  }
+
+  function resolveForSpawnStall(taskId: string): { projectId: string; taskId: string; taskTitle: string } | null {
+    const options = attachCapture.pushNotifierOptions;
+    if (!options) throw new Error('attachContext() did not build a PushNotifier');
+    return options.resolveTaskContextByTaskId(taskId);
+  }
+
+  /** The feed attachContext() handed the capability handlers, which read-board subscribes to. */
+  function handlerFeed(): NonNullable<typeof attachCapture.handlerDeps>['spawnProgressFeed'] {
+    const deps = attachCapture.handlerDeps;
+    if (!deps) throw new Error('attachContext() did not register the capability handlers');
+    return deps.spawnProgressFeed;
+  }
+
+  function fakeWindow(): BrowserWindow {
+    return { isDestroyed: () => false, webContents: { send: vi.fn() } } as unknown as BrowserWindow;
+  }
+
+  beforeEach(() => {
+    attachCapture.pushNotifierOptions = null;
+    attachCapture.handlerDeps = null;
+    attachCapture.projectRepos = null;
+    __resetSpawnProgressForTest();
+  });
+
+  afterEach(() => {
+    for (const service of servicesToDispose) service.dispose();
+    servicesToDispose.length = 0;
+    attachCapture.projectRepos = null;
+    __resetSpawnProgressForTest();
+  });
+
+  it('a spawn stall resolves the task to the project that owns it and to its title, skipping a project that does not hold it', () => {
+    attachWithProjects({
+      'proj-other': { 'task-9': 'Somebody else\'s task' },
+      'proj-owner': { 'task-1': 'Add dark mode' },
+    });
+
+    expect(resolveForSpawnStall('task-1')).toEqual({ projectId: 'proj-owner', taskId: 'task-1', taskTitle: 'Add dark mode' });
+  });
+
+  it('a spawn stall skips a project whose repos throw and keeps looking', () => {
+    attachWithProjects({
+      'proj-broken': 'throws',
+      'proj-owner': { 'task-1': 'Add dark mode' },
+    });
+
+    expect(resolveForSpawnStall('task-1')).toEqual({ projectId: 'proj-owner', taskId: 'task-1', taskTitle: 'Add dark mode' });
+  });
+
+  it('a spawn stall for a task no project owns resolves to null', () => {
+    attachWithProjects({
+      'proj-broken': 'throws',
+      'proj-other': { 'task-9': 'Somebody else\'s task' },
+    });
+
+    expect(resolveForSpawnStall('task-1')).toBeNull();
+  });
+
+  it('registers the capability handlers with a started spawn-progress feed that names the owning project', () => {
+    attachWithProjects({
+      'proj-broken': 'throws',
+      'proj-other': {},
+      'proj-owner': { 'task-1': 'Add dark mode' },
+    });
+    const onProgressChanged = vi.fn();
+    handlerFeed().onTaskSpawnProgressChanged(onProgressChanged);
+
+    // A real push through the spawn-progress module: only a started feed hears
+    // it, and only a working owner lookup can name the project.
+    emitSpawnProgress(fakeWindow(), 'task-1', 'starting-agent');
+
+    expect(onProgressChanged).toHaveBeenCalledExactlyOnceWith('proj-owner', 'task-1');
+  });
+
+  it('dispose() detaches the spawn-progress feed from the module-level push', () => {
+    const service = attachWithProjects({
+      'proj-owner': { 'task-1': 'Add dark mode', 'task-2': 'Fix the login bug' },
+    });
+    const onProgressChanged = vi.fn();
+    handlerFeed().onTaskSpawnProgressChanged(onProgressChanged);
+    emitSpawnProgress(fakeWindow(), 'task-1', 'starting-agent');
+    expect(onProgressChanged).toHaveBeenCalledTimes(1);
+
+    service.dispose();
+
+    // A DIFFERENT task: task-1's first push opened a throttle window, so a
+    // second change for it would never deliver at once and this would pass even
+    // with the feed still attached.
+    emitSpawnProgress(fakeWindow(), 'task-2', 'starting-agent');
+    expect(onProgressChanged).toHaveBeenCalledTimes(1);
   });
 });

@@ -22,7 +22,7 @@
  * re-pushes "Waiting (2 ahead)" every 5s) emits nothing, and the clear always
  * emits.
  */
-import { onSpawnProgressChange } from '../transition-engine/spawn-progress';
+import { onSpawnProgressChange, SPAWN_PROGRESS_TTL_MS } from '../transition-engine/spawn-progress';
 
 /** Window after an emit during which further changes coalesce into one trailing emit. */
 const DEFAULT_THROTTLE_MS = 1000;
@@ -30,9 +30,9 @@ const DEFAULT_THROTTLE_MS = 1000;
 /**
  * A TTL expiry in getInFlightSpawnProgress() drops a label without a push, so
  * the clear this feed waits for never comes. An entry untouched this long is
- * dropped on the next change. Matches spawn-progress.ts's SPAWN_PROGRESS_TTL_MS.
+ * dropped on the next change, on the same horizon as that TTL.
  */
-const STALE_ENTRY_MS = 120_000;
+const STALE_ENTRY_MS = SPAWN_PROGRESS_TTL_MS;
 
 interface TaskThrottleState {
   /** The label the last emit announced. */

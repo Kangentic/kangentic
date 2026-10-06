@@ -25,7 +25,8 @@ import { sendToRenderer } from '../ipc/send-to-renderer';
 //
 // 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE and by
 // SESSION_RESUME (once it knows it will spawn) before any git work, so the
-// card is never silent while the lane resolves and the git op queues. 'switching-model', 'switching-agent', 'applying-settings', and
+// card is never silent while the lane resolves and the git op queues.
+// 'switching-model', 'switching-agent', 'applying-settings', and
 // 'new-session' are emitted the same way by task-move.ts's Phase 1
 // suspend-for-respawn branches, before the suspend that would otherwise leave
 // the card reading a stale "Paused" for the whole unlocked Phase 2 window (see
@@ -178,8 +179,10 @@ export function onSpawnProgressChange(listener: SpawnProgressChangeListener): ()
  * TTL safety net. Longer than any realistic worktree-create + fetch + agent
  * spawn (those are bounded by AbortControllers anyway); this only catches the
  * pathological "never cleared" case. Normal cleanup is clearSpawnProgress().
+ * Exported for the mobile bridge's SpawnProgressFeed, which prunes its own
+ * per-task state on the same horizon because a TTL expiry pushes nothing.
  */
-const SPAWN_PROGRESS_TTL_MS = 120_000;
+export const SPAWN_PROGRESS_TTL_MS = 120_000;
 
 /**
  * Update the queryable map and push the change to the renderer. The map is

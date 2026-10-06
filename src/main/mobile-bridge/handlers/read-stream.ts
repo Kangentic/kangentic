@@ -466,10 +466,11 @@ function subscribeReadStream(
   //
   // Coupling: the successor hop above depends on the spawn flow's sibling
   // drain (session-spawn-flow.ts) dropping the paused row WITHOUT a
-  // 'session-removed'. If that drain starts emitting one, as
-  // session-replica-contract.md says every removal should, this listener ends
-  // the feed before the successor is registered, and the hop silently loses
-  // its successorSessionId. Whoever changes the drain keeps the hop working.
+  // 'session-removed', and before the new session's 'session-changed'. If
+  // that drain starts emitting one, this listener ends the feed before the
+  // successor is registered, and the hop silently loses its
+  // successorSessionId. session-spawn-flow.test.ts pins the drain's side
+  // ("guards the mobile read-stream successor hop: ...").
   const onSessionRemoved = (removedSessionId: string): void => {
     if (removedSessionId !== sessionId) return;
     endFeed({ intentional: true });
