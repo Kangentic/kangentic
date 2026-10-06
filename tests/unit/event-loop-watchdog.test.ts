@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +19,7 @@ import path from 'node:path';
 import {
   startEventLoopWatchdog,
   LABEL_BYTES,
+  WATCHDOG_BUFFER_BYTES,
   WATCHDOG_THREAD_SOURCE,
   type EventLoopWatchdog,
   type EventLoopWatchdogOptions,
@@ -190,7 +192,38 @@ describe('event-loop watchdog', () => {
   });
 
   it('is the only worker thread in src/main', () => {
-    expect(sourceFilesContaining(/['"](node:)?worker_threads['"]/)).toEqual(['retrieval/worker/event-loop-watchdog.ts']);
+    expect(
+      sourceFilesContaining(/['"](node:)?worker_threads['"]/),
+      'A second worker thread in src/main: see .claude/rules/retrieval-out-of-process.md before adding one, and update this list if it is deliberate.',
+    ).toEqual(['retrieval/worker/event-loop-watchdog.ts']);
+  });
+
+  it('writes its line to stderr when stderr is a pipe, as the utility process forks it', { timeout: 15_000 }, async () => {
+    // The tests above pass a file descriptor. The worker's real stderr is fd 2 on a pipe
+    // (UTILITY_PROCESS_STDIO), so this runs the thread source in a child whose stderr is one.
+    // The heartbeat never beats here, so the line comes after the held checks.
+    const childScript = [
+      `const { Worker } = require('node:worker_threads');`,
+      `const buffer = new SharedArrayBuffer(${WATCHDOG_BUFFER_BYTES});`,
+      `const watchdog = new Worker(${JSON.stringify(WATCHDOG_THREAD_SOURCE)}, {`,
+      `  eval: true,`,
+      `  workerData: { buffer, fd: 2, checkIntervalMs: ${CHECK_INTERVAL_MS}, heldChecks: ${HELD_CHECKS}, prefix: '[pipe-watchdog]' },`,
+      `});`,
+      `watchdog.once('online', () => {`,
+      `  const until = Date.now() + ${HOLD_MS};`,
+      `  while (Date.now() < until) {}`,
+      `  process.exit(0);`,
+      `});`,
+    ].join('\n');
+    const child = spawn(process.execPath, ['-e', childScript], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderrText = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrText += chunk.toString('utf8');
+    });
+    const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve));
+
+    expect(exitCode).toBe(0);
+    expect(stderrText).toMatch(/\[pipe-watchdog\] event loop held \d+ s outside any labelled step\n/);
   });
 
   it('is started first in the worker\'s initialize(), before the database is configured', () => {
@@ -198,18 +231,20 @@ describe('event-loop watchdog', () => {
       path.join(__dirname, '..', '..', 'src', 'main', 'retrieval', 'worker', 'retrieval-worker.ts'),
       'utf8',
     );
+    const layoutChanged =
+      'retrieval-worker.ts no longer has a top-level initialize() calling both functions; update this scan to the new layout.';
     const functionStart = workerSource.indexOf('function initialize(');
-    expect(functionStart).toBeGreaterThanOrEqual(0);
+    expect(functionStart, layoutChanged).toBeGreaterThanOrEqual(0);
     // A top-level function ends at the first closing brace in column 0.
     const functionEnd = workerSource.indexOf('\n}\n', functionStart);
-    expect(functionEnd).toBeGreaterThan(functionStart);
+    expect(functionEnd, layoutChanged).toBeGreaterThan(functionStart);
     const initializeBody = workerSource.slice(functionStart, functionEnd);
 
     const watchdogCall = initializeBody.indexOf('startEventLoopWatchdog(');
     const databaseCall = initializeBody.indexOf('configureProjectDbAccess(');
-    expect(watchdogCall).toBeGreaterThanOrEqual(0);
-    expect(databaseCall).toBeGreaterThanOrEqual(0);
-    expect(watchdogCall).toBeLessThan(databaseCall);
+    expect(watchdogCall, layoutChanged).toBeGreaterThanOrEqual(0);
+    expect(databaseCall, layoutChanged).toBeGreaterThanOrEqual(0);
+    expect(watchdogCall, 'startEventLoopWatchdog() must run before the database is configured.').toBeLessThan(databaseCall);
   });
 });
 
@@ -331,7 +366,10 @@ describe('setSyncSpanLabelSink', () => {
   });
 
   it('is set only by the retrieval worker\'s watchdog, so main\'s spans keep their one null check', () => {
-    expect(sourceFilesContaining(/setSyncSpanLabelSink\(/)).toEqual([
+    expect(
+      sourceFilesContaining(/setSyncSpanLabelSink\(/),
+      'A new file mentions setSyncSpanLabelSink( (a caller, or prose in a comment). Main must not set a sink; update this list only if the new file is not one.',
+    ).toEqual([
       'diagnostics/event-loop-lag.ts',
       'retrieval/worker/event-loop-watchdog.ts',
     ]);

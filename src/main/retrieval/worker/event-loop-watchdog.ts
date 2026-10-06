@@ -39,6 +39,8 @@ export const LABEL_BYTES = 96;
 /** Int32 slots ahead of the label: the heartbeat, then the label's length. */
 const HEADER_SLOTS = 2;
 const HEADER_BYTES = HEADER_SLOTS * Int32Array.BYTES_PER_ELEMENT;
+/** The shared buffer's size: the header, then the label. */
+export const WATCHDOG_BUFFER_BYTES = HEADER_BYTES + LABEL_BYTES;
 const HEARTBEAT_SLOT = 0;
 const LABEL_LENGTH_SLOT = 1;
 
@@ -103,7 +105,7 @@ export interface EventLoopWatchdog {
 
 /** Start the heartbeat, the span-label sink, and the watchdog thread. */
 export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): EventLoopWatchdog {
-  const buffer = new SharedArrayBuffer(HEADER_BYTES + LABEL_BYTES);
+  const buffer = new SharedArrayBuffer(WATCHDOG_BUFFER_BYTES);
   const header = new Int32Array(buffer, 0, HEADER_SLOTS);
   const labelBytes = new Uint8Array(buffer, HEADER_BYTES, LABEL_BYTES);
   const encoder = new TextEncoder();
