@@ -2878,7 +2878,8 @@ export interface DictationInfo {
    *  push-to-talk has no fallback engine, so the settings panel surfaces
    *  this rather than leaving it a silent dead end. */
   workerUnavailable: boolean;
-  /** The newest crash's exit code + first error line, when `workerUnavailable`. */
+  /** How the newest crash happened (`exited with code <n>` or `failed to start`)
+   *  plus the first error line, when `workerUnavailable`. */
   workerError?: string;
 }
 
@@ -7565,8 +7566,9 @@ export interface KnowledgeGraphStatus {
    *  Knowledge Graph tab can explain the degrade), or undefined if it simply is not loaded. */
   vecError?: string;
   /** When `semantic === 'error'` because the embedding worker crashed past its
-   *  restart cap: its exit code plus the first error line of its stderr (home
-   *  directory redacted), so the Knowledge Graph tab can say why. Undefined otherwise. */
+   *  restart cap: how it stopped (`exited with code <n>` or `failed to start`)
+   *  plus the first error line of its stderr (home directory redacted), so the
+   *  Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
   /** Task summaries summed over every indexed project, for their line in the
    *  Index card. Absent while semantic search is off or there is no index to
