@@ -9,7 +9,10 @@
  * which can come from a process scan (`task-process-tag.md`: nothing a reader
  * sees leaves it). The one exception is a reader that would not load: that
  * text is a koffi or dlopen error about this install, and it goes into a
- * context block with paths stripped, so the issue still groups by code.
+ * context block with paths stripped, so the issue still groups by code. A
+ * reap that failed in a scan pass also carries that pass as a `pass` tag,
+ * which says whether anything had been signalled. It stays out of the
+ * message and the once-per-launch key, so the issue never splits by pass.
  *
  * Main-only: the pty host never imports analytics or Sentry
  * (`pty-host-out-of-process.md`), so the host carries the code back in the
@@ -19,7 +22,7 @@
 import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
 import { sanitizeErrorMessage } from '../analytics/analytics';
 import { redactPaths } from '../../shared/sentry-breadcrumbs';
-import type { ReapFailureCode } from './process-tag/tagged-reap';
+import type { ReapFailureCode, ReapPass } from './process-tag/tagged-reap';
 
 /**
  * A reap's own codes, plus two main sees itself. `host_error`: the pty host
@@ -33,7 +36,12 @@ export type TaskReapStage = 'reap' | 'stop';
 
 const reported = new Set<string>();
 
-export function reportTaskReapFailure(stage: TaskReapStage, code: TaskReapFailure, loadError: string | null = null): void {
+export function reportTaskReapFailure(
+  stage: TaskReapStage,
+  code: TaskReapFailure,
+  loadError: string | null = null,
+  pass: ReapPass | null = null,
+): void {
   const key = `${stage}:${code}`;
   if (reported.has(key)) return;
   reported.add(key);
@@ -42,7 +50,9 @@ export function reportTaskReapFailure(stage: TaskReapStage, code: TaskReapFailur
     // which leaves the rest of a profile folder like `C:\Users\First Last\...`.
     ? { task_reap: { loadError: sanitizeErrorMessage(redactPaths(loadError)) } }
     : {};
-  reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), { source: 'task_reap', stage, code }, contexts);
+  const tags: Record<string, string> = { source: 'task_reap', stage, code };
+  if (pass) tags.pass = pass;
+  reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), tags, contexts);
 }
 
 /** Forget what this launch reported. Tests only. */

@@ -89,6 +89,12 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   (`task-reap-failure-report.ts`) with `ReapFailureCode`, `host_error` or `wsl_error`. `failureReason` stays in
   local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
   stripped, since it is about this install and not about a process.
+- **A reader names the scan step that failed by type, never by message.** It throws
+  `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`), and the
+  reap maps the type to that code. The pass a reap failed in (`failurePass`: `first`, `second`,
+  `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
+  returns the same code and pass (`StopProcessResult`), and main reports it as stage `stop`. A
+  refusal or a survivor is an answer, and main never reports it.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
   terminates through. A scan that cannot read the caller's own session or user fails, so the reap
@@ -138,8 +144,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the libproc reads (parent, uid, start time, working directory, another user's process) against
   `ps` and `lsof` on the same processes, so a wrong struct offset fails there; on Windows it runs
   the real Toolhelp listing.
-- **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load` and
-  `empty_scan`; `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
+- **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load`,
+  `empty_scan`, the failing pass, and, over the macOS reader with a fake kernel, `window_list`
+  and `process_list`, and a Stop's code and pass (none for a refusal or a survivor);
+  `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
   fixed message, that no other failure's text reaches the event, and SessionManager's reports,
   the WSL one included. `tests/unit/wsl-reap-script-budget.test.ts` pins that a WSL reap whose
   shared script budget runs out reports it once and still returns what earlier batches killed.

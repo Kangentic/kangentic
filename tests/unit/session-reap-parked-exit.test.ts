@@ -24,7 +24,7 @@ import type { PtyHandle } from '../../src/main/pty/host/pty-host-client';
 import type { TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
 
 function setup() {
   const manager = new SessionManager();

@@ -349,10 +349,10 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(isProcessAlive(reportedPid)).toBe(true);
 
     // A stale identity is refused: the pid is the same, the start key is not.
-    expect(await stopProcessTree({ pid: reportedPid, startKey: `${entry!.startKey}-stale`, mainPid: process.pid }, { reader: reader!, liveRootPids: () => [] })).toBe('ended');
+    expect((await stopProcessTree({ pid: reportedPid, startKey: `${entry!.startKey}-stale`, mainPid: process.pid }, { reader: reader!, liveRootPids: () => [] })).outcome).toBe('ended');
     expect(isProcessAlive(reportedPid)).toBe(true);
 
-    expect(await stopProcessTree({ pid: reportedPid, startKey: entry!.startKey, mainPid: process.pid }, { reader: reader!, liveRootPids: () => [] })).toBe('stopped');
+    expect((await stopProcessTree({ pid: reportedPid, startKey: entry!.startKey, mainPid: process.pid }, { reader: reader!, liveRootPids: () => [] })).outcome).toBe('stopped');
     expect(await waitUntilDead([reportedPid])).toEqual([]);
   }, 60_000);
 

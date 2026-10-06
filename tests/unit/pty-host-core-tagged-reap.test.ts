@@ -161,8 +161,10 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       coalesceMs: 0,
       createTaggedProcessReader: () => null,
     });
-    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] });
-    await expect(core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID })).resolves.toBe('failed');
+    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] });
+    await expect(core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID })).resolves.toEqual({
+      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+    });
   });
 
   it('never stops a PTY it still holds, even when the user names it', async () => {
@@ -180,7 +182,10 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       createTaggedProcessReader: () => reader,
     });
     core.spawn(spawnParams());
-    await expect(core.stopReportedProcess({ pid: PTY_ROOT_PID, startKey: `start-${PTY_ROOT_PID}`, mainPid: MAIN_PID })).resolves.toBe('failed');
+    // A refusal, not a failure: no code goes back to main.
+    await expect(core.stopReportedProcess({ pid: PTY_ROOT_PID, startKey: `start-${PTY_ROOT_PID}`, mainPid: MAIN_PID })).resolves.toEqual({
+      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+    });
     expect(reader.kills).toEqual([]);
   });
 });

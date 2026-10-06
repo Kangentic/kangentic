@@ -31,8 +31,10 @@ import { HostCliProcesses } from './host-cli-processes';
 import { createTaggedProcessReader } from '../process-tag/reader-factory';
 import {
   TaggedReaper,
-  type StopProcessOutcome,
+  emptyReapResult,
+  stopAnswer,
   type StopProcessRequest,
+  type StopProcessResult,
   type TaggedReapRequest,
   type TaggedReapResult,
 } from '../process-tag/tagged-reap';
@@ -440,7 +442,7 @@ export class PtyHostCore {
    */
   reapTaggedProcesses(request: TaggedReapRequest): Promise<TaggedReapResult> {
     const reaper = this.ensureTaggedReaper();
-    if (!reaper) return Promise.resolve({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] });
+    if (!reaper) return Promise.resolve(emptyReapResult());
     return reaper.request(request);
   }
 
@@ -449,9 +451,9 @@ export class PtyHostCore {
    * user asked for it by name. Kangentic's tree and every PTY this host holds
    * stay out of reach, as in a reap.
    */
-  stopReportedProcess(request: StopProcessRequest): Promise<StopProcessOutcome> {
+  stopReportedProcess(request: StopProcessRequest): Promise<StopProcessResult> {
     const reaper = this.ensureTaggedReaper();
-    if (!reaper) return Promise.resolve('failed');
+    if (!reaper) return Promise.resolve(stopAnswer('failed'));
     return reaper.stop(request);
   }
 

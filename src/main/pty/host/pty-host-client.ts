@@ -30,7 +30,7 @@ import {
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
 } from './protocol';
-import type { StopProcessOutcome, StopProcessRequest, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 
 /** A listener registration that can be undone. */
 export interface PtyDisposable {
@@ -512,7 +512,7 @@ export class PtyHostClient {
   }
 
   /** Stop one process a reap reported (see `process-tag/tagged-reap.ts`). */
-  stopReportedProcess(request: StopProcessRequest, timeoutMs: number): Promise<StopProcessOutcome> {
+  stopReportedProcess(request: StopProcessRequest, timeoutMs: number): Promise<StopProcessResult> {
     return this.transport.request('stopReportedProcess', request, { timeoutMs });
   }
 

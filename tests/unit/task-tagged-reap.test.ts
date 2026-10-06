@@ -1,7 +1,8 @@
 /**
  * The task reap's two passes, its report, request coalescing, and the stop of
  * one reported process (src/main/pty/process-tag/tagged-reap.ts), against a
- * fake reader.
+ * fake reader, and the failure codes of the macOS reader's scan steps against
+ * that reader over a fake kernel.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -14,7 +15,8 @@ import {
   SURVIVOR_CHECK_MS,
   type TaggedReapTask,
 } from '../../src/main/pty/process-tag/tagged-reap';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import { ScanStepError, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import { DarwinTaggedProcessReader, type DarwinKernel, type DarwinProcessRow } from '../../src/main/pty/process-tag/darwin-reader';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const OTHER_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
@@ -129,6 +131,7 @@ describe('reapTaggedOnce', () => {
     expect(waits).toEqual([]);
     expect(result.killedPids).toEqual([]);
     expect(result.entries).toEqual([]);
+    expect(result.failurePass).toBeNull();
   });
 
   it('refuses an id that is not a task id, without scanning', async () => {
@@ -144,7 +147,7 @@ describe('reapTaggedOnce', () => {
     const homedirSpy = vi.spyOn(os, 'homedir').mockImplementation(() => { throw new Error('no home'); });
     try {
       await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
-        killedPids: [], unreadableCount: 0, failureReason: 'no home', failureCode: 'reap_error', entries: [],
+        killedPids: [], unreadableCount: 0, failureReason: 'no home', failureCode: 'reap_error', failurePass: null, entries: [],
       });
     } finally {
       homedirSpy.mockRestore();
@@ -174,11 +177,11 @@ describe('reapTaggedOnce', () => {
     expect(result.killedPids).toEqual([2001]);
   });
 
-  it('never throws when the scan fails', async () => {
+  it('never throws when the scan fails, and reports an error no reader step names as reap_error', async () => {
     const reader = new FakeReader([[]]);
     reader.failScan = true;
     await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', failureCode: 'reap_error', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', failureCode: 'reap_error', failurePass: 'first', entries: [],
     });
   });
 
@@ -186,7 +189,7 @@ describe('reapTaggedOnce', () => {
     const reader = new FakeReader([[tagged(2001, TASK)]]);
     const loading = Object.assign(reader, { ready: async () => { throw new Error('Cannot find module koffi'); } });
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(loading));
-    expect(result).toMatchObject({ failureCode: 'reader_load', failureReason: 'Cannot find module koffi', killedPids: [] });
+    expect(result).toMatchObject({ failureCode: 'reader_load', failureReason: 'Cannot find module koffi', failurePass: null, killedPids: [] });
     expect(reader.scanCount).toBe(0);
   });
 
@@ -194,7 +197,7 @@ describe('reapTaggedOnce', () => {
     const reader = new FakeReader([]);
     reader.scans = [{ processes: [], unreadableCount: 0 }];
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
-    expect(result).toMatchObject({ failureCode: 'empty_scan', killedPids: [], entries: [] });
+    expect(result).toMatchObject({ failureCode: 'empty_scan', failurePass: 'first', killedPids: [], entries: [] });
     expect(reader.kills).toEqual([]);
   });
 
@@ -437,6 +440,7 @@ describe('reapTaggedOnce when a scan after the graceful kills fails', () => {
     reader.scans[1] = EMPTY_SCAN;
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(result.failureCode).toBe('empty_scan');
+    expect(result.failurePass).toBe('second');
     expect(result.killedPids).toEqual([2001]);
     expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
     // No second plan to force-kill from: the empty scan said nothing about what is running.
@@ -449,7 +453,7 @@ describe('reapTaggedOnce when a scan after the graceful kills fails', () => {
     // The wait sits between the graceful kills and the second scan.
     const failingAfterKills = { ...deps(reader), wait: async () => { reader.failScan = true; } };
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, failingAfterKills);
-    expect(result).toMatchObject({ failureCode: 'reap_error', failureReason: 'probe failed', killedPids: [2001] });
+    expect(result).toMatchObject({ failureCode: 'reap_error', failurePass: 'second', failureReason: 'probe failed', killedPids: [2001] });
     expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed', '2002:kept']);
   });
 
@@ -463,8 +467,80 @@ describe('reapTaggedOnce when a scan after the graceful kills fails', () => {
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
     expect(result.failureCode).toBe('empty_scan');
+    expect(result.failurePass).toBe('last');
     expect(result.killedPids).toEqual([2001]);
     expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
+  });
+});
+
+/** A minimal `KERN_PROCARGS2` record: argc, the executable path and its NUL padding, argv, then the environment. */
+function procArgsRecord(executablePath: string, argv: string[], environment: string[]): Buffer {
+  const argc = Buffer.alloc(4);
+  argc.writeInt32LE(argv.length, 0);
+  return Buffer.concat([argc, Buffer.from(`${executablePath}\0\0\0${argv.join('\0')}\0${environment.join('\0')}\0\0\0`, 'latin1')]);
+}
+
+describe('reapTaggedOnce over the macOS reader names the scan step and the pass that failed', () => {
+  const OWN_UID = 501;
+  const ROWS: DarwinProcessRow[] = [
+    { pid: MAIN_PID, ppid: 900, uid: OWN_UID, startKey: '1790000000.000000' },
+    { pid: 2001, ppid: 1, uid: OWN_UID, startKey: '1790000001.000000' },
+  ];
+  const RECORDS = new Map<number, Buffer>([
+    [MAIN_PID, procArgsRecord('/usr/local/bin/node', ['node', 'main.js'], ['HOME=/Users/dev'])],
+    [2001, procArgsRecord('/usr/local/bin/node', ['node', 'server.js'], [`KANGENTIC_TASK_ID=${TASK}`])],
+  ]);
+
+  /** Main and one tagged process working in the project. */
+  function fakeKernel(overrides: Partial<DarwinKernel> = {}): DarwinKernel {
+    return {
+      listPids: () => ROWS.map((row) => row.pid),
+      processRow: (pid) => ROWS.find((row) => row.pid === pid) ?? null,
+      workingDirectory: (pid) => (pid === 2001 ? PROJECT : null),
+      procArgs: (pid) => RECORDS.get(pid) ?? null,
+      ...overrides,
+    };
+  }
+
+  function darwinDeps(reader: TaggedProcessReader) {
+    return { reader, liveRootPids: () => [], wait: async () => undefined, caseInsensitivePaths: false };
+  }
+
+  it('reports window_list in the second pass when lsappinfo fails after the graceful kills went out', async () => {
+    // The first scan's window list ran; the second scan's did not.
+    const lsappinfoAnswers: Array<string | null> = ['', null];
+    // Injected, so no real pid is ever signalled.
+    const signals: Array<{ pid: number; signalName: NodeJS.Signals }> = [];
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel(),
+      runLsappinfo: async () => lsappinfoAnswers.shift() ?? null,
+      signal: (pid, signalName) => { signals.push({ pid, signalName }); },
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    expect(result).toMatchObject({ failureCode: 'window_list', failurePass: 'second', killedPids: [2001] });
+    // Both window lists were asked for: the failure is the second scan's, not the first's.
+    expect(lsappinfoAnswers).toEqual([]);
+    // The graceful kill went out and no force kill followed it.
+    expect(signals).toEqual([{ pid: 2001, signalName: 'SIGTERM' }]);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
+  });
+
+  it('reports process_list in the first pass when the kernel refuses the pid list, and kills nothing', async () => {
+    const runLsappinfo = vi.fn(async (): Promise<string | null> => '');
+    const signals: number[] = [];
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel({ listPids: () => { throw new Error('proc_listallpids failed'); } }),
+      runLsappinfo,
+      signal: (pid) => { signals.push(pid); },
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    expect(result).toEqual({
+      killedPids: [], unreadableCount: 0, failureReason: 'proc_listallpids failed', failureCode: 'process_list', failurePass: 'first', entries: [],
+    });
+    expect(runLsappinfo).not.toHaveBeenCalled();
+    expect(signals).toEqual([]);
   });
 });
 
@@ -483,6 +559,8 @@ describe('reapTaggedOnce when a signalled root is still listed but the second pl
     expect(reader.kills).toEqual([{ pid: 2001, startKey: 'start-2001', strength: 'graceful' }]);
     expect(result.killedPids).toEqual([2001]);
     expect(result.failureCode).toBeNull();
+    // A reap that ran all three scans did not fail, so it names no pass.
+    expect(result.failurePass).toBeNull();
     expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2001:failed']);
   });
 
@@ -607,8 +685,8 @@ describe('TaggedReaper', () => {
     expect(reader.scanCount).toBe(1);
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful']);
     releaseWait();
-    expect(await first).toBe('stopped');
-    expect(await second).toBe('stopped');
+    expect((await first).outcome).toBe('stopped');
+    expect((await second).outcome).toBe('stopped');
     expect(reader.scanCount).toBe(4);
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful']);
   });
@@ -655,39 +733,42 @@ describe('stopProcessTree', () => {
       [{ ...tagged(2001, TASK), role: 'visible-app' }, tagged(2002, TASK, 'start-2002', PROJECT, 2001)],
       [],
     ]);
-    const outcome = await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader));
-    expect(outcome).toBe('stopped');
+    const result = await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader));
+    expect(result).toEqual({ outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null });
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`).sort()).toEqual(['2001:graceful', '2002:graceful']);
   });
 
   it('answers ended for a pid that is gone or now names another process', async () => {
     const reader = new FakeReader([[tagged(2001, TASK, 'new')]]);
-    expect(await stopProcessTree({ pid: 2001, startKey: 'old', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
-    expect(await stopProcessTree({ pid: 4242, startKey: 'start-4242', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
+    expect((await stopProcessTree({ pid: 2001, startKey: 'old', mainPid: MAIN_PID }, deps(reader))).outcome).toBe('ended');
+    expect((await stopProcessTree({ pid: 4242, startKey: 'start-4242', mainPid: MAIN_PID }, deps(reader))).outcome).toBe('ended');
     expect(reader.kills).toEqual([]);
   });
 
   it('answers ended for a request with no start key, even when the scan lists that pid with no start key either', async () => {
     // A process whose creation time could not be read has an empty key; '' === '' must not make it the one named.
     const reader = new FakeReader([[tagged(2001, TASK, '')]]);
-    expect(await stopProcessTree({ pid: 2001, startKey: '', mainPid: MAIN_PID }, deps(reader))).toBe('ended');
+    expect((await stopProcessTree({ pid: 2001, startKey: '', mainPid: MAIN_PID }, deps(reader))).outcome).toBe('ended');
     // Positive control: the scan ran and listed the pid, so 'ended' is the empty-key refusal, not a missing process.
     expect(reader.scanCount).toBe(1);
     expect(reader.scans[0].processes.some((scanned) => scanned.pid === 2001 && scanned.startKey === '')).toBe(true);
     expect(reader.kills).toEqual([]);
   });
 
-  it('answers failed, not ended, when the scan lists nothing at all', async () => {
+  it('answers failed, not ended, when the scan lists nothing at all, and names the step and pass', async () => {
     const reader = new FakeReader([]);
     reader.scans = [{ processes: [], unreadableCount: 0 }];
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
+      outcome: 'failed', failureCode: 'empty_scan', failurePass: 'first', failureReason: 'the process scan listed nothing',
+    });
     expect(reader.kills).toEqual([]);
   });
 
   it('answers failed, not stopped, when the scan after the graceful kill lists nothing', async () => {
     const reader = new FakeReader([[tagged(2001, TASK)], []]);
     reader.scans[1] = EMPTY_SCAN;
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader)))
+      .toMatchObject({ outcome: 'failed', failureCode: 'empty_scan', failurePass: 'second' });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
   });
 
@@ -695,15 +776,39 @@ describe('stopProcessTree', () => {
     const survivor = tagged(2001, TASK);
     const reader = new FakeReader([[survivor], [survivor], []]);
     reader.scans[2] = EMPTY_SCAN;
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('failed');
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader)))
+      .toMatchObject({ outcome: 'failed', failureCode: 'empty_scan', failurePass: 'last' });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
   });
 
-  it('force-kills what ignored the first signal, and answers failed for what survives even that', async () => {
+  it('answers failed with reap_error in the first pass when the scan throws an error no reader step names', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)]]);
+    reader.failScan = true;
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
+      outcome: 'failed', failureCode: 'reap_error', failurePass: 'first', failureReason: 'probe failed',
+    });
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('names a reader step that failed after the graceful kill, and the pass, without force-killing', async () => {
+    const reader = new FakeReader([[tagged(2001, TASK)], [tagged(2001, TASK)]]);
+    const failingAfterKill = {
+      ...deps(reader),
+      wait: async () => { reader.scan = async () => { throw new ScanStepError('window_list', 'lsappinfo list did not run'); }; },
+    };
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, failingAfterKill)).toEqual({
+      outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureReason: 'lsappinfo list did not run',
+    });
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
+  });
+
+  it('force-kills what ignored the first signal, and answers failed for what survives even that, with no failure to report', async () => {
     const survivor = tagged(2001, TASK);
     const reader = new FakeReader([[survivor], [survivor], [survivor]]);
     const waits: number[] = [];
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toBe('failed');
+    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toEqual({
+      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+    });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
   });
@@ -714,7 +819,7 @@ describe('stopProcessTree', () => {
     // The target exits on the graceful kill. Its child ignores it, and the force kill does not remove it either.
     const reader = new FakeReader([[target, child], [child], [child]]);
     const waits: number[] = [];
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toBe('failed');
+    expect((await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).outcome).toBe('failed');
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful', '2002:force']);
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
     expect(reader.scanCount).toBe(3);
@@ -725,7 +830,7 @@ describe('stopProcessTree', () => {
     const child = tagged(2002, TASK, 'start-2002', PROJECT, 2001);
     const unrelated = tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT);
     const reader = new FakeReader([[target, child], [child], [unrelated]]);
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toBe('stopped');
+    expect((await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).outcome).toBe('stopped');
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2001:graceful', '2002:graceful', '2002:force']);
     expect(reader.scanCount).toBe(3);
   });
@@ -736,14 +841,16 @@ describe('stopProcessTree', () => {
     const underPty = tagged(3001, TASK, 'start-3001', PROJECT, 3000);
     const reader = new FakeReader([[underMain, ptyRoot, underPty]]);
     for (const target of [underMain, ptyRoot, underPty]) {
-      expect(await stopProcessTree({ pid: target.pid, startKey: target.startKey, mainPid: MAIN_PID }, deps(reader, [], [3000]))).toBe('failed');
+      // A refusal is an answer, not a failure: nothing to report.
+      expect(await stopProcessTree({ pid: target.pid, startKey: target.startKey, mainPid: MAIN_PID }, deps(reader, [], [3000])))
+        .toEqual({ outcome: 'failed', failureCode: null, failurePass: null, failureReason: null });
     }
     expect(reader.kills).toEqual([]);
   });
 
   it('leaves out a held PTY under the named process', async () => {
     const reader = new FakeReader([[tagged(2001, TASK), tagged(3000, TASK, 'start-3000', PROJECT, 2001)], []]);
-    expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, [], [3000]))).toBe('stopped');
+    expect((await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, [], [3000]))).outcome).toBe('stopped');
     expect(reader.kills.map((kill) => kill.pid)).toEqual([2001]);
   });
 });

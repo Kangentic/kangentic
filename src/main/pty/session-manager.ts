@@ -60,7 +60,7 @@ import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './
 import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { reportTaskReapFailure } from './task-reap-failure-report';
-import type { LeftoverProcessEntry, StopProcessOutcome } from './process-tag/tagged-reap';
+import type { LeftoverProcessEntry, StopProcessOutcome, StopProcessResult } from './process-tag/tagged-reap';
 
 /** How long a task reap may take in the host: two scans, the 1 s grace
  *  between them, and the kills. A scan measured ~30 ms on Windows. */
@@ -2026,7 +2026,7 @@ export class SessionManager extends EventEmitter {
       if (result.failureReason) {
         console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
         const code = result.failureCode ?? 'reap_error';
-        reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null);
+        reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass);
       }
       // Processes whose environment could not be read (elevated on Windows,
       // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
@@ -2093,16 +2093,25 @@ export class SessionManager extends EventEmitter {
    * Stop one process a reap reported, with everything under it, after the
    * user asked for it from the leftover list. The pty host re-checks its
    * identity and keeps Kangentic's tree and every held PTY out of reach.
-   * Never throws: a host failure reads as `failed`.
+   * Never throws: a host failure reads as `failed`. A Stop the host ran but
+   * could not finish (a scan that threw or listed nothing) is reported by its
+   * code and pass, as a reap's is; a refusal or a survivor is an answer.
    */
   async stopReportedProcess(pid: number, startKey: string): Promise<StopProcessOutcome> {
+    let result: StopProcessResult;
     try {
-      return await this.host.stopReportedProcess({ pid, startKey, mainPid: process.pid }, TASK_REAP_TIMEOUT_MS);
+      result = await this.host.stopReportedProcess({ pid, startKey, mainPid: process.pid }, TASK_REAP_TIMEOUT_MS);
     } catch (error) {
       console.warn('[TASK-REAP] stop failed (non-fatal):', error);
       reportTaskReapFailure('stop', 'host_error');
       return 'failed';
     }
+    if (result.failureCode) {
+      console.warn(`[TASK-REAP] stop failed (non-fatal): ${result.failureReason}`);
+      // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
+      reportTaskReapFailure('stop', result.failureCode, null, result.failurePass);
+    }
+    return result.outcome;
   }
 
   /**

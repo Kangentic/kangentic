@@ -19,7 +19,7 @@
  */
 
 import type { ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
-import type { StopProcessOutcome, StopProcessRequest, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -228,7 +228,7 @@ export interface PtyHostRequestMap {
   reapTaggedProcesses: { params: TaggedReapRequest; result: TaggedReapResult };
   /** Stop one process a reap reported, and everything under it, after the
    *  user asked for it by name; its identity is re-checked first. */
-  stopReportedProcess: { params: StopProcessRequest; result: StopProcessOutcome };
+  stopReportedProcess: { params: StopProcessRequest; result: StopProcessResult };
   /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
    *  by its ptyId like any other; its output arrives as `rawData`. */
   spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };
