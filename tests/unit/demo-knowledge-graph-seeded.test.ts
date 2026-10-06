@@ -203,6 +203,7 @@ describe('demo Knowledge Graph node facts', () => {
     sessionId: string;
     taskId: string | null;
     title: string | null;
+    displayId: number | null;
     outcome: string | null;
     model: string | null;
     effort: string | null;
@@ -211,24 +212,46 @@ describe('demo Knowledge Graph node facts', () => {
     tokens: number | null;
     lastActivityMs: number | null;
   }
+  interface SeededSnapshot {
+    projectId: string;
+    projection: { nodes: SeededNode[]; builtAt: string; signature: string };
+    building: boolean;
+    buildProgress: unknown;
+    stale: boolean;
+    semanticAvailable: boolean;
+    projectionKey: string;
+  }
+  interface SeededPickerRow { id: string; name: string; conversations: number; taskRecords: number; lastActivityMs: number | null }
   interface Lifted {
     script: string;
-    snapshots: Record<string, { projection: { nodes: SeededNode[] } }>;
+    snapshots: Record<string, SeededSnapshot>;
+    projects: SeededPickerRow[];
     archivedExitedAtMs: (task: { archivedDaysAgo: number }) => number;
   }
+  /** The parts of the seed's `data` a test below changes before lifting. */
+  interface SeedData {
+    tasks: Array<{ id: string; projectId: string; lane: string }>;
+    lanesByProject: Record<string, Array<{ slug: string; role: string | null }>>;
+    knowledgeGraph: { projects: Record<string, { projection: { nodes: Array<{ sessionId: string; taskId: string | null }> } }> };
+  }
 
-  /** The seed's own `knowledgeGraphSeed`, run over the data it is generated with, at a fixed clock. */
-  function liftKnowledgeGraphSeed(): Lifted {
+  /**
+   * The seed's own `knowledgeGraphSeed`, run over the data it is generated with, at a fixed clock.
+   * `adjust` edits that data first, to reach a case the sample install itself never has.
+   */
+  function liftKnowledgeGraphSeed(adjust?: (data: SeedData) => void): Lifted {
     const script = buildDemoPreConfig({ scrollback: Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording'])) });
     // `var data = <JSON>;` is one line: JSON.stringify escapes every newline inside a string.
     const dataStart = script.indexOf('var data = ') + 'var data = '.length;
-    const data = JSON.parse(script.slice(dataStart, script.indexOf(';\n', dataStart))) as unknown;
+    const data = JSON.parse(script.slice(dataStart, script.indexOf(';\n', dataStart))) as SeedData;
+    adjust?.(data);
     const source = [
       'var tasksById = {};',
       'data.tasks.forEach(function (task) { tasksById[task.id] = task; });',
       extractFunction(script, 'archivedExitedAtMs'),
       extractFunction(script, 'knowledgeGraphSeed'),
-      'return { snapshots: knowledgeGraphSeed(data.knowledgeGraph).snapshots, archivedExitedAtMs: archivedExitedAtMs };',
+      'var seeded = knowledgeGraphSeed(data.knowledgeGraph);',
+      'return { snapshots: seeded.snapshots, projects: seeded.projects, archivedExitedAtMs: archivedExitedAtMs };',
     ].join('\n');
     const lifted = new Function('data', 'now', source)(data, NOW_MS) as Omit<Lifted, 'script'>;
     return { ...lifted, script };
@@ -290,6 +313,115 @@ describe('demo Knowledge Graph node facts', () => {
     // test cannot run, so what is pinned is that it reads archivedExitedAtMs, as the node above does.
     expect(lifted.script).toContain('var exitedAtMs = archivedExitedAtMs(task);');
     expect(lifted.script).toContain('exitedAt: new Date(exitedAtMs).toISOString()');
+  });
+
+  it('dates a live session\'s node at its newest tool call, and gives it its row\'s duration and effort', () => {
+    let withToolCalls = 0;
+    let live = 0;
+    for (const node of seededNodes) {
+      const session = DEMO_SESSIONS.find((candidate) => candidate.id === node.sessionId);
+      if (!session) continue;
+      live += 1;
+      expect(node.durationMs, node.sessionId).toBe(session.durationMinutes * 60_000);
+      expect(node.effort, node.sessionId).toBe(session.effort ?? null);
+      if (session.events.length === 0) {
+        // No tool call to date it by: still a real moment, and never one in the future.
+        expect(node.lastActivityMs, node.sessionId).not.toBeNull();
+        expect(node.lastActivityMs ?? Infinity, node.sessionId).toBeLessThanOrEqual(NOW_MS);
+        continue;
+      }
+      withToolCalls += 1;
+      // The newest call is the one with the fewest minutes ago, wherever the list happens to put it.
+      const newestMinutesAgo = Math.min(...session.events.map((event) => event.minutesAgo));
+      expect(node.lastActivityMs, node.sessionId).toBe(NOW_MS - newestMinutesAgo * 60_000);
+    }
+    // Vacuity: the map draws live sessions, and at least one of them has tool calls to date it by.
+    expect(live).toBeGreaterThan(0);
+    expect(withToolCalls).toBeGreaterThan(0);
+  });
+
+  it('builds each snapshot after the newest conversation it draws, and leaves it settled', () => {
+    expect(Object.keys(lifted.snapshots).sort()).toEqual(projects.map(([projectId]) => projectId).sort());
+    for (const [projectId, snapshot] of Object.entries(lifted.snapshots)) {
+      const times = snapshot.projection.nodes.map((node) => node.lastActivityMs).filter((time): time is number => time !== null);
+      expect(times.length, `${projectId} dates no node`).toBeGreaterThan(0);
+      // A UTC instant, per the timestamp rule, no earlier than any conversation the map draws.
+      expect(new Date(snapshot.projection.builtAt).toISOString(), projectId).toBe(snapshot.projection.builtAt);
+      expect(Date.parse(snapshot.projection.builtAt), `${projectId} was built before its newest conversation`).toBeGreaterThanOrEqual(Math.max(...times));
+      expect(Date.parse(snapshot.projection.builtAt), `${projectId} was built in the future`).toBeLessThanOrEqual(NOW_MS);
+      // Nothing to wait for or rebuild: no build running, no progress bar, no stale banner.
+      expect(snapshot.projectId).toBe(projectId);
+      expect(snapshot.building, projectId).toBe(false);
+      expect(snapshot.buildProgress, projectId).toBeNull();
+      expect(snapshot.stale, projectId).toBe(false);
+      expect(snapshot.semanticAvailable, projectId).toBe(true);
+      // The renderer keys its drawn map on this, so it names the project and the layout it drew.
+      expect(snapshot.projectionKey, projectId).toContain(projectId);
+      expect(snapshot.projectionKey, projectId).toContain(snapshot.projection.signature);
+    }
+  });
+
+  it('lists one picker row per project, named for it and dated at its newest node', () => {
+    const datedAt = (projectId: string): number => Math.max(
+      ...lifted.snapshots[projectId].projection.nodes.map((node) => node.lastActivityMs).filter((time): time is number => time !== null),
+    );
+    expect(lifted.projects.map((row) => row.id)).toEqual(DEMO_PROJECTS.map((project) => project.id));
+    for (const row of lifted.projects) {
+      expect(row.name, row.id).toBe(DEMO_PROJECTS.find((project) => project.id === row.id)?.name);
+      expect(row.lastActivityMs, `${row.id} shows a different last activity than its map`).toBe(datedAt(row.id));
+    }
+  });
+
+  it('calls a conversation done once its task is in the Done column, though not archived', () => {
+    // The sample install has no conversation on a Done card that is still on the board, so one is made:
+    // a live session's task moved into its project's Done column.
+    const liveNode = seededNodes.find((node) => DEMO_SESSIONS.some((session) => session.id === node.sessionId));
+    if (!liveNode?.taskId) throw new Error('the map draws no live session on a task');
+    const movedTaskId = liveNode.taskId;
+    const moved = liftKnowledgeGraphSeed((data) => {
+      const task = data.tasks.find((candidate) => candidate.id === movedTaskId);
+      const doneLane = task ? data.lanesByProject[task.projectId].find((lane) => lane.role === 'done') : undefined;
+      if (!task || !doneLane) throw new Error(`no Done column to move ${movedTaskId} into`);
+      task.lane = doneLane.slug;
+    });
+    const movedNodes = Object.values(moved.snapshots).flatMap((snapshot) => snapshot.projection.nodes);
+    expect(movedNodes.find((node) => node.sessionId === liveNode.sessionId)?.outcome).toBe('done');
+    // Only that task's conversation changed: the other live nodes are still active.
+    const otherLive = movedNodes.filter((node) => node.sessionId !== liveNode.sessionId && DEMO_SESSIONS.some((session) => session.id === node.sessionId));
+    expect(otherLive.length).toBeGreaterThan(0);
+    for (const node of otherLive) expect(node.outcome, node.sessionId).toBe(node.taskId === movedTaskId ? 'done' : 'active');
+  });
+
+  it('gives a conversation whose task the board lacks no title, number or outcome, and keeps the session\'s own facts', () => {
+    const liveNode = seededNodes.find((node) => DEMO_SESSIONS.some((session) => session.id === node.sessionId));
+    if (!liveNode) throw new Error('the map draws no live session');
+    const orphaned = liftKnowledgeGraphSeed((data) => {
+      for (const graph of Object.values(data.knowledgeGraph.projects)) {
+        for (const node of graph.projection.nodes) if (node.sessionId === liveNode.sessionId) node.taskId = 'task-not-on-this-board';
+      }
+    });
+    const node = Object.values(orphaned.snapshots).flatMap((snapshot) => snapshot.projection.nodes).find((candidate) => candidate.sessionId === liveNode.sessionId);
+    expect(node, 'the orphaned conversation is still drawn').toBeDefined();
+    expect(node?.title).toBeNull();
+    expect(node?.displayId).toBeNull();
+    expect(node?.outcome).toBeNull();
+    // The session row still answers for what a session knows: its model and cost.
+    const session = DEMO_SESSIONS.find((candidate) => candidate.id === liveNode.sessionId);
+    expect(node?.model).toBe(session?.model?.displayName);
+    expect(node?.costUsd).toBe(session?.costUsd);
+  });
+
+  it('answers for no project the fixture holds no map for, in the snapshots or in the picker', () => {
+    const projectIds = projects.map(([projectId]) => projectId);
+    // Vacuity: more than one project, so dropping one leaves another to answer for.
+    expect(projectIds.length).toBeGreaterThan(1);
+    const droppedProjectId = projectIds[0];
+    const keptProjectIds = projectIds.filter((projectId) => projectId !== droppedProjectId);
+    const without = liftKnowledgeGraphSeed((data) => {
+      delete data.knowledgeGraph.projects[droppedProjectId];
+    });
+    expect(Object.keys(without.snapshots).sort()).toEqual([...keptProjectIds].sort());
+    expect(without.projects.map((row) => row.id).sort()).toEqual([...keptProjectIds].sort());
   });
 });
 
