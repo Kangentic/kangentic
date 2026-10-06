@@ -36,7 +36,7 @@ import { setSyncSpanLabelSink } from '../../diagnostics/event-loop-lag';
 
 /** Longest label kept, in UTF-8 bytes. Labels are short fixed identifiers. */
 const LABEL_BYTES = 96;
-/** Int32 slots ahead of the label: the heartbeat, then the label's length. */
+/** Bytes ahead of the label: two Int32 slots, the heartbeat, then the label's length. */
 const HEADER_BYTES = 8;
 const HEARTBEAT_SLOT = 0;
 const LABEL_LENGTH_SLOT = 1;

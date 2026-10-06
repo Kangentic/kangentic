@@ -373,6 +373,23 @@ describe('UtilityRestartPolicy', () => {
       ]);
     });
 
+    it('omits pending= when the timed-out call was the only one pending, and omits method= when none is named', () => {
+      // The retrieval client passes pendingMethods: [] in the common single-call case.
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(null, undefined, { cause: 'request_timeout', method: 'projects.summaries', pendingMethods: [] });
+      clock.advance(4_000);
+      policy.recordCrash(null, undefined, { cause: 'request_timeout', method: 'projects.summaries', pendingMethods: [] });
+      clock.advance(4_000);
+      policy.recordCrash(null, undefined, { cause: 'request_timeout' });
+
+      const [, , contexts] = mockReportHandledError.mock.calls[0];
+      expect(contexts.utility_process.crashes).toEqual([
+        'request_timeout method=projects.summaries',
+        'request_timeout method=projects.summaries',
+        'request_timeout',
+      ]);
+    });
+
     it('keeps every context value a primitive or a list of primitives, which is all that survives Sentry\'s depth-3 normalization', () => {
       // Sentry normalizes event.contexts to depth 3: contexts, utility_process, a list, and an
       // object inside that list arrives as the string "[Object]". A crash record as an object

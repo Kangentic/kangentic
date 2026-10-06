@@ -202,7 +202,7 @@ export class UtilityRestartPolicy {
     // count and backoff above, the telemetry, and whether this crash latches.
     // Only the two places that PRINT the stderr wait for it (below).
     const crashNumber = this.crashCount;
-    this.trackCrashOnce('first', exitCode, cause);
+    this.trackCrashOnce('first', record);
 
     const latchesNow = this.crashCount >= this.maxCrashes && !this.reportedLatch;
     // Copied now, like `crashNumber`: the report can wait on the stderr drain,
@@ -212,12 +212,12 @@ export class UtilityRestartPolicy {
       this.reportedLatch = true;
       // The same moment as the Sentry report is decided, so the two surfaces
       // stay aligned on when a subsystem gave up.
-      this.trackCrashOnce('latched', exitCode, cause);
+      this.trackCrashOnce('latched', record);
     }
 
     const emit = (): void => {
       this.logCrash(record, crashNumber);
-      if (latchesNow) this.reportLatch(exitCode, crashNumber, cause, crashesAtLatch);
+      if (latchesNow) this.reportLatch(record, crashNumber, crashesAtLatch);
     };
 
     // The dying worker's stderr can still be arriving (see
@@ -253,16 +253,17 @@ export class UtilityRestartPolicy {
 
   /** Reported from here rather than from the SDK's app-level
    *  `child-process-gone` listener because only this side knows the service
-   *  name, the exit code, and that the exit was unintentional. The SDK's own
-   *  utility-process event is filtered out in error-reporting.ts precisely
+   *  name, why each crash happened, and that it was unintentional. The SDK's
+   *  own utility-process event is filtered out in error-reporting.ts precisely
    *  because it can carry none of that. */
   private reportLatch(
-    exitCode: number | null | undefined,
+    { exitCode, cause }: UtilityCrashRecord,
     crashNumber: number,
-    cause: UtilityCrashCause,
     crashes: readonly UtilityCrashRecord[],
   ): void {
     reportHandledError(
+      // The message is the issue's grouping key, so it stays "exited" for every
+      // cause. The cause tag and the crash list say what happened.
       new Error(`${this.service} worker exited repeatedly (exit code ${exitCode ?? 'unknown'})`),
       {
         source: 'utility_process',
@@ -295,7 +296,7 @@ export class UtilityRestartPolicy {
    *  because -1 alone cannot tell a fork that threw from a worker that hung.
    *  The crash count does not, because it is a constant per phase (1 on
    *  `first`, the cap on `latched`) and already lives on the Sentry tag. */
-  private trackCrashOnce(phase: CrashPhase, exitCode: number | null | undefined, cause: UtilityCrashCause): void {
+  private trackCrashOnce(phase: CrashPhase, { exitCode, cause }: UtilityCrashRecord): void {
     let phases = trackedCrashPhases.get(this.service);
     if (!phases) {
       phases = new Set<CrashPhase>();
