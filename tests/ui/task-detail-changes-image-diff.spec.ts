@@ -10,12 +10,20 @@
  * BEFORE_PNG is 40x60 with one light block; AFTER_PNG is 40x80 with the block
  * moved down and a green strip added (so its dimensions differ);
  * BEFORE_PNG_REENCODED has BEFORE_PNG's exact pixels at another zlib level, so
- * its bytes differ while no pixel does.
+ * its bytes differ while no pixel does. solidPng builds PNGs of any size and
+ * colour on the spot (stored, uncompressed pixels), so the live-refresh test can
+ * regenerate an image at the exact byte length it had.
+ *
+ * The "live refresh and change navigation" describe covers what happens around a
+ * diff-changed push and the change keys: the refresh repaints an image whose
+ * bytes changed, and rolling into an image leaves no pending first-change
+ * request behind.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import zlib from 'node:zlib';
+import { settleFrames, waitForViteReady } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -57,6 +65,48 @@ function pngFile(filePath: string, overrides: Partial<FixtureFile> = {}): Fixtur
     modifiedImageBase64: AFTER_PNG,
     ...overrides,
   };
+}
+
+function crc32(bytes: Buffer): number {
+  let checksum = 0xffffffff;
+  for (const byte of bytes) {
+    checksum ^= byte;
+    for (let bit = 0; bit < 8; bit++) checksum = (checksum >>> 1) ^ (0xedb88320 & -(checksum & 1));
+  }
+  return (checksum ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, checksum]);
+}
+
+/**
+ * A solid-colour RGBA PNG, base64 encoded. zlib level 0 stores the pixels
+ * uncompressed, so the byte length depends on the dimensions alone and never on
+ * the colour: two colours at one size are two files of the exact same length.
+ */
+function solidPng(width: number, height: number, red: number, green: number, blue: number): string {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 6; // colour type: RGBA
+  const scanline = Buffer.alloc(1 + width * 4); // filter byte 0 (none), then the pixels
+  for (let column = 0; column < width; column++) {
+    scanline.set([red, green, blue, 255], 1 + column * 4);
+  }
+  const pixels = Buffer.concat(Array.from({ length: height }, () => scanline));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', zlib.deflateSync(pixels, { level: 0 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64');
 }
 
 const preConfig = `
@@ -392,6 +442,310 @@ test.describe('Changes panel image view', () => {
 
     // Put the rail back so later tests (and the persisted width) start from the default.
     await divider.dblclick();
+    await closeChanges();
+  });
+});
+
+type MockGitWindow = {
+  __mockGitDiff: { files: FixtureFile[] };
+  __mockFireDiffChanged?: () => void;
+  __mockGitFileContentDeferred?: boolean;
+  __mockGitFileContentResolve?: () => void;
+};
+
+interface DiffEditorHandle {
+  getModifiedEditor: () => {
+    getScrollTop: () => number;
+    getScrollHeight: () => number;
+    setScrollTop: (scrollTop: number) => void;
+  };
+  getLineChanges: () => { modifiedStartLineNumber: number }[] | null;
+}
+
+interface MonacoTestHandle {
+  editor: { getDiffEditors: () => DiffEditorHandle[] };
+}
+
+interface MountedDiffState {
+  mounted: boolean;
+  /** -1 until the mounted editor's diff has landed; 0 for an empty diff. */
+  changeCount: number;
+  /** Modified-side line of the first computed change, or -1. */
+  firstChangeLine: number;
+}
+
+/** Read the live diff editor through the dev-only monaco handle (`window.__monaco`). */
+async function readDiffState(): Promise<MountedDiffState> {
+  return page.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const diffEditors = monaco?.editor.getDiffEditors() ?? [];
+    if (diffEditors.length === 0) return { mounted: false, changeCount: -1, firstChangeLine: -1 };
+    const lineChanges = diffEditors[0].getLineChanges();
+    return {
+      mounted: true,
+      changeCount: lineChanges === null ? -1 : lineChanges.length,
+      firstChangeLine: lineChanges?.[0]?.modifiedStartLineNumber ?? -1,
+    };
+  });
+}
+
+/** Drive the modified side to its bottom; Monaco saturates an over-large offset at the real maximum. */
+async function scrollModifiedToBottom(): Promise<void> {
+  await page.evaluate(() => {
+    const monaco = (window as unknown as { __monaco?: MonacoTestHandle }).__monaco;
+    const modifiedEditor = monaco?.editor.getDiffEditors()[0]?.getModifiedEditor();
+    modifiedEditor?.setScrollTop(modifiedEditor.getScrollHeight());
+  });
+}
+
+const LONG_FILE_LINES = 400;
+const LONG_FILE_CHANGE_LINE = 100;
+const LONG_FILE_CHANGE_TOKEN = 'FIRST_HUNK_TOKEN_AAA';
+const LONG_FILE_TAIL_TOKEN = 'TAIL_OF_FILE_TOKEN_ZZZ';
+
+/**
+ * A file far taller than the pane, with one change at line 100 and an unchanged
+ * tail token on its last line. Monaco virtualizes lines, so which token has a
+ * `.view-line` in the DOM says which end of the file the viewport is on: the
+ * first-change reveal centers line 100, a restored bottom position shows the tail.
+ */
+function longTextFile(filePath: string): FixtureFile {
+  const originalLines: string[] = [];
+  for (let lineNumber = 1; lineNumber <= LONG_FILE_LINES; lineNumber++) {
+    originalLines.push(lineNumber === LONG_FILE_LINES ? `// ${LONG_FILE_TAIL_TOKEN} ${lineNumber}` : `// filler line ${lineNumber}`);
+  }
+  const modifiedLines = originalLines.slice();
+  modifiedLines[LONG_FILE_CHANGE_LINE - 1] = `const value = "${LONG_FILE_CHANGE_TOKEN}";`;
+  return {
+    path: filePath, status: 'M', binary: false, language: 'typescript',
+    original: originalLines.join('\n'), modified: modifiedLines.join('\n'),
+  };
+}
+
+test.describe('Changes panel image view: live refresh and change navigation', () => {
+  test('a diff refresh repaints an image regenerated at the same byte size, though its text is empty both times', async () => {
+    // Same dimensions, same byte length, different pixels. Everything the
+    // refresh could compare short of the decoded bytes is therefore equal: the
+    // text is '' on both sides of the swap, and so are the size and the
+    // dimensions.
+    const regeneratedBefore = solidPng(24, 16, 220, 38, 38);
+    const regeneratedAfter = solidPng(24, 16, 37, 99, 235);
+    expect(Buffer.from(regeneratedAfter, 'base64').length).toBe(Buffer.from(regeneratedBefore, 'base64').length);
+    expect(regeneratedAfter).not.toBe(regeneratedBefore);
+
+    await openChanges(
+      [pngFile('shots/regenerated.png', { modifiedImageBase64: regeneratedBefore })],
+      'shots/regenerated.png',
+    );
+    const afterImage = page.locator('[data-testid="diff-image-after"] img');
+    const afterDimensions = page.locator('[data-testid="diff-image-info-after-dimensions"]');
+    await expect(afterImage).toHaveAttribute('src', `data:image/png;base64,${regeneratedBefore}`, { timeout: 8000 });
+    await expect(afterDimensions).toHaveText('24 x 16');
+
+    // The agent regenerates the screenshot: new pixels land on disk and the
+    // watcher pushes a diff-changed event. The mock reads its fixture on every
+    // fileImage call, so editing the entry in place is the new file on disk.
+    await page.evaluate((regeneratedBase64) => {
+      const mockWindow = window as unknown as MockGitWindow;
+      if (!mockWindow.__mockFireDiffChanged) throw new Error('the Changes panel has not subscribed to diff changes');
+      mockWindow.__mockGitDiff.files[0].modifiedImageBase64 = regeneratedBase64;
+      mockWindow.__mockFireDiffChanged();
+    }, regeneratedAfter);
+
+    // The cached entry is served at once, then the background refetch decides
+    // whether to repaint. Only the decoded bytes differ, so only a byte
+    // comparison of the image repaints it; a text-only (or size-only) one
+    // leaves the stale pixels on screen and this poll times out.
+    await expect(afterImage).toHaveAttribute('src', `data:image/png;base64,${regeneratedAfter}`, { timeout: 8000 });
+    await expect(afterDimensions).toHaveText('24 x 16');
+
+    await closeChanges();
+  });
+
+  // The next two tests share a fixture, in tree order: a text file with no text
+  // changes (the change key rolls out of it on the first press, so there is no
+  // diff to time), an image, and the long text file whose scroll is remembered.
+  // Scroll memory is module scope and keyed by task and path, so it outlives a
+  // test on this shared page: each test gets its own long file path, or the
+  // second would open its file on the first one's remembered position.
+  const LONG_PATH = 'c-long.ts';
+  const CONTROL_LONG_PATH = 'c-long-control.ts';
+  const rollFiles = (longPath: string): FixtureFile[] => [
+    {
+      path: 'a-unchanged.ts', status: 'M', binary: false, language: 'typescript',
+      original: 'const unchanged = 1;\n', modified: 'const unchanged = 1;\n',
+    },
+    pngFile('b-shot.png'),
+    longTextFile(longPath),
+  ];
+  const unchangedLine = () => page.locator('.view-line', { hasText: 'const unchanged' }).first();
+  const changeLine = () => page.locator('.view-line', { hasText: LONG_FILE_CHANGE_TOKEN });
+  const tailLine = () => page.locator('.view-line', { hasText: LONG_FILE_TAIL_TOKEN });
+
+  /**
+   * Visit the long file, leave it scrolled to its bottom, and commit that
+   * position by moving to another text file (the editor stays mounted across a
+   * text to text switch). Then reopen the panel on `selectPath`: its content
+   * cache starts empty, so the long file is uncached again, while the remembered
+   * scroll (module scope) survives.
+   */
+  async function rememberLongFileBottomThenReopen(longPath: string, selectPath: string): Promise<void> {
+    // The long file leads the list so it is the one the panel selects on its own: a
+    // second switch right after the first can consume its first-change reveal
+    // against the previous file's diff (DiffViewer's known imperfection).
+    const [unchangedFile, imageFile, longFile] = rollFiles(longPath);
+    await openChanges([longFile, unchangedFile, imageFile], longPath);
+    await expect.poll(async () => (await readDiffState()).firstChangeLine, { timeout: 10000 }).toBe(LONG_FILE_CHANGE_LINE);
+    await expect(changeLine().first()).toBeVisible({ timeout: 10000 });
+    await scrollModifiedToBottom();
+    await expect(tailLine().first()).toBeVisible({ timeout: 10000 });
+    await selectFile('a-unchanged.ts');
+    await expect(unchangedLine()).toBeVisible({ timeout: 10000 });
+    await closeChanges();
+    await openChanges(rollFiles(longPath), selectPath);
+  }
+
+  /** The next file read is held, so the click that triggers it can be observed before its content arrives. */
+  async function holdNextFileContent(): Promise<void> {
+    await page.evaluate(() => {
+      (window as unknown as MockGitWindow).__mockGitFileContentDeferred = true;
+    });
+  }
+
+  /**
+   * Let the held read through once the app owns a mounted editor that has
+   * computed the empty diff of the previous content. While the read is held the
+   * content cannot match the file, so a pending request survives both the mount
+   * and that empty diff, and what the test then sees is what the real content's
+   * diff does with it.
+   *
+   * "Mounted" means the app has been handed the editor, not that Monaco has
+   * built it: @monaco-editor/react creates the editor, and only one render
+   * later calls onMount, which is where DiffViewer starts listening for diffs
+   * and consuming a pending request. Releasing before that lets onMount run
+   * against content that has just arrived and a diff that still reads empty,
+   * and a request consumed there is dropped without positioning anything, which
+   * hides exactly the leak under test. The boot spinner leaves in the render
+   * that precedes onMount, so wait for it and then for the frames its effects
+   * need.
+   */
+  async function releaseHeldFileContent(): Promise<void> {
+    await expect.poll(async () => (await readDiffState()).mounted, { timeout: 10000 }).toBe(true);
+    await expect(page.locator('[data-testid="diff-editor-area"] .animate-spin')).toHaveCount(0, { timeout: 10000 });
+    await settleFrames(page);
+    await expect.poll(async () => (await readDiffState()).changeCount, { timeout: 10000 }).toBe(0);
+    await page.evaluate(() => {
+      const resolve = (window as unknown as MockGitWindow).__mockGitFileContentResolve;
+      if (!resolve) throw new Error('no file read is being held');
+      resolve();
+    });
+    // The long file's OWN diff is the only one with a change at line 100, so once
+    // it lands whatever positioning it triggers has already run (Monaco fires
+    // the update event with the result).
+    await expect.poll(async () => (await readDiffState()).firstChangeLine, { timeout: 10000 }).toBe(LONG_FILE_CHANGE_LINE);
+  }
+
+  test('rolling from a text file into an image leaves no stale request to jump a later text file to its first change', async () => {
+    // Two dialog opens, a held fetch and Monaco throughout.
+    test.slow();
+    await rememberLongFileBottomThenReopen(LONG_PATH, 'a-unchanged.ts');
+    await expect(unchangedLine()).toBeVisible({ timeout: 10000 });
+
+    // Roll out of the text file into the image with the change key. The roll asks
+    // the next file to land on its first change; an image has no editor to do it.
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect(page.locator('[data-testid="changes-file-row"][data-path="b-shot.png"]')).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+
+    // Then CLICK the long file (nothing rolled into it), with its content held
+    // until after the editor mounts. A cached file would show nothing here, red or
+    // green: its mount clears any pending request itself (see the control below).
+    await holdNextFileContent();
+    await selectFile(LONG_PATH);
+    await releaseHeldFileContent();
+
+    // Restored: the bottom it was left at. A request that outlived the roll would
+    // have jumped to line 100 centered instead (the control below), which leaves
+    // the tail unrendered, so this wait would time out.
+    await expect(tailLine().first()).toBeVisible({ timeout: 10000 });
+    await expect(changeLine()).toHaveCount(0);
+
+    await closeChanges();
+  });
+
+  // The control for the test above. It runs the same interleaving, but the long
+  // file is rolled INTO from the image, so a request really is pending when its
+  // diff lands. That has to win over the remembered scroll (a roll-in lands on the
+  // file's first change), which is what proves the held-fetch interleaving can
+  // tell a pending request from none: without it the test above could pass
+  // vacuously, e.g. if a change to when the request is consumed hid a leak.
+  //
+  // It pins only the case its name says: content that arrives AFTER the editor
+  // mounted. The next test covers a file whose content is already cached.
+  test('rolling from an image into a text file whose content arrives after the editor mounts lands on its first change, not on its remembered scroll', async () => {
+    test.slow();
+    await rememberLongFileBottomThenReopen(CONTROL_LONG_PATH, 'b-shot.png');
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 10000 });
+
+    await holdNextFileContent();
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect(page.locator(`[data-testid="changes-file-row"][data-path="${CONTROL_LONG_PATH}"]`)).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+    await releaseHeldFileContent();
+
+    await expect(changeLine().first()).toBeVisible({ timeout: 10000 });
+    await expect(tailLine()).toHaveCount(0);
+
+    await closeChanges();
+  });
+
+  // The other arrival order: the file was visited in this panel, so its content is
+  // cached and matches the moment the editor mounts, while the fresh editor's diff
+  // has not computed (null, not empty). The roll's request must survive that mount
+  // and land the file on its change once the diff arrives, instead of being dropped
+  // there and leaving the remembered scroll to win.
+  //
+  // Rolls backward (Alt+ArrowUp, the 'last' request) so the long file can lead the
+  // list and be the one the panel selects on its own: a second switch right after
+  // the first can consume a first-change reveal against the previous file's diff.
+  // Its single change makes last and first the same line. Paths are unique to this
+  // test, so neither the remembered scroll nor the persisted selection of an
+  // earlier test on this shared page leaks in.
+  test('rolling back from an image into a cached text file lands on its change, not on its remembered scroll', async () => {
+    test.slow();
+    const cachedLongPath = 'd-cached-long.ts';
+    const cachedShotPath = 'e-cached-shot.png';
+    const cachedOtherPath = 'f-cached-other.ts';
+    await openChanges([
+      longTextFile(cachedLongPath),
+      pngFile(cachedShotPath),
+      {
+        path: cachedOtherPath, status: 'M', binary: false, language: 'typescript',
+        original: 'const other = 1;\n', modified: 'const other = 1;\n',
+      },
+    ], cachedLongPath);
+
+    // Visit the long file and leave it scrolled to its bottom, then commit that
+    // position by moving to another text file. Nothing closes the panel, so the
+    // long file stays cached.
+    await expect.poll(async () => (await readDiffState()).firstChangeLine, { timeout: 10000 }).toBe(LONG_FILE_CHANGE_LINE);
+    await expect(changeLine().first()).toBeVisible({ timeout: 10000 });
+    await scrollModifiedToBottom();
+    await expect(tailLine().first()).toBeVisible({ timeout: 10000 });
+    await selectFile(cachedOtherPath);
+    await expect(page.locator('.view-line', { hasText: 'const other' }).first()).toBeVisible({ timeout: 10000 });
+    await selectFile(cachedShotPath);
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 10000 });
+
+    await page.keyboard.press('Alt+ArrowUp');
+    await expect(page.locator(`[data-testid="changes-file-row"][data-path="${cachedLongPath}"]`)).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+    // The long file's own diff is the only one with a change at line 100, so once
+    // it lands whatever positioning it triggers has already run.
+    await expect.poll(async () => (await readDiffState()).firstChangeLine, { timeout: 10000 }).toBe(LONG_FILE_CHANGE_LINE);
+
+    // On its change, not back at the bottom it was left at.
+    await expect(changeLine().first()).toBeVisible({ timeout: 10000 });
+    await expect(tailLine()).toHaveCount(0);
+
     await closeChanges();
   });
 });

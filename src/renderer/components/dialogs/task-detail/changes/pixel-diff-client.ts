@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import PixelDiffWorker from './pixel-diff.worker?worker';
 import type { PixelDiffRequest, PixelDiffResponse } from './pixel-diff.worker';
 import { loadImage, type DiffImageSide } from './diff-content';
+import { pixelDiffCanvas } from './pixel-diff-canvas';
 
 /**
  * Main-thread half of the Diff mode: decodes both sides to ImageBitmaps,
@@ -24,6 +25,10 @@ export const PIXEL_DIFF_COLOR_CSS = `rgb(${PIXEL_DIFF_COLOR.join(' ')})`;
 let worker: Worker | null = null;
 let nextRequestId = 1;
 const pendingRequests = new Map<number, (outcome: PixelDiffOutcome) => void>();
+// Set by the Fast Refresh dispose below. A comparison still decoding when the
+// module is replaced resumes here afterwards, and must not build a worker that
+// nothing would ever terminate.
+let disposed = false;
 
 /**
  * Results keyed by side identity. A DiffContent's side objects stay the same
@@ -38,6 +43,7 @@ function failAllPending(): void {
 }
 
 function getWorker(): Worker {
+  if (disposed) throw new Error('Pixel diff client was replaced by a Fast Refresh');
   if (worker !== null) return worker;
   const created = new PixelDiffWorker();
   created.onmessage = (event: MessageEvent<PixelDiffResponse>) => {
@@ -58,53 +64,33 @@ function getWorker(): Worker {
   return created;
 }
 
-/**
- * A vector image (SVG) has no pixel grid of its own and the view draws it
- * scaled up to fill the pane, so it is compared at a raster size near what is
- * on screen instead of its nominal size. A 64x64 icon compared at 64x64 would
- * paint a blocky mask once scaled to 500px. Raster images always compare at
- * their real pixels.
- */
-const VECTOR_COMPARE_LONG_EDGE = 1024;
-const VECTOR_COMPARE_MAX_SCALE = 16;
-
-function compareScale(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): number {
-  if (!scalable) return 1;
-  const longEdge = Math.max(before.width, before.height, after.width, after.height);
-  return Math.max(1, Math.min(VECTOR_COMPARE_MAX_SCALE, Math.floor(VECTOR_COMPARE_LONG_EDGE / longEdge)));
-}
-
 /** Decoded on this thread because a worker cannot decode SVG. The resize also pins an SVG with no intrinsic size to the size the view uses. */
 async function bitmapOf(side: DecodedImageSide, scale: number): Promise<ImageBitmap> {
   const image = await loadImage(side.dataUrl);
   return createImageBitmap(image, { resizeWidth: side.width * scale, resizeHeight: side.height * scale, resizeQuality: 'high' });
 }
 
-export function cachedPixelDiff(before: DecodedImageSide, after: DecodedImageSide): PixelDiffOutcome | null {
+function cachedPixelDiff(before: DecodedImageSide, after: DecodedImageSide): PixelDiffOutcome | null {
   return outcomeCache.get(before)?.get(after) ?? null;
 }
 
-export async function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
+async function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
   const cached = cachedPixelDiff(before, after);
   if (cached !== null) return cached;
+  const canvas = pixelDiffCanvas(before, after, scalable);
+  if (canvas === null) return { status: 'failed' };
+  const { scale, width, height } = canvas;
   let outcome: PixelDiffOutcome;
   try {
-    const scale = compareScale(before, after, scalable);
     const [beforeBitmap, afterBitmap] = await Promise.all([bitmapOf(before, scale), bitmapOf(after, scale)]);
     outcome = await new Promise<PixelDiffOutcome>((resolve) => {
       const id = nextRequestId++;
-      pendingRequests.set(id, resolve);
-      const request: PixelDiffRequest = {
-        id,
-        before: beforeBitmap,
-        after: afterBitmap,
-        // One canvas both images fit, each drawn at its natural size from the
-        // top-left, so area only one image covers counts as changed.
-        width: Math.max(before.width, after.width) * scale,
-        height: Math.max(before.height, after.height) * scale,
-        color: PIXEL_DIFF_COLOR,
-      };
+      const request: PixelDiffRequest = { id, before: beforeBitmap, after: afterBitmap, width, height, color: PIXEL_DIFF_COLOR };
+      // Registered only once the post went through: a throw from getWorker or
+      // postMessage rejects this promise, and must not strand an entry. The
+      // worker's reply is a later task, so it cannot arrive before the set.
       getWorker().postMessage(request, [beforeBitmap, afterBitmap]);
+      pendingRequests.set(id, resolve);
     });
   } catch {
     outcome = { status: 'failed' };
@@ -152,6 +138,7 @@ export function usePixelDiff(
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose(() => {
+    disposed = true;
     failAllPending();
     worker?.terminate();
     worker = null;

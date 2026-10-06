@@ -41,6 +41,7 @@ vi.mock('../../src/main/git/line-count/line-count-client', () => ({
 import fs from 'node:fs';
 import path from 'node:path';
 import { DiffService } from '../../src/main/git/diff-service';
+import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
 
 /** Backs the countFileLines bounded stat+open read path (see
  *  src/main/git/line-count/count-lines.ts) with a single in-memory buffer, so
@@ -1251,6 +1252,24 @@ describe('DiffService', () => {
       expect(result.modified).toEqual({ kind: 'too-large', size: OVER_CAP });
       expect(mockGit.showBuffer).not.toHaveBeenCalled();
       expect(fs.promises.readFile).not.toHaveBeenCalled();
+    });
+
+    it('a side of exactly the cap is still read: only a larger side is withheld', async () => {
+      // Both readers report a size of exactly IMAGE_PREVIEW_MAX_BYTES but hand back
+      // a small buffer, so the test never allocates 10 MB. The size check runs on
+      // what `cat-file -s` and `stat` report, before any read, so a `>=` in the cap
+      // comparison would turn both sides into `too-large` and skip both reads.
+      mockGit.catFile.mockResolvedValue(`${IMAGE_PREVIEW_MAX_BYTES}\n`);
+      mockGit.showBuffer.mockResolvedValue(PNG_BYTES);
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: IMAGE_PREVIEW_MAX_BYTES } as never);
+      vi.mocked(fs.promises.readFile).mockResolvedValue(PNG_BYTES as never);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result.original?.kind).toBe('bytes');
+      expect(result.modified?.kind).toBe('bytes');
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
+      expect(fs.promises.readFile).toHaveBeenCalledWith(expect.stringMatching(/img[/\\]a\.png$/));
     });
 
     it('a Git LFS pointer in place of the image is reported as one', async () => {
