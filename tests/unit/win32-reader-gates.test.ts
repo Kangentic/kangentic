@@ -871,6 +871,26 @@ describe('Win32TaggedProcessReader.connections: the TCP table', () => {
     expect(fake.opens).toEqual([]);
   });
 
+  it('pairs only sockets in ESTABLISHED: a connection winding down is no connection', async () => {
+    // MIB_TCP_STATE (iphlpapi.h): 2 LISTEN, 5 ESTAB, 7 FIN_WAIT2, 8 CLOSE_WAIT.
+    const fake = new FakeWin32([]);
+    fake.tcpTables.set(2, tcpTable([
+      { state: 2, local: ANY, localPort: 5037, remote: ANY, remotePort: 0, pid: 2001 },
+      // The client closed first: the server's accepted socket waits to close, the client's end waits for the FIN.
+      { state: 8, local: LOOPBACK, localPort: 5037, remote: LOOPBACK, remotePort: 52000, pid: 2001 },
+      { state: 7, local: LOOPBACK, localPort: 52000, remote: LOOPBACK, remotePort: 5037, pid: 3001 },
+      // The server closed first: the same two states, the other way round.
+      { state: 7, local: LOOPBACK, localPort: 5037, remote: LOOPBACK, remotePort: 52001, pid: 2001 },
+      { state: 8, local: LOOPBACK, localPort: 52001, remote: LOOPBACK, remotePort: 5037, pid: 3002 },
+      // Positive control: a live connection pairs.
+      { state: 5, local: LOOPBACK, localPort: 5037, remote: LOOPBACK, remotePort: 52002, pid: 2001 },
+      { state: 5, local: LOOPBACK, localPort: 52002, remote: LOOPBACK, remotePort: 5037, pid: 3003 },
+    ]));
+    const read = await readerFor(fake).connections([listener(2001)], [listener(3001), listener(3002), listener(3003)]);
+    expect(read.pairs).toEqual([{ listenerPid: 2001, clientPid: 3003 }]);
+    expect(read.listeningPids).toEqual([2001]);
+  });
+
   it('asks again with the size the table needs when it outgrew the buffer', async () => {
     const fake = new FakeWin32([]);
     fake.tcpTableGrowths = 2;
