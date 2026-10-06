@@ -91,16 +91,16 @@ test.describe('waitForSettled', () => {
     await page.evaluate(() => {
       const subject = document.querySelector<HTMLElement>('#subject');
       if (!subject) throw new Error('no #subject to animate');
-      const motion = window as unknown as { lastMovedAt: number };
+      // The subject carries the page-clock time it last moved, for the read after the wait.
       const startedAt = performance.now();
-      motion.lastMovedAt = startedAt;
+      subject.dataset.lastMovedAt = String(startedAt);
       let frame = 0;
       const step = (): void => {
         const now = performance.now();
         if (now - startedAt > 400) return;
         frame += 1;
         subject.style.left = `${10 + frame * 2}px`;
-        motion.lastMovedAt = now;
+        subject.dataset.lastMovedAt = String(now);
         requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
@@ -109,7 +109,7 @@ test.describe('waitForSettled', () => {
     await waitForSettled(page, SUBJECT, GENEROUS_TIMEOUT_MS);
 
     // The page's own clock, from the last frame that moved: the quiet window is measured from there.
-    const stillForMs = await page.evaluate(() => performance.now() - (window as unknown as { lastMovedAt: number }).lastMovedAt);
+    const stillForMs = await page.evaluate(() => performance.now() - Number(document.querySelector<HTMLElement>('#subject')?.dataset.lastMovedAt));
     expect(stillForMs).toBeGreaterThanOrEqual(500);
   });
 

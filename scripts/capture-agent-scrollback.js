@@ -51,7 +51,7 @@ const path = require('node:path');
 // disk and must rewrite identity exactly the way a record-time write does.
 const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanitizer');
 // Shared with scripts/capture-demo-archived-runs.mjs, which starts the same CLIs headless.
-const { toSpawnable } = require('./lib/spawnable');
+const { toSpawnable, childAgentEnv } = require('./lib/spawnable');
 
 function parseArgs(argv) {
   const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', messageTrail: true, transcriptOut: null, resume: null };
@@ -207,12 +207,8 @@ async function seedTrust(agent, cwd) {
 
 // ---------------------------------------------------------------- environment
 function buildEnv() {
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) continue;
-    if (key === 'NO_COLOR') continue;
-    env[key] = value;
-  }
+  const env = childAgentEnv();
+  delete env.NO_COLOR;
   env.TERM = 'xterm-256color';
   // The classic renderer scrolls like a normal terminal, which is what a replay wants, and it
   // never arms Claude's fullscreen boot canary.

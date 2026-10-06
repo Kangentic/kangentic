@@ -1258,6 +1258,22 @@ test('still=1 paints every terminal from the seed and fetches no recording', asy
   expect(getRecordingRequests()).toEqual([]);
 });
 
+test('the Knowledge Graph\'s maps are fetched once, by a frame that opens the graph, and never by a board', async ({ page }) => {
+  // The maps were most of the seed's weight while no board frame drew them, so the build emits them
+  // as their own file and the seed fetches it on the graph's first ask (demo-dataset.ts,
+  // seededKnowledgeGraph). Every project's snapshot and the Projects picker share that one read.
+  const graphRequests: string[] = [];
+  page.on('request', (request) => { if (request.url().includes('/graph/')) graphRequests.push(request.url()); });
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  expect(graphRequests).toEqual([]);
+
+  await gotoScene(page, { view: 'knowledge-graph', embed: '1', still: '1' });
+  await expect(page.locator(SCENES['knowledge-graph'].ready).first()).toBeVisible();
+  expect(graphRequests).toHaveLength(1);
+  expect(graphRequests[0]).toMatch(/\/graph\/knowledge-graph-[0-9a-f]{8}\.json$/);
+});
+
 /** Each row of a painted frame in cells: the text between the autowrap brackets, plus its cursor-forward gaps. */
 function frameRowWidths(frame: string): number[] {
   const start = frame.indexOf('\x1b[?7l');

@@ -20,7 +20,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildDemoPreConfig, DEMO_PROJECTS } from '../tests/captures/helpers/demo-dataset';
+import { buildDemoPreConfig, DEMO_PROJECTS, shippedKnowledgeGraph } from '../tests/captures/helpers/demo-dataset';
 import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoPeekTimelines, loadDemoRecordings, loadDemoScrollback, loadDemoTiledFrames, loadDemoTranscripts, readLiveTailMs, type DemoRecordingEntry } from '../tests/captures/helpers/demo-scrollback';
 // The cap main keeps per session, so a replayed trail slices exactly as a pushed one does.
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
@@ -124,6 +124,12 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     files.push({ fileName, source });
     transcripts[sessionId] = { file: fileName.slice('transcripts/'.length) };
   }
+  // The Knowledge Graph's maps, one file fetched the first time a frame opens the graph
+  // (demo-dataset.ts, seededKnowledgeGraph). Nothing on a board reads them, and inline they were
+  // most of the seed's weight.
+  const knowledgeGraphSource = JSON.stringify(shippedKnowledgeGraph());
+  const knowledgeGraphFile = hashedName('graph/knowledge-graph.json', knowledgeGraphSource);
+  files.push({ fileName: knowledgeGraphFile, source: knowledgeGraphSource });
   const index = {
     base: `${base}recordings/`,
     sessions: Object.fromEntries(Object.entries(recordings.sessions).map(([id, entry]) => [id, indexEntryOf(entry)])),
@@ -133,9 +139,10 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     geometry: recordings.geometry,
     transcriptsBase: `${base}transcripts/`,
     transcripts,
+    knowledgeGraph: `${base}${knowledgeGraphFile}`,
   };
   const tiledCount = Object.values(index.sessions).filter((entry) => entry.tiled).length;
-  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(index.resumes).length} resume boots, ${Object.keys(transcripts).length} transcripts`);
+  console.log(`[demo] recordings emitted: ${Object.keys(index.sessions).length} sessions (${tiledCount} with a tiled sibling), ${Object.keys(index.spawns).length} spawn boots, ${Object.keys(index.terminals).length} terminal boots, ${Object.keys(index.resumes).length} resume boots, ${Object.keys(transcripts).length} transcripts, the Knowledge Graph (${Math.round(knowledgeGraphSource.length / 1024)} KB)`);
   // The guest pages: what each project's dev URL shows, for the Browser pane's iframe
   // stand-in (demo/webview-shim.js). Keyed by the URL the pane shows, valued by the hashed file.
   const guestPages: Record<string, string> = {};
@@ -231,6 +238,8 @@ function buildSeedScript(version: string): string {
       appVersion: version,
       cellWidths: buildCellWidthTable(),
       history: loadDemoHistory(),
+      // Fetched from the file planDemoAssets emits, when a frame opens the graph.
+      knowledgeGraph: 'fetched',
     }),
     '};',
     'window.__demoBoot.afterSeed();',

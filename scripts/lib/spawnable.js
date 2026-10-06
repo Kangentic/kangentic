@@ -4,7 +4,7 @@
  * so the CLI is resolved through PATH and a shim is wrapped in its interpreter.
  *
  * Shared by scripts/capture-agent-scrollback.js (a recording in a PTY) and
- * scripts/capture-demo-archived-runs.mjs (a headless run).
+ * scripts/capture-demo-archived-runs.mjs (a headless run), with the environment both runs get.
  */
 const { execFileSync } = require('node:child_process');
 
@@ -19,8 +19,9 @@ function toSpawnable(exe, args) {
     }
     if (lookup.length === 0) throw new Error(`Could not find ${exe} on PATH`);
     // npm installs three shims side by side (an extensionless shell script, .cmd, .ps1). Prefer
-    // a native executable, then .cmd, then .ps1; the shell script cannot start as a process.
-    const rank = (candidate) => (/\.exe$/i.test(candidate) ? 0 : /\.cmd$/i.test(candidate) ? 1 : /\.ps1$/i.test(candidate) ? 2 : 3);
+    // a native executable, then .cmd (or .bat, which cmd.exe runs the same way), then .ps1; the
+    // shell script cannot start as a process.
+    const rank = (candidate) => (/\.exe$/i.test(candidate) ? 0 : /\.(cmd|bat)$/i.test(candidate) ? 1 : /\.ps1$/i.test(candidate) ? 2 : 3);
     resolved = lookup.slice().sort((left, right) => rank(left) - rank(right))[0];
   }
   if (/\.ps1$/i.test(resolved)) {
@@ -38,11 +39,39 @@ function toSpawnable(exe, args) {
  */
 const SHELL_REPARSED = { cmd: /[%"^&|<>\r\n]/, powershell: /["$`\r\n]/ };
 
-/** The first argument the shim's interpreter would re-parse, or null when it starts directly or none would be. */
+/** Node quotes an argument that is empty or holds a space or a tab. */
+const nodeQuotes = (argument) => argument === '' || /[ \t]/.test(argument);
+
+/**
+ * The first argument the shim's interpreter would re-parse, or null when it starts directly or none
+ * would be. For cmd.exe that includes the shim's own path when the line would lose its quotes: Node
+ * quotes a path that holds a space, so the line after `/c` opens with a quote, and when any later
+ * argument is quoted too, `/c` strips the line's first and last quote and cmd.exe runs the path cut
+ * at its first space.
+ */
 function shellReparsedArgument(spawnable) {
   if (spawnable.shell === null) return null;
   const pattern = SHELL_REPARSED[spawnable.shell];
-  return spawnable.args.find((argument) => pattern.test(argument)) ?? null;
+  const reparsed = spawnable.args.find((argument) => pattern.test(argument));
+  if (reparsed !== undefined) return reparsed;
+  if (spawnable.shell === 'cmd') {
+    const [, , shimPath, ...callerArgs] = spawnable.args;
+    if (shimPath !== undefined && nodeQuotes(shimPath) && callerArgs.some(nodeQuotes)) return shimPath;
+  }
+  return null;
 }
 
-module.exports = { toSpawnable, shellReparsedArgument };
+/**
+ * The environment an agent run gets: this process's, less the variables a Claude Code session sets
+ * for itself (CLAUDECODE, CLAUDE_CODE_*), which would otherwise leak into the run.
+ */
+function childAgentEnv() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
+module.exports = { toSpawnable, shellReparsedArgument, childAgentEnv };

@@ -100,8 +100,8 @@ export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>,
     const sessionKeys: Record<string, string> = {};
     const now = new Date().toISOString();
     for (const session of planned.sessions) {
-      const previewTaskId = previewTaskIdByKey.get(session.taskKey);
-      if (!previewTaskId) throw new Error(`${planned.name}: session ${session.key} names task ${session.taskKey}, which the plan does not carry`);
+      // Present: every session's task was checked against the plan before the first write.
+      const previewTaskId = previewTaskIdByKey.get(session.taskKey)!;
       // The adapter's own session type, never a name mapped here (agent-adapters-boundary).
       const sessionType = agentRegistry.get(session.agent)?.sessionType ?? '';
       const created = sessionRepository.insert({

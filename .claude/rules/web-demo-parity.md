@@ -147,8 +147,9 @@ three things staying in step, and each is enforced rather than remembered.
   to the mock's empty response, which is what the desktop shows once a history file is gone.
 - **The Knowledge Graph is main's pipeline over the recordings, never placed by hand.** A preview
   indexes, embeds, lays out and names the sample install's recorded conversations, and the
-  snapshots are committed (`graph/knowledge-graph.json`); a node's title, cost and times are joined
-  from the dataset's rows at seed time. An archived task's Completed Tasks row is its own recorded
+  snapshots are committed (`graph/knowledge-graph.json`). The web build emits them as their own
+  file, and the seed fetches it and joins each node's title, cost and times from the dataset's rows
+  when a frame first opens the graph. An archived task's Completed Tasks row is its own recorded
   run (`archived/runs.json`). A scene whose subject keeps moving after `ready` names what to wait
   on in `settle`, and the rig refuses a poster of the no-GPU card.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
@@ -257,7 +258,8 @@ three things staying in step, and each is enforced rather than remembered.
   on it. A parked window, a Command Terminal, and a terminal outside every task window keep no
   press, so the first press posts. A scene that names `settle` must settle. The Knowledge Graph
   must draw in a 3D context: no no-GPU card, island labels placed by a drawn frame, and named
-  region pills. Runs as the `demo` job in `.github/workflows/ci.yml`
+  region pills. Its maps are fetched once, by the frame that opens the graph, and never by a board
+  frame. Runs as the `demo` job in `.github/workflows/ci.yml`
   and again inside `.github/workflows/deploy-demo.yml` before the Pages deploy.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, and a
   scene entry that carries code instead of data.

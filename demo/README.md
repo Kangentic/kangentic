@@ -384,10 +384,12 @@ no lockfile, so each run counted a new `package-lock.json` of 3,000 to 4,700 lin
 repository that commits its lockfile never shows. Replacements take new ids after the last, and
 the guard holds every run to at least one changed line. Archive dates spread from the
 day after each project joined the install to four days ago, oldest commits oldest, and the history
-takes ticket numbers after each board's, so no card on a board changed number. Main indexes at most
-25 conversations per project open (`MAX_SESSIONS_PER_SWEEP`), so the capture opens a project again
-whenever its sweep stops with conversations left, as a user's later visits would. Cursor and Copilot sessions get no node, since their adapters have no transcript
-parser, which is what the desktop draws too; the Command Terminal is transient and has no row. The
+takes ticket numbers after each board's, so no card on a board changed number.
+
+Main indexes at most 25 conversations per project open (`MAX_SESSIONS_PER_SWEEP`). The capture
+opens a project again whenever its sweep stops with conversations left, as a user's later visits
+would. Cursor and Copilot sessions get no node, because their adapters have no transcript parser.
+The desktop draws none for them either. The Command Terminal is transient and has no row. The
 fixture's `withoutNode` names each recorded session without a node and the reason, and
 `tests/unit/demo-knowledge-graph-seeded.test.ts` holds every recorded conversation to being drawn
 or named.
@@ -395,8 +397,10 @@ or named.
 The fixture keeps what the pipeline computed: each node's place, size, regions and agent name (the
 adapter's display name, which main resolves), the links, the neighbour lists, the regions at every
 granularity, and the coverage and Index counts. A node's title, ticket, model, effort, cost,
-duration, tokens, outcome and last activity are joined from the dataset's rows when the seed runs,
-as main's `documentMetadata` joins the same rows on the desktop, so a node agrees with its card.
+duration, tokens, outcome and last activity are joined from the dataset's rows when the graph
+first opens, as main's `documentMetadata` joins the same rows on the desktop, so a node agrees with
+its card. The web build ships the maps as their own file, fetched at that moment, and no board
+frame loads them (What the page ships, below).
 The counts are the install's own because the capture registers each project at a repository with
 the History pane's history: task records are its tasks plus its backlog, and commits are the
 scaffold's commit plan for contoso-web and the one commit of each shallow upstream clone. Settings, Knowledge Graph
@@ -714,35 +718,39 @@ Sessions cover every state the app distinguishes (thinking, needs-you, a permiss
 suspended, queued) plus a Command Terminal; Monitor rows are derived from the session rows so the
 two views cannot disagree; the usage dashboard is a seeded, deterministic fourteen-day series.
 Each archived task carries the stats its last session left (`DEMO_ARCHIVED_SUMMARIES`, what the
-Completed Tasks dialog lists), and that session was run for real. `scripts/capture-demo-archived-runs.mjs`
-gives each archived task one headless Claude Code run of its own prompt (`claude -p` with the
-default template's `<title>: <description>`), in a throwaway clone of its repo beside the
-project's scratch clone, trusted the way the desktop trusts a workspace before a spawn, in
-acceptEdits. A run has to start before its task's change: upstream had already made three of them
-(petclinic's Postgres profile, boutique's Go bump and its move to Artifact Registry), so
-`manifest.archived.refs` pins the parent of the upstream commit that made each. The row is the run:
-cost and duration from the run's own result, which is what the status line reports, tokens and
-tools from main's own transcript parsers, and churn from git over the clone, untracked files
-included as `getChurnSummary` counts them. The contoso-web scaffold commits no lockfile, so the CI
-task, which generates one for `npm ci`, counts all 3,069 of its lines. The board's seven runs were on
-Opus 5, and the row's model is read from the run's history: the model the main conversation's turns
-name. The result's `modelUsage` is no guide. Claude Code's advisor answers on its own model and bills
-it to the run, and in three of the seven runs it wrote more than the main conversation, which is how
-those rows once read Opus 5.5. After a change to how a run is measured,
-`node scripts/capture-demo-archived-runs.mjs --remeasure` re-reads every recorded run from its history
-without running anything. Every run is Claude Code's, so each archived task names it as the agent
-that did the work.
-The rows do not reconcile with the usage dashboard: its series is seeded noise, the
-Postgres run alone costs more than the lightest weekday it draws for one project, and the weekday
-an archive date lands on moves with the day the frame is opened. One run differs in mode. In
-acceptEdits, headless Claude refused the Java 21 task's `.devcontainer/Dockerfile` edit as a
-sensitive file, which left one of its three named changes undone, so that task runs in
-bypassPermissions (`manifest.archived.permissionModes`), standing in for the approval the merged
-task got. The runs' transcripts stay on the recording
-machine, where the Knowledge Graph indexed them (Knowledge Graph above). The mock answers the
-archived list per project, as each project's own DB does on the desktop, so contoso-web's dialog
-lists its own archive, the history included (Knowledge Graph above), and not every project's. The
-history runs are on Sonnet 5.5, so their rows name it, beside the board's seven Opus 5 runs.
+Completed Tasks dialog lists), and that session was run for real.
+`scripts/capture-demo-archived-runs.mjs` gives each archived task one headless Claude Code run of
+its own prompt (`claude -p` with the default template's `<title>: <description>`). Each run is in
+acceptEdits, in a throwaway clone of its repo beside the project's scratch clone, trusted the way
+the desktop trusts a workspace before a spawn. A run has to start before its task's change.
+Upstream had already made three of them (petclinic's Postgres profile, boutique's Go bump and its
+move to Artifact Registry), so `manifest.archived.refs` pins the parent of the upstream commit that
+made each.
+
+The row is the run. Cost and duration come from the run's own result, which is what the status
+line reports. Tokens and tools come from main's own transcript parsers. Churn comes from git over
+the clone, untracked files included as `getChurnSummary` counts them. The contoso-web scaffold
+commits no lockfile, so the CI task, which generates one for `npm ci`, counts all 3,069 of its
+lines. The board's seven runs were on Opus 5, and the row's model is read from the run's history:
+the model the main conversation's turns name. The result's `modelUsage` is no guide. Claude Code's
+advisor answers on its own model and bills it to the run, and in three of the seven runs it wrote
+more than the main conversation, which is how those rows once read Opus 5.5. After a change to how
+a run is measured, `node scripts/capture-demo-archived-runs.mjs --remeasure` re-reads every
+recorded run from its history without running anything. Every run is Claude Code's, so each
+archived task names it as the agent that did the work.
+
+The rows do not reconcile with the usage dashboard. Its series is seeded noise, the Postgres run
+alone costs more than the lightest weekday it draws for one project, and the weekday an archive
+date lands on moves with the day the frame is opened. One run differs in mode. In acceptEdits,
+headless Claude refused the Java 21 task's `.devcontainer/Dockerfile` edit as a sensitive file,
+which left one of its three named changes undone. That task runs in bypassPermissions
+(`manifest.archived.permissionModes`), standing in for the approval the merged task got.
+
+The runs' transcripts stay on the recording machine, where the Knowledge Graph indexed them
+(Knowledge Graph above). The mock answers the archived list per project, as each project's own DB
+does on the desktop. So contoso-web's dialog lists its own archive, the history included, and not
+every project's. The history runs are on Sonnet 5.5, so their rows name it, beside the board's
+seven Opus 5 runs.
 
 ### Terminal recordings
 
@@ -1285,12 +1293,14 @@ became physical rows and the seed took on the cell-width table the applier clips
 a working session's opening frame each), which is what lets a still of a tiled window paint the
 right recording without a fetch. It grew about 50 KB more (156 to 207 KB by the same gzip, built
 from the commit before and after) for the Knowledge Graph's three maps and the 177 older archived
-tasks whose conversations make them up, with each task's run summary. The maps alone are about
-30 KB of that. They stay in the seed because the mock takes its graph answers from what
-`__mockPreConfigure` returns, as it takes every other seeded read. Eight board frames on one page
-were ready in 1,569 ms against 1,476 ms before, with 74 MB of heap against 62 MB (`demo:measure`,
-both builds on one machine, run back to back); a single frame's ready time moved by less than its
-run-to-run noise.
+tasks whose conversations make them up, with each task's run summary. The maps alone were about
+30 KB of that, and no board frame draws them, so they left the seed. The build emits them as
+`graph/knowledge-graph-<hash>.json` (147 KB raw, 31 KB gzipped), and the seed fetches that file
+the first time a frame opens the graph (`seededKnowledgeGraph`), as the conversation viewer
+fetches a transcript. The seed went from 207 to 175 KB by the same gzip, and eight board frames on
+one page from 74 to 66 MB of heap (`demo:measure`, both builds on one machine, run back to back).
+Ready times moved by less than their run-to-run noise. `tests/demo/static-demo.spec.ts` holds a
+board frame to no graph request and the graph scene to exactly one.
 The 44 recordings under `recordings/` (six of them tiled siblings, five of them resume boots) are
 17.3 MB raw and 543 KB gzipped in total, fetched one at a time as terminals mount, so none of it
 is on the boot path. The resume boots are 204 KB raw and 29 KB gzipped of that, and one is fetched
@@ -1384,6 +1394,7 @@ mock-electron-api-<hash>.js      tests/ui/mock-electron-api.js verbatim
 demo-seed-<hash>.js              the sample install, final frames, diffs, and history embedded
 recordings/<name>-<hash>.json    one timed stream per recording, fetched when a terminal mounts
 transcripts/<session>-<hash>.json  the agent transcript behind a session, fetched when a conversation viewer opens
+graph/knowledge-graph-<hash>.json  the Knowledge Graph's three maps, fetched when a frame first opens the graph
 guest/<name>-<hash>.html         the page a project's dev URL shows in the Browser pane
 assets/                          the renderer's hashed chunks and stylesheets, monaco's lazy chunks and workers
 ```

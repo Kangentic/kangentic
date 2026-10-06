@@ -25,5 +25,7 @@ export function buildMarketingPreConfig(): string {
     messageTrails: loadDemoMessageTrails(), messageTrailMaxEntries: MESSAGE_TRAIL_MAX_ENTRIES,
     cellWidths: buildCellWidthTable(),
     history: loadDemoHistory(),
+    // Carried, not fetched: the rig serves no recordings index to fetch the maps from.
+    knowledgeGraph: 'inline',
   });
 }
