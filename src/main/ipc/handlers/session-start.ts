@@ -32,7 +32,7 @@ import { getProjectRepos } from '../helpers/project-repos';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
-import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
 export type StartTaskSessionResult =
@@ -48,17 +48,14 @@ export type StartTaskSessionResult =
   | { outcome: 'starting'; settled: Promise<void> };
 
 /**
- * Whether the task's session is paused: a `suspended` row in the registry,
- * which is what the desktop's task view offers Resume for. It excludes a
- * Command Terminal row the way read-board and read-stream do when they compute
- * `resumable`, the flag that promises this path to the phone. A suspended row
- * survives `reconcileTaskSessionRef` (it clears only the task's pointer), so
- * this reads the registry by task, not the pointer.
+ * Whether the task's session is paused, by `isPausedTaskSession`: the same
+ * definition read-board and read-stream use for `resumable`, the flag that
+ * promises this path to the phone. A suspended row survives
+ * `reconcileTaskSessionRef` (it clears only the task's pointer), so this reads
+ * the registry by task, not the pointer.
  */
 function hasSuspendedSession(context: IpcContext, taskId: string): boolean {
-  return context.sessionManager.listSessions().some(
-    (session) => session.taskId === taskId && session.status === 'suspended' && session.transient !== true,
-  );
+  return context.sessionManager.listSessions().some((session) => session.taskId === taskId && isPausedTaskSession(session));
 }
 
 /**
