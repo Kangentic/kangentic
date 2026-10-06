@@ -74,6 +74,16 @@ function fakeSession(): BridgeSession {
   return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn() } as unknown as BridgeSession;
 }
 
+/** The context the view, resumable and spawn-progress suites share; the session registry lists `registryRows`. */
+function boardContext(): IpcContext {
+  return {
+    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
+    boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
+    sessionManager: { listSessions: () => registryRows },
+    configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
+  } as unknown as IpcContext;
+}
+
 describe('handleReadBoard', () => {
   beforeEach(() => {
     // detail_view_state / handoff_context / external_metadata are renderer- or
@@ -178,15 +188,6 @@ describe('handleReadBoard', () => {
   });
 
   describe('view projections (protocol 0.9.0)', () => {
-    function boardContext(): IpcContext {
-      return {
-        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
-        boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
-        sessionManager: { listSessions: () => registryRows },
-        configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
-      } as unknown as IpcContext;
-    }
-
     beforeEach(() => {
       tasksList.mockReturnValue([
         { id: 't-1', swimlane_id: 'lane-1', session_id: 'sess-1' },
@@ -271,15 +272,6 @@ describe('handleReadBoard', () => {
   });
 
   describe('resumable on the board row (protocol 0.16.0)', () => {
-    function boardContext(): IpcContext {
-      return {
-        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
-        boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
-        sessionManager: { listSessions: () => registryRows },
-        configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
-      } as unknown as IpcContext;
-    }
-
     beforeEach(() => {
       swimlanesList.mockReturnValue([
         { id: 'lane-review', role: null, auto_spawn: false },
@@ -349,15 +341,6 @@ describe('handleReadBoard', () => {
   });
 
   describe('spawn progress (protocol 0.16.0)', () => {
-    function boardContext(): IpcContext {
-      return {
-        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
-        boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
-        sessionManager: { listSessions: () => registryRows },
-        configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
-      } as unknown as IpcContext;
-    }
-
     beforeEach(() => {
       tasksList.mockReturnValue([
         { id: 't-1', swimlane_id: 'lane-1', session_id: 'sess-1' },
