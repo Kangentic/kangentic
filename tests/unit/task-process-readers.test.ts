@@ -773,6 +773,15 @@ describe('macOS reader: TCP connections from libproc socket info', () => {
     expect(parseSocketFdInfo(Buffer.alloc(300), 1)).toBeNull();
   });
 
+  it('reads every state but LISTEN and ESTABLISHED as no connection: a socket winding down is no evidence', () => {
+    // XNU's TSI_S_* values: CLOSED 0, SYN_SENT 2, SYN_RECEIVED 3, CLOSE_WAIT 5,
+    // FIN_WAIT_1 6, CLOSING 7, LAST_ACK 8, FIN_WAIT_2 9, TIME_WAIT 10.
+    for (const state of [0, 2, 3, 5, 6, 7, 8, 9, 10]) {
+      const row = parseSocketFdInfo(socketFdInfo({ ipv4: true, local: [127, 0, 0, 1], localPort: 5037, remote: [127, 0, 0, 1], remotePort: 52000, state }), 2001);
+      expect(row?.state, `TSI_S state ${state}`).toBe('other');
+    }
+  });
+
   function socketRow(state: SocketRow['state'], localPort: number, remotePort: number, pid: number): SocketRow {
     return { state, localAddress: '127.0.0.1', localPort, remoteAddress: state === 'listen' ? '0.0.0.0' : '127.0.0.1', remotePort, ownerPids: [pid] };
   }
@@ -806,6 +815,24 @@ describe('macOS reader: TCP connections from libproc socket info', () => {
     // 4001 is another user's process (no start key) and is never read, and
     // 3002 is not read once 3001's socket was the last peer missing.
     expect(socketReads).toEqual([2001, 3001]);
+  });
+
+  it('keeps reading clients, past one with no peer to find, until the last connection has its peer, and no further', async () => {
+    const sockets = new Map<number, SocketRow[]>([
+      // 2001 accepted two connections, from 52000 and from 52001.
+      [2001, [socketRow('listen', 5037, 0, 2001), socketRow('established', 5037, 52000, 2001), socketRow('established', 5037, 52001, 2001)]],
+      [3001, [socketRow('established', 52000, 5037, 3001)]],
+      // Connected elsewhere: its read finds neither peer.
+      [3002, [socketRow('established', 52500, 443, 3002)]],
+      [3003, [socketRow('established', 52001, 5037, 3003)]],
+      [3004, [socketRow('established', 52600, 443, 3004)]],
+    ]);
+    const socketReads: number[] = [];
+    const reader = new DarwinTaggedProcessReader({ loadKernel: async () => kernelWithSockets(sockets, socketReads) });
+    const read = await reader.connections([asProcess(2001)], [asProcess(3001), asProcess(3002), asProcess(3003), asProcess(3004)]);
+    expect(read.pairs).toEqual([{ listenerPid: 2001, clientPid: 3001 }, { listenerPid: 2001, clientPid: 3003 }]);
+    // 3001 holds the first peer, but the second is still missing, so 3002 and 3003 are read; 3004 never is.
+    expect(socketReads).toEqual([2001, 3001, 3002, 3003]);
   });
 
   it('reads no client when no listener has a connection', async () => {
