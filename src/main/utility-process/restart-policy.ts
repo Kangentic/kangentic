@@ -206,7 +206,7 @@ export class UtilityRestartPolicy {
     this.trackCrashOnce('first', record);
 
     const latchesNow = this.crashCount >= this.maxCrashes && !this.reportedLatch;
-    // Copied now, like `crashNumber`: the report can wait on the stderr drain,
+    // Copied now, like `crashNumber`. The report can wait on the stderr drain,
     // and a crash recorded meanwhile would shift the bounded list.
     const crashesAtLatch = latchesNow ? [...this.crashRecords] : [];
     if (latchesNow) {

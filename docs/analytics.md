@@ -57,8 +57,8 @@ sentinel meaning "there is no exit code", which a real exit code cannot collide 
 Sentry tag spells that same case `unknown` rather than `-1`. `cause` says why there is none: an
 `exit` normally carries a real code and sends `-1` only if Electron reported none, while
 `fork_failed` (the fork threw, so no process started), `ready_timeout` (the worker never said
-ready) and `request_timeout` (the client killed a worker that stopped answering) always send `-1`. Before `cause` was sent, a retrieval worker that hung read
-as a fork failure. `phase` says which of the two per-run events it is: `first` counts the
+ready) and `request_timeout` (the client killed a worker that stopped answering) always send `-1`.
+Before `cause` was sent, a retrieval worker that hung read as a fork failure. `phase` says which of the two per-run events it is: `first` counts the
 installs that hit a crash at all, `latched` counts the installs whose subsystem gave up (the same
 moment the Sentry issue is filed). The event used to tick on every crash, which with three crashes
 per five-minute decay window read as "71 crashes a day" when it was a handful of installs looping,
@@ -74,7 +74,7 @@ session-teardown exit is written to the record but never ticks, or every shutdow
 would read as a GPU death on the dashboard. Neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
 the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
 matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same
-meaning it does for `utility_worker_crashed` above: there it means the worker never exited, but here it
+meaning it does for `utility_worker_crashed` above: there `cause` says why no code exists, but here it
 means Electron's `child-process-gone` event reported no exit code, a routine and more common case.
 The latch governs this Aptabase tick ONLY. The durable escalation record is written on every death
 from the first (see "Error Reporting" below), because the death that actually kills the app is one
@@ -538,10 +538,10 @@ in one Sentry org, one triage surface.
   `utility_worker_crashed` events per service per app run, the first crash and the latch. The same
   volume-versus-diagnostic split as `spawn_failed`.
   Every crash does log its stderr tail to the main console as a
-  `[utility-process] <service> exited with code <n> (crash <i> of <cap>)` warning, which the log
+  `[utility-process] <service> <what happened> (crash <i> of <cap>)` warning, which the log
   mirror persists to `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether
-  or not error reporting is on. A crash with no exit says what the worker failed to do instead, as
-  in `did not answer projects.summaries in time`, and the package smoke matches the `(crash <i> of
+  or not error reporting is on. An exit reads `exited with code <n>`. A crash with no exit says what
+  the worker failed to do, as in `did not answer projects.summaries in time`, and the package smoke matches the `(crash <i> of
   <cap>)` suffix every cause shares. The Knowledge Graph settings tab shows the same reason, plus
   the first error line, while semantic search is off because of it.
 - **A GPU health escalation is reported once, and on the NEXT launch, not live.**

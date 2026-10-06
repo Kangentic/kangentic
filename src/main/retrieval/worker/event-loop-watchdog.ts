@@ -35,7 +35,7 @@ import { Worker } from 'node:worker_threads';
 import { setSyncSpanLabelSink } from '../../diagnostics/event-loop-lag';
 
 /** Longest label kept, in UTF-8 bytes. Labels are short fixed identifiers. */
-const LABEL_BYTES = 96;
+export const LABEL_BYTES = 96;
 /** Int32 slots ahead of the label: the heartbeat, then the label's length. */
 const HEADER_SLOTS = 2;
 const HEADER_BYTES = HEADER_SLOTS * Int32Array.BYTES_PER_ELEMENT;
@@ -108,7 +108,7 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
   const labelBytes = new Uint8Array(buffer, HEADER_BYTES, LABEL_BYTES);
   const encoder = new TextEncoder();
 
-  // The thread first, and nothing else until it exists: the caller runs ahead
+  // The thread first, and nothing else until it exists. The caller runs ahead
   // of the worker's `ready`, so a constructor that throws must cost only the
   // diagnostics, never the worker's startup.
   let watchdog: Worker;
@@ -127,7 +127,7 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
     console.warn('[retrieval-worker] event-loop watchdog did not start:', error);
     return { online: Promise.resolve(), stop: async () => undefined };
   }
-  // Diagnostics only: the thread never keeps the worker alive, and a thread
+  // Diagnostics only. The thread never keeps the worker alive, and a thread
   // that fails takes nothing else with it.
   watchdog.unref();
   watchdog.on('error', (error) => {
