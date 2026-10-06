@@ -316,12 +316,19 @@ const INVISIBLE_FORMAT_CHARACTERS = /[\u{00AD}\u{061C}\u{200B}\u{200E}\u{200F}\u
 
 /**
  * The tag characters (U+E0000-U+E007F). They render as nothing and can spell
- * out a whole hidden string. The one place they show is an emoji tag sequence:
- * the black flag (U+1F3F4), tag letters and digits, then the cancel tag
- * (U+E007F), which is how a subdivision flag such as Scotland's is written.
- * The first group matches that sequence so the replacement can keep it.
+ * out a whole hidden string. The one place they show is a subdivision flag:
+ * the black flag (U+1F3F4), a code in tag letters, then the cancel tag
+ * (U+E007F). The first group matches only the three flags that render
+ * (England "gbeng", Scotland "gbsct", Wales "gbwls"), so the replacement keeps
+ * those. Keeping any flag-shaped run instead would let hidden text through
+ * wrapped in a black flag and a cancel tag.
  */
-const TAG_CHARACTERS = /(\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]+\u{E007F})|[\u{E0000}-\u{E007F}]/gu;
+const TAG_CHARACTERS = /(\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F})|[\u{E0000}-\u{E007F}]/gu;
+
+/** Drops every tag character except those inside one of the three flags TAG_CHARACTERS keeps. */
+function stripTagCharacters(text: string): string {
+  return text.replace(TAG_CHARACTERS, (_tagMatch: string, flagSequence: string | undefined) => flagSequence ?? '');
+}
 
 /** Tabs and line breaks, including the Unicode line and paragraph separators (U+2028, U+2029). */
 const LABEL_LINE_BREAKS = /[\t\r\n\u{2028}\u{2029}]+/gu;
@@ -333,23 +340,24 @@ const LABEL_LINE_BREAKS = /[\t\r\n\u{2028}\u{2029}]+/gu;
  * "<automation name>"...`. That name comes from the column's config, which a
  * team shares in a committed `kangentic.json`, so it is text another person
  * wrote. Escape sequences, control characters, invisible format characters
- * and tag characters outside a flag emoji are stripped, tabs and line breaks
- * become spaces, and the result is capped
+ * and tag characters outside the three subdivision flags are stripped, tabs
+ * and line breaks become spaces, and the result is capped
  * at SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH with a trailing "...". A label with
  * nothing left to show is null, which the phone reads as no spawn in flight.
  */
 export function toSpawnProgressLabelWire(label: string | null): string | null {
   if (label === null) return null;
-  const cleaned = stripAnsiControlCodes(label)
-    .replace(INVISIBLE_FORMAT_CHARACTERS, '')
-    .replace(TAG_CHARACTERS, (_tagMatch: string, flagSequence: string | undefined) => flagSequence ?? '')
+  const cleaned = stripTagCharacters(stripAnsiControlCodes(label).replace(INVISIBLE_FORMAT_CHARACTERS, ''))
     .replace(LABEL_LINE_BREAKS, ' ')
     .replace(/ {2,}/g, ' ')
     .trim();
   if (cleaned === '') return null;
   const characters = Array.from(cleaned);
   if (characters.length <= SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH) return cleaned;
-  return `${characters.slice(0, SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3).join('').trimEnd()}...`;
+  // The cut can land inside a kept flag; stripping again drops the tag
+  // characters it leaves behind and keeps the black flag.
+  const head = stripTagCharacters(characters.slice(0, SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3).join(''));
+  return `${head.trimEnd()}...`;
 }
 
 /**

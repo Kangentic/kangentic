@@ -158,15 +158,36 @@ describe('toSpawnProgressLabelWire', () => {
     expect(toSpawnProgressLabelWire(`Running "deploy${hidden}"...`)).toBe('Running "deploy"...');
   });
 
-  it('keeps a subdivision flag, the one emoji spelled with tag characters', () => {
-    // The black flag, "gbsct" in tag letters, then the cancel tag: Scotland.
-    const scotland = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}';
-    expect(toSpawnProgressLabelWire(`Running "${scotland} deploy"...`)).toBe(`Running "${scotland} deploy"...`);
+  // The black flag, a code in tag letters, then the cancel tag.
+  const ENGLAND = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+  const SCOTLAND = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}';
+  const WALES = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}';
+
+  it.each([
+    ['England', ENGLAND],
+    ['Scotland', SCOTLAND],
+    ['Wales', WALES],
+  ])('keeps the %s flag, one of the three emoji spelled with tag characters', (_name, flag) => {
+    expect(toSpawnProgressLabelWire(`Running "${flag} deploy"...`)).toBe(`Running "${flag} deploy"...`);
+  });
+
+  it('strips hidden text wrapped in a black flag and a cancel tag, keeping only the black flag', () => {
+    // "ignoreprevious" in tag letters: shaped like a flag, but not one of the three.
+    const tagLetters = Array.from('ignoreprevious', (letter) => String.fromCodePoint(0xE0000 + (letter.codePointAt(0) ?? 0))).join('');
+    const disguised = `\u{1F3F4}${tagLetters}\u{E007F}`;
+    expect(toSpawnProgressLabelWire(`Running "deploy${disguised}"...`)).toBe('Running "deploy\u{1F3F4}"...');
   });
 
   it('strips the tags after a black flag that do not close as a flag, and keeps the flag', () => {
     const unterminated = '\u{1F3F4}\u{E0067}\u{E0062}';
     expect(toSpawnProgressLabelWire(`Running "${unterminated} deploy"...`)).toBe('Running "\u{1F3F4} deploy"...');
+  });
+
+  it('a cut through a kept flag leaves no tag characters before the ellipsis', () => {
+    // The cap keeps 117 code points: 114 of padding, the black flag, and the
+    // flag's first two tags, which the second strip drops.
+    const label = `${'x'.repeat(114)}${SCOTLAND} deploy`;
+    expect(toSpawnProgressLabelWire(label)).toBe(`${'x'.repeat(114)}\u{1F3F4}...`);
   });
 });
 
