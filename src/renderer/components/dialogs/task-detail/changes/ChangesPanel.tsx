@@ -213,7 +213,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // increments - stale entries are served immediately while a background
   // refetch runs, so content updates without any loading indicators. Image
   // payloads are budgeted, and the cache evicts the least recently used.
-  const contentCacheRef = useRef(new DiffContentCache<ContentCacheEntry>());
+  // Built once by a lazy initializer, never a throwaway per render.
+  const [contentCache] = useState(() => new DiffContentCache<ContentCacheEntry>());
   const cacheGenerationRef = useRef(0);
 
   // Tracks whether the initial file list fetch has completed, used to gate
@@ -277,7 +278,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     // Key the cache by selection (commit OID or scope) so a file's diffs never
     // bleed across a scope switch or a different commit selection.
     const cacheKey = changesSelectedCommit ? `commit:${changesSelectedCommit}:${filePath}` : `scope:${scope}:${filePath}`;
-    const cached = contentCacheRef.current.get(cacheKey);
+    const cached = contentCache.get(cacheKey);
     if (cached) {
       // Always serve cached content immediately (stale-while-revalidate)
       setFileContent({ result: cached.result, filePath });
@@ -299,7 +300,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         scope,
         commitOid: changesSelectedCommit ?? undefined,
       }, fileEntry?.binary ?? false, cached.result).then((freshResult) => {
-        contentCacheRef.current.set(cacheKey, { result: freshResult, generation: currentGeneration });
+        contentCache.set(cacheKey, { result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually
         // changed. Images compare byte for byte (diffContentEqual), so a
         // regenerated screenshot repaints even when its text is empty both times.
@@ -327,7 +328,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         scope,
         commitOid: changesSelectedCommit ?? undefined,
       }, file.binary);
-      contentCacheRef.current.set(cacheKey, { result, generation: cacheGenerationRef.current });
+      contentCache.set(cacheKey, { result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
       // display this result if its file is still selected, mirroring the
       // background-refetch path above.
@@ -339,7 +340,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         setFileContent({ result: EMPTY_DIFF_CONTENT, filePath });
       }
     }
-  }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
+  }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit, contentCache]);
 
   // Lightweight, local-only branch context for the header (name, ahead/behind,
   // last commit). Cheap enough to re-run on every fs.watch fire and manual

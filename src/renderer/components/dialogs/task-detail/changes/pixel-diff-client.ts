@@ -105,16 +105,12 @@ function getWorker(): Worker {
 
 /**
  * What the worker draws one side from. A raster image goes as its data URL
- * and the worker decodes it: `createImageBitmap` on an `<img>` decodes on the
- * calling thread, 30 to 42 ms a side for a 3840 x 2160 PNG, and in headless
- * Chromium every one of 12 comparisons of such a pair dropped a frame. With
- * the worker decoding, 6 of 18 did. Posting the data URL (a string copy, about
- * 6 ms at the 10 MB cap) beat keeping each side's bytes as a Blob to post:
- * that held a second copy of every image and still dropped a frame in 12 of
- * 21. The price is the worker's own base64 decode, about 50 ms more before
- * the result on that pair. An SVG is
- * decoded here, because a worker cannot decode SVG, and the resize pins an
- * SVG with no intrinsic size to the size the view uses.
+ * and the worker decodes it, because `createImageBitmap` on an `<img>` decodes
+ * on the calling thread and a large screenshot drops frames there. The data
+ * URL is already held, so posting it keeps no second copy of the bytes, at the
+ * cost of the worker decoding the base64 again. An SVG is decoded here,
+ * because a worker cannot decode SVG, and the resize pins an SVG with no
+ * intrinsic size to the size the view uses.
  */
 async function sourceOf(side: DecodedImageSide, scale: number, scalable: boolean): Promise<PixelDiffSource> {
   if (!scalable) return side.dataUrl;

@@ -1163,9 +1163,9 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
   });
 
   test('a raster pair reaches the worker undecoded and an SVG pair decoded, so no raster decode runs on the main thread', async () => {
-    // createImageBitmap on an <img> decodes on the calling thread, and a pair of
-    // 3840 x 2160 screenshots dropped a frame on every comparison that way. A
-    // raster side is posted as its data URL for the worker to decode. An SVG,
+    // createImageBitmap on an <img> decodes on the calling thread, which drops
+    // frames on a large screenshot. A raster side is posted as its data URL
+    // for the worker to decode. An SVG,
     // which no worker can decode, is posted as the bitmap this thread drew.
     await page.evaluate(() => {
       const recorder = window as unknown as { __pixelDiffSources: string[]; __restoreSourcesPostMessage: () => void };
@@ -1203,6 +1203,48 @@ test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
       expect(await postedSources()).toEqual(['png data URL', 'png data URL', 'bitmap', 'bitmap']);
     } finally {
       await page.evaluate(() => (window as unknown as { __restoreSourcesPostMessage: () => void }).__restoreSourcesPostMessage());
+    }
+
+    await closeChanges();
+  });
+
+  test('a raster side the worker cannot decode reads as a failed comparison, and the next comparison still runs', async () => {
+    // The page decodes both images before Diff mode starts, so only the
+    // worker's own decode can fail here: the first request's before side is
+    // swapped, on its way to the worker, for bytes that are not an image.
+    await page.evaluate(() => {
+      const patch = window as unknown as { __restoreCorruptingPostMessage: () => void };
+      const originalPostMessage = Worker.prototype.postMessage;
+      let corrupted = false;
+      Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: unknown) {
+        let outgoing = message;
+        if (!corrupted && message !== null && typeof message === 'object' && 'before' in message && typeof message.before === 'string') {
+          corrupted = true;
+          outgoing = { ...message, before: 'data:image/png;base64,AAAA' };
+        }
+        return (originalPostMessage as (this: Worker, message: unknown, transfer?: unknown) => void).call(this, outgoing, transfer);
+      } as Worker['postMessage'];
+      patch.__restoreCorruptingPostMessage = () => { Worker.prototype.postMessage = originalPostMessage; };
+    });
+    const brokenPath = 'shots/worker-cannot-decode.png';
+    const healthyPath = 'shots/worker-recovers.png';
+
+    try {
+      await openChanges([
+        pngFile(brokenPath),
+        pngFile(healthyPath, { modifiedImageBase64: BEFORE_PNG_REENCODED }),
+      ], brokenPath);
+      await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+      await diffModeButton().click();
+      await expect(pixelStat()).toHaveAttribute('data-status', 'failed', { timeout: 10000 });
+      await expect(pixelStat()).toHaveText('Could not compare pixels');
+      await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toHaveCount(0);
+
+      // The failure did not wedge the worker: the next pair compares as usual.
+      await selectFile(healthyPath);
+      await expect(pixelStat()).toHaveText('No pixel changes', { timeout: 10000 });
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restoreCorruptingPostMessage: () => void }).__restoreCorruptingPostMessage());
     }
 
     await closeChanges();

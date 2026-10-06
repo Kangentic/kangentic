@@ -1457,8 +1457,9 @@ describe('DiffService', () => {
     );
 
     it('a git failure reads unreadable and is logged, and the verdict is per side', async () => {
-      // A header the reader cannot parse (the old `cat-file -s` NaN case) and a
-      // git that exits before answering both reject inside the reader.
+      // A header the reader cannot parse, a git that exits before answering,
+      // and a git that cannot start all reject inside the reader, with no
+      // Node error code (pinned in git-object-reader-stream.test.ts).
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       try {
         mockReadGitObject.mockRejectedValue(new Error('git cat-file exited with 128 before it answered'));
@@ -1474,17 +1475,37 @@ describe('DiffService', () => {
       }
     });
 
-    it('a side that is not there (no such object, no such file) reads unreadable without a log line', async () => {
-      // Expected on every refresh after a file is deleted under the panel, so it must not fill the log.
+    it.each(['ENOENT', 'ENOTDIR', 'EISDIR'])(
+      'a side that is not there (no such object; %s on disk) reads unreadable without a log line',
+      async (code) => {
+        // Met on every refresh after a file is deleted, or turned into a
+        // directory, under the open panel, so it must not fill the log.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+          mockReadGitObject.mockResolvedValue({ kind: 'missing' } satisfies GitObjectRead);
+          vi.mocked(fs.promises.stat).mockRejectedValue(Object.assign(new Error(`${code}: not a file`), { code }));
+
+          const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+          expect(result).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
+          expect(warn).not.toHaveBeenCalled();
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
+    it('a disk failure other than a missing path is logged', async () => {
+      // The control for the case above: the same mocks, an error code that means the disk failed.
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       try {
         mockReadGitObject.mockResolvedValue({ kind: 'missing' } satisfies GitObjectRead);
-        vi.mocked(fs.promises.stat).mockRejectedValue(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }));
+        vi.mocked(fs.promises.stat).mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
 
         const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-        expect(result).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
-        expect(warn).not.toHaveBeenCalled();
+        expect(result.modified).toEqual({ kind: 'unreadable' });
+        expect(warn).toHaveBeenCalledTimes(1);
       } finally {
         warn.mockRestore();
       }
@@ -1503,6 +1524,8 @@ describe('DiffService', () => {
       ['a parent segment behind a backslash', { filePath: 'img\\..\\..\\key.png' }],
       ['an absolute POSIX path', { filePath: '/etc/hosts.png' }],
       ['an absolute Windows path', { filePath: 'C:\\Users\\dev\\key.png' }],
+      ['a drive-relative Windows path', { filePath: 'C:key.png' }],
+      ['an empty path', { filePath: '' }],
       ['a parent segment in the old path of a rename', { filePath: 'img/a.png', oldPath: 'img/../../old.png' }],
       ['a commit that is not an object id', { filePath: 'img/a.png', commitOid: '--output=x' }],
     ])('%s: neither reader touches git or the disk', async (_label, overrides) => {
@@ -1520,13 +1543,27 @@ describe('DiffService', () => {
       expect(fs.promises.readFile).not.toHaveBeenCalled();
     });
 
-    it('a name that only holds two dots, and a full commit id, still read', async () => {
+    it('a refused image keeps the sides its status has: none before an Added file, none after a Deleted one', async () => {
+      const refused = { projectPath: '/project', worktreePath: '/project/wt', baseBranch: 'main', filePath: '../outside/key.png' };
+
+      const added = await service.getImageContent({ ...refused, status: 'A' });
+      const deleted = await service.getImageContent({ ...refused, status: 'D' });
+
+      expect(added).toEqual({ original: null, modified: { kind: 'unreadable' } });
+      expect(deleted).toEqual({ original: { kind: 'unreadable' }, modified: null });
+      expect(mockReadGitObject).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a name that only holds two dots, with a full commit id', 'img/a..b.png'],
+      ['a name with a colon after its first character, legal on POSIX', 'img/a:b.png'],
+    ])('%s still reads', async (_label, filePath) => {
       // The control for the cases above: the same mocks, reached by input that is allowed.
       mockReadGitObject.mockResolvedValue({ kind: 'blob', objectId: 'f'.repeat(40), bytes: PNG_BYTES } satisfies GitObjectRead);
       mockGit.show.mockResolvedValue('text');
       const input = {
         projectPath: '/project', baseBranch: 'main', status: 'M' as const,
-        filePath: 'img/a..b.png', commitOid: '0123456789abcdef0123456789abcdef01234567',
+        filePath, commitOid: '0123456789abcdef0123456789abcdef01234567',
       };
 
       const image = await service.getImageContent(input);

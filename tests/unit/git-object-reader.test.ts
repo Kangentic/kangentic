@@ -8,7 +8,7 @@
  * Runs the real `git` binary against a temp directory, mirroring
  * diff-service-image-real-git.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +23,26 @@ const NO_CAP = 1024 * 1024;
 const IMAGE_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]), Buffer.alloc(40, 0x2a)]);
 
 let repository: string;
+
+// A GIT_DIR or GIT_WORK_TREE inherited from the shell (a test run from a git
+// hook sets both) would point every git call below at another repository.
+const INHERITED_GIT_VARIABLES = ['GIT_DIR', 'GIT_WORK_TREE'] as const;
+const inheritedGitValues = new Map<string, string | undefined>();
+
+beforeAll(() => {
+  for (const name of INHERITED_GIT_VARIABLES) {
+    inheritedGitValues.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+
+afterAll(() => {
+  for (const name of INHERITED_GIT_VARIABLES) {
+    const value = inheritedGitValues.get(name);
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 function run(args: string[]): string {
   return execFileSync('git', args, { cwd: repository, windowsHide: true }).toString().trim();
@@ -86,6 +106,26 @@ describe('readGitObject against a real repository', () => {
     expect(atCap.kind).toBe('blob');
   });
 
+  it('reads a blob far larger than one pipe chunk byte for byte, at and under the cap', async () => {
+    // Every real screenshot arrives over many stdout chunks, so the header and
+    // the content land in separate reads. The pattern makes a dropped,
+    // repeated or reordered chunk show up as a byte mismatch.
+    const large = Buffer.alloc(300 * 1024);
+    for (let index = 0; index < large.length; index++) large[index] = (index * 31 + (index >> 8)) & 255;
+    writeFile('img/large.png', large);
+    run(['add', '-A']);
+    run(['commit', '-m', 'add a large image']);
+
+    const underCap = await readGitObject(repository, 'HEAD:img/large.png', { maxBytes: NO_CAP });
+    const atCap = await readGitObject(repository, 'HEAD:img/large.png', { maxBytes: large.length });
+
+    for (const read of [underCap, atCap]) {
+      if (read.kind !== 'blob') throw new Error(`expected a blob, got ${read.kind}`);
+      expect(read.bytes.length).toBe(large.length);
+      expect(read.bytes.equals(large)).toBe(true);
+    }
+  });
+
   it('reads an empty file as an empty blob', async () => {
     const read = await readGitObject(repository, 'HEAD:img/empty.png', { maxBytes: NO_CAP });
 
@@ -108,11 +148,18 @@ describe('readGitObject against a real repository', () => {
     expect(read.bytes.buffer.byteLength).toBe(IMAGE_BYTES.length);
   });
 
-  it('rejects when git itself fails: a directory that is not a repository', async () => {
+  it('rejects when git itself fails, naming git\'s own reason: a directory that is not a repository', async () => {
     const notARepository = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-not-a-repository-'));
+    // Stop git's search for a repository above the temp directory, so a home
+    // directory or a checkout that holds the temp directory cannot answer instead.
+    const inheritedCeiling = process.env.GIT_CEILING_DIRECTORIES;
+    process.env.GIT_CEILING_DIRECTORIES = path.dirname(notARepository);
     try {
-      await expect(readGitObject(notARepository, 'HEAD:img/a.png', { maxBytes: NO_CAP })).rejects.toThrow(/exited/);
+      // The text after the colon is git's own message, whatever language it is in.
+      await expect(readGitObject(notARepository, 'HEAD:img/a.png', { maxBytes: NO_CAP })).rejects.toThrow(/exited with \d+ before it answered: \S/);
     } finally {
+      if (inheritedCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+      else process.env.GIT_CEILING_DIRECTORIES = inheritedCeiling;
       await fs.promises.rm(notARepository, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   });
@@ -131,9 +178,14 @@ describe('parseObjectHeader', () => {
   });
 
   it('refuses a header it does not recognise rather than guessing a size', () => {
-    // The case the old `cat-file -s` reader guarded with Number.isFinite.
     expect(parseObjectHeader(`${'a'.repeat(40)} blob not-a-number`)).toBeNull();
     expect(parseObjectHeader('short blob 12')).toBeNull();
     expect(parseObjectHeader('')).toBeNull();
+  });
+
+  it('accepts only the two id lengths git uses, 40 and 64 hex characters', () => {
+    for (const length of [39, 41, 63, 65]) {
+      expect(parseObjectHeader(`${'c'.repeat(length)} blob 12`)).toBeNull();
+    }
   });
 });
