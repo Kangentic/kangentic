@@ -193,7 +193,7 @@ describe('SpawnProgressFeed', () => {
     }
   });
 
-  it('prunes an entry a TTL expiry stranded, so a later identical label emits again', () => {
+  it('prunes an entry a TTL expiry stranded, announcing the retract, so a later identical label emits again', () => {
     const nowSpy = vi.spyOn(Date, 'now');
     try {
       nowSpy.mockReturnValue(0);
@@ -201,15 +201,68 @@ describe('SpawnProgressFeed', () => {
       vi.advanceTimersByTime(1000);
       expect(emitted).toHaveLength(1);
 
-      // The desktop's TTL drops the label without a push; the next spawn's
-      // first label is the same text and must still be announced.
+      // The desktop's TTL drops the label without a push. The prune announces
+      // that once, and the next spawn's first label is the same text and must
+      // still be announced.
       __resetSpawnProgressForTest();
       nowSpy.mockReturnValue(10 * 60_000);
       emitSpawnProgress(window, 'task-1', 'starting-agent');
-      expect(emitted).toHaveLength(2);
+      expect(emitted).toEqual([['proj-1', 'task-1'], ['proj-1', 'task-1'], ['proj-1', 'task-1']]);
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it('still tells the phone about a clear that arrives after a quiet phase outlived the TTL', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    try {
+      nowSpy.mockReturnValue(0);
+      // An automation's label is pushed once and then nothing for its whole run.
+      createProgressCallback(window, 'task-1')('Running "build"...');
+      vi.advanceTimersByTime(1000);
+      expect(emitted).toHaveLength(1);
+
+      nowSpy.mockReturnValue(125_000);
+      clearSpawnProgress(window, 'task-1');
+      // Without the retract the prune swallowed the clear: the phone kept the
+      // label while the desktop card had already cleared it.
+      expect(emitted).toEqual([['proj-1', 'task-1'], ['proj-1', 'task-1']]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('keeps an entry whose window is still open when the stale sweep runs, so its trailing emit still lands', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    try {
+      nowSpy.mockReturnValue(0);
+      emitSpawnProgress(window, 'task-1', 'fetching');
+      // A second label inside the window waits for the trailing edge.
+      emitSpawnProgress(window, 'task-1', 'creating-worktree');
+      expect(emitted).toEqual([['proj-1', 'task-1']]);
+
+      // Another task's change sweeps while task-1's window is still open,
+      // on a clock already past the stale horizon.
+      nowSpy.mockReturnValue(125_000);
+      emitSpawnProgress(window, 'task-2', 'fetching');
+      expect(emitted).toEqual([['proj-1', 'task-1'], ['proj-1', 'task-2']]);
+
+      vi.advanceTimersByTime(1000);
+      expect(emitted).toEqual([['proj-1', 'task-1'], ['proj-1', 'task-2'], ['proj-1', 'task-1']]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('stops delivering to a listener once its unsubscribe runs', () => {
+    const secondListenerCalls: Array<[string, string]> = [];
+    const unsubscribe = feed.onTaskSpawnProgressChanged((projectId, taskId) => {
+      secondListenerCalls.push([projectId, taskId]);
+    });
+    unsubscribe();
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(secondListenerCalls).toEqual([]);
+    expect(emitted).toEqual([['proj-1', 'task-1']]);
   });
 
   it('dispose stops listening and cancels the open window', () => {

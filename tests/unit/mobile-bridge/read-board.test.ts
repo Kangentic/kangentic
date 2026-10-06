@@ -34,7 +34,13 @@ import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import { SubscriptionRegistry } from '../../../src/main/mobile-bridge/session/subscription-registry';
 import type { SpawnProgressChangedListener } from '../../../src/main/mobile-bridge/spawn-progress-feed';
-import { emitSpawnProgress, emitSpawnWaiting, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
+import {
+  createProgressCallback,
+  emitSpawnProgress,
+  emitSpawnWaiting,
+  getInFlightSpawnProgress,
+  __resetSpawnProgressForTest,
+} from '../../../src/main/transition-engine/spawn-progress';
 
 /** A spawn-progress feed that never fires, for the tests that are not about it. */
 const noSpawnProgressFeed = { onTaskSpawnProgressChanged: vi.fn(() => vi.fn()) };
@@ -371,6 +377,33 @@ describe('handleReadBoard', () => {
 
       const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
       expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-1', 't-2']);
+      expect(snapshot.taskCountsByColumnId).toEqual({ 'lane-1': 2, 'lane-2': 1 });
+    });
+
+    it.each([
+      ['only ANSI escape codes', '\u001b[31m\u001b[0m'],
+      ['only whitespace and line breaks', ' \t\r\n '],
+      ['only invisible format characters', '​⁠﻿'],
+    ])("'sessions' drops a session-less task whose in-flight label sanitizes to nothing (%s)", async (_description, rawLabel) => {
+      // A label that is text on the desktop but nothing on the wire: the phone
+      // reads spawn_progress null as "no spawn in flight", so the card has
+      // nothing to say and the filter must judge the mapped row, not the raw
+      // label.
+      createProgressCallback(fakeWindow(), 't-2')(rawLabel);
+      emitSpawnProgress(fakeWindow(), 't-3', 'creating-worktree');
+      // Guards against a vacuous pass: the raw label really is in flight, so
+      // only the sanitizer stands between it and the phone.
+      expect(getInFlightSpawnProgress()['t-2']).toBe(rawLabel);
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const snapshot = response.payload as { tasks: Array<{ id: string; spawn_progress: string | null }>; taskCountsByColumnId: Record<string, number> };
+      // t-2 is dropped; t-3, with a real label in flight, still stays.
+      expect(snapshot.tasks.map((task) => [task.id, task.spawn_progress])).toEqual([
+        ['t-1', null],
+        ['t-3', 'Creating worktree...'],
+      ]);
+      // Counts still describe the whole column, dropped task included.
       expect(snapshot.taskCountsByColumnId).toEqual({ 'lane-1': 2, 'lane-2': 1 });
     });
 

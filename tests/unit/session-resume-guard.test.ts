@@ -157,11 +157,16 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
     }
   });
 
-  it('pausedTaskIdsOf keeps each task with a paused row once, and nothing else', () => {
+  it('pausedTaskIdsOf keeps each task with a paused row and no live one once, and nothing else', () => {
     const taskIds = pausedTaskIdsOf([
       { taskId: 'task-paused', status: 'suspended' },
-      // A resume's queued successor beside the paused row it will replace.
-      { taskId: 'task-paused', status: 'queued' },
+      // A queued successor beside the paused row it will replace: the desktop
+      // shows the queued session and offers no Resume, so the task is not paused.
+      { taskId: 'task-paused-with-queued-successor', status: 'suspended' },
+      { taskId: 'task-paused-with-queued-successor', status: 'queued' },
+      // The live row listed first must not matter.
+      { taskId: 'task-paused-with-running-successor', status: 'running' },
+      { taskId: 'task-paused-with-running-successor', status: 'suspended' },
       { taskId: 'task-paused-twice', status: 'suspended' },
       { taskId: 'task-paused-twice', status: 'suspended', transient: false },
       { taskId: 'task-running', status: 'running' },

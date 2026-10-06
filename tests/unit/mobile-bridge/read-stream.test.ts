@@ -74,6 +74,11 @@ class FakeSessionManager extends EventEmitter {
     { id, taskId: 'task-1', status: 'running', resuming: false }
   ));
   getSessionTaskId = vi.fn((id: string): string | undefined => (id === 'sess-1' ? 'task-1' : undefined));
+  /** The registry's rows: by default only the row getSession answers for 'sess-1'. */
+  listSessions = vi.fn(() => {
+    const row = this.getSession('sess-1');
+    return row ? [row] : [];
+  });
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
   // The mobile seed uses the parsed-grid serialized frame, not the raw replay.
   getSerializedFrame = vi.fn(() => Promise.resolve('serialized-frame'));
@@ -612,6 +617,22 @@ describe('handleReadStream', () => {
       expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
     });
 
+    it('the snapshot carries resumable false for a paused row whose task already holds a queued successor', async () => {
+      // A respawn queued behind the concurrency limit: the desktop shows the
+      // queued session and offers no Resume, and start-session answers `live`.
+      const pausedRow = { id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false };
+      sessionManager.getSession.mockReturnValue(pausedRow);
+      sessionManager.listSessions.mockReturnValue([
+        pausedRow,
+        { id: 'sess-2', taskId: 'task-1', projectId: 'proj-1', status: 'queued', resuming: true },
+      ]);
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+
+      expect(response.ok).toBe(true);
+      expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
+    });
+
     it('the snapshot carries resumable false, with no task lookup, for a paused session that has no owning project', async () => {
       // The row is a normal paused task session in every other respect (task id
       // set, suspended, not transient), so only the missing project can be what
@@ -649,8 +670,11 @@ describe('handleReadStream', () => {
       const context = { sessionManager } as unknown as IpcContext;
       await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, new SubscriptionRegistry());
 
-      // A queued row suspended: no PTY, so no exit, and the feed stays.
-      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false });
+      // A queued row suspended: no PTY, so no exit, and the feed stays. The
+      // registry holds the suspended row by the time it announces it.
+      const suspendedRow = { id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false };
+      sessionManager.getSession.mockReturnValue(suspendedRow);
+      sessionManager.emit('session-changed', 'sess-1', suspendedRow);
       expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'suspended', resuming: false, resumable: true }]);
 
       // The status itself does not change, but the column now refuses Resume:
@@ -841,6 +865,49 @@ describe('handleReadStream', () => {
 
       expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
       expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('a removed RUNNING session flushes its parked terminal bytes, ends the feed, and its later exit sends nothing more', async () => {
+      // remove() lands BEFORE the PTY's asynchronous 'exit', so a feed on a
+      // running session is ended by the removal itself, not only a paused row's.
+      vi.useFakeTimers();
+      try {
+        const session = fakeSession();
+        const context = { sessionManager } as unknown as IpcContext;
+        const subscriptions = new SubscriptionRegistry();
+        await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: true }), session, context, subscriptions);
+        expect(sessionManager.tapSubscriptions.get('sess-1')).toBe(1);
+
+        // Past TERMINAL_IMMEDIATE_FLUSH_CHARS, so the bytes park on the
+        // coalesce timer instead of taking the keystroke fast path.
+        const parkedOutput = 'r'.repeat(300);
+        sessionManager.emit('data-tap', 'sess-1', parkedOutput);
+        expect(session.sendMessage).not.toHaveBeenCalled();
+
+        sessionManager.emit('session-removed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
+
+        // The pending bytes ship FIRST, then session-ended is the feed's last word.
+        const sentEvents = vi.mocked(session.sendMessage).mock.calls.map((call) => (call[0] as { event: { kind: string; payload: Record<string, unknown> } }).event);
+        expect(sentEvents.map((event) => event.kind)).toEqual(['terminal', 'activity']);
+        expect(sentEvents[0].payload).toEqual({ data: parkedOutput });
+        expect(sentEvents[1].payload).toEqual({ type: 'session-ended', intentional: true });
+        expectPhoneAcceptsEveryActivityEvent(session);
+
+        // The subscription is fully torn down: registry entry, tap, listeners.
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+        expect(sessionManager.tapSubscriptions.size).toBe(0);
+        expect(sessionManager.listenerCount('data-tap')).toBe(0);
+        expect(sessionManager.listenerCount('exit')).toBe(0);
+
+        // The PTY's exit arrives afterwards, and neither it nor a stray timer
+        // adds a second session-ended or a duplicate flush.
+        const sentBeforeExit = vi.mocked(session.sendMessage).mock.calls.length;
+        sessionManager.emit('exit', 'sess-1', 0, true);
+        await vi.runAllTimersAsync();
+        expect(vi.mocked(session.sendMessage).mock.calls).toHaveLength(sentBeforeExit);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('a successor whose spawn failed after the drain ends the feed with no successor', async () => {

@@ -9,7 +9,7 @@ import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatu
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
-import { isPausedTaskSession, isResumeOffered } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, isResumeOffered, pausedTaskIdsOf } from '../../../shared/session-resume-eligibility';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
@@ -131,15 +131,17 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
  * Resume rather than offering one start-session would refuse.
  */
 function isSessionResumable(context: IpcContext, session: Session): boolean {
-  // This session, not any row of its task: the stream's copy answers for the
-  // session it carries. Decided before the task lookup, which it gates.
-  const hasPausedSession = isPausedTaskSession(session);
-  if (!hasPausedSession || !session.taskId || !session.projectId) return false;
+  // This session first: the stream's copy answers for the session it carries.
+  // Decided before any lookup, which it gates.
+  if (!isPausedTaskSession(session) || !session.taskId || !session.projectId) return false;
   try {
     const { tasks, swimlanes } = getProjectRepos(context, session.projectId);
     const task = tasks.getById(session.taskId);
     if (!task) return false;
     const lane = swimlanes.getById(task.swimlane_id);
+    // Then the board row's own scan, so a paused row whose task already holds
+    // a queued or running successor answers false here as it does there.
+    const hasPausedSession = pausedTaskIdsOf(context.sessionManager.listSessions()).has(session.taskId);
     return isResumeOffered({ hasPausedSession, task, laneRole: lane?.role });
   } catch (error) {
     // Logged because the false is silent on the phone: Resume just never shows.
@@ -326,10 +328,11 @@ function subscribeReadStream(
     // kill() has no such race - it deliberately leaves status at 'running'
     // (a hard reset is 'exited', not resumable) and emits no flip before
     // writeExitSequence, so the desktop pane does render kill()'s exit
-    // sequence. Either way this subscription has no listener on
-    // session-changed at all, so it must check explicitly, and it covers
-    // both paths. Whatever was already queued before teardown began
-    // still flushes normally - only NEW bytes are dropped.
+    // sequence. Either way this tap must check explicitly: the
+    // session-changed listener below pushes status only and never stops the
+    // tap, and this check covers both paths. Whatever was already queued
+    // before teardown began still flushes normally - only NEW bytes are
+    // dropped.
     if (context.sessionManager.isSessionTeardownInFlight(sessionId)) return;
     pendingTerminalChunks.push(data);
     pendingTerminalChars += data.length;

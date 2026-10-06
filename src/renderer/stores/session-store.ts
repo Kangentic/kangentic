@@ -576,6 +576,10 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
   resumeSession: async (taskId, resumePrompt?) => {
     const newSession = await window.electronAPI.sessions.resume(taskId, resumePrompt, useProjectStore.getState().currentProject?.id ?? null);
+    // A cancelled resume (a newer one, a phone Resume included, or a suspend,
+    // reset or relocation) resolves null. Whatever cancelled it pushes the
+    // task's real state, so there is nothing to write here.
+    if (!newSession) return null;
     set((s) => {
       const sessions = [
         ...s.sessions.filter((sess) => sess.taskId !== taskId),

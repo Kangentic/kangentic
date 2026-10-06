@@ -21,10 +21,16 @@
  * the exact one a future refactor would silently reintroduce, which is why
  * it is pinned here rather than only in the UI tier.
  *
+ * It also pins `resumeSession`'s cancelled-resume path (main resolves null),
+ * the last describe below: that action is another writer of the same
+ * `sessions` replica, and it needs the same stubbed-window harness and
+ * paused-row seed, so it lives here instead of in a one-case file.
+ *
  * Drives the real Zustand store with `window.electronAPI` stubbed, the way
  * session-store-task-row-dedup.test.ts does.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { Session, SessionUsage } from '../../src/shared/types';
 
@@ -380,5 +386,78 @@ describe('syncSessions does not resurrect a row removed during its async gap', (
 
     expect(useSessionStore.getState().sessions.map((session) => session.id).sort())
       .toEqual([OTHER_SESSION_ID, 'sess-newcomer', SESSION_ID].sort());
+  });
+});
+
+describe('resumeSession when main answers null (a cancelled resume)', () => {
+  type ResumeStub = (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session | null>;
+
+  /** Runs `body` with `window.electronAPI.sessions.resume` answering `answer`, then restores the stub. */
+  async function withResumeAnswering(answer: Session | null, body: (resume: Mock<ResumeStub>) => Promise<void>): Promise<void> {
+    const sessionsApi = (window as Record<string, unknown> & {
+      electronAPI: { sessions: { resume: ResumeStub } };
+    }).electronAPI.sessions;
+    const originalResume = sessionsApi.resume;
+    const resume = vi.fn<ResumeStub>(async () => answer);
+    sessionsApi.resume = resume;
+    try {
+      await body(resume);
+    } finally {
+      sessionsApi.resume = originalResume;
+    }
+  }
+
+  /** The task's paused row (no PTY), beside an unrelated live session the user has selected. */
+  function seedPausedTask(): void {
+    const pausedRow = makeSession({ id: SESSION_ID, taskId: TASK_ID, status: 'suspended', pid: null });
+    const sessions = [pausedRow, elsewhere];
+    useSessionStore.setState({
+      sessions,
+      _sessionByTaskId: buildSessionByTaskId(sessions),
+      activeSessionId: OTHER_SESSION_ID,
+    });
+  }
+
+  beforeEach(seedPausedTask);
+
+  it('resolves null, writes nothing to the store, and does not throw', async () => {
+    // A newer resume, a Pause, a reset or a relocation cancels the in-flight
+    // resume and main resolves null. Reading `.id` off that null used to throw
+    // a TypeError, which the task detail showed as a false "Failed to resume
+    // session" toast. Whatever cancelled it pushes the task's real state.
+    await withResumeAnswering(null, async (resume) => {
+      const before = useSessionStore.getState();
+
+      const result = await useSessionStore.getState().resumeSession(TASK_ID);
+
+      expect(result).toBeNull();
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(resume.mock.calls[0][0]).toBe(TASK_ID);
+      const after = useSessionStore.getState();
+      // Same references, not merely equal values: no set() ran at all.
+      expect(after.sessions).toBe(before.sessions);
+      expect(after._sessionByTaskId).toBe(before._sessionByTaskId);
+      expect(after.activeSessionId).toBe(OTHER_SESSION_ID);
+      expect(after.sessions.map((session) => [session.id, session.status])).toEqual([
+        [SESSION_ID, 'suspended'],
+        [OTHER_SESSION_ID, 'running'],
+      ]);
+    });
+  });
+
+  it('control: a resumed session still replaces the task\'s rows and becomes the active tab', async () => {
+    // Without this, a resumeSession that always returned null would pass the
+    // case above.
+    const resumed = makeSession({ id: 'sess-resumed', taskId: TASK_ID, status: 'running', resuming: true });
+
+    await withResumeAnswering(resumed, async () => {
+      const result = await useSessionStore.getState().resumeSession(TASK_ID);
+
+      expect(result).toBe(resumed);
+      const state = useSessionStore.getState();
+      expect(state.sessions.map((session) => session.id)).toEqual([OTHER_SESSION_ID, 'sess-resumed']);
+      expect(state._sessionByTaskId.get(TASK_ID)?.id).toBe('sess-resumed');
+      expect(state.activeSessionId).toBe('sess-resumed');
+    });
   });
 });
