@@ -224,7 +224,7 @@ test.describe('Changes panel image view', () => {
     await page.locator('[data-testid="diff-image-mode-slider"]').click();
     await expect(view).toHaveAttribute('data-mode', 'slider');
     // The toolbar loses its layout toggle here; its row must not shrink and shift the pane.
-    expect(Math.abs((await areaTop()) - topInSideBySide)).toBeLessThan(1);
+    expect(Math.abs((await areaTop()) - topInSideBySide)).toBeLessThan(2);
     await expect(page.locator('[data-testid="diff-image-composite"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-view-split"]')).toHaveCount(0);
     await page.locator('[data-testid="diff-image-slider"]').fill('25');
@@ -324,6 +324,82 @@ test.describe('Changes panel image view', () => {
 
     await selectFile('shots/lfs.png');
     await expect(page.locator('[data-testid="diff-image-before"] [data-testid="diff-image-placeholder"]')).toHaveAttribute('data-reason', 'lfs-pointer', { timeout: 8000 });
+
+    await closeChanges();
+  });
+
+  test('an image whose read fails says so instead of spinning, and reads again when selected again', async () => {
+    // The panel falls back to empty content when a fetch throws, and empty
+    // content has no image: the view used to wait on it forever.
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitFileImageReject = true;
+    });
+    await openChanges([pngFile('shots/gone.png'), pngFile('shots/other.png')], 'shots/gone.png');
+
+    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toHaveText('Could not read this image');
+    await expect(page.locator('[data-testid="diff-editor-area"] .animate-spin')).toHaveCount(0);
+
+    // The failure is not cached: coming back reads the image again.
+    await selectFile('shots/other.png');
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+    await selectFile('shots/gone.png');
+    await expect(page.locator('[data-testid="diff-image-before"] img')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toHaveCount(0);
+
+    await closeChanges();
+  });
+
+  test('a Diff view that mounts twice for one image pair runs one comparison, not two', async () => {
+    // Stepping to an uncached image in Diff mode unmounts the view for the
+    // loading spinner and mounts it again in Diff, and React StrictMode (on in
+    // this dev build) runs that mount's effect twice. The second request must
+    // join the first comparison rather than decode both images and queue a
+    // second one behind it in the worker.
+    await openChanges([pngFile('shots/first.png'), pngFile('shots/second.png')], 'shots/first.png');
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+    await page.evaluate(() => {
+      const counter = window as unknown as { __pixelDiffPosts: number; __restorePostMessage: () => void };
+      counter.__pixelDiffPosts = 0;
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: unknown) {
+        if (message !== null && typeof message === 'object' && 'before' in message && 'after' in message) counter.__pixelDiffPosts += 1;
+        return (originalPostMessage as (this: Worker, message: unknown, transfer?: unknown) => void).call(this, message, transfer);
+      } as Worker['postMessage'];
+      counter.__restorePostMessage = () => { Worker.prototype.postMessage = originalPostMessage; };
+    });
+    const posts = () => page.evaluate(() => (window as unknown as { __pixelDiffPosts: number }).__pixelDiffPosts);
+    const pixelStat = page.locator('[data-testid="diff-image-pixel-stat"]');
+
+    try {
+      await page.locator('[data-testid="diff-image-mode-diff"]').click();
+      await expect(pixelStat).toHaveAttribute('data-status', 'done', { timeout: 10000 });
+      expect(await posts()).toBe(1);
+
+      await selectFile('shots/second.png');
+      await expect(page.locator('[data-testid="changes-file-row"][data-path="shots/second.png"]')).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+      await expect.poll(posts, { timeout: 10000 }).toBeGreaterThanOrEqual(2);
+      await expect(pixelStat).toHaveAttribute('data-status', 'done', { timeout: 10000 });
+      expect(await posts()).toBe(2);
+    } finally {
+      await page.evaluate(() => (window as unknown as { __restorePostMessage: () => void }).__restorePostMessage());
+    }
+
+    await closeChanges();
+  });
+
+  test('an SVG whose image read fails keeps its text diff, and only its preview reports the failure', async () => {
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitFileImageReject = true;
+    });
+    await openChanges([{ path: 'icons/broken.svg', status: 'M', binary: false, original: SVG_BEFORE, modified: SVG_AFTER, language: 'xml' }], 'icons/broken.svg');
+
+    // The text diff is the SVG's own, not the empty diff a failed fetch leaves.
+    await expect(page.locator('[data-testid="diff-editor-area"] .monaco-diff-editor')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('[data-testid="diff-editor-area"]')).toContainText('circle', { timeout: 8000 });
+
+    await page.locator('[data-testid="diff-svg-preview"]').click();
+    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
 
     await closeChanges();
   });

@@ -3550,9 +3550,15 @@
       // main does. Test hooks: every call is recorded in
       // window.__mockGitFileImageCalls ({ filePath, knownFingerprints, result },
       // each result side reduced to its kind and fingerprint),
-      // and window.__mockGitFileImageDeferred = true holds the next call until
-      // window.__mockGitFileImageResolve() is called.
+      // window.__mockGitFileImageDeferred = true holds the next call until
+      // window.__mockGitFileImageResolve() is called, and
+      // window.__mockGitFileImageReject = true makes the next call reject, as
+      // the IPC call does when main throws (a worktree removed under the panel).
       fileImage: async function (request) {
+        if (typeof window !== 'undefined' && window.__mockGitFileImageReject) {
+          window.__mockGitFileImageReject = false;
+          throw new Error('Mock fileImage failure');
+        }
         if (typeof window !== 'undefined' && window.__mockGitFileImageDeferred) {
           window.__mockGitFileImageDeferred = false;
           var resolveImageRef;

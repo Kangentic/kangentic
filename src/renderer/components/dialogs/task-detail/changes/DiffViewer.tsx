@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageOff } from 'lucide-react';
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { shownTheme, useConfigStore } from '../../../../stores/config-store';
@@ -963,7 +963,11 @@ export function DiffViewer({
           // Unlike Monaco, which keeps the previous file's text while the next
           // loads, the image view waits for THIS file's content, so a previous
           // image never paints under the new file's header.
-          contentFilePath === filePath && image !== null ? (
+          contentFilePath !== filePath ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            </div>
+          ) : image !== null ? (
             <ImageDiffView
               image={image}
               layout={viewMode}
@@ -972,8 +976,11 @@ export function DiffViewer({
               scalable={imageKind === 'svg'}
             />
           ) : (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            // This file's content arrived with no image: the fetch failed and
+            // the host fell back to empty content. A spinner here would never end.
+            <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center" data-testid="diff-image-load-failed">
+              <ImageOff size={22} className="text-fg-disabled" aria-hidden="true" />
+              <span className="text-sm text-fg-muted">Could not read this image</span>
             </div>
           )
         ) : binary ? (

@@ -22,12 +22,16 @@ export type PixelDiffState = { status: 'idle' } | { status: 'pending' } | PixelD
 export const PIXEL_DIFF_COLOR: [number, number, number] = [255, 60, 199];
 export const PIXEL_DIFF_COLOR_CSS = `rgb(${PIXEL_DIFF_COLOR.join(' ')})`;
 
+// hmr-safe: the dispose at the bottom of this file terminates this worker and
+// fails every pending request, so the next module instance starts clean.
 let worker: Worker | null = null;
+// hmr-safe: ids only pair a reply with its request inside one worker's life.
 let nextRequestId = 1;
+// hmr-safe: emptied by the dispose at the bottom of this file.
 const pendingRequests = new Map<number, (outcome: PixelDiffOutcome) => void>();
-// Set by the Fast Refresh dispose below. A comparison still decoding when the
-// module is replaced resumes here afterwards, and must not build a worker that
-// nothing would ever terminate.
+// hmr-safe: set by the Fast Refresh dispose below. A comparison still decoding
+// when the module is replaced resumes here afterwards, and must not build a
+// worker that nothing would ever terminate.
 let disposed = false;
 
 /**
@@ -35,6 +39,7 @@ let disposed = false;
  * for as long as the panel's content cache holds them, so a revisit hits; once
  * the cache drops a file, its results go with it.
  */
+// hmr-safe: a refresh only costs the next Diff view one comparison.
 const outcomeCache = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, PixelDiffOutcome>>();
 
 /**
@@ -44,6 +49,7 @@ const outcomeCache = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, Pix
  * and queuing a duplicate behind it in the single worker. An entry leaves when
  * its comparison settles, failure included, so a failed pair is tried afresh.
  */
+// hmr-safe: the comparisons it holds fail with the disposed worker anyway.
 const runningComparisons = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, Promise<PixelDiffOutcome>>>();
 
 function failAllPending(): void {

@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { DiffService, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
+import { DiffService, RACY_FINGERPRINT_SUFFIX, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
 import type { GitFileImageInput, GitImageSide } from '../../src/shared/types';
 
 /** Starts like a PNG and holds a NUL byte, so git treats it as binary and never converts line endings. */
@@ -133,7 +133,31 @@ describe('getImageContent fingerprints against a real repository', () => {
     const second = await service.getImageContent(workingInput({ modified: fingerprintOf(first.modified) }));
 
     expect(bytesOf(second.modified).equals(AFTER)).toBe(true);
-    expect(fingerprintOf(second.modified)).toBe(fingerprintOf(first.modified));
+    expect(fingerprintOf(second.modified)).toBe(`${fingerprintOf(first.modified)}${RACY_FINGERPRINT_SUFFIX}`);
+  });
+
+  it('a same-size rewrite in the same timestamp tick shows once the window has passed', async () => {
+    // What a coarse filesystem does to two writes in one burst: the second
+    // keeps the first one's size and modified time. utimes stands in for the
+    // coarse clock, since this disk records far finer times.
+    const writtenAtMs = Date.now() - SETTLED_AGE_MS;
+    const SAME_SIZE_REWRITE = imageBytes(0x44);
+    writeImage(AFTER, writtenAtMs);
+    const actualMtimeMs = fs.statSync(path.join(repository, IMAGE_PATH)).mtimeMs;
+    const service = new DiffService(repository);
+    // Both reads run on a pinned clock (only Date is faked, so git and the
+    // filesystem still run): the first inside the window after the write,
+    // the second well past it, however long the machine takes in between.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(actualMtimeMs + Math.floor(RECENT_WRITE_WINDOW_MS / 4));
+    const first = await service.getImageContent(workingInput());
+    expect(fingerprintOf(first.modified)).toMatch(new RegExp(`${RACY_FINGERPRINT_SUFFIX}$`));
+
+    writeImage(SAME_SIZE_REWRITE, writtenAtMs);
+    vi.setSystemTime(actualMtimeMs + RECENT_WRITE_WINDOW_MS * 5);
+    const second = await service.getImageContent(workingInput({ modified: fingerprintOf(first.modified) }));
+
+    expect(bytesOf(second.modified).equals(SAME_SIZE_REWRITE)).toBe(true);
   });
 
   it('commit selection: both sides are blobs, and their ids answer unchanged', async () => {
