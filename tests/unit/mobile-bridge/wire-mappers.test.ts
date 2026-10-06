@@ -119,6 +119,15 @@ describe('toSpawnProgressLabelWire', () => {
     const atCap = 'y'.repeat(SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH);
     expect(toSpawnProgressLabelWire(atCap)).toBe(atCap);
   });
+
+  it('a cut that lands on whitespace drops it, so the ellipsis never trails a space', () => {
+    // The slice keeps SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3 characters: the
+    // run of 'a' plus the space that follows it. The space must not survive
+    // in front of the "...".
+    const wordLength = SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 4;
+    const capped = toSpawnProgressLabelWire(`${'a'.repeat(wordLength)} ${'b'.repeat(50)}`);
+    expect(capped).toBe(`${'a'.repeat(wordLength)}...`);
+  });
 });
 
 function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {

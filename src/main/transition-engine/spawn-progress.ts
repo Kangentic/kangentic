@@ -231,7 +231,15 @@ function pushSpawnProgress(
     for (const listener of spawnProgressTransitionListeners) listener(taskId, isTracked);
   }
   const decoratedLabel = label === null ? null : decorateLabel(taskId, label);
-  for (const listener of spawnProgressChangeListeners) listener(taskId, decoratedLabel);
+  // This runs on the spawn path itself: a throwing listener must neither skip
+  // the renderer push below nor throw into the spawn that pushed the label.
+  for (const listener of spawnProgressChangeListeners) {
+    try {
+      listener(taskId, decoratedLabel);
+    } catch (error) {
+      console.warn('[spawn-progress] change listener failed:', error);
+    }
+  }
   // Through the recorded chokepoint, not a raw `webContents.send`: a label is
   // what tells a card and a paired phone that a suspend is a respawn rather
   // than a park, so when that goes wrong the IPC log is where the answer is
