@@ -5,7 +5,8 @@
  * the pushes the desktop card does. Contract: the first label emits at once,
  * changes inside the 1000ms window coalesce into one trailing emit, an
  * unchanged re-push emits nothing, the clear always emits, the owning project
- * is resolved at emit time, and no phone listening means no project lookup.
+ * is resolved once per label and kept until it clears, and no phone listening
+ * means no project lookup.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
@@ -50,11 +51,11 @@ describe('SpawnProgressFeed', () => {
 
   it('coalesces a burst inside the window into one trailing emit', () => {
     const onProgress = createProgressCallback(window, 'task-1');
+    // A worktree spawn's phases can all land inside one second.
     onProgress('fetching');
-    // Raw git progress lines pass through createProgressCallback verbatim.
-    onProgress('Receiving objects: 10%');
-    onProgress('Receiving objects: 55%');
-    onProgress('Resolving deltas: 90%');
+    onProgress('creating-worktree');
+    onProgress('init-script');
+    onProgress('starting-agent');
     expect(emitted).toHaveLength(1);
 
     vi.advanceTimersByTime(1000);
@@ -111,6 +112,34 @@ describe('SpawnProgressFeed', () => {
   it('a task no project owns emits nothing', () => {
     emitSpawnProgress(window, 'task-orphan', 'fetching');
     expect(emitted).toEqual([]);
+  });
+
+  it('resolves the owning project once per label, not once per emit', () => {
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    emitSpawnProgress(window, 'task-1', 'creating-worktree');
+    vi.advanceTimersByTime(1000);
+    // The trailing emit opened a fresh window, so the clear lands at its end.
+    clearSpawnProgress(window, 'task-1');
+    vi.advanceTimersByTime(1000);
+    // The first label, the trailing emit and the clear: three emits, one scan.
+    expect(emitted).toHaveLength(3);
+    expect(resolveProjectIdForTask).toHaveBeenCalledTimes(1);
+
+    // The clear dropped the entry, so the next spawn's label scans again.
+    emitSpawnProgress(window, 'task-1', 'starting-agent');
+    expect(emitted).toHaveLength(4);
+    expect(resolveProjectIdForTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not keep a project miss: a later emit for the same label asks again', () => {
+    resolveProjectIdForTask.mockReturnValueOnce(null);
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(emitted).toEqual([]);
+
+    emitSpawnProgress(window, 'task-1', 'creating-worktree');
+    vi.advanceTimersByTime(1000);
+    expect(emitted).toEqual([['proj-1', 'task-1']]);
+    expect(resolveProjectIdForTask).toHaveBeenCalledTimes(2);
   });
 
   it('skips the project lookup entirely while nothing listens', () => {

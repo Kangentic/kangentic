@@ -197,14 +197,14 @@ export const SPAWN_PROGRESS_TTL_MS = 120_000;
  * `label === null` removes the entry (spawn done/aborted).
  *
  * `owner` stamps who pushed a label: a claim's token, or null for a push from
- * anywhere else. 'keep' keeps the entry's current owner, for a re-push of the
- * same label (setSpawnStaleNote) that changes no hands.
+ * anywhere else. A re-push of the same label that changes no hands
+ * (setSpawnStaleNote) passes the entry's own owner back in.
  */
 function pushSpawnProgress(
   mainWindow: BrowserWindow,
   taskId: string,
   label: string | null,
-  owner: SpawnProgressOwner | null | 'keep',
+  owner: SpawnProgressOwner | null,
 ): void {
   const wasTracked = inFlightSpawnProgress.has(taskId);
   if (label === null) {
@@ -223,8 +223,7 @@ function pushSpawnProgress(
         spawnStaleNotes.set(taskId, pending.note);
       }
     }
-    const resolvedOwner = owner === 'keep' ? inFlightSpawnProgress.get(taskId)?.owner ?? null : owner;
-    inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now(), owner: resolvedOwner });
+    inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now(), owner });
   }
   const isTracked = label !== null;
   if (wasTracked !== isTracked) {
@@ -309,7 +308,7 @@ export function setSpawnStaleNote(
     }
     spawnStaleNotes.set(taskId, note);
     // A decoration of the same label, so whoever pushed it still owns it.
-    pushSpawnProgress(mainWindow, taskId, entry.label, 'keep');
+    pushSpawnProgress(mainWindow, taskId, entry.label, entry.owner);
     return;
   }
   if (probeGeneration === undefined) return;
@@ -466,8 +465,9 @@ export function emitSpawnWaiting(
 /**
  * Create an onProgress callback that emits spawn progress labels.
  * The callback accepts phase strings from the git layer and resolves
- * them to user-facing labels via the PHASE_LABELS map. Unknown phases
- * (e.g. raw git progress strings) are passed through verbatim.
+ * them to user-facing labels via the PHASE_LABELS map. Unknown phases are
+ * passed through verbatim: every git caller passes a named phase, and the
+ * automation runner passes `Running "<automation name>"...`.
  */
 export function createProgressCallback(
   mainWindow: BrowserWindow,

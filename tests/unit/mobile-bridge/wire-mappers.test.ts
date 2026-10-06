@@ -128,6 +128,19 @@ describe('toSpawnProgressLabelWire', () => {
     const capped = toSpawnProgressLabelWire(`${'a'.repeat(wordLength)} ${'b'.repeat(50)}`);
     expect(capped).toBe(`${'a'.repeat(wordLength)}...`);
   });
+
+  it('strips bidi controls and invisible characters from an automation name, so it cannot render as different text', () => {
+    // An override (U+202E) and an isolate pair (U+2066, U+2069) reorder what
+    // follows; a mark (U+200F), a zero-width space (U+200B) and a byte order
+    // mark (U+FEFF) show nothing.
+    const label = 'Running "\u{202E}deploy\u{202C} \u{2066}prod\u{2069}\u{200F}\u{200B}\u{FEFF}"...';
+    expect(toSpawnProgressLabelWire(label)).toBe('Running "deploy prod"...');
+  });
+
+  it('keeps the zero-width joiner, which an emoji sequence needs', () => {
+    const technologist = '\u{1F9D1}\u{200D}\u{1F4BB}';
+    expect(toSpawnProgressLabelWire(`Running "${technologist} review"...`)).toBe(`Running "${technologist} review"...`);
+  });
 });
 
 function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {

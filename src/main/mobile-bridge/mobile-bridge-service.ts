@@ -304,9 +304,9 @@ export class MobileBridgeService extends EventEmitter {
    * Which project owns a task, by scanning every known project's task repo: a
    * task with no session yet has no getSessionProjectId to consult. One
    * indexed lookup per project. Callers are rare by construction: the
-   * spawn-stall push (once per stalled spawn) and the spawn-progress feed (at
-   * most one a second per spawning task, and only while a phone watches a
-   * board).
+   * spawn-stall push (once per stalled spawn) and the spawn-progress feed (once
+   * per label, which it keeps until the label clears, and only while a phone
+   * watches a board).
    */
   private findTaskOwner(context: IpcContext, taskId: string): { projectId: string; taskTitle: string } | null {
     for (const project of context.projectRepo.list()) {

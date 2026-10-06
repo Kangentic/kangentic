@@ -28,6 +28,16 @@ a black terminal with a populated context bar instead of the edit form.
   the exited-row eviction in `registerSuspendedPlaceholder`) emits `session-removed`
   (`IPC.SESSION_REMOVED`, `sessions.onRemoved`) with the row's last snapshot, before the row is
   deleted. It never announces itself on `session-changed`.
+
+  The respawn's sibling drain in `performSpawn` (`session-spawn-flow.ts`) is the one deliberate
+  exception. It deletes the task's older rows, a paused one included, with no `session-removed`,
+  and the new session's own `session-changed` follows. `upsertSession` makes a pushed row its
+  task's only row, so that push is what drops the old row from the replica. A paired phone's
+  read-stream successor hop (`mobile-bridge/handlers/read-stream.ts`) depends on the silence: a
+  removal push would end the paused feed before the successor exists to name.
+  `session-spawn-flow.test.ts` pins it. One gap stays open: a spawn that fails after the drain
+  registers an exited placeholder and pushes only its `exit`, which matches no row the replica
+  holds, so the drained row stays until the next `syncSessions`.
 - **A status push only upserts; a removal push only removes.** `sessions.onStatus` maps to
   `upsertSession`, `sessions.onRemoved` maps to `removeSession`, and neither handler does the
   other's job. `removeSession` is the one push-driven writer that takes a row OUT.
