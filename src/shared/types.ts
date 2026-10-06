@@ -99,9 +99,11 @@ export interface AgentCapabilities {
   /**
    * Friendly display name per entry in `models` and per `modelAliases` id
    * (e.g. `claude-opus-4-8` -> "Opus 4.8", `opus` -> "Opus"), computed by the
-   * adapter so no agent-naming knowledge lives in shared or renderer code. An
-   * id absent from this map (or when the map itself is absent) falls back to
-   * showing its raw id.
+   * adapter so no agent-naming knowledge lives in shared or renderer code. The
+   * `agent:list` handler also adds a name for each telemetry-learned id the
+   * adapter can label (`AgentAdapter.modelDisplayName`, `nameLearnedModels`).
+   * An id absent from this map (or when the map itself is absent) falls back
+   * to showing its raw id.
    */
   modelDisplayNames?: Record<string, string>;
   /**
