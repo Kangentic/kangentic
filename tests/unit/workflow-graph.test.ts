@@ -108,10 +108,19 @@ describe('workflow rules in the view', () => {
   });
 
   it('allows Add blocker and Remove only where they act', () => {
-    expect(addBlockerRefusal(tasks[2])).toBeNull();
-    expect(addBlockerRefusal(tasks[1])).toBe('#413 has started. Only a task in To Do can wait for another.');
+    const unlinked = detail('running', tasks, []);
+    expect(addBlockerRefusal(unlinked, tasks[2])).toBeNull();
+    expect(addBlockerRefusal(unlinked, tasks[1])).toBe('#413 has started. Only a task in To Do can wait for another.');
     expect(removeRefusal(tasks[1])).toBeNull();
     expect(removeRefusal(tasks[0])).toBe('#411 is done and stays with its workflow.');
+  });
+
+  it('disables Add blocker when no task is left to wait for, and a started task still says it has started', () => {
+    // #414 already waits for #413, #411 is done, and #415 waits on #414, so linking it would loop.
+    const exhausted = detail('running', tasks, [['b', 'c'], ['c', 'd']]);
+    expect(blockerCandidates(exhausted, 'c')).toEqual([]);
+    expect(addBlockerRefusal(exhausted, tasks[2])).toBe(WORKFLOW_REFUSALS.noBlockerCandidates);
+    expect(addBlockerRefusal(exhausted, tasks[1])).toBe('#413 has started. Only a task in To Do can wait for another.');
   });
 
   it('locks every route step the task has reached, and only those', () => {

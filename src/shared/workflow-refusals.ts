@@ -10,6 +10,8 @@
 export const WORKFLOW_REFUSALS = {
   /** A link onto a task that has left To Do. */
   cannotWait: (label: string) => `${label} has started. Only a task in To Do can wait for another.`,
+  /** Add blocker on a task whose every other task is done, already blocks it, or waits on it. */
+  noBlockerCandidates: 'No task it can wait for.',
   /** A link from a task already in Done. */
   blockerDone: (label: string) => `${label} is done. Waiting for it changes nothing.`,
   selfLink: 'A task cannot wait for itself.',

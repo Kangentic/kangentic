@@ -120,9 +120,14 @@ export function unlinkRefusal(detail: WorkflowDetail, blockerKey: string, blocke
   return null;
 }
 
-/** Why the task cannot get a new blocker, or null while it can (it has not started). */
-export function addBlockerRefusal(task: WorkflowViewTask): string | null {
-  return canWait(task) ? null : WORKFLOW_REFUSALS.cannotWait(taskLabel(task));
+/**
+ * Why the task cannot get a new blocker, or null while it can: it has not
+ * started, and some task is left that it could wait for. With none left, Add
+ * blocker is disabled rather than opening an empty list.
+ */
+export function addBlockerRefusal(detail: WorkflowDetail, task: WorkflowViewTask): string | null {
+  if (!canWait(task)) return WORKFLOW_REFUSALS.cannotWait(taskLabel(task));
+  return blockerCandidates(detail, task.key).length === 0 ? WORKFLOW_REFUSALS.noBlockerCandidates : null;
 }
 
 /** Why the task cannot be taken out of its workflow, or null while it can. */

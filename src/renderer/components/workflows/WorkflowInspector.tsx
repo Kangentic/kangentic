@@ -297,9 +297,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
         className="fixed z-[2147483646] max-h-72 overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl p-1"
         data-testid="workflow-add-blocker-menu"
       >
-        {candidates.length === 0 ? (
-          <div className="px-3 py-2 text-sm text-fg-faint">No task it can wait for.</div>
-        ) : candidates.map((candidate) => (
+        {candidates.map((candidate) => (
           <button
             key={candidate.key}
             type="button"
@@ -436,7 +434,8 @@ function TaskPanel({
   const blockedBy = detail.links.filter((link) => link.blockedKey === task.key).map((link) => findTask(detail, link.blockerKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
   const blocking = detail.links.filter((link) => link.blockerKey === task.key).map((link) => findTask(detail, link.blockedKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
   const held = planHeld;
-  const addRefusal = held ? WORKFLOW_REFUSALS.agentWorking : addBlockerRefusal(task);
+  // Memoized: with no other guard in the way it walks every task's links.
+  const addRefusal = useMemo(() => (held ? WORKFLOW_REFUSALS.agentWorking : addBlockerRefusal(detail, task)), [held, detail, task]);
   const removeReason = held ? WORKFLOW_REFUSALS.agentWorking : removeRefusal(task);
   const onAnotherBoard = task.projectId !== detail.homeProjectId;
   const openLabel = variant === 'taskDetail' ? 'Open workflow' : onAnotherBoard ? `Open on ${detail.projectNames[task.projectId] ?? 'its board'}` : 'Open task';
@@ -501,7 +500,10 @@ function TaskPanel({
               />
             ))}
           </div>
-          <AddBlocker detail={detail} task={task} refusal={addRefusal} onAdd={(blockerKey) => onSetLink(blockerKey, task.key, true)} projectNameOf={projectNameOf} />
+          {/* Keyed on its refusal, so a list that empties (or a guard that
+              lands) while the menu is open closes it rather than leaving an
+              empty menu on screen. */}
+          <AddBlocker key={addRefusal ?? 'live'} detail={detail} task={task} refusal={addRefusal} onAdd={(blockerKey) => onSetLink(blockerKey, task.key, true)} projectNameOf={projectNameOf} />
         </section>
         {blocking.length > 0 && (
           <section className="px-4 py-3.5">

@@ -666,6 +666,29 @@ test.describe('Workflows inspector', () => {
     }
   });
 
+  // An empty list is a dead end, so with nothing left to wait for the button
+  // is disabled and says why, and no menu opens.
+  test('Add blocker is disabled with the reason once no task is left to wait for', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      await card(page, 't419').click();
+      const addBlocker = byTestId(page, 'workflow-add-blocker');
+      const options = page.locator('[data-testid="workflow-add-blocker-option"]');
+      for (let remaining = 5; remaining > 0; remaining -= 1) {
+        await addBlocker.click();
+        await expect(options).toHaveCount(remaining);
+        await options.first().click();
+        await expect(options).toHaveCount(0);
+      }
+      await expect(addBlocker).toBeDisabled();
+      await expect(addBlocker).toHaveAttribute('title', 'No task it can wait for.');
+      await addBlocker.click({ force: true });
+      await expect(byTestId(page, 'workflow-add-blocker-menu')).toBeHidden();
+    } finally {
+      await browser.close();
+    }
+  });
+
   // The board's column header resolves a column's glyph as icon, then its To Do
   // or Done default, then a dot in its color, and the phone's strip does the
   // same. So a column with no icon is a dot here too, never a stand-in square.

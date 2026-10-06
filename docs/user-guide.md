@@ -585,8 +585,8 @@ canvas.
 the pointer says what a release would do, or why it cannot. In the inspector, the route switches
 turn a column on or off for that task, the X on a link row removes the link, and Add blocker makes
 the task wait for another. A control that would break a rule stays in place, disabled, and its
-tooltip says why (a task that has started cannot get a new blocker, a step it has reached cannot
-change). Remove takes a task out of the workflow.
+tooltip says why (a task that has started, or has no task left to wait for, cannot get a new
+blocker; a step it has reached cannot change). Remove takes a task out of the workflow.
 
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task
