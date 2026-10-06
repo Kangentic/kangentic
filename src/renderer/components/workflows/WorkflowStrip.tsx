@@ -115,13 +115,15 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
             />
           );
         }
+        // A done step is neutral: the current step is the one color in the
+        // track, the one that says something (which column the task is in).
         return (
           <i
             key={step.swimlaneId}
             title={`${step.name}: ${step.state === 'done' ? 'done' : 'next'}`}
             data-step-state={step.state}
             className="block w-[11px] h-[4px] rounded-[2px]"
-            style={step.state === 'done' ? { background: color, opacity: 0.55 } : { background: AHEAD_COLOR }}
+            style={step.state === 'done' ? { background: UNCOLORED, opacity: 0.55 } : { background: AHEAD_COLOR }}
           />
         );
       })}

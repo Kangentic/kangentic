@@ -595,7 +595,8 @@ that finishes a plan moves on when you approve the plan. Without an Automation a
 column with no agent, you drag the card on yourself.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name, a step track
-(one bar per column it visits, the current one wider and brighter) and a lock while the workflow
+(one bar per column it visits; done ones grey, the current one wider and in its column's color)
+and a lock while the workflow
 runs, and a card in To Do says what it waits for ("Blocked by #413..."). On the Workflows canvas
 the strip names no column: the current step is that column's icon on a tint of its color (a dot
 when the column has no icon), and hovering it names the column. A task in To Do or Done shows that

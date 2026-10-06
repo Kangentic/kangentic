@@ -713,6 +713,10 @@ test.describe('Workflows inspector', () => {
       await expect(marker).toHaveAttribute('aria-label', 'Executing: now');
       await expect(marker).toHaveCSS('background-color', await computedColor(page, 'color-mix(in srgb, #3b82f6 18%, transparent)'));
       await expect(marker.locator('svg')).toHaveCSS('color', await computedColor(page, '#3b82f6'));
+      // The marker is the one color in the track: Planning, done, is neutral.
+      const doneStep = strip.locator('[data-step-state="done"]');
+      await expect(doneStep).toHaveCSS('background-color', await computedColor(page, 'var(--color-fg-faint)'));
+      await expect(doneStep).toHaveCSS('opacity', '0.55');
 
       // #415 waits in To Do: the To Do marker alone, in the faint grey, with no step marks.
       const toDoTrack = card(page, 't415').locator('[data-testid="workflow-step-track"]');

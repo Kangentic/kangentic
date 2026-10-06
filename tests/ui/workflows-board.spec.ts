@@ -233,6 +233,16 @@ test.describe('Workflow tasks on the board', () => {
       await expect(current).toHaveCSS('width', '15px');
       await expect(current).toHaveCSS('height', '6px');
       await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
+      // The current bar is the one color in the track: Planning, done, is neutral.
+      const faint = await page.evaluate(() => {
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--color-fg-faint)';
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      });
+      await expect(strip.locator('[data-step-state="done"]')).toHaveCSS('background-color', faint);
       // A card in To Do shows its whole route ahead, five bars, and no marker.
       const toDoTrack = boardCard(page, 't415').locator('[data-testid="workflow-step-track"]');
       await expect(toDoTrack.locator('[data-step-state="ahead"]')).toHaveCount(5);
