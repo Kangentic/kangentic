@@ -208,7 +208,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       child = utilityProcess.fork(hostPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
       console.warn('[pty-host] fork failed:', error);
-      this.restartPolicy.recordCrash(null);
+      this.restartPolicy.recordCrash(null, undefined, { cause: 'fork_failed' });
       this.afterHostLost();
       return null;
     }

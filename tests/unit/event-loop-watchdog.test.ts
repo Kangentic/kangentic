@@ -45,6 +45,23 @@ function readFrom(file: string, offset: number): string {
   return fs.readFileSync(file).subarray(offset).toString('utf8');
 }
 
+/** `src/main` TypeScript files whose text matches `pattern`, as sorted forward-slash paths. */
+function sourceFilesContaining(pattern: RegExp): string[] {
+  const sourceRoot = path.join(__dirname, '..', '..', 'src', 'main');
+  const matches: string[] = [];
+  const walk = (directoryPath: string): void => {
+    for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
+      const fullPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) walk(fullPath);
+      else if (entry.name.endsWith('.ts') && pattern.test(fs.readFileSync(fullPath, 'utf8'))) {
+        matches.push(path.relative(sourceRoot, fullPath).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(sourceRoot);
+  return matches.sort();
+}
+
 describe('event-loop watchdog', () => {
   let directory: string | null = null;
   let descriptor: number | null = null;
@@ -255,23 +272,6 @@ describe('event-loop watchdog when the thread cannot start', () => {
     }
   });
 });
-
-/** `src/main` TypeScript files whose text matches `pattern`, as sorted forward-slash paths. */
-function sourceFilesContaining(pattern: RegExp): string[] {
-  const sourceRoot = path.join(__dirname, '..', '..', 'src', 'main');
-  const matches: string[] = [];
-  const walk = (directoryPath: string): void => {
-    for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
-      const fullPath = path.join(directoryPath, entry.name);
-      if (entry.isDirectory()) walk(fullPath);
-      else if (entry.name.endsWith('.ts') && pattern.test(fs.readFileSync(fullPath, 'utf8'))) {
-        matches.push(path.relative(sourceRoot, fullPath).split(path.sep).join('/'));
-      }
-    }
-  };
-  walk(sourceRoot);
-  return matches.sort();
-}
 
 describe('setSyncSpanLabelSink', () => {
   afterEach(() => {

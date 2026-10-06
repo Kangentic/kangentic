@@ -176,9 +176,10 @@ export class UtilityRestartPolicy {
    * dispose, quit) must NOT be passed here - a recycle is not a crash, and
    * counting one would latch a perfectly healthy subsystem.
    *
-   * `detail` says why. Without it, a numeric code is an `exit` and a null one
-   * is a `fork_failed`, the convention every client that passes no detail
-   * follows: their only null call is the catch around `utilityProcess.fork`.
+   * `detail` says why. Without it the crash is an `exit`, with the code
+   * reading "unknown" when there is none, so only a cause that is not an exit
+   * has to be named. Every catch around `utilityProcess.fork` passes
+   * `fork_failed`.
    */
   recordCrash(exitCode: number | null | undefined, stderr?: StderrSource, detail?: UtilityCrashDetail): void {
     this.decayIfQuiet();
@@ -188,7 +189,7 @@ export class UtilityRestartPolicy {
       this.stderrSources.push(stderr);
       while (this.stderrSources.length > this.maxCrashes) this.stderrSources.shift();
     }
-    const cause = detail?.cause ?? (exitCode == null ? 'fork_failed' : 'exit');
+    const cause = detail?.cause ?? 'exit';
     const record: UtilityCrashRecord = {
       cause,
       exitCode: exitCode ?? null,

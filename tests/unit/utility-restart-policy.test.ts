@@ -290,7 +290,7 @@ describe('UtilityRestartPolicy', () => {
 
     it('records a fork failure (no exit code) without throwing', () => {
       const { policy } = makePolicy();
-      policy.recordCrash(null);
+      policy.recordCrash(null, undefined, { cause: 'fork_failed' });
       expect(mockTrackEvent).toHaveBeenCalledWith('utility_worker_crashed', {
         service: 'kangentic-test-worker',
         exitCode: -1,
@@ -426,24 +426,18 @@ describe('UtilityRestartPolicy', () => {
       ]);
     });
 
-    it('reads a numeric code as an exit and a bare null as a fork that threw, so clients that pass no cause still say why', () => {
-      const exits = makePolicy();
-      for (let index = 0; index < 3; index++) {
-        exits.policy.recordCrash(137);
-        exits.clock.advance(4_000);
-      }
-      const forks = makePolicy();
-      for (let index = 0; index < 3; index++) {
-        forks.policy.recordCrash(null);
-        forks.clock.advance(4_000);
-      }
+    it('reads a crash with no cause as an exit, with or without a code, so an exit never passes for a fork that threw', () => {
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(137);
+      clock.advance(4_000);
+      policy.recordCrash(null);
+      clock.advance(4_000);
+      policy.recordCrash(undefined);
 
-      const [, exitTags, exitContexts] = mockReportHandledError.mock.calls[0];
-      expect(exitTags.cause).toBe('exit');
-      expect(exitContexts.utility_process.crashes).toEqual(['exit code=137', 'exit code=137', 'exit code=137']);
-      const [, forkTags, forkContexts] = mockReportHandledError.mock.calls[1];
-      expect(forkTags.cause).toBe('fork_failed');
-      expect(forkContexts.utility_process.crashes).toEqual(['fork_failed', 'fork_failed', 'fork_failed']);
+      const [, tags, contexts] = mockReportHandledError.mock.calls[0];
+      expect(tags.cause).toBe('exit');
+      expect(contexts.utility_process.crashes).toEqual(['exit code=137', 'exit', 'exit']);
+      expect(policy.lastCrashDescription).toBe('exited with code unknown');
     });
 
     it('sends the cause with the Aptabase event, so a hang no longer counts as a fork failure', () => {
@@ -452,7 +446,7 @@ describe('UtilityRestartPolicy', () => {
       const { policy, clock } = makePolicy();
       policy.recordCrash(null, undefined, { cause: 'request_timeout', method: 'projects.summaries' });
       clock.advance(4_000);
-      policy.recordCrash(null);
+      policy.recordCrash(null, undefined, { cause: 'fork_failed' });
       clock.advance(4_000);
       policy.recordCrash(null, undefined, { cause: 'ready_timeout' });
 
@@ -475,7 +469,7 @@ describe('UtilityRestartPolicy', () => {
       const { policy } = makePolicy({ maxCrashes: 10 });
       policy.recordCrash(null, undefined, { cause: 'request_timeout', method: 'projects.summaries' });
       policy.recordCrash(null, undefined, { cause: 'ready_timeout' });
-      policy.recordCrash(null);
+      policy.recordCrash(null, undefined, { cause: 'fork_failed' });
 
       const lines = warnSpy.mock.calls.map((call) => String(call[0]));
       expect(lines).toEqual([
@@ -499,7 +493,7 @@ describe('UtilityRestartPolicy', () => {
       policy.recordCrash(null, makeStderrSource('Error: sqlite-vec failed to load'), { cause: 'ready_timeout' });
       expect(policy.lastCrashDescription).toBe('did not start in time: Error: sqlite-vec failed to load');
 
-      policy.recordCrash(null);
+      policy.recordCrash(null, undefined, { cause: 'fork_failed' });
       // The ready timeout's stderr is still the newest non-empty tail.
       expect(policy.lastCrashDescription).toBe('failed to start: Error: sqlite-vec failed to load');
 
@@ -607,7 +601,7 @@ describe('UtilityRestartPolicy', () => {
     it('reports a placeholder when no tail was ever captured (the fork-failure path)', () => {
       const { policy, clock } = makePolicy();
       for (let index = 0; index < 3; index++) {
-        policy.recordCrash(null);
+        policy.recordCrash(null, undefined, { cause: 'fork_failed' });
         clock.advance(4_000);
       }
 

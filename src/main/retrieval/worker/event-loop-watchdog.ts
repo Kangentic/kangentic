@@ -36,8 +36,9 @@ import { setSyncSpanLabelSink } from '../../diagnostics/event-loop-lag';
 
 /** Longest label kept, in UTF-8 bytes. Labels are short fixed identifiers. */
 const LABEL_BYTES = 96;
-/** Bytes ahead of the label: two Int32 slots, the heartbeat, then the label's length. */
-const HEADER_BYTES = 8;
+/** Int32 slots ahead of the label: the heartbeat, then the label's length. */
+const HEADER_SLOTS = 2;
+const HEADER_BYTES = HEADER_SLOTS * Int32Array.BYTES_PER_ELEMENT;
 const HEARTBEAT_SLOT = 0;
 const LABEL_LENGTH_SLOT = 1;
 
@@ -56,7 +57,7 @@ const { workerData } = require('node:worker_threads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- thread source, never bundled; ESLint skips strings, so this marker is for esbuild-cjs-imports.test.ts
 const fs = require('node:fs');
 const { buffer, fd, checkIntervalMs, heldChecks, prefix } = workerData;
-const header = new Int32Array(buffer, 0, ${HEADER_BYTES / 4});
+const header = new Int32Array(buffer, 0, ${HEADER_SLOTS});
 const labelBytes = new Uint8Array(buffer, ${HEADER_BYTES}, ${LABEL_BYTES});
 const decoder = new TextDecoder();
 let lastBeat = Atomics.load(header, ${HEARTBEAT_SLOT});
@@ -103,7 +104,7 @@ export interface EventLoopWatchdog {
 /** Start the heartbeat, the span-label sink, and the watchdog thread. */
 export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): EventLoopWatchdog {
   const buffer = new SharedArrayBuffer(HEADER_BYTES + LABEL_BYTES);
-  const header = new Int32Array(buffer, 0, HEADER_BYTES / 4);
+  const header = new Int32Array(buffer, 0, HEADER_SLOTS);
   const labelBytes = new Uint8Array(buffer, HEADER_BYTES, LABEL_BYTES);
   const encoder = new TextEncoder();
 
