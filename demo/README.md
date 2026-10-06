@@ -965,7 +965,7 @@ job is to explain why the engine reports what it reports, and a panel of invente
 real activity pill would be the one thing on this board that does not agree with itself.
 
 Most of the rest has a documented correct value rather than a derived one, which is not a shortcut.
-`compensationCounters` is "in a clean session, all eight fields read 0", and no seeded session has
+`compensationCounters` is "in a clean session, all nine fields read 0", and no seeded session has
 had a watchdog fire. `recentPtyChunks` is "empty in production builds where the recorder is
 dead-code-eliminated", which is the build this renderer IS. The background-shell and subagent
 counters are zero because no seeded session runs either.
