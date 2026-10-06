@@ -52,6 +52,18 @@ describe('isGitLfsPointer', () => {
     expect(isGitLfsPointer(encode('version https://git-lfs'))).toBe(false);
     expect(isGitLfsPointer(encode(`version https://git-lfs.github.com/spec/v1\n${'x'.repeat(2048)}`))).toBe(false);
   });
+
+  it('accepts a pointer of exactly 1024 bytes and rejects one byte more: the size limit is strict', () => {
+    // The limit is private to the module, so the boundary is stated here as 1024.
+    const header = 'version https://git-lfs.github.com/spec/v1\n';
+    const atLimit = encode(header + 'x'.repeat(1024 - header.length));
+    const overLimit = encode(header + 'x'.repeat(1025 - header.length));
+    // Preconditions: a miscount would test the wrong boundary and still pass.
+    expect(atLimit.length).toBe(1024);
+    expect(overLimit.length).toBe(1025);
+    expect(isGitLfsPointer(atLimit)).toBe(true);
+    expect(isGitLfsPointer(overLimit)).toBe(false);
+  });
 });
 
 describe('IMAGE_PREVIEW_MAX_BYTES', () => {

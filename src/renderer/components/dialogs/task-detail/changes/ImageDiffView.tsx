@@ -332,17 +332,10 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
         )}
         {mode === 'slider' && (
           <>
-            <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">Before</span>
-            <span className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">After</span>
-            <div className="pointer-events-none absolute bottom-0 top-0 w-0.5 -translate-x-1/2 bg-fg" style={{ left: `${sliderPosition}%` }} />
-            <div
-              className="pointer-events-none absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-surface shadow"
-              style={{ left: `${sliderPosition}%` }}
-            >
-              <ChevronsLeftRight size={14} aria-hidden="true" />
-            </div>
             {/* A transparent range input over the whole image: dragging anywhere
-                moves the split, and the arrow keys move it from the keyboard. */}
+                moves the split, and the arrow keys move it from the keyboard.
+                It comes first so the handle below can show its keyboard focus
+                through `peer`; everything drawn after it ignores the pointer. */}
             <input
               type="range"
               min={0}
@@ -352,8 +345,19 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
               onChange={(event) => onSliderPositionChange(Number(event.target.value))}
               aria-label="Slider position"
               data-testid="diff-image-slider"
-              className="absolute inset-0 h-full w-full cursor-ew-resize appearance-none bg-transparent opacity-0"
+              className="peer absolute inset-0 h-full w-full cursor-ew-resize appearance-none bg-transparent opacity-0"
             />
+            {/* Fixed dark chips, not theme tokens: they sit on arbitrary image
+                pixels in every theme, so only a constant scrim keeps them legible. */}
+            <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">Before</span>
+            <span className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">After</span>
+            <div className="pointer-events-none absolute bottom-0 top-0 w-0.5 -translate-x-1/2 bg-fg" style={{ left: `${sliderPosition}%` }} />
+            <div
+              className="pointer-events-none absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-surface shadow peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
+              style={{ left: `${sliderPosition}%` }}
+            >
+              <ChevronsLeftRight size={14} aria-hidden="true" />
+            </div>
           </>
         )}
       </div>

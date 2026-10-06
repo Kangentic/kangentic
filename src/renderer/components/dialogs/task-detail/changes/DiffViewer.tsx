@@ -499,12 +499,18 @@ export function DiffViewer({
 
   // When the panel rolled into this file from an adjacent one, jump to its
   // first/last change instead of restoring the saved scroll. Returns true once
-  // applied (or once abandoned because the file has no changes), so the caller
-  // skips the normal saved-scroll reveal.
+  // applied, or while the request still waits on the diff, so the caller skips
+  // the normal saved-scroll reveal; false once abandoned because the file has
+  // no changes.
   const consumePendingChangeFocus = useCallback((): boolean => {
     const focus = pendingChangeFocusRef.current;
     if (!focus) return false;
     if (!contentMatchesRef.current) return false; // wait until this file's content shows
+    // A freshly mounted editor (rolling out of an image or binary file, whose
+    // pane has none) has not computed its diff yet: null, not empty. Keep the
+    // request for onDidUpdateDiff, and hold off the saved-scroll restore that
+    // would otherwise land the file on its remembered position instead.
+    if (diffEditorRef.current?.getLineChanges() === null) return true;
     const positioned = navigateToChange(focus);
     // Clear the request either way: a rolled-into file with no changes must not
     // keep re-triggering on every later diff update.
@@ -703,8 +709,8 @@ export function DiffViewer({
   // (src/renderer/monaco-error-funnel.ts). The funnel receives only the error,
   // so it calls this reader synchronously at the moment of a throw it reports
   // as handled (Sentry DESKTOP-19). Registered once per mount: the reader reads
-  // refs at call time, so the binary placeholder and markdown preview, which
-  // null diffEditorRef, need no re-register.
+  // refs at call time, so the binary placeholder, the previews and the image
+  // view, which null diffEditorRef, need no re-register.
   useEffect(() => registerDiffViewerSnapshotReader(() => {
     const diffEditor = diffEditorRef.current;
     if (diffEditor === null) return null;
