@@ -115,7 +115,7 @@ describe('leftoverReportCounts', () => {
     const process = (outcome: 'stopped' | 'kept' | 'failed') => ({
       id: outcome, taskId: TASK, taskTitle: 'Fix login', pid: 1, label: 'node', outcome, reason: null, place: 'worktree' as const,
     });
-    expect(leftoverReportCounts({ id: 'report', stoppingEnabled: false, processes: [process('stopped'), process('stopped'), process('kept'), process('failed')] }))
+    expect(leftoverReportCounts({ id: 'report', stoppingEnabled: false, processes: [process('stopped'), process('stopped'), process('kept'), process('failed')], reportedAt: '2026-01-01T00:00:00.000Z' }))
       .toEqual({ stopped: 2, kept: 1, failed: 1, stoppingEnabled: false });
   });
 });

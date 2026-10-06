@@ -36,8 +36,10 @@
  * processes are no evidence (the agent's own browser on its dev server), and
  * neither are Kangentic's other processes (the network service behind a
  * Browser pane), found by walking up to main without passing a live PTY, nor
- * an untagged process outside Kangentic. Only the listener is spared, not the
- * process above it: a tagged shell that started the server still goes.
+ * an untagged process outside Kangentic. The connection spares only the
+ * listener, never the process above it: a tagged shell that started the
+ * server still goes, unless the server is its only child and the next rule
+ * keeps it.
  *
  * A process whose every child is kept is kept too (`keptAncestorPids`), unless
  * it listens on a TCP port itself: an emulator launcher, which holds no socket
@@ -254,7 +256,7 @@ function protectedPidsOf(input: Pick<ReapPlanInput, 'processes' | 'mainPid' | 'l
   // Main's ancestors: whoever launched Kangentic (a terminal, an agent running
   // /preview, the desktop shell).
   let cursor = byPid.get(input.mainPid);
-  for (let depth = 0; cursor && depth < 64; depth += 1) {
+  for (let depth = 0; cursor && depth < MAX_TREE_DEPTH; depth += 1) {
     const parent = byPid.get(cursor.ppid);
     if (!parent || parent.pid === cursor.pid || protectedPids.has(parent.pid)) break;
     if (!isRealChild(parent, cursor)) break;
@@ -410,6 +412,25 @@ function liveSessionPidsOf(input: Pick<ReapPlanInput, 'liveRootPids'>, byPid: Ma
 }
 
 /**
+ * Whether a client is other Kangentic work, whose connection to a reaped
+ * task's listener shows the listener is shared: a process under a live PTY,
+ * or one carrying another task's tag or a cleared one, never Kangentic's own
+ * processes. `connectionQueryOf` asks about these clients and `planReapDetailed`
+ * counts them, so the two read one rule.
+ */
+function otherWorkOf(
+  input: Pick<ReapPlanInput, 'mainPid' | 'liveRootPids'>,
+  byPid: Map<number, ScannedProcess>,
+  children: Map<number, ScannedProcess[]>,
+  reapedTaskIds: ReadonlySet<string>,
+): (scanned: ScannedProcess) => boolean {
+  const liveSessionPids = liveSessionPidsOf(input, byPid, children);
+  const kangenticPids = kangenticOwnPids(input, byPid, children, liveSessionPids);
+  return (scanned) => liveSessionPids.has(scanned.pid)
+    || (!kangenticPids.has(scanned.pid) && scanned.tagValue !== null && !reapedTaskIds.has(scanned.tagValue));
+}
+
+/**
  * Whose sockets a reap reads after a scan (`TaggedProcessReader.connections`).
  * Listeners: every process carrying a reaped task's tag, every macOS withheld
  * orphan a reap could kill, and everything under them, never a protected one.
@@ -434,15 +455,10 @@ export function connectionQueryOf(input: ReapPlanInput): { listeners: ScannedPro
     }
   }
   if (listenerPids.size === 0) return { listeners: [], clients: [] };
-  const liveSessionPids = liveSessionPidsOf(input, byPid, children);
-  const kangenticPids = kangenticOwnPids(input, byPid, children, liveSessionPids);
-  const clientPids = new Set<number>([...listenerPids, ...liveSessionPids]);
-  for (const scanned of input.processes) {
-    if (scanned.tagValue !== null && !reapedTaskIds.has(scanned.tagValue) && !kangenticPids.has(scanned.pid)) clientPids.add(scanned.pid);
-  }
+  const isOtherWork = otherWorkOf(input, byPid, children, reapedTaskIds);
   return {
     listeners: input.processes.filter((scanned) => listenerPids.has(scanned.pid)),
-    clients: input.processes.filter((scanned) => clientPids.has(scanned.pid)),
+    clients: input.processes.filter((scanned) => listenerPids.has(scanned.pid) || isOtherWork(scanned)),
   };
 }
 
@@ -522,14 +538,10 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   // would not kill is never reported here.
   const connections = input.connections?.pairs ?? [];
   if (connections.length > 0) {
-    const liveSessionPids = liveSessionPidsOf(input, byPid, children);
-    const kangenticPids = kangenticOwnPids(input, byPid, children, liveSessionPids);
-    const isEvidence = (client: ScannedProcess): boolean => {
-      if (liveSessionPids.has(client.pid)) return true;
-      if (kangenticPids.has(client.pid)) return false;
-      if (client.tagValue !== null && !reapedTaskIds.has(client.tagValue)) return true;
-      return sparedPids.has(client.pid);
-    };
+    const isOtherWork = otherWorkOf(input, byPid, children, reapedTaskIds);
+    // Kangentic's own processes are protected, so never spared: only other
+    // work, or a listener this plan already spared, is evidence.
+    const isEvidence = (client: ScannedProcess): boolean => isOtherWork(client) || sparedPids.has(client.pid);
     let changed = true;
     while (changed) {
       changed = false;
@@ -562,17 +574,19 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   const isKeptChild = (pid: number): boolean => protectedPids.has(pid) || sparedPids.has(pid) || keptAncestorPids.has(pid);
   const realChildrenOf = (parent: ScannedProcess): ScannedProcess[] => (children.get(parent.pid) ?? [])
     .filter((child) => child.pid !== parent.pid && isRealChild(parent, child) && child.role !== 'console-host');
-  let grew = listeningPids !== null;
-  while (grew && listeningPids !== null) {
-    grew = false;
-    for (const pid of targetPids) {
-      const target = byPid.get(pid);
-      if (!target || listeningPids.has(pid) || input.signalledIdentities?.has(processIdentity(target))) continue;
-      const realChildren = realChildrenOf(target);
-      if (realChildren.length > 0 && realChildren.every((child) => isKeptChild(child.pid))) {
-        keptAncestorPids.add(pid);
-        targetPids.delete(pid);
-        grew = true;
+  if (listeningPids) {
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const pid of targetPids) {
+        const target = byPid.get(pid);
+        if (!target || listeningPids.has(pid) || input.signalledIdentities?.has(processIdentity(target))) continue;
+        const realChildren = realChildrenOf(target);
+        if (realChildren.length > 0 && realChildren.every((child) => isKeptChild(child.pid))) {
+          keptAncestorPids.add(pid);
+          targetPids.delete(pid);
+          grew = true;
+        }
       }
     }
   }

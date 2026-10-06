@@ -296,6 +296,89 @@ describe('Linux reader: TCP connections from net/tcp and the fd links', () => {
     const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
     await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list' });
   });
+
+  describe('clients\' fd links are read only until every peer has an owner', () => {
+    // Mirrors FD_BATCH_SIZE in linux-reader.ts: the clients are listed this many at a time.
+    const fdBatchSize = 16;
+    const restorableSpies: Array<{ mockRestore: () => void }> = [];
+
+    afterEach(() => {
+      for (const spy of restorableSpies.splice(0)) spy.mockRestore();
+    });
+
+    /**
+     * A proc root whose fd tables are plain files holding each link's target.
+     * A Windows symlink cannot name `socket:[1003]`, so a `readlink` spy reads
+     * the target back from the file and the walk runs on every OS. The returned
+     * function lists the pids whose fd directory the reader listed.
+     */
+    function procWithSocketFiles(links: Record<number, number[]>): { procRoot: string; fdDirectoriesRead: () => number[] } {
+      const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-net-'));
+      temporaryRoots.push(procRoot);
+      fs.mkdirSync(path.join(procRoot, 'net'));
+      // No tcp6 file: a kernel without IPv6 is a normal read.
+      fs.writeFileSync(path.join(procRoot, 'net', 'tcp'), tcp);
+      for (const [pid, inodes] of Object.entries(links)) {
+        const fdDirectory = path.join(procRoot, pid, 'fd');
+        fs.mkdirSync(fdDirectory, { recursive: true });
+        inodes.forEach((inode, index) => fs.writeFileSync(path.join(fdDirectory, String(index + 3)), `socket:[${inode}]`));
+        // A plain file link beside the sockets.
+        fs.writeFileSync(path.join(fdDirectory, '0'), '/dev/null');
+      }
+      const readlinkSpy = vi.spyOn(fs.promises, 'readlink').mockImplementation(async (linkPath) => fs.readFileSync(linkPath, 'utf8'));
+      const readdirSpy = vi.spyOn(fs.promises, 'readdir');
+      restorableSpies.push(readlinkSpy, readdirSpy);
+      const fdDirectoriesRead = (): number[] => readdirSpy.mock.calls.flatMap(([target]) => {
+        const [pid, entry, ...rest] = path.relative(procRoot, String(target)).split(path.sep);
+        return entry === 'fd' && rest.length === 0 ? [Number(pid)] : [];
+      });
+      return { procRoot, fdDirectoriesRead };
+    }
+
+    const clientsFrom = (firstPid: number, count: number): number[] => Array.from({ length: count }, (_, index) => firstPid + index);
+    // A readable fd directory for each client, so a read of it would be recorded and not fail quietly.
+    const clientLinks = (pids: number[]): Record<number, number[]> => Object.fromEntries(pids.map((pid) => [pid, [9000 + pid]]));
+
+    it('lists no client in a later batch once the first batch holds the peer\'s owner', async () => {
+      const clientPids = clientsFrom(100, fdBatchSize + 4);
+      const ownerPid = clientPids[3];
+      // 50 listens on 5037 and holds the accepted socket 1002; the owner holds the client end, 1003.
+      const { procRoot, fdDirectoriesRead } = procWithSocketFiles({ 50: [1001, 1002], ...clientLinks(clientPids), [ownerPid]: [1003] });
+      const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+      const read = await reader.connections([asProcess(50)], clientPids.map(asProcess));
+      expect(read.pairs).toEqual([{ listenerPid: 50, clientPid: ownerPid }]);
+      expect(read.listeningPids).toEqual([50]);
+      const listed = fdDirectoriesRead();
+      // Positive controls: the spy sees the listener's walk and the batch that found the owner.
+      expect(listed).toContain(50);
+      expect(listed).toContain(ownerPid);
+      // The owner was found, so the clients after the first batch were never needed.
+      expect(listed.filter((pid) => clientPids.slice(fdBatchSize).includes(pid))).toEqual([]);
+    });
+
+    it('reads the next batch when the owner is not in the first, then stops before the batch after it', async () => {
+      const clientPids = clientsFrom(100, 2 * fdBatchSize + 8);
+      const ownerPid = clientPids[fdBatchSize + 4];
+      const { procRoot, fdDirectoriesRead } = procWithSocketFiles({ 50: [1001, 1002], ...clientLinks(clientPids), [ownerPid]: [1003] });
+      const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+      const read = await reader.connections([asProcess(50)], clientPids.map(asProcess));
+      // The owner is in the second batch, so the loop did not stop too early.
+      expect(read.pairs).toEqual([{ listenerPid: 50, clientPid: ownerPid }]);
+      const listed = fdDirectoriesRead();
+      expect(listed).toContain(ownerPid);
+      expect(listed.filter((pid) => clientPids.slice(2 * fdBatchSize).includes(pid))).toEqual([]);
+    });
+
+    it('lists no client when a process on the listener side already holds the peer socket', async () => {
+      // 50 listens and holds the accepted socket; 60 listens too, and holds the client end, 1003.
+      const { procRoot, fdDirectoriesRead } = procWithSocketFiles({ 50: [1001, 1002], 60: [1003], 70: [9070], 71: [9071] });
+      const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+      const read = await reader.connections([asProcess(50), asProcess(60)], [asProcess(60), asProcess(70), asProcess(71)]);
+      expect(read.pairs).toEqual([{ listenerPid: 50, clientPid: 60 }]);
+      // Only the two listeners' tables, each once: not the clients 70 and 71, and not 60 again as a client.
+      expect(fdDirectoriesRead().sort((left, right) => left - right)).toEqual([50, 60]);
+    });
+  });
 });
 
 describe('macOS reader', () => {
@@ -827,6 +910,25 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))('local T
   const clientScript = (port: string, host: string) => `require('net').connect(${port}, '${host}', () => console.log('connected')); setInterval(() => {}, 1000);`;
   const sortPairs = (pairs: LocalConnection[]) => [...pairs].sort((left, right) => left.listenerPid - right.listenerPid || left.clientPid - right.clientPid);
 
+  function hasCommand(command: string): boolean {
+    try {
+      execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', [command], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // `netstat` and `lsof` ship with Windows and macOS; `ss` comes with iproute2,
+  // which a minimal Linux image can lack. Without it only the cross-check skips.
+  const hasConnectionTool = process.platform !== 'linux' || hasCommand('ss');
+
+  // task-reap-real-processes.yml sets this flag, so a cross-check that would
+  // skip there fails the job instead of reading as a pass.
+  it.runIf(process.env.KANGENTIC_REAP_REQUIRE_ALL_CASES === '1')('has the OS tool the cross-check reads', () => {
+    expect(hasConnectionTool, 'ss is not installed, so the cross-check against it skipped').toBe(true);
+  });
+
   /** The OS tool's own view: whether `clientPid` holds an established connection to `port`. */
   function toolSeesConnection(clientPid: number, port: string): boolean {
     if (process.platform === 'win32') {
@@ -850,8 +952,10 @@ describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))('local T
       // An explicit IPv4 client of a default listener, which binds `::` dual-stack.
       const dualStackClient = await startNode(clientScript(dualStack.line, '127.0.0.1'), children);
       const ipv4Client = await startNode(clientScript(ipv4Only.line, '127.0.0.1'), children);
-      expect(toolSeesConnection(dualStackClient.pid, dualStack.line)).toBe(true);
-      expect(toolSeesConnection(ipv4Client.pid, ipv4Only.line)).toBe(true);
+      if (hasConnectionTool) {
+        expect(toolSeesConnection(dualStackClient.pid, dualStack.line)).toBe(true);
+        expect(toolSeesConnection(ipv4Client.pid, ipv4Only.line)).toBe(true);
+      }
 
       const reader = platformReader();
       const scan = await reader.scan();
