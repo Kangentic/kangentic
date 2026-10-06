@@ -67,6 +67,7 @@ const archivedRuns = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'archived
 const contosoHistory = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'history', 'contoso-web.json'), 'utf-8'));
 const dataset = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'demo-dataset.ts'));
 const extract = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'message-trail-extract.ts'));
+const metrics = await importTsModule(path.join(repoRoot, 'tests', 'captures', 'helpers', 'archived-run-metrics.ts'));
 
 /** Embedding a few thousand chunks at the drain's duty cycle takes minutes, not hours. */
 const READY_TIMEOUT_MS = 45 * 60 * 1000;
@@ -76,7 +77,7 @@ const STABLE_READS = 3;
 /** Reads with the unindexed count unchanged before the sweep is taken as stopped. */
 const UNINDEXED_QUIET_POLLS = 3;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 // ---------------------------------------------------------------- the preview bridge
 /** Two minutes a call: a seed or a project open can take that long, a status read never does. */
@@ -136,7 +137,16 @@ async function planProject(project) {
       withoutNode.push({ sessionId: dataset.archivedSessionIdOf(task.id), reason: 'no recorded run in archived/runs.json; run scripts/capture-demo-archived-runs.mjs' });
       continue;
     }
-    sessions.push({ key: dataset.archivedSessionIdOf(task.id), taskKey: task.id, agent: run.agent, agentSessionId: run.agentSessionId, cwd: archivedClonePath(archivedRoot, project.path, task.id) });
+    const cwd = archivedClonePath(archivedRoot, project.path, task.id);
+    // Named here when the history is gone (Claude's cleanupPeriodDays, or a --root other than the
+    // run's): the index can never count it, so the wait for it would only run to its timeout.
+    const historyPath = metrics.claudeHistoryPath(run.agentSessionId, cwd);
+    if (!fs.existsSync(historyPath)) {
+      withoutNode.push({ sessionId: dataset.archivedSessionIdOf(task.id), reason: `its history is gone from the recording machine (${historyPath})` });
+      sessions.push({ key: dataset.archivedSessionIdOf(task.id), taskKey: task.id, agent: run.agent, agentSessionId: null, cwd });
+      continue;
+    }
+    sessions.push({ key: dataset.archivedSessionIdOf(task.id), taskKey: task.id, agent: run.agent, agentSessionId: run.agentSessionId, cwd });
   }
   return {
     plan: {

@@ -108,6 +108,43 @@ describe('seedKnowledgeGraphDemo refuses a plan before writing anything', () => 
     expectRefusal({ projects: [good, bad] }, `Sample refuse-shared-bad: the plan puts it at ${sharedPath}, where it also puts Sample refuse-shared-good`);
   });
 
+  it('refuses a project key the plan carries twice', () => {
+    const good = buildProjectPlan('refuse-project-key-good');
+    const bad = buildProjectPlan('refuse-project-key-bad', { key: good.key });
+
+    expectRefusal({ projects: [good, bad] }, 'The plan carries project refuse-project-key-good twice');
+  });
+
+  it('refuses two sessions pointing at one history, across projects', () => {
+    const good = buildProjectPlan('refuse-history-good');
+    const bad = buildProjectPlan('refuse-history-bad');
+    bad.sessions[0] = { ...bad.sessions[0], agentSessionId: good.sessions[0].agentSessionId };
+
+    expectRefusal({ projects: [good, bad] }, `The plan points two sessions at the history ${good.sessions[0].agentSessionId}`);
+  });
+
+  it('refuses a task key a project carries twice', () => {
+    const good = buildProjectPlan('refuse-task-key-good');
+    const bad = buildProjectPlan('refuse-task-key-bad');
+    bad.tasks[1] = { ...bad.tasks[1], key: bad.tasks[0].key };
+
+    expectRefusal({ projects: [good, bad] }, `Sample refuse-task-key-bad: the plan carries task ${bad.tasks[0].key} twice`);
+  });
+
+  it('refuses a session key a project carries twice', () => {
+    const good = buildProjectPlan('refuse-session-key-good');
+    const bad = buildProjectPlan('refuse-session-key-bad');
+    bad.sessions[1] = { ...bad.sessions[1], key: bad.sessions[0].key };
+
+    expectRefusal({ projects: [good, bad] }, `Sample refuse-session-key-bad: the plan carries session ${bad.sessions[0].key} twice`);
+  });
+
+  it('refuses a plan with no projects array, as a script could send over IPC', () => {
+    const before = registeredProjectIds();
+    expect(() => seedKnowledgeGraphDemo(context, {} as DevSeedKnowledgeGraphDemoPlan)).toThrow('The demo graph plan carries no projects array');
+    expect(registeredProjectIds()).toEqual(before);
+  });
+
   it('refuses an agent with no adapter', () => {
     const good = buildProjectPlan('refuse-agent-good');
     const bad = buildProjectPlan('refuse-agent-bad');

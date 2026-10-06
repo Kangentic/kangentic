@@ -13,14 +13,15 @@ import path from 'node:path';
 /**
  * The scratch root both scripts take from `--root`, or the home directory. Shared so the graph
  * capture looks for a run's history under the root the run was given. A `--root` with no
- * directory after it is refused rather than read as the home directory.
+ * directory after it is refused rather than read as the home directory. A relative root is made
+ * absolute, since Claude files a run's history under its absolute working directory.
  */
 export function scratchRootFromArgv(argv) {
   const flagIndex = argv.indexOf('--root');
   if (flagIndex === -1) return os.homedir();
   const root = argv[flagIndex + 1];
   if (!root || root.startsWith('--')) throw new Error('--root needs a directory after it');
-  return root;
+  return path.resolve(root);
 }
 
 /**

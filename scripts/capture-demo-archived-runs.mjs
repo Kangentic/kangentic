@@ -247,7 +247,8 @@ function removeClone(project, spec, cwd) {
   if (spec.git) {
     const base = baseCloneFor(project, spec);
     try {
-      execFileSync('git', ['-C', base, 'worktree', 'remove', '--force', cwd], { stdio: 'ignore' });
+      // Long paths on, as for the add: removing walks the same deep tree.
+      execFileSync('git', ['-C', base, '-c', 'core.longpaths=true', 'worktree', 'remove', '--force', cwd], { stdio: 'ignore' });
       return;
     } catch {
       // A standalone clone made before the worktrees, or one already half gone: removed below.

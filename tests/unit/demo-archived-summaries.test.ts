@@ -20,8 +20,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { humanizeClaudeModelId } from '../../src/main/agent/adapters/claude/model-display-name';
 import {
-  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
-  archivedRunPromptOf,
+  DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
+  archivedRunPromptOf, taskSlugOf,
 } from '../../tests/captures/helpers/demo-dataset';
 import { archivedClonePath, archivedCloneSegments, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
 
@@ -73,10 +73,10 @@ describe('demo archived task summaries', () => {
   });
 
   it('runs each history task on its own work: an upstream one at the parent of its own commit, on the history\'s model', () => {
-    const ids = new Set<string>();
+    const seenHistoryTaskIds = new Set<string>();
     for (const entry of DEMO_HISTORY.tasks) {
-      expect(ids.has(entry.id), `${entry.id} listed twice`).toBe(false);
-      ids.add(entry.id);
+      expect(seenHistoryTaskIds.has(entry.id), `${entry.id} listed twice`).toBe(false);
+      seenHistoryTaskIds.add(entry.id);
       const task = DEMO_TASKS.find((candidate) => candidate.id === entry.id);
       expect(task?.archivedDaysAgo, `${entry.id} is not an archived task`).toBe(entry.archivedDaysAgo);
       // A history task predates nothing it could not: it was archived after its project was added.
@@ -219,6 +219,17 @@ describe('demo archived run clone path', () => {
     const root = path.join(os.tmpdir(), 'demo-home');
     expect(archivedClonePath(root, contosoPath, 'task-cw-done-deploy')).toBe(path.join(root, 'work', 'contoso-web-cw-done-deploy'));
   });
+
+  // The clone rule lives in a script library and the slug rule in the dataset; the two must name
+  // every archived task the same way, or the graph capture looks for a run's history elsewhere.
+  it('names each archived task\'s clone with the dataset\'s own slug for it', () => {
+    expect(DEMO_ARCHIVED_TASKS.length).toBeGreaterThan(0);
+    for (const task of DEMO_ARCHIVED_TASKS) {
+      const project = DEMO_PROJECTS.find((candidate) => candidate.id === task.projectId);
+      const segments = archivedCloneSegments(project?.path ?? '', task.id);
+      expect(segments.at(-1), task.id).toMatch(new RegExp(`-${taskSlugOf(task.id)}$`));
+    }
+  });
 });
 
 describe('demo capture scratch root', () => {
@@ -229,6 +240,10 @@ describe('demo capture scratch root', () => {
   it('is the directory after --root', () => {
     const root = path.join(os.tmpdir(), 'demo-scratch');
     expect(scratchRootFromArgv(['--force', '--root', root, '--check'])).toBe(root);
+  });
+
+  it('makes a relative --root absolute, as Claude files a run\'s history under its absolute directory', () => {
+    expect(scratchRootFromArgv(['--root', 'demo-scratch'])).toBe(path.resolve('demo-scratch'));
   });
 
   it.each([
