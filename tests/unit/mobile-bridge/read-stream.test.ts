@@ -5,6 +5,17 @@ vi.mock('../../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
 }));
 
+// `resumable` reads the paused session's task and column. Defaults: a task in
+// a custom column, not archived (resumable when suspended).
+const taskGetByIdMock = vi.fn();
+const swimlaneGetByIdMock = vi.fn();
+vi.mock('../../../src/main/ipc/helpers/project-repos', () => ({
+  getProjectRepos: vi.fn(() => ({
+    tasks: { getById: (...args: unknown[]) => taskGetByIdMock(...args) },
+    swimlanes: { getById: (...args: unknown[]) => swimlaneGetByIdMock(...args) },
+  })),
+}));
+
 const resolveTaskTranscriptMock = vi.fn();
 vi.mock('../../../src/main/agent/transcript-service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/agent/transcript-service')>()),
@@ -93,6 +104,8 @@ describe('handleReadStream', () => {
   beforeEach(() => {
     sessionManager = new FakeSessionManager();
     resolveTaskTranscriptMock.mockReset();
+    taskGetByIdMock.mockReset().mockReturnValue({ id: 'task-1', swimlane_id: 'lane-review', archived_at: null });
+    swimlaneGetByIdMock.mockReset().mockReturnValue({ id: 'lane-review', role: null });
     // getInFlightSpawnProgress() reads a module-level singleton keyed by
     // taskId, and every fixture here uses 'task-1' - without this reset, a
     // label left behind by one test would leak into another's session-ended
@@ -568,6 +581,58 @@ describe('handleReadStream', () => {
       }
     }
 
+    it('the snapshot carries resumable true for a paused session the desktop would offer Resume for', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false });
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+
+      expect((response.payload as { resumable?: boolean }).resumable).toBe(true);
+      expect(taskGetByIdMock).toHaveBeenCalledWith('task-1');
+      expect(swimlaneGetByIdMock).toHaveBeenCalledWith('lane-review');
+    });
+
+    it.each([
+      ['a running session', { status: 'running' }, {}, {}],
+      ['a paused task in Done', { status: 'suspended' }, {}, { role: 'done' }],
+      ['a paused task in To Do', { status: 'suspended' }, {}, { role: 'todo' }],
+      ['a paused archived task', { status: 'suspended' }, { archived_at: '2026-10-01T00:00:00.000Z' }, {}],
+      ['a paused Command Terminal session', { status: 'suspended', transient: true }, {}, {}],
+      ['a paused session whose task is gone', { status: 'suspended' }, null, {}],
+    ])('the snapshot carries resumable false for %s', async (_label, sessionOverrides, taskOverrides, laneOverrides) => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'running', resuming: false, ...sessionOverrides });
+      if (taskOverrides === null) {
+        taskGetByIdMock.mockReturnValue(undefined);
+      } else {
+        taskGetByIdMock.mockReturnValue({ id: 'task-1', swimlane_id: 'lane-review', archived_at: null, ...taskOverrides });
+      }
+      swimlaneGetByIdMock.mockReturnValue({ id: 'lane-review', role: null, ...laneOverrides });
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+
+      expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
+    });
+
+    it('a suspend pushes status with resumable true, and a move to Done while paused pushes resumable false on the next edge', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'running', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, new SubscriptionRegistry());
+
+      // A queued row suspended: no PTY, so no exit, and the feed stays.
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false });
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'suspended', resuming: false, resumable: true }]);
+
+      // The status itself does not change, but the column now refuses Resume:
+      // the next edge carries the new resumable alone.
+      swimlaneGetByIdMock.mockReturnValue({ id: 'lane-review', role: 'done' });
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false });
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'status', status: 'suspended', resuming: false, resumable: true },
+        { type: 'status', status: 'suspended', resuming: false, resumable: false },
+      ]);
+      expectPhoneAcceptsEveryActivityEvent(session);
+    });
+
     it('the snapshot carries resuming from the session row', async () => {
       sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
       const context = { sessionManager } as unknown as IpcContext;
@@ -608,7 +673,7 @@ describe('handleReadStream', () => {
       // The queue promotes it.
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
-      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: false }]);
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: false, resumable: false }]);
       expectPhoneAcceptsEveryActivityEvent(session);
     });
 
@@ -621,7 +686,7 @@ describe('handleReadStream', () => {
       await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, new SubscriptionRegistry());
 
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
-      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: true }]);
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: true, resumable: false }]);
 
       sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
       expect(sentActivityPayloads(session)).toHaveLength(1);
@@ -639,7 +704,7 @@ describe('handleReadStream', () => {
       sessionManager.emit('exit', 'sess-1', 0, true);
 
       expect(sentActivityPayloads(session)).toEqual([
-        { type: 'status', status: 'suspended', resuming: false },
+        { type: 'status', status: 'suspended', resuming: false, resumable: false },
         { type: 'session-ended', intentional: true },
       ]);
       expect(subscriptions.has('stream:sess-1')).toBe(false);
@@ -657,7 +722,7 @@ describe('handleReadStream', () => {
       sessionManager.emit('exit', 'sess-1', 0, true);
 
       expect(sentActivityPayloads(session)).toEqual([
-        { type: 'status', status: 'exited', resuming: false },
+        { type: 'status', status: 'exited', resuming: false, resumable: false },
         { type: 'session-ended', intentional: true },
       ]);
       expect(subscriptions.has('stream:sess-1')).toBe(false);

@@ -1,8 +1,10 @@
 /**
  * start-session must route through startTaskSession (the task lock, the
- * stale-pointer reconcile, the To Do / Done / archived gate, and the
- * autoSpawnForTask -> spawnAgent chokepoint), never the engine or a
- * repository directly, and must forward ONLY the two trusted payload fields.
+ * stale-pointer reconcile, the To Do / Done / archived gate, then the desktop
+ * Resume path for a paused task or the autoSpawnForTask -> spawnAgent
+ * chokepoint otherwise; start-session-resume-path.test.ts runs both for real),
+ * never the engine or a repository directly, and must forward ONLY the two
+ * trusted payload fields.
  *
  * It must also answer the phone when the start is ACCEPTED, not when the
  * agent is up: the worktree ensure (a git fetch), the branch checkout, the
