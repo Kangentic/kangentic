@@ -446,12 +446,16 @@ sweep` block in `tests/unit/bg-shell-watcher.test.ts` and by
 
 Restoring from Done is slow (the worktree is recreated from the preserved branch, then the CLI
 boots) and the task's suspended record survives that whole window, so the UI used to advertise a
-manual "Resume session" button while the engine was already restoring the conversation. Two things
+manual "Resume session" button while the engine was already restoring the conversation. Three things
 now prevent that:
 
 - `TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE` thread `onProgress` into their git helpers exactly as
   `task-move` does, and emit `resuming` immediately so the card is never silent while the lane is
   resolved and the git op queues.
+- The Resume button's own handler (`SESSION_RESUME`) does the same once it knows it will spawn
+  (its self-heal return spawns nothing): it emits `resuming`, threads `onProgress` into
+  `ensureTaskWorktree`, and clears the label in one `finally`, so a paused card stops reading
+  "Paused" while its resume runs.
 - `getTaskProgress` lets an in-flight spawn label outrank a `suspended` session (only `suspended`;
   a running or queued session owns its own display). An emitted label means main is spawning right
   now, which is newer than a record suspended earlier.

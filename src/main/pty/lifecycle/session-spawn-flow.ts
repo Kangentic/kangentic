@@ -385,6 +385,12 @@ export async function performSpawn(
   // suspended session's scrollback included, where they were (their PTYs and
   // file watchers were already stopped above). The reused id is the new
   // session's own.
+  //
+  // This drain emits no 'session-removed' for a sibling, and it runs before
+  // the new session's 'session-changed'. The mobile bridge's read-stream
+  // successor hop (mobile-bridge/handlers/read-stream.ts) relies on both to
+  // name the resumed session to a paired phone; session-spawn-flow.test.ts
+  // pins them. Change the two together.
   for (const sibling of siblings) {
     context.registry.delete(sibling.id);
     context.telemetry.removeSession(sibling.id);

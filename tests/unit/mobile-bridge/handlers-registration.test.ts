@@ -36,6 +36,7 @@ describe('registerCapabilityHandlers', () => {
       diffWatcher: {} as DiffWatcher,
       getSubscriptions: () => ({}) as SubscriptionRegistry,
       pushRegistrations: {} as PushRegistrationStore,
+      spawnProgressFeed: { onTaskSpawnProgressChanged: () => () => undefined },
     });
 
     const registeredVerbs = registerSpy.mock.calls.map(([verb]) => verb);

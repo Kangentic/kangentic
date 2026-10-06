@@ -660,6 +660,37 @@ describe('performSpawn - one row per task', () => {
     expect(rowsAtFailure).toEqual([]);
     expect(scrollbackAtFailure).toBe('carried bytes');
   });
+
+  it('guards the mobile read-stream successor hop: the drain drops the paused sibling with no session-removed, before the new session-changed', async () => {
+    // A phone's feed on a paused row ends naming the successor when it sees a
+    // same-task session-changed AFTER its own row is gone from the registry
+    // (handlers/read-stream.ts, onSessionChanged). A 'session-removed' for the
+    // sibling would end the feed first and without the successor id, and a
+    // sibling still in the registry when the new session is announced would
+    // hold the hop back. So this drain must stay silent about the sibling and
+    // must finish before the announcement.
+    const context = makeContext();
+    seedRow(context, { id: 'sess-paused', status: 'suspended', startedAt: SUSPENDED_STARTED_AT });
+    const emittedEvents: string[] = [];
+    let rowIdsAtSessionChanged: string[] | null = null;
+    let pausedRowAtSessionChanged: unknown = 'session-changed was not observed';
+    vi.mocked(context.emit).mockImplementation((event: string, ...args: unknown[]) => {
+      emittedEvents.push(event);
+      if (event === 'session-changed' && args[0] === 'sess-resumed') {
+        rowIdsAtSessionChanged = context.registry.listByTaskId('task-001').map((row) => row.id);
+        pausedRowAtSessionChanged = context.registry.get('sess-paused');
+      }
+    });
+
+    await performSpawn(makeInput({ id: 'sess-resumed' }), context);
+
+    // The announcement fired, and found the new session as the task's only row.
+    expect(emittedEvents).toContain('session-changed');
+    expect(rowIdsAtSessionChanged).toEqual(['sess-resumed']);
+    expect(pausedRowAtSessionChanged).toBeUndefined();
+    // Nothing announced the sibling's removal, at any point of the spawn.
+    expect(emittedEvents).not.toContain('session-removed');
+  });
 });
 
 describe('performSpawn - caller-owned session ID wiring', () => {
