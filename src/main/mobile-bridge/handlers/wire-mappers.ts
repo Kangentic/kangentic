@@ -305,12 +305,16 @@ export const SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH = 120;
 /**
  * Characters that change how a label renders without showing anything: the
  * bidi embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069), the
- * left-to-right and right-to-left marks (U+200E, U+200F), the zero-width space
- * (U+200B) and the byte order mark (U+FEFF). A bidi override can make one
- * string read as another. The zero-width joiner and non-joiner stay: emoji
- * sequences and several scripts need them.
+ * left-to-right, right-to-left and Arabic letter marks (U+200E, U+200F,
+ * U+061C), the zero-width space (U+200B), the word joiner (U+2060) and the
+ * byte order mark (U+FEFF). A bidi override can make one string read as
+ * another. The zero-width joiner and non-joiner stay: emoji sequences and
+ * several scripts need them.
  */
-const INVISIBLE_FORMAT_CHARACTERS = /[\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}\u{FEFF}]/gu;
+const INVISIBLE_FORMAT_CHARACTERS = /[\u{061C}\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2060}\u{2066}-\u{2069}\u{FEFF}]/gu;
+
+/** Tabs and line breaks, including the Unicode line and paragraph separators (U+2028, U+2029). */
+const LABEL_LINE_BREAKS = /[\t\r\n\u{2028}\u{2029}]+/gu;
 
 /**
  * A spawn-progress label as it may leave the desktop. Most labels are the
@@ -327,7 +331,7 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
   if (label === null) return null;
   const cleaned = stripAnsiControlCodes(label)
     .replace(INVISIBLE_FORMAT_CHARACTERS, '')
-    .replace(/[\t\r\n]+/g, ' ')
+    .replace(LABEL_LINE_BREAKS, ' ')
     .replace(/ {2,}/g, ' ')
     .trim();
   if (cleaned === '') return null;

@@ -612,6 +612,37 @@ describe('handleReadStream', () => {
       expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
     });
 
+    it('the snapshot carries resumable false, with no task lookup, for a paused session that has no owning project', async () => {
+      // The row is a normal paused task session in every other respect (task id
+      // set, suspended, not transient), so only the missing project can be what
+      // answers false. The repo mock ignores its project argument, so without
+      // the guard the lookup would find the task and answer true.
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+
+      expect(response.ok).toBe(true);
+      expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
+      expect(taskGetByIdMock).not.toHaveBeenCalled();
+    });
+
+    it('a paused session whose task cannot be read still subscribes, with resumable false', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'suspended', resuming: false });
+      taskGetByIdMock.mockImplementation(() => {
+        throw new Error('database is locked');
+      });
+      const subscriptions = new SubscriptionRegistry();
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, subscriptions);
+
+      expect(response.ok).toBe(true);
+      expect((response.payload as { resumable?: boolean }).resumable).toBe(false);
+      // The lookup was attempted, so the false came from the failed read and
+      // not from an earlier guard; the feed is still registered.
+      expect(taskGetByIdMock).toHaveBeenCalledWith('task-1');
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+    });
+
     it('a suspend pushes status with resumable true, and a move to Done while paused pushes resumable false on the next edge', async () => {
       sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', projectId: 'proj-1', status: 'running', resuming: false });
       const session = fakeSession();
@@ -808,6 +839,35 @@ describe('handleReadStream', () => {
       sessionManager.emit('exit', 'sess-2', -1);
 
       expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('an exit of another session of the same task leaves the feed alone while its own row is still registered', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      // sess-2 passes the task check a real successor passes, and the feed
+      // tracks successors, so only the "own row is gone" check can be what
+      // holds the feed in place: a live paused row is not replaced by anything.
+      sessionManager.getSessionTaskId.mockImplementation((id: string) => (id === 'sess-2' ? 'task-1' : undefined));
+      sessionManager.emit('exit', 'sess-2', -1);
+
+      expect(sentActivityPayloads(session)).toEqual([]);
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+      expect(sessionManager.listenerCount('exit')).toBe(1);
+
+      // Control: the same exit once the feed's own row is gone ends it, so the
+      // registered row was the only thing standing in the way.
+      sessionManager.getSession.mockReturnValue(undefined);
+      sessionManager.emit('exit', 'sess-2', -1);
+
+      const payloads = sentActivityPayloads(session);
+      expect(payloads).toEqual([{ type: 'session-ended', intentional: true }]);
+      // toEqual treats a key set to undefined as absent, so pin the absence.
+      expect('successorSessionId' in payloads[0]).toBe(false);
       expect(subscriptions.has('stream:sess-1')).toBe(false);
     });
 
