@@ -40,26 +40,14 @@ import * as path from 'node:path';
 import * as url from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { QUESTIONS } from './eval-ask-questions.mjs';
-import { evaluateInPreview, readPreviewPort as readPreviewPortOf } from './lib/preview-bridge.mjs';
+// The preview's inspection bridge. Its thirty-second default is what stops one wedged agent from
+// hanging a whole ten-question pass silently.
+import { evaluateInPreview, readPreviewPort } from './lib/preview-bridge.mjs';
 // The answer table's own query, not a copy. Node strips the types on import.
 import { BOARD_TASK_FACTS_SQL, toBoardTaskFacts } from '../src/main/retrieval/board-task-facts.ts';
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
-
-/** Where a running preview announces its inspection port. */
-function readPreviewPort() {
-  return readPreviewPortOf(PROJECT_ROOT);
-}
-
-/**
- * Evaluate an expression in the preview's renderer. Thirty seconds by default: a
- * single wedged agent would otherwise hang the whole run silently, which on a
- * ten-question pass is the difference between one bad result and no results.
- */
-function evaluate(port, expression, timeoutMs = 30_000) {
-  return evaluateInPreview(port, expression, timeoutMs);
-}
 
 /**
  * Conversations rolled up per TASK.
@@ -162,7 +150,7 @@ function addMetric(current, next) {
 /** Ground-truth providers, one per corpus. The seam the repo corpus plugs into. */
 const ROLLUPS = {
   conversation: async (port) => {
-    const { nodes, projectId } = await evaluate(
+    const { nodes, projectId } = await evaluateInPreview(
       port,
       // The wire carries the map as `projectionJson`; only the renderer store
       // parses it, so this read does the same.
@@ -178,7 +166,7 @@ const ROLLUPS = {
   // repository, written with the question; this says only whether the code is
   // indexed and embedded, so a run without it skips them rather than failing.
   code: async (port) => {
-    const snapshot = await evaluate(port, 'window.electronAPI.knowledgeGraph.graphSnapshot(null)');
+    const snapshot = await evaluateInPreview(port, 'window.electronAPI.knowledgeGraph.graphSnapshot(null)');
     const code = snapshot?.index?.corpora?.find((entry) => entry.corpus === 'code');
     return { files: code?.documents ?? 0, chunks: code?.chunks ?? 0, embedded: code?.embeddedChunks ?? 0 };
   },
@@ -201,7 +189,7 @@ async function ask(port, question) {
     // many tool calls the agent made. Measured in the renderer, so the numbers
     // are what a user would see rather than what this script observed over
     // the bridge.
-    const outcome = await evaluate(
+    const outcome = await evaluateInPreview(
       port,
       `(async () => {
         const requestId = crypto.randomUUID();
@@ -248,7 +236,7 @@ async function ask(port, question) {
  * when nothing usable exists, and the question is then skipped, never failed.
  */
 async function phraseFromTranscript(port, target) {
-  const bodies = await evaluate(
+  const bodies = await evaluateInPreview(
     port,
     `(async () => {
       const snapshot = await window.electronAPI.knowledgeGraph.graphSnapshot(null);
@@ -415,7 +403,7 @@ async function main() {
   // a grader is far likelier to be wrong than the product.
   if (regrade) return regradeSavedRun(regrade, only);
 
-  const port = readPreviewPort();
+  const port = readPreviewPort(PROJECT_ROOT);
   const selected = QUESTIONS.filter((entry) => !only || entry.id.includes(only));
   if (selected.length === 0) throw new Error(`No question id matches "${only}".`);
 
@@ -578,7 +566,7 @@ async function main() {
  */
 async function regradeSavedRun(file, only) {
   const saved = JSON.parse(fs.readFileSync(file, 'utf-8'));
-  const port = readPreviewPort();
+  const port = readPreviewPort(PROJECT_ROOT);
   const rollupCache = new Map();
   const tools = { phraseFrom: (target) => phraseFromTranscript(port, target) };
   let passed = 0;

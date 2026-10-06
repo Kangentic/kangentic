@@ -24,10 +24,10 @@ export function readPreviewPort(repoRoot) {
  *
  * The bridge sets no deadline of its own, since it awaits the promise for as long as the renderer
  * takes, and fetch has none either, so `timeoutMs` is what stops one wedged call from hanging the
- * whole run. Needs Settings > Developer > Allow Unsafe Operations, which is reported plainly rather
- * than as a bare 403.
+ * whole run. Thirty seconds unless said. Needs Settings > Developer > Allow Unsafe Operations,
+ * which is reported plainly rather than as a bare 403.
  */
-export async function evaluateInPreview(port, expression, timeoutMs) {
+export async function evaluateInPreview(port, expression, timeoutMs = 30_000) {
   const response = await fetch(`http://127.0.0.1:${port}/eval`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

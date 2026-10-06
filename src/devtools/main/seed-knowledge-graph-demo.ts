@@ -33,24 +33,46 @@ import { isSamePath } from '../../shared/paths';
 import type { DevSeedKnowledgeGraphDemoPlan, DevSeedKnowledgeGraphDemoResult } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
 
+/** The first value that appears twice in `values`, or undefined when every value is distinct. */
+function firstRepeat(values: string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+  }
+  return undefined;
+}
+
 /**
  * Write every planned project's rows. The whole plan is checked before the first write, and a
  * plan that fails a check throws with nothing written: a project row already at a planned path (a
  * second seed would double every task, and the graph would carry each conversation twice), two
- * planned projects at one path (the same doubling, from one seed), an agent with no adapter,
- * tickets not numbered 1 to n, or a session naming a task the plan lacks.
+ * planned projects at one path (the same doubling, from one seed), two sessions pointing at one
+ * history (that conversation drawn twice), a project, task or session key the plan carries twice
+ * (the id maps would hand one key two rows), an agent with no adapter, tickets not numbered 1 to
+ * n, or a session naming a task the plan lacks.
  * A throw after that (a new board with no To Do or Done column, the allocator numbering a task
  * other than the plan does) leaves the rows already written, so restart the preview to seed again.
  */
 export function seedKnowledgeGraphDemo(context: Pick<IpcContext, 'projectRepo'>, plan: DevSeedKnowledgeGraphDemoPlan): DevSeedKnowledgeGraphDemoResult {
-  for (const [index, planned] of plan.projects.entries()) {
+  // The plan arrives over IPC from a script, so its shape is checked once rather than trusted.
+  if (!plan || !Array.isArray(plan.projects)) throw new Error('The demo graph plan carries no projects array');
+  const repeatedProjectKey = firstRepeat(plan.projects.map((planned) => planned.key));
+  if (repeatedProjectKey !== undefined) throw new Error(`The plan carries project ${repeatedProjectKey} twice`);
+  const repeatedHistory = firstRepeat(plan.projects.flatMap((planned) => planned.sessions.flatMap((session) => (session.agentSessionId === null ? [] : [session.agentSessionId]))));
+  if (repeatedHistory !== undefined) throw new Error(`The plan points two sessions at the history ${repeatedHistory}, so the graph would draw that conversation twice`);
+  for (const [projectIndex, planned] of plan.projects.entries()) {
     if (context.projectRepo.list().some((existing) => isSamePath(existing.path, planned.path))) {
       throw new Error(`A project is already registered at ${planned.path}; restart the preview to seed the demo graph again`);
     }
-    const sharedWith = plan.projects.slice(0, index).find((earlier) => isSamePath(earlier.path, planned.path));
+    const sharedWith = plan.projects.slice(0, projectIndex).find((earlier) => isSamePath(earlier.path, planned.path));
     if (sharedWith) throw new Error(`${planned.name}: the plan puts it at ${planned.path}, where it also puts ${sharedWith.name}`);
+    const repeatedTaskKey = firstRepeat(planned.tasks.map((task) => task.key));
+    if (repeatedTaskKey !== undefined) throw new Error(`${planned.name}: the plan carries task ${repeatedTaskKey} twice`);
+    const repeatedSessionKey = firstRepeat(planned.sessions.map((session) => session.key));
+    if (repeatedSessionKey !== undefined) throw new Error(`${planned.name}: the plan carries session ${repeatedSessionKey} twice`);
     const displayIds = planned.tasks.map((task) => task.displayId).sort((left, right) => left - right);
-    const gapAt = displayIds.findIndex((displayId, index) => displayId !== index + 1);
+    const gapAt = displayIds.findIndex((displayId, position) => displayId !== position + 1);
     if (gapAt !== -1) throw new Error(`${planned.name}: the plan's tickets are not numbered 1 to ${displayIds.length} (found #${displayIds[gapAt]} at position ${gapAt + 1})`);
     const taskKeys = new Set(planned.tasks.map((task) => task.key));
     for (const session of planned.sessions) {

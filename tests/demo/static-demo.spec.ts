@@ -1274,6 +1274,211 @@ test('the Knowledge Graph\'s maps are fetched once, by a frame that opens the gr
   expect(graphRequests[0]).toMatch(/\/graph\/knowledge-graph-[0-9a-f]{8}\.json$/);
 });
 
+// ---- what the seed answers the Knowledge Graph with ------------------------------------------
+// The test above proves WHEN the maps are read. These prove what each answer is, which ids are left
+// to the mock, and what a failed read leaves behind (demo-dataset.ts, seededKnowledgeGraph).
+
+interface DemoKnowledgeGraphRow { id: string; name: string; conversations: number; taskRecords: number; lastActivityMs: number | null }
+interface DemoKnowledgeGraphSnapshot { projectId: string; projection: { nodes: Array<{ sessionId: string }> } }
+interface DemoKnowledgeGraphWindow {
+  electronAPI: {
+    knowledgeGraph: {
+      graphSnapshot: (projectId: string | null) => Promise<DemoKnowledgeGraphSnapshot | null>;
+      graphProjects: () => Promise<DemoKnowledgeGraphRow[]>;
+    };
+  };
+  /** The mock's own recorders: bumped only when the mock's original answers, never by the seed's override. */
+  __mockGraphSnapshotCalls?: Array<{ projectId: string | null }>;
+  __mockGraphProjectsCalls?: number;
+}
+
+/** An id the sample install does not have, so the seed leaves it to the mock. */
+const UNKNOWN_PROJECT_ID = 'proj-not-in-the-sample-install';
+
+function knowledgeGraphFixtureOf(projectId: string): (typeof DEMO_KNOWLEDGE_GRAPH.projects)[string] {
+  const fixture = DEMO_KNOWLEDGE_GRAPH.projects[projectId];
+  if (!fixture) throw new Error(`the Knowledge Graph fixture has no project ${projectId}`);
+  return fixture;
+}
+
+/** What the fixture's index counts for one corpus of one project: the figure the picker row must show. */
+function indexedDocumentCount(projectId: string, corpus: 'conversation' | 'task'): number {
+  const entry = knowledgeGraphFixtureOf(projectId).index.corpora.find((candidate) => candidate.corpus === corpus);
+  if (!entry) throw new Error(`the fixture's index for ${projectId} has no ${corpus} corpus`);
+  return entry.documents;
+}
+
+/**
+ * Count every request for the Knowledge Graph's maps, and answer the first `failFirstRequests` of them
+ * with a 500. A route rather than a request listener, because Playwright keeps the HTTP cache off
+ * while one is installed: a second read the browser could have served from cache is still counted.
+ * Install it BEFORE navigating.
+ */
+async function routeKnowledgeGraphFile(page: Page, failFirstRequests = 0): Promise<() => string[]> {
+  const requestedUrls: string[] = [];
+  await page.route('**/graph/knowledge-graph-*.json', (route) => {
+    requestedUrls.push(route.request().url());
+    if (requestedUrls.length <= failFirstRequests) return route.fulfill({ status: 500, contentType: 'text/plain', body: 'unavailable' });
+    return route.continue();
+  });
+  return () => requestedUrls.slice();
+}
+
+test('an id the sample install does not have is left to the mock and reads no map', async ({ page }) => {
+  const getGraphRequests = await routeKnowledgeGraphFile(page);
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  const snapshotCallsBefore = await page.evaluate(() => (window as unknown as DemoKnowledgeGraphWindow).__mockGraphSnapshotCalls?.length ?? 0);
+
+  const answers = await page.evaluate(async (unknownProjectId) => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    return { none: await api.graphSnapshot(null), unknown: await api.graphSnapshot(unknownProjectId) };
+  }, UNKNOWN_PROJECT_ID);
+  expect(answers).toEqual({ none: null, unknown: null });
+  expect(getGraphRequests(), 'a snapshot of no project, or of one that is not here, must not read the maps').toEqual([]);
+
+  // The mock's own recorder heard both asks, so each went to the mock's original rather than being
+  // answered by the override with a null of its own.
+  const handedToMock = await page.evaluate((from) => (window as unknown as DemoKnowledgeGraphWindow).__mockGraphSnapshotCalls?.slice(from) ?? [], snapshotCallsBefore);
+  expect(handedToMock).toEqual([{ projectId: null }, { projectId: UNKNOWN_PROJECT_ID }]);
+
+  // Positive control, same page: a project the install has DOES read them, so the silence above
+  // is the guard working and not a counter that never counts.
+  const known = await page.evaluate((projectId) => (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph.graphSnapshot(projectId), PROJECT_CONTOSO);
+  expect(known?.projectId).toBe(PROJECT_CONTOSO);
+  expect(getGraphRequests()).toHaveLength(1);
+});
+
+test('a project of the sample install is answered with its own map, and every ask gets its own copy', async ({ page }) => {
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  const projectIds = DEMO_PROJECTS.map((project) => project.id);
+
+  const answers = await page.evaluate(async (ids) => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    const collected = [];
+    for (const projectId of ids) {
+      const first = await api.graphSnapshot(projectId);
+      const second = await api.graphSnapshot(projectId);
+      const sameObject = first === second;
+      const sameContent = JSON.stringify(first) === JSON.stringify(second);
+      // A reader that edits what it was handed edits nothing the next ask reads.
+      if (first) first.projection.nodes.length = 0;
+      const third = await api.graphSnapshot(projectId);
+      collected.push({
+        projectId,
+        answeredProjectId: first?.projectId ?? null,
+        nodeSessionIds: second?.projection.nodes.map((node) => node.sessionId) ?? null,
+        sameObject,
+        sameContent,
+        nodesAfterAnEdit: third?.projection.nodes.length ?? null,
+      });
+    }
+    return collected;
+  }, projectIds);
+
+  expect(answers).toHaveLength(projectIds.length);
+  for (const answer of answers) {
+    const expectedSessionIds = knowledgeGraphFixtureOf(answer.projectId).projection.nodes.map((node) => node.sessionId);
+    expect(expectedSessionIds.length, `${answer.projectId}'s fixture draws no conversation`).toBeGreaterThan(0);
+    expect(answer.answeredProjectId, `${answer.projectId} was answered with another project's snapshot`).toBe(answer.projectId);
+    expect(answer.nodeSessionIds, `${answer.projectId}'s nodes are not its fixture's`).toEqual(expectedSessionIds);
+    expect(answer.sameContent, `${answer.projectId}'s two asks differ`).toBe(true);
+    expect(answer.sameObject, `${answer.projectId}'s two asks share one object`).toBe(false);
+    expect(answer.nodesAfterAnEdit, `an edit to ${answer.projectId}'s answer leaked into the next ask`).toBe(expectedSessionIds.length);
+  }
+});
+
+test('a failed read of the maps rejects with its status, and the next ask reads them again', async ({ page }) => {
+  const getGraphRequests = await routeKnowledgeGraphFile(page, 1);
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+
+  const outcomes = await page.evaluate(async (projectId) => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    const settle = (ask: Promise<DemoKnowledgeGraphSnapshot | null>) => ask.then(
+      (snapshot) => ({ rejection: null, projectId: snapshot?.projectId ?? null }),
+      (error: Error) => ({ rejection: error.message, projectId: null }),
+    );
+    const first = await settle(api.graphSnapshot(projectId));
+    const second = await settle(api.graphSnapshot(projectId));
+    return { first, second };
+  }, PROJECT_CONTOSO);
+
+  expect(outcomes.first.rejection, 'the first ask should name the failing status').toContain('returned 500');
+  expect(outcomes.second, 'the failure was kept, so the next ask never tried again').toEqual({ rejection: null, projectId: PROJECT_CONTOSO });
+  expect(getGraphRequests()).toHaveLength(2);
+});
+
+test('the snapshot and the picker asked together share one read of the maps', async ({ page }) => {
+  const getGraphRequests = await routeKnowledgeGraphFile(page);
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  expect(getGraphRequests()).toEqual([]);
+
+  const answers = await page.evaluate(async (projectId) => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    const [snapshot, projects] = await Promise.all([api.graphSnapshot(projectId), api.graphProjects()]);
+    return { snapshotProjectId: snapshot?.projectId ?? null, rowIds: projects.map((row) => row.id) };
+  }, PROJECT_CONTOSO);
+
+  expect(answers.snapshotProjectId).toBe(PROJECT_CONTOSO);
+  expect(answers.rowIds).toHaveLength(DEMO_PROJECTS.length);
+  expect(getGraphRequests(), 'two asks in flight at once must not each fetch the maps').toHaveLength(1);
+});
+
+test('the Projects picker lists one row per project of the sample install, counted from the fixture', async ({ page }) => {
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+
+  const { rows, rowsAfterAnEdit } = await page.evaluate(async () => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    const asked = await api.graphProjects();
+    const snapshotOfAsked = JSON.stringify(asked);
+    // A reader that edits what it was handed edits nothing the next ask reads.
+    asked[0].name = 'edited';
+    asked.length = 0;
+    return { rows: JSON.parse(snapshotOfAsked) as DemoKnowledgeGraphRow[], rowsAfterAnEdit: await api.graphProjects() };
+  });
+
+  expect(rows.map((row) => row.id).sort()).toEqual(DEMO_PROJECTS.map((project) => project.id).sort());
+  for (const project of DEMO_PROJECTS) {
+    const row = rows.find((candidate) => candidate.id === project.id);
+    if (!row) throw new Error(`no picker row for ${project.id}`);
+    expect(row.name).toBe(project.name);
+    expect(row.conversations, `${project.name} conversations`).toBe(indexedDocumentCount(project.id, 'conversation'));
+    expect(row.taskRecords, `${project.name} task records`).toBe(indexedDocumentCount(project.id, 'task'));
+    expect(row.conversations, `${project.name} has no conversation to count`).toBeGreaterThan(0);
+    expect(typeof row.lastActivityMs, `${project.name} shows no last activity`).toBe('number');
+  }
+  expect(rowsAfterAnEdit, 'an edit to the picker rows leaked into the next ask').toEqual(rows);
+});
+
+test('an empty install keeps the mock\'s empty Knowledge Graph answers and reads no map', async ({ page }) => {
+  const getGraphRequests = await routeKnowledgeGraphFile(page);
+  await gotoScene(page, { view: 'welcome', embed: '1', still: '1' });
+  await expect(page.locator(SCENES.welcome.ready)).toBeVisible();
+  const countsBefore = await page.evaluate(() => {
+    const demoWindow = window as unknown as DemoKnowledgeGraphWindow;
+    return { snapshots: demoWindow.__mockGraphSnapshotCalls?.length ?? 0, projects: demoWindow.__mockGraphProjectsCalls ?? 0 };
+  });
+
+  const answers = await page.evaluate(async (projectId) => {
+    const api = (window as unknown as DemoKnowledgeGraphWindow).electronAPI.knowledgeGraph;
+    // A project the sample install has: with nothing seeded here it must not draw.
+    return { projects: await api.graphProjects(), snapshot: await api.graphSnapshot(projectId) };
+  }, PROJECT_CONTOSO);
+  expect(answers).toEqual({ projects: [], snapshot: null });
+  expect(getGraphRequests()).toEqual([]);
+
+  // Both reached the mock's own methods: its recorders moved, which the seed's override never does.
+  const countsAfter = await page.evaluate(() => {
+    const demoWindow = window as unknown as DemoKnowledgeGraphWindow;
+    return { snapshots: demoWindow.__mockGraphSnapshotCalls?.length ?? 0, projects: demoWindow.__mockGraphProjectsCalls ?? 0 };
+  });
+  expect(countsAfter).toEqual({ snapshots: countsBefore.snapshots + 1, projects: countsBefore.projects + 1 });
+});
+
 /** Each row of a painted frame in cells: the text between the autowrap brackets, plus its cursor-forward gaps. */
 function frameRowWidths(frame: string): number[] {
   const start = frame.indexOf('\x1b[?7l');

@@ -559,9 +559,10 @@ export function archivedRunPromptOf(task: Pick<DemoTask, 'title' | 'description'
  * (`sessions.listSummaries`, keyed by task id). Main captures this at suspend from the session's
  * own telemetry, and so is this: each row is its task's recorded run (DEMO_ARCHIVED_RUNS), never
  * written by hand. The model is the one the run's main conversation ran on, never its advisor's,
- * named as the CLI's status line names it, and the tool count is the sum of the breakdown. A task in Done with no run is left out here, so
- * the recorder can load this module before every run exists; the build refuses to seed one
- * (`buildDemoPreConfig`), and tests/unit/demo-archived-summaries.test.ts fails on the gap.
+ * named as the CLI's status line names it, and the tool count is the sum of the breakdown. A task
+ * in Done with no run is left out here, so the recorder can load this module before every run
+ * exists; the build refuses to seed one (`buildDemoPreConfig`), and
+ * tests/unit/demo-archived-summaries.test.ts fails on the gap.
  */
 export interface DemoArchivedSummary {
   taskId: string;
