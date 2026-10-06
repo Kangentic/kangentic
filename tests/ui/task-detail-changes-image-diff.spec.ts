@@ -12,12 +12,18 @@
  * BEFORE_PNG_REENCODED has BEFORE_PNG's exact pixels at another zlib level, so
  * its bytes differ while no pixel does. solidPng builds PNGs of any size and
  * colour on the spot (stored, uncompressed pixels), so the live-refresh test can
- * regenerate an image at the exact byte length it had.
+ * regenerate an image at the exact byte length it had, and speckledPng adds one
+ * tiny hard-edged square so a pair can differ in only a handful of pixels.
  *
  * The "live refresh and change navigation" describe covers what happens around a
  * diff-changed push and the change keys: the refresh repaints an image whose
  * bytes changed, and rolling into an image leaves no pending first-change
  * request behind.
+ *
+ * The "Diff mode outcomes and copy" describe pins what the pixel comparison
+ * reports: a remembered result is not compared again, a canvas over the pixel
+ * cap reads as failed, an SVG compares at its scaled-up size, and the stat and
+ * size-change copy for the small-change and shrinking-file cases.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -38,6 +44,10 @@ const OVER_PREVIEW_CAP = 11 * 1024 * 1024;
 
 const SVG_BEFORE = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#1f2a1d"/></svg>\n';
 const SVG_AFTER = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#1f2a1d"/><circle cx="50" cy="50" r="7" fill="#f87171"/></svg>\n';
+// 5000 x 5000 is 25,000,000 pixels at scale 1, over the Diff mode's 4096 x 4096
+// cap, yet two tiny strings: the over-cap path needs no heavy fixture.
+const HUGE_SVG_BEFORE = '<svg xmlns="http://www.w3.org/2000/svg" width="5000" height="5000" viewBox="0 0 5000 5000"><rect width="5000" height="5000" fill="#1f2a1d"/></svg>\n';
+const HUGE_SVG_AFTER = '<svg xmlns="http://www.w3.org/2000/svg" width="5000" height="5000" viewBox="0 0 5000 5000"><rect width="5000" height="5000" fill="#1f2a1d"/><circle cx="2500" cy="2500" r="400" fill="#f87171"/></svg>\n';
 
 const PROJECT_ID = 'proj-image-diff';
 const TASK_ID = 'task-image-diff';
@@ -85,28 +95,58 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typeBytes, data, checksum]);
 }
 
+type RgbColor = readonly [number, number, number];
+
 /**
- * A solid-colour RGBA PNG, base64 encoded. zlib level 0 stores the pixels
- * uncompressed, so the byte length depends on the dimensions alone and never on
- * the colour: two colours at one size are two files of the exact same length.
+ * An opaque RGBA PNG whose pixel at (column, row) is `colorAt(column, row)`,
+ * base64 encoded. zlib level 0 stores the pixels uncompressed, so the byte
+ * length depends on the dimensions alone and never on the colours: two images
+ * at one size are two files of the exact same length.
  */
-function solidPng(width: number, height: number, red: number, green: number, blue: number): string {
+function encodeRgbaPng(width: number, height: number, colorAt: (column: number, row: number) => RgbColor): string {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
   header[8] = 8; // bit depth
   header[9] = 6; // colour type: RGBA
-  const scanline = Buffer.alloc(1 + width * 4); // filter byte 0 (none), then the pixels
-  for (let column = 0; column < width; column++) {
-    scanline.set([red, green, blue, 255], 1 + column * 4);
+  const scanlines: Buffer[] = [];
+  for (let row = 0; row < height; row++) {
+    const scanline = Buffer.alloc(1 + width * 4); // filter byte 0 (none), then the pixels
+    for (let column = 0; column < width; column++) {
+      const [red, green, blue] = colorAt(column, row);
+      scanline.set([red, green, blue, 255], 1 + column * 4);
+    }
+    scanlines.push(scanline);
   }
-  const pixels = Buffer.concat(Array.from({ length: height }, () => scanline));
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', header),
-    pngChunk('IDAT', zlib.deflateSync(pixels, { level: 0 })),
+    pngChunk('IDAT', zlib.deflateSync(Buffer.concat(scanlines), { level: 0 })),
     pngChunk('IEND', Buffer.alloc(0)),
   ]).toString('base64');
+}
+
+/** A solid-colour RGBA PNG, base64 encoded. */
+function solidPng(width: number, height: number, red: number, green: number, blue: number): string {
+  return encodeRgbaPng(width, height, () => [red, green, blue]);
+}
+
+const SPECK_EDGE = 2;
+
+/**
+ * A solid `base` PNG with one hard-edged `SPECK_EDGE` x `SPECK_EDGE` square of
+ * `speck` colour at the middle. Against a solid PNG of the `base` colour and the
+ * same size it differs in exactly SPECK_EDGE squared pixels, as long as `speck`
+ * is far from `base`: the square sits clear of every border, and a block that
+ * size has no anti-aliased pixels to drop.
+ */
+function speckledPng(width: number, height: number, base: RgbColor, speck: RgbColor): string {
+  const speckLeft = Math.floor(width / 2);
+  const speckTop = Math.floor(height / 2);
+  return encodeRgbaPng(width, height, (column, row) => {
+    const insideSpeck = column >= speckLeft && column < speckLeft + SPECK_EDGE && row >= speckTop && row < speckTop + SPECK_EDGE;
+    return insideSpeck ? speck : base;
+  });
 }
 
 const preConfig = `
@@ -181,6 +221,35 @@ async function closeChanges(): Promise<void> {
   await page.locator('[data-testid="changes-toggle"]').click();
   await page.keyboard.press('Control+Shift+W');
   await expect(page.locator('[data-testid="task-detail-dialog"]')).not.toBeVisible({ timeout: 8000 });
+}
+
+interface PixelDiffPostCounter {
+  /** How many comparisons have been handed to the pixel-diff worker since the counter was installed. */
+  posts: () => Promise<number>;
+  /** Put the page's own postMessage back. Belongs in a `finally`, so a failed test cannot leave the shared page patched. */
+  restore: () => Promise<void>;
+}
+
+/**
+ * Count the requests the page posts to the pixel-diff worker (the only worker
+ * messages that carry both a `before` and an `after` bitmap). Install it before
+ * the Diff mode is first entered so no comparison goes uncounted.
+ */
+async function countPixelDiffPosts(): Promise<PixelDiffPostCounter> {
+  await page.evaluate(() => {
+    const counter = window as unknown as { __pixelDiffPosts: number; __restorePostMessage: () => void };
+    counter.__pixelDiffPosts = 0;
+    const originalPostMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: unknown) {
+      if (message !== null && typeof message === 'object' && 'before' in message && 'after' in message) counter.__pixelDiffPosts += 1;
+      return (originalPostMessage as (this: Worker, message: unknown, transfer?: unknown) => void).call(this, message, transfer);
+    } as Worker['postMessage'];
+    counter.__restorePostMessage = () => { Worker.prototype.postMessage = originalPostMessage; };
+  });
+  return {
+    posts: () => page.evaluate(() => (window as unknown as { __pixelDiffPosts: number }).__pixelDiffPosts),
+    restore: () => page.evaluate(() => (window as unknown as { __restorePostMessage: () => void }).__restorePostMessage()),
+  };
 }
 
 test.describe('Changes panel image view', () => {
@@ -358,17 +427,7 @@ test.describe('Changes panel image view', () => {
     // second one behind it in the worker.
     await openChanges([pngFile('shots/first.png'), pngFile('shots/second.png')], 'shots/first.png');
     await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
-    await page.evaluate(() => {
-      const counter = window as unknown as { __pixelDiffPosts: number; __restorePostMessage: () => void };
-      counter.__pixelDiffPosts = 0;
-      const originalPostMessage = Worker.prototype.postMessage;
-      Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: unknown) {
-        if (message !== null && typeof message === 'object' && 'before' in message && 'after' in message) counter.__pixelDiffPosts += 1;
-        return (originalPostMessage as (this: Worker, message: unknown, transfer?: unknown) => void).call(this, message, transfer);
-      } as Worker['postMessage'];
-      counter.__restorePostMessage = () => { Worker.prototype.postMessage = originalPostMessage; };
-    });
-    const posts = () => page.evaluate(() => (window as unknown as { __pixelDiffPosts: number }).__pixelDiffPosts);
+    const { posts, restore } = await countPixelDiffPosts();
     const pixelStat = page.locator('[data-testid="diff-image-pixel-stat"]');
 
     try {
@@ -382,7 +441,7 @@ test.describe('Changes panel image view', () => {
       await expect(pixelStat).toHaveAttribute('data-status', 'done', { timeout: 10000 });
       expect(await posts()).toBe(2);
     } finally {
-      await page.evaluate(() => (window as unknown as { __restorePostMessage: () => void }).__restorePostMessage());
+      await restore();
     }
 
     await closeChanges();
@@ -965,6 +1024,139 @@ test.describe('Changes panel image view: refresh fingerprints, layout toggle and
     const afterPlaceholder = page.locator('[data-testid="diff-image-after"] [data-testid="diff-image-placeholder"]');
     await expect(afterPlaceholder).toHaveAttribute('data-reason', 'undecodable');
     await expect(afterPlaceholder).toContainText('Not image data');
+
+    await closeChanges();
+  });
+});
+
+test.describe('Changes panel image view: Diff mode outcomes and copy', () => {
+  const diffModeButton = () => page.locator('[data-testid="diff-image-mode-diff"]');
+  const pixelStat = () => page.locator('[data-testid="diff-image-pixel-stat"]');
+
+  test('stepping back to an already compared pair in Diff mode reads its remembered result instead of comparing it again', async () => {
+    // The two pairs read differently ("32.5%" against "No pixel changes"), so the
+    // stat's text says which pair is on screen: a "done" left over from the other
+    // file cannot pass for this one.
+    const pairA = 'shots/remembered-a.png';
+    const pairB = 'shots/remembered-b.png';
+    await openChanges([
+      pngFile(pairA),
+      pngFile(pairB, { modifiedImageBase64: BEFORE_PNG_REENCODED }),
+    ], pairA);
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+    const { posts, restore } = await countPixelDiffPosts();
+
+    try {
+      await diffModeButton().click();
+      await expect(pixelStat()).toHaveText('32.5% of pixels changed', { timeout: 10000 });
+      expect(await posts()).toBe(1);
+
+      await selectFile(pairB);
+      await expect(pixelStat()).toHaveText('No pixel changes', { timeout: 10000 });
+      expect(await posts()).toBe(2);
+
+      // Back to the first pair, still in Diff mode: its result is already known.
+      // Without the remembered outcome the stat would pass through "comparing"
+      // and only read 32.5% after a third post.
+      await selectFile(pairA);
+      await expect(page.locator(`[data-testid="changes-file-row"][data-path="${pairA}"]`)).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+      await expect(pixelStat()).toHaveText('32.5% of pixels changed', { timeout: 10000 });
+      await expect(pixelStat()).toHaveAttribute('data-status', 'done');
+      await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
+      expect(await posts()).toBe(2);
+    } finally {
+      await restore();
+    }
+
+    await closeChanges();
+  });
+
+  test('a pair too large to compare says so, draws no mask, and never reaches the worker', async () => {
+    // An SVG sized 5000 x 5000 compares at scale 1 (floor(1024 / 5000) is 0, kept
+    // at 1), so its canvas is 25,000,000 pixels: over the 4096 x 4096 cap. The
+    // canvas is refused before either image is decoded, which is why this needs
+    // no heavy fixture. Git marks the SVG binary so it opens straight on the image view.
+    const filePath = 'assets/too-large-to-compare.svg';
+    await openChanges([
+      { path: filePath, status: 'M', binary: true, original: HUGE_SVG_BEFORE, modified: HUGE_SVG_AFTER, language: 'xml' },
+    ], filePath);
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('5000 x 5000');
+    const { posts, restore } = await countPixelDiffPosts();
+
+    try {
+      await diffModeButton().click();
+      await expect(pixelStat()).toHaveAttribute('data-status', 'failed', { timeout: 10000 });
+      await expect(pixelStat()).toHaveText('Could not compare pixels');
+      await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toHaveCount(0);
+      await expect(page.getByLabel('Comparing pixels')).toHaveCount(0);
+      // The refusal came from the size cap, not from a decode or worker error.
+      expect(await posts()).toBe(0);
+    } finally {
+      await restore();
+    }
+
+    await closeChanges();
+  });
+
+  test('a few changed pixels in a large image read as under 0.1%, not as 0.0%', async () => {
+    // 100 x 100 is 10,000 pixels and the speck is 2 x 2: 4 changed pixels is
+    // 0.04%, which toFixed(1) alone would print as "0.0%".
+    const filePath = 'shots/speck.png';
+    const base: RgbColor = [240, 240, 240];
+    const speck: RgbColor = [220, 38, 38];
+    await openChanges([
+      pngFile(filePath, { originalImageBase64: solidPng(100, 100, ...base), modifiedImageBase64: speckledPng(100, 100, base, speck) }),
+    ], filePath);
+    await expect(page.locator('[data-testid="diff-image-view"]')).toBeVisible({ timeout: 8000 });
+
+    await diffModeButton().click();
+    await expect(pixelStat()).toHaveAttribute('data-status', 'done', { timeout: 10000 });
+    await expect(pixelStat()).toHaveText('Under 0.1% of pixels changed');
+    await expect(pixelStat()).toHaveAttribute('title', /^4 of 10,?000 pixels differ$/);
+    await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
+
+    await closeChanges();
+  });
+
+  test('a new image with fewer bytes than the old one shows its size change as a minus', async () => {
+    // The mirror of the modified PNG test's "+23 B": the same two files, swapped.
+    // AFTER_PNG is 158 bytes and BEFORE_PNG 135.
+    const filePath = 'shots/shrunk.png';
+    await openChanges([
+      pngFile(filePath, { originalImageBase64: AFTER_PNG, modifiedImageBase64: BEFORE_PNG }),
+    ], filePath);
+
+    await expect(page.locator('[data-testid="diff-image-size-delta"]')).toHaveText('-23 B', { timeout: 8000 });
+    // The new image is the shorter one, so its dimensions flag the change too.
+    await expect(page.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('40 x 60');
+
+    await closeChanges();
+  });
+
+  test('Diff mode on an SVG pair compares at the scaled-up size, so the circle counts at that size', async () => {
+    // A 64 x 64 SVG compares at scale floor(1024 / 64) = 16, a canvas of
+    // 1024 x 1024 = 1,048,576 pixels. Dropping the scale shrinks that total to
+    // 4,096; dropping the resize leaves both images 64 x 64 in the corner of the
+    // big canvas, so the total holds while the changed count collapses to a few
+    // pixels. The only change is the circle (r 7 in 64 units, so r 112 at 16x):
+    // pi * 112^2 is about 39,400 pixels, and the anti-aliased rim is not counted.
+    const filePath = 'assets/scaled-up.svg';
+    await openChanges([
+      { path: filePath, status: 'M', binary: true, original: SVG_BEFORE, modified: SVG_AFTER, language: 'xml' },
+    ], filePath);
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible({ timeout: 8000 });
+
+    await diffModeButton().click();
+    await expect(pixelStat()).toHaveAttribute('data-status', 'done', { timeout: 10000 });
+    const title = await pixelStat().getAttribute('title');
+    const match = /^([\d,]+) of 1,?048,?576 pixels differ$/.exec(title ?? '');
+    expect(match, `pixel stat title was ${title}`).not.toBeNull();
+    const changedPixels = Number(match![1].replace(/,/g, ''));
+    expect(changedPixels).toBeGreaterThan(35000);
+    expect(changedPixels).toBeLessThan(42000);
+    await expect(pixelStat()).toHaveText(/^3\.\d% of pixels changed$/);
+    await expect(page.locator('[data-testid="diff-image-diff-mask"]')).toBeVisible();
 
     await closeChanges();
   });

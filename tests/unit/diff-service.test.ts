@@ -1409,6 +1409,53 @@ describe('DiffService', () => {
       expect(result.modified?.kind).toBe('bytes');
     });
 
+    it('a Git LFS pointer on the working-tree side is reported as one, with the pointer size and a file fingerprint', async () => {
+      const pointer = Buffer.from('version https://git-lfs.github.com/spec/v1\noid sha256:4d7a\nsize 12345\n');
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(pointer);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result.modified).toEqual({
+        kind: 'lfs-pointer', size: pointer.length, fingerprint: `file:${pointer.length}:${SETTLED_MTIME_MS}`,
+      });
+      // The blob side is a real image, so the pointer verdict is per side.
+      expect(result.original?.kind).toBe('bytes');
+    });
+
+    it.each(['working', 'branch'] as const)(
+      '%s scope: the modified side is read from the worktree, never from the project root',
+      async (scope) => {
+        routeObjects({ 'abc123:img/a.png': PNG_BYTES, ':img/a.png': PNG_BYTES });
+        mockDiskFile(PNG_BYTES);
+        const worktreeFilePath = path.join('/project/wt', 'img/a.png');
+
+        const result = await service.getImageContent({ ...baseInput, status: 'M', scope });
+
+        expect(fs.promises.stat).toHaveBeenCalledWith(worktreeFilePath);
+        expect(fs.promises.readFile).toHaveBeenCalledWith(worktreeFilePath);
+        expect(fs.promises.stat).not.toHaveBeenCalledWith(path.join('/project', 'img/a.png'));
+        expect(fs.promises.readFile).not.toHaveBeenCalledWith(path.join('/project', 'img/a.png'));
+        expect(result.modified?.kind).toBe('bytes');
+      },
+    );
+
+    it('a blob side whose cat-file size is not a number reads unreadable and is never fetched', async () => {
+      // showBuffer answers with real bytes, so a missing finite-size guard would
+      // not fall through to an exception: it would wrongly report the side as bytes.
+      mockGit.revparse.mockResolvedValue('odd-blob\n');
+      mockGit.catFile.mockResolvedValue('not-a-number\n');
+      mockGit.showBuffer.mockResolvedValue(PNG_BYTES);
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result.original).toEqual({ kind: 'unreadable' });
+      expect(mockGit.showBuffer).not.toHaveBeenCalled();
+      // The unreadable verdict is per side: the disk side still reads.
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
     it('a failed read on either side is unreadable, not an exception', async () => {
       mockGit.revparse.mockRejectedValue(new Error('fatal: bad object'));
       vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));

@@ -3562,7 +3562,7 @@
         if (typeof window !== 'undefined' && window.__mockGitFileImageDeferred) {
           window.__mockGitFileImageDeferred = false;
           var resolveImageRef;
-          var pendingImage = new Promise(function (res) { resolveImageRef = res; });
+          var pendingImage = new Promise(function (resolve) { resolveImageRef = resolve; });
           window.__mockGitFileImageResolve = resolveImageRef;
           await pendingImage;
         }

@@ -63,6 +63,8 @@ beforeEach(() => {
   run(['config', 'user.email', 'dev@example.com']);
   run(['config', 'user.name', 'Dev']);
   run(['config', 'core.autocrlf', 'false']);
+  // A machine whose global config signs commits would otherwise fail the commit below.
+  run(['config', 'commit.gpgsign', 'false']);
   fs.mkdirSync(path.join(repository, 'img'));
   writeImage(BEFORE, Date.now() - SETTLED_AGE_MS);
   run(['add', '-A']);

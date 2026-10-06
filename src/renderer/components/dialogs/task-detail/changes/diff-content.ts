@@ -43,7 +43,7 @@ export const EMPTY_DIFF_CONTENT: DiffContent = { text: EMPTY_DIFF_TEXT, image: n
  * Past this, the least recently viewed image entries are dropped: a branch of
  * regenerated screenshots would otherwise keep every one resident.
  */
-export const IMAGE_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
+const IMAGE_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
 
 /**
  * Fetch what the diff pane shows for one file. A raster image reads bytes only
