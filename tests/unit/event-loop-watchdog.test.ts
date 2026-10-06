@@ -17,6 +17,7 @@ import path from 'node:path';
 
 import {
   startEventLoopWatchdog,
+  LABEL_BYTES,
   WATCHDOG_THREAD_SOURCE,
   type EventLoopWatchdog,
   type EventLoopWatchdogOptions,
@@ -129,15 +130,15 @@ describe('event-loop watchdog', () => {
   it('truncates a label longer than the label buffer instead of overflowing it', async () => {
     const file = await start();
     const sizeBeforeHold = fs.statSync(file).size;
-    // 96 UTF-8 bytes is the buffer's capacity (LABEL_BYTES, private to the module); this label is ASCII.
-    const longLabel = 'test:' + 'x'.repeat(200);
+    // The buffer holds LABEL_BYTES UTF-8 bytes; this label is ASCII, so one byte per character.
+    const longLabel = 'test:' + 'x'.repeat(LABEL_BYTES * 2);
     let writtenDuringHold = '';
     timeSyncWork(longLabel, () => {
       holdEventLoop(HOLD_MS);
       writtenDuringHold = readFrom(file, sizeBeforeHold);
     });
 
-    expect(writtenDuringHold).toContain('in ' + longLabel.slice(0, 96) + '\n');
+    expect(writtenDuringHold).toContain('in ' + longLabel.slice(0, LABEL_BYTES) + '\n');
   });
 
   it('reports only a short label that follows a long one, not the long one\'s leftover bytes', async () => {
@@ -268,6 +269,43 @@ describe('event-loop watchdog when the thread cannot start', () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('did not start'), expect.any(Error));
       expect(freshLag.timeSyncWork('test:no-thread', () => 'work result')).toBe('work result');
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('logs an error event from the thread instead of throwing, since an unhandled one would take down the worker', async () => {
+    // An EventEmitter with no 'error' listener throws on emit. Red-green: remove the
+    // `watchdog.on('error', ...)` line and the emit below throws.
+    const { EventEmitter } = await import('node:events');
+    const constructed: { instance: EventEmitter | null } = { instance: null };
+    vi.resetModules();
+    vi.doMock('node:worker_threads', () => ({
+      Worker: class extends EventEmitter {
+        constructor() {
+          super();
+          constructed.instance = this;
+        }
+        unref(): void {}
+        terminate(): Promise<number> {
+          return Promise.resolve(0);
+        }
+      },
+    }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const freshLag = await import('../../src/main/diagnostics/event-loop-lag');
+    let started: EventLoopWatchdog | undefined;
+    try {
+      const freshWatchdog = await import('../../src/main/retrieval/worker/event-loop-watchdog');
+      started = freshWatchdog.startEventLoopWatchdog();
+      expect(constructed.instance).not.toBeNull();
+
+      const threadError = new Error('thread crashed');
+      expect(() => constructed.instance?.emit('error', threadError)).not.toThrow();
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stopped'), threadError);
+    } finally {
+      await started?.stop();
+      freshLag.setSyncSpanLabelSink(null);
       warnSpy.mockRestore();
     }
   });

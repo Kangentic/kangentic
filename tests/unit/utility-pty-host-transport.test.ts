@@ -52,7 +52,7 @@ vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordSyncSpan: vi
 
 import { UtilityPtyHostTransport, ptyHostEntryPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
-import { resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
+import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
 
 function latestChild(): FakeChild {
   const child = forks[forks.length - 1];
@@ -272,6 +272,29 @@ describe('UtilityPtyHostTransport', () => {
     for (const platform of ['win32', 'linux'] as const) {
       expect(ptyHostEntryPath(bundleDirectory, platform)).toContain('app.asar.unpacked');
     }
+  });
+
+  it('reports a fork that threw as fork_failed, not as an exit, and retries on the next restart poll', async () => {
+    // A fork that throws never produced a process, so it has no exit code and
+    // must not reach telemetry as an exit. Red-green: revert the catch to
+    // `recordCrash(null)` and the cause defaults to 'exit'.
+    const recordCrashSpy = vi.spyOn(UtilityRestartPolicy.prototype, 'recordCrash');
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('spawn ENOENT');
+    });
+    const { transport } = makeTransport();
+
+    transport.start();
+
+    expect(forkMock).toHaveBeenCalledTimes(1);
+    expect(forks).toHaveLength(0);
+    expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+    expect(recordCrashSpy).toHaveBeenCalledWith(null, undefined, { cause: 'fork_failed' });
+    expect(console.warn).toHaveBeenCalledWith('[pty-host] fork failed:', expect.any(Error));
+
+    // The failure counts as one crash, so the restart timer forks again.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(forks).toHaveLength(1);
   });
 
   it('shutdown posts shutdown, and the exit that follows neither restarts nor reports a loss', async () => {
