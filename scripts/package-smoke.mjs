@@ -82,8 +82,9 @@ export const LEFTOVER_COMMAND = `node ${LEFTOVER_SCRIPT_NAME}`;
  */
 export const FAILURE_MARKERS = [
   {
-    pattern: /\[utility-process\] .+ exited with code/,
-    sourceText: '`[utility-process] ${this.service} exited with code',
+    // Every cause (an exit, a fork that threw, a worker that hung) ends in the same suffix.
+    pattern: /\[utility-process\] .+ \(crash \d+ of \d+\)/,
+    sourceText: '(crash ${crashNumber} of ${this.maxCrashes})',
     reason: 'a utility process (pty host, retrieval worker, or another) crashed',
   },
   { pattern: /\[pty-host\] exited unexpectedly/, sourceText: '[pty-host] exited unexpectedly', reason: 'the pty host crashed' },

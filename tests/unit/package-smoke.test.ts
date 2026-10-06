@@ -180,6 +180,17 @@ describe('package smoke: the log check', () => {
     expect(new Set(found.map((entry: { reason: string }) => entry.reason)).size).toBe(FAILURE_MARKERS.length);
   });
 
+  it('fails on a utility worker that hung or never forked, not only on one that exited', () => {
+    // The restart policy logs a hang in the in-app signal's words, with no "exited with code".
+    const found = findFailureMarkers([
+      '{"level":"warn","args":["[utility-process] kangentic-retrieval did not answer projects.summaries in time (crash 1 of 3)","(no stderr captured)"]}',
+      '{"level":"warn","args":["[utility-process] kangentic-retrieval did not start in time (crash 2 of 3)","(no stderr captured)"]}',
+      '{"level":"warn","args":["[utility-process] kangentic-embeddings failed to start (crash 1 of 3)","(no stderr captured)"]}',
+    ]);
+    expect(found).toHaveLength(3);
+    expect(new Set(found.map((entry: { reason: string }) => entry.reason))).toEqual(new Set([FAILURE_MARKERS[0].reason]));
+  });
+
   it('passes the warnings an unpublished build writes on every run', () => {
     expect(findFailureMarkers([
       '{"level":"warn","args":["[UPDATER] Skipping init: app-update.yml not found in the resources directory."]}',

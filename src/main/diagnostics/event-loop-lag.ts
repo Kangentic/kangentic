@@ -174,6 +174,10 @@ const recentSlowSyncWork: SlowSyncWork[] = [];
 const syncWorkByLabel = new Map<string, SyncWorkStats>();
 /** Where a process with no monitor of its own sends its slow spans (see `relaySlowSyncSpans`). */
 let spanRelay: ((label: string, elapsedMs: number) => void) | null = null;
+/** Told the label of the span now running, and null between spans (see `setSyncSpanLabelSink`). */
+let spanLabelSink: ((label: string | null) => void) | null = null;
+/** The innermost `timeSyncWork` label running now, kept only while a sink is set. */
+let currentSpanLabel: string | null = null;
 const lagAtLeastMs = emptyEdgeCounts();
 let delayHistogram: IntervalHistogram | null = null;
 let delayWindowTimer: ReturnType<typeof setInterval> | null = null;
@@ -259,6 +263,21 @@ export function slowSyncWorkSince(sinceMs: number): SlowSyncWork[] {
  * loop exactly as long as a slow success.
  */
 export function timeSyncWork<T>(label: string, work: () => T): T {
+  if (spanLabelSink === null) return measureSyncWork(label, work);
+  const sink = spanLabelSink;
+  const outerLabel = currentSpanLabel;
+  currentSpanLabel = label;
+  sink(label);
+  try {
+    return measureSyncWork(label, work);
+  } finally {
+    // Spans nest, so the enclosing span is current again, not "none".
+    currentSpanLabel = outerLabel;
+    sink(outerLabel);
+  }
+}
+
+function measureSyncWork<T>(label: string, work: () => T): T {
   if (!isTimingSyncWork()) return work();
   const startedAt = performance.now();
   try {
@@ -266,6 +285,17 @@ export function timeSyncWork<T>(label: string, work: () => T): T {
   } finally {
     recordSyncSpan(label, performance.now() - startedAt);
   }
+}
+
+/**
+ * Tell `sink` the label of each `timeSyncWork` span as it starts, and the
+ * enclosing label (or null) as it ends, in production as well as dev. The
+ * retrieval worker's event-loop watchdog uses it to name the step that held
+ * the loop. Main never sets one, so its spans pay one null check.
+ */
+export function setSyncSpanLabelSink(sink: ((label: string | null) => void) | null): void {
+  spanLabelSink = sink;
+  currentSpanLabel = null;
 }
 
 /** True while spans are counted: the monitor runs here, or spans are relayed. */

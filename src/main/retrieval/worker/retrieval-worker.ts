@@ -4,8 +4,9 @@
  * runs on the main process (see `protocol.ts`).
  *
  * This file only dispatches. The handlers are in `methods.ts`; this adds the
- * worker's database access, the message loop, and the dev-only relay of slow
- * spans to main's lag report.
+ * worker's database access, the message loop, the event-loop watchdog
+ * (`event-loop-watchdog.ts`), and the dev-only relay of slow spans to main's
+ * lag report.
  *
  * Bundled by esbuild as its own entry (`.vite/build/retrieval-worker.js`), and
  * kept free of `electron`'s main-only modules, analytics and Sentry by
@@ -19,6 +20,7 @@ import { setAfterCommitHook } from '../../db/transaction';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { createCheckpointPacer } from './checkpoint-pacing';
+import { startEventLoopWatchdog } from './event-loop-watchdog';
 import { installWriteBudget } from '../write-budget';
 import { retrievalHandlers, type WorkerContext } from './methods';
 import type { KnowledgeGraphBuildProgress } from '../../../shared/types';
@@ -58,6 +60,10 @@ let vecLoadError: string | null = null;
 let vecLoadablePath: string | null = null;
 
 function initialize(message: InitMessage): void {
+  // First, so a startup that hangs is named too. Production as well as dev:
+  // the slow-span relay below is dev-only, and this is what a packaged build
+  // has when a call times out.
+  startEventLoopWatchdog();
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
   // Checkpoints are PASSIVE and come from two places only: main's 5 s request
   // (checkpoint-driver.ts), which covers what the pty host writes, and the

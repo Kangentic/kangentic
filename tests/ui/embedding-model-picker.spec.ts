@@ -645,7 +645,7 @@ test.describe('Local model error state', () => {
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
       await expect(status).toHaveText(
-        'The local model failed to start - showing keyword matches. (exit 1: Cannot find module sharp)',
+        'The local model stopped - showing keyword matches. (exit 1: Cannot find module sharp)',
       );
     } finally {
       await browser.close();
