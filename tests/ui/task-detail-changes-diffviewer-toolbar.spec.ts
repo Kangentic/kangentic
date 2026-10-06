@@ -816,7 +816,7 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     // real adjacent file to roll into IF the `enabled: isFocused && !previewActive`
     // guard on DiffViewer's changes.nextChange/changes.prevChange bindings were
     // broken. Entering preview mode nulls diffEditorRef (the
-    // `binary || previewActive` effect in DiffViewer.tsx), so
+    // `diffEditorHidden` effect in DiffViewer.tsx), so
     // if the handler fired while previewing it would hit navigateChange's
     // "no diff mounted" branch and immediately roll to the adjacent file via
     // onCrossFile - a Monaco-independent, unmistakable signal that the binding

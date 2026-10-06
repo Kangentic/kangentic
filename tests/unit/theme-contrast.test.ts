@@ -159,6 +159,55 @@ describe('theme contrast (all themes, not just the default)', () => {
     expect(failures).toEqual([]);
   });
 
+  it('keeps the Changes panel modified color readable on every ground it sits on', () => {
+    // `--kng-modified` is declared once on :root and overridden for the light
+    // themes by a shared-selector block, so no full theme block carries it and
+    // the MUST_READ table cannot see it. Resolve it per theme the way the
+    // cascade does. It shipped as Tailwind yellow, which is ~1.4:1 on every
+    // light theme.
+    const overrides = new Map<string, string>();
+    let rootValue: string | undefined;
+    for (const block of CSS.matchAll(/(^|\})\s*([^{}]+?)\s*\{([^}]*--kng-modified[^}]*)\}/gms)) {
+      const value = /--kng-modified\s*:\s*(#[0-9a-fA-F]{6})/.exec(block[3])?.[1];
+      if (!value) continue;
+      for (const selector of block[2].split(',').map((part) => part.trim().split('\n').pop()?.trim() ?? '')) {
+        if (selector.includes(':root')) rootValue = value;
+        else overrides.set(selector, value);
+      }
+    }
+    expect(rootValue, ':root declares --kng-modified').toBeDefined();
+    expect(overrides.size, 'the light themes override --kng-modified').toBeGreaterThan(0);
+
+    const mix = (foreground: string, background: string, weight: number): string => '#' + [1, 3, 5]
+      .map((offset) => Math.round(
+        parseInt(foreground.slice(offset, offset + 2), 16) * weight
+        + parseInt(background.slice(offset, offset + 2), 16) * (1 - weight),
+      ).toString(16).padStart(2, '0'))
+      .join('');
+
+    const failures: string[] = [];
+    for (const theme of themes) {
+      const modified = overrides.get(theme.name) ?? rootValue!;
+      const surface = theme.vars['surface'];
+      const raised = theme.vars['surface-raised'];
+      const hover = theme.vars['surface-hover'];
+      // The image view's info tile is `bg-surface-hover/50` over the pane, and
+      // its size-delta pill is a further `bg-modified/15` tint on that tile.
+      const tile = mix(hover, surface, 0.5);
+      const grounds: Record<string, string> = {
+        surface,
+        'surface-raised': raised,
+        'info tile': tile,
+        'size pill': mix(modified, tile, 0.15),
+      };
+      for (const [groundName, ground] of Object.entries(grounds)) {
+        const ratio = contrastRatio(modified, ground);
+        if (ratio < AA_NORMAL_TEXT) failures.push(`${theme.name}: modified on ${groundName} = ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   it('keeps a placeholder dimmer than the value it stands in for', () => {
     // Placeholders are deliberately exempt from AA (they are transient hints,
     // and the field's own label carries the same information), but they must

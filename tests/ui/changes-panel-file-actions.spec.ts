@@ -139,11 +139,22 @@ test.describe('Changes panel: file context menu', () => {
     await fileRow.waitFor({ state: 'visible', timeout: 8000 });
 
     // Right-click the file row to open the context menu.
-    await fileRow.click({ button: 'right' });
+    const rowBox = await fileRow.boundingBox();
+    expect(rowBox).not.toBeNull();
+    const clickPoint = { x: 24, y: rowBox!.height / 2 };
+    await fileRow.click({ button: 'right', position: clickPoint });
     const menu = page.locator('[data-testid="changes-file-context-menu"]');
     // Explicit 8s timeout: under CI event-loop contention the React scheduling
     // of setContextMenu can be delayed past the default 5s polling budget.
     await expect(menu).toBeVisible({ timeout: 8000 });
+
+    // The menu is `position: fixed` at the cursor and renders inside the file
+    // tree, so any ancestor that becomes a containing block for fixed elements
+    // (a transform, a filter, or a size container's layout containment) would
+    // shift it by that ancestor's offset. Its corner has to sit at the click.
+    const menuBox = await menu.boundingBox();
+    expect(Math.abs(menuBox!.x - (rowBox!.x + clickPoint.x))).toBeLessThan(2);
+    expect(Math.abs(menuBox!.y - (rowBox!.y + clickPoint.y))).toBeLessThan(2);
     await expect(menu.locator('[data-testid="context-open-file"]')).toBeVisible({ timeout: 3000 });
     await expect(menu.locator('[data-testid="context-reveal-file"]')).toBeVisible({ timeout: 3000 });
     await expect(menu.locator('[data-testid="context-copy-path"]')).toBeVisible({ timeout: 3000 });

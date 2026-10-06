@@ -101,6 +101,7 @@
     "monaco-editor": "^0.57.0",
     "node-machine-id": "^1.1.12",
     "p-queue": "^9.3.0",
+    "pixelmatch": "^8.0.0",
     "playwright": "^1.60.0",
     "postcss": "^8.5.15",
     "qrcode": "^1.5.4",

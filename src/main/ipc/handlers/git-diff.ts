@@ -137,6 +137,11 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return service.getFileContent(input);
   });
 
+  ipcMain.handle(IPC.GIT_FILE_IMAGE, async (_, input: GitFileContentInput) => {
+    const service = getOrCreateService(input.worktreePath ?? input.projectPath);
+    return service.getImageContent(input);
+  });
+
   // Per-sender refcounting so N windows watching one path (the in-app Changes
   // panel, the detached Changes window, per-file diff windows) each hold their
   // own subscription: one window unsubscribing (or being destroyed) never tears

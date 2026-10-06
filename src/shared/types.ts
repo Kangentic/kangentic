@@ -2496,6 +2496,29 @@ export interface GitFileContentResult {
 }
 
 /**
+ * One side of an image file as main read it for the Changes panel. `size` is
+ * the file's byte length. Bytes travel only under `IMAGE_PREVIEW_MAX_BYTES`
+ * (`src/shared/image-preview.ts`); a larger side reports its size alone.
+ */
+export type GitImageSide =
+  | { kind: 'bytes'; size: number; bytes: Uint8Array }
+  | { kind: 'too-large'; size: number }
+  | { kind: 'lfs-pointer'; size: number }
+  | { kind: 'unreadable' };
+
+/**
+ * Both sides of a changed image, read with the same per-scope revision logic
+ * as {@link GitFileContentResult}. A side is `null` when the status has no
+ * such side: Added and Untracked have no original, Deleted has no modified.
+ * Kept off `GitFileContentResult` on purpose: the mobile bridge forwards that
+ * shape to the phone as JSON, where bytes would not survive.
+ */
+export interface GitImageContentResult {
+  original: GitImageSide | null;
+  modified: GitImageSide | null;
+}
+
+/**
  * Input for the per-file history reader (commits touching a single file, via
  * `git log --follow`). Local-only and fail-safe, mirroring {@link GitCommitGraphInput}.
  */
@@ -6410,6 +6433,7 @@ export interface ElectronAPI {
     listBranches: () => Promise<string[]>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
+    fileImage: (input: GitFileContentInput) => Promise<GitImageContentResult>;
     subscribeDiff: (worktreePath: string) => void;
     unsubscribeDiff: (worktreePath: string) => void;
     onDiffChanged: (callback: () => void) => () => void;

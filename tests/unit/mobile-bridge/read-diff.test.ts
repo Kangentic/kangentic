@@ -191,6 +191,30 @@ describe('handleReadDiff', () => {
     });
   });
 
+  it('answers a binary file with empty content and never reads it (no garbled bytes over the relay)', async () => {
+    tasksGetById.mockReturnValue({ id: 't-1', worktree_path: '/worktrees/t-1', base_branch: 'main' });
+    getDiffFiles.mockResolvedValue({
+      files: [{ path: 'shots/home.png', status: 'M', oldPath: undefined, binary: true, insertions: 0, deletions: 0 }],
+      totalInsertions: 0,
+      totalDeletions: 0,
+    });
+    const context = {
+      projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path: '/projects/proj-1' })) },
+    } as unknown as IpcContext;
+
+    const response = await handleReadDiff(
+      fakeRequest({ taskId: 't-1', projectId: 'proj-1', filePath: 'shots/home.png' }),
+      fakeSession(),
+      context,
+      new SubscriptionRegistry(),
+      fakeDiffWatcher(),
+    );
+
+    expect(response.ok).toBe(true);
+    expect(response.payload).toEqual({ original: '', modified: '', language: 'plaintext' });
+    expect(getFileContent).not.toHaveBeenCalled();
+  });
+
   it('rejects a filePath not present in the current diff', async () => {
     tasksGetById.mockReturnValue({ id: 't-1', worktree_path: '/worktrees/t-1', base_branch: 'main' });
     getDiffFiles.mockResolvedValue({ files: [], totalInsertions: 0, totalDeletions: 0 });

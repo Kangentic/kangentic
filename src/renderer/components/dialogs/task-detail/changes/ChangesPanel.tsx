@@ -16,7 +16,8 @@ import { POP_OUT_SURFACES } from '../../../../../shared/pop-out';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { MousePointerClick } from 'lucide-react';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, GitFileHistoryCommit, Task } from '../../../../../shared/types';
+import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileHistoryCommit, Task } from '../../../../../shared/types';
+import { EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, trimImageCache, type DiffContent } from './diff-content';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
@@ -30,11 +31,15 @@ const EMPTY_VIEWED_FILES = new Set<string>();
 // the width dividend past the 420px cap all goes to the diff pane. A manual
 // drag still stores exact px (TortoiseGit-style precise control), render-
 // clamped so a width stored against a wider panel never starves the diff.
+// When the row is too narrow for both, the rail gives ground first: the outer
+// clamp caps it at the row minus DIFF_PANE_DRAG_MIN and the 4px divider, down
+// to FILE_TREE_DRAG_MIN. The default 58%-wide window on a 1440px screen gives
+// a ~417px row, which used to leave the diff pane 193px.
 // The skeleton in TaskDetailBody.tsx mirrors the default clamp - keep in sync.
-const RAIL_DEFAULT_WIDTH_CLAMP = 'clamp(220px, 25%, 420px)';
+const RAIL_DEFAULT_WIDTH_CLAMP = 'clamp(160px, clamp(220px, 25%, 420px), calc(100% - 244px))';
 const FILE_TREE_DEFAULT_WIDTH = 220;          // drag-state seed before any stored width exists
-const FILE_TREE_DRAG_MIN = 200;               // minimum rail width while dragging the divider
-const DIFF_PANE_DRAG_MIN = 240;               // minimum diff-pane width while dragging the divider
+const FILE_TREE_DRAG_MIN = 160;               // the rail's floor on every path: the default, a drag, a stored width
+const DIFF_PANE_DRAG_MIN = 240;               // the diff pane's floor, held while the rail is above its own
 
 // Vertical-split constraints (px) for the History section at the BOTTOM of the
 // rail: the section body's height vs the file-tree region above it.
@@ -88,7 +93,7 @@ interface ChangesPanelProps {
 }
 
 interface ContentCacheEntry {
-  result: GitFileContentResult;
+  result: DiffContent;
   generation: number;
 }
 
@@ -97,7 +102,7 @@ interface ContentCacheEntry {
  *  actually belong to its `filePath` prop (the stale-content window that opens
  *  between a file switch and the new content's fetch resolving). */
 interface DisplayedFileContent {
-  result: GitFileContentResult;
+  result: DiffContent;
   filePath: string;
 }
 
@@ -271,17 +276,26 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     // Key the cache by selection (commit OID or scope) so a file's diffs never
     // bleed across a scope switch or a different commit selection.
     const cacheKey = changesSelectedCommit ? `commit:${changesSelectedCommit}:${filePath}` : `scope:${scope}:${filePath}`;
+    // Image payloads are budgeted (trimImageCache), so every write re-inserts
+    // its key at the end of the Map's order: the least recently used image is
+    // the one evicted.
+    const storeInCache = (entry: ContentCacheEntry) => {
+      contentCacheRef.current.delete(cacheKey);
+      contentCacheRef.current.set(cacheKey, entry);
+      trimImageCache(contentCacheRef.current);
+    };
     const cached = contentCacheRef.current.get(cacheKey);
     if (cached) {
       // Always serve cached content immediately (stale-while-revalidate)
       setFileContent({ result: cached.result, filePath });
+      storeInCache(cached);
       if (cached.generation === cacheGenerationRef.current) {
         return; // Fresh entry - no refetch needed
       }
       // Stale entry - show cached content now, refetch in background
       const currentGeneration = cacheGenerationRef.current;
       const fileEntry = filesRef.current.find((entry) => entry.path === filePath);
-      window.electronAPI.git.fileContent({
+      fetchDiffContent({
         worktreePath,
         projectPath,
         baseBranch,
@@ -290,11 +304,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         oldPath: fileEntry?.oldPath,
         scope,
         commitOid: changesSelectedCommit ?? undefined,
-      }).then((freshResult) => {
-        contentCacheRef.current.set(cacheKey, { result: freshResult, generation: currentGeneration });
-        // Only update UI if this file is still selected and content actually changed
-        if (selectedFileRef.current === filePath &&
-            (freshResult.original !== cached.result.original || freshResult.modified !== cached.result.modified)) {
+      }, fileEntry?.binary ?? false).then((freshResult) => {
+        storeInCache({ result: freshResult, generation: currentGeneration });
+        // Only update UI if this file is still selected and content actually
+        // changed. Images compare byte for byte (diffContentEqual), so a
+        // regenerated screenshot repaints even when its text is empty both times.
+        if (selectedFileRef.current === filePath && !diffContentEqual(freshResult, cached.result)) {
           setFileContent({ result: freshResult, filePath });
         }
       }).catch(() => {
@@ -308,7 +323,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     if (!file) return;
 
     try {
-      const result = await window.electronAPI.git.fileContent({
+      const result = await fetchDiffContent({
         worktreePath,
         projectPath,
         baseBranch,
@@ -317,8 +332,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         oldPath: file.oldPath,
         scope,
         commitOid: changesSelectedCommit ?? undefined,
-      });
-      contentCacheRef.current.set(cacheKey, { result, generation: cacheGenerationRef.current });
+      }, file.binary);
+      storeInCache({ result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
       // display this result if its file is still selected, mirroring the
       // background-refetch path above.
@@ -327,7 +342,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       }
     } catch {
       if (selectedFileRef.current === filePath) {
-        setFileContent({ result: { original: '', modified: '', language: 'plaintext' }, filePath });
+        setFileContent({ result: EMPTY_DIFF_CONTENT, filePath });
       }
     }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
@@ -634,6 +649,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const fileTreeWidthRef = useRef<number>(storedFileTreeWidth ?? FILE_TREE_DEFAULT_WIDTH);
   const [isResizingTree, setIsResizingTree] = useState(false);
   const panelRowRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
 
   // Track the stored (manual) width in the ref. Fires only when the stored value
   // itself changes - NOT on isResizingTree - so the release does not momentarily
@@ -652,7 +668,11 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     if (!container) return;
     setIsResizingTree(true);
     // Start the live width where the rail already is, so the first frame of
-    // the drag (before any mousemove) does not jump.
+    // the drag (before any mousemove) does not jump. Measured, because the
+    // default clamp puts the rail anywhere from 160px to 420px and the ref
+    // holds only the last stored width.
+    const railWidth = railRef.current?.getBoundingClientRect().width;
+    if (railWidth) fileTreeWidthRef.current = railWidth;
     setFileTreeWidth(fileTreeWidthRef.current);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -742,7 +762,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // collapsed is the default) and the expanded body's height, both mirroring
   // the file-tree width pattern above. The section lives at the BOTTOM of the
   // rail column, so the drag math measures up from the rail's bottom edge.
-  const railRef = useRef<HTMLDivElement>(null);
   const historyOpen = useSessionStore((state) => state.changesHistoryOpen[entityId] ?? false);
   const setChangesHistoryOpen = useSessionStore((state) => state.setChangesHistoryOpen);
   const handleHistoryToggle = useCallback(() => {
@@ -1087,8 +1106,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           <span className="absolute inset-y-0 -inset-x-1" />
         </div>
 
-        {/* Diff viewer - right panel */}
-        <div className="flex-1 min-h-0">
+        {/* Diff viewer - right panel. min-w-0 lets it shrink to the divider's
+            DIFF_PANE_DRAG_MIN instead of to its toolbar's full content width,
+            which pushed a narrow pane past the window's right edge. */}
+        <div className="flex-1 min-h-0 min-w-0">
           {!selectedFile ? (
             <div className="flex flex-col h-full">
               {/* The toolbar row survives with no file selected, carrying only
@@ -1141,9 +1162,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           ) : (
             <DiffErrorBoundary>
               <DiffViewer
-                original={fileContent?.result.original ?? ''}
-                modified={fileContent?.result.modified ?? ''}
-                language={fileContent?.result.language ?? 'plaintext'}
+                original={fileContent?.result.text.original ?? ''}
+                modified={fileContent?.result.text.modified ?? ''}
+                language={fileContent?.result.text.language ?? 'plaintext'}
+                image={fileContent?.result.image ?? null}
                 filePath={selectedFile}
                 contentFilePath={fileContent?.filePath ?? null}
                 // Scoped by what is under review: the same file at the same

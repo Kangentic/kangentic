@@ -31,9 +31,10 @@ export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid
   return (
     <DiffErrorBoundary>
       <DiffViewer
-        original={content.result.original}
-        modified={content.result.modified}
-        language={content.result.language}
+        original={content.result.text.original}
+        modified={content.result.text.modified}
+        language={content.result.text.language}
+        image={content.result.image}
         filePath={filePath}
         contentFilePath={content.filePath}
         scrollKey={scrollKey}

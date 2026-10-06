@@ -52,7 +52,7 @@ function ChangesPanelSkeleton() {
     <div className="flex h-full" data-testid="changes-panel-skeleton">
       {/* Mirrors ChangesPanel's RAIL_DEFAULT_WIDTH_CLAMP (kept literal here so
           the skeleton never imports the lazy chunk it stands in for). */}
-      <div className="flex-shrink-0 border-r border-edge p-2 space-y-1.5" style={{ width: 'clamp(220px, 25%, 420px)' }}>
+      <div className="flex-shrink-0 border-r border-edge p-2 space-y-1.5" style={{ width: 'clamp(160px, clamp(220px, 25%, 420px), calc(100% - 244px))' }}>
         {Array.from({ length: 6 }, (_, index) => (
           <div key={index} className="h-4 rounded bg-surface-hover animate-pulse" style={{ opacity: 1 - index * 0.1 }} />
         ))}

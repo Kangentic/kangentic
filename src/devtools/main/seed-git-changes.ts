@@ -34,7 +34,13 @@
  *       whitespace.ts an indentation/trailing-space-only edit -> ignore-whitespace
  *       gone.ts       a deletion (D)
  *       newfile.ts    an untracked file (U)
- *       logo.png      a binary file -> binary detection ("cannot display diff")
+ *       logo.png      an untracked PNG (U) -> the image view's new-image-only state
+ *       blob.bin      an untracked non-image binary (U) -> binary detection
+ *                     ("cannot display diff")
+ *       assets/hero.png  a regenerated screenshot (M), taller than the
+ *                     committed one -> the image view's four comparison modes
+ *                     and the dimension-change highlight
+ *       assets/icon.svg  an SVG edit (M) -> the text diff and its image preview
  *       notes.md      a rich markdown edit (M) -> the markdown preview toggle
  *       changelog.markdown  a .markdown edit (M) -> the .markdown extension map,
  *                     and a second markdown file so the preview toggle's per-file
@@ -64,6 +70,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { previewProjectsRoot, runPreviewGit } from './ephemeral-projects';
@@ -87,19 +94,138 @@ const SEED_AUTHORS = [
   { name: 'Dana Volkov', email: 'dana@kangentic.local' },
 ];
 
-// A tiny 1x1 PNG (has null bytes, so the diff service detects it as binary).
-const BINARY_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-  'base64',
-);
+// A binary file that is not an image, so the "cannot display diff" placeholder
+// still has a fixture now that logo.png opens in the image view.
+const NON_IMAGE_BINARY = Buffer.from([0x00, 0x01, 0x02, 0xff, 0x00, 0x7f, 0x10, 0x00]);
 
 // Per-repo counts for the toast summary (kept in sync with seedOneRepo's
 // COMMIT_CHAIN). COMMITTED_COUNT is the distinct fixture files that end up
 // committed ahead of base, spread across the chain (not all in one commit).
 const COMMIT_CHAIN_LENGTH = 11;
-const COMMITTED_COUNT = 11;
+const COMMITTED_COUNT = 13;
 const STAGED_COUNT = 4;
-const WORKING_COUNT = 9;
+const WORKING_COUNT = 12;
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index++) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * A minimal RGBA PNG encoder (one IDAT chunk, no filtering), enough for seed
+ * fixtures. A pixel callback returning null leaves that pixel transparent.
+ */
+function encodePng(width: number, height: number, pixelAt: (x: number, y: number) => [number, number, number] | null): Buffer {
+  const rowBytes = width * 4 + 1;
+  const raw = Buffer.alloc(rowBytes * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * rowBytes] = 0; // filter type: none
+    for (let x = 0; x < width; x++) {
+      const pixel = pixelAt(x, y);
+      if (pixel === null) continue; // Buffer.alloc zero-fills: transparent black
+      const offset = y * rowBytes + 1 + x * 4;
+      raw[offset] = pixel[0];
+      raw[offset + 1] = pixel[1];
+      raw[offset + 2] = pixel[2];
+      raw[offset + 3] = 255;
+    }
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, checksum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 6; // color type: RGBA
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/**
+ * A small phone-screenshot stand-in for the image view: a header bar and three
+ * cards. The `after` variant is taller (so the dimension change is flagged),
+ * moves the cards down, and adds a colored strip to each, the shape of a real
+ * regenerated store screenshot.
+ */
+function heroScreenshot(variant: 'before' | 'after'): Buffer {
+  const width = 180;
+  const height = variant === 'before' ? 320 : 360;
+  const cardHeight = variant === 'before' ? 70 : 84;
+  const cardGap = 16;
+  const cardTop = 54;
+  const stripColors: Array<[number, number, number]> = [[86, 138, 78], [192, 132, 56], [61, 107, 143]];
+  return encodePng(width, height, (x, y) => {
+    if (y >= 14 && y < 24 && x >= 14 && x < 90) return [223, 227, 232]; // title bar
+    for (let card = 0; card < 3; card++) {
+      const top = cardTop + card * (cardHeight + cardGap);
+      if (y < top || y >= top + cardHeight || x < 10 || x >= width - 10) continue;
+      const localY = y - top;
+      if (localY >= 10 && localY < 18 && x >= 22 && x < 110) return [207, 211, 216]; // card title
+      if (localY >= 28 && localY < 33 && x >= 22 && x < 150) return [75, 82, 92]; // card line
+      if (variant === 'after' && localY >= cardHeight - 20 && localY < cardHeight - 10 && x >= 22 && x < width - 22) {
+        return stripColors[card];
+      }
+      return [26, 30, 36]; // card body
+    }
+    return [14, 16, 19]; // page background
+  });
+}
+
+/**
+ * An untracked 96x96 logo: a rounded tile with three columns. The corners
+ * outside the radius are transparent, so the image view's checkerboard shows.
+ */
+function logoImage(): Buffer {
+  const size = 96;
+  const radius = 20;
+  const barColor: [number, number, number] = [104, 160, 96];
+  const bars = [{ left: 18, height: 54 }, { left: 41, height: 36 }, { left: 64, height: 45 }];
+  return encodePng(size, size, (x, y) => {
+    const cornerX = x < radius ? radius - x : x >= size - radius ? x - (size - radius - 1) : 0;
+    const cornerY = y < radius ? radius - y : y >= size - radius ? y - (size - radius - 1) : 0;
+    if (cornerX * cornerX + cornerY * cornerY > radius * radius) return null;
+    for (const bar of bars) {
+      if (x >= bar.left && x < bar.left + 14 && y >= 21 && y < 21 + bar.height) return barColor;
+    }
+    return [31, 42, 29];
+  });
+}
+
+/** An SVG icon edited in the working tree: one bar recolored and a badge added. */
+function iconSvg(mutate: boolean): string {
+  const firstBarColor = mutate ? '#e3b341' : '#68a060';
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">',
+    '  <rect width="64" height="64" rx="14" fill="#1f2a1d"/>',
+    `  <rect x="12" y="14" width="10" height="36" rx="3" fill="${firstBarColor}"/>`,
+    '  <rect x="27" y="14" width="10" height="24" rx="3" fill="#68a060"/>',
+    '  <rect x="42" y="14" width="10" height="30" rx="3" fill="#68a060"/>',
+    ...(mutate ? ['  <circle cx="50" cy="50" r="7" fill="#f87171"/>'] : []),
+    '</svg>',
+    '',
+  ].join('\n');
+}
 
 // Module state; resets when the main process restarts. Each click uses a fresh
 // index so re-clicks pile on a new, non-colliding directory of changes.
@@ -257,12 +383,13 @@ interface ChainStep {
   author: { name: string; email: string };
   hoursAgo: number;
   message: string;
-  writes: Array<{ relative: string; content: string }>;
+  /** A string is written as UTF-8 text; a Buffer is written as raw bytes (the PNG fixtures). */
+  writes: Array<{ relative: string; content: string | Buffer }>;
 }
 
 async function commitChainStep(
   repoPath: string,
-  writeFile: (relative: string, content: string) => Promise<void>,
+  writeFile: (relative: string, content: string | Buffer) => Promise<void>,
   step: ChainStep,
 ): Promise<void> {
   for (const write of step.writes) {
@@ -283,9 +410,10 @@ async function commitChainStep(
 /** Seed one repo with the full fixture under `seed-<index>/`. */
 async function seedOneRepo(repoPath: string, dir: string, index: number): Promise<void> {
   const absolute = (relative: string): string => path.join(repoPath, relative);
-  const writeFile = async (relative: string, content: string): Promise<void> => {
+  const writeFile = async (relative: string, content: string | Buffer): Promise<void> => {
     await fs.promises.mkdir(path.dirname(absolute(relative)), { recursive: true });
-    await fs.promises.writeFile(absolute(relative), content, 'utf-8');
+    if (typeof content === 'string') await fs.promises.writeFile(absolute(relative), content, 'utf-8');
+    else await fs.promises.writeFile(absolute(relative), content);
   };
 
   // Step 1: a chain of commits ahead of base (COMMIT_CHAIN.length, well over
@@ -305,6 +433,8 @@ async function seedOneRepo(repoPath: string, dir: string, index: number): Promis
         { relative: `${dir}/gone.ts`, content: `export const gone${index} = ${index};\n` },
         { relative: `${dir}/staged-del.ts`, content: `export const stagedDel${index} = ${index};\n` },
         { relative: `${dir}/staged-old.ts`, content: `export const stagedRen${index} = ${index};\n` },
+        { relative: `${dir}/assets/hero.png`, content: heroScreenshot('before') },
+        { relative: `${dir}/assets/icon.svg`, content: iconSvg(false) },
       ],
     },
     {
@@ -374,8 +504,10 @@ async function seedOneRepo(repoPath: string, dir: string, index: number): Promis
   await writeFile(`${dir}/whitespace.ts`, `export function compute${index}() {\n    return 1 + 2;   \n}\n`); // M: whitespace-only
   await fs.promises.rm(absolute(`${dir}/gone.ts`), { force: true });                                         // D
   await writeFile(`${dir}/newfile.ts`, `export const fresh${index} = ${index};\n`);                          // U
-  await fs.promises.mkdir(path.dirname(absolute(`${dir}/logo.png`)), { recursive: true });
-  await fs.promises.writeFile(absolute(`${dir}/logo.png`), BINARY_PNG);                                      // U: binary
+  await writeFile(`${dir}/logo.png`, logoImage());                                                           // U: image view, new image only
+  await writeFile(`${dir}/blob.bin`, NON_IMAGE_BINARY);                                                      // U: binary placeholder
+  await writeFile(`${dir}/assets/hero.png`, heroScreenshot('after'));                                        // M: image view, both sides, taller
+  await writeFile(`${dir}/assets/icon.svg`, iconSvg(true));                                                  // M: SVG text diff + preview
   await writeFile(`${dir}/notes.md`, notesMarkdown(index, true));                                            // M: markdown preview
   await writeFile(`${dir}/changelog.markdown`, changelogMarkdown(index, true));                              // M: .markdown preview
   await fs.promises.rm(absolute(`${dir}/removed.md`), { force: true });                                      // D: deleted markdown
