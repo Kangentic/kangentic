@@ -2,6 +2,58 @@
 
 <!-- releases -->
 
+## [protocol-v0.16.0] - 2026-10-06
+
+Sends the desktop card's in-between states to the phone, and lets a phone
+resume a paused task the way the desktop Resume button does. All additive;
+`PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains `spawn_progress` and `resumable`. `spawn_progress` is the
+card's preparing label, such as "Creating worktree..." or "Switching model...",
+and the desktop announces each change with a `task-updated` board event, at most
+about once a second per task. It is untrusted display text. The desktop strips
+escape sequences and control, invisible and tag characters and caps it at 120
+characters, but a client still caps it for its own layout. A label overrides a
+`suspended` session status, never `running` or `queued`. `resumable` is true
+when the task's session is paused and the desktop would offer Resume for it.
+Both parse as null when absent, which means a pre-0.16.0 desktop. Under
+`view: 'sessions'` a task with a label, or a resumable paused task, is kept
+while its `session_id` is null.
+
+A new `status` activity payload carries `status`, `resuming` and `resumable`
+whenever one of them changes after the read-stream snapshot, for the same
+session id only. The snapshot gains `resuming` and `resumable`, and
+`isReadStreamSessionStatusWire` is exported. A resume always mints a new
+session id, so a feed held on a paused session ends with
+`session-ended { intentional: true, successorSessionId }` and the phone
+subscribes to the successor. Each new signal is an activity payload type rather
+than a new event kind, so an older phone drops just that event through
+`isBridgeEvent`.
+
+`resumable` is the desktop's promise that `start-session` resumes the paused
+session as its Resume button does: the same conversation, a "Resuming
+session..." label, and no enter automations or column message. A pre-0.16.0
+desktop starts the column instead, so a client offers no Resume when the field
+is null or absent. Gate Resume on the board row's field, not the stream's copy,
+because a pause clears `session_id` and the phone then holds no stream on the
+paused session.
+
+### Features
+- Send spawn progress, resuming and live session status to the phone (fd8c72ac)
+- Flag a paused task that `start-session` will resume like the Resume button (8d7179fa)
+- Put `resumable` on the board task row, where a phone can see a paused task (67120bcc)
+- Keep a resumable paused task in the `'sessions'` board view (a3101c6b)
+
+### Fixes
+- The `spawn_progress` doc comment says the desktop sanitizes the label for the wire (46e54c2e)
+- The `spawn_progress` doc comment names the invisible format characters the desktop strips (1bca46a2)
+- The `status` and read-stream `resumable` doc comments say that copy can stay true after a move to Done or an archive (e586550c)
+- The `spawn_progress` doc comment says the desktop strips tag characters (874d5823)
+- The `spawn_progress` doc comment says only the England, Scotland and Wales flag emoji keep their tag characters (93878e56)
+
+### Other
+- The `SessionUsageWire.toolCallCount` doc comment says it counts every run of the session (4389ef4b)
+
 ## [protocol-v0.15.0] - 2026-09-18
 
 Adds the `start-session` capability verb, so a phone can start a task's session
