@@ -151,6 +151,8 @@ import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
 import { claimSpawnProgress, clearSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
+import { abortInFlightResume } from '../../src/main/ipc/handlers/session-resume-controllers';
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
 /** The claim SESSION_RESUME took, from the mocked claimSpawnProgress. */
 function resumeClaim(): { onProgress: MockInstance; release: MockInstance } | undefined {
@@ -720,6 +722,46 @@ describe('SESSION_RESUME AbortError cleanup', () => {
     expect(claimSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-resume-abort');
     expect(resumeClaim()?.release).toHaveBeenCalledTimes(1);
   });
+
+  it('drops a progress report the git phase makes after the abort, so it cannot take the label back', async () => {
+    const handler = capturedHandlers.get(IPC.SESSION_RESUME);
+    if (!handler) throw new Error('SESSION_RESUME handler not registered');
+
+    mockEnsureTaskWorktree.mockImplementation(async (_context: unknown, _task: unknown, _tasks: unknown, _path: unknown, options: unknown) => {
+      const { onProgress } = options as { onProgress: (phase: string) => void };
+      onProgress('init-script');
+      // A newer resume or a Pause cancels this one while the post-worktree
+      // script runs, and the script's heartbeat ticks once more before the
+      // git phase rejects.
+      abortInFlightResume('task-resume-abort');
+      onProgress('init-script');
+      throw new DOMException('The operation was aborted', 'AbortError');
+    });
+
+    const result = await handler(null, 'task-resume-abort');
+    expect(result).toBeNull();
+
+    const claim = resumeClaim();
+    expect(claim?.onProgress.mock.calls).toEqual([['resuming'], ['init-script']]);
+    expect(claim?.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops before accepting or labelling when the abort lands while it waits for the lock', async () => {
+    const handler = capturedHandlers.get(IPC.SESSION_RESUME);
+    if (!handler) throw new Error('SESSION_RESUME handler not registered');
+
+    // Hold the task lock so the resume queues behind it, then cancel it there.
+    let releaseLock!: () => void;
+    const lockHeld = withTaskLock('task-resume-abort', () => new Promise<void>((resolve) => { releaseLock = resolve; }));
+    const resumePromise = handler(null, 'task-resume-abort') as Promise<unknown>;
+    abortInFlightResume('task-resume-abort');
+    releaseLock();
+    await lockHeld;
+
+    expect(await resumePromise).toBeNull();
+    expect(claimSpawnProgress).not.toHaveBeenCalled();
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -905,7 +947,7 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(result).toMatchObject({ id: 'sess-other' });
   });
 
-  it('labels the resume "resuming" before the git phase, hands the git phase the same callback, and releases it once the resume resolves', async () => {
+  it('labels the resume "resuming" before the git phase, hands the git phase a callback that reports through the claim, and releases it once the resume resolves', async () => {
     const handler = capturedHandlers.get(IPC.SESSION_RESUME);
     if (!handler) throw new Error('SESSION_RESUME handler not registered');
 
@@ -927,7 +969,11 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(claimSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-2');
     const claim = resumeClaim();
     expect(claim?.onProgress).toHaveBeenCalledWith('resuming');
-    expect(onProgressSeenByGitPhase).toBe(claim?.onProgress);
+    // A guard around the claim's callback (see the abort suite), which reports
+    // through the claim while the resume is not aborted.
+    expect(typeof onProgressSeenByGitPhase).toBe('function');
+    (onProgressSeenByGitPhase as (phase: string) => void)('fetching');
+    expect(claim?.onProgress).toHaveBeenCalledWith('fetching');
     expect(claim?.release).toHaveBeenCalledTimes(1);
     // Never the unconditional clear, which would wipe another spawn's label.
     expect(clearSpawnProgress).not.toHaveBeenCalled();

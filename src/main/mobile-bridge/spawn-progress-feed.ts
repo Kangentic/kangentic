@@ -32,7 +32,8 @@ const THROTTLE_MS = 1000;
 /**
  * A TTL expiry in getInFlightSpawnProgress() drops a label without a push, so
  * the clear this feed waits for never comes. An entry untouched this long is
- * dropped on the next change, on the same horizon as that TTL.
+ * dropped on the next change, on the same horizon as that TTL, and a dropped
+ * entry whose label reached the phone emits once so the phone re-reads it.
  */
 const STALE_ENTRY_MS = SPAWN_PROGRESS_TTL_MS;
 
@@ -149,7 +150,13 @@ export class SpawnProgressFeed {
 
   private pruneStale(now: number): void {
     for (const [taskId, state] of this.states) {
-      if (!state.windowTimer && now - state.touchedAt > STALE_ENTRY_MS) this.states.delete(taskId);
+      if (state.windowTimer || now - state.touchedAt <= STALE_ENTRY_MS) continue;
+      this.states.delete(taskId);
+      // The phone was told this label, and the desktop's TTL has dropped it
+      // on the same horizon without a push. Announce the retract now: a clear
+      // that arrives after this prune finds no entry and emits nothing, so a
+      // phase that went quiet past the TTL would leave the label on the phone.
+      if (state.deliveredLabel !== null) this.emit(taskId, state);
     }
   }
 

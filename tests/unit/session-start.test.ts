@@ -274,6 +274,26 @@ describe('startTaskSession', () => {
       expect(result.outcome).toBe('starting');
     });
 
+    it('answers starting, and settled resolves, when a Pause or newer resume cancels the resume before it ever accepts', async () => {
+      registryRows = [{ id: 'sess-paused', taskId: TASK_ID, status: 'suspended' }];
+      // resumeTaskSession resolves null WITHOUT calling onAccepted when its
+      // signal aborts while it waits for the task lock (the throwIfAborted at
+      // the top of its Phase 1). Awaiting `accepted` alone would hang here
+      // forever, so the short timeout below reads a hang as a failure.
+      mockResumeTaskSession.mockImplementationOnce(async () => null);
+
+      const result = await startTaskSession(makeContext(), PROJECT_ID, TASK_ID);
+
+      expect(result.outcome).toBe('starting');
+      if (result.outcome !== 'starting') throw new Error('unreachable');
+      await expect(result.settled).resolves.toBeUndefined();
+      // The resume path ran and no column start was made in its place.
+      expect(mockResumeTaskSession).toHaveBeenCalledTimes(1);
+      expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+    }, 2000);
+
+    // The other half of that race, a resume that REJECTS before accepting, is
+    // pinned by the test below and by start-session-resume-path.test.ts.
     it('rejects with the resume\'s own refusal when its Phase 1 throws before accepting', async () => {
       registryRows = [{ id: 'sess-paused', taskId: TASK_ID, status: 'suspended' }];
       mockResumeTaskSession.mockImplementationOnce(async () => {

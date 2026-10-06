@@ -1,4 +1,5 @@
 import type { Session, SwimlaneRole, Task } from './types';
+import { isLiveSessionStatus } from './session-liveness';
 
 /**
  * Columns that deliberately offer no Resume.
@@ -76,23 +77,34 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
 
 /**
  * The ids of the tasks that have a paused session (`isPausedTaskSession`)
- * among the given registry rows. The one registry scan behind both ends of the
- * phone's Resume promise: read-board's `resumable` for every task on a board,
- * and `startTaskSession` choosing the Resume path for one task. Reads the
- * registry by task rather than by `task.session_id`, because a pause clears
- * that pointer while the suspended row stays.
+ * and no live one among the given registry rows. The one registry scan behind
+ * both ends of the phone's Resume promise: read-board's `resumable` for every
+ * task on a board, and `startTaskSession` choosing the Resume path for one
+ * task. Reads the registry by task rather than by `task.session_id`, because a
+ * pause clears that pointer while the suspended row stays.
+ *
+ * A task with a live row as well is not paused. A respawn queued behind the
+ * concurrency limit leaves the task holding `[suspended, queued]` until the
+ * queued row is promoted. The desktop card shows the queued session there and
+ * offers no Resume, and `startTaskSession` finds the queued row live and
+ * answers `live`, so reporting the task here would promise a Resume that
+ * nothing performs.
  */
 export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>): Set<string> {
-  const taskIds = new Set<string>();
+  const pausedTaskIds = new Set<string>();
+  const liveTaskIds = new Set<string>();
   for (const session of sessions) {
-    if (session.taskId && isPausedTaskSession(session)) taskIds.add(session.taskId);
+    if (!session.taskId) continue;
+    if (isPausedTaskSession(session)) pausedTaskIds.add(session.taskId);
+    else if (isLiveSessionStatus(session.status)) liveTaskIds.add(session.taskId);
   }
-  return taskIds;
+  for (const taskId of liveTaskIds) pausedTaskIds.delete(taskId);
+  return pausedTaskIds;
 }
 
 /**
  * Whether the desktop offers Resume for a task: its session is paused (a
- * `suspended` registry row, `isPausedTaskSession`) and
+ * `suspended` registry row and no live one, `pausedTaskIdsOf`) and
  * `resumeBlockReasonForTask` refuses nothing. This is the resume direction of
  * `canToggle` in the task detail (`useTaskSessionState.ts`), and the
  * `resumable` the mobile bridge sends, on the board row and the read-stream

@@ -46,7 +46,8 @@ export interface ResumeTaskSessionOptions {
   resumePrompt?: string;
   /**
    * Called once, when Phase 1 has decided, before any git work. Not called
-   * when Phase 1 throws (no project, a refused column, a missing task). Lets a
+   * when Phase 1 throws (no project, a refused column, a missing task), or when
+   * a cancel lands before Phase 1 runs, which resolves null. Lets a
    * caller with a short answer budget, the phone's `start-session`, reply on
    * acceptance and leave the slow part running, the way `move-task` replies on
    * `handleTaskMove`'s `onCommitted`.
@@ -121,6 +122,9 @@ export function resumeTaskSession(
         // exists spawns nothing, and it is the only path that re-attaches a
         // drifted renderer, including one drifted onto an archived task.
         const phase1Result = await withTaskLock(taskId, async () => {
+          // A Pause or a newer resume can cancel this one while it waits for
+          // the lock. It then stops here, before it accepts or labels the task.
+          signal.throwIfAborted();
           const { task, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
           if (liveSession) {
             return { kind: 'live' as const, session: liveSession };
@@ -157,6 +161,13 @@ export function resumeTaskSession(
         // the label the other spawn is still showing.
         const progress = claimSpawnProgress(context.mainWindow, taskId);
         progress.onProgress('resuming');
+        // The git phase can report once more between an abort and its own
+        // rejection (the post-worktree script's heartbeat). That push would
+        // take the label back from the resume that aborted this one, and this
+        // claim's release would then clear the newer resume's label.
+        const onProgress = (phase: string): void => {
+          if (!signal.aborted) progress.onProgress(phase);
+        };
         try {
           // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
           // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
@@ -165,7 +176,7 @@ export function resumeTaskSession(
             // The explicit projectId: if the user switches projects during this
             // slow git phase, a base-fetch failure's spawn warning must stamp
             // the resumed task's project, not whatever became ambient.
-            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress: progress.onProgress, projectId: resolvedProjectId });
+            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress, projectId: resolvedProjectId });
           } catch (worktreeError) {
             if (isAbortError(worktreeError)) throw worktreeError;
             reportFailure('worktree', worktreeError, planTask);

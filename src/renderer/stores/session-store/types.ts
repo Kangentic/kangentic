@@ -174,7 +174,7 @@ export interface CoreSessionSlice {
   killSession: (id: string) => Promise<void>;
   resetSession: (taskId: string) => Promise<void>;
   suspendSession: (taskId: string) => Promise<void>;
-  resumeSession: (taskId: string, resumePrompt?: string) => Promise<Session>;
+  resumeSession: (taskId: string, resumePrompt?: string) => Promise<Session | null>;
   /**
    * Probe main's registry for the live session of `taskId` and reconcile
    * the renderer cache. If main returns a live Session (running/queued),

@@ -113,7 +113,9 @@ export async function startTaskSession(
     onFailed: (step, error, task) => notifySpawnBlocked(context, task, step, error, projectId),
   });
   // A refusal in the resume's Phase 1 rejects before acceptance and reaches
-  // the phone as ok:false, as the decision's own refusals do.
+  // the phone as ok:false, as the decision's own refusals do. A resume that a
+  // Pause or a newer resume cancelled before its Phase 1 resolves null with no
+  // acceptance, and the phone hears `starting`, the same as after a later cancel.
   const acceptance = await Promise.race([accepted, resumed.then(() => null)]);
   if (acceptance === 'live') return { outcome: 'live' };
   return { outcome: 'starting', settled: resumed.then(() => undefined) };

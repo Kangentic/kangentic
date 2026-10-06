@@ -6109,7 +6109,8 @@ export interface ElectronAPI {
     spawn: (input: SpawnSessionInput, projectId?: string | null) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
-    resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session>;
+    /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */
+    resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session | null>;
     /**
      * Targeted "is this task's session alive right now?" probe. Returns
      * the live registry Session if main has one for this task, or null
