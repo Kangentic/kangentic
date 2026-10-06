@@ -21,6 +21,7 @@ import {
   type EventLoopWatchdog,
   type EventLoopWatchdogOptions,
 } from '../../src/main/retrieval/worker/event-loop-watchdog';
+import * as eventLoopLag from '../../src/main/diagnostics/event-loop-lag';
 import { setSyncSpanLabelSink, timeSyncWork } from '../../src/main/diagnostics/event-loop-lag';
 
 const CHECK_INTERVAL_MS = 50;
@@ -126,8 +127,9 @@ describe('event-loop watchdog', () => {
     holdEventLoop(HOLD_MS);
     expect(fs.statSync(file).size).toBeGreaterThan(0);
 
-    // Free long enough for the thread to see a beat and re-arm.
-    await delay(CHECK_INTERVAL_MS * HELD_CHECKS * 3);
+    // Free long enough for the thread to see a beat and re-arm, with room for a CI
+    // runner that starves the watchdog thread for a while: nothing signals the re-arm.
+    await delay(HOLD_MS);
     const sizeBeforeSecondHold = fs.statSync(file).size;
     holdEventLoop(HOLD_MS);
     // Grew, not "exactly two lines": a stall in the gap could add one.
@@ -161,6 +163,27 @@ describe('event-loop watchdog', () => {
     expect(watchdogCall).toBeGreaterThanOrEqual(0);
     expect(databaseCall).toBeGreaterThanOrEqual(0);
     expect(watchdogCall).toBeLessThan(databaseCall);
+  });
+});
+
+describe('event-loop watchdog stop()', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setSyncSpanLabelSink(null);
+  });
+
+  it('clears the span-label sink it installed, so spans stop writing into a buffer nobody reads', async () => {
+    // Forwarding spy: the real sink still gets installed, so the spans below behave as in the worker.
+    const sinkSpy = vi.spyOn(eventLoopLag, 'setSyncSpanLabelSink');
+    const watchdog = startEventLoopWatchdog({ fd: 2, heartbeatIntervalMs: 10, checkIntervalMs: 1_000, heldChecks: 1_000 });
+    await watchdog.online;
+    expect(sinkSpy).toHaveBeenCalledTimes(1);
+    expect(sinkSpy.mock.calls[0][0]).toEqual(expect.any(Function));
+
+    await watchdog.stop();
+
+    expect(sinkSpy).toHaveBeenCalledTimes(2);
+    expect(sinkSpy.mock.calls[1][0]).toBeNull();
   });
 });
 

@@ -18,6 +18,11 @@ vi.mock('electron', () => ({
 
 import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS, READY_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  WATCHDOG_CHECK_INTERVAL_MS,
+  WATCHDOG_HELD_CHECKS,
+} from '../../src/main/retrieval/worker/event-loop-watchdog';
 
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;
@@ -576,5 +581,19 @@ describe('RetrievalClient', () => {
     // The disposal kill is not a crash.
     child.emit('exit', 0);
     expect(forkedChildren).toHaveLength(1);
+  });
+});
+
+// The watchdog's own tests override every interval, so none of them would notice a production
+// default drifting past the kill. These pin the defaults against the 15 s kill they were chosen for.
+describe('event-loop watchdog production defaults against the interactive kill', () => {
+  it('writes its line well inside INTERACTIVE_TIMEOUT_MS', () => {
+    // One extra check: the first check after a hold begins can still see the last heartbeat.
+    const worstCaseFirstLineMs = (WATCHDOG_HELD_CHECKS + 1) * WATCHDOG_CHECK_INTERVAL_MS;
+    expect(worstCaseFirstLineMs).toBeLessThan(INTERACTIVE_TIMEOUT_MS);
+  });
+
+  it('beats more often than it checks, so a healthy loop never reads as held', () => {
+    expect(HEARTBEAT_INTERVAL_MS).toBeLessThan(WATCHDOG_CHECK_INTERVAL_MS);
   });
 });
