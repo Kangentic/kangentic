@@ -462,9 +462,15 @@ function sidesForStatus(status: GitDiffStatus): { needsOriginal: boolean; needsM
   return { needsOriginal: status !== 'A' && status !== 'U', needsModified: status !== 'D' };
 }
 
-/** A path from the diff list: relative, with no `..` segment, so a read can never leave the worktree. */
+/**
+ * A path from the diff list: relative, with no `..` segment, so a read can
+ * never leave the worktree. A drive-relative `C:name` is refused too: Windows
+ * cannot hold such a name, so no diff lists one. A colon later in a name is
+ * left alone, since it is a legal file name on POSIX.
+ */
 function isRepoRelativePath(filePath: string): boolean {
   if (filePath === '' || path.posix.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) return false;
+  if (/^[A-Za-z]:/.test(filePath)) return false;
   return !filePath.split(/[\\/]/).includes('..');
 }
 
@@ -542,7 +548,7 @@ async function readSideAsImage(
       ? await readRevisionImage(gitDirectory, source.spec, knownFingerprint)
       : await readWorkingTreeImage(source.absolutePath, knownFingerprint);
   } catch (error) {
-    if (!isMissingFileError(error)) console.warn('[DIFF] Could not read an image side:', error);
+    if (!isMissingPathError(error)) console.warn('[DIFF] Could not read an image side:', error);
     return { kind: 'unreadable' };
   }
 }
@@ -578,6 +584,14 @@ function imageSideFromBytes(bytes: Buffer, fingerprint: string): GitImageSide {
   return { kind: 'bytes', size: bytes.length, bytes, fingerprint };
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+/**
+ * A working-tree path that is not a file any more: deleted, or turned into a
+ * directory or into a path through a file under the open panel. Every refresh
+ * meets it again, so it is not logged. Only the disk reads carry a `code`:
+ * readGitObject's rejections never do, so git failing to start is logged.
+ */
+const MISSING_PATH_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR', 'EISDIR']);
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string' && MISSING_PATH_CODES.has(error.code);
 }
