@@ -10,9 +10,6 @@ const mockGit = {
   diffSummary: vi.fn(),
   diff: vi.fn(),
   show: vi.fn(),
-  showBuffer: vi.fn(),
-  catFile: vi.fn(),
-  revparse: vi.fn(),
   raw: vi.fn(),
   status: vi.fn(),
 };
@@ -39,9 +36,18 @@ vi.mock('../../src/main/git/line-count/line-count-client', () => ({
   lineCountClient: { countFiles: mockCountFiles },
 }));
 
+// The image reader's git half. Its own behavior against real git is pinned in
+// git-object-reader.test.ts; here it answers from a table (routeObjects).
+const { mockReadGitObject } = vi.hoisted(() => ({ mockReadGitObject: vi.fn() }));
+
+vi.mock('../../src/main/git/git-object-reader', () => ({
+  readGitObject: mockReadGitObject,
+}));
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { DiffService, RACY_FINGERPRINT_SUFFIX, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
+import type { GitObjectRead, GitObjectReadOptions } from '../../src/main/git/git-object-reader';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
 
 /** Backs the countFileLines bounded stat+open read path (see
@@ -957,12 +963,12 @@ describe('DiffService', () => {
         const result = await service.getDiffFiles({
           projectPath: '/project',
           baseBranch: 'main',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
-        expect(mockGit.raw).toHaveBeenCalledWith(['rev-parse', '--verify', 'commit123^']);
-        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'commit123']);
-        expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'parent999', 'commit123']);
+        expect(mockGit.raw).toHaveBeenCalledWith(['rev-parse', '--verify', 'c0ffee123^']);
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'c0ffee123']);
+        expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'parent999', 'c0ffee123']);
         expect(mockGit.status).not.toHaveBeenCalled();
         expect(result.files[0].status).toBe('M');
       });
@@ -992,11 +998,11 @@ describe('DiffService', () => {
           projectPath: '/project',
           baseBranch: 'main',
           scope: 'staged',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         // The commit-diff args are used, not the staged-scope args (--cached).
-        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'commit123']);
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'c0ffee123']);
         expect(mockGit.diffSummary).not.toHaveBeenCalledWith(['--cached']);
       });
     });
@@ -1007,7 +1013,7 @@ describe('DiffService', () => {
         mockGit.show.mockImplementation(async (args: string[]) => {
           const ref = args[0];
           if (ref.startsWith('parent999:')) return 'parent content';
-          if (ref.startsWith('commit123:')) return 'commit content';
+          if (ref.startsWith('c0ffee123:')) return 'commit content';
           return 'other';
         });
 
@@ -1017,11 +1023,11 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/a.ts',
           status: 'M',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/a.ts']);
-        expect(mockGit.show).toHaveBeenCalledWith(['commit123:src/a.ts']);
+        expect(mockGit.show).toHaveBeenCalledWith(['c0ffee123:src/a.ts']);
         expect(fs.promises.readFile).not.toHaveBeenCalled();
         expect(result.original).toBe('parent content');
         expect(result.modified).toBe('commit content');
@@ -1035,11 +1041,11 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/new.ts',
           status: 'A',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         expect(result.original).toBe('');
-        expect(mockGit.show).toHaveBeenCalledWith(['commit123:src/new.ts']);
+        expect(mockGit.show).toHaveBeenCalledWith(['c0ffee123:src/new.ts']);
         expect(result.modified).toBe('new file content');
       });
 
@@ -1052,7 +1058,7 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/removed.ts',
           status: 'D',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/removed.ts']);
@@ -1069,7 +1075,7 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/a.ts',
           status: 'M',
-          commitOid: 'root123',
+          commitOid: 'f00d123',
         });
 
         expect(mockGit.show).toHaveBeenCalledWith([`${EMPTY_TREE_HASH}:src/a.ts`]);
@@ -1085,14 +1091,14 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/a.ts',
           status: 'M',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
         await service.getFileContent({
           projectPath: '/project',
           baseBranch: 'main',
           filePath: 'src/b.ts',
           status: 'M',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         // rev-parse is only spawned once for the same commitOid across calls.
@@ -1102,7 +1108,7 @@ describe('DiffService', () => {
       it('does NOT cache a failed (empty-tree fallback) parent-ref resolution: a transient error is retried on the next call', async () => {
         // First call: rev-parse fails transiently (not a genuine root commit) -
         // falls back to the empty tree but must not poison the cache for
-        // commit123, per resolveParentRef's doc comment ("only a SUCCESSFUL
+        // c0ffee123, per resolveParentRef's doc comment ("only a SUCCESSFUL
         // resolution is cached").
         mockGit.raw.mockRejectedValueOnce(new Error('fatal: transient git error'));
         mockGit.show.mockResolvedValue('content');
@@ -1112,7 +1118,7 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/a.ts',
           status: 'M',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
         expect(mockGit.show).toHaveBeenCalledWith([`${EMPTY_TREE_HASH}:src/a.ts`]);
 
@@ -1125,7 +1131,7 @@ describe('DiffService', () => {
           baseBranch: 'main',
           filePath: 'src/b.ts',
           status: 'M',
-          commitOid: 'commit123',
+          commitOid: 'c0ffee123',
         });
 
         // rev-parse was retried (spawned twice total), and the second call's
@@ -1137,9 +1143,10 @@ describe('DiffService', () => {
   });
 
   // The image view's byte reader. Same per-scope revisions as getFileContent;
-  // what differs is that no side is ever decoded as text, a side is
-  // fingerprinted before anything else is read, and its size is checked
-  // before its bytes are read.
+  // what differs is that no side is ever decoded as text, a side the caller
+  // already holds is answered unchanged, and a side over the cap is withheld.
+  // A git side goes through readGitObject, which stops at the object's header
+  // for those two cases (pinned against real git in git-object-reader.test.ts).
   describe('getImageContent', () => {
     const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
     const OVER_CAP = 10 * 1024 * 1024 + 1;
@@ -1152,30 +1159,30 @@ describe('DiffService', () => {
       filePath: 'img/a.png',
     } as const;
 
-    /** The blob id `rev-parse` reports for an object spec in routeObjects. */
-    function objectIdOf(spec: string): string {
-      return `oid-${spec}`;
+    /** The blob id the reader reports for an object name in routeObjects. */
+    function objectIdOf(objectName: string): string {
+      return `oid-${objectName}`;
     }
 
     /**
-     * Answers `rev-parse --verify <spec>`, then `cat-file -s <object id>` and
-     * `show <spec>`, from one table keyed by object spec.
+     * Answers readGitObject from one table keyed by object name, the way the
+     * real reader does: missing for a name it cannot resolve, unchanged for
+     * the id the caller holds, too-large over the cap, else the bytes.
      */
     function routeObjects(objects: Record<string, Buffer>): void {
-      mockGit.revparse.mockImplementation(async (args: string[]) => {
-        if (!objects[args[1]]) throw new Error(`fatal: path does not exist: ${args[1]}`);
-        return objectIdOf(args[1]);
+      mockReadGitObject.mockImplementation(async (_gitDirectory: string, objectName: string, options: GitObjectReadOptions): Promise<GitObjectRead> => {
+        const bytes = objects[objectName];
+        if (!bytes) return { kind: 'missing' };
+        const objectId = objectIdOf(objectName);
+        if (objectId === options.knownObjectId) return { kind: 'unchanged', objectId };
+        if (bytes.length > options.maxBytes) return { kind: 'too-large', objectId, size: bytes.length };
+        return { kind: 'blob', objectId, bytes };
       });
-      mockGit.catFile.mockImplementation(async (args: string[]) => {
-        const spec = Object.keys(objects).find((candidate) => objectIdOf(candidate) === args[1]);
-        if (spec === undefined) throw new Error(`fatal: not a valid object name ${args[1]}`);
-        return `${objects[spec].length}\n`;
-      });
-      mockGit.showBuffer.mockImplementation(async (args: string[]) => {
-        const bytes = objects[args[0]];
-        if (!bytes) throw new Error(`fatal: path does not exist: ${args[0]}`);
-        return bytes;
-      });
+    }
+
+    /** The object names the reader was asked for, in call order. */
+    function objectNamesRead(): string[] {
+      return mockReadGitObject.mock.calls.map((call) => String(call[1]));
     }
 
     function mockDiskFile(bytes: Buffer, mtimeMs: number = SETTLED_MTIME_MS): void {
@@ -1189,9 +1196,8 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'working' });
 
-      expect(mockGit.revparse).toHaveBeenCalledWith(['--verify', ':img/a.png']);
-      expect(mockGit.catFile).toHaveBeenCalledWith(['-s', objectIdOf(':img/a.png')]);
-      expect(mockGit.showBuffer).toHaveBeenCalledWith([':img/a.png']);
+      expect(mockReadGitObject).toHaveBeenCalledTimes(1);
+      expect(mockReadGitObject).toHaveBeenCalledWith('/project', ':img/a.png', { knownObjectId: undefined, maxBytes: IMAGE_PREVIEW_MAX_BYTES });
       expect(fs.promises.readFile).toHaveBeenCalledWith(expect.stringMatching(/img[/\\]a\.png$/));
       expect(vi.mocked(fs.promises.readFile).mock.calls[0]).toHaveLength(1);
       expect(result.original).toEqual({
@@ -1203,7 +1209,7 @@ describe('DiffService', () => {
       expect(mockGit.show).not.toHaveBeenCalled();
     });
 
-    it('a git side whose blob id matches the caller\'s fingerprint answers unchanged and is never read', async () => {
+    it('a git side whose blob id matches the caller\'s fingerprint answers unchanged', async () => {
       routeObjects({ 'abc123:img/a.png': PNG_BYTES });
       mockDiskFile(PNG_BYTES);
       const originalFingerprint = `blob:${objectIdOf('abc123:img/a.png')}`;
@@ -1213,8 +1219,10 @@ describe('DiffService', () => {
       });
 
       expect(result.original).toEqual({ kind: 'unchanged', fingerprint: originalFingerprint });
-      expect(mockGit.catFile).not.toHaveBeenCalled();
-      expect(mockGit.showBuffer).not.toHaveBeenCalled();
+      // The id goes to the reader, which stops at the header on a match.
+      expect(mockReadGitObject).toHaveBeenCalledWith('/project', 'abc123:img/a.png', {
+        knownObjectId: objectIdOf('abc123:img/a.png'), maxBytes: IMAGE_PREVIEW_MAX_BYTES,
+      });
       // The side with no known fingerprint is read as usual.
       expect(result.modified?.kind).toBe('bytes');
     });
@@ -1300,8 +1308,24 @@ describe('DiffService', () => {
 
       expect(result.original?.kind).toBe('bytes');
       expect(result.modified?.kind).toBe('bytes');
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
+      // A blob fingerprint passes its id on; it just no longer matches.
+      expect(mockReadGitObject).toHaveBeenCalledWith('/project', 'abc123:img/a.png', {
+        knownObjectId: 'an-older-blob', maxBytes: IMAGE_PREVIEW_MAX_BYTES,
+      });
       expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('a working-tree fingerprint never reaches the git reader as an object id', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      await service.getImageContent({
+        ...baseInput, status: 'M', knownFingerprints: { original: `file:${PNG_BYTES.length}:${SETTLED_MTIME_MS}` },
+      });
+
+      expect(mockReadGitObject).toHaveBeenCalledWith('/project', 'abc123:img/a.png', {
+        knownObjectId: undefined, maxBytes: IMAGE_PREVIEW_MAX_BYTES,
+      });
     });
 
     it('staged scope: original is HEAD, modified is the index blob, nothing from disk', async () => {
@@ -1309,8 +1333,7 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'staged' });
 
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['HEAD:img/a.png']);
-      expect(mockGit.showBuffer).toHaveBeenCalledWith([':img/a.png']);
+      expect(objectNamesRead().sort()).toEqual([':img/a.png', 'HEAD:img/a.png']);
       expect(fs.promises.readFile).not.toHaveBeenCalled();
       expect(result.original?.kind).toBe('bytes');
       expect(result.modified?.kind).toBe('bytes');
@@ -1322,18 +1345,17 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
+      expect(objectNamesRead()).toEqual(['abc123:img/a.png']);
       expect(result.original?.kind).toBe('bytes');
     });
 
     it('commit selection: both sides come from the commit and its parent, never disk', async () => {
       mockGit.raw.mockResolvedValue('parent999\n');
-      routeObjects({ 'parent999:img/a.png': PNG_BYTES, 'commit123:img/a.png': PNG_BYTES });
+      routeObjects({ 'parent999:img/a.png': PNG_BYTES, 'c0ffee123:img/a.png': PNG_BYTES });
 
-      const result = await service.getImageContent({ ...baseInput, status: 'M', commitOid: 'commit123' });
+      const result = await service.getImageContent({ ...baseInput, status: 'M', commitOid: 'c0ffee123' });
 
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['parent999:img/a.png']);
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['commit123:img/a.png']);
+      expect(objectNamesRead().sort()).toEqual(['c0ffee123:img/a.png', 'parent999:img/a.png']);
       expect(fs.promises.stat).not.toHaveBeenCalled();
       expect(result.original?.kind).toBe('bytes');
       expect(result.modified?.kind).toBe('bytes');
@@ -1345,7 +1367,7 @@ describe('DiffService', () => {
 
       const result = await service.getImageContent({ ...baseInput, status: 'R', oldPath: 'img/old.png' });
 
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/old.png']);
+      expect(objectNamesRead()).toEqual(['abc123:img/old.png']);
       expect(result.original?.kind).toBe('bytes');
     });
 
@@ -1365,35 +1387,29 @@ describe('DiffService', () => {
     });
 
     it('a side over the 10 MB cap reports its size and is never read', async () => {
-      mockGit.revparse.mockResolvedValue('big-blob\n');
-      mockGit.catFile.mockResolvedValue(`${OVER_CAP}\n`);
+      mockReadGitObject.mockResolvedValue({ kind: 'too-large', objectId: 'big-blob', size: OVER_CAP } satisfies GitObjectRead);
       vi.mocked(fs.promises.stat).mockResolvedValue({ size: OVER_CAP, mtimeMs: SETTLED_MTIME_MS } as never);
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
       expect(result.original).toEqual({ kind: 'too-large', size: OVER_CAP, fingerprint: 'blob:big-blob' });
       expect(result.modified).toEqual({ kind: 'too-large', size: OVER_CAP, fingerprint: `file:${OVER_CAP}:${SETTLED_MTIME_MS}` });
-      expect(mockGit.showBuffer).not.toHaveBeenCalled();
       expect(fs.promises.readFile).not.toHaveBeenCalled();
     });
 
-    it('a side of exactly the cap is still read: only a larger side is withheld', async () => {
-      // Both readers report a size of exactly IMAGE_PREVIEW_MAX_BYTES but hand back
-      // a small buffer, so the test never allocates 10 MB. The size check runs on
-      // what `cat-file -s` and `stat` report, before any read, so a `>=` in the cap
-      // comparison would turn both sides into `too-large` and skip both reads.
-      mockGit.revparse.mockResolvedValue('cap-blob\n');
-      mockGit.catFile.mockResolvedValue(`${IMAGE_PREVIEW_MAX_BYTES}\n`);
-      mockGit.showBuffer.mockResolvedValue(PNG_BYTES);
+    it('a working-tree side of exactly the cap is still read, and the git side hands the reader the same cap', async () => {
+      // stat reports exactly IMAGE_PREVIEW_MAX_BYTES but readFile hands back a
+      // small buffer, so the test never allocates 10 MB. A `>=` in the cap
+      // comparison would turn the side into `too-large` and skip the read.
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
       vi.mocked(fs.promises.stat).mockResolvedValue({ size: IMAGE_PREVIEW_MAX_BYTES, mtimeMs: SETTLED_MTIME_MS } as never);
       vi.mocked(fs.promises.readFile).mockResolvedValue(PNG_BYTES as never);
 
       const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(result.original?.kind).toBe('bytes');
       expect(result.modified?.kind).toBe('bytes');
-      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
       expect(fs.promises.readFile).toHaveBeenCalledWith(expect.stringMatching(/img[/\\]a\.png$/));
+      expect(mockReadGitObject).toHaveBeenCalledWith('/project', 'abc123:img/a.png', expect.objectContaining({ maxBytes: IMAGE_PREVIEW_MAX_BYTES }));
     });
 
     it('a Git LFS pointer in place of the image is reported as one', async () => {
@@ -1440,29 +1456,85 @@ describe('DiffService', () => {
       },
     );
 
-    it('a blob side whose cat-file size is not a number reads unreadable and is never fetched', async () => {
-      // showBuffer answers with real bytes, so a missing finite-size guard would
-      // not fall through to an exception: it would wrongly report the side as bytes.
-      mockGit.revparse.mockResolvedValue('odd-blob\n');
-      mockGit.catFile.mockResolvedValue('not-a-number\n');
-      mockGit.showBuffer.mockResolvedValue(PNG_BYTES);
-      mockDiskFile(PNG_BYTES);
+    it('a git failure reads unreadable and is logged, and the verdict is per side', async () => {
+      // A header the reader cannot parse (the old `cat-file -s` NaN case) and a
+      // git that exits before answering both reject inside the reader.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        mockReadGitObject.mockRejectedValue(new Error('git cat-file exited with 128 before it answered'));
+        mockDiskFile(PNG_BYTES);
 
-      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+        const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(result.original).toEqual({ kind: 'unreadable' });
-      expect(mockGit.showBuffer).not.toHaveBeenCalled();
-      // The unreadable verdict is per side: the disk side still reads.
-      expect(result.modified?.kind).toBe('bytes');
+        expect(result.original).toEqual({ kind: 'unreadable' });
+        expect(result.modified?.kind).toBe('bytes');
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
     });
 
-    it('a failed read on either side is unreadable, not an exception', async () => {
-      mockGit.revparse.mockRejectedValue(new Error('fatal: bad object'));
-      vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+    it('a side that is not there (no such object, no such file) reads unreadable without a log line', async () => {
+      // Expected on every refresh after a file is deleted under the panel, so it must not fill the log.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        mockReadGitObject.mockResolvedValue({ kind: 'missing' } satisfies GitObjectRead);
+        vi.mocked(fs.promises.stat).mockRejectedValue(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }));
 
-      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+        const result = await service.getImageContent({ ...baseInput, status: 'M' });
 
-      expect(result).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
+        expect(result).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
+  // The content readers join the caller's paths onto the worktree and hand its
+  // commit to git, and the caller is the renderer over IPC or a phone through
+  // the mobile bridge. Every legitimate input is a path the diff list reported
+  // and a commit from the history, so anything else is refused before any read.
+  describe('refuses a path or commit no diff list could hold', () => {
+    const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    it.each([
+      ['a parent segment', { filePath: '../outside/key.png' }],
+      ['a parent segment behind a backslash', { filePath: 'img\\..\\..\\key.png' }],
+      ['an absolute POSIX path', { filePath: '/etc/hosts.png' }],
+      ['an absolute Windows path', { filePath: 'C:\\Users\\dev\\key.png' }],
+      ['a parent segment in the old path of a rename', { filePath: 'img/a.png', oldPath: 'img/../../old.png' }],
+      ['a commit that is not an object id', { filePath: 'img/a.png', commitOid: '--output=x' }],
+    ])('%s: neither reader touches git or the disk', async (_label, overrides) => {
+      const input = { projectPath: '/project', worktreePath: '/project/wt', baseBranch: 'main', status: 'M' as const, ...overrides };
+
+      const text = await service.getFileContent(input);
+      const image = await service.getImageContent(input);
+
+      expect(text).toEqual({ original: '', modified: '', language: expect.any(String) });
+      expect(image).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
+      expect(mockGit.show).not.toHaveBeenCalled();
+      expect(mockGit.raw).not.toHaveBeenCalled();
+      expect(mockReadGitObject).not.toHaveBeenCalled();
+      expect(fs.promises.stat).not.toHaveBeenCalled();
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+    });
+
+    it('a name that only holds two dots, and a full commit id, still read', async () => {
+      // The control for the cases above: the same mocks, reached by input that is allowed.
+      mockReadGitObject.mockResolvedValue({ kind: 'blob', objectId: 'f'.repeat(40), bytes: PNG_BYTES } satisfies GitObjectRead);
+      mockGit.show.mockResolvedValue('text');
+      const input = {
+        projectPath: '/project', baseBranch: 'main', status: 'M' as const,
+        filePath: 'img/a..b.png', commitOid: '0123456789abcdef0123456789abcdef01234567',
+      };
+
+      const image = await service.getImageContent(input);
+      const text = await service.getFileContent(input);
+
+      expect(image.original?.kind).toBe('bytes');
+      expect(image.modified?.kind).toBe('bytes');
+      expect(text.modified).toBe('text');
     });
   });
 });

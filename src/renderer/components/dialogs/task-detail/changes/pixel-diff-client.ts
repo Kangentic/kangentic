@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
 import PixelDiffWorker from './pixel-diff.worker?worker';
-import type { PixelDiffRequest, PixelDiffResponse } from './pixel-diff.worker';
-import { loadImage, type DiffImageSide } from './diff-content';
+import type { PixelDiffRequest, PixelDiffResponse, PixelDiffSource } from './pixel-diff.worker';
+import { loadImage, type DecodedImageSide } from './diff-content';
 import { pixelDiffCanvas } from './pixel-diff-canvas';
 
 /**
- * Main-thread half of the Diff mode: decodes both sides to ImageBitmaps,
- * hands them to the pixel-diff worker, and caches each pair's result so
- * stepping back to a file in Diff mode does not compare it again.
+ * Main-thread half of the Diff mode: hands both sides to the pixel-diff
+ * worker and caches each pair's result so stepping back to a file in Diff
+ * mode does not compare it again.
  */
-
-export type DecodedImageSide = Extract<DiffImageSide, { kind: 'image' }>;
 
 export type PixelDiffOutcome =
   | { status: 'done'; maskUrl: string; changedPixels: number; totalPixels: number }
@@ -22,6 +20,31 @@ export type PixelDiffState = { status: 'idle' } | { status: 'pending' } | PixelD
 const PIXEL_DIFF_COLOR: [number, number, number] = [255, 60, 199];
 export const PIXEL_DIFF_COLOR_CSS = `rgb(${PIXEL_DIFF_COLOR.join(' ')})`;
 
+/**
+ * Values keyed by a pair of sides, held only as long as both sides are. A
+ * side is fixed to one file, so the pair alone identifies a comparison.
+ */
+class SidePairMap<Value> {
+  private readonly byBefore = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, Value>>();
+
+  get(before: DecodedImageSide, after: DecodedImageSide): Value | undefined {
+    return this.byBefore.get(before)?.get(after);
+  }
+
+  set(before: DecodedImageSide, after: DecodedImageSide, value: Value): void {
+    let byAfter = this.byBefore.get(before);
+    if (byAfter === undefined) {
+      byAfter = new WeakMap<DecodedImageSide, Value>();
+      this.byBefore.set(before, byAfter);
+    }
+    byAfter.set(after, value);
+  }
+
+  delete(before: DecodedImageSide, after: DecodedImageSide): void {
+    this.byBefore.get(before)?.delete(after);
+  }
+}
+
 // hmr-safe: the dispose at the bottom of this file terminates this worker and
 // fails every pending request, so the next module instance starts clean.
 let worker: Worker | null = null;
@@ -29,28 +52,29 @@ let worker: Worker | null = null;
 let nextRequestId = 1;
 // hmr-safe: emptied by the dispose at the bottom of this file.
 const pendingRequests = new Map<number, (outcome: PixelDiffOutcome) => void>();
-// hmr-safe: set by the Fast Refresh dispose below. A comparison still decoding
-// when the module is replaced resumes here afterwards, and must not build a
-// worker that nothing would ever terminate.
+// hmr-safe: set by the Fast Refresh dispose below. A comparison still running
+// when the module is replaced resumes here afterwards: it must not build a
+// worker that nothing would ever terminate, and the failure the dispose hands
+// it is not a real outcome, so usePixelDiff does not show it.
 let disposed = false;
 
 /**
- * Results keyed by side identity. A DiffContent's side objects stay the same
- * for as long as the panel's content cache holds them, so a revisit hits; once
- * the cache drops a file, its results go with it.
+ * Results by side pair. A DiffContent's side objects stay the same for as
+ * long as the panel's content cache holds them, so a revisit hits; once the
+ * cache drops a file, its results go with it.
  */
 // hmr-safe: a refresh only costs the next Diff view one comparison.
-const outcomeCache = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, PixelDiffOutcome>>();
+const outcomeCache = new SidePairMap<PixelDiffOutcome>();
 
 /**
  * Comparisons still running, keyed the same way. A second request for the
  * same pair (React StrictMode's double effect, or a re-render before the
- * worker answers) joins the running one instead of decoding both images again
- * and queuing a duplicate behind it in the single worker. An entry leaves when
- * its comparison settles, failure included, so a failed pair is tried afresh.
+ * worker answers) joins the running one instead of queuing a duplicate behind
+ * it in the single worker. An entry leaves when its comparison settles,
+ * failure included, so a failed pair is tried afresh.
  */
 // hmr-safe: the comparisons it holds fail with the disposed worker anyway.
-const runningComparisons = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, Promise<PixelDiffOutcome>>>();
+const runningComparisons = new SidePairMap<Promise<PixelDiffOutcome>>();
 
 function failAllPending(): void {
   for (const resolve of pendingRequests.values()) resolve({ status: 'failed' });
@@ -79,32 +103,39 @@ function getWorker(): Worker {
   return created;
 }
 
-/** Decoded on this thread because a worker cannot decode SVG. The resize also pins an SVG with no intrinsic size to the size the view uses. */
-async function bitmapOf(side: DecodedImageSide, scale: number): Promise<ImageBitmap> {
+/**
+ * What the worker draws one side from. A raster image goes as its data URL
+ * and the worker decodes it: `createImageBitmap` on an `<img>` decodes on the
+ * calling thread, 30 to 42 ms a side for a 3840 x 2160 PNG, and in headless
+ * Chromium every one of 12 comparisons of such a pair dropped a frame. With
+ * the worker decoding, 6 of 18 did. Posting the data URL (a string copy, about
+ * 6 ms at the 10 MB cap) beat keeping each side's bytes as a Blob to post:
+ * that held a second copy of every image and still dropped a frame in 12 of
+ * 21. The price is the worker's own base64 decode, about 50 ms more before
+ * the result on that pair. An SVG is
+ * decoded here, because a worker cannot decode SVG, and the resize pins an
+ * SVG with no intrinsic size to the size the view uses.
+ */
+async function sourceOf(side: DecodedImageSide, scale: number, scalable: boolean): Promise<PixelDiffSource> {
+  if (!scalable) return side.dataUrl;
   const image = await loadImage(side.dataUrl);
   return createImageBitmap(image, { resizeWidth: side.width * scale, resizeHeight: side.height * scale, resizeQuality: 'high' });
 }
 
-function cachedPixelDiff(before: DecodedImageSide, after: DecodedImageSide): PixelDiffOutcome | null {
-  return outcomeCache.get(before)?.get(after) ?? null;
+function closeIfBitmap(source: PixelDiffSource): void {
+  if (typeof source !== 'string') source.close();
 }
 
-/**
- * One pair's comparison, shared by every caller asking for it while it runs.
- * A side is fixed to one file, and `scalable` is fixed by the file's type, so
- * the pair alone identifies the request.
- */
+/** One pair's comparison, shared by every caller asking for it while it runs. */
 function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
-  const cached = cachedPixelDiff(before, after);
-  if (cached !== null) return Promise.resolve(cached);
-  const running = runningComparisons.get(before)?.get(after);
+  const cached = outcomeCache.get(before, after);
+  if (cached !== undefined) return Promise.resolve(cached);
+  const running = runningComparisons.get(before, after);
   if (running !== undefined) return running;
   const comparison = runPixelDiff(before, after, scalable).finally(() => {
-    runningComparisons.get(before)?.delete(after);
+    runningComparisons.delete(before, after);
   });
-  const byAfter = runningComparisons.get(before) ?? new WeakMap<DecodedImageSide, Promise<PixelDiffOutcome>>();
-  byAfter.set(after, comparison);
-  runningComparisons.set(before, byAfter);
+  runningComparisons.set(before, after, comparison);
   return comparison;
 }
 
@@ -114,23 +145,24 @@ async function runPixelDiff(before: DecodedImageSide, after: DecodedImageSide, s
   const { scale, width, height } = canvas;
   let outcome: PixelDiffOutcome;
   try {
-    const decoded = await Promise.allSettled([bitmapOf(before, scale), bitmapOf(after, scale)]);
-    if (decoded[0].status === 'rejected' || decoded[1].status === 'rejected') {
-      // The side that did decode is still this thread's to free.
-      for (const result of decoded) if (result.status === 'fulfilled') result.value.close();
+    const prepared = await Promise.allSettled([sourceOf(before, scale, scalable), sourceOf(after, scale, scalable)]);
+    if (prepared[0].status === 'rejected' || prepared[1].status === 'rejected') {
+      // A side that did decode is still this thread's to free.
+      for (const result of prepared) if (result.status === 'fulfilled') closeIfBitmap(result.value);
       return { status: 'failed' };
     }
-    const beforeBitmap = decoded[0].value;
-    const afterBitmap = decoded[1].value;
+    const beforeSource = prepared[0].value;
+    const afterSource = prepared[1].value;
+    const transfer = [beforeSource, afterSource].filter((source): source is ImageBitmap => typeof source !== 'string');
     outcome = await new Promise<PixelDiffOutcome>((resolve) => {
       const id = nextRequestId++;
-      const request: PixelDiffRequest = { id, before: beforeBitmap, after: afterBitmap, width, height, color: PIXEL_DIFF_COLOR };
+      const request: PixelDiffRequest = { id, before: beforeSource, after: afterSource, width, height, color: PIXEL_DIFF_COLOR };
       try {
-        getWorker().postMessage(request, [beforeBitmap, afterBitmap]);
+        getWorker().postMessage(request, transfer);
       } catch (postError) {
-        // Nothing was transferred, so both bitmaps are still this thread's to free.
-        beforeBitmap.close();
-        afterBitmap.close();
+        // Nothing was transferred, so any bitmap is still this thread's to free.
+        closeIfBitmap(beforeSource);
+        closeIfBitmap(afterSource);
         throw postError;
       }
       // Registered only once the post went through: a throw from getWorker or
@@ -141,11 +173,7 @@ async function runPixelDiff(before: DecodedImageSide, after: DecodedImageSide, s
   } catch {
     outcome = { status: 'failed' };
   }
-  if (outcome.status === 'done') {
-    const byAfter = outcomeCache.get(before) ?? new WeakMap<DecodedImageSide, PixelDiffOutcome>();
-    byAfter.set(after, outcome);
-    outcomeCache.set(before, byAfter);
-  }
+  if (outcome.status === 'done') outcomeCache.set(before, after, outcome);
   return outcome;
 }
 
@@ -164,7 +192,9 @@ export function usePixelDiff(
     if (!enabled || before === null || after === null) return;
     let cancelled = false;
     void computePixelDiff(before, after, scalable).then((outcome) => {
-      if (!cancelled) setSettled({ before, after, outcome });
+      // `disposed` is this module instance's: a Fast Refresh failed the
+      // comparison, and the replacement module's effect compares again.
+      if (!cancelled && !disposed) setSettled({ before, after, outcome });
     });
     return () => {
       cancelled = true;
@@ -172,8 +202,8 @@ export function usePixelDiff(
   }, [enabled, before, after, scalable]);
 
   if (!enabled || before === null || after === null) return { status: 'idle' };
-  const cached = cachedPixelDiff(before, after);
-  if (cached !== null) return cached;
+  const cached = outcomeCache.get(before, after);
+  if (cached !== undefined) return cached;
   if (settled !== null && settled.before === before && settled.after === after) return settled.outcome;
   return { status: 'pending' };
 }

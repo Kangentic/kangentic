@@ -1,14 +1,15 @@
 /**
- * The Changes panel's content equality, image cache budget, fetch routing and
+ * The Changes panel's content equality, image cache, fetch routing and
  * compare-mode rules (src/renderer/components/dialogs/task-detail/changes/diff-content.ts).
  * The equality decides whether a background refresh repaints the pane, so it
  * must see a change in image bytes even when the text on both sides is empty.
  * The fetch routing decides which reads a file needs, so a binary file is
- * never read, and an image side main reports unchanged is the side already
- * held, not a copy.
+ * never read, and an image side main reports unchanged, or resends byte for
+ * byte, is the side already held, not a copy.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  DiffContentCache,
   EMPTY_DIFF_CONTENT,
   EMPTY_DIFF_TEXT,
   diffContentEqual,
@@ -28,16 +29,16 @@ import type {
   GitImageContentResult,
 } from '../../src/shared/types';
 
-function imageSide(dataUrl: string, size = dataUrl.length, width = 10, height = 20, fingerprint = `fp-${dataUrl}`): DiffImageSide {
-  return { kind: 'image', size, dataUrl, width, height, fingerprint };
+function imageSide(dataUrl: string, size = dataUrl.length, width = 10, height = 20): DiffImageSide {
+  return { kind: 'image', size, dataUrl, width, height };
 }
 
-function tooLargeSide(size: number, fingerprint = `fp-size-${size}`): DiffImageSide {
-  return { kind: 'too-large', size, fingerprint };
+function tooLargeSide(size: number): DiffImageSide {
+  return { kind: 'too-large', size };
 }
 
-function imageContent(original: DiffImageSide | null, modified: DiffImageSide | null): DiffContent {
-  return { text: EMPTY_DIFF_TEXT, image: { original, modified } };
+function imageContent(original: DiffImageSide | null, modified: DiffImageSide | null, fingerprints: DiffImageContent['fingerprints'] = {}): DiffContent {
+  return { text: EMPTY_DIFF_TEXT, image: { original, modified, fingerprints } };
 }
 
 describe('diffContentEqual', () => {
@@ -68,7 +69,15 @@ describe('diffContentEqual', () => {
     const first: DiffContent = { text: { original: 'a', modified: 'b', language: 'typescript' }, image: null };
     expect(diffContentEqual(first, { ...first })).toBe(true);
     expect(diffContentEqual(first, { text: { ...first.text, modified: 'c' }, image: null })).toBe(false);
-    expect(diffContentEqual(first, { ...first, image: { original: null, modified: null } })).toBe(false);
+    expect(diffContentEqual(first, { ...first, image: { original: null, modified: null, fingerprints: {} } })).toBe(false);
+  });
+
+  it('ignores fingerprints: they name the bytes, they are not drawn', () => {
+    const side = imageSide('data:image/png;base64,AAAA');
+    expect(diffContentEqual(
+      imageContent(side, null, { original: 'file:4:1:racy' }),
+      imageContent(side, null, { original: 'file:4:1' }),
+    )).toBe(true);
   });
 });
 
@@ -102,8 +111,46 @@ describe('trimImageCache', () => {
   });
 });
 
+describe('DiffContentCache', () => {
+  const weigh = (length: number) => imageContent(null, imageSide('x'.repeat(length)));
+
+  it('a read counts as a use: the entry read last survives the trim, the one left unread is evicted', () => {
+    const cache = new DiffContentCache<{ result: DiffContent }>(90);
+    cache.set('first', { result: weigh(40) });
+    cache.set('second', { result: weigh(40) });
+
+    expect(cache.get('first')).toBeDefined();
+    cache.set('third', { result: weigh(40) });
+
+    expect(cache.keys()).toEqual(['first', 'third']);
+  });
+
+  it('a write to a key already held moves it to the newest place', () => {
+    const cache = new DiffContentCache<{ result: DiffContent }>(90);
+    cache.set('first', { result: weigh(40) });
+    cache.set('second', { result: weigh(40) });
+
+    cache.set('first', { result: weigh(40) });
+    cache.set('third', { result: weigh(40) });
+
+    expect(cache.keys()).toEqual(['first', 'third']);
+  });
+
+  it('a miss changes nothing, and listing the keys is not a use', () => {
+    const cache = new DiffContentCache<{ result: DiffContent }>(90);
+    cache.set('first', { result: weigh(40) });
+    cache.set('second', { result: weigh(40) });
+
+    expect(cache.get('absent')).toBeUndefined();
+    expect(cache.keys()).toEqual(['first', 'second']);
+    cache.set('third', { result: weigh(40) });
+
+    expect(cache.keys()).toEqual(['second', 'third']);
+  });
+});
+
 describe('imageCompareState', () => {
-  const both = (original: DiffImageSide | null, modified: DiffImageSide | null): DiffImageContent => ({ original, modified });
+  const both = (original: DiffImageSide | null, modified: DiffImageSide | null): DiffImageContent => ({ original, modified, fingerprints: {} });
 
   it('two decoded sides compare in the chosen mode, and only Side by side offers the layout toggle', () => {
     const image = both(imageSide('data:a'), imageSide('data:b'));
@@ -198,7 +245,11 @@ describe('fetchDiffContent (paths that never decode)', () => {
     expect(result.text).toBe(text);
     // The sides are main's byte reads, not derived from the text: the short
     // markup above could never be too large, and a failed read stays unreadable.
-    expect(result.image).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'too-large', size: 99, fingerprint: 'blob:m' } });
+    expect(result.image).toEqual({
+      original: { kind: 'unreadable' },
+      modified: { kind: 'too-large', size: 99 },
+      fingerprints: { original: undefined, modified: 'blob:m' },
+    });
   });
 
   it('an SVG marked binary by .gitattributes still reads both, since the markup is valid', async () => {
@@ -210,7 +261,7 @@ describe('fetchDiffContent (paths that never decode)', () => {
 
     expect(fileContent).toHaveBeenCalledWith(input);
     expect(fileImage).toHaveBeenCalledTimes(1);
-    expect(result.image).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
+    expect(result.image).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' }, fingerprints: {} });
   });
 
   it('an SVG whose image read fails keeps its text diff, with no image', async () => {
@@ -252,8 +303,9 @@ describe('fetchDiffContent (paths that never decode)', () => {
     expect(fileContent).not.toHaveBeenCalled();
     expect(result.text).toEqual(EMPTY_DIFF_TEXT);
     expect(result.image).toEqual({
-      original: { kind: 'too-large', size: 99, fingerprint: 'blob:o' },
-      modified: { kind: 'lfs-pointer', size: 130, fingerprint: 'file:130:1' },
+      original: { kind: 'too-large', size: 99 },
+      modified: { kind: 'lfs-pointer', size: 130 },
+      fingerprints: { original: 'blob:o', modified: 'file:130:1' },
     });
   });
 
@@ -262,13 +314,13 @@ describe('fetchDiffContent (paths that never decode)', () => {
 
     const result = await fetchDiffContent(inputFor('shots/new.png', 'A'), true);
 
-    expect(result.image).toEqual({ original: null, modified: { kind: 'unreadable' } });
+    expect(result.image).toEqual({ original: null, modified: { kind: 'unreadable' }, fingerprints: {} });
   });
 
   it('sends the previous sides\' fingerprints, and a side main reports unchanged is the previous side itself', async () => {
-    const previousOriginal = imageSide('data:image/png;base64,OLD', 3, 10, 20, 'blob:original');
-    const previousModified = imageSide('data:image/png;base64,NEW', 3, 10, 20, 'file:3:42');
-    const previous = imageContent(previousOriginal, previousModified);
+    const previousOriginal = imageSide('data:image/png;base64,OLD', 3, 10, 20);
+    const previousModified = imageSide('data:image/png;base64,NEW', 3, 10, 20);
+    const previous = imageContent(previousOriginal, previousModified, { original: 'blob:original', modified: 'file:3:42' });
     fileImage.mockResolvedValue({
       original: { kind: 'unchanged', fingerprint: 'blob:original' },
       modified: { kind: 'unchanged', fingerprint: 'file:3:42' },
@@ -283,11 +335,12 @@ describe('fetchDiffContent (paths that never decode)', () => {
     // Identity, not equality: the pixel diff's cache is keyed on these objects.
     expect(result.image?.original).toBe(previousOriginal);
     expect(result.image?.modified).toBe(previousModified);
+    expect(result.image?.fingerprints).toEqual({ original: 'blob:original', modified: 'file:3:42' });
     expect(diffContentEqual(result, previous)).toBe(true);
   });
 
   it('an unreadable previous side sends no fingerprint, and an unchanged answer it cannot match shows nothing', async () => {
-    const previous = imageContent({ kind: 'unreadable' }, tooLargeSide(99, 'blob:held'));
+    const previous = imageContent({ kind: 'unreadable' }, tooLargeSide(99), { modified: 'blob:held' });
     fileImage.mockResolvedValue({
       original: { kind: 'unreadable' },
       modified: { kind: 'unchanged', fingerprint: 'blob:some-other-blob' },
@@ -298,5 +351,91 @@ describe('fetchDiffContent (paths that never decode)', () => {
 
     expect(fileImage).toHaveBeenCalledWith({ ...input, knownFingerprints: { original: undefined, modified: 'blob:held' } });
     expect(result.image?.modified).toEqual({ kind: 'unreadable' });
+  });
+});
+
+/**
+ * The decode path, with stand-ins for the two browser objects it needs:
+ * FileReader turns the bytes into a data URL, and Image "decodes" every data
+ * URL to 4 x 3, recording each one it is handed.
+ */
+describe('fetchDiffContent (bytes main resends unchanged)', () => {
+  const fileContent = vi.fn<(input: GitFileContentInput) => Promise<GitFileContentResult>>();
+  const fileImage = vi.fn<(input: GitFileImageInput) => Promise<GitImageContentResult>>();
+  const decodedDataUrls: string[] = [];
+
+  class StandInFileReader {
+    result: string | null = null;
+    error: Error | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(blob: Blob): void {
+      void blob.arrayBuffer().then((buffer) => {
+        this.result = `data:${blob.type};base64,${Buffer.from(buffer).toString('base64')}`;
+        this.onload?.();
+      });
+    }
+  }
+
+  class StandInImage {
+    naturalWidth = 0;
+    naturalHeight = 0;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(dataUrl: string) {
+      decodedDataUrls.push(dataUrl);
+      this.naturalWidth = 4;
+      this.naturalHeight = 3;
+      queueMicrotask(() => this.onload?.());
+    }
+  }
+
+  beforeEach(() => {
+    fileContent.mockReset();
+    fileImage.mockReset();
+    decodedDataUrls.length = 0;
+    vi.stubGlobal('window', { electronAPI: { git: { fileContent, fileImage } } });
+    vi.stubGlobal('FileReader', StandInFileReader);
+    vi.stubGlobal('Image', StandInImage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const input: GitFileContentInput = { projectPath: '/project', baseBranch: 'main', filePath: 'shots/home.png', status: 'A' };
+
+  function bytesAnswer(bytes: number[], fingerprint: string): GitImageContentResult {
+    return { original: null, modified: { kind: 'bytes', size: bytes.length, bytes: new Uint8Array(bytes), fingerprint } };
+  }
+
+  it('the same bytes again keep the side already held, decoded once, under the new fingerprint', async () => {
+    // A working-tree read inside main's racy window is resent in full even
+    // when nothing changed. Keeping the side keeps the pixel diff's cache,
+    // which is keyed on side identity.
+    fileImage.mockResolvedValueOnce(bytesAnswer([1, 2, 3], 'file:3:10:racy'));
+    const first = await fetchDiffContent(input, true);
+    fileImage.mockResolvedValueOnce(bytesAnswer([1, 2, 3], 'file:3:10'));
+
+    const second = await fetchDiffContent(input, true, first);
+
+    expect(fileImage).toHaveBeenLastCalledWith({ ...input, knownFingerprints: { original: undefined, modified: 'file:3:10:racy' } });
+    expect(first.image?.modified?.kind).toBe('image');
+    expect(second.image?.modified).toBe(first.image?.modified);
+    expect(second.image?.fingerprints.modified).toBe('file:3:10');
+    expect(decodedDataUrls).toHaveLength(1);
+  });
+
+  it('different bytes decode into a new side', async () => {
+    // The control for the case above: same stand-ins, bytes that differ.
+    fileImage.mockResolvedValueOnce(bytesAnswer([1, 2, 3], 'file:3:10'));
+    const first = await fetchDiffContent(input, true);
+    fileImage.mockResolvedValueOnce(bytesAnswer([4, 5, 6], 'file:3:20'));
+
+    const second = await fetchDiffContent(input, true, first);
+
+    expect(second.image?.modified).not.toBe(first.image?.modified);
+    expect(second.image?.fingerprints.modified).toBe('file:3:20');
+    expect(decodedDataUrls).toHaveLength(2);
   });
 });

@@ -1,21 +1,26 @@
 import pixelmatch from 'pixelmatch';
+import { readAsDataUrl } from '../../../../lib/read-as-data-url';
 
 /**
- * Off-main-thread pixel comparison for the Changes panel's Diff mode. The main
- * thread decodes both images (SVG cannot be decoded inside a worker) and
- * transfers them here as ImageBitmaps; this worker draws each at its natural
- * size, top-left, onto one shared canvas size, runs pixelmatch, and returns
- * the changed pixels as a transparent PNG mask plus the count.
+ * Off-main-thread pixel comparison for the Changes panel's Diff mode. A raster
+ * image arrives as its data URL and is decoded here, off the main thread. An
+ * SVG arrives as an ImageBitmap the main thread decoded, since SVG cannot be
+ * decoded inside a worker. This worker draws each at its natural size,
+ * top-left, onto one shared canvas size, runs pixelmatch, and returns the
+ * changed pixels as a transparent PNG mask plus the count.
  *
  * `diffMask: true` draws only counted differences: pixelmatch leaves
  * anti-aliased pixels out of a mask (and out of the count, `includeAA: false`),
  * so every highlighted pixel is one the "% of pixels changed" line counts.
  */
 
+/** A decoded bitmap, or a raster image's data URL for this worker to decode. */
+export type PixelDiffSource = ImageBitmap | string;
+
 export interface PixelDiffRequest {
   id: number;
-  before: ImageBitmap;
-  after: ImageBitmap;
+  before: PixelDiffSource;
+  after: PixelDiffSource;
   width: number;
   height: number;
   color: [number, number, number];
@@ -46,17 +51,24 @@ function pixelsOf(bitmap: ImageBitmap, width: number, height: number): Uint8Clam
   return context.getImageData(0, 0, width, height).data;
 }
 
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => reject(reader.error ?? new Error('Could not encode the diff mask'));
-    reader.readAsDataURL(blob);
-  });
+async function bitmapFrom(source: PixelDiffSource): Promise<ImageBitmap> {
+  if (typeof source !== 'string') return source;
+  // A Blob decodes off the calling thread, unlike an <img>.
+  const blob = await (await fetch(source)).blob();
+  return createImageBitmap(blob);
+}
+
+/** Both sides as bitmaps. A side that decoded is closed if the other did not, so a failure leaks nothing. */
+async function bitmapsFor(request: PixelDiffRequest): Promise<[ImageBitmap, ImageBitmap]> {
+  const decoded = await Promise.allSettled([bitmapFrom(request.before), bitmapFrom(request.after)]);
+  if (decoded[0].status === 'fulfilled' && decoded[1].status === 'fulfilled') return [decoded[0].value, decoded[1].value];
+  for (const result of decoded) if (result.status === 'fulfilled') result.value.close();
+  throw new Error('An image did not decode');
 }
 
 async function comparePixels(request: PixelDiffRequest): Promise<PixelDiffResponse> {
-  const { id, before, after, width, height, color } = request;
+  const { id, width, height, color } = request;
+  const [before, after] = await bitmapsFor(request);
   const beforeWidth = before.width;
   const beforeHeight = before.height;
   const afterWidth = after.width;
