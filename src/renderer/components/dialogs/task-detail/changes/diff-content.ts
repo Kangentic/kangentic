@@ -71,9 +71,12 @@ export async function fetchDiffContent(
   const previousImage = previous?.image ?? null;
   if (imageKind === 'raster') return { text: EMPTY_DIFF_TEXT, image: await fetchImageSides(input, previousImage) };
   if (imageKind === 'svg') {
+    // The image half settles on its own: an SVG is first of all a text diff,
+    // and a failed image read must not take the text down with it. A null
+    // image then shows as a failed read in the preview alone.
     const [text, image] = await Promise.all([
       window.electronAPI.git.fileContent(input),
-      fetchImageSides(input, previousImage),
+      fetchImageSides(input, previousImage).catch(() => null),
     ]);
     return { text, image };
   }

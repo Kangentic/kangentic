@@ -480,13 +480,18 @@ async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: 
 }
 
 /**
- * A working-tree file modified this recently is read even when its size and
- * modified time match the caller's fingerprint. Git's racy-entry rule: a
- * second write inside the same timestamp tick (a coarse filesystem, or an
- * agent regenerating a screenshot twice in one burst) leaves both unchanged,
- * and trusting them would keep showing the old image.
+ * A working-tree fingerprint taken this soon after the file's last write is
+ * never trusted. Git's racy-entry rule: a second write inside the same
+ * timestamp tick (a coarse filesystem, or an agent regenerating a screenshot
+ * twice in one burst) keeps both size and modified time, so a fingerprint
+ * recorded between the two writes would match the second one and keep showing
+ * the first image for good. What counts is when the caller's copy was read,
+ * not when it is compared, so a side read inside the window carries
+ * RACY_FINGERPRINT_SUFFIX, which no fresh fingerprint ends in: the next
+ * refresh reads it again, by then outside the window.
  */
 export const RECENT_WRITE_WINDOW_MS = 2000;
+export const RACY_FINGERPRINT_SUFFIX = ':racy';
 
 async function readSideAsImage(
   git: ReturnType<typeof simpleGit>,
@@ -505,9 +510,12 @@ async function readSideAsImage(
       size = Number.parseInt((await git.catFile(['-s', objectId])).trim(), 10);
     } else {
       const stats = await fs.promises.stat(source.absolutePath);
-      fingerprint = `file:${stats.size}:${stats.mtimeMs}`;
+      const settledFingerprint = `file:${stats.size}:${stats.mtimeMs}`;
+      // The comparison checks the window too, which only matters if the
+      // clock stepped back since the caller's copy was read.
       const writtenRecently = Date.now() - stats.mtimeMs < RECENT_WRITE_WINDOW_MS;
-      if (fingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint };
+      if (settledFingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint: settledFingerprint };
+      fingerprint = writtenRecently ? `${settledFingerprint}${RACY_FINGERPRINT_SUFFIX}` : settledFingerprint;
       size = stats.size;
     }
     if (!Number.isFinite(size)) return { kind: 'unreadable' };

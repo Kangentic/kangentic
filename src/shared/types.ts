@@ -2510,7 +2510,10 @@ export interface GitFileImageInput extends GitFileContentInput {
  * the file's byte length. Bytes travel only under `IMAGE_PREVIEW_MAX_BYTES`
  * (`src/shared/image-preview.ts`); a larger side reports its size alone.
  * `fingerprint` names the bytes without carrying them: the blob id for a side
- * read from git, the size and modified time for a working-tree file.
+ * read from git, the size and modified time for a working-tree file. A
+ * working-tree file read just after a write gets a fingerprint marked racy,
+ * which never matches, so the next refresh reads it again (see
+ * RECENT_WRITE_WINDOW_MS in diff-service.ts). Callers treat it as opaque.
  * `unchanged` answers a side whose fingerprint matched the caller's, and the
  * caller keeps the side it already has.
  */

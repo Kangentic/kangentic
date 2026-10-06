@@ -41,7 +41,7 @@ vi.mock('../../src/main/git/line-count/line-count-client', () => ({
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DiffService, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
+import { DiffService, RACY_FINGERPRINT_SUFFIX, RECENT_WRITE_WINDOW_MS } from '../../src/main/git/diff-service';
 import { IMAGE_PREVIEW_MAX_BYTES } from '../../src/shared/image-preview';
 
 /** Backs the countFileLines bounded stat+open read path (see
@@ -1250,8 +1250,39 @@ describe('DiffService', () => {
           ...baseInput, status: 'M', knownFingerprints: { modified: modifiedFingerprint },
         });
 
-        expect(result.modified).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: modifiedFingerprint });
+        expect(result.modified).toEqual({
+          kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: `${modifiedFingerprint}${RACY_FINGERPRINT_SUFFIX}`,
+        });
         expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a fingerprint read inside the recent-write window is not trusted once the window has passed', async () => {
+      // The racy case itself: a second same-size write in the same timestamp
+      // tick lands after this read. The caller's copy is the first write's, so
+      // matching on size and time after the window would keep it forever.
+      const writtenAtMs = 1_800_000_000_000;
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+        mockDiskFile(PNG_BYTES, writtenAtMs);
+        vi.setSystemTime(writtenAtMs + Math.floor(RECENT_WRITE_WINDOW_MS / 4));
+        const first = await service.getImageContent({ ...baseInput, status: 'M' });
+        const firstFingerprint = first.modified?.kind === 'bytes' ? first.modified.fingerprint : undefined;
+        expect(firstFingerprint).toBe(`file:${PNG_BYTES.length}:${writtenAtMs}${RACY_FINGERPRINT_SUFFIX}`);
+
+        vi.setSystemTime(writtenAtMs + RECENT_WRITE_WINDOW_MS * 5);
+        const second = await service.getImageContent({ ...baseInput, status: 'M', knownFingerprints: { modified: firstFingerprint } });
+        expect(second.modified).toEqual({
+          kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES, fingerprint: `file:${PNG_BYTES.length}:${writtenAtMs}`,
+        });
+
+        // Read outside the window, the fingerprint is trusted from then on.
+        const third = await service.getImageContent({ ...baseInput, status: 'M', knownFingerprints: { modified: `file:${PNG_BYTES.length}:${writtenAtMs}` } });
+        expect(third.modified).toEqual({ kind: 'unchanged', fingerprint: `file:${PNG_BYTES.length}:${writtenAtMs}` });
+        expect(fs.promises.readFile).toHaveBeenCalledTimes(2);
       } finally {
         vi.useRealTimers();
       }

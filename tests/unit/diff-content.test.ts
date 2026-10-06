@@ -213,6 +213,23 @@ describe('fetchDiffContent (paths that never decode)', () => {
     expect(result.image).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
   });
 
+  it('an SVG whose image read fails keeps its text diff, with no image', async () => {
+    const text = textResult('<svg/>', '<svg></svg>');
+    fileContent.mockResolvedValue(text);
+    fileImage.mockRejectedValue(new Error('worktree removed'));
+
+    const result = await fetchDiffContent(inputFor('icons/logo.svg'), false);
+
+    expect(result).toEqual({ text, image: null });
+  });
+
+  it('a raster image whose read fails rejects, so the host can fall back', async () => {
+    // The control for the case above: a raster has no text to keep.
+    fileImage.mockRejectedValue(new Error('worktree removed'));
+
+    await expect(fetchDiffContent(inputFor('shots/home.png'), true)).rejects.toThrow('worktree removed');
+  });
+
   it('an SVG side main reports missing for the status stays null', async () => {
     fileContent.mockResolvedValue(textResult('', '<svg/>'));
     fileImage.mockResolvedValue({ original: null, modified: { kind: 'too-large', size: 5, fingerprint: 'file:5:1' } });
