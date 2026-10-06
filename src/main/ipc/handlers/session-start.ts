@@ -32,7 +32,7 @@ import { getProjectRepos } from '../helpers/project-repos';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
-import { isPausedTaskSession, resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
 export type StartTaskSessionResult =
@@ -85,9 +85,7 @@ export async function startTaskSession(
 
     const { swimlanes } = getProjectRepos(context, projectId);
     const lane = swimlanes.getById(task.swimlane_id);
-    // Truthiness, not `!== null`: a Task assembled without the column carries
-    // `undefined` in `archived_at`, which `!== null` would read as archived.
-    const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
+    const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
 
     if (hasSuspendedSession(context, taskId)) return { path: 'resume' as const };

@@ -27,7 +27,9 @@ import {
   isResumeOffered,
   resumeBlockMessage,
   resumeBlockReason,
+  resumeBlockReasonForTask,
 } from '../../src/shared/session-resume-eligibility';
+import type { Task } from '../../src/shared/types';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SESSIONS_HANDLER = 'src/main/ipc/handlers/sessions.ts';
@@ -70,6 +72,17 @@ describe('resumeBlockReason', () => {
     expect([...RESUME_HIDDEN_ROLES].sort()).toEqual(['done', 'todo']);
   });
 
+  it('resumeBlockReasonForTask reads archived_at by truthiness, so a row assembled without the column is not archived', () => {
+    // A mock, wire-mapped or MCP-constructed Task can carry `undefined` here.
+    // `!== null` would read that as ARCHIVED and refuse every resume.
+    const rowWithoutColumn = {} as Pick<Task, 'archived_at'>;
+    expect(resumeBlockReasonForTask({ task: rowWithoutColumn, laneRole: null })).toBeNull();
+    expect(resumeBlockReasonForTask({ task: { archived_at: null }, laneRole: null })).toBeNull();
+    expect(resumeBlockReasonForTask({ task: { archived_at: '2026-01-01T00:00:00.000Z' }, laneRole: null })).toBe('archived');
+    // Done still wins over archived, as resumeBlockReason orders them.
+    expect(resumeBlockReasonForTask({ task: { archived_at: '2026-01-01T00:00:00.000Z' }, laneRole: 'done' })).toBe('done');
+  });
+
   it('phrases every refusal as user-facing guidance', () => {
     // These strings reach the user verbatim through the task detail's
     // "Failed to resume session: <reason>" toast.
@@ -110,16 +123,16 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
   it('checks eligibility at BOTH the Phase 1 and Phase 3 lane checks', () => {
     // Phase 2 (worktree git I/O) runs unlocked, so Phase 3 must re-check against
     // the re-read row: a concurrent move to Done archives the task in that gap.
-    const callSites = source.match(/resumeBlockReason\(/g) ?? [];
+    const callSites = source.match(/resumeBlockReasonForTask\(/g) ?? [];
     expect(callSites).toHaveLength(2);
   });
 
-  it('reads archived_at at both call sites, not just the lane role', () => {
-    // Truthiness, never `!== null`: a Task assembled without the column carries
-    // `undefined`, and `!== null` reads that as ARCHIVED, refusing every resume.
-    const archivedReads = source.match(/isArchived: Boolean\((task|current)\.archived_at\)/g) ?? [];
-    expect(archivedReads).toHaveLength(2);
-    expect(source).not.toMatch(/archived_at !== null/);
+  it('hands the row to the predicate at both call sites, the re-read one in Phase 3', () => {
+    // The predicate reads archived_at itself, so passing the row is what makes
+    // the archive state count. Phase 3 must pass the row it re-read under the
+    // lock, not the Phase 1 snapshot, or a move to Done in the gap goes unseen.
+    expect(source).toMatch(/resumeBlockReasonForTask\(\{ task, laneRole: lane\?\.role \}\)/);
+    expect(source).toMatch(/resumeBlockReasonForTask\(\{ task: current, laneRole: currentLane\?\.role \}\)/);
   });
 
   it('keeps the self-heal early return ahead of the eligibility check', () => {
@@ -127,7 +140,7 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
     // path that re-attaches a renderer whose view drifted to 'suspended'.
     // Ordering it after the check would strand that renderer on an archived task.
     const selfHealIndex = source.indexOf("return { kind: 'live' as const, session: liveSession }");
-    const firstGuardIndex = source.indexOf('resumeBlockReason(');
+    const firstGuardIndex = source.indexOf('resumeBlockReasonForTask(');
     expect(selfHealIndex).toBeGreaterThan(-1);
     expect(firstGuardIndex).toBeGreaterThan(selfHealIndex);
   });
@@ -144,11 +157,27 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
   });
 
   it('isResumeOffered needs a paused session AND a column and archive state that allow Resume', () => {
-    expect(isResumeOffered({ hasPausedSession: true, laneRole: null, isArchived: false })).toBe(true);
-    expect(isResumeOffered({ hasPausedSession: false, laneRole: null, isArchived: false })).toBe(false);
-    expect(isResumeOffered({ hasPausedSession: true, laneRole: 'todo', isArchived: false })).toBe(false);
-    expect(isResumeOffered({ hasPausedSession: true, laneRole: 'done', isArchived: false })).toBe(false);
-    expect(isResumeOffered({ hasPausedSession: true, laneRole: null, isArchived: true })).toBe(false);
+    const liveTask = { archived_at: null };
+    const archivedTask = { archived_at: '2026-01-01T00:00:00.000Z' };
+    expect(isResumeOffered({ hasPausedSession: true, task: liveTask, laneRole: null })).toBe(true);
+    expect(isResumeOffered({ hasPausedSession: false, task: liveTask, laneRole: null })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, task: liveTask, laneRole: 'todo' })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, task: liveTask, laneRole: 'done' })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, task: archivedTask, laneRole: null })).toBe(false);
+  });
+
+  // The archive half of the check had four hand-written copies, each carrying
+  // the same "truthiness, not `!== null`" warning. The predicates own that read
+  // now; a site that derives `isArchived` again is the drift this pins.
+  it.each([
+    'src/main/ipc/handlers/session-start.ts',
+    'src/main/ipc/handlers/session-resume.ts',
+    'src/main/mobile-bridge/handlers/read-board.ts',
+    'src/main/mobile-bridge/handlers/read-stream.ts',
+  ])('%s leaves the archived_at read to the shared predicate', (relativePath) => {
+    const source = readSource(relativePath);
+    expect(source).not.toMatch(/isArchived:/);
+    expect(source).not.toMatch(/archived_at !== null/);
   });
 
   // start-session's resume path and the `resumable` flag the phone gates

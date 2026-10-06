@@ -137,9 +137,7 @@ function isSessionResumable(context: IpcContext, session: Session): boolean {
     const task = tasks.getById(session.taskId);
     if (!task) return false;
     const lane = swimlanes.getById(task.swimlane_id);
-    // Truthiness, not `!== null`: a Task assembled without the column carries
-    // `undefined` in `archived_at`, which `!== null` would read as archived.
-    return isResumeOffered({ hasPausedSession: true, laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
+    return isResumeOffered({ hasPausedSession: true, task, laneRole: lane?.role });
   } catch {
     return false;
   }

@@ -1,4 +1,4 @@
-import type { Session, SwimlaneRole } from './types';
+import type { Session, SwimlaneRole, Task } from './types';
 
 /**
  * Columns that deliberately offer no Resume.
@@ -48,6 +48,21 @@ export function resumeBlockReason(input: {
 }
 
 /**
+ * `resumeBlockReason` for a task row and its column's role, for callers that
+ * hold the row itself (the main-process resume, start and mobile bridge paths;
+ * the renderer derives `isArchived` on its own). It owns the one read of
+ * `archived_at`, by truthiness, never `!== null`: a Task assembled without the
+ * column (mocks, wire mappers, MCP-constructed rows) carries `undefined`, which
+ * `!== null` reads as ARCHIVED and would refuse every resume.
+ */
+export function resumeBlockReasonForTask(input: {
+  task: Pick<Task, 'archived_at'>;
+  laneRole: string | null | undefined;
+}): ResumeBlockReason | null {
+  return resumeBlockReason({ laneRole: input.laneRole, isArchived: Boolean(input.task.archived_at) });
+}
+
+/**
  * Whether a session registry row is a task's PAUSED session: `suspended`, and
  * not a Command Terminal (which belongs to no task and is never resumed). The
  * one definition behind the mobile bridge's Resume promise: `startTaskSession`
@@ -61,17 +76,18 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
 
 /**
  * Whether the desktop offers Resume for a task: its session is paused (a
- * `suspended` registry row, `isPausedTaskSession`) and the resume is not refused. This is the resume
- * direction of `canToggle` in the task detail (`useTaskSessionState.ts`), and
- * the `resumable` the mobile bridge sends, on the board row and the
- * read-stream feed, promising that `start-session` resumes rather than starts.
+ * `suspended` registry row, `isPausedTaskSession`) and
+ * `resumeBlockReasonForTask` refuses nothing. This is the resume direction of
+ * `canToggle` in the task detail (`useTaskSessionState.ts`), and the
+ * `resumable` the mobile bridge sends, on the board row and the read-stream
+ * feed, promising that `start-session` resumes rather than starts.
  */
 export function isResumeOffered(input: {
   hasPausedSession: boolean;
+  task: Pick<Task, 'archived_at'>;
   laneRole: string | null | undefined;
-  isArchived: boolean;
 }): boolean {
-  return input.hasPausedSession && resumeBlockReason(input) === null;
+  return input.hasPausedSession && resumeBlockReasonForTask(input) === null;
 }
 
 /**
