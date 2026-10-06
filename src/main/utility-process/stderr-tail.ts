@@ -8,7 +8,7 @@ import { StringDecoder } from 'node:string_decoder';
  * `utilityProcess.fork` defaults `stdio` to `inherit`, which on a packaged GUI
  * build sends the worker's stderr nowhere: the uncaught-exception dump that
  * names a crash was thrown away on every occurrence, and the crash report
- * could only say "exited with code 1" (DESKTOP-H). Both workers now fork with
+ * could only say "exited with code 1" (DESKTOP-H). Every worker now forks with
  * stderr piped (`UTILITY_PROCESS_STDIO`) and drain it into one of these per
  * child; the restart policy reads it when it logs a crash and when it reports
  * the latch.

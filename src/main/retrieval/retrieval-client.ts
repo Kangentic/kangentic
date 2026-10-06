@@ -68,6 +68,8 @@ export class RetrievalUnavailableError extends Error {
 }
 
 interface PendingCall {
+  /** Named in the crash record when another call times out while this one waits. */
+  method: RetrievalMethod;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -144,7 +146,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     return new Promise<MethodResult<Method>>((resolve, reject) => {
       const timer = timeoutMs === null ? null : setTimeout(() => this.onTimeout(child, requestId, method), timeoutMs);
       timer?.unref();
-      this.pending.set(requestId, { resolve: resolve as (result: unknown) => void, reject, timer });
+      this.pending.set(requestId, { method, resolve: resolve as (result: unknown) => void, reject, timer });
       const message: RequestMessage<Method> = { type: 'request', id: requestId, method, params };
       try {
         child.postMessage(message);
@@ -170,7 +172,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       child = utilityProcess.fork(workerPath, [], { serviceName: SERVICE_NAME, stdio: UTILITY_PROCESS_STDIO });
     } catch (error) {
       console.warn('[retrieval] retrieval worker fork failed:', error);
-      this.restartPolicy.recordCrash(null);
+      this.restartPolicy.recordCrash(null, undefined, { cause: 'fork_failed' });
       return null;
     }
     this.child = child;
@@ -190,7 +192,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     const readyTimer = setTimeout(() => {
       if (child !== this.child) return;
       console.warn('[retrieval] the retrieval worker did not start in time; restarting it');
-      this.restartPolicy.recordCrash(null, stderrTail);
+      this.restartPolicy.recordCrash(null, stderrTail, { cause: 'ready_timeout' });
       this.drop(new RetrievalUnavailableError('The retrieval worker did not start in time'));
     }, READY_TIMEOUT_MS);
     readyTimer.unref();
@@ -241,12 +243,19 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     else entry.resolve(result);
   }
 
-  private onTimeout(child: UtilityProcess, requestId: number, method: string): void {
+  private onTimeout(child: UtilityProcess, requestId: number, method: RetrievalMethod): void {
     if (!this.pending.has(requestId) || child !== this.child) return;
     console.warn(`[retrieval] ${method} did not answer in time; restarting the retrieval worker`);
+    // What else was waiting, read before `drop` settles it all. Background jobs
+    // count too: one holding the worker between steps is what a timeout most
+    // likely means, and its name is the only trace a packaged build keeps.
+    const pendingMethods: RetrievalMethod[] = [];
+    for (const [pendingId, entry] of this.pending) {
+      if (pendingId !== requestId) pendingMethods.push(entry.method);
+    }
     // A stuck worker counts toward the crash cap, recorded now: its exit, when
     // it lands, may come after the next worker is already running.
-    this.restartPolicy.recordCrash(null, this.childStderr ?? undefined);
+    this.restartPolicy.recordCrash(null, this.childStderr ?? undefined, { cause: 'request_timeout', method, pendingMethods });
     this.drop(new RetrievalUnavailableError(`The retrieval worker did not answer ${method} in time`));
   }
 
@@ -262,7 +271,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     const exited = new RetrievalUnavailableError('The retrieval worker exited');
     for (const requestId of [...this.pending.keys()]) this.settle(requestId, exited);
     this.markDown();
-    if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail);
+    if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail, { cause: 'exit' });
   }
 
   private markDown(): void {

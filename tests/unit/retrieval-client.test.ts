@@ -113,6 +113,42 @@ describe('RetrievalClient', () => {
     client.dispose();
   });
 
+  // DESKTOP-1Q: the latch said only "exit code unknown". A timed-out call now names the method
+  // that did not answer and every other call still waiting, background jobs included, since a
+  // background job holding the worker's event loop is the hypothesis the report has to test.
+  it('tells the restart policy which method timed out and what else was pending', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // The default backoff, so the policy still refuses a respawn right after the
+    // crash and `unavailableReason` says why.
+    const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 5 });
+    const recordCrash = vi.spyOn(policy, 'recordCrash');
+    const client = new RetrievalClient(policy);
+    try {
+      const background = client.call('summary.candidates', { projectId: 'project-1', skip: [] }, { timeoutMs: null });
+      const interactive = client.call('projects.summaries', { projectIds: [] });
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await flush();
+
+      vi.advanceTimersByTime(INTERACTIVE_TIMEOUT_MS);
+      await expect(interactive).rejects.toBeInstanceOf(RetrievalUnavailableError);
+      await expect(background).rejects.toBeInstanceOf(RetrievalUnavailableError);
+
+      expect(recordCrash).toHaveBeenCalledTimes(1);
+      expect(recordCrash).toHaveBeenCalledWith(null, expect.anything(), {
+        cause: 'request_timeout',
+        method: 'projects.summaries',
+        pendingMethods: ['summary.candidates'],
+      });
+      // What the Knowledge Graph shows: a hang, not "exited with code unknown".
+      expect(client.unavailableReason).toBe('The retrieval worker stopped (did not answer projects.summaries in time)');
+    } finally {
+      client.dispose();
+      warn.mockRestore();
+    }
+  });
+
   it('gives a background job no budget', async () => {
     vi.useFakeTimers();
     const client = new RetrievalClient();
@@ -153,16 +189,22 @@ describe('RetrievalClient', () => {
   });
 
   it('latches off after repeated crashes and says why', async () => {
-    const client = new RetrievalClient(new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 2, backoffMs: [0] }));
+    // The policy logs each crash; keep that out of the test output.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const policy = new UtilityRestartPolicy({ service: 'test-retrieval', maxCrashes: 2, backoffMs: [0] });
+    const recordCrash = vi.spyOn(policy, 'recordCrash');
+    const client = new RetrievalClient(policy);
     for (let attempt = 0; attempt < 2; attempt++) {
       const call = client.call('projects.summaries', { projectIds: [] });
       lastChild().emit('exit', 1);
       await expect(call).rejects.toBeInstanceOf(RetrievalUnavailableError);
     }
+    expect(recordCrash).toHaveBeenCalledWith(1, expect.anything(), { cause: 'exit' });
     await expect(client.call('projects.summaries', { projectIds: [] })).rejects.toBeInstanceOf(RetrievalUnavailableError);
     expect(forkedChildren).toHaveLength(2);
     expect(client.unavailableReason).toMatch(/stopped/);
     client.dispose();
+    warn.mockRestore();
   });
 
   it('ignores the exit of a worker it already replaced', async () => {
@@ -337,6 +379,7 @@ describe('RetrievalClient', () => {
         expect(forkedChildren).toHaveLength(0);
         expect(respawned).not.toHaveBeenCalled();
         expect(recordCrash).toHaveBeenCalledTimes(1);
+        expect(recordCrash).toHaveBeenCalledWith(null, undefined, { cause: 'fork_failed' });
 
         const next = client.call('projects.summaries', { projectIds: [] });
         expect(mockFork).toHaveBeenCalledTimes(2);
@@ -451,6 +494,7 @@ describe('RetrievalClient', () => {
       expect(stuckChild.kill).toHaveBeenCalledTimes(1);
       expect(sent(stuckChild, 'shutdown')).toHaveLength(1);
       expect(recordCrash).toHaveBeenCalledTimes(1);
+      expect(recordCrash).toHaveBeenCalledWith(null, expect.anything(), { cause: 'ready_timeout' });
 
       // The next call forks a new worker and gets its answer.
       const next = client.call('projects.summaries', { projectIds: [] });

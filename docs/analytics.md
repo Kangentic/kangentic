@@ -26,7 +26,7 @@ Nineteen event types are tracked, all on critical-path actions only:
 | `board_snapshot` | Once per project per app run, the first time the user views it (the boot auto-open or a sidebar switch); background activation of other projects does not count, and neither does the open that creates a project, whose board is still the default | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
 | `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
-| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), phase (`first` / `latched`) |
+| `utility_worker_crashed` | A Kangentic utility process exited unexpectedly (not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), cause (`exit` / `fork_failed` / `ready_timeout` / `request_timeout`), phase (`first` / `latched`) |
 | `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder, or the startup sweep stopped or failed to stop something. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
 | `mobile_bridge_forced_redial` | The mobile bridge abandoned a relay socket that still read connected but carried nothing (a socket the relay reaped while the network was away; see `docs/mobile-bridge.md`): at most once per reason per app run | reason (`paired-silent` / `parked-stale`) |
@@ -53,9 +53,12 @@ minutes before something unrelated killed it".
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
 reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
 `GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
-sentinel meaning "the fork itself threw, so no process ever started and there is no exit code",
-which a real exit code cannot collide with. The matching Sentry tag spells that same case
-`unknown` rather than `-1`. `phase` says which of the two per-run events it is: `first` counts the
+sentinel meaning "no process exit, so there is no exit code", which a real exit code cannot collide
+with. The matching Sentry tag spells that same case `unknown` rather than `-1`. `cause` says which
+case it was: `exit` carries a real code, and `-1` comes with `fork_failed` (the fork threw, so no
+process started), `ready_timeout` (the worker never said ready) or `request_timeout` (the client
+killed a worker that stopped answering). Before `cause` was sent, a retrieval worker that hung read
+as a fork failure. `phase` says which of the two per-run events it is: `first` counts the
 installs that hit a crash at all, `latched` counts the installs whose subsystem gave up (the same
 moment the Sentry issue is filed). The event used to tick on every crash, which with three crashes
 per five-minute decay window read as "71 crashes a day" when it was a handful of installs looping,
@@ -71,7 +74,7 @@ session-teardown exit is written to the record but never ticks, or every shutdow
 would read as a GPU death on the dashboard. Neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
 the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
 matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel does NOT carry the same
-meaning it does for `utility_worker_crashed` above: there it means the fork never started, but here it
+meaning it does for `utility_worker_crashed` above: there it means the worker never exited, but here it
 means Electron's `child-process-gone` event reported no exit code, a routine and more common case.
 The latch governs this Aptabase tick ONLY. The durable escalation record is written on every death
 from the first (see "Error Reporting" below), because the death that actually kills the app is one
@@ -464,7 +467,7 @@ in one Sentry org, one triage surface.
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
   `reason` tag), a Kangentic utility worker that has crashed past its restart cap
-  (`source: utility_process`, with `service`, `exitCode`, and `crashCount`), and a GPU health
+  (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a task leftover reap or a leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
@@ -487,10 +490,22 @@ in one Sentry org, one triage surface.
   per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code
   change (Sentry DESKTOP-1C). The utility-worker report also
   carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
-  directory redacted). Both workers are forked with stderr piped for this; with Electron's
+  directory redacted). Every worker is forked with stderr piped for this; with Electron's
   `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so
   every DESKTOP-H event could only say "exit code 1". Content lives in the context, never in a
-  tag or the message, so grouping is unchanged.
+  tag or the message, so grouping is unchanged. The same block lists `crashes`, one line per crash
+  in the decay window, oldest first: the cause (`exit`, `fork_failed`, `ready_timeout` or
+  `request_timeout`), the exit code when there is one, and for a request timeout the method that
+  did not answer and the other methods still pending, as in
+  `request_timeout method=projects.summaries pending=transcript.usage(12)`. The latching crash's
+  cause is also a `cause` tag. Only `exit` is a process exit, so a `request_timeout` latch means the
+  worker hung; DESKTOP-1Q said only "exit code unknown" and could not tell. Each crash is a string
+  because Sentry normalizes contexts to depth 3, which turns an object inside the list into
+  `[Object]`. The pending list names every job in flight, since the retrieval worker schedules
+  nothing itself, but not which one held the loop. For that, the worker runs an event-loop watchdog
+  thread (`src/main/retrieval/worker/event-loop-watchdog.ts`): when its heartbeat stops for about
+  5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
+  `timeSyncWork` span that was running, so the line is in the stderr tail by the 15 s kill.
 - **Host memory pressure carries a `host_memory` context on every event** (`setHostMemoryContext`,
   `src/main/diagnostics/host-memory.ts`; DESKTOP-16 was a renderer OOM where the crashing process
   held 179 MB while the host had 2.15 MB of Windows commit remaining out of an 89.8 GB limit - a
@@ -523,10 +538,12 @@ in one Sentry org, one triage surface.
   `utility_worker_crashed` events per service per app run, the first crash and the latch. The same
   volume-versus-diagnostic split as `spawn_failed`.
   Every crash does log its stderr tail to the main console as a
-  `[utility-process] <service> exited with code <n>` warning, which the log mirror persists to
-  `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether or not error
-  reporting is on. The Knowledge Graph settings tab shows the same reason (exit code plus the first error
-  line) while semantic search is off because of it.
+  `[utility-process] <service> exited with code <n> (crash <i> of <cap>)` warning, which the log
+  mirror persists to `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether
+  or not error reporting is on. A crash with no exit says what the worker failed to do instead, as
+  in `did not answer projects.summaries in time`, and the package smoke matches the `(crash <i> of
+  <cap>)` suffix every cause shares. The Knowledge Graph settings tab shows the same reason, plus
+  the first error line, while semantic search is off because of it.
 - **A GPU health escalation is reported once, and on the NEXT launch, not live.**
   `src/main/diagnostics/gpu-health.ts` counts GPU `child-process-gone` deaths the same way
   `UtilityRestartPolicy` counts a worker's, but cannot report live: the failure sequence this exists

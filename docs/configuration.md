@@ -536,8 +536,9 @@ about how many calls); otherwise it runs at once. A Search quality change re-emb
 When the embedding worker crashes three times inside five minutes, the restart
 policy stops respawning it and search falls back to keyword matches until the
 window decays. The Knowledge Graph card's note then names the reason (`KnowledgeGraphStatus.workerError`:
-the worker's exit code plus the first error line of its stderr, for example
-`exited with code 1: Error: Cannot find module 'onnxruntime-common'`), and the
+how the worker stopped plus the first error line of its stderr, for example
+`exited with code 1: Error: Cannot find module 'onnxruntime-common'`, or `failed to start` for a
+fork that threw), and the
 same text is in `<project>/.kangentic/logs/<date>.log` as a
 `[utility-process]` warning.
 

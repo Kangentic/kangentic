@@ -42,7 +42,7 @@ function semanticPlatformNote(status: KnowledgeGraphStatus | null): string | nul
   }
   if (status.semantic === 'error') {
     return status.workerError
-      ? `The local model failed to start - showing keyword matches. (${status.workerError})`
+      ? `The local model stopped - showing keyword matches. (${status.workerError})`
       : 'The local model failed to start - showing keyword matches.';
   }
   return null;

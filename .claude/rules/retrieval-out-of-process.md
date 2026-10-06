@@ -57,6 +57,11 @@ connection.
 - **`RetrievalClient` is constructed only in `retrieval-client.ts`**, as the shared
   `retrievalClient`. The worker is its own esbuild entry in `scripts/build.js` and `scripts/dev.js`
   and carries no `electron`, IPC, analytics or Sentry import.
+- **The worker's one thread is its event-loop watchdog** (`worker/event-loop-watchdog.ts`), which
+  names the step that held the loop when a call times out. It runs inline source that requires
+  only `node:` built-ins, since loading a native module in a worker thread is unsafe, and it
+  writes with `fs.writeSync`, since a thread's console waits on the thread that is hung. It posts
+  no message, so main pays nothing while the worker is healthy.
 - **Project delete closes the worker's handle first** (`project.close`, or a kill after 3 s), since
   Windows refuses to unlink a database file another process holds open.
 
@@ -75,6 +80,10 @@ connection.
 - **Test:** `tests/unit/stderr-tail.test.ts` scans every `utilityProcess.fork` site, the retrieval
   worker's included (see [[cross-platform-parity]]), and `tests/unit/verify-unpacked-worker.test.ts`
   pins the packaging half.
+- **Test:** `tests/unit/event-loop-watchdog.test.ts` runs the watchdog on a real thread, holds the
+  loop, and reads the line it wrote while the loop was still held. It also fails when the thread
+  requires anything but a `node:` built-in, or when `worker_threads` is imported anywhere else in
+  `src/main`.
 - **Review:** a new main-side caller of a retrieval-store method compiles (types are erased), so
   the boundary test catches it only when it pulls a declaration into main's bundle. `/code-review`
   flags a direct `getProjectDb` read of a `memory_*` table from main.
