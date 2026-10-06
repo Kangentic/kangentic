@@ -561,7 +561,7 @@ test.describe('Announcements megaphone and history', () => {
 
     // Two active announcements: the banner takes the higher-priority one...
     await expect(page.locator('[data-testid="announcement-banner"]'))
-      .toContainText('Kangentic Mobile is almost here');
+      .toContainText('Kangentic Mobile is live on iOS and Android');
     // ...both are unread, so the badge counts exactly those two...
     await expect(badge()).toContainText('2');
 
