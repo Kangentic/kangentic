@@ -49,7 +49,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
-import { seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import { ScanStepError, seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 
 const TOOL_TIMEOUT_MS = 5000;
 const LAUNCHD_PID = 1;
@@ -347,7 +347,13 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
 
   async scan(): Promise<ProcessScan> {
     const kernel = await this.loadKernel();
-    const pids = kernel.listPids();
+    let pids: number[];
+    try {
+      pids = kernel.listPids();
+    } catch (error) {
+      // A refused list or a koffi throw in the call: the reap names the step.
+      throw new ScanStepError('process_list', error instanceof Error ? error.message : String(error));
+    }
     const processes: ScannedProcess[] = [];
     const executablePaths = new Map<number, string>();
     let unreadableCount = 0;
@@ -442,7 +448,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     // Applications folder has. Without it the scan fails, so the reap stops
     // before its next kill, rather than treating every process as windowless.
     const listing = await this.runLsappinfo(['list']);
-    if (listing === null) throw new Error('lsappinfo list did not run');
+    if (listing === null) throw new ScanStepError('window_list', 'lsappinfo list did not run');
     const uiPids = parseLsappinfoUiPids(listing);
     for (const scanned of relevant) {
       scanned.workingDirectory = kernel.workingDirectory(scanned.pid);

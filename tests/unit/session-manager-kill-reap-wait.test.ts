@@ -46,7 +46,7 @@ import { KILL_GRACE_MS } from '../../src/main/pty/lifecycle/deferred-kill';
 const EXIT_SEQUENCE = ['\x03', '/exit\r'];
 /** A task id the reap accepts: a task tag value must be a UUID. */
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
 
 let tmpDir: string;
 const managers: SessionManager[] = [];

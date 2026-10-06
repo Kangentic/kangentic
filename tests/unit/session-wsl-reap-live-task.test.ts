@@ -38,7 +38,7 @@ const STARTING_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
 const IDLE_TASK = '1c2d3e4f-5061-4728-9930-4b5c6d7e8f90';
 /** Has no session when a reap starts, and gets one while its `wsl.exe` listings are in flight. */
 const LATE_TASK = '2d3e4f50-6172-4839-8a41-5c6d7e8f9a01';
-const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
 
 const realPlatform = process.platform;
 

@@ -70,6 +70,24 @@ export interface ProcessScan {
 }
 
 /**
+ * A scan step a reader can name when it fails. `process_list`: the OS refused
+ * the list of processes. `window_list`: the list of visible apps could not be
+ * read (macOS `lsappinfo`).
+ */
+export type ScanStepFailureCode = 'process_list' | 'window_list';
+
+/**
+ * A scan that failed at a step the reader names, so the reap reports the step
+ * as a fixed code without reading the message. The message is the reader's
+ * own text for the local log, never anything a scan read.
+ */
+export class ScanStepError extends Error {
+  constructor(readonly code: ScanStepFailureCode, message: string) {
+    super(message);
+  }
+}
+
+/**
  * The processes `isSeed` picks and everything below them, by parent link. A
  * POSIX reader reads roles (and on macOS working directories) for these only,
  * since a reap can touch nothing else. Never their ancestors: a desktop shell

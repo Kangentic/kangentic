@@ -43,7 +43,13 @@ import {
   type ReapPlanInput,
   type ReapTaskScope,
 } from './reap-plan';
-import type { ProcessScan, ScannedProcess, TaggedProcessReader } from './process-scan';
+import {
+  ScanStepError,
+  type ProcessScan,
+  type ScannedProcess,
+  type ScanStepFailureCode,
+  type TaggedProcessReader,
+} from './process-scan';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -92,10 +98,18 @@ export interface LeftoverProcessEntry {
 /**
  * Why a reap gave up, as a fixed code. `reader_load`: koffi or an OS library
  * would not load. `empty_scan`: the scan listed no process at all, which is
- * never true (the host and main are always running). `reap_error`: anything
- * else threw.
+ * never true (the host and main are always running). `process_list` and
+ * `window_list`: a scan step the reader named failed (`ScanStepError`).
+ * `reap_error`: anything else threw.
  */
-export type ReapFailureCode = 'reader_load' | 'empty_scan' | 'reap_error';
+export type ReapFailureCode = 'reader_load' | 'empty_scan' | ScanStepFailureCode | 'reap_error';
+
+/**
+ * The pass a reap was in when it failed. `first`: nothing was signalled yet.
+ * `second`: the graceful kills went out. `last`: the survivor check, after the
+ * force pass.
+ */
+export type ReapPass = 'first' | 'second' | 'last';
 
 export interface TaggedReapResult {
   /** Pids a kill was issued for, in either pass. */
@@ -110,6 +124,8 @@ export interface TaggedReapResult {
    */
   failureReason: string | null;
   failureCode: ReapFailureCode | null;
+  /** The pass the reap failed in, or null when it failed before its first scan or did not fail. */
+  failurePass: ReapPass | null;
   /** What the user is told: stopped, not stopped, and left running. */
   entries: LeftoverProcessEntry[];
 }
@@ -126,8 +142,8 @@ export interface TaggedReaperDeps {
 }
 
 /** A fresh result each time, so no caller can share another's arrays. */
-function emptyResult(): TaggedReapResult {
-  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, entries: [] };
+export function emptyReapResult(): TaggedReapResult {
+  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
 }
 
 function messageOf(error: unknown): string {
@@ -145,6 +161,13 @@ class EmptyScanError extends Error {
 function requireProcesses(scan: ProcessScan): ProcessScan {
   if (scan.processes.length === 0) throw new EmptyScanError();
   return scan;
+}
+
+/** The fixed code for what a pass threw, by its type and never its message. */
+function failureCodeOf(error: unknown): ReapFailureCode {
+  if (error instanceof EmptyScanError) return 'empty_scan';
+  if (error instanceof ScanStepError) return error.code;
+  return 'reap_error';
 }
 
 function defaultWait(ms: number): Promise<void> {
@@ -253,9 +276,9 @@ export async function reapTaggedOnce(
   } catch (error) {
     // `os.homedir()` throws for a user with no home. Without it home cannot be
     // refused as a root, so the reap kills nothing.
-    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
+    return { ...emptyReapResult(), failureReason: messageOf(error), failureCode: 'reap_error' };
   }
-  if (tasks.size === 0) return emptyResult();
+  if (tasks.size === 0) return emptyReapResult();
   const wait = deps.wait ?? defaultWait;
   const caseInsensitivePaths = deps.caseInsensitivePaths ?? process.platform !== 'linux';
   const planInput = (processes: ScannedProcess[]): ReapPlanInput => ({
@@ -274,16 +297,18 @@ export async function reapTaggedOnce(
   try {
     await deps.reader.ready?.();
   } catch (error) {
-    return { ...emptyResult(), failureReason: messageOf(error), failureCode: 'reader_load' };
+    return { ...emptyReapResult(), failureReason: messageOf(error), failureCode: 'reader_load' };
   }
   const killed = new Set<number>();
   // Set once the graceful kills went out: a scan that fails after them still
   // owes the user a report, with what was signalled listed as not stopped.
   let signalledEntries: (() => LeftoverProcessEntry[]) | null = null;
+  // Which pass a failure lands in, which says what was signalled before it.
+  let pass: ReapPass = 'first';
   try {
     const firstScan = await deps.reader.scan();
     if (firstScan.processes.length === 0) {
-      return { ...emptyResult(), failureReason: 'the process scan listed nothing', failureCode: 'empty_scan' };
+      return { ...emptyReapResult(), failureReason: 'the process scan listed nothing', failureCode: 'empty_scan', failurePass: pass };
     }
     const firstPlan = planReapDetailed(planInput(firstScan.processes));
     const labels = await describeSafely(deps.reader, [
@@ -307,6 +332,7 @@ export async function reapTaggedOnce(
         unreadableCount: firstScan.unreadableCount,
         failureReason: null,
         failureCode: null,
+        failurePass: null,
         entries: [...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, 'kept', null)), ...keptEntries],
       };
     }
@@ -317,6 +343,7 @@ export async function reapTaggedOnce(
       ...keptEntries,
     ];
     await wait(REAP_GRACE_MS);
+    pass = 'second';
     const secondScan = requireProcesses(await deps.reader.scan());
     const secondPlan = planReapDetailed(planInput(secondScan.processes));
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
@@ -338,6 +365,7 @@ export async function reapTaggedOnce(
     const rootStillListed = firstPlan.roots.some((root) => listedAfterFirst.has(identityOf(root.process)));
     if (secondPlan.targets.length > 0 || rootStillListed) {
       await wait(SURVIVOR_CHECK_MS);
+      pass = 'last';
       const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
       const alive = new Set(lastScan.processes.map(identityOf));
@@ -382,6 +410,7 @@ export async function reapTaggedOnce(
       unreadableCount,
       failureReason: null,
       failureCode: null,
+      failurePass: null,
       entries: [
         ...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, failedRootPids.has(root.process.pid) ? 'failed' : 'stopped', null)),
         ...orphanEntries,
@@ -390,10 +419,11 @@ export async function reapTaggedOnce(
     };
   } catch (error) {
     return {
-      ...emptyResult(),
+      ...emptyReapResult(),
       killedPids: [...killed].sort((left, right) => left - right),
       failureReason: messageOf(error),
-      failureCode: error instanceof EmptyScanError ? 'empty_scan' : 'reap_error',
+      failureCode: failureCodeOf(error),
+      failurePass: pass,
       entries: signalledEntries ? signalledEntries() : [],
     };
   }
@@ -411,6 +441,25 @@ export interface StopProcessRequest {
 export type StopProcessOutcome = 'stopped' | 'ended' | 'failed';
 
 /**
+ * A stop's answer, and why it gave up when it did. A refusal (Kangentic's
+ * tree, a held PTY) or a process that outlived the force kill is an answer,
+ * with no failure code. Only a scan that threw or listed nothing carries one,
+ * with the pass it happened in. `failureReason` is for local logs only: it
+ * can come from a scan.
+ */
+export interface StopProcessResult {
+  outcome: StopProcessOutcome;
+  failureCode: ReapFailureCode | null;
+  failurePass: ReapPass | null;
+  failureReason: string | null;
+}
+
+/** A stop's answer with no failure to report. */
+export function stopAnswer(outcome: StopProcessOutcome): StopProcessResult {
+  return { outcome, failureCode: null, failurePass: null, failureReason: null };
+}
+
+/**
  * Stop one process a report named, with everything under it, as the user
  * asked from the list. Its tag and directory were checked when the report was
  * made; here only its identity is, and Kangentic's own tree and every held PTY
@@ -425,34 +474,37 @@ export type StopProcessOutcome = 'stopped' | 'ended' | 'failed';
 export async function stopProcessTree(
   request: StopProcessRequest,
   deps: TaggedReaperDeps,
-): Promise<StopProcessOutcome> {
+): Promise<StopProcessResult> {
   const wait = deps.wait ?? defaultWait;
+  // As in a reap: which pass a failure lands in says what was signalled before it.
+  let pass: ReapPass = 'first';
   try {
-    const scan = await deps.reader.scan();
     // A scan that lists nothing failed (see `empty_scan`); it says nothing about whether the process ended.
-    if (scan.processes.length === 0) return 'failed';
+    const scan = requireProcesses(await deps.reader.scan());
     const target = scan.processes.find((scanned) => scanned.pid === request.pid && scanned.startKey === request.startKey);
-    if (!target || !request.startKey) return 'ended';
+    if (!target || !request.startKey) return stopAnswer('ended');
     const safetyPids = buildSafetyProtectedPids({ processes: scan.processes, mainPid: request.mainPid, liveRootPids: deps.liveRootPids() });
-    if (safetyPids.has(target.pid)) return 'failed';
+    if (safetyPids.has(target.pid)) return stopAnswer('failed');
     const tree = subtreeOf(target, scan.processes, safetyPids);
-    if (tree.length === 0) return 'failed';
+    if (tree.length === 0) return stopAnswer('failed');
     await killAll(deps.reader, tree, 'graceful');
     await wait(REAP_GRACE_MS);
+    pass = 'second';
     // An empty later scan throws, so it reads as `failed`, never as `stopped`.
     const secondScan = requireProcesses(await deps.reader.scan());
     const aliveAfterFirst = new Set(secondScan.processes.map(identityOf));
     const survivors = tree.filter((scanned) => aliveAfterFirst.has(identityOf(scanned)));
-    if (survivors.length === 0) return 'stopped';
+    if (survivors.length === 0) return stopAnswer('stopped');
     await killAll(deps.reader, survivors, 'force');
     await wait(SURVIVOR_CHECK_MS);
+    pass = 'last';
     const lastScan = requireProcesses(await deps.reader.scan());
     // Any survivor, not only the target: a child that outlived its parent
     // keeps the tree running.
     const aliveAtLast = new Set(lastScan.processes.map(identityOf));
-    return survivors.some((survivor) => aliveAtLast.has(identityOf(survivor))) ? 'failed' : 'stopped';
-  } catch {
-    return 'failed';
+    return stopAnswer(survivors.some((survivor) => aliveAtLast.has(identityOf(survivor))) ? 'failed' : 'stopped');
+  } catch (error) {
+    return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureReason: messageOf(error) };
   }
 }
 
@@ -502,7 +554,7 @@ export class TaggedReaper {
   }
 
   /** Stop one reported process. Stops run one at a time, so two clicks never interleave their scans. */
-  stop(request: StopProcessRequest): Promise<StopProcessOutcome> {
+  stop(request: StopProcessRequest): Promise<StopProcessResult> {
     const run = this.stopChain.then(() => stopProcessTree(request, this.deps));
     this.stopChain = run.then(() => undefined, () => undefined);
     return run;
