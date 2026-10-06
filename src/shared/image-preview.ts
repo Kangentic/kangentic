@@ -24,7 +24,7 @@ const RASTER_IMAGE_MIME_TYPES: Readonly<Record<string, string>> = {
   avif: 'image/avif',
 };
 
-export const SVG_MIME_TYPE = 'image/svg+xml';
+const SVG_MIME_TYPE = 'image/svg+xml';
 
 /**
  * Per-side cap on what main reads and sends over IPC. A regenerated store
@@ -47,17 +47,19 @@ function extensionOf(filePath: string): string {
   return baseName.slice(dotIndex + 1).toLowerCase();
 }
 
+// Object.hasOwn, not `in` or a bare index: a file named `notes.constructor`
+// must not match a member the table inherits from Object.prototype.
 export function imageKindForPath(filePath: string): ImageKind | null {
   const extension = extensionOf(filePath);
   if (extension === 'svg') return 'svg';
-  if (extension in RASTER_IMAGE_MIME_TYPES) return 'raster';
+  if (Object.hasOwn(RASTER_IMAGE_MIME_TYPES, extension)) return 'raster';
   return null;
 }
 
 export function imageMimeTypeForPath(filePath: string): string | null {
   const extension = extensionOf(filePath);
   if (extension === 'svg') return SVG_MIME_TYPE;
-  return RASTER_IMAGE_MIME_TYPES[extension] ?? null;
+  return Object.hasOwn(RASTER_IMAGE_MIME_TYPES, extension) ? RASTER_IMAGE_MIME_TYPES[extension] : null;
 }
 
 /** True when the bytes are a Git LFS pointer file rather than the image it stands for. */

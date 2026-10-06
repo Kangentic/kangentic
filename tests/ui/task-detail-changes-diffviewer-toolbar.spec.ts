@@ -813,15 +813,16 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
 
   test('next/prev-change keybindings are inert while the markdown preview is active', async () => {
     // Three files so both next-change (F7) and prev-change (Shift+F7) have a
-    // real adjacent file to roll into IF the `enabled: isFocused && !previewActive`
-    // guard on DiffViewer's changes.nextChange/changes.prevChange bindings were
+    // real adjacent file to roll into IF the `changeNavigationEnabled`
+    // (`isFocused && !markdownPreviewActive`) guard on DiffViewer's
+    // changes.nextChange/changes.prevChange bindings were
     // broken. Entering preview mode nulls diffEditorRef (the
     // `diffEditorHidden` effect in DiffViewer.tsx), so
     // if the handler fired while previewing it would hit navigateChange's
     // "no diff mounted" branch and immediately roll to the adjacent file via
     // onCrossFile - a Monaco-independent, unmistakable signal that the binding
-    // fired. Correct behavior attaches no listener at all while previewActive
-    // (enabled=false), so the shortcut is a true no-op and the panel stays on
+    // fired. Correct behavior attaches no listener at all while
+    // markdownPreviewActive (enabled=false), so the shortcut is a true no-op and the panel stays on
     // the markdown file with its preview open.
     await page.evaluate(() => {
       (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {

@@ -19,7 +19,7 @@ export type PixelDiffOutcome =
 export type PixelDiffState = { status: 'idle' } | { status: 'pending' } | PixelDiffOutcome;
 
 /** The changed-pixel color: saturated, and far from every status and accent color the pane uses. */
-export const PIXEL_DIFF_COLOR: [number, number, number] = [255, 60, 199];
+const PIXEL_DIFF_COLOR: [number, number, number] = [255, 60, 199];
 export const PIXEL_DIFF_COLOR_CSS = `rgb(${PIXEL_DIFF_COLOR.join(' ')})`;
 
 // hmr-safe: the dispose at the bottom of this file terminates this worker and

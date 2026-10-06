@@ -68,11 +68,14 @@ async function comparePixels(request: PixelDiffRequest): Promise<PixelDiffRespon
   // one image covers (the strip a taller screenshot added) is changed by
   // definition, so it is painted and counted here instead: compared, its
   // transparent side would blend against pixelmatch's pseudo-random
-  // checkerboard and come out speckled.
+  // checkerboard and come out speckled. Two images of one size cover every
+  // pixel together, so the walk is skipped for them (a regenerated screenshot,
+  // the common case, up to PIXEL_DIFF_MAX_PIXELS iterations that mark nothing).
   const ignoreMask = new Uint8Array(width * height);
   const mask = new Uint8ClampedArray(width * height * 4);
   let coveredByOneImage = 0;
-  for (let y = 0; y < height; y++) {
+  const sameSize = beforeWidth === afterWidth && beforeHeight === afterHeight;
+  for (let y = 0; !sameSize && y < height; y++) {
     for (let x = 0; x < width; x++) {
       const inBefore = x < beforeWidth && y < beforeHeight;
       const inAfter = x < afterWidth && y < afterHeight;

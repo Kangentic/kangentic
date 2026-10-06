@@ -27,6 +27,14 @@ describe('imageKindForPath', () => {
     expect(imageKindForPath('screens.v2/home')).toBeNull();
     expect(imageKindForPath('C:\\repo\\img.dir\\logo.png')).toBe('raster');
   });
+
+  it('never matches an extension named after an Object.prototype member', () => {
+    // A text file named this way would otherwise lose its text diff to the image view.
+    for (const filePath of ['notes.constructor', 'a.toString', 'b.valueOf', 'c.hasOwnProperty', 'd.__proto__']) {
+      expect(imageKindForPath(filePath)).toBeNull();
+      expect(imageMimeTypeForPath(filePath)).toBeNull();
+    }
+  });
 });
 
 describe('imageMimeTypeForPath', () => {

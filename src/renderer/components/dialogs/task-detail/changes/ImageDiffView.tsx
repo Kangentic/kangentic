@@ -409,7 +409,8 @@ interface InfoTileProps {
  */
 function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, testId }: InfoTileProps) {
   const dimensions = side.kind === 'image' ? `${side.width} x ${side.height}` : null;
-  const size = side.kind === 'unreadable' ? null : formatBytes(side.size);
+  const sizeBytes = sizeOf(side);
+  const size = sizeBytes === null ? null : formatBytes(sizeBytes);
   const deltaText = sizeDelta === null ? null : `${sizeDelta > 0 ? '+' : '-'}${formatBytes(Math.abs(sizeDelta))}`;
   const summary = [label, dimensions, size ?? 'not readable'].filter((part) => part !== null).join(', ');
 
