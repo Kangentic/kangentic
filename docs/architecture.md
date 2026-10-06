@@ -583,7 +583,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:final` | on | Push: finalized text to the renderer |
 | `transcribe:audioChunk` | on | Stream one PCM frame into the funnel (fire-and-forget, no round-trip) |
 | `transcribe:requestMic` | invoke | Ensure microphone access (macOS TCC prompt on first use) |
-| `transcribe:modelProgress` | on | Push: first-use model download progress |
+| `transcribe:modelProgress` | on | Push: first-use model download progress, as aggregate bytes across the set plus the downloading model's own pair (`modelDownloadedBytes`, `modelTotalBytes`) for its line in the Dictation tab. An `error` carries the id of the model whose download failed |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
 | `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
 | `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the refinement model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |

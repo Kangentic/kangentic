@@ -54,8 +54,9 @@ export interface EmbedStoreAccess {
  * same model only needs the table to exist. False when there is none.
  *
  * A new model at the same width resets too. bge-base and Granite R2 are both
- * 768-wide, and the search does not filter by tag, so without the reset a
- * re-embed drain left one table scoring queries against two models' vectors.
+ * 768-wide, so without the reset a re-embed drain left one table holding two
+ * models' vectors. Until the reset runs the search returns no vector hits
+ * (`searchSemantic` checks the tag) and answers by keyword.
  * `vec_model` records the tag the tables hold; an index from before it was
  * kept resets only when a stored vector comes from another model, so a user
  * whose model did not change never re-embeds for it. That is the search's own

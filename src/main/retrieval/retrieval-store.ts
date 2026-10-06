@@ -889,10 +889,11 @@ export class RetrievalStore {
     }
   }
 
-  /** Recreate every vec table at a new dimension (a model switch that changes
-   *  vector width) and clear every chunk's embedding marker so they re-embed.
-   *  vec0 tables are fixed-width, so a dimension change requires a full reset.
-   *  `awaitTurn` runs after every transaction, as `purgeCorpora`'s does. */
+  /** Recreate every vec table at `dimensions` and clear every chunk's embedding
+   *  marker so they re-embed. A model switch runs it at any width: vec0 tables
+   *  are fixed-width, and a same-width model's vectors must not share a table
+   *  with the old one's. `awaitTurn` runs after every transaction, as
+   *  `purgeCorpora`'s does. */
   async resetVec(dimensions: number, awaitTurn: () => Promise<void>): Promise<void> {
     if (!hasVecSupport(this.db)) return;
     // Every embedded chunk back to pending, its vector deleted with it, a page
@@ -914,8 +915,8 @@ export class RetrievalStore {
     }
     // The tables themselves, at the new width. Dropping a vec0 table frees its
     // storage in one statement even once its rows are gone, since vec0 keeps a
-    // table's vector blocks allocated. It runs once per model switch that
-    // changes the width, which the user asks for.
+    // table's vector blocks allocated. It runs once per model switch, which
+    // the user asks for.
     writeTransaction(this.db, () => {
       // The older conversation table too, and any copy into the new one.
       this.db.exec(`DROP TABLE IF EXISTS ${LEGACY_CONVERSATION_VEC_TABLE}`);
