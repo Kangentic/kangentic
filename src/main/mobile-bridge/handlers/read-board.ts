@@ -92,12 +92,7 @@ export async function handleReadBoard(
   const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(
     task,
     spawnProgressByTaskId[task.id] ?? null,
-    isResumeOffered({
-      hasPausedSession: pausedTaskIds.has(task.id),
-      laneRole: laneRoleById.get(task.swimlane_id),
-      // Truthiness, not `!== null`: see resumeBlockReason.
-      isArchived: Boolean(task.archived_at),
-    }),
+    isResumeOffered({ hasPausedSession: pausedTaskIds.has(task.id), task, laneRole: laneRoleById.get(task.swimlane_id) }),
   );
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot

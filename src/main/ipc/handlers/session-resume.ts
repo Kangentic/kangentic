@@ -24,7 +24,7 @@ import { reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
 import { isAbortError } from '../../../shared/abort-utils';
-import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
+import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { Session } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -103,10 +103,7 @@ export function resumeTaskSession(
             return { kind: 'live' as const, session: liveSession };
           }
           const lane = swimlanes.getById(task.swimlane_id);
-          // Truthiness, not `!== null`: a Task assembled without the column
-          // (mocks, wire mappers, MCP-constructed rows) carries `undefined`,
-          // which `!== null` reads as ARCHIVED and would refuse every resume.
-          const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
+          const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
           if (blocked) throw new Error(resumeBlockMessage(blocked));
           return { kind: 'spawn' as const, task };
         });
@@ -176,10 +173,7 @@ export function resumeTaskSession(
             // Re-read, not the Phase 1 snapshot: the task could have been moved or
             // archived (a move to Done archives in the same tick) during the
             // unlocked git I/O above.
-            const currentBlocked = resumeBlockReason({
-              laneRole: currentLane?.role,
-              isArchived: Boolean(current.archived_at),
-            });
+            const currentBlocked = resumeBlockReasonForTask({ task: current, laneRole: currentLane?.role });
             if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
 
             const db = getProjectDb(resolvedProjectId);

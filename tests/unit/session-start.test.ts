@@ -164,7 +164,7 @@ describe('startTaskSession', () => {
 
   it('throws naming the column and the task when the task\'s column no longer exists', async () => {
     mockReconcileTaskSessionRef.mockReturnValue({ task: makeTask(), liveSession: null });
-    // resumeBlockReason({ laneRole: undefined, isArchived: false }) returns
+    // resumeBlockReasonForTask with no lane role and no archived_at returns
     // null, so this is what reaches the `if (!lane) throw` line rather than
     // the archived/role refusal above it.
     mockSwimlaneGetById.mockReturnValue(undefined);
