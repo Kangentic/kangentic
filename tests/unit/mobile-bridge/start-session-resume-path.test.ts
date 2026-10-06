@@ -511,6 +511,28 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
       expect(reportedTask).toMatchObject({ id: TASK_ID });
     });
 
+    it('reports the agent step when Phase 3 setup throws before the engine call, after the resume was accepted', async () => {
+      // The project row read sits between the refusal check and the engine
+      // call. A phone was already told `starting`, so a throw there must reach
+      // the desktop notice like an engine failure does.
+      const setupError = new Error('database is locked');
+      const context = fakeContext();
+      vi.mocked(context.projectRepo.getById).mockImplementation(() => {
+        throw setupError;
+      });
+      const onAccepted = vi.fn();
+
+      await expect(resume(context, onAccepted)).rejects.toBe(setupError);
+
+      expect(onAccepted).toHaveBeenCalledWith('resuming');
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      expect(onFailed).toHaveBeenCalledTimes(1);
+      const [step, reportedError, reportedTask] = onFailed.mock.calls[0];
+      expect(step).toBe('agent');
+      expect(reportedError).toBe(setupError);
+      expect(reportedTask).toMatchObject({ id: TASK_ID });
+    });
+
     it('does not report the Phase 1 refusal: a task already in Done is turned away before the resume is accepted', async () => {
       storedTask = { ...storedTask, swimlane_id: DONE_LANE.id };
       const onAccepted = vi.fn();

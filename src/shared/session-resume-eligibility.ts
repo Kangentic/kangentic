@@ -103,6 +103,18 @@ export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' |
 }
 
 /**
+ * `pausedTaskIdsOf` for one task, for the callers that ask about a single
+ * task (`startTaskSession`, the read-stream copy of `resumable`). It runs the
+ * same function over that task's rows, so the rule stays defined once.
+ */
+export function isTaskPaused(
+  sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>,
+  taskId: string,
+): boolean {
+  return pausedTaskIdsOf(sessions.filter((session) => session.taskId === taskId)).has(taskId);
+}
+
+/**
  * Whether the desktop offers Resume for a task: its session is paused (a
  * `suspended` registry row and no live one, `pausedTaskIdsOf`) and
  * `resumeBlockReasonForTask` refuses nothing. This is the resume direction of

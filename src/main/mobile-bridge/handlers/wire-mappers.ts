@@ -330,8 +330,14 @@ function stripTagCharacters(text: string): string {
   return text.replace(TAG_CHARACTERS, (_tagMatch: string, flagSequence: string | undefined) => flagSequence ?? '');
 }
 
-/** Tabs and line breaks, including the Unicode line and paragraph separators (U+2028, U+2029). */
-const LABEL_LINE_BREAKS = /[\t\r\n\u{2028}\u{2029}]+/gu;
+/**
+ * Tabs and line breaks: CR, LF, the vertical tab, the form feed, the C1 next
+ * line (U+0085) and the Unicode line and paragraph separators (U+2028,
+ * U+2029). Replaced before the escape strip, which deletes the vertical tab,
+ * the form feed and the next line outright and would join the words on
+ * either side.
+ */
+const LABEL_LINE_BREAKS = /[\t\n\v\f\r\u{0085}\u{2028}\u{2029}]+/gu;
 
 /**
  * A spawn-progress label as it may leave the desktop. Most labels are the
@@ -347,10 +353,9 @@ const LABEL_LINE_BREAKS = /[\t\r\n\u{2028}\u{2029}]+/gu;
  */
 export function toSpawnProgressLabelWire(label: string | null): string | null {
   if (label === null) return null;
-  const cleaned = stripTagCharacters(stripAnsiControlCodes(label).replace(INVISIBLE_FORMAT_CHARACTERS, ''))
-    .replace(LABEL_LINE_BREAKS, ' ')
-    .replace(/ {2,}/g, ' ')
-    .trim();
+  const spaced = label.replace(LABEL_LINE_BREAKS, ' ');
+  const visible = stripTagCharacters(stripAnsiControlCodes(spaced).replace(INVISIBLE_FORMAT_CHARACTERS, ''));
+  const cleaned = visible.replace(/ {2,}/g, ' ').trim();
   if (cleaned === '') return null;
   const characters = Array.from(cleaned);
   if (characters.length <= SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH) return cleaned;

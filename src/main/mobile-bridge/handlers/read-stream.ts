@@ -9,7 +9,7 @@ import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatu
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
-import { isPausedTaskSession, isResumeOffered, pausedTaskIdsOf } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, isResumeOffered, isTaskPaused } from '../../../shared/session-resume-eligibility';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
@@ -141,7 +141,7 @@ function isSessionResumable(context: IpcContext, session: Session): boolean {
     const lane = swimlanes.getById(task.swimlane_id);
     // Then the board row's own scan, so a paused row whose task already holds
     // a queued or running successor answers false here as it does there.
-    const hasPausedSession = pausedTaskIdsOf(context.sessionManager.listSessions()).has(session.taskId);
+    const hasPausedSession = isTaskPaused(context.sessionManager.listSessions(), session.taskId);
     return isResumeOffered({ hasPausedSession, task, laneRole: lane?.role });
   } catch (error) {
     // Logged because the false is silent on the phone: Resume just never shows.

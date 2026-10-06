@@ -56,8 +56,9 @@ export interface ResumeTaskSessionOptions {
   /**
    * Called once, just before the rejection, when an accepted resume fails:
    * `'worktree'` with the git error itself (not the "Worktree setup failed"
-   * wrapper the rejection carries), `'agent'` when the engine resume or the
-   * session check after it fails. Not called for a refusal, in either phase,
+   * wrapper the rejection carries), `'agent'` when anything in Phase 3 after
+   * its refusal check fails: the profile fold, the engine setup, the engine
+   * resume, or the session check after it. Not called for a refusal, in either phase,
    * or for an abort. For a caller that answered before the work ran and has
    * no rejection to show, the phone's `start-session`. The desktop Resume
    * passes none: the renderer toasts the rejection itself.
@@ -146,19 +147,13 @@ export function resumeTaskSession(
         const planTask = phase1Result.task;
         options.onAccepted?.('resuming');
 
-        // Label the resume from here on, as restoring from Done does
-        // (task-archive.ts). The git phase below can take seconds, and without
-        // a label the card (and a paired phone's card) reads "Paused" behind a
-        // Resume button while the conversation is already being restored. The
-        // label also rides the paused session's `session-ended` to a paired
-        // phone, which then reads the swap as a respawn rather than a stop.
-        // Emitted only now that the resume will spawn: the self-heal return
-        // above spawns nothing. One `finally` releases it on every exit, the
-        // abort included. A claim rather than a plain clear: a phone's plain
-        // Start of the same task registers alongside this resume without
-        // aborting it, and a newer resume aborts this one and labels the task
-        // before this one unwinds, so an unconditional clear here would wipe
-        // the label the other spawn is still showing.
+        // Label the resume, as restoring from Done does (task-archive.ts), so
+        // neither the desktop card nor a phone's reads "Paused" behind a Resume
+        // button through a git phase that can take seconds. Only now: the
+        // self-heal above spawns nothing. The `finally` below releases it on
+        // every exit. A claim rather than a plain clear, because a phone Start
+        // of the same task, or the newer resume that aborts this one, can label
+        // the task before this one unwinds.
         const progress = claimSpawnProgress(context.mainWindow, taskId);
         progress.onProgress('resuming');
         // The git phase can report once more between an abort and its own
@@ -196,30 +191,32 @@ export function resumeTaskSession(
             // clears it so we proceed to spawn fresh.
             const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
             if (liveSession) return liveSession;
-            // Folded through the task's Board Profile so an explicit Resume
-            // restarts on the same rung the task was running, not the column's
-            // base settings. Identity fields (including `role`, checked next) pass
-            // through the fold untouched.
-            const currentLane = applyProfileToLane(
-              swimlanes.getById(current.swimlane_id),
-              loadTaskProfile(context, current, resolvedProjectPath),
-            );
             // Re-read, not the Phase 1 snapshot: the task could have been moved or
             // archived (a move to Done archives in the same tick) during the
-            // unlocked git I/O above.
-            const currentBlocked = resumeBlockReasonForTask({ task: current, laneRole: currentLane?.role });
+            // unlocked git I/O above. Read off the column's own row, since the
+            // profile fold below passes `role` through untouched. A refusal is
+            // the user's answer, not a failure, so it stays outside the try
+            // that reports one.
+            const currentRow = swimlanes.getById(current.swimlane_id);
+            const currentBlocked = resumeBlockReasonForTask({ task: current, laneRole: currentRow?.role });
             if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
 
-            const db = getProjectDb(resolvedProjectId);
-            const sessionRepo = new SessionRepository(db);
-            const engine = createTransitionEngine(
-              context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
-              resolvedProjectId, resolvedProjectPath,
-            );
-
-            const project = context.projectRepo.getById(resolvedProjectId);
-            const overrides = resolveSpawnOverrides(current, currentLane, project);
+            // Every throw from here on is a resume that failed after a phone was
+            // told `starting`: the profile fold and the engine setup as much as
+            // the engine call, so all of them report through onFailed.
             try {
+              // Folded through the task's Board Profile so an explicit Resume
+              // restarts on the same rung the task was running, not the
+              // column's base settings.
+              const currentLane = applyProfileToLane(currentRow, loadTaskProfile(context, current, resolvedProjectPath));
+              const db = getProjectDb(resolvedProjectId);
+              const sessionRepo = new SessionRepository(db);
+              const engine = createTransitionEngine(
+                context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
+                resolvedProjectId, resolvedProjectPath,
+              );
+              const project = context.projectRepo.getById(resolvedProjectId);
+              const overrides = resolveSpawnOverrides(current, currentLane, project);
               await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
 
               const updated = tasks.getById(taskId);
@@ -243,11 +240,9 @@ export function resumeTaskSession(
           // lands before this resume registers a row or writes session_id.
           // The engine's last checkpoint precedes sessionManager.spawn, the
           // session_id write follows it with no further checkpoint, and a
-          // spawn a teardown cancels registers nothing. A removeByTaskId here
-          // used to drop the task's PAUSED row while the newer resume was
-          // still in its git phase, so a paired phone's feed on that row
-          // ended with no successor and `resumable` read false until the new
-          // session spawned. A Pause that cancelled the resume lost the same row.
+          // spawn a teardown cancels registers nothing. Removing the task's
+          // rows here would drop the PAUSED row the canceller still needs;
+          // docs/session-lifecycle.md records what that broke.
           console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
           return null;
         }
