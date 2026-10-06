@@ -21,6 +21,9 @@
  * leave a picker - a companion one-shot migration in config-manager.ts clears
  * the cache once, and a restored seeding block would defeat it on next launch.
  *
+ * And covers the other direction: `rememberDiscoveredModel` persisting a newly
+ * learned id reloads the list, unforced, so main can label that id.
+ *
  * The throttle state is MODULE-SCOPE in config-store.ts (`modelRescanInFlight`,
  * `modelRescanLastAtMs`), so it would otherwise leak across tests in this
  * file. Each test gets a pristine copy via `vi.resetModules()` + a fresh
@@ -258,5 +261,51 @@ describe('config-store loadAgentList does not seed discoveredModelsByAgent', () 
     expectNeverWroteDiscoveredModelsByAgent(configSetSync);
     expect(useConfigStore.getState().config.discoveredModelsByAgent).toBe(discoveredModelsBefore);
     expect(useConfigStore.getState().config.discoveredModelsByAgent).toEqual(previouslyRememberedModels);
+  });
+});
+
+// Main labels a telemetry-learned model id on each agents.list call
+// (`nameLearnedModels`, agent-list.ts), so the store asks again once it learns
+// one. Without that, the new picker row stays raw until something else reloads.
+describe('config-store rememberDiscoveredModel reloads the agent list', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reloads the list, unforced, once the newly learned id is persisted', async () => {
+    const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+
+    useConfigStore.getState().rememberDiscoveredModel('claude', 'claude-opus-4-1-20250805');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(configSet).toHaveBeenCalledWith({
+      discoveredModelsByAgent: { claude: ['claude-opus-4-1-20250805'] },
+    });
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    // Unforced: a forced call would re-probe every CLI and spawn the /model probe.
+    expect(agentsList.mock.calls[0][0]).toBeFalsy();
+    // The write lands first, so main's per-call labeling sees the new id.
+    expect(configSet.mock.invocationCallOrder[0]).toBeLessThan(agentsList.mock.invocationCallOrder[0]);
+  });
+
+  it('neither writes nor reloads for an id it already knows', async () => {
+    const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+    useConfigStore.setState({
+      config: { ...DEFAULT_CONFIG, discoveredModelsByAgent: { claude: ['claude-opus-5-5'] } },
+    });
+
+    useConfigStore.getState().rememberDiscoveredModel('claude', 'claude-opus-5-5');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(configSet).not.toHaveBeenCalled();
+    expect(agentsList).not.toHaveBeenCalled();
   });
 });

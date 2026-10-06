@@ -31,6 +31,22 @@ vi.mock('../../src/main/agent/adapters/claude/capability-discovery', () => ({
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { claudeProjectSlug } from '../../src/main/agent/adapters/claude/transcript-parser';
 
+// A model id learned from live telemetry that discovery did not list (an old
+// dated pin, a [1m] form) used to render raw in the pickers. The agent list
+// names it through this hook, with the same humanizer discovery uses.
+describe('ClaudeAdapter.modelDisplayName', () => {
+  const adapter = new ClaudeAdapter();
+
+  it('names a dated pin and a 1M form the way discovered ids are named', () => {
+    expect(adapter.modelDisplayName('claude-opus-4-1-20250805')).toBe('Opus 4.1');
+    expect(adapter.modelDisplayName('claude-sonnet-5-5[1m]')).toBe('Sonnet 5.5 (1M)');
+  });
+
+  it('returns null for an id it cannot derive a label from', () => {
+    expect(adapter.modelDisplayName('   ')).toBeNull();
+  });
+});
+
 describe('ClaudeAdapter.discoverCapabilities', () => {
   beforeEach(() => {
     staticCapabilitiesMock.mockReset();

@@ -463,6 +463,16 @@ export interface AgentAdapter {
   configuredModelFromCommand?(command: string): { id: string; displayName: string } | null;
 
   /**
+   * Optional: the label for a model id this adapter's own discovery did not
+   * list, one the app learned from live telemetry
+   * (`config.discoveredModelsByAgent`). The pickers show those ids too, and
+   * without a label they render raw. `nameLearnedModels` (agent-list.ts) adds
+   * these labels to `capabilities.modelDisplayNames`; a name discovery already
+   * gave wins. Null leaves the raw id.
+   */
+  modelDisplayName?(modelId: string): string | null;
+
+  /**
    * Return the sequence of strings to write to the PTY for a graceful exit.
    * Called by SessionManager.suspend() before force-killing the PTY.
    * Ctrl+C (\x03) interrupts in-progress work; the exit command triggers

@@ -12,7 +12,7 @@ import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
-import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
+import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -336,10 +336,13 @@ export function registerSystemHandlers(context: IpcContext): void {
   // The inventory is cached across calls (bootstrap, welcome screen, Settings,
   // and the column manager all request it) and rebuilt only on agent-config
   // change or an explicit forceRefresh (the Agent settings "re-detect" button).
-  // See src/main/agent/agent-list.ts.
+  // See src/main/agent/agent-list.ts. The labels for telemetry-learned model
+  // ids go on per call, outside the cache, so a newly learned id is named on
+  // the next request without a rebuild.
   ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean): Promise<AgentDetectionInfo[]> => {
     const config = context.configManager.load();
-    return listAgents(config.agent.cliPaths, forceRefresh ?? false);
+    const agents = await listAgents(config.agent.cliPaths, forceRefresh ?? false);
+    return nameLearnedModels(agents, config.discoveredModelsByAgent);
   });
 
   // "Test connection" in the Agent settings tab. Reads the server record

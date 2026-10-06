@@ -28,9 +28,16 @@
  * the fallback kill. The picker text is identical in both renderers, and the
  * parser predates fullscreen (2.1.170).
  *
+ * The CLI gets `TERM=xterm-256color` whatever the app's own environment says
+ * (see PROBE_TERM), and the probe never types into a dialog: no key while a
+ * select dialog shows, and Enter only once the input box holds `/model`.
+ *
  * Failure contract matches the rest of capability discovery: a failure (CLI
  * missing, layout change, timeout) is never surfaced to the user, and resolves
- * to the last good scan when there is one, else undefined. Results are cached:
+ * to the last good scan when there is one, else undefined. Each failed or
+ * partial run writes one `[model-picker-probe]` warning to the local log,
+ * naming the stage it stopped at and the bottom of the CLI's screen, so a
+ * failure on someone else's machine can be read back. Results are cached:
  * a complete scan is reused for hours (models ship rarely; the spawn costs
  * seconds), while a failed or incomplete one is retried after a short backoff
  * (see `recordProbeResult`). The last good scan is also kept in the
@@ -45,6 +52,7 @@ import path from 'node:path';
 import { VirtualScreen } from '../../../pty/virtual-screen';
 import { PATHS } from '../../../config/paths';
 import { compareModelVersion, parseModelFamily, parseModelId } from '../../../../shared/model-id';
+import { redactPaths } from '../../../../shared/sentry-breadcrumbs';
 import type { ModelAliasOption } from '../../../../shared/types';
 import { isWindowsBatchShim, shimSibling } from '../../shared/shim-launch';
 import { ensureWorktreeTrust } from './trust-manager';
@@ -105,6 +113,42 @@ const ROWS_BELOW_PATTERN = /^\s*(?:↓\s*\d+\.|…\s*\+\d+\s+models?\b)/mu;
  * so a new marker glyph cannot reach one and not the other.
  */
 const PICKER_ROW_PATTERN = /^\s*(?:[❯↑↓]\s*)?(\d+)\.\s+(.+)$/u;
+/** The full-width rule the input box draws directly above its prompt line. */
+const INPUT_BOX_RULE_PATTERN = /^[╭─]─{9,}/u;
+/** The input box's prompt line: `❯` in the first column (after a `│` in a boxed layout). */
+const INPUT_BOX_PROMPT_PATTERN = /^(?:│ ?)?❯/u;
+/** The input box holding the typed command, the one state Enter may follow. */
+const MODEL_COMMAND_ECHO_PATTERN = /^(?:│ ?)?❯\s*\/model\b/u;
+
+/**
+ * The input box's prompt line, or null when none is on screen. Measured on
+ * Claude Code 2.1.290 (classic renderer, 2026-10-05): a full-width `─` rule,
+ * then `❯` in column 0 with the placeholder or the typed text, then another
+ * rule. A select dialog's options are indented under its question
+ * (`  ❯ No (recommended)`, no number on the "use this API key?" dialog), and
+ * so are the slash-command suggestions under the box (`  ❯ /model ...`), so
+ * neither passes for the prompt. Searched from the bottom: the live box is the
+ * lowest one.
+ */
+export function inputBoxPromptLine(frame: string): string | null {
+  const lines = frame.split('\n');
+  for (let index = lines.length - 1; index >= 1; index--) {
+    if (INPUT_BOX_PROMPT_PATTERN.test(lines[index]) && INPUT_BOX_RULE_PATTERN.test(lines[index - 1])) {
+      return lines[index];
+    }
+  }
+  return null;
+}
+
+/**
+ * A select dialog holds the keyboard: a `❯` is on screen but no input box is.
+ * The trust dialog, the "use this API key?" prompt and an onboarding choice
+ * all replace the input box this way, and Enter on one accepts its highlighted
+ * option, so the probe sends no key while one shows.
+ */
+export function isSelectDialogShowing(frame: string): boolean {
+  return frame.includes('❯') && inputBoxPromptLine(frame) === null;
+}
 
 /** The probe's scratch cwd, pre-trusted so no trust dialog renders. */
 function probeScratchDirectory(): string {
@@ -115,6 +159,113 @@ const LAST_SCAN_FILE_NAME = 'model-picker-last-scan.json';
 
 /** Forces Claude's classic renderer, which never arms the fullscreen boot canary. */
 export const PROBE_CLASSIC_RENDERER_ENV_KEY = 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN';
+
+/**
+ * The probe's TERM. Claude Code draws its prompt and every select-row marker
+ * with the `figures` pointer, which is `❯` only when its Unicode check passes.
+ * On Windows that check reads the environment alone (`WT_SESSION`,
+ * `TERM_PROGRAM=vscode`, `TERM=xterm-256color`, and a few other terminals), and
+ * node-pty never turns the spawn's `name` into TERM there. A packaged app
+ * started from the Start menu has none of them, so the CLI drew `>` and the
+ * probe timed out waiting for `❯`, while `npm start` from Windows Terminal
+ * inherited `WT_SESSION` and worked.
+ */
+export const PROBE_TERM = 'xterm-256color';
+
+/**
+ * Leads the one line a failed probe logs. Deliberately absent from
+ * `CONSOLE_BREADCRUMB_TAGS` (src/shared/sentry-breadcrumbs.ts): the line
+ * carries the bottom of the CLI's screen, so it stays in the local log
+ * (`console.warn` is always persisted, see log-mirror.ts) and never reaches
+ * Sentry.
+ */
+const PROBE_LOG_TAG = '[model-picker-probe]';
+/** Bottom lines of the screen the failure line carries. */
+const SCREEN_TAIL_LINE_COUNT = 6;
+const SCREEN_TAIL_LINE_CHARS = 160;
+/**
+ * A short screen's tail reaches the header. The 2.1.290 header is three lines
+ * (version, model and plan, the cwd as a `~` path) and names no one (measured
+ * 2026-10-05), so these two cover the account text a different layout can put
+ * there: an address, and a welcome box greeting the account by name.
+ */
+const EMAIL_PATTERN = /[^\s@<>"'()[\]]+@[^\s@<>"'()[\]]+\.[A-Za-z]{2,}/gu;
+/** The name runs to the greeting's `!` or the box's right border. */
+const WELCOME_NAME_PATTERN = /(\bWelcome back)\s+[^!│]+/gu;
+/**
+ * An API key as the CLI prints it. The "use this API key?" dialog shows
+ * `sk-ant-...` plus the key's last 20 characters, and that dialog is one of
+ * the screens a failed probe logs. The match runs to the next space, so a key
+ * character outside base64url cannot end it early.
+ */
+const API_KEY_PATTERN = /\bsk-\S+/gu;
+/** The value printed after an `..._API_KEY:` label, masked whatever its prefix. */
+const API_KEY_VALUE_PATTERN = /(\b[A-Z][A-Z0-9_]*_API_KEY:\s*)\S+/gu;
+
+/** Where a probe run stopped without a scan. */
+type ProbeStopStage =
+  | 'scratch-setup'
+  | 'spawn'
+  | 'trust-dialog'
+  | 'select-dialog'
+  | 'no-prompt'
+  | 'input-not-echoed'
+  | 'picker-not-rendered'
+  | 'frame-not-settled'
+  | 'no-rows'
+  | 'error';
+
+/** What one `waitForScreen` poll loop ended on. */
+type ScreenWaitResult = 'found' | 'trust-dialog' | 'select-dialog' | 'exited' | 'timeout';
+
+/**
+ * The last non-blank lines of a probe screen, safe for the local log: paths,
+ * email-shaped tokens, a welcome greeting's name and API keys are replaced,
+ * and each line is capped.
+ */
+export function probeScreenTail(screenText: string): string[] {
+  return screenText
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .slice(-SCREEN_TAIL_LINE_COUNT)
+    .map((line) =>
+      redactPaths(line.trimEnd())
+        .replace(EMAIL_PATTERN, '<email>')
+        .replace(WELCOME_NAME_PATTERN, '$1 <name>')
+        .replace(API_KEY_PATTERN, '<api-key>')
+        .replace(API_KEY_VALUE_PATTERN, '$1<api-key>')
+        .slice(0, SCREEN_TAIL_LINE_CHARS),
+    );
+}
+
+/** One local log line, followed by the bottom of the screen when there is one. */
+function writeProbeLog(headline: string, screenText: string | null): void {
+  const lines = [`${PROBE_LOG_TAG} ${headline}`];
+  if (screenText !== null) {
+    const tail = probeScreenTail(screenText);
+    lines.push(tail.length > 0 ? 'screen tail:' : 'screen was blank');
+    for (const line of tail) lines.push(`  | ${line}`);
+  }
+  console.warn(lines.join('\n'));
+}
+
+/** The log line for a probe run that stopped without a scan. */
+function logProbeStop(stage: ProbeStopStage, startedAtMs: number, detail: string, screenText: string | null): void {
+  writeProbeLog(`failed at ${stage} after ${Date.now() - startedAtMs} ms (${detail})`, screenText);
+}
+
+/** The log line for a scroll that stopped with rows still below; the run returns the rows it reached. */
+function logPartialScan(startedAtMs: number, detail: string, screenText: string): void {
+  writeProbeLog(`returned a partial scan at scroll-incomplete after ${Date.now() - startedAtMs} ms (${detail})`, screenText);
+}
+
+/** A short, path-free description of a thrown value for the probe's log line. */
+function describeProbeError(error: unknown): string {
+  if (!(error instanceof Error)) return 'non-Error thrown';
+  const code = (error as { code?: unknown }).code;
+  const name = typeof code === 'string' ? `${error.name}(${code})` : error.name;
+  return redactPaths(`${name}: ${error.message}`).slice(0, SCREEN_TAIL_LINE_CHARS);
+}
 
 let timings: ProbeTimings = DEFAULT_TIMINGS;
 
@@ -392,6 +543,10 @@ function spawnEnvironment(): Record<string, string> {
   // comment). Set unconditionally - a user's `/tui fullscreen` is for their
   // sessions, and this hidden one has no renderer preference to honor.
   environment[PROBE_CLASSIC_RENDERER_ENV_KEY] = '1';
+  // Forced, not defaulted the way buildSpawnEnv (pty-spawn.ts) does for
+  // sessions: this PTY's terminal is our own VirtualScreen, an xterm grid, so
+  // a user's TERM (dumb, cygwin) describes a terminal it is not. See PROBE_TERM.
+  environment.TERM = PROBE_TERM;
   return environment;
 }
 
@@ -437,11 +592,14 @@ async function exitProbeGracefully(
 }
 
 /**
- * One full probe run: spawn, wait for the prompt, open `/model`, wait for
- * the picker to render and settle, scroll it with Arrow Down until no rows
- * remain below, parse the merged frames, Esc, kill. Never throws.
+ * One full probe run: spawn, wait for the input box, type `/model` and wait
+ * for the box to echo it, Enter, wait for the picker to render and settle,
+ * scroll it with Arrow Down until no rows remain below, parse the merged
+ * frames, Esc, `/exit`. A dialog at any step ends the run with no further key
+ * and a plain kill. Never throws.
  */
 async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | undefined> {
+  const startedAtMs = Date.now();
   const scratchDirectory = probeScratchDirectory();
   try {
     fs.mkdirSync(scratchDirectory, { recursive: true });
@@ -449,7 +607,8 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     // Belt and suspenders: if the dialog shows up anyway, the wait loop below
     // detects it and bails without sending a single keystroke.
     await ensureWorktreeTrust(scratchDirectory);
-  } catch {
+  } catch (error) {
+    logProbeStop('scratch-setup', startedAtMs, describeProbeError(error), null);
     return undefined;
   }
 
@@ -470,49 +629,100 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     probeProcess = process.platform === 'win32'
       ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, '--safe-mode'], spawnOptions)
       : await spawnOffMainPty(cliPath, ['--safe-mode'], spawnOptions);
-  } catch {
+  } catch (error) {
+    logProbeStop('spawn', startedAtMs, describeProbeError(error), null);
     return undefined;
   }
 
-  let exited = false;
+  let exitCode: number | null = null;
   let resolveExited: () => void = () => undefined;
   const exitedPromise = new Promise<void>((resolve) => {
     resolveExited = resolve;
   });
-  // Set once the input box has rendered: only then is a typed `/exit` a
-  // command rather than a keystroke into whatever dialog is showing.
-  let promptSeen = false;
+  // Set once the input box shows the typed `/model`, right before Enter, and
+  // cleared if Enter opens a dialog instead of the picker: only while it holds
+  // is Esc a picker close and a typed `/exit` a command, rather than
+  // keystrokes into whatever dialog is showing.
+  let modelCommandSubmitted = false;
   probeProcess.onData((data) => screen.write(data));
-  probeProcess.onExit(() => {
-    exited = true;
+  probeProcess.onExit((event) => {
+    exitCode = event.exitCode;
     resolveExited();
   });
 
+  const fail = (stage: ProbeStopStage, detail: string): undefined => {
+    logProbeStop(stage, startedAtMs, detail, screen.text());
+    return undefined;
+  };
+  /**
+   * Log a wait that did not find its screen. A dialog is its own stage, with
+   * `dialogDetail` saying how far the run got; an exit or a timeout is
+   * `stage`.
+   */
+  const failWait = (
+    result: Exclude<ScreenWaitResult, 'found'>,
+    stage: ProbeStopStage,
+    dialogDetail: string,
+  ): undefined => {
+    if (result === 'trust-dialog' || result === 'select-dialog') return fail(result, dialogDetail);
+    return fail(stage, result === 'exited' ? `cli exited with code ${exitCode}` : 'timed out');
+  };
+
   const deadline = Date.now() + timings.overallTimeoutMs;
-  const waitForScreen = async (marker: string): Promise<boolean> => {
+  /**
+   * Poll until `isReady` holds for the screen. With `guardDialogs`, a select
+   * dialog (a `❯` on screen with no input box) ends the wait first, so no key
+   * reaches it.
+   */
+  const waitForScreen = async (
+    isReady: (frame: string) => boolean,
+    guardDialogs: boolean,
+  ): Promise<ScreenWaitResult> => {
     while (Date.now() < deadline) {
       const frame = screen.text();
       // Pre-trust failed and the workspace-trust dialog rendered (it also
-      // contains a '❯' selector, so check before the marker): bail without
-      // sending a keystroke - Enter on that dialog would accept trust.
-      if (frame.includes('trust this folder')) return false;
-      if (frame.includes(marker)) return true;
-      if (exited) return false;
+      // contains a '❯' selector, so check it before `isReady`, guarded wait or
+      // not): bail without sending a keystroke - Enter on it would accept trust.
+      if (frame.includes('trust this folder')) return 'trust-dialog';
+      if (guardDialogs && isSelectDialogShowing(frame)) return 'select-dialog';
+      if (isReady(frame)) return 'found';
+      if (exitCode !== null) return 'exited';
       await delay(timings.pollIntervalMs);
     }
-    return false;
+    return 'timeout';
   };
 
   try {
-    // The '❯' prompt marker appears when the input box is ready for keys.
-    if (!(await waitForScreen('❯'))) return undefined;
-    promptSeen = true;
+    // The input box is ready for keys once its '❯' prompt line renders.
+    const promptResult = await waitForScreen((frame) => inputBoxPromptLine(frame) !== null, true);
+    if (promptResult !== 'found') return failWait(promptResult, 'no-prompt', 'no keys sent');
     await delay(timings.typeDelayMs);
     probeProcess.write('/model');
     await delay(timings.typeDelayMs);
+    // Enter is the key that can accept a choice, so it goes only to an input
+    // box that visibly holds `/model`. A dialog that opened after the prompt
+    // rendered would have taken the text instead. The suggestion list under
+    // the box repeats `❯ /model` indented; only the box's own line counts.
+    const echoResult = await waitForScreen((frame) => {
+      const promptLine = inputBoxPromptLine(frame);
+      return promptLine !== null && MODEL_COMMAND_ECHO_PATTERN.test(promptLine);
+    }, true);
+    if (echoResult !== 'found') return failWait(echoResult, 'input-not-echoed', 'before Enter');
+    modelCommandSubmitted = true;
     probeProcess.write('\r');
 
-    if (!(await waitForScreen('Select model'))) return undefined;
+    const pickerResult = await waitForScreen((frame) => frame.includes('Select model'), false);
+    if (pickerResult !== 'found') {
+      // Enter opened something other than the picker. A dialog that now holds
+      // the keyboard would take the teardown's Esc and `/exit` Enter as its
+      // answer, so the run ends on the plain kill instead.
+      // The picker itself is such a dialog (its `❯ N.` rows, no input box),
+      // so only a wait that ended without it can clear the flag.
+      if (pickerResult === 'trust-dialog' || isSelectDialogShowing(screen.text())) {
+        modelCommandSubmitted = false;
+      }
+      return failWait(pickerResult, 'picker-not-rendered', 'after Enter');
+    }
 
     // Let the picker finish painting: two identical consecutive frames. Parse
     // only frames we confirmed stable - if the deadline expires while the
@@ -529,7 +739,7 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
       return undefined;
     };
     const stableFrame = await waitForStableFrame(timings.settleIntervalMs);
-    if (stableFrame === undefined) return undefined;
+    if (stableFrame === undefined) return fail('frame-not-settled', 'timed out');
 
     // Walk the highlight down until the picker has no rows left below
     // (see ARROW_DOWN), keeping every settled frame. A scroll that runs out of
@@ -537,37 +747,51 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     // returned before scrolling existed, but reports itself incomplete.
     const frames = [stableFrame];
     let latestFrame = stableFrame;
-    for (let presses = 0; presses < MAX_SCROLL_PRESSES && ROWS_BELOW_PATTERN.test(latestFrame); presses++) {
+    let scrollPresses = 0;
+    let scrollTimedOut = false;
+    for (; scrollPresses < MAX_SCROLL_PRESSES && ROWS_BELOW_PATTERN.test(latestFrame); scrollPresses++) {
       probeProcess.write(ARROW_DOWN);
       await delay(timings.scrollSettleMs);
       const settledFrame = await waitForStableFrame(timings.scrollSettleMs);
-      if (settledFrame === undefined) break;
+      if (settledFrame === undefined) {
+        scrollTimedOut = true;
+        break;
+      }
       latestFrame = settledFrame;
       frames.push(settledFrame);
     }
 
     const scan = parseModelPickerScreen(mergePickerFrames(frames));
-    if (scan.models.length === 0) return undefined;
-    return { scan, complete: !ROWS_BELOW_PATTERN.test(latestFrame) };
-  } catch {
-    return undefined;
+    if (scan.models.length === 0) return fail('no-rows', `${frames.length} frames read`);
+    const complete = !ROWS_BELOW_PATTERN.test(latestFrame);
+    if (!complete) {
+      const reason = scrollTimedOut ? 'timed out' : `${scrollPresses} presses`;
+      logPartialScan(startedAtMs, `${reason}, ${scan.models.length} models`, latestFrame);
+    }
+    return { scan, complete };
+  } catch (error) {
+    return fail('error', describeProbeError(error));
   } finally {
     // Esc closes the picker without selecting (Enter would change the
-    // user's default model), then tear the hidden session down.
-    try {
-      probeProcess.write('\x1b');
-    } catch {
-      // Already dead.
+    // user's default model), then tear the hidden session down. Sent only
+    // while `/model` stands submitted: Esc on a dialog can record a choice too.
+    if (modelCommandSubmitted) {
+      try {
+        probeProcess.write('\x1b');
+      } catch {
+        // Already dead.
+      }
     }
-    if (promptSeen && !exited) {
+    if (modelCommandSubmitted && exitCode === null) {
       // `/exit` then wait for the CLI's own exit (cmd exits with its child on
       // Windows; POSIX runs the CLI directly), kill only as the fallback. Not
       // awaited: the result above is final and the caller must not wait.
       void exitProbeGracefully(probeProcess, exitedPromise, timings.typeDelayMs, timings.exitGraceMs);
     } else {
-      // No prompt was ever reached (trust dialog, early exit, timeout before
-      // the input box): a typed Enter here could accept the trust dialog, so
-      // this stays the plain kill. Nothing booted far enough to arm a canary.
+      // `/model` never reached the input box (a dialog, an early exit, a
+      // timeout), Enter opened a dialog instead of the picker, or the CLI
+      // already exited: a typed Enter here could accept a dialog, so this
+      // stays the plain kill. The classic renderer never arms the boot canary.
       try {
         probeProcess.kill();
       } catch {

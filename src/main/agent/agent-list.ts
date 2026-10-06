@@ -90,6 +90,45 @@ export async function listAgents(
   return agentListCache.get(() => buildAgentList(cliPathOverrides, forceRefresh), forceRefresh);
 }
 
+/**
+ * Label the model ids the app learned from live telemetry
+ * (`config.discoveredModelsByAgent`) that an agent's own discovery did not
+ * list. The pickers union those ids into every list, and an id with no entry
+ * in `capabilities.modelDisplayNames` renders raw. Each label comes from the
+ * adapter's optional `modelDisplayName`, so naming stays in the adapter; a
+ * name discovery already gave wins.
+ *
+ * Applied per call on top of the cached inventory, never inside it: an id
+ * learned after the build is named on the next call without a rebuild. It
+ * returns new entry objects and leaves the cached ones untouched. An entry with
+ * no `capabilities` (CLI not found) stays as it is.
+ */
+export function nameLearnedModels(
+  agents: AgentDetectionInfo[],
+  learnedModelsByAgent: Record<string, string[]> | undefined,
+): AgentDetectionInfo[] {
+  if (!learnedModelsByAgent) return agents;
+  return agents.map((entry) => {
+    const learnedModels = learnedModelsByAgent[entry.name];
+    const capabilities = entry.capabilities;
+    if (!learnedModels || learnedModels.length === 0 || !capabilities) return entry;
+    const adapter = agentRegistry.get(entry.name);
+    if (!adapter?.modelDisplayName) return entry;
+    const discoveredNames = capabilities.modelDisplayNames ?? {};
+    const addedNames: Record<string, string> = {};
+    for (const modelId of learnedModels) {
+      if (discoveredNames[modelId]) continue;
+      const displayName = adapter.modelDisplayName(modelId);
+      if (displayName) addedNames[modelId] = displayName;
+    }
+    if (Object.keys(addedNames).length === 0) return entry;
+    return {
+      ...entry,
+      capabilities: { ...capabilities, modelDisplayNames: { ...addedNames, ...discoveredNames } },
+    };
+  });
+}
+
 /** Clear the cached inventory so the next `listAgents` rebuilds it. */
 export function invalidateAgentListCache(): void {
   agentListCache.invalidate();
