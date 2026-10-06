@@ -202,16 +202,29 @@ describe('parseActivityEventPayload', () => {
 
   it('parses a status payload for every lifecycle status', () => {
     for (const status of ['running', 'queued', 'suspended', 'exited']) {
-      expect(parseActivityEventPayload({ type: 'status', status, resuming: false })).toEqual({ type: 'status', status, resuming: false });
+      expect(parseActivityEventPayload({ type: 'status', status, resuming: false, resumable: false })).toEqual({ type: 'status', status, resuming: false, resumable: false });
     }
-    expect(parseActivityEventPayload({ type: 'status', status: 'running', resuming: true })).toEqual({ type: 'status', status: 'running', resuming: true });
+    expect(parseActivityEventPayload({ type: 'status', status: 'running', resuming: true, resumable: false })).toEqual({ type: 'status', status: 'running', resuming: true, resumable: false });
   });
 
-  it('rejects a status payload with an unknown status or a missing resuming', () => {
-    expect(() => parseActivityEventPayload({ type: 'status', status: 'zombie', resuming: false })).toThrow(/status/);
-    expect(() => parseActivityEventPayload({ type: 'status', resuming: false })).toThrow(/status/);
-    expect(() => parseActivityEventPayload({ type: 'status', status: 'running' })).toThrow(/resuming/);
-    expect(() => parseActivityEventPayload({ type: 'status', status: 'running', resuming: 'yes' })).toThrow(/resuming/);
+  it('carries resumable true on a status payload for a paused session the desktop would offer Resume for', () => {
+    expect(parseActivityEventPayload({ type: 'status', status: 'suspended', resuming: false, resumable: true })).toEqual({
+      type: 'status',
+      status: 'suspended',
+      resuming: false,
+      resumable: true,
+    });
+  });
+
+  it('rejects a status payload with an unknown status, or a missing resuming or resumable', () => {
+    expect(() => parseActivityEventPayload({ type: 'status', status: 'zombie', resuming: false, resumable: false })).toThrow(/status/);
+    expect(() => parseActivityEventPayload({ type: 'status', resuming: false, resumable: false })).toThrow(/status/);
+    expect(() => parseActivityEventPayload({ type: 'status', status: 'running', resumable: false })).toThrow(/resuming/);
+    expect(() => parseActivityEventPayload({ type: 'status', status: 'running', resuming: 'yes', resumable: false })).toThrow(/resuming/);
+    // The status payload is new in 0.16.0 alongside resumable, so no desktop
+    // ever sends one without it: absence is malformed, not an older peer.
+    expect(() => parseActivityEventPayload({ type: 'status', status: 'suspended', resuming: false })).toThrow(/resumable/);
+    expect(() => parseActivityEventPayload({ type: 'status', status: 'suspended', resuming: false, resumable: 'yes' })).toThrow(/resumable/);
   });
 
   it('rejects an invalid state', () => {
@@ -540,6 +553,24 @@ describe('read-* response parsers', () => {
     expect(() => parseReadStreamResponsePayload({ ...base, resuming: 'yes' })).toThrow(/resuming/);
   });
 
+  it('carries resumable true and false, leaves it absent for a pre-0.16.0 desktop, and rejects a non-boolean', () => {
+    const base: Record<string, JsonValue> = {
+      scrollback: '',
+      activity: { state: null, reason: null },
+      usage: null,
+      awaitedPromptId: null,
+      sessionStatus: 'suspended',
+    };
+    expect(parseReadStreamResponsePayload({ ...base, resumable: true }).resumable).toBe(true);
+    expect(parseReadStreamResponsePayload({ ...base, resumable: false }).resumable).toBe(false);
+    // Absent, never defaulted: an older desktop answers start-session by
+    // starting the column, so a phone must be able to tell "no promise" apart
+    // from false, and offer no Resume.
+    expect('resumable' in parseReadStreamResponsePayload(base)).toBe(false);
+    expect(() => parseReadStreamResponsePayload({ ...base, resumable: 'yes' })).toThrow(/resumable/);
+    expect(() => parseReadStreamResponsePayload({ ...base, resumable: null })).toThrow(/resumable/);
+  });
+
   it('parses a read-board project list', () => {
     expect(parseReadBoardResponsePayload({ projects: [{ id: 'p-1', name: 'Alpha' }] })).toEqual({ projects: [{ id: 'p-1', name: 'Alpha' }] });
   });
@@ -673,7 +704,7 @@ describe('isBridgeEvent', () => {
     expect(
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, successorSessionId: 's-2' } }),
     ).toBe(true);
-    expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'status', status: 'queued', resuming: false } })).toBe(true);
+    expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'status', status: 'queued', resuming: false, resumable: false } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 'bytes' } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 48, rows: 26 } })).toBe(true);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'task-updated', ids: ['t-1'] } })).toBe(true);
@@ -691,7 +722,7 @@ describe('isBridgeEvent', () => {
     expect(
       isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'session-ended', intentional: true, spawnProgressLabel: 42 } }),
     ).toBe(false);
-    expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'status', status: 'paused', resuming: false } })).toBe(false);
+    expect(isBridgeEvent({ kind: 'activity', sessionId: 's', taskId: 't', payload: { type: 'status', status: 'paused', resuming: false, resumable: true } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 42 } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 0, rows: 26 } })).toBe(false);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', payload: { cols: 48, rows: 26 } })).toBe(false);

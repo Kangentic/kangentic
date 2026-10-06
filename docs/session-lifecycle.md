@@ -84,12 +84,14 @@ module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, el
 | MCP create (`kangentic_create_task`) | `autoSpawnForTask` | `spawnAgent` |
 | Column auto-spawn switched on | a column edit or a Board Profile edit, from either the Board Manager or the MCP `update_column` / profile tools, via `reconcileAutoSpawnChange` | `autoSpawnForTask` -> `spawnAgent` (sequential, skips user-paused, active project only) |
 | Unarchive (single + bulk) | Completed Tasks restore / `TASK_UNARCHIVE` | `spawnAgent`, `skipPromptTemplate` + `suppressAutoCommand` (recovery move) |
-| Phone Start (`start-session` verb) | "Start again" from the phone's ended state, via `startTaskSession` (`handlers/session-start.ts`) | `autoSpawnForTask` -> `spawnAgent`, `explicitStart` (lifts the column's `auto_spawn` default and a user pause, as the desktop Resume button does; the role gate stays) |
+| Phone Start (`start-session` verb) | "Start again" from the phone's ended state, via `startTaskSession` (`handlers/session-start.ts`), for a task with no session or an exited one | `autoSpawnForTask` -> `spawnAgent`, `explicitStart` (lifts the column's `auto_spawn` default and a user pause, as the desktop Resume button does; the role gate stays) |
+| Phone Resume (`start-session` verb) | the same verb for a PAUSED task (a `suspended` registry row), via `startTaskSession` | `resumeTaskSession` (`handlers/session-resume.ts`), the Resume button's own path: no enter automations, no column message |
 | Startup crash recovery | project open, `resumeSuspendedSessions` | `prepareAgentSpawn` (`session-startup/prepare-spawn.ts`) |
 | Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` |
 
-In-place restarts of an existing session (`SESSION_RESUME`, `restartSessionForSettingsChange`)
-call the engine directly; they are not first-spawn entry points. Transient Command Terminal
+In-place restarts of an existing session (`resumeTaskSession`, which `SESSION_RESUME` and a phone
+Resume share, and `restartSessionForSettingsChange`) call the engine directly; they are not
+first-spawn entry points. Transient Command Terminal
 sessions bypass all of this (not task agents).
 
 ### Engine spawn (board-driven path)
@@ -270,7 +272,12 @@ them on exactly the slow path where the later read matters most.
 ### Where resume is refused
 
 `SESSION_RESUME` (the task detail's Pause/Resume toggle) restarts a suspended session **in
-place**, in the task's current column. It is refused for three states, resolved by one shared
+place**, in the task's current column. Its body is `resumeTaskSession`
+(`handlers/session-resume.ts`), which the phone's `start-session` verb also calls for a paused
+task, so a phone Resume is the same resume: it cancels a resume already in flight for the task,
+labels the task "Resuming session...", resumes the conversation idle, and runs no enter
+automations or column message. The read-stream feed tells the phone when that promise holds
+(`resumable`, see [Mobile Bridge](mobile-bridge.md)). It is refused for three states, resolved by one shared
 predicate (`src/shared/session-resume-eligibility.ts`) that the main-process handler, the task
 detail, and the phone's `startTaskSession` (`handlers/session-start.ts`, the `start-session` verb)
 all read, and whose role set startup recovery shares:
@@ -1441,7 +1448,9 @@ When a task moves rapidly between columns (e.g. drag-and-drop corrections), spaw
 
 The `isAbortError()` utility in `src/shared/abort-utils.ts` provides a type guard for distinguishing abort errors from real errors in catch blocks.
 
-The board-driven spawn chokepoint `autoSpawnForTask` (`src/main/ipc/helpers/agent-spawn.ts`: the MCP create, the auto-spawn reconcile, and the phone's `start-session` verb) is cancellable the same way. It registers an `AbortController` on the per-task registry `SESSION_RESUME` uses (`handlers/session-resume-controllers.ts`), so `SESSION_SUSPEND`, `SESSION_RESET`, a newer `SESSION_RESUME`, and a project relocation cancel its in-flight git phase through `abortInFlightResume`, and the signal reaches `ensureTaskWorktree`, `ensureTaskBranchCheckout`, and `spawnAgent`. It registers WITHOUT aborting an existing controller first, unlike `SESSION_RESUME`: a phone Start never cancels desktop work, and two starts converge on one session through the gates below. The registry holds every in-flight controller per task (a `Set`, not one slot), so that second registration does not displace the desktop resume's controller: the next Pause reaches both. `tests/unit/session-resume-controllers.test.ts` pins that. Its lock is split the way `SESSION_RESUME`'s is: Phase 1 runs the gates (column re-check, live-session check, profile fold, `auto_spawn`, role) under `withTaskLock`, Phase 2 releases it for the worktree ensure and branch checkout (serialized per project by `WorktreeManager.projectQueues`), and Phase 3 re-acquires it, re-runs the same gates as the compare-and-swap, and spawns. Holding the lock across the fetch used to make a desktop Pause or move on the same task wait behind a phone Start. An abort is logged and swallowed, never counted as a spawn failure, and cleans up no session state: the engine's last abort checkpoint precedes the PTY spawn, and the `session_id` write follows it with no further checkpoint, so an abort never leaves a half-written session for the aborter to trip over.
+A phone Resume of a paused task (`start-session` through `resumeTaskSession`) is a `SESSION_RESUME` in every respect, including the abort: it cancels an in-flight resume for the task exactly as a second desktop Resume click does, by decision, so the phone mirrors the desktop.
+
+The board-driven spawn chokepoint `autoSpawnForTask` (`src/main/ipc/helpers/agent-spawn.ts`: the MCP create, the auto-spawn reconcile, and the phone's `start-session` verb for a task with no session or an exited one) is cancellable the same way. It registers an `AbortController` on the per-task registry `SESSION_RESUME` uses (`handlers/session-resume-controllers.ts`), so `SESSION_SUSPEND`, `SESSION_RESET`, a newer `SESSION_RESUME`, and a project relocation cancel its in-flight git phase through `abortInFlightResume`, and the signal reaches `ensureTaskWorktree`, `ensureTaskBranchCheckout`, and `spawnAgent`. It registers WITHOUT aborting an existing controller first, unlike `SESSION_RESUME`: a phone Start never cancels desktop work, and two starts converge on one session through the gates below. The registry holds every in-flight controller per task (a `Set`, not one slot), so that second registration does not displace the desktop resume's controller: the next Pause reaches both. `tests/unit/session-resume-controllers.test.ts` pins that. Its lock is split the way `SESSION_RESUME`'s is: Phase 1 runs the gates (column re-check, live-session check, profile fold, `auto_spawn`, role) under `withTaskLock`, Phase 2 releases it for the worktree ensure and branch checkout (serialized per project by `WorktreeManager.projectQueues`), and Phase 3 re-acquires it, re-runs the same gates as the compare-and-swap, and spawns. Holding the lock across the fetch used to make a desktop Pause or move on the same task wait behind a phone Start. An abort is logged and swallowed, never counted as a spawn failure, and cleans up no session state: the engine's last abort checkpoint precedes the PTY spawn, and the `session_id` write follows it with no further checkpoint, so an abort never leaves a half-written session for the aborter to trip over.
 
 ## Terminal Paste Strategy
 

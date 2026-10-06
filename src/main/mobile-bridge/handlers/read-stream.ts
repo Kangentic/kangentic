@@ -8,6 +8,8 @@ import {
 import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatus, SessionUsage } from '../../../shared/types';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { getProjectRepos } from '../../ipc/helpers/project-repos';
+import { resumeBlockReason } from '../../../shared/session-resume-eligibility';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
@@ -115,6 +117,34 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
   return null;
 }
 
+/**
+ * Whether the desktop's own task view would offer Resume for this session: the
+ * `resumable` a phone gates its Resume on. Mirrors the resume direction of
+ * `canToggle` in `useTaskSessionState.ts`: the session is suspended, and the
+ * task is not in To Do or Done and not archived (`resumeBlockReason`). Those
+ * are also exactly the cases `startTaskSession` sends down the Resume
+ * button's path rather than starting the column.
+ *
+ * Reads the task only for a suspended session, so a running feed costs no
+ * lookup. A Command Terminal session belongs to no task and is never
+ * resumable. A task or project that cannot be read answers false, which hides
+ * Resume rather than offering one start-session would refuse.
+ */
+function isSessionResumable(context: IpcContext, session: Session): boolean {
+  if (session.status !== 'suspended' || session.transient === true || !session.taskId || !session.projectId) return false;
+  try {
+    const { tasks, swimlanes } = getProjectRepos(context, session.projectId);
+    const task = tasks.getById(session.taskId);
+    if (!task) return false;
+    const lane = swimlanes.getById(task.swimlane_id);
+    // Truthiness, not `!== null`: a Task assembled without the column carries
+    // `undefined` in `archived_at`, which `!== null` would read as archived.
+    return resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) }) === null;
+  } catch {
+    return false;
+  }
+}
+
 function currentAwaitedPromptId(context: IpcContext, sessionId: string): string | null {
   const statsSnapshot = context.sessionManager.getActivityStatsSnapshot(sessionId);
   return statsSnapshot?.permissionPending && statsSnapshot.permissionAwaitedToolId
@@ -140,6 +170,7 @@ async function probePromptOptions(context: IpcContext, sessionId: string): Promi
 function subscribeReadStream(
   sessionId: string,
   snapshotSession: Session,
+  snapshotResumable: boolean,
   initialAwaitedPromptId: string | null,
   session: BridgeSession,
   context: IpcContext,
@@ -165,6 +196,7 @@ function subscribeReadStream(
   // The snapshot already told the phone these; only a change is pushed.
   let lastSentStatus: SessionStatus = snapshotSession.status;
   let lastSentResuming = snapshotSession.resuming;
+  let lastSentResumable = snapshotResumable;
   // A Command Terminal session belongs to no task, so no other session can
   // be its successor.
   const tracksSuccessor = taskId !== '' && snapshotSession.transient !== true;
@@ -420,15 +452,20 @@ function subscribeReadStream(
     }
   };
 
+  // `resumable` is recomputed on every edge, so a status edge that changes
+  // nothing but it (the task's column was read again after a suspend) still
+  // reaches the phone.
   const pushStatusIfChanged = (current: Session): void => {
-    if (current.status === lastSentStatus && current.resuming === lastSentResuming) return;
+    const resumable = isSessionResumable(context, current);
+    if (current.status === lastSentStatus && current.resuming === lastSentResuming && resumable === lastSentResumable) return;
     lastSentStatus = current.status;
     lastSentResuming = current.resuming;
+    lastSentResumable = resumable;
     sendEvent(session, {
       kind: 'activity',
       sessionId,
       taskId,
-      payload: { type: 'status', status: toReadStreamSessionStatusWire(current.status), resuming: current.resuming },
+      payload: { type: 'status', status: toReadStreamSessionStatusWire(current.status), resuming: current.resuming, resumable },
     });
   };
 
@@ -658,6 +695,7 @@ export async function handleReadStream(
   // directly instead of a second read. Null = no numbered dialog parsed;
   // the phone falls back to its blind approve/deny keystrokes.
   const awaitedPromptOptions = awaitedPromptId ? extractPromptOptions(scrollback, ptyDimensions) : null;
+  const resumable = isSessionResumable(context, snapshotSession);
   const responsePayload: ReadStreamResponsePayload = {
     scrollback,
     activity: {
@@ -670,9 +708,10 @@ export async function handleReadStream(
     ...(ptyDimensions ? { ptyDimensions } : {}),
     sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
     resuming: snapshotSession.resuming,
+    resumable,
   };
 
-  subscribeReadStream(payload.sessionId, snapshotSession, awaitedPromptId, session, context, subscriptions, wantsTerminal);
+  subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal);
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

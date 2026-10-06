@@ -144,11 +144,13 @@ export type ActivityEventPayload =
    * `queued`. Read `suspended` alone as "Paused"; read it next to a label as
    * that label.
    *
-   * `resuming` repeats the snapshot field so the payload is complete on its
-   * own. Absent from pre-0.16.0 desktops, whose phones drop the unknown type
-   * through `isBridgeEvent` and keep inferring status from activity events.
+   * `resuming` and `resumable` repeat the snapshot fields so the payload is
+   * complete on its own; the desktop sends it when any of the three values
+   * changes. Absent from pre-0.16.0 desktops, whose phones drop the unknown
+   * type through `isBridgeEvent` and keep inferring status from activity
+   * events.
    */
-  | { type: 'status'; status: ReadStreamSessionStatusWire; resuming: boolean }
+  | { type: 'status'; status: ReadStreamSessionStatusWire; resuming: boolean; resumable: boolean }
   /**
    * The agent's most recent assistant message, already collapsed to a short
    * plain-text preview, pushed whenever it changes.
@@ -254,7 +256,8 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
     case 'status': {
       if (!isReadStreamSessionStatusWire(payload.status)) throw new Error('status payload has an invalid "status"');
       if (typeof payload.resuming !== 'boolean') throw new Error('status payload is missing "resuming"');
-      return { type: 'status', status: payload.status, resuming: payload.resuming };
+      if (typeof payload.resumable !== 'boolean') throw new Error('status payload is missing "resumable"');
+      return { type: 'status', status: payload.status, resuming: payload.resuming, resumable: payload.resumable };
     }
     case 'message-preview': {
       if (typeof payload.text !== 'string') throw new Error('message-preview payload is missing "text"');

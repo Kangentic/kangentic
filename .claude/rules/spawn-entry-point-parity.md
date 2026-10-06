@@ -37,13 +37,15 @@ contract was kept in sync across three files by prose comments alone.
   Task / Edit dialog displayed when the user configured the task (a drag move passes the SOURCE
   lane). When that lane is unknowable (create, promote, MCP create, unarchive), the destination
   the user chose is the fallback - never a lane no dialog ever showed.
-- In-place restarts of an EXISTING session (`SESSION_RESUME` in `handlers/sessions.ts`,
+- In-place restarts of an EXISTING session (`resumeTaskSession` in `handlers/session-resume.ts`,
+  which the `SESSION_RESUME` handler and a phone resume of a paused task both call, and
   `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are allowlisted direct
   engine calls; they are not first-spawn entry points.
 - A **user-initiated start in place** (the phone's `start-session` verb, via `startTaskSession` in
-  `handlers/session-start.ts`) is NOT a third direct engine call: it routes through
-  `autoSpawnForTask` -> `spawnAgent` with `explicitStart: true`, so the column's enter automations
-  run as they do on a move. That flag lifts exactly two guards, the column's `auto_spawn` default
+  `handlers/session-start.ts`) is NOT a third direct engine call. For a paused task it calls
+  `resumeTaskSession`, the Resume button's own path, which runs no enter automations. Otherwise
+  it routes through `autoSpawnForTask` -> `spawnAgent` with `explicitStart: true`, so the column's
+  enter automations run as they do on a move. That flag lifts exactly two guards, the column's `auto_spawn` default
   and the manually-paused check, both of which exist to stop an AUTOMATIC spawn from overriding a
   choice the user made; the To Do / Done role gate stays. Only an explicit user gesture passes it.
   A create, promote, unarchive, startup, or `reconcileAutoSpawnChange` caller never does, or a

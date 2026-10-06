@@ -126,6 +126,29 @@ export interface ReadStreamResponsePayload {
    * desktops; read absent as false.
    */
   resuming?: boolean;
+  /**
+   * True when this session is paused (`suspended`) and the desktop's own task
+   * view would offer Resume for it: the task is not in To Do or Done and not
+   * archived. It is the desktop's promise that `start-session` for this task
+   * resumes the session exactly as its Resume button does: the same
+   * conversation, the column's model, effort and permission, a "Resuming
+   * session..." label, and NO enter automations or column message. Gate a
+   * phone's Resume control on it.
+   *
+   * Explicit on purpose, never inferred from another field: a pre-0.16.0
+   * desktop answers `start-session` by STARTING the column, which re-runs its
+   * enter automations and resends its message (a paused task in Code Review
+   * would get `/code-review` again). Absent from those desktops, so a client
+   * reads absent as "offer no Resume".
+   *
+   * Recomputed on every `status` push, which the desktop also sends when this
+   * value alone changes. It describes the session, so a live `spawn_progress`
+   * label on the task's board row still takes precedence for display, as it
+   * does over `suspended`. `start-session` re-checks the column itself and
+   * refuses a To Do, Done or archived task with the desktop's Resume copy, so
+   * a value overtaken by a move is safe to act on.
+   */
+  resumable?: boolean;
 }
 
 /** Phone-side narrowing of a read-stream subscribe response. Throws on a malformed required field. */
@@ -167,6 +190,10 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
   if (payload.resuming !== undefined) {
     if (typeof payload.resuming !== 'boolean') throw new Error('read-stream response has an invalid "resuming"');
     response.resuming = payload.resuming;
+  }
+  if (payload.resumable !== undefined) {
+    if (typeof payload.resumable !== 'boolean') throw new Error('read-stream response has an invalid "resumable"');
+    response.resumable = payload.resumable;
   }
   return response;
 }

@@ -11,10 +11,11 @@
  * Two halves, deliberately:
  *
  *   (a) the CONTRACT - the pure predicate every consumer reads;
- *   (b) the STRUCTURAL parity check - that `handlers/sessions.ts` actually
- *       calls it at both lane checks. (a) alone is green the moment it is
- *       written and says nothing about the handler where the bug lived, so
- *       (b) is the regression guard.
+ *   (b) the STRUCTURAL parity check - that `resumeTaskSession`
+ *       (`handlers/session-resume.ts`, the body SESSION_RESUME and a phone
+ *       resume share) actually calls it at both lane checks. (a) alone is
+ *       green the moment it is written and says nothing about the handler
+ *       where the bug lived, so (b) is the regression guard.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -28,6 +29,7 @@ import {
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SESSIONS_HANDLER = 'src/main/ipc/handlers/sessions.ts';
+const SESSION_RESUME_BODY = 'src/main/ipc/handlers/session-resume.ts';
 const RESUME_SUSPENDED = 'src/main/transition-engine/session-startup/resume-suspended.ts';
 
 function readSource(relativePath: string): string {
@@ -81,7 +83,15 @@ describe('resumeBlockReason', () => {
 });
 
 describe('SESSION_RESUME routes both lane checks through the shared predicate', () => {
-  const source = readSource(SESSIONS_HANDLER);
+  const source = readSource(SESSION_RESUME_BODY);
+
+  it('the SESSION_RESUME handler delegates to the shared body, so these checks cover it', () => {
+    // The body moved out of sessions.ts so the phone's start-session could
+    // call the same function. Red if the handler grows its own copy again.
+    const handlerSource = readSource(SESSIONS_HANDLER);
+    expect(handlerSource).toMatch(/ipcMain\.handle\(IPC\.SESSION_RESUME,[\s\S]{0,200}resumeTaskSession\(/);
+    expect(handlerSource).not.toMatch(/resumeSuspendedSession\(/);
+  });
 
   it('imports the shared eligibility predicate', () => {
     expect(source).toMatch(/from '\.\.\/\.\.\/\.\.\/shared\/session-resume-eligibility'/);

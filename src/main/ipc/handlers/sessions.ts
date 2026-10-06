@@ -8,9 +8,8 @@ import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, notifySpawnBlocked } from '../helpers';
+import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
-import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { handleTaskMove } from './task-move';
@@ -23,14 +22,12 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
-import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
+import { abortInFlightResume } from './session-resume-controllers';
+import { resumeTaskSession } from './session-resume';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
-import { isAbortError } from '../../../shared/abort-utils';
-import { resumeBlockMessage, resumeBlockReason } from '../../../shared/session-resume-eligibility';
 import { broadcast } from '../../pop-out/window-broadcast';
 
 // Track session start times for duration calculation on exit
@@ -134,156 +131,11 @@ export function registerSessionHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) => {
-    // Cancel any in-flight resume BEFORE queueing on the lock. Moving this
-    // outside the lock is required because Phase 2 (worktree git I/O) runs
-    // unlocked - a second resume must be able to cancel the first's in-flight
-    // fetch. Aborting inside the lock would deadlock: we'd be waiting for a
-    // holder stuck in the now-unlocked git op.
-    abortInFlightResume(taskId);
-    const resumeController = new AbortController();
-    registerResumeController(taskId, resumeController);
-    const { signal } = resumeController;
-
-    return (async (): Promise<Session | null> => {
-      const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-      if (!resolvedProjectId) throw new Error('No project is currently open');
-
-      const { tasks, automations, automationRuns, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
-
-      try {
-        // Phase 1 (locked, short): validate task + lane, build plan.
-        // Self-heal contract: if main already has a live PTY for this task,
-        // return it instead of throwing. The renderer's view can drift after
-        // rapid project switches (sessions[] entries with status='suspended'
-        // for tasks whose registry entry is actually 'running'). Rather than
-        // surfacing an error the user can't recover from without a restart,
-        // we treat resume as idempotent and return the existing handle. The
-        // renderer's resumeSession action replaces the stale entry and sets
-        // activeSessionId, restoring the terminal attachment. That branch stays
-        // AHEAD of the eligibility check below: handing back a PTY that already
-        // exists spawns nothing, and it is the only path that re-attaches a
-        // drifted renderer, including one drifted onto an archived task.
-        const phase1Result = await withTaskLock(taskId, async () => {
-          const { task, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
-          if (liveSession) {
-            return { kind: 'live' as const, session: liveSession };
-          }
-          const lane = swimlanes.getById(task.swimlane_id);
-          // Truthiness, not `!== null`: a Task assembled without the column
-          // (mocks, wire mappers, MCP-constructed rows) carries `undefined`,
-          // which `!== null` reads as ARCHIVED and would refuse every resume.
-          const blocked = resumeBlockReason({ laneRole: lane?.role, isArchived: Boolean(task.archived_at) });
-          if (blocked) throw new Error(resumeBlockMessage(blocked));
-          return { kind: 'spawn' as const, task };
-        });
-
-        if (phase1Result.kind === 'live') {
-          console.log(
-            `[SESSION_RESUME] Self-heal: returning live session for task ${taskId.slice(0, 8)}`
-            + ` (renderer view was stale)`,
-          );
-          return phase1Result.session;
-        }
-        const planTask = phase1Result.task;
-
-        // Label the resume from here on, as restoring from Done does
-        // (task-archive.ts). The git phase below can take seconds, and without
-        // a label the card (and a paired phone's card) reads "Paused" behind a
-        // Resume button while the conversation is already being restored. The
-        // label also rides the paused session's `session-ended` to a paired
-        // phone, which then reads the swap as a respawn rather than a stop.
-        // Emitted only now that the resume will spawn: the self-heal return
-        // above spawns nothing. One `finally` releases it on every exit, the
-        // abort included. A claim rather than a plain clear: a phone Start
-        // registers alongside this resume without aborting it, and a newer
-        // resume aborts this one and labels the task before this one unwinds,
-        // so an unconditional clear here would wipe the label the other spawn
-        // is still showing.
-        const progress = claimSpawnProgress(context.mainWindow, taskId);
-        const onProgress = progress.onProgress;
-        onProgress('resuming');
-        try {
-          // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
-          // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
-          // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
-          try {
-            // The explicit projectId: if the user switches projects during this
-            // slow git phase, a base-fetch failure's spawn warning must stamp
-            // the resumed task's project, not whatever became ambient.
-            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress, projectId: resolvedProjectId });
-          } catch (worktreeError) {
-            if (isAbortError(worktreeError)) throw worktreeError;
-            const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-            throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
-          }
-
-          // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY
-          // and write session_id. Re-read task because Phase 2 could have raced
-          // with a concurrent handler that cleared session_id, moved the task
-          // to To Do, or already spawned a session.
-          return await withTaskLock(taskId, async () => {
-            signal.throwIfAborted();
-            // Reconcile against the registry: if a concurrent handler spawned a
-            // live session during our Phase 2 gap, return it (don't duplicate).
-            // If session_id is stale (registry-suspended/missing), reconcile
-            // clears it so we proceed to spawn fresh.
-            const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
-            if (liveSession) return liveSession;
-            // Folded through the task's Board Profile so an explicit Resume
-            // restarts on the same rung the task was running, not the column's
-            // base settings. Identity fields (including `role`, checked next) pass
-            // through the fold untouched.
-            const currentLane = applyProfileToLane(
-              swimlanes.getById(current.swimlane_id),
-              loadTaskProfile(context, current, resolvedProjectPath),
-            );
-            // Re-read, not the Phase 1 snapshot: the task could have been moved or
-            // archived (a move to Done archives in the same tick) during the
-            // unlocked git I/O above.
-            const currentBlocked = resumeBlockReason({
-              laneRole: currentLane?.role,
-              isArchived: Boolean(current.archived_at),
-            });
-            if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
-
-            const db = getProjectDb(resolvedProjectId);
-            const sessionRepo = new SessionRepository(db);
-            const engine = createTransitionEngine(
-              context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
-              resolvedProjectId, resolvedProjectPath,
-            );
-
-            const project = context.projectRepo.getById(resolvedProjectId);
-            const overrides = resolveSpawnOverrides(current, currentLane, project);
-            await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, resumePrompt, signal, undefined, undefined, overrides);
-
-            const updated = tasks.getById(taskId);
-            if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
-            const newSession = context.sessionManager.getSession(updated.session_id);
-            if (!newSession) throw new Error('Session resume failed - session not in manager');
-            return newSession;
-          });
-        } finally {
-          progress.release();
-        }
-      } catch (error) {
-        if (isAbortError(error)) {
-          console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
-          // Clean up partial state under the lock so a concurrent handler
-          // cannot observe a half-written session_id.
-          await withTaskLock(taskId, async () => {
-            context.sessionManager.removeByTaskId(taskId);
-            tasks.update({ id: taskId, session_id: null });
-          });
-          return null;
-        }
-        throw error;
-      } finally {
-        releaseResumeController(taskId, resumeController);
-      }
-    })();
-  });
+  // The Resume button. The whole path lives in resumeTaskSession
+  // (session-resume.ts), shared with the phone's start-session verb for a
+  // paused task, so a desktop and a phone Resume cannot drift.
+  ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) =>
+    resumeTaskSession(context, taskId, { projectId, resumePrompt }));
 
   // === Session Reset (safety-net recovery for unrecoverable sessions) ===
   ipcMain.handle(IPC.SESSION_RESET, (_, taskId: string, projectId?: string | null) => {
