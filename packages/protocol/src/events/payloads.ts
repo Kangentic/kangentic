@@ -375,7 +375,9 @@ export interface BoardTaskWire {
    * a paused session (the stream's `resumable` covers only an open session
    * screen through the suspend itself). A pause, a resume, a column move and
    * an archive each reach the phone as a `task-updated` board event, after
-   * which the next snapshot carries the new value.
+   * which the next snapshot carries the new value. Under `view: 'sessions'` a
+   * resumable task is kept even though its `session_id` is null, so an agent
+   * feed can draw it as Paused with a Resume control.
    *
    * Explicit on purpose, never inferred from another field: a pre-0.16.0
    * desktop answers `start-session` by STARTING the column, which re-runs its

@@ -324,6 +324,17 @@ describe('handleReadBoard', () => {
       });
     });
 
+    it("'sessions' keeps a resumable paused task, and still drops a paused task that offers no Resume", async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
+      // t-paused stays though its session_id is null; the paused tasks in To Do
+      // and Done, the ended one, and the fresh one stay out as before.
+      expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-paused', 't-running']);
+      // Counts still describe the whole column, not the filtered list.
+      expect(snapshot.taskCountsByColumnId['lane-review']).toBe(5);
+    });
+
     it('the archived page never offers Resume', async () => {
       tasksListArchivedPage.mockReturnValue({
         tasks: [{ id: 't-paused-archived', swimlane_id: 'lane-done', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' }],

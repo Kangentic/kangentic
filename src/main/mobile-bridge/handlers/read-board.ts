@@ -135,7 +135,9 @@ export async function handleReadBoard(
   // session_id is null: a first start has no session yet, and a respawn nulls
   // session_id (task-move.ts suspendLiveSessionForRespawn) for the whole gap
   // the label describes, so the card would otherwise vanish exactly while it
-  // has something to say.
+  // has something to say. It keeps a resumable paused task for the same
+  // reason: a desktop pause nulls session_id too (applySuspendDbWrites), and
+  // without it the feed could show Paused only until the row dropped out.
   const view = payload.view;
   const sessionTasksOnly = view === 'sessions';
   const backlog = view === undefined ? new BacklogRepository(getProjectDb(projectId)).list().map(toBacklogItemWire) : undefined;
@@ -143,7 +145,7 @@ export async function handleReadBoard(
   const responsePayload: ReadBoardResponsePayload = {
     projectId,
     columns: swimlaneRows.map(toBoardColumnWire),
-    tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null || typeof task.spawn_progress === 'string') : allTasks,
+    tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null || typeof task.spawn_progress === 'string' || task.resumable === true) : allTasks,
     ...(backlog !== undefined ? { backlog } : {}),
     projectColor: deriveProjectAccentColor(projectId),
     // The Layout "Ticket Numbers" setting travels with the snapshot so the
