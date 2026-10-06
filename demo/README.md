@@ -357,8 +357,8 @@ one. Conversation hits (the memory index) have no rows to search here and do not
 
 The map a frame opens from the title bar, and the `knowledge-graph` scene, are the Knowledge Graph
 main's own pipeline built over the sample install's recorded conversations: index, embed with the
-default model, nearest neighbours, the 3D layout, regions at three granularities, and region names
-from the task titles. `scripts/capture-demo-knowledge-graph.mjs` registers the three projects in a
+default model (bge-base for the committed fixture, see below), nearest neighbours, the 3D layout,
+regions at three granularities, and region names from the task titles. `scripts/capture-demo-knowledge-graph.mjs` registers the three projects in a
 running `/preview` (`seed-knowledge-graph-demo.ts`, dev only), points each recorded session's row at
 its agent's own history, opens each project, waits for the sweep, the embedding drain, the map and
 its names, and reads the snapshots back into `tests/captures/fixtures/demo/graph/knowledge-graph.json`.
@@ -405,8 +405,10 @@ The counts are the install's own because the capture registers each project at a
 the History pane's history: task records are its tasks plus its backlog, and commits are the
 scaffold's commit plan for contoso-web and the one commit of each shallow upstream clone. Settings, Knowledge Graph
 reads the same counts through `getStatus`, summed with main's shared helpers
-(`DEMO_KNOWLEDGE_GRAPH_STATUS`), with semantic search on and the default model present, which is
-the config the maps were built under. No Ask agent is chosen, so Enter in the Ask box opens
+(`DEMO_KNOWLEDGE_GRAPH_STATUS`), with semantic search on and the default model (Granite R2)
+present. The committed maps were embedded with bge-base, before Granite R2 became the default.
+Nothing a visitor sees reads the model tag, so the frame stays consistent, and a fresh run of the
+capture re-embeds them with the default. No Ask agent is chosen, so Enter in the Ask box opens
 Settings, as on a desktop where nobody picked one. An Ask answer is not seeded: an honest one needs
 a recorded answer run and a mock that refuses every other question.
 

@@ -27,8 +27,10 @@
  * then the count that pane lists.
  *
  * Prerequisites: a `/preview` of this worktree running, Settings > Developer > Allow Unsafe
- * Operations on, and the bge-base embedding model on the machine (Settings > Knowledge Graph
- * downloads it). The preview's data is thrown away when it stops, so the seed runs once per launch.
+ * Operations on, and the default embedding model (Granite English R2) on the machine (Settings >
+ * Knowledge Graph downloads it). The preview's data is thrown away when it stops, so the seed runs
+ * once per launch. The committed fixture was embedded with bge-base, before Granite R2 became the
+ * default; a fresh run re-embeds it with the default.
  *
  *   node scripts/capture-demo-knowledge-graph.mjs
  *   node scripts/capture-demo-knowledge-graph.mjs --check        build and report, write nothing
