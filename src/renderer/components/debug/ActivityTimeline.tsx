@@ -165,6 +165,7 @@ const COUNTER_LABELS: Record<keyof ActivityStatsSnapshot['compensationCounters']
   forceIdle: 'force-idle',
   unmatchedBgShellEnd: 'unmatched-bg-shell-end',
   ignoredInnerSubagentStop: 'ignored-inner-subagent-stop',
+  duplicateSubagentStop: 'duplicate-subagent-stop',
   stuckSubagent: 'stuck-subagent',
 };
 

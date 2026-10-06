@@ -61,6 +61,7 @@ const EMPTY_COMPENSATION_COUNTERS: ActivityStatsSnapshot['compensationCounters']
   forceIdle: 0,
   unmatchedBgShellEnd: 0,
   ignoredInnerSubagentStop: 0,
+  duplicateSubagentStop: 0,
   stuckSubagent: 0,
 };
 

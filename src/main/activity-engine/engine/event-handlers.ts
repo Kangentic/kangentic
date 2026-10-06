@@ -1,7 +1,12 @@
 import { EventType, IdleReason } from '../../../shared/types';
 import type { SessionEvent } from '../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
-import { MAX_PENDING_EXEMPT_SHELL_TOOL_IDS, type SessionEngineState } from './shapes';
+import {
+  MAX_PENDING_EXEMPT_SHELL_TOOL_IDS,
+  MAX_TRACKED_SUBAGENT_IDS,
+  type SessionEngineState,
+  type SubagentLifecycle,
+} from './shapes';
 import { looksLikeShellId } from '../background-shell/looks-like-shell-id';
 
 /**
@@ -28,6 +33,38 @@ function rememberExemptShellToolId(state: SessionEngineState, toolId: string): v
 }
 
 /**
+ * Record a correlated subagent's latest lifecycle event. Deleting first moves
+ * the id to the newest position, so the FIFO cap evicts the id written longest
+ * ago rather than the one first seen.
+ */
+function recordSubagentLifecycle(
+  state: SessionEngineState,
+  subagentId: string,
+  lifecycle: SubagentLifecycle,
+): void {
+  state.subagentLifecycleById.delete(subagentId);
+  if (state.subagentLifecycleById.size >= MAX_TRACKED_SUBAGENT_IDS) {
+    const oldest = state.subagentLifecycleById.keys().next().value;
+    if (oldest !== undefined) state.subagentLifecycleById.delete(oldest);
+  }
+  state.subagentLifecycleById.set(subagentId, lifecycle);
+}
+
+/**
+ * Zero `subagentDepth` and mark every live correlated subagent stopped. Every
+ * path that force-releases the depth goes through here, so the ledger agrees
+ * with the count: the released agents no longer hold a slot, and a late named
+ * stop from one of them is a duplicate rather than a decrement that would take
+ * the slot of a subagent started after the reset.
+ */
+export function releaseSubagentSlots(state: SessionEngineState): void {
+  state.subagentDepth = 0;
+  for (const [subagentId, lifecycle] of state.subagentLifecycleById) {
+    if (lifecycle === 'live') state.subagentLifecycleById.set(subagentId, 'stopped');
+  }
+}
+
+/**
  * Pure event-to-state mutations for the activity engine.
  *
  * Each function takes the current state and an event and mutates the
@@ -48,10 +85,14 @@ function rememberExemptShellToolId(state: SessionEngineState, toolId: string): v
  *                         turn is done, any unmatched ToolStart events
  *                         are stale by definition (PostToolUse hook
  *                         dropped, tool force-killed, etc.).
- * - `SubagentStart`       increments `subagentDepth`.
+ * - `SubagentStart`       increments `subagentDepth` and, with a
+ *                         `subagentId`, marks that id live (re-opening a
+ *                         continued agent).
  * - `SubagentStop`        decrements `subagentDepth` (clamped at zero),
  *                         EXCEPT an empty-string detail ("") which is a
- *                         subagent's spurious inner-loop Stop and is ignored.
+ *                         subagent's spurious inner-loop Stop and is ignored,
+ *                         and a stop whose `subagentId` is already stopped,
+ *                         which is a duplicate and is ignored (task #759).
  * - `BackgroundShellStart` first closes any in-flight pending tool whose
  *                         id matches `event.toolId` (a foreground Bash that
  *                         Claude auto-backgrounded on timeout - the tool
@@ -149,6 +190,13 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
     }
     case EventType.SubagentStart:
       state.subagentDepth += 1;
+      // A SendMessage continuation fires a fresh SubagentStart under the SAME
+      // id (captured on CLI 2.1.290), so a start always re-marks the id live.
+      // Without this, the continued agent's legitimate stop would read as a
+      // duplicate and leave depth one too high until `timer:stuck-subagent`.
+      if (event.subagentId) {
+        recordSubagentLifecycle(state, event.subagentId, 'live');
+      }
       break;
     case EventType.SubagentStop:
       // An empty-STRING detail ("") marks a subagent's spurious inner-loop
@@ -163,11 +211,34 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       // The guard is strictly `=== ''`, NOT `!event.detail`: a detail-less
       // terminal stop must still count, and session-008's replay test is the
       // CI backstop that fails if this is ever weakened to `!event.detail`.
+      //
+      // This check runs FIRST and never records the stop's id: an ignored inner
+      // stop that marked its id stopped would make that agent's real named stop
+      // read as a duplicate below, leaving depth stuck one too high.
       if (event.detail === '') {
         state.compensationCounters.ignoredInnerSubagentStop += 1;
         break;
       }
+      // A second NAMED stop for one agent. A background subagent that ends its
+      // turn without calling SubagentHandback fires a named stop, is
+      // re-prompted by the CLI's `[handback-send-enforce]` message, and fires
+      // another after the handback. Counting both took a live sibling's slot,
+      // so the parent's Stop passed the depth-0 turn-ending gate while a
+      // background test-builder was still running (task #759, session-030).
+      // An id-less stop skips this and decrements as it always has. An empty
+      // id names no agent, so it counts as id-less too: as a ledger key, two
+      // agents both stopping with `""` would read as one agent's duplicate.
+      if (
+        event.subagentId
+        && state.subagentLifecycleById.get(event.subagentId) === 'stopped'
+      ) {
+        state.compensationCounters.duplicateSubagentStop += 1;
+        break;
+      }
       state.subagentDepth = Math.max(0, state.subagentDepth - 1);
+      if (event.subagentId) {
+        recordSubagentLifecycle(state, event.subagentId, 'stopped');
+      }
       break;
     case EventType.BackgroundShellStart: {
       // A foreground Bash that Claude auto-backgrounds on timeout arrives

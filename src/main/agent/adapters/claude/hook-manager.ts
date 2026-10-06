@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractDetail, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -257,15 +257,24 @@ export function buildHooks(
       ...(existingHooks[H.SessionEnd] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SessionEnd) }] },
     ],
+    // Both subagent hooks carry `agent_id` (captured on CLI 2.1.290). The
+    // engine needs it because one agent can fire two NAMED stops: a background
+    // subagent that ends its turn without calling SubagentHandback stops, gets
+    // re-prompted by the CLI's `[handback-send-enforce]` message, and stops
+    // again after the handback. Counting both took a live sibling's depth slot
+    // (task #759). A SendMessage continuation also stops twice under one id,
+    // but fires a fresh SubagentStart with that id first, which re-opens it.
     [H.SubagentStart]: [
       ...(existingHooks[H.SubagentStart] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SubagentStart,
-        extractDetail(['agent_type', 'subagent_type'])) }] },
+        extractDetail(['agent_type', 'subagent_type']),
+        extractSubagentId(['agent_id'])) }] },
     ],
     [H.SubagentStop]: [
       ...(existingHooks[H.SubagentStop] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.SubagentStop,
-        extractDetail(['agent_type', 'subagent_type'])) }] },
+        extractDetail(['agent_type', 'subagent_type']),
+        extractSubagentId(['agent_id'])) }] },
     ],
     [H.Notification]: [
       ...(existingHooks[H.Notification] || []),

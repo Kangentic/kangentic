@@ -967,7 +967,7 @@ export function buildDemoPreConfig(options: {
       // does not agree with itself.
       //
       // Most of the snapshot has a documented correct value here rather than a derived one, and
-      // that is not a shortcut. \`compensationCounters\` is "in a clean session, all eight fields
+      // that is not a shortcut. \`compensationCounters\` is "in a clean session, all nine fields
       // read 0", and no seeded session has had a watchdog fire. \`recentPtyChunks\` is "empty in
       // production builds where the recorder is dead-code-eliminated", which is the build this
       // renderer IS. The background-shell and subagent counters are zero because no seeded
@@ -1028,7 +1028,8 @@ export function buildDemoPreConfig(options: {
           recentTransitions: transitions.slice(-20),
           compensationCounters: {
             staleThinking: 0, bgShellHatch: 0, stuckPendingTools: 0, forceThinking: 0,
-            forceIdle: 0, unmatchedBgShellEnd: 0, ignoredInnerSubagentStop: 0, stuckSubagent: 0,
+            forceIdle: 0, unmatchedBgShellEnd: 0, ignoredInnerSubagentStop: 0,
+            duplicateSubagentStop: 0, stuckSubagent: 0,
           },
           recentPtyChunks: [],
         };

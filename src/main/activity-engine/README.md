@@ -7,7 +7,7 @@ This directory implements Kangentic's activity-detection engine. The full archit
 | File | Purpose |
 |------|---------|
 | `engine/activity-engine.ts` | The state machine. Single predicate + counter tracking + 400ms stability window + 180s stale-thinking watchdog + the bg-shell escape hatch (5-min cap once a shell is named, 30s grace while all are anonymous). |
-| `engine/event-handlers.ts` | Pure event-to-counter mutations (`updateCounters`, `updatePermissionFlag`). |
+| `engine/event-handlers.ts` | Pure event-to-counter mutations (`updateCounters`, `updatePermissionFlag`), plus `releaseSubagentSlots`, which every depth-zeroing reset calls. |
 | `engine/predicate.ts` | The predicate below, plus `idleHintEndsTurn` and the reason ladder. |
 | `engine/watchdog.ts` | The five watchdog holds and their resets. |
 | `engine/shapes.ts` | `SessionEngineState`, `ActivityStatsSnapshot`, and the tunable defaults. |
