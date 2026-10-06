@@ -37,6 +37,15 @@ let disposed = false;
  */
 const outcomeCache = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, PixelDiffOutcome>>();
 
+/**
+ * Comparisons still running, keyed the same way. A second request for the
+ * same pair (React StrictMode's double effect, or a re-render before the
+ * worker answers) joins the running one instead of decoding both images again
+ * and queuing a duplicate behind it in the single worker. An entry leaves when
+ * its comparison settles, failure included, so a failed pair is tried afresh.
+ */
+const runningComparisons = new WeakMap<DecodedImageSide, WeakMap<DecodedImageSide, Promise<PixelDiffOutcome>>>();
+
 function failAllPending(): void {
   for (const resolve of pendingRequests.values()) resolve({ status: 'failed' });
   pendingRequests.clear();
@@ -74,22 +83,53 @@ function cachedPixelDiff(before: DecodedImageSide, after: DecodedImageSide): Pix
   return outcomeCache.get(before)?.get(after) ?? null;
 }
 
-async function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
+/**
+ * One pair's comparison, shared by every caller asking for it while it runs.
+ * A side is fixed to one file, and `scalable` is fixed by the file's type, so
+ * the pair alone identifies the request.
+ */
+function computePixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
   const cached = cachedPixelDiff(before, after);
-  if (cached !== null) return cached;
+  if (cached !== null) return Promise.resolve(cached);
+  const running = runningComparisons.get(before)?.get(after);
+  if (running !== undefined) return running;
+  const comparison = runPixelDiff(before, after, scalable).finally(() => {
+    runningComparisons.get(before)?.delete(after);
+  });
+  const byAfter = runningComparisons.get(before) ?? new WeakMap<DecodedImageSide, Promise<PixelDiffOutcome>>();
+  byAfter.set(after, comparison);
+  runningComparisons.set(before, byAfter);
+  return comparison;
+}
+
+async function runPixelDiff(before: DecodedImageSide, after: DecodedImageSide, scalable: boolean): Promise<PixelDiffOutcome> {
   const canvas = pixelDiffCanvas(before, after, scalable);
   if (canvas === null) return { status: 'failed' };
   const { scale, width, height } = canvas;
   let outcome: PixelDiffOutcome;
   try {
-    const [beforeBitmap, afterBitmap] = await Promise.all([bitmapOf(before, scale), bitmapOf(after, scale)]);
+    const decoded = await Promise.allSettled([bitmapOf(before, scale), bitmapOf(after, scale)]);
+    if (decoded[0].status === 'rejected' || decoded[1].status === 'rejected') {
+      // The side that did decode is still this thread's to free.
+      for (const result of decoded) if (result.status === 'fulfilled') result.value.close();
+      return { status: 'failed' };
+    }
+    const beforeBitmap = decoded[0].value;
+    const afterBitmap = decoded[1].value;
     outcome = await new Promise<PixelDiffOutcome>((resolve) => {
       const id = nextRequestId++;
       const request: PixelDiffRequest = { id, before: beforeBitmap, after: afterBitmap, width, height, color: PIXEL_DIFF_COLOR };
+      try {
+        getWorker().postMessage(request, [beforeBitmap, afterBitmap]);
+      } catch (postError) {
+        // Nothing was transferred, so both bitmaps are still this thread's to free.
+        beforeBitmap.close();
+        afterBitmap.close();
+        throw postError;
+      }
       // Registered only once the post went through: a throw from getWorker or
       // postMessage rejects this promise, and must not strand an entry. The
       // worker's reply is a later task, so it cannot arrive before the set.
-      getWorker().postMessage(request, [beforeBitmap, afterBitmap]);
       pendingRequests.set(id, resolve);
     });
   } catch {

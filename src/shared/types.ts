@@ -2496,14 +2496,29 @@ export interface GitFileContentResult {
 }
 
 /**
+ * Input for `git:fileImage`: the file and scope of {@link GitFileContentInput},
+ * plus the fingerprints of the sides the caller already holds for that same
+ * file and scope. A side whose fingerprint still matches comes back
+ * `unchanged`, so a diff refresh does not resend megabytes of identical bytes.
+ */
+export interface GitFileImageInput extends GitFileContentInput {
+  knownFingerprints?: { original?: string; modified?: string };
+}
+
+/**
  * One side of an image file as main read it for the Changes panel. `size` is
  * the file's byte length. Bytes travel only under `IMAGE_PREVIEW_MAX_BYTES`
  * (`src/shared/image-preview.ts`); a larger side reports its size alone.
+ * `fingerprint` names the bytes without carrying them: the blob id for a side
+ * read from git, the size and modified time for a working-tree file.
+ * `unchanged` answers a side whose fingerprint matched the caller's, and the
+ * caller keeps the side it already has.
  */
 export type GitImageSide =
-  | { kind: 'bytes'; size: number; bytes: Uint8Array }
-  | { kind: 'too-large'; size: number }
-  | { kind: 'lfs-pointer'; size: number }
+  | { kind: 'bytes'; size: number; bytes: Uint8Array; fingerprint: string }
+  | { kind: 'too-large'; size: number; fingerprint: string }
+  | { kind: 'lfs-pointer'; size: number; fingerprint: string }
+  | { kind: 'unchanged'; fingerprint: string }
   | { kind: 'unreadable' };
 
 /**
@@ -6433,7 +6448,7 @@ export interface ElectronAPI {
     listBranches: () => Promise<string[]>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
-    fileImage: (input: GitFileContentInput) => Promise<GitImageContentResult>;
+    fileImage: (input: GitFileImageInput) => Promise<GitImageContentResult>;
     subscribeDiff: (worktreePath: string) => void;
     unsubscribeDiff: (worktreePath: string) => void;
     onDiffChanged: (callback: () => void) => () => void;

@@ -1,7 +1,7 @@
 import simpleGit from 'simple-git';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitImageContentResult, GitImageSide } from '../../shared/types';
+import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
 import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-preview';
 import { countFileLines } from './line-count/count-lines';
 import { lineCountClient } from './line-count/line-count-client';
@@ -402,16 +402,19 @@ export class DiffService {
   /**
    * Both sides of a changed image as bytes, for the Changes panel's image
    * view. Same per-scope revisions as {@link getFileContent}; only the readers
-   * differ. Each side's size is read first (`git cat-file -s` or `stat`), so a
-   * side over IMAGE_PREVIEW_MAX_BYTES is never read into memory or sent over IPC.
+   * differ. Each side is fingerprinted first (`git rev-parse` or `stat`), so a
+   * side the caller already holds is answered `unchanged` without being read,
+   * and its size is checked next, so a side over IMAGE_PREVIEW_MAX_BYTES is
+   * never read into memory or sent over IPC.
    */
-  async getImageContent(input: GitFileContentInput): Promise<GitImageContentResult> {
+  async getImageContent(input: GitFileImageInput): Promise<GitImageContentResult> {
     const git = simpleGit(this.gitDirectory);
     const { needsOriginal, needsModified } = sidesForStatus(input.status);
+    const known = input.knownFingerprints;
 
     const [original, modified] = await Promise.all([
-      needsOriginal ? readSideAsImage(git, () => this.resolveOriginalSource(git, input)) : null,
-      needsModified ? readSideAsImage(git, async () => resolveModifiedSource(input)) : null,
+      needsOriginal ? readSideAsImage(git, () => this.resolveOriginalSource(git, input), known?.original) : null,
+      needsModified ? readSideAsImage(git, async () => resolveModifiedSource(input), known?.modified) : null,
     ]);
 
     return { original, modified };
@@ -476,21 +479,46 @@ async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: 
   }
 }
 
-async function readSideAsImage(git: ReturnType<typeof simpleGit>, resolveSource: () => Promise<FileSideSource>): Promise<GitImageSide> {
+/**
+ * A working-tree file modified this recently is read even when its size and
+ * modified time match the caller's fingerprint. Git's racy-entry rule: a
+ * second write inside the same timestamp tick (a coarse filesystem, or an
+ * agent regenerating a screenshot twice in one burst) leaves both unchanged,
+ * and trusting them would keep showing the old image.
+ */
+export const RECENT_WRITE_WINDOW_MS = 2000;
+
+async function readSideAsImage(
+  git: ReturnType<typeof simpleGit>,
+  resolveSource: () => Promise<FileSideSource>,
+  knownFingerprint: string | undefined,
+): Promise<GitImageSide> {
   try {
     const source = await resolveSource();
-    const size = source.kind === 'revision'
-      ? Number.parseInt((await git.catFile(['-s', source.spec])).trim(), 10)
-      : (await fs.promises.stat(source.absolutePath)).size;
+    let fingerprint: string;
+    let size: number;
+    if (source.kind === 'revision') {
+      // A blob id names its exact bytes, so a match is always safe to trust.
+      const objectId = (await git.revparse(['--verify', source.spec])).trim();
+      fingerprint = `blob:${objectId}`;
+      if (fingerprint === knownFingerprint) return { kind: 'unchanged', fingerprint };
+      size = Number.parseInt((await git.catFile(['-s', objectId])).trim(), 10);
+    } else {
+      const stats = await fs.promises.stat(source.absolutePath);
+      fingerprint = `file:${stats.size}:${stats.mtimeMs}`;
+      const writtenRecently = Date.now() - stats.mtimeMs < RECENT_WRITE_WINDOW_MS;
+      if (fingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint };
+      size = stats.size;
+    }
     if (!Number.isFinite(size)) return { kind: 'unreadable' };
-    if (size > IMAGE_PREVIEW_MAX_BYTES) return { kind: 'too-large', size };
+    if (size > IMAGE_PREVIEW_MAX_BYTES) return { kind: 'too-large', size, fingerprint };
     // No encoding on either reader: the bytes must arrive untouched. Electron
     // delivers a Buffer to the renderer as a Uint8Array.
     const bytes = source.kind === 'revision'
       ? await git.showBuffer([source.spec])
       : await fs.promises.readFile(source.absolutePath);
-    if (isGitLfsPointer(bytes)) return { kind: 'lfs-pointer', size: bytes.length };
-    return { kind: 'bytes', size: bytes.length, bytes };
+    if (isGitLfsPointer(bytes)) return { kind: 'lfs-pointer', size: bytes.length, fingerprint };
+    return { kind: 'bytes', size: bytes.length, bytes, fingerprint };
   } catch {
     return { kind: 'unreadable' };
   }

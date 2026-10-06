@@ -20,7 +20,7 @@
  * request behind.
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { settleFrames, waitForViteReady } from './helpers';
@@ -446,12 +446,58 @@ test.describe('Changes panel image view', () => {
   });
 });
 
+interface RecordedFileImageCall {
+  filePath: string;
+  knownFingerprints?: { original?: string; modified?: string };
+  result: { original: { kind: string } | null; modified: { kind: string } | null };
+}
+
 type MockGitWindow = {
   __mockGitDiff: { files: FixtureFile[] };
   __mockFireDiffChanged?: () => void;
   __mockGitFileContentDeferred?: boolean;
   __mockGitFileContentResolve?: () => void;
+  __mockGitFileImageCalls?: RecordedFileImageCall[];
+  __mockGitFileImageDeferred?: boolean;
+  __mockGitFileImageResolve?: () => void;
 };
+
+/** What the fileImage mock recorded for one file, with each answered side reduced to its kind (bytes stay in the page). */
+interface FileImageCallSummary {
+  sentFingerprints: { original?: string; modified?: string } | undefined;
+  answeredKinds: { original: string | null; modified: string | null };
+}
+
+async function readFileImageCalls(target: Page, filePath: string): Promise<FileImageCallSummary[]> {
+  return target.evaluate((wantedPath) => {
+    const calls = (window as unknown as MockGitWindow).__mockGitFileImageCalls ?? [];
+    return calls
+      .filter((call) => call.filePath === wantedPath)
+      .map((call) => ({
+        sentFingerprints: call.knownFingerprints
+          ? { original: call.knownFingerprints.original, modified: call.knownFingerprints.modified }
+          : undefined,
+        answeredKinds: { original: call.result.original?.kind ?? null, modified: call.result.modified?.kind ?? null },
+      }));
+  }, filePath);
+}
+
+/** The next image read is held, so a test can observe the view while the content for a newly selected file is still on its way. */
+async function holdNextImageRead(): Promise<void> {
+  await page.evaluate(() => {
+    const mockWindow = window as unknown as MockGitWindow;
+    mockWindow.__mockGitFileImageResolve = undefined;
+    mockWindow.__mockGitFileImageDeferred = true;
+  });
+}
+
+async function releaseHeldImageRead(): Promise<void> {
+  await expect.poll(
+    () => page.evaluate(() => typeof (window as unknown as MockGitWindow).__mockGitFileImageResolve === 'function'),
+    { timeout: 8000 },
+  ).toBe(true);
+  await page.evaluate(() => (window as unknown as MockGitWindow).__mockGitFileImageResolve?.());
+}
 
 interface DiffEditorHandle {
   getModifiedEditor: () => {
@@ -750,26 +796,155 @@ test.describe('Changes panel image view: live refresh and change navigation', ()
   });
 });
 
+test.describe('Changes panel image view: refresh fingerprints, layout toggle and SVG reads', () => {
+  test('a diff refresh of an unchanged image sends its fingerprints, gets unchanged back, and leaves the view alone', async () => {
+    const filePath = 'shots/unchanged.png';
+    await openChanges([pngFile(filePath)], filePath);
+    const afterImage = page.locator('[data-testid="diff-image-after"] img');
+    await expect(afterImage).toBeVisible({ timeout: 8000 });
+    const paintedSource = await afterImage.getAttribute('src');
+    expect(paintedSource).toMatch(/^data:image\/png;base64,/);
+
+    // The first read has nothing to compare against, so it sends no fingerprints
+    // and gets the bytes. That is the premise the refresh is measured against.
+    const callsBeforeRefresh = await readFileImageCalls(page, filePath);
+    expect(callsBeforeRefresh.length).toBeGreaterThan(0);
+    expect(callsBeforeRefresh[0].sentFingerprints?.original).toBeUndefined();
+    expect(callsBeforeRefresh[0].answeredKinds).toEqual({ original: 'bytes', modified: 'bytes' });
+
+    // The watcher fires, and nothing on disk changed.
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as MockGitWindow;
+      if (!mockWindow.__mockFireDiffChanged) throw new Error('the Changes panel has not subscribed to diff changes');
+      mockWindow.__mockFireDiffChanged();
+    });
+
+    await expect.poll(async () => (await readFileImageCalls(page, filePath)).length, { timeout: 8000 })
+      .toBeGreaterThan(callsBeforeRefresh.length);
+    const refresh = (await readFileImageCalls(page, filePath))[callsBeforeRefresh.length];
+    // The refetch names the sides the panel already holds (the cached entry is
+    // passed as `previous`), so main answers for each with no bytes at all. A
+    // refetch that passed nothing would send no fingerprints and get bytes back.
+    expect(refresh.sentFingerprints?.original).toEqual(expect.stringMatching(/\S/));
+    expect(refresh.sentFingerprints?.modified).toEqual(expect.stringMatching(/\S/));
+    expect(refresh.answeredKinds).toEqual({ original: 'unchanged', modified: 'unchanged' });
+
+    await expect(afterImage).toHaveAttribute('src', paintedSource!);
+    await expect(page.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('40 x 80');
+
+    await closeChanges();
+  });
+
+  test('the layout toggle changes together with the content, not ahead of it, while the next image loads', async () => {
+    const pairOne = 'shots/toggle-pair-one.png';
+    const added = 'shots/toggle-added.png';
+    const pairTwo = 'shots/toggle-pair-two.png';
+    await openChanges([
+      pngFile(pairOne),
+      { path: added, status: 'U', binary: true, modifiedImageBase64: ADDED_PNG },
+      pngFile(pairTwo),
+    ], pairOne);
+    const layoutToggle = page.locator('[data-testid="diff-view-split"]');
+    const loadingSpinner = page.locator('[data-testid="diff-editor-area"] .animate-spin');
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible({ timeout: 8000 });
+    await expect(layoutToggle).toBeVisible();
+
+    // A modified pair to an Added image: the toggle belongs to the pair on
+    // screen until the Added image's own content lands. It used to follow the new
+    // file's status, so it vanished while the old pair was still painted.
+    await holdNextImageRead();
+    await selectFile(added);
+    await expect(page.locator(`[data-testid="changes-file-row"][data-path="${added}"]`)).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+    await expect(loadingSpinner).toBeVisible();
+    await expect(layoutToggle).toBeVisible();
+    await releaseHeldImageRead();
+    await expect(page.locator('[data-testid="diff-image-single"] img')).toBeVisible({ timeout: 8000 });
+    await expect(layoutToggle).toHaveCount(0);
+
+    // The converse: an Added image to a modified pair stays without it until the
+    // pair's content lands, then gets it. (An uncached file, so its read is held.)
+    await holdNextImageRead();
+    await selectFile(pairTwo);
+    await expect(page.locator(`[data-testid="changes-file-row"][data-path="${pairTwo}"]`)).toHaveAttribute('data-selected', 'true', { timeout: 8000 });
+    await expect(loadingSpinner).toBeVisible();
+    await expect(layoutToggle).toHaveCount(0);
+    await releaseHeldImageRead();
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible({ timeout: 8000 });
+    await expect(layoutToggle).toBeVisible();
+
+    await closeChanges();
+  });
+
+  test('an SVG emptied on its new side previews as not image data, not as unreadable', async () => {
+    // An empty file is a successful read of zero bytes, which no browser decodes.
+    // Only a failed read is "Could not read".
+    await openChanges([
+      { path: 'assets/emptied.svg', status: 'M', binary: false, original: SVG_BEFORE, modified: '', language: 'xml' },
+    ], 'assets/emptied.svg');
+
+    const toggle = page.locator('[data-testid="diff-svg-preview"]');
+    await expect(toggle).toBeVisible({ timeout: 8000 });
+    await toggle.click();
+    await expect(page.locator('[data-testid="diff-image-before"] img')).toBeVisible({ timeout: 8000 });
+    const afterPlaceholder = page.locator('[data-testid="diff-image-after"] [data-testid="diff-image-placeholder"]');
+    await expect(afterPlaceholder).toHaveAttribute('data-reason', 'undecodable');
+    await expect(afterPlaceholder).toContainText('Not image data');
+
+    await closeChanges();
+  });
+});
+
 test.describe('per-file pop-out', () => {
-  test('a changes-file window renders the image view through its own fetch path', async () => {
+  const POP_OUT_PATH = 'shots/popout.png';
+
+  /** A pop-out page for one changed image, booted the way the window engine boots it. */
+  async function openPopOutPage(): Promise<{ context: BrowserContext; popOutPage: Page }> {
     const context = await browser.newContext({ viewport: { width: 900, height: 700 } });
     const popOutPage = await context.newPage();
     await popOutPage.addInitScript({ path: MOCK_SCRIPT });
     await popOutPage.addInitScript(preConfig);
     await popOutPage.addInitScript(`
-      window.__mockGitDiff = { files: ${JSON.stringify([pngFile('shots/popout.png')])} };
+      window.__mockGitDiff = { files: ${JSON.stringify([pngFile(POP_OUT_PATH)])} };
       window.electronAPI.popOut.descriptor = {
         kind: 'changes-file',
         params: {
-          taskId: '${TASK_ID}', projectId: '${PROJECT_ID}', filePath: 'shots/popout.png', scope: 'branch',
+          taskId: '${TASK_ID}', projectId: '${PROJECT_ID}', filePath: '${POP_OUT_PATH}', scope: 'branch',
           projectPath: '/mock/image-diff-test', worktreePath: '/mock/worktrees/image-diff', baseBranch: 'main',
           status: 'M', binary: true, taskDisplayId: 1, taskTitle: 'Image Diff Task',
         },
       };
     `);
     await popOutPage.goto(VITE_URL);
+    return { context, popOutPage };
+  }
+
+  test('a changes-file window renders the image view through its own fetch path', async () => {
+    const { context, popOutPage } = await openPopOutPage();
     await expect(popOutPage.locator('[data-testid="diff-image-before"] img')).toBeVisible({ timeout: 15000 });
     await expect(popOutPage.locator('[data-testid="diff-image-after"] img')).toBeVisible();
+    await expect(popOutPage.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('40 x 80');
+    await context.close();
+  });
+
+  test('a changes-file window refreshes with the fingerprints of the image it shows', async () => {
+    const { context, popOutPage } = await openPopOutPage();
+    await expect(popOutPage.locator('[data-testid="diff-image-after"] img')).toBeVisible({ timeout: 15000 });
+    const callsBeforeRefresh = await readFileImageCalls(popOutPage, POP_OUT_PATH);
+    expect(callsBeforeRefresh.length).toBeGreaterThan(0);
+
+    // The window subscribes to diff changes once it mounts; wait for that, then push.
+    await expect.poll(
+      () => popOutPage.evaluate(() => typeof (window as unknown as MockGitWindow).__mockFireDiffChanged === 'function'),
+      { timeout: 8000 },
+    ).toBe(true);
+    await popOutPage.evaluate(() => (window as unknown as MockGitWindow).__mockFireDiffChanged?.());
+
+    await expect.poll(async () => (await readFileImageCalls(popOutPage, POP_OUT_PATH)).length, { timeout: 8000 })
+      .toBeGreaterThan(callsBeforeRefresh.length);
+    const refresh = (await readFileImageCalls(popOutPage, POP_OUT_PATH))[callsBeforeRefresh.length];
+    expect(refresh.sentFingerprints?.original).toEqual(expect.stringMatching(/\S/));
+    expect(refresh.sentFingerprints?.modified).toEqual(expect.stringMatching(/\S/));
+    expect(refresh.answeredKinds).toEqual({ original: 'unchanged', modified: 'unchanged' });
     await expect(popOutPage.locator('[data-testid="diff-image-info-after-dimensions"]')).toHaveText('40 x 80');
     await context.close();
   });
