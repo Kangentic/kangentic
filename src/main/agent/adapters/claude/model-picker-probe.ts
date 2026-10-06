@@ -29,8 +29,9 @@
  * parser predates fullscreen (2.1.170).
  *
  * The CLI gets `TERM=xterm-256color` whatever the app's own environment says
- * (see PROBE_TERM), and the probe never types into a dialog: no key while a
- * select dialog shows, and Enter only once the input box holds `/model`.
+ * (see PROBE_TERM). Before `/model` is submitted the probe types into no
+ * dialog: no key while a select dialog shows, and Enter only once the input
+ * box holds `/model`. Once the picker opens, only Arrow Down and Esc reach it.
  *
  * Failure contract matches the rest of capability discovery: a failure (CLI
  * missing, layout change, timeout) is never surfaced to the user, and resolves

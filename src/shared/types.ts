@@ -3837,13 +3837,12 @@ export interface AppConfig {
    *
    *  Null until a layout is first saved. See src/renderer/components/monitor/. */
   monitorWorkspace: SerializedWorkspace | null;
-  /** Persisted union of every model ID we've ever seen for each agent: the
-   *  result of the static/JSONL `discoverCapabilities()` walk, plus any model
-   *  that has appeared on a live session's usage stream (Claude reports model
-   *  IDs like `claude-opus-4-7` on `usage.model.id`), plus any value the user
-   *  has typed/picked in an override. Keyed by agent name. Acts as the cache
-   *  for the model dropdowns so they don't depend on re-walking JSONL every
-   *  launch and they "discover" new models the user invokes in real time. */
+  /** Model ids a live session has reported, per agent (`usage.model.id`, via
+   *  `rememberDiscoveredModel`), kept across restarts so a model the user ran
+   *  stays in the dropdowns. Never seeded from capability discovery:
+   *  `useKnownModels` unions the live `capabilities.models` in at read time.
+   *  The `agent:list` handler labels these ids per call (`nameLearnedModels`).
+   *  Keyed by agent name. */
   discoveredModelsByAgent: Record<string, string[]>;
   /** Empirically-observed context-window size (in tokens) per model, learned
    *  from a live session's `status.json` (`context_window.context_window_size`,

@@ -74,7 +74,8 @@ export function useModelAliases(agent: string | null): ModelAliasOption[] {
 /**
  * Friendly display name per discovered model id (e.g. `claude-opus-4-8` ->
  * "Opus 4.8"), from the agent's own capability discovery
- * (`AgentCapabilities.modelDisplayNames`). All naming knowledge lives in the
+ * (`AgentCapabilities.modelDisplayNames`), plus the labels main adds for
+ * telemetry-learned ids (`nameLearnedModels`). All naming knowledge lives in the
  * adapter (see `.claude/rules/agent-adapters-boundary.md`); an id absent from
  * the map falls back to its raw id at the render site.
  */

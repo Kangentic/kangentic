@@ -58,9 +58,10 @@ session is what `kill()` now gives a young one.
 - **A short-lived probe PTY runs Claude on the classic renderer**
   (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, which never arms the canary) and exits it with
   `/exit`, waiting on the PTY's own `onExit` before the fallback kill. The model picker probe is
-  the one that exists. It types `/exit` only once its own `/model` was submitted and the picker,
-  not a dialog, answered: a dialog takes typed keys as its answer, so a run that met one ends on
-  the plain kill, which the classic renderer makes safe.
+  the one that exists. It writes Esc and `/exit` only after its own `/model` was submitted, and
+  not when a dialog replaced the picker. A dialog takes typed keys as its answer, so a run that
+  never got `/model` into the input box, or whose Enter opened a dialog, ends on the plain kill,
+  which the classic renderer makes safe.
 - **Every Kangentic read-modify-write of `~/.claude.json` runs under `withClaudeJsonLock`**
   (`src/main/agent/adapters/claude/claude-json-lock.ts`), which takes Claude's own
   `~/.claude.json.lock` as well as the in-process chain, and reads inside it. A write that
@@ -79,7 +80,8 @@ session is what `kill()` now gives a young one.
   the cancel on a natural exit, the `immediate` option, and `killAll`'s report;
   `tests/unit/session-shutdown-flow.test.ts` pins the quit-path deferral and flush;
   `tests/unit/pty-exit-callback-drain.test.ts` pins the deadline extension;
-  `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env and graceful exit;
+  `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env, its graceful exit, and its
+  no-key-into-a-dialog guards;
   `tests/unit/claude-json-lock.test.ts` pins the file lock's acquire, wait, stale break, and
   ELOCKED skip.
 - **Review:** the `awaitExit` ordering is control flow the scan cannot see; `/code-review` flags a
