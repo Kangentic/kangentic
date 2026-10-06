@@ -156,8 +156,7 @@ export function resumeTaskSession(
         // before this one unwinds, so an unconditional clear here would wipe
         // the label the other spawn is still showing.
         const progress = claimSpawnProgress(context.mainWindow, taskId);
-        const onProgress = progress.onProgress;
-        onProgress('resuming');
+        progress.onProgress('resuming');
         try {
           // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
           // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
@@ -166,7 +165,7 @@ export function resumeTaskSession(
             // The explicit projectId: if the user switches projects during this
             // slow git phase, a base-fetch failure's spawn warning must stamp
             // the resumed task's project, not whatever became ambient.
-            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress, projectId: resolvedProjectId });
+            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress: progress.onProgress, projectId: resolvedProjectId });
           } catch (worktreeError) {
             if (isAbortError(worktreeError)) throw worktreeError;
             reportFailure('worktree', worktreeError, planTask);

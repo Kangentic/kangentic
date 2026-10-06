@@ -135,9 +135,11 @@ export interface ReadStreamResponsePayload {
    * session screen that is open during the suspend current until then, and it
    * carries the same promise: `start-session` resumes rather than starts.
    *
-   * Recomputed on every `status` push, which the desktop also sends when this
-   * value alone changes. Absent from pre-0.16.0 desktops, which a client
-   * reads as "offer no Resume".
+   * Recomputed on each lifecycle edge of this session, and a `status` push
+   * carries it even when it is the only value that changed. A move to Done or
+   * an archive of a paused task is no edge of its row, so this copy can stay
+   * true after the board row's turns false. Absent from pre-0.16.0 desktops,
+   * which a client reads as "offer no Resume".
    */
   resumable?: boolean;
 }

@@ -70,8 +70,8 @@ export type ActivityEventPayload =
    * The feed's last word: the desktop's read-stream subscription pushes this
    * once, right before it tears itself down, so the phone learns "this
    * session is over" from the feed itself instead of inferring it from
-   * silence. Sent when the streamed session's PTY exits, and (from 0.16.0)
-   * when a session the feed was held on without a PTY - a paused row - is
+   * silence. Sent when the streamed session's PTY exits. From 0.16.0 it is
+   * also sent when a paused row, which the feed holds without a PTY, is
    * replaced or removed. `intentional` distinguishes a deliberate stop
    * (desktop Stop button, suspend, shutdown, a resume replacing a paused row)
    * from a crash.
@@ -145,8 +145,12 @@ export type ActivityEventPayload =
    * that label.
    *
    * `resuming` and `resumable` repeat the snapshot fields so the payload is
-   * complete on its own; the desktop sends it when any of the three values
-   * changes. Absent from pre-0.16.0 desktops, whose phones drop the unknown
+   * complete on its own. The desktop re-reads all three on each lifecycle
+   * edge of this session and sends the payload when any of them differs. A
+   * move to Done or an archive of a paused task is no edge of its row, so
+   * `resumable` here can stay true until the feed ends; gate Resume on
+   * `BoardTaskWire.resumable`, which the board event for that move refreshes.
+   * Absent from pre-0.16.0 desktops, whose phones drop the unknown
    * type through `isBridgeEvent` and keep inferring status from activity
    * events.
    */

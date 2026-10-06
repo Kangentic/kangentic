@@ -908,8 +908,8 @@ describe('SESSION_RESUME split-lock dedup', () => {
 
     let onProgressSeenByGitPhase: unknown;
     let releasedDuringGitPhase = true;
-    mockEnsureTaskWorktree.mockImplementation(async (_ctx: unknown, _task: unknown, _tasks: unknown, _path: unknown, opts: unknown) => {
-      onProgressSeenByGitPhase = (opts as { onProgress?: unknown }).onProgress;
+    mockEnsureTaskWorktree.mockImplementation(async (_context: unknown, _task: unknown, _tasks: unknown, _path: unknown, options: unknown) => {
+      onProgressSeenByGitPhase = (options as { onProgress?: unknown }).onProgress;
       // The label is up, and not yet released, while the git phase runs.
       releasedDuringGitPhase = (resumeClaim()?.release.mock.calls.length ?? 0) > 0;
       // Phase 3 then resolves through its dedup return (this harness does not
