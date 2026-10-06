@@ -1,4 +1,4 @@
-import type { SwimlaneRole } from './types';
+import type { Session, SwimlaneRole } from './types';
 
 /**
  * Columns that deliberately offer no Resume.
@@ -48,8 +48,20 @@ export function resumeBlockReason(input: {
 }
 
 /**
+ * Whether a session registry row is a task's PAUSED session: `suspended`, and
+ * not a Command Terminal (which belongs to no task and is never resumed). The
+ * one definition behind the mobile bridge's Resume promise: `startTaskSession`
+ * takes the Resume button's path for such a row, and the board row and the
+ * read-stream feed report `resumable` from it. Three call sites wrote it out by
+ * hand before, and one of them missed the Command Terminal exclusion.
+ */
+export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient'>): boolean {
+  return session.status === 'suspended' && session.transient !== true;
+}
+
+/**
  * Whether the desktop offers Resume for a task: its session is paused (a
- * `suspended` registry row) and the resume is not refused. This is the resume
+ * `suspended` registry row, `isPausedTaskSession`) and the resume is not refused. This is the resume
  * direction of `canToggle` in the task detail (`useTaskSessionState.ts`), and
  * the `resumable` the mobile bridge sends, on the board row and the
  * read-stream feed, promising that `start-session` resumes rather than starts.

@@ -13,7 +13,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
-import { isResumeOffered } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, isResumeOffered } from '../../../shared/session-resume-eligibility';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -86,7 +86,7 @@ export async function handleReadBoard(
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
   const pausedTaskIds = new Set(
     context.sessionManager.listSessions()
-      .filter((session) => session.status === 'suspended' && session.transient !== true)
+      .filter(isPausedTaskSession)
       .map((session) => session.taskId),
   );
   const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(

@@ -23,6 +23,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   RESUME_HIDDEN_ROLES,
+  isPausedTaskSession,
+  isResumeOffered,
   resumeBlockMessage,
   resumeBlockReason,
 } from '../../src/shared/session-resume-eligibility';
@@ -128,6 +130,39 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
     const firstGuardIndex = source.indexOf('resumeBlockReason(');
     expect(selfHealIndex).toBeGreaterThan(-1);
     expect(firstGuardIndex).toBeGreaterThan(selfHealIndex);
+  });
+});
+
+describe('the paused-session definition behind the phone\'s Resume promise', () => {
+  it('isPausedTaskSession is a suspended row that is not a Command Terminal', () => {
+    expect(isPausedTaskSession({ status: 'suspended' })).toBe(true);
+    expect(isPausedTaskSession({ status: 'suspended', transient: false })).toBe(true);
+    expect(isPausedTaskSession({ status: 'suspended', transient: true })).toBe(false);
+    for (const status of ['running', 'queued', 'exited'] as const) {
+      expect(isPausedTaskSession({ status })).toBe(false);
+    }
+  });
+
+  it('isResumeOffered needs a paused session AND a column and archive state that allow Resume', () => {
+    expect(isResumeOffered({ hasPausedSession: true, laneRole: null, isArchived: false })).toBe(true);
+    expect(isResumeOffered({ hasPausedSession: false, laneRole: null, isArchived: false })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, laneRole: 'todo', isArchived: false })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, laneRole: 'done', isArchived: false })).toBe(false);
+    expect(isResumeOffered({ hasPausedSession: true, laneRole: null, isArchived: true })).toBe(false);
+  });
+
+  // start-session's resume path and the `resumable` flag the phone gates
+  // Resume on must agree on what "paused" means, or the flag promises a resume
+  // the verb does not deliver. Each site wrote it out by hand before, and
+  // start-session's copy missed the Command Terminal exclusion.
+  it.each([
+    'src/main/ipc/handlers/session-start.ts',
+    'src/main/mobile-bridge/handlers/read-board.ts',
+    'src/main/mobile-bridge/handlers/read-stream.ts',
+  ])('%s decides "paused" through isPausedTaskSession, with no hand-rolled suspended comparison', (relativePath) => {
+    const source = readSource(relativePath);
+    expect(source).toMatch(/isPausedTaskSession\(|\.filter\(isPausedTaskSession\)/);
+    expect(source.match(/[!=]==\s*'suspended'/g) ?? []).toEqual([]);
   });
 });
 

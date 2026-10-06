@@ -9,7 +9,7 @@ import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatu
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
-import { isResumeOffered } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, isResumeOffered } from '../../../shared/session-resume-eligibility';
 import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
@@ -131,7 +131,7 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
  * Resume rather than offering one start-session would refuse.
  */
 function isSessionResumable(context: IpcContext, session: Session): boolean {
-  if (session.status !== 'suspended' || session.transient === true || !session.taskId || !session.projectId) return false;
+  if (!isPausedTaskSession(session) || !session.taskId || !session.projectId) return false;
   try {
     const { tasks, swimlanes } = getProjectRepos(context, session.projectId);
     const task = tasks.getById(session.taskId);
