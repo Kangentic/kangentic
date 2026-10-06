@@ -638,14 +638,14 @@ test.describe('Index card', () => {
 });
 
 test.describe('Local model error state', () => {
-  test('shows the worker error detail when the local model stops', async () => {
+  test('shows the worker error detail when the local model is unavailable', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));
     try {
       await openKnowledgeGraphTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
       await expect(status).toHaveText(
-        'The local model stopped - showing keyword matches. (exit 1: Cannot find module sharp)',
+        'The local model is unavailable - showing keyword matches. (exit 1: Cannot find module sharp)',
       );
     } finally {
       await browser.close();
@@ -658,7 +658,8 @@ test.describe('Local model error state', () => {
       await openKnowledgeGraphTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
-      await expect(status).toHaveText('The local model stopped - showing keyword matches.');
+      // Also what a failed model download shows: that path sets the same state with no worker error.
+      await expect(status).toHaveText('The local model is unavailable - showing keyword matches.');
     } finally {
       await browser.close();
     }
