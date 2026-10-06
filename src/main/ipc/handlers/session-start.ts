@@ -33,7 +33,7 @@ import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { notifySpawnBlocked } from '../helpers/task-git';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
-import { pausedTaskIdsOf, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
+import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
 export type StartTaskSessionResult =
@@ -83,10 +83,11 @@ export async function startTaskSession(
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
 
-    // The same scan read-board's `resumable` runs, so the flag that promises
-    // the phone this path and the choice of it cannot disagree. A suspended row
-    // survives reconcileTaskSessionRef, which clears only the task's pointer.
-    if (pausedTaskIdsOf(context.sessionManager.listSessions()).has(taskId)) return { path: 'resume' as const };
+    // The rule read-board's `resumable` applies (`pausedTaskIdsOf`), so the
+    // flag that promises the phone this path and the choice of it cannot
+    // disagree. A suspended row survives reconcileTaskSessionRef, which clears
+    // only the task's pointer.
+    if (isTaskPaused(context.sessionManager.listSessions(), taskId)) return { path: 'resume' as const };
 
     if (!lane) throw new Error(`Column ${task.swimlane_id} not found for task ${taskId}`);
     return { path: 'start' as const, task: { id: task.id, title: task.title }, laneId: lane.id };

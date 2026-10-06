@@ -25,6 +25,7 @@ import {
   RESUME_HIDDEN_ROLES,
   isPausedTaskSession,
   isResumeOffered,
+  isTaskPaused,
   pausedTaskIdsOf,
   resumeBlockMessage,
   resumeBlockReason,
@@ -132,8 +133,10 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
     // The predicate reads archived_at itself, so passing the row is what makes
     // the archive state count. Phase 3 must pass the row it re-read under the
     // lock, not the Phase 1 snapshot, or a move to Done in the gap goes unseen.
+    // Its role comes off the column's own row: the profile fold passes `role`
+    // through, and the check has to run before the try that reports failures.
     expect(source).toMatch(/resumeBlockReasonForTask\(\{ task, laneRole: lane\?\.role \}\)/);
-    expect(source).toMatch(/resumeBlockReasonForTask\(\{ task: current, laneRole: currentLane\?\.role \}\)/);
+    expect(source).toMatch(/resumeBlockReasonForTask\(\{ task: current, laneRole: currentRow\?\.role \}\)/);
   });
 
   it('keeps the self-heal early return ahead of the eligibility check', () => {
@@ -180,6 +183,22 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
     expect([...taskIds].sort()).toEqual(['task-paused', 'task-paused-twice']);
   });
 
+  it('isTaskPaused answers pausedTaskIdsOf for one task, ignoring every other task\'s rows', () => {
+    const sessions = [
+      { taskId: 'task-paused', status: 'suspended' as const },
+      { taskId: 'task-paused-with-queued-successor', status: 'suspended' as const },
+      { taskId: 'task-paused-with-queued-successor', status: 'queued' as const },
+      // Another task's live row must not unpause this one.
+      { taskId: 'task-running', status: 'running' as const },
+      { taskId: 'task-command-terminal', status: 'suspended' as const, transient: true },
+    ];
+    expect(isTaskPaused(sessions, 'task-paused')).toBe(true);
+    expect(isTaskPaused(sessions, 'task-paused-with-queued-successor')).toBe(false);
+    expect(isTaskPaused(sessions, 'task-running')).toBe(false);
+    expect(isTaskPaused(sessions, 'task-command-terminal')).toBe(false);
+    expect(isTaskPaused(sessions, 'task-unknown')).toBe(false);
+  });
+
   it('isResumeOffered needs a paused session AND a column and archive state that allow Resume', () => {
     const liveTask = { archived_at: null };
     const archivedTask = { archived_at: '2026-01-01T00:00:00.000Z' };
@@ -207,16 +226,17 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
   // start-session's resume path and the `resumable` flag the phone gates
   // Resume on must agree on what "paused" means, or the flag promises a resume
   // the verb does not deliver. Each site wrote it out by hand before, and
-  // start-session's copy missed the Command Terminal exclusion. The two that
-  // scan the registry by task share one scan; read-stream asks about the one
-  // session it streams.
+  // start-session's copy missed the Command Terminal exclusion. All three run
+  // one scan: read-board over every task, start-session and read-stream over
+  // one task through isTaskPaused, which wraps it. read-stream also checks the
+  // one session it streams.
   it.each([
-    ['src/main/ipc/handlers/session-start.ts', /pausedTaskIdsOf\(/],
-    ['src/main/mobile-bridge/handlers/read-board.ts', /pausedTaskIdsOf\(/],
-    ['src/main/mobile-bridge/handlers/read-stream.ts', /isPausedTaskSession\(/],
-  ])('%s decides "paused" through the shared definition, with no hand-rolled suspended comparison', (relativePath, sharedCall) => {
+    ['src/main/ipc/handlers/session-start.ts', [/isTaskPaused\(/]],
+    ['src/main/mobile-bridge/handlers/read-board.ts', [/pausedTaskIdsOf\(/]],
+    ['src/main/mobile-bridge/handlers/read-stream.ts', [/isPausedTaskSession\(/, /isTaskPaused\(/]],
+  ])('%s decides "paused" through the shared definition, with no hand-rolled suspended comparison', (relativePath, sharedCalls) => {
     const source = readSource(relativePath);
-    expect(source).toMatch(sharedCall);
+    for (const sharedCall of sharedCalls) expect(source).toMatch(sharedCall);
     expect(source.match(/[!=]==\s*'suspended'/g) ?? []).toEqual([]);
   });
 });

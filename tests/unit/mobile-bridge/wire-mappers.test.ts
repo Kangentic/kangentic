@@ -100,6 +100,14 @@ describe('toSpawnProgressLabelWire', () => {
     expect(toSpawnProgressLabelWire('\rCounting objects:\t 10%\r\nCounting objects: 20%\n')).toBe('Counting objects: 10% Counting objects: 20%');
   });
 
+  it.each([
+    ['a vertical tab', '\u000b'],
+    ['a form feed', '\u000c'],
+    ['the C1 next line', '\u0085'],
+  ])('turns %s into a space rather than joining the words around it', (_name, lineBreak) => {
+    expect(toSpawnProgressLabelWire(`Running "lint${lineBreak}and test"...`)).toBe('Running "lint and test"...');
+  });
+
   it('a label with nothing printable left is null', () => {
     expect(toSpawnProgressLabelWire('\u001b[2K\r  \n')).toBeNull();
   });
