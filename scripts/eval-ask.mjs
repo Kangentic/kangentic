@@ -40,6 +40,7 @@ import * as path from 'node:path';
 import * as url from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { QUESTIONS } from './eval-ask-questions.mjs';
+import { evaluateInPreview, readPreviewPort as readPreviewPortOf } from './lib/preview-bridge.mjs';
 // The answer table's own query, not a copy. Node strips the types on import.
 import { BOARD_TASK_FACTS_SQL, toBoardTaskFacts } from '../src/main/retrieval/board-task-facts.ts';
 
@@ -48,49 +49,16 @@ const PROJECT_ROOT = path.resolve(HERE, '..');
 
 /** Where a running preview announces its inspection port. */
 function readPreviewPort() {
-  const lockPath = path.join(PROJECT_ROOT, '.kangentic', 'preview.lock');
-  if (!fs.existsSync(lockPath)) {
-    throw new Error(
-      `No preview is running for this worktree (${lockPath} is missing).\n`
-      + 'Start one first, then re-run this harness.',
-    );
-  }
-  const record = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
-  if (!record.port) throw new Error('The preview lockfile carries no port.');
-  return record.port;
+  return readPreviewPortOf(PROJECT_ROOT);
 }
 
 /**
- * Evaluate an expression in the preview's renderer.
- *
- * Requires Settings > Developer > Allow Unsafe Operations, which the harness
- * reports plainly rather than failing with a bare 403.
+ * Evaluate an expression in the preview's renderer. Thirty seconds by default: a
+ * single wedged agent would otherwise hang the whole run silently, which on a
+ * ten-question pass is the difference between one bad result and no results.
  */
-async function evaluate(port, expression, timeoutMs = 30_000) {
-  // The bridge itself imposes no deadline - it awaits the promise for as long
-  // as the renderer takes - and node's fetch has none either. So a single
-  // wedged agent would hang the whole run silently, which on a ten-question
-  // pass is the difference between one bad result and no results at all.
-  const response = await fetch(`http://127.0.0.1:${port}/eval`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expression }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    // The bridge answers `{ ok: false, error: { kind, detail } }`. This used
-    // to read `kind` and `detail` off the top level, which exists on no
-    // response, so every failure printed the bare status line and the one
-    // thing needed to fix it - the renderer's own error text - was dropped.
-    const failure = payload?.error ?? payload ?? {};
-    const detail = failure.detail ?? failure.kind ?? response.statusText;
-    if (failure.kind === 'eval-disabled') {
-      throw new Error('Turn on Settings > Developer > Allow Unsafe Operations, then re-run.');
-    }
-    throw new Error(`Preview rejected the call (${failure.kind ?? response.status}): ${detail}`);
-  }
-  return payload?.value;
+function evaluate(port, expression, timeoutMs = 30_000) {
+  return evaluateInPreview(port, expression, timeoutMs);
 }
 
 /**

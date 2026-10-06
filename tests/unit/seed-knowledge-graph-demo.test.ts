@@ -15,7 +15,7 @@
  * validated and wrote one project at a time would register the first before refusing the second,
  * which is the case "validates the whole plan before its first write" exists to prevent.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { seedKnowledgeGraphDemo } from '../../src/devtools/main/seed-knowledge-graph-demo';
@@ -250,5 +250,45 @@ describe('seedKnowledgeGraphDemo writes a valid plan', () => {
         expect(taskRepository.getById(taskId)?.title, taskKey).toBe(plannedTask?.title);
       }
     }
+  });
+});
+
+/**
+ * Two checks can only run once a project is written: the new board's columns, and the number the
+ * allocator hands each task. Neither fails on a real board today, so each is forced through a spy
+ * on the real repository. Both throw rather than seed a graph that disagrees with the dataset, and
+ * the file header documents that what was already written stays.
+ */
+describe('seedKnowledgeGraphDemo refuses after its first write', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function isRegistered(projectPath: string): boolean {
+    return projectRepo.list().some((project) => path.resolve(project.path) === path.resolve(projectPath));
+  }
+
+  it('refuses a new board with no To Do column, leaving the project it registered', () => {
+    const plan = buildProjectPlan('no-todo-lane');
+    const realList = SwimlaneRepository.prototype.list;
+    vi.spyOn(SwimlaneRepository.prototype, 'list').mockImplementation(function (this: SwimlaneRepository) {
+      return realList.call(this).filter((lane) => lane.role !== 'todo');
+    });
+
+    expect(() => seedKnowledgeGraphDemo(context, { projects: [plan] })).toThrow('Sample no-todo-lane: the new board has no To Do or Done column');
+    expect(isRegistered(plan.path)).toBe(true);
+  });
+
+  it('refuses a task the allocator numbers other than the plan does', () => {
+    const plan = buildProjectPlan('renumbered');
+    const realCreate = TaskRepository.prototype.create;
+    vi.spyOn(TaskRepository.prototype, 'create').mockImplementation(function (this: TaskRepository, input) {
+      const created = realCreate.call(this, input);
+      return { ...created, display_id: created.display_id + 10 };
+    });
+
+    // Tasks are created in ticket order, so ticket #1 (the archived task) is the first refused.
+    expect(() => seedKnowledgeGraphDemo(context, { projects: [plan] })).toThrow('Sample renumbered: "renumbered archived task" was numbered #11, the dataset says #1');
+    expect(isRegistered(plan.path)).toBe(true);
   });
 });

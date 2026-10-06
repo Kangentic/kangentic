@@ -725,6 +725,23 @@ export interface DemoKnowledgeGraph {
 
 export const DEMO_KNOWLEDGE_GRAPH = knowledgeGraphFixture as unknown as DemoKnowledgeGraph;
 
+/** What a page receives of one project's map: the fixture's, less the capture's notes on what it left out. */
+export type DemoKnowledgeGraphShippedProject = Omit<DemoKnowledgeGraphProject, 'withoutNode'>;
+
+/**
+ * The maps as the seed reads them, inline or fetched (`buildDemoPreConfig`'s `knowledgeGraph`).
+ * One function builds both, so the file the web build emits and the copy a seed carries cannot
+ * differ in shape.
+ */
+export function shippedKnowledgeGraph(): { projects: Record<string, DemoKnowledgeGraphShippedProject> } {
+  return {
+    projects: Object.fromEntries(Object.entries(DEMO_KNOWLEDGE_GRAPH.projects).map(([projectId, graph]) => [
+      projectId,
+      { projection: graph.projection, coverage: graph.coverage, index: graph.index },
+    ])),
+  };
+}
+
 /** Every node the three maps draw: the count the `knowledge-graph` scene waits to see drawn. */
 export const DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL = Object.values(DEMO_KNOWLEDGE_GRAPH.projects)
   .reduce((sum, project) => sum + project.projection.nodes.length, 0);
@@ -803,6 +820,12 @@ export function buildDemoPreConfig(options: {
   cellWidths?: DemoCellWidthTable;
   /** Each scaffolded project's git history (loadDemoHistory), keyed by project name. */
   history?: Record<string, DemoHistory>;
+  /**
+   * Where the seed gets the Knowledge Graph's maps. 'inline' carries them in the seed. 'fetched'
+   * reads the file the web build emits beside the recordings, the first time a frame opens the
+   * graph, so a frame that never opens it never pays for them. Inline unless said.
+   */
+  knowledgeGraph?: 'inline' | 'fetched';
 } = {}): string {
   const dataset = {
     groups: DEMO_GROUPS,
@@ -822,7 +845,8 @@ export function buildDemoPreConfig(options: {
     archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
     // One rule for an archived task's session id, read by its summary and its graph node alike.
     archivedSessionIds: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedSessionIdOf(summary.taskId)])),
-    knowledgeGraph: DEMO_KNOWLEDGE_GRAPH,
+    // Null when the seed fetches the maps instead (the `knowledgeGraph` option).
+    knowledgeGraph: options.knowledgeGraph === 'fetched' ? null : shippedKnowledgeGraph(),
     knowledgeGraphConfig: DEMO_KNOWLEDGE_GRAPH_CONFIG,
     knowledgeGraphStatus: DEMO_KNOWLEDGE_GRAPH_STATUS,
     backlog: DEMO_BACKLOG,
@@ -1025,13 +1049,13 @@ export function buildDemoPreConfig(options: {
         return Math.max(0, duration - tail);
       }
 
-      // The Knowledge Graph's snapshots, one per project, and its Projects picker. The map itself
-      // is the fixture main's pipeline built (DEMO_KNOWLEDGE_GRAPH); what main's documentMetadata
-      // joins from the board's rows is joined here from the same rows, so a node's title, model,
-      // cost, tokens, outcome and last activity are the card's own. A working session's last
-      // activity is its newest tool call, and an archived task's is when its run ended, the moment
-      // its Completed Tasks row records.
-      function knowledgeGraphSeed() {
+      // The Knowledge Graph's snapshots, one per project, and its Projects picker, from graphs
+      // (shippedKnowledgeGraph). The map itself is the fixture main's pipeline built
+      // (DEMO_KNOWLEDGE_GRAPH); what main's documentMetadata joins from the board's rows is joined
+      // here from the same rows, so a node's title, model, cost, tokens, outcome and last activity
+      // are the card's own. A working session's last activity is its newest tool call, and an
+      // archived task's is when its run ended, the moment its Completed Tasks row records.
+      function knowledgeGraphSeed(graphs) {
         var sessionsById = {};
         data.sessions.forEach(function (session) { sessionsById[session.id] = session; });
         var summariesByTask = {};
@@ -1075,7 +1099,7 @@ export function buildDemoPreConfig(options: {
         var snapshots = {};
         var projects = [];
         data.projects.forEach(function (project) {
-          var graph = data.knowledgeGraph.projects[project.id];
+          var graph = graphs.projects[project.id];
           if (!graph) return;
           var newest = null;
           var nodes = graph.projection.nodes.map(function (node) {
@@ -1221,11 +1245,9 @@ export function buildDemoPreConfig(options: {
         // panel describe the same index.
         state.config.knowledgeGraph = Object.assign({}, data.knowledgeGraphConfig);
         mockState = state;
-        var graph = knowledgeGraphSeed();
+        // The maps themselves are answered by the Knowledge Graph section below, when asked.
         return {
           currentProjectId: data.currentProjectId,
-          knowledgeGraphSnapshotsByProject: graph.snapshots,
-          knowledgeGraphProjects: graph.projects,
           memoryStatus: data.knowledgeGraphStatus,
         };
       });
@@ -2690,6 +2712,52 @@ export function buildDemoPreConfig(options: {
         if (rows.length === 0) return originalTranscriptList.apply(this, arguments);
         return Promise.resolve(rows.map(transcriptSessionMeta));
       };
+
+      // ---- the Knowledge Graph ---------------------------------------------------------
+      // Only a frame that opens the graph reads the maps: its store asks for a project's snapshot
+      // and for the Projects picker when the graph opens, and nothing on a board asks for either.
+      // So the web build emits the maps as one file beside the recordings, fetched on that first
+      // ask, and a seed with no recordings index carries them (data.knowledgeGraph). The
+      // snapshots are built once, at the first ask, with the same clock as every other seeded time.
+      // An empty install has no projects to draw, so its frame keeps the mock's empty answers.
+      var knowledgeGraphSeeded = null;
+      function seededKnowledgeGraph() {
+        if (!knowledgeGraphSeeded) {
+          var graphs;
+          if (data.knowledgeGraph) {
+            graphs = Promise.resolve(data.knowledgeGraph);
+          } else if (recordings && recordings.knowledgeGraph) {
+            graphs = fetch(recordings.knowledgeGraph).then(function (response) {
+              if (!response.ok) throw new Error('[demo] the Knowledge Graph returned ' + response.status);
+              return response.json();
+            });
+          } else {
+            graphs = Promise.reject(new Error('[demo] the seed carries no Knowledge Graph and the recordings index names no file for it'));
+          }
+          // A failed read or build is not kept, so the next open asks again.
+          knowledgeGraphSeeded = graphs.then(knowledgeGraphSeed).catch(function (error) {
+            knowledgeGraphSeeded = null;
+            throw error;
+          });
+        }
+        return knowledgeGraphSeeded;
+      }
+      if (!emptyInstall) {
+        var originalGraphSnapshot = window.electronAPI.knowledgeGraph.graphSnapshot;
+        window.electronAPI.knowledgeGraph.graphSnapshot = function (projectId) {
+          if (!projectId || !projectsById[projectId]) return originalGraphSnapshot.apply(this, arguments);
+          var self = this;
+          var callArguments = arguments;
+          return seededKnowledgeGraph().then(function (seeded) {
+            var snapshot = seeded.snapshots[projectId];
+            // A copy per call, as the mock answers, so a reader that edits it edits nothing here.
+            return snapshot ? JSON.parse(JSON.stringify(snapshot)) : originalGraphSnapshot.apply(self, callArguments);
+          });
+        };
+        window.electronAPI.knowledgeGraph.graphProjects = function () {
+          return seededKnowledgeGraph().then(function (seeded) { return JSON.parse(JSON.stringify(seeded.projects)); });
+        };
+      }
 
       // ---- what a drag or a click starts -----------------------------------------------
       // The transition engine lives in the main process; here the same outcome is produced

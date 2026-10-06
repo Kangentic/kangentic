@@ -49,6 +49,7 @@ import { buildScaffoldRepo } from './lib/demo-scaffold-repo.mjs';
 import { importTsModule } from './lib/bundle-ts-module.mjs';
 import { archivedClonePath, scratchClonePath, scratchRootFromArgv } from './lib/demo-archived-clone.mjs';
 import { gitOutput } from './lib/git-output.mjs';
+import { evaluateInPreview, readPreviewPort } from './lib/preview-bridge.mjs';
 
 const require = createRequire(import.meta.url);
 const { buildSanitizer } = require('./lib/demo-sanitizer.js');
@@ -78,32 +79,8 @@ const UNINDEXED_QUIET_POLLS = 3;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------- the preview bridge
-function readPreviewPort() {
-  const lockPath = path.join(repoRoot, '.kangentic', 'preview.lock');
-  if (!fs.existsSync(lockPath)) throw new Error(`No preview is running for this worktree (${lockPath} is missing). Start one with /preview first.`);
-  const record = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
-  if (!record.port) throw new Error('The preview lockfile carries no port.');
-  return record.port;
-}
-
-/** Evaluate an expression in the preview's renderer; the bridge awaits a returned promise. */
-async function evaluate(port, expression, timeoutMs = 120_000) {
-  const response = await fetch(`http://127.0.0.1:${port}/eval`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expression }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const failure = payload?.error ?? payload ?? {};
-    if (failure.kind === 'eval-disabled') throw new Error('Turn on Settings > Developer > Allow Unsafe Operations in the preview, then re-run.');
-    throw new Error(`Preview rejected the call (${failure.kind ?? response.status}): ${failure.detail ?? response.statusText}`);
-  }
-  return payload?.value;
-}
-
-const call = (port, expression) => evaluate(port, `(async () => (${expression}))()`);
+/** Two minutes a call: a seed or a project open can take that long, a status read never does. */
+const call = (port, expression) => evaluateInPreview(port, `(async () => (${expression}))()`, 120_000);
 
 // ---------------------------------------------------------------- the repositories
 const workRoot = path.join(os.tmpdir(), 'kangentic-demo-graph');
@@ -229,7 +206,7 @@ function stateOf(databasePath, agentSessionId) {
 }
 
 // ---------------------------------------------------------------- run
-const port = readPreviewPort();
+const port = readPreviewPort(repoRoot);
 const planned = [];
 for (const project of dataset.DEMO_PROJECTS) {
   const repo = prepareProjectRepo(project);

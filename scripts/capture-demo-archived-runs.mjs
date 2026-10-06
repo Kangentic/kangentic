@@ -67,7 +67,7 @@ import { gitOutput } from './lib/git-output.mjs';
 
 const require = createRequire(import.meta.url);
 const { buildSanitizer, sanitizeDeep } = require('./lib/demo-sanitizer.js');
-const { toSpawnable, shellReparsedArgument } = require('./lib/spawnable.js');
+const { toSpawnable, shellReparsedArgument, childAgentEnv } = require('./lib/spawnable.js');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -216,22 +216,12 @@ async function seedClaudeTrust(trust, cwd) {
   }
 }
 
-/** The rig's environment: none of this session's own Claude Code variables leak into the run. */
-function runEnv() {
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) continue;
-    env[key] = value;
-  }
-  return env;
-}
-
 function runHeadless(cwd, prompt, plan) {
   const flags = ['-p', '--output-format', 'json', '--model', plan.model, '--permission-mode', plan.permissionMode];
   if (plan.effort) flags.push('--effort', plan.effort);
   const { file, args } = claudeSpawnable([...flags, '--', prompt]);
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd, env: runEnv(), stdio: ['ignore', 'pipe', 'inherit'] });
+    const child = spawn(file, args, { cwd, env: childAgentEnv(), stdio: ['ignore', 'pipe', 'inherit'] });
     let stdout = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     const timer = setTimeout(() => { killRun(child); reject(new Error(`run exceeded ${RUN_TIMEOUT_MS / 60000} minutes`)); }, RUN_TIMEOUT_MS);

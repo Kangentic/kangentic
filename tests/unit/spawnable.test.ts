@@ -27,6 +27,7 @@ interface Spawnable {
 interface SpawnableModule {
   toSpawnable: (exe: string, args: string[]) => Spawnable;
   shellReparsedArgument: (spawnable: Spawnable) => string | null;
+  childAgentEnv: () => Record<string, string | undefined>;
 }
 
 const require = createRequire(import.meta.url);
@@ -187,6 +188,14 @@ describe('toSpawnable on Windows (where.exe ranking, stubbed)', () => {
     });
   });
 
+  it('ranks .bat with .cmd, ahead of the extensionless script, and wraps it in cmd.exe', () => {
+    lookupReturns('C:\\bin\\tool\r\nC:\\bin\\tool.bat\r\n');
+
+    const spawnable = spawnableModule.toSpawnable('tool', []);
+
+    expect(spawnable).toEqual({ file: 'cmd.exe', args: ['/d', '/c', 'C:\\bin\\tool.bat'], shell: 'cmd' });
+  });
+
   it('ranks extensions case-insensitively', () => {
     lookupReturns('C:\\bin\\tool.PS1\r\nC:\\bin\\tool.CMD\r\n');
 
@@ -263,6 +272,30 @@ describe('shellReparsedArgument', () => {
     it('returns the FIRST offending argument, not a later one', () => {
       expect(spawnableModule.shellReparsedArgument(cmdSpawnable(['clean', 'first&bad', 'second|bad']))).toBe('first&bad');
     });
+
+    // cmd.exe's /c strips the first and last quote of a line that opens with one and holds more
+    // than two, so a quoted shim path loses its quotes as soon as another argument is quoted.
+    describe('a shim path Node has to quote', () => {
+      const spacedShim = 'C:\\Users\\dev\\Program Files\\npm\\claude.cmd';
+
+      it.each([
+        ['an argument with a space', ['-p', 'Title: a prompt']],
+        ['an argument with a tab', ['-p', 'Title:\ta prompt']],
+        ['an empty argument', ['-p', '']],
+      ])('is flagged when the caller passes %s', (_label, callerArgs) => {
+        expect(spawnableModule.shellReparsedArgument(cmdSpawnable(['/d', '/c', spacedShim, ...callerArgs]))).toBe(spacedShim);
+      });
+
+      it('is not flagged when no caller argument is quoted, which cmd.exe runs as written', () => {
+        expect(spawnableModule.shellReparsedArgument(cmdSpawnable(['/d', '/c', spacedShim, '--version']))).toBeNull();
+      });
+
+      it('is not flagged for a powershell shim, whose -File keeps its quotes', () => {
+        const spacedScript = 'C:\\Users\\dev\\Program Files\\npm\\claude.ps1';
+
+        expect(spawnableModule.shellReparsedArgument(powershellSpawnable([...POWERSHELL_FLAGS, spacedScript, '-p', 'Title: a prompt']))).toBeNull();
+      });
+    });
   });
 
   describe('powershell', () => {
@@ -308,5 +341,42 @@ describe('shellReparsedArgument', () => {
       expect(spawnableModule.shellReparsedArgument(spawnableModule.toSpawnable('shim.ps1', ['50% done']))).toBeNull();
       expect(spawnableModule.shellReparsedArgument(spawnableModule.toSpawnable('claude', ['50% "done" $5']))).toBeNull();
     });
+
+    it('names the shim path itself when it holds a space and a caller argument is quoted', () => {
+      const spacedShim = '/opt/Program Files/claude.cmd';
+
+      expect(spawnableModule.shellReparsedArgument(spawnableModule.toSpawnable(spacedShim, ['-p', 'Title: a prompt']))).toBe(spacedShim);
+    });
+  });
+});
+
+describe('childAgentEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('drops the variables a Claude Code session sets for itself and keeps the rest', () => {
+    vi.stubEnv('CLAUDECODE', '1');
+    vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
+    vi.stubEnv('CLAUDE_CODE_SSE_PORT', '12345');
+    vi.stubEnv('CLAUDE_CONFIG_NOTE', 'kept: not a CLAUDE_CODE_ variable');
+    vi.stubEnv('SPAWNABLE_TEST_MARKER', 'kept');
+
+    const env = spawnableModule.childAgentEnv();
+
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
+    expect(env.CLAUDE_CONFIG_NOTE).toBe('kept: not a CLAUDE_CODE_ variable');
+    expect(env.SPAWNABLE_TEST_MARKER).toBe('kept');
+  });
+
+  it('returns a copy, so a caller editing it leaves process.env alone', () => {
+    vi.stubEnv('SPAWNABLE_TEST_MARKER', 'original');
+
+    const env = spawnableModule.childAgentEnv();
+    env.SPAWNABLE_TEST_MARKER = 'edited';
+
+    expect(process.env.SPAWNABLE_TEST_MARKER).toBe('original');
   });
 });

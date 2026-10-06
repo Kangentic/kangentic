@@ -22,6 +22,7 @@ import path from 'node:path';
 import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_BACKLOG, DEMO_KNOWLEDGE_GRAPH, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL,
   DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, archivedSessionIdOf, buildDemoPreConfig,
+  shippedKnowledgeGraph,
 } from '../../tests/captures/helpers/demo-dataset';
 import { TranscriptMatchError, agentSessionIdOf } from '../../tests/captures/helpers/message-trail-extract';
 import { SCENES } from '../../tests/captures/scenes';
@@ -146,8 +147,9 @@ describe('demo Knowledge Graph fixture', () => {
     }
     const dataset = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'captures', 'helpers', 'demo-dataset.ts'), 'utf-8');
     expect(dataset).toContain("from '../fixtures/demo/graph/knowledge-graph.json'");
-    expect(dataset, 'the seed hands the snapshots to the mock').toContain('knowledgeGraphSnapshotsByProject: graph.snapshots');
-    expect(dataset, 'the seed hands the Projects picker its list').toContain('knowledgeGraphProjects: graph.projects');
+    // Answered by the seed itself when the graph opens, from the maps it carries or fetches.
+    expect(dataset, 'the seed answers the snapshots').toContain('window.electronAPI.knowledgeGraph.graphSnapshot = function');
+    expect(dataset, 'the seed answers the Projects picker').toContain('window.electronAPI.knowledgeGraph.graphProjects = function');
   });
 });
 
@@ -226,7 +228,7 @@ describe('demo Knowledge Graph node facts', () => {
       'data.tasks.forEach(function (task) { tasksById[task.id] = task; });',
       extractFunction(script, 'archivedExitedAtMs'),
       extractFunction(script, 'knowledgeGraphSeed'),
-      'return { snapshots: knowledgeGraphSeed().snapshots, archivedExitedAtMs: archivedExitedAtMs };',
+      'return { snapshots: knowledgeGraphSeed(data.knowledgeGraph).snapshots, archivedExitedAtMs: archivedExitedAtMs };',
     ].join('\n');
     const lifted = new Function('data', 'now', source)(data, NOW_MS) as Omit<Lifted, 'script'>;
     return { ...lifted, script };
@@ -291,10 +293,40 @@ describe('demo Knowledge Graph node facts', () => {
   });
 });
 
+describe('demo Knowledge Graph in the seed', () => {
+  /** The `data` object a generated seed carries. */
+  function seededData(script: string): { knowledgeGraph: { projects: Record<string, Record<string, unknown>> } | null } {
+    // `var data = <JSON>;` is one line: JSON.stringify escapes every newline inside a string.
+    const dataStart = script.indexOf('var data = ') + 'var data = '.length;
+    return JSON.parse(script.slice(dataStart, script.indexOf(';\n', dataStart)));
+  }
+  const scrollback = Object.fromEntries(DEMO_SESSIONS.map((session) => [session.id, 'recording']));
+
+  it('leaves the maps out of a seed that fetches them, which the web build emits as their own file', () => {
+    expect(seededData(buildDemoPreConfig({ scrollback, knowledgeGraph: 'fetched' })).knowledgeGraph).toBeNull();
+  });
+
+  it('carries the maps the build would emit when inline, the default, without the capture\'s notes', () => {
+    for (const script of [buildDemoPreConfig({ scrollback }), buildDemoPreConfig({ scrollback, knowledgeGraph: 'inline' })]) {
+      const carried = seededData(script).knowledgeGraph;
+      expect(carried).toEqual(JSON.parse(JSON.stringify(shippedKnowledgeGraph())));
+      expect(Object.keys(carried?.projects ?? {}).sort()).toEqual(DEMO_PROJECTS.map((project) => project.id).sort());
+      for (const graph of Object.values(carried?.projects ?? {})) expect(Object.keys(graph).sort()).toEqual(['coverage', 'index', 'projection']);
+    }
+  });
+
+  it('answers the graph through the lazy loader, never through the pre-configure seed', () => {
+    const script = buildDemoPreConfig({ scrollback, knowledgeGraph: 'fetched' });
+    expect(script).toContain('fetch(recordings.knowledgeGraph)');
+    expect(script).not.toContain('knowledgeGraphSnapshotsByProject');
+  });
+});
+
 describe('demo Knowledge Graph history lookup', () => {
   const CLAUDE_SESSION_ID = '3f2b8c1e-6d4a-4b7e-9c2d-1a5e7f9b0c3d';
   const CODEX_ROLLOUT_ID = '019a3f2e-7b1c-7d4e-8a2f-5c6d7e8f9a0b';
   const REAL_GEMINI_SESSION_ID = '8336f267-33dc-4cd7-8212-b807cb166f76';
+  const FIXTURES_DIRECTORY = path.join(REPO_ROOT, 'tests', 'fixtures');
   const temporaryDirectories: string[] = [];
 
   function makeTemporaryDirectory(): string {
@@ -315,6 +347,18 @@ describe('demo Knowledge Graph history lookup', () => {
     const rolloutDirectory = '/home/dev/.codex/sessions/2026/09/01';
     expect(agentSessionIdOf('codex', `${rolloutDirectory}/rollout-2026-09-01T10-00-00-${CODEX_ROLLOUT_ID}.jsonl`)).toBe(CODEX_ROLLOUT_ID);
     expect(() => agentSessionIdOf('codex', `${rolloutDirectory}/rollout-2026-09-01T10-00-00.jsonl`)).toThrow(TranscriptMatchError);
+  });
+
+  it('reads the id a real Codex rollout records for itself, from the name Codex files it under', () => {
+    // The real rollout's own session_meta line carries its id and start; Codex names the file
+    // rollout-<start, colons as dashes>-<id>.jsonl (the pattern its session history parser matches).
+    const realRollout = path.join(FIXTURES_DIRECTORY, 'codex-real-rollout.jsonl');
+    const sessionMeta = JSON.parse(fs.readFileSync(realRollout, 'utf-8').split('\n')[0]) as { timestamp: string; payload: { id: string } };
+    const startedAt = sessionMeta.timestamp.slice(0, 19).replace(/:/g, '-');
+    const filedRollout = path.join(makeTemporaryDirectory(), `rollout-${startedAt}-${sessionMeta.payload.id}.jsonl`);
+    fs.copyFileSync(realRollout, filedRollout);
+
+    expect(agentSessionIdOf('codex', filedRollout)).toBe(sessionMeta.payload.id);
   });
 
   it('reads a Gemini session id from the first line of a .jsonl chat file, not from the whole file', () => {
