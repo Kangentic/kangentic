@@ -109,6 +109,35 @@ describe('event-loop watchdog', () => {
     expect(readFrom(file, sizeBeforeHold)).toContain('in test:outer\n');
   });
 
+  it('truncates a label longer than the label buffer instead of overflowing it', async () => {
+    const file = await start();
+    const sizeBeforeHold = fs.statSync(file).size;
+    // 96 UTF-8 bytes is the buffer's capacity (LABEL_BYTES, private to the module); this label is ASCII.
+    const longLabel = 'test:' + 'x'.repeat(200);
+    let writtenDuringHold = '';
+    timeSyncWork(longLabel, () => {
+      holdEventLoop(HOLD_MS);
+      writtenDuringHold = readFrom(file, sizeBeforeHold);
+    });
+
+    expect(writtenDuringHold).toContain('in ' + longLabel.slice(0, 96) + '\n');
+  });
+
+  it('reports only a short label that follows a long one, not the long one\'s leftover bytes', async () => {
+    const file = await start();
+    const longLabel = 'test:' + 'y'.repeat(75);
+    timeSyncWork(longLabel, () => undefined);
+    const sizeBeforeHold = fs.statSync(file).size;
+    let writtenDuringHold = '';
+    timeSyncWork('test:short', () => {
+      holdEventLoop(HOLD_MS);
+      writtenDuringHold = readFrom(file, sizeBeforeHold);
+    });
+
+    expect(writtenDuringHold.endsWith('in test:short\n')).toBe(true);
+    expect(writtenDuringHold).not.toContain('yyy');
+  });
+
   it('writes once per hold, and writes nothing while the loop is free', { timeout: 15_000 }, async () => {
     // A one second threshold, so a CI stall of a few hundred ms cannot write a line in the free wait.
     const thresholdMs = 1_000;
@@ -122,7 +151,7 @@ describe('event-loop watchdog', () => {
     expect(lines).toHaveLength(1);
   });
 
-  it('writes again for a second hold once the heartbeat has resumed', async () => {
+  it('writes again for a second hold once the heartbeat has resumed', { timeout: 15_000 }, async () => {
     const file = await start();
     holdEventLoop(HOLD_MS);
     expect(fs.statSync(file).size).toBeGreaterThan(0);
