@@ -48,6 +48,21 @@ export function resumeBlockReason(input: {
 }
 
 /**
+ * Whether the desktop offers Resume for a task: its session is paused (a
+ * `suspended` registry row) and the resume is not refused. This is the resume
+ * direction of `canToggle` in the task detail (`useTaskSessionState.ts`), and
+ * the `resumable` the mobile bridge sends, on the board row and the
+ * read-stream feed, promising that `start-session` resumes rather than starts.
+ */
+export function isResumeOffered(input: {
+  hasPausedSession: boolean;
+  laneRole: string | null | undefined;
+  isArchived: boolean;
+}): boolean {
+  return input.hasPausedSession && resumeBlockReason(input) === null;
+}
+
+/**
  * User-facing copy for a refusal. The main-process handler throws this string
  * and the task detail surfaces it verbatim in a toast, so it reads as guidance,
  * not as an internal error.

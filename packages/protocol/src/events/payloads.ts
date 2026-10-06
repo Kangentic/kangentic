@@ -361,6 +361,36 @@ export interface BoardTaskWire {
    * populates the key from every real wire response.
    */
   spawn_progress?: string | null;
+  /**
+   * True when the task's session is paused and the desktop's own task view
+   * would offer Resume for it: the task is not in To Do or Done and not
+   * archived. It is the desktop's promise that `start-session` for this task
+   * resumes the paused session exactly as its Resume button does: the same
+   * conversation, the column's model, effort and permission, a "Resuming
+   * session..." label, and NO enter automations or column message. Gate a
+   * phone's Resume control on THIS field.
+   *
+   * On the board row because the phone always holds the board: a desktop
+   * pause clears the task's `session_id`, so a phone keeps no read-stream on
+   * a paused session (the stream's `resumable` covers only an open session
+   * screen through the suspend itself). A pause, a resume, a column move and
+   * an archive each reach the phone as a `task-updated` board event, after
+   * which the next snapshot carries the new value.
+   *
+   * Explicit on purpose, never inferred from another field: a pre-0.16.0
+   * desktop answers `start-session` by STARTING the column, which re-runs its
+   * enter automations and resends its message (a paused task in Code Review
+   * would get `/code-review` again). Null or absent means such a desktop; a
+   * client offers no Resume then. While `spawn_progress` is non-null a spawn
+   * is already in flight and the desktop card shows that label instead of a
+   * Resume control; a client applies the same precedence. `start-session`
+   * re-checks the column and refuses a To Do, Done or archived task with the
+   * desktop's Resume copy, so a value overtaken by a move is safe to act on.
+   *
+   * Declared OPTIONAL (`?`) like `spawns_session`; `parseBoardTaskWire`
+   * populates the key from every real wire response.
+   */
+  resumable?: boolean | null;
 }
 
 /** Phone-needed subset of the desktop's BacklogTask row. */
@@ -664,6 +694,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     created_at: requireString(value, 'created_at', 'board task'),
     updated_at: requireString(value, 'updated_at', 'board task'),
     spawn_progress: nullableString(value, 'spawn_progress'),
+    resumable: nullableBoolean(value, 'resumable'),
   };
 }
 

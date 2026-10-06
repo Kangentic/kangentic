@@ -326,8 +326,12 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * sees what the phone gets. Required rather than optional so every call site
  * decides, and so a bare `.map(toBoardTaskWire)` (which would pass the array
  * index here) fails to compile.
+ *
+ * `resumable` is `isResumeOffered` for the task, which the caller resolves
+ * because it needs the session registry and the column; see
+ * `BoardTaskWire.resumable`.
  */
-export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null): BoardTaskWire {
+export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null, resumable: boolean): BoardTaskWire {
   return {
     id: task.id,
     display_id: task.display_id,
@@ -351,6 +355,7 @@ export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null): 
     created_at: task.created_at,
     updated_at: task.updated_at,
     spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
+    resumable,
   };
 }
 
