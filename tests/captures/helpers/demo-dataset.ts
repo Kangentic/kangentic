@@ -748,9 +748,13 @@ export const DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL = Object.values(DEMO_KNOWLEDGE_GRAP
   .reduce((sum, project) => sum + project.projection.nodes.length, 0);
 
 /**
- * The config the maps were built under, which the sample install carries so Settings and the map's
- * Index panel describe the same index: semantic search on, the default model. No Ask agent is
- * chosen, as on a desktop whose user has not picked one, so pressing Enter in Ask opens Settings.
+ * The config the sample install carries, so Settings and the map's Index panel describe the same
+ * index: semantic search on, the default model. No Ask agent is chosen, as on a desktop whose user
+ * has not picked one, so pressing Enter in Ask opens Settings.
+ *
+ * The committed maps predate Granite R2 as the default and carry bge-base's tag
+ * (`DEMO_KNOWLEDGE_GRAPH.modelTag`). Nothing a visitor sees reads the tag, so the frame stays
+ * consistent; `node scripts/capture-demo-knowledge-graph.mjs` re-embeds them with the default.
  */
 export const DEMO_KNOWLEDGE_GRAPH_CONFIG = { ...DEFAULT_CONFIG.knowledgeGraph, enabled: true };
 
@@ -758,7 +762,7 @@ export const DEMO_KNOWLEDGE_GRAPH_CONFIG = { ...DEFAULT_CONFIG.knowledgeGraph, e
  * What Settings, Knowledge Graph reads from `knowledgeGraph.getStatus()`: main's own shape, summed
  * the way main sums it (`sumIndexCounts`, `summaryStatusOf`, `sourceStatusOf`) over the same three
  * projects' counts the maps carry, so the tab's Index card and the map's agree. The model is the
- * one the maps were embedded with, present. `activeBackend` is left out because no embedding runs
+ * configured default, present. `activeBackend` is left out because no embedding runs
  * in a browser, and `code` because source code is not indexed and main's estimate of a branch is a
  * read of the open project's repository, which this install has no copy of.
  */
