@@ -73,8 +73,9 @@ at the Windows timer floor.
   first time the Toolhelp listing fails), `ps` on POSIX. So does the task leftover reap (`reapTaggedProcesses`,
   `src/main/pty/process-tag/`): the host scans for the `KANGENTIC_TASK_ID` tag and kills, and on
   Windows and macOS it loads koffi (an esbuild external, unpacked, and loaded by the afterPack
-  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record) and, on
-  macOS, the process list and working directories from libproc. The scan yields to the event loop
+  probe) to read another process's environment (the PEB; the `KERN_PROCARGS2` record), the
+  machine's TCP table on Windows (`GetExtendedTcpTable`), and, on macOS, the process list, working
+  directories and each process's sockets from libproc. The scan yields to the event loop
   as it goes, and a native call long enough to hold it (the Toolhelp snapshot) runs on the thread
   pool through koffi's async call. See
   [[task-process-tag]].
