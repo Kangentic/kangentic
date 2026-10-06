@@ -171,6 +171,55 @@ describe('selectEngine - a Custom slot naming a model the registry no longer kno
     expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
     expect(result.models.map((model) => model.id)).toEqual(['streaming-zipformer-en', 'parakeet-tdt-0.6b-v3']);
   });
+
+  // The fallback follows the machine and the language, not "English on a capable
+  // machine". Every English capable-machine case above would still pass with either
+  // one hardcoded, so these name the other two axes.
+  const weakProfile = makeProfile({ cpuCores: 2, totalRamGb: 8, gpu: 'none' });
+
+  it('a removed live model id on a weak machine falls back to the Light preset\'s Zipformer, not Best\'s 600 MB Nemotron', () => {
+    const result = selectEngine(
+      weakProfile,
+      makeConfig({ mode: 'custom', language: 'en', liveModelId: 'model-that-was-removed', modelId: 'none' }),
+    );
+    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.finalModelId).toBeNull();
+  });
+
+  it('a removed refinement model id on a weak machine stays empty: the Light preset has no refinement model', () => {
+    const result = selectEngine(
+      weakProfile,
+      makeConfig({ mode: 'custom', language: 'en', liveModelId: 'streaming-zipformer-en', modelId: 'model-that-was-removed' }),
+    );
+    expect(result.liveModelId).toBe('streaming-zipformer-en');
+    expect(result.finalModelId).toBeNull();
+    expect(result.models.map((model) => model.id)).toEqual(['streaming-zipformer-en']);
+  });
+
+  // French has no English-only model to fall back to: the preset's live model for
+  // French is Nemotron 3.5, and the English Nemotron would also clamp the language
+  // to en.
+  it('a removed live model id for French falls back to the default preset\'s French live model (Nemotron 3.5)', () => {
+    const result = selectEngine(
+      capableProfile,
+      makeConfig({ mode: 'custom', language: 'fr', liveModelId: 'model-that-was-removed', modelId: 'none' }),
+    );
+    expect(result.liveModelId).toBe('nemotron-3.5-streaming-0.6b');
+    expect(result.finalModelId).toBeNull();
+    expect(result.language).toBe('fr');
+  });
+
+  // Parakeet v3 has no Japanese, so the Best preset's refinement model for Japanese is
+  // Whisper small. The English pick (Parakeet v3) would also clamp the language to en.
+  it('a removed refinement model id for Japanese falls back to the default preset\'s refinement model for Japanese (Whisper small)', () => {
+    const result = selectEngine(
+      capableProfile,
+      makeConfig({ mode: 'custom', language: 'ja', liveModelId: 'whisper-base-multi', modelId: 'model-that-was-removed' }),
+    );
+    expect(result.liveModelId).toBe('whisper-base-multi');
+    expect(result.finalModelId).toBe('whisper-small-multi');
+    expect(result.language).toBe('ja');
+  });
 });
 
 describe('selectEngine - on-device slot guard (at least one slot always active)', () => {
@@ -197,6 +246,19 @@ describe('selectEngine - on-device slot guard (at least one slot always active)'
     );
     expect(result.liveModelId).toBeNull();
     expect(result.finalModelId).toBe('parakeet-tdt-0.6b-v3');
+  });
+
+  // Parakeet v3 has no Japanese, so the Best preset refines Japanese with Whisper
+  // small. The guard takes the Best preset's refinement model FOR THE LANGUAGE: the
+  // English pick would clamp the session's language to en.
+  it('both slots none for Japanese: the guard picks the Best refinement model for Japanese (Whisper small)', () => {
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ mode: 'custom', language: 'ja', liveModelId: 'none', modelId: 'none' }),
+    );
+    expect(result.liveModelId).toBeNull();
+    expect(result.finalModelId).toBe('whisper-small-multi');
+    expect(result.language).toBe('ja');
   });
 });
 

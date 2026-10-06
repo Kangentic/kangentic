@@ -484,6 +484,35 @@ test('Custom mode: a refinement model that does not cover the language falls bac
   }
 });
 
+// A preset is on-device, so picking one while Custom runs the cloud refinement puts
+// the engine back on this machine. Without the reset, Mode would read Best while main
+// kept sending the final clip to the endpoint, and the refinement line would still
+// say Cloud endpoint.
+test('picking a preset while Custom runs a cloud refinement puts the engine back on the machine', async () => {
+  const { browser, page } = await launchWithInfo(BEST_SELECTION);
+  try {
+    await seedDictation(page, {
+      enabled: true, mode: 'custom', engineMode: 'remote', liveModelId: NEMOTRON_STREAMING.id,
+    });
+    await openDictationTab(page);
+    // The premise: the tab is really in the cloud shape.
+    await expect(page.getByTestId('dictation-final-model-select')).toHaveValue('cloud');
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText('Cloud endpoint');
+
+    await page.getByTestId('dictation-preset-accurate').click();
+
+    await expect
+      .poll(async () => {
+        const { mode, engineMode } = await savedDictation(page);
+        return { mode, engineMode };
+      })
+      .toEqual({ mode: 'accurate', engineMode: 'auto' });
+    await expect(page.getByTestId('dictation-refinement-model-line-value')).toHaveText(readyText(PARAKEET_V3));
+  } finally {
+    await browser.close();
+  }
+});
+
 /** The last non-null payload `dictation.prewarm` received. The hook also calls
  *  prewarm(null) while dictation is off, which is not a warm request. */
 async function lastWarmedConfig(page: Page): Promise<Record<string, unknown> | null> {
