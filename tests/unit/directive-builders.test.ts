@@ -13,6 +13,7 @@ import { EventType } from '../../src/shared/types';
 import {
   extractTool,
   extractToolId,
+  extractSubagentId,
   extractToolPath,
   extractDetail,
   extractDetailPath,
@@ -41,6 +42,8 @@ describe('directive builders - wire format contract', () => {
     ['extractTool', extractTool('tool_name'), 'extractTool', { field: 'tool_name' }],
     ['extractToolId top-level', extractToolId(['tool_use_id']), 'extractToolId', { fields: ['tool_use_id'] }],
     ['extractToolId nested', extractToolId(['tool_use_id'], { nested: 'tool_response' }), 'extractToolId', { fields: ['tool_use_id'], nested: 'tool_response' }],
+    // Top-level only, no `nested` option. A subagent's `agent_id` is a top-level hook field.
+    ['extractSubagentId', extractSubagentId(['agent_id']), 'extractSubagentId', { fields: ['agent_id'] }],
     ['extractDetail top-level', extractDetail(['message', 'notification']), 'extractDetail', { fields: ['message', 'notification'] }],
     ['extractDetail nested', extractDetail(['model'], { nested: 'llm_request' }), 'extractDetail', { fields: ['model'], nested: 'llm_request' }],
     // `whenTool` scopes the extraction to one tool and, unlike `nested`, also

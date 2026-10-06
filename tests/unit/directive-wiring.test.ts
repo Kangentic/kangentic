@@ -30,6 +30,7 @@ const EVENTS_PATH = '/fake/.kangentic/sessions/abc/events.jsonl';
 const KNOWN_KINDS = new Set([
   'extractTool',
   'extractToolId',
+  'extractSubagentId',
   'extractDetail',
   'extractDetailWhenTool',
   'setDetail',
