@@ -27,6 +27,7 @@ import {
 } from '@kangentic/protocol';
 import { isJsonValue } from '@kangentic/protocol';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
+import { stripAnsiControlCodes } from '../../../shared/ansi-strip';
 import type {
   ActivityReason,
   BacklogTask,
@@ -298,11 +299,33 @@ export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
   };
 }
 
+/** Longest spawn-progress label a phone receives, in characters (code points). */
+export const SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH = 120;
+
+/**
+ * A spawn-progress label as it may leave the desktop. The label can carry a
+ * raw git progress line (createProgressCallback passes unknown phases through
+ * verbatim), so escape sequences and control characters are stripped, tabs and
+ * line breaks become spaces, and the result is capped at
+ * SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH with a trailing "...". A label with
+ * nothing left to show is null, which the phone reads as no spawn in flight.
+ */
+export function toSpawnProgressLabelWire(label: string | null): string | null {
+  if (label === null) return null;
+  const cleaned = stripAnsiControlCodes(label).replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (cleaned === '') return null;
+  const characters = Array.from(cleaned);
+  if (characters.length <= SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH) return cleaned;
+  return `${characters.slice(0, SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH - 3).join('').trimEnd()}...`;
+}
+
 /**
  * `spawnProgressLabel` is the task's in-flight label from
- * getInFlightSpawnProgress(), or null. Required rather than optional so every
- * call site decides, and so a bare `.map(toBoardTaskWire)` (which would pass
- * the array index here) fails to compile.
+ * getInFlightSpawnProgress(), or null; it goes through
+ * toSpawnProgressLabelWire here, so a caller that filters on the mapped row
+ * sees what the phone gets. Required rather than optional so every call site
+ * decides, and so a bare `.map(toBoardTaskWire)` (which would pass the array
+ * index here) fails to compile.
  */
 export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null): BoardTaskWire {
   return {
@@ -327,7 +350,7 @@ export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null): 
     archived_at: task.archived_at,
     created_at: task.created_at,
     updated_at: task.updated_at,
-    spawn_progress: spawnProgressLabel,
+    spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
   };
 }
 

@@ -97,6 +97,7 @@ vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
   emitSpawnProgress: vi.fn(),
   clearSpawnProgress: vi.fn(),
   createProgressCallback: vi.fn(() => vi.fn()),
+  claimSpawnProgress: vi.fn(() => ({ onProgress: vi.fn(), release: vi.fn() })),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({
@@ -138,7 +139,12 @@ import { registerTaskMoveHandlers, handleTaskMove } from '../../src/main/ipc/han
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
-import { clearSpawnProgress, createProgressCallback } from '../../src/main/transition-engine/spawn-progress';
+import { claimSpawnProgress, clearSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
+
+/** The claim SESSION_RESUME took, from the mocked claimSpawnProgress. */
+function resumeClaim(): { onProgress: MockInstance; release: MockInstance } | undefined {
+  return vi.mocked(claimSpawnProgress).mock.results[0]?.value as { onProgress: MockInstance; release: MockInstance } | undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -695,8 +701,10 @@ describe('SESSION_RESUME AbortError cleanup', () => {
     const lastRepos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { update: MockInstance } };
     expect(lastRepos?.tasks.update).toHaveBeenCalledWith({ id: 'task-resume-abort', session_id: null });
 
-    // The aborted resume retires its own "Resuming session..." label.
-    expect(clearSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-resume-abort');
+    // The aborted resume releases its own "Resuming session..." label, which
+    // clears it only while no other spawn has labelled the task since.
+    expect(claimSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-resume-abort');
+    expect(resumeClaim()?.release).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -883,16 +891,16 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(result).toMatchObject({ id: 'sess-other' });
   });
 
-  it('labels the resume "resuming" before the git phase, hands the git phase the same callback, and clears it once the resume resolves', async () => {
+  it('labels the resume "resuming" before the git phase, hands the git phase the same callback, and releases it once the resume resolves', async () => {
     const handler = capturedHandlers.get(IPC.SESSION_RESUME);
     if (!handler) throw new Error('SESSION_RESUME handler not registered');
 
     let onProgressSeenByGitPhase: unknown;
-    let clearedDuringGitPhase = true;
+    let releasedDuringGitPhase = true;
     mockEnsureTaskWorktree.mockImplementation(async (_ctx: unknown, _task: unknown, _tasks: unknown, _path: unknown, opts: unknown) => {
       onProgressSeenByGitPhase = (opts as { onProgress?: unknown }).onProgress;
-      // The label is up, and not yet cleared, while the git phase runs.
-      clearedDuringGitPhase = vi.mocked(clearSpawnProgress).mock.calls.length > 0;
+      // The label is up, and not yet released, while the git phase runs.
+      releasedDuringGitPhase = (resumeClaim()?.release.mock.calls.length ?? 0) > 0;
       // Phase 3 then resolves through its dedup return (this harness does not
       // drive a full engine spawn); the finally runs the same either way.
       storedTask = { ...storedTask, session_id: 'sess-other' };
@@ -900,16 +908,18 @@ describe('SESSION_RESUME split-lock dedup', () => {
 
     await handler(null, 'task-2');
 
-    expect(clearedDuringGitPhase).toBe(false);
+    expect(releasedDuringGitPhase).toBe(false);
 
-    expect(createProgressCallback).toHaveBeenCalledWith(context.mainWindow, 'task-2');
-    const onProgress = vi.mocked(createProgressCallback).mock.results[0]?.value as MockInstance;
-    expect(onProgress).toHaveBeenCalledWith('resuming');
-    expect(onProgressSeenByGitPhase).toBe(onProgress);
-    expect(clearSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-2');
+    expect(claimSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-2');
+    const claim = resumeClaim();
+    expect(claim?.onProgress).toHaveBeenCalledWith('resuming');
+    expect(onProgressSeenByGitPhase).toBe(claim?.onProgress);
+    expect(claim?.release).toHaveBeenCalledTimes(1);
+    // Never the unconditional clear, which would wipe another spawn's label.
+    expect(clearSpawnProgress).not.toHaveBeenCalled();
   });
 
-  it('clears the label when the git phase fails', async () => {
+  it('releases the label when the git phase fails', async () => {
     const handler = capturedHandlers.get(IPC.SESSION_RESUME);
     if (!handler) throw new Error('SESSION_RESUME handler not registered');
     mockEnsureTaskWorktree.mockImplementation(async () => {
@@ -917,7 +927,7 @@ describe('SESSION_RESUME split-lock dedup', () => {
     });
 
     await expect(handler(null, 'task-2')).rejects.toThrow(/Worktree setup failed/);
-    expect(clearSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-2');
+    expect(resumeClaim()?.release).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1016,7 +1026,7 @@ describe('SESSION_RESUME Phase 1 self-heal (live session already exists)', () =>
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
     // Nothing spawns, so no "Resuming session..." label is put up over the
     // live session the card already shows.
-    expect(createProgressCallback).not.toHaveBeenCalled();
+    expect(claimSpawnProgress).not.toHaveBeenCalled();
   });
 
   it('does not clear task.session_id when returning the live session', async () => {

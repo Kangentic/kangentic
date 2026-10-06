@@ -102,7 +102,8 @@ export type ActivityEventPayload =
    * the desktop's own display text for what it is doing ("Switching
    * model...", "Starting agent...", a live git-queue wait count) - treat it
    * as untrusted display text, not a key to switch on, cap its length, and
-   * fall back to generic copy rather than parsing it.
+   * fall back to generic copy rather than parsing it. From 0.16.0 the desktop
+   * sends it sanitized as `BoardTaskWire.spawn_progress` describes.
    *
    * INTENT, not a guarantee, on the same terms `BoardColumnWire.spawns_session`
    * documents: the desktop can suspend without a successor ever landing (a

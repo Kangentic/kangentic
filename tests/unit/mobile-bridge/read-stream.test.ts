@@ -23,7 +23,7 @@ import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import { SubscriptionRegistry } from '../../../src/main/mobile-bridge/session/subscription-registry';
-import { emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
+import { createProgressCallback, emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
 
 function fakeWindow(): BrowserWindow {
   return { isDestroyed: () => false, webContents: { send: vi.fn() } } as unknown as BrowserWindow;
@@ -490,6 +490,23 @@ describe('handleReadStream', () => {
       type: 'session-ended',
       intentional: true,
       spawnProgressLabel: 'Switching model...',
+    });
+  });
+
+  it('session-ended carries the label sanitized: a raw git progress line loses its escape codes and carriage return', async () => {
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+    // createProgressCallback passes an unknown phase (a raw git line) through.
+    createProgressCallback(fakeWindow(), 'task-1')('\u001b[32mReceiving objects:\u001b[0m 45%\r');
+    sessionManager.emit('exit', 'sess-1', 0, true);
+
+    const calls = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    expect((calls[calls.length - 1][0] as { event: { payload: unknown } }).event.payload).toEqual({
+      type: 'session-ended',
+      intentional: true,
+      spawnProgressLabel: 'Receiving objects: 45%',
     });
   });
 

@@ -54,8 +54,14 @@ import { sendToRenderer } from '../ipc/send-to-renderer';
  * sweep so a spawn path that dies without calling clearSpawnProgress (process
  * killed mid-spawn, uncaught throw bypassing the finally) cannot strand a
  * label here forever.
+ *
+ * `owner` is the claimSpawnProgress() token that pushed the label, or null
+ * for any other push. Only a claim's release() reads it.
  */
-const inFlightSpawnProgress = new Map<string, { label: string; updatedAt: number }>();
+const inFlightSpawnProgress = new Map<string, { label: string; updatedAt: number; owner: SpawnProgressOwner | null }>();
+
+/** Opaque identity of one claimSpawnProgress() region. */
+type SpawnProgressOwner = object;
 
 /**
  * Per-task staleness note appended to every label until the spawn clears
@@ -189,8 +195,17 @@ export const SPAWN_PROGRESS_TTL_MS = 120_000;
  * updated UNCONDITIONALLY (before the destroyed-window guard) so it stays the
  * authoritative source of truth even when the send is skipped during teardown.
  * `label === null` removes the entry (spawn done/aborted).
+ *
+ * `owner` stamps who pushed a label: a claim's token, or null for a push from
+ * anywhere else. 'keep' keeps the entry's current owner, for a re-push of the
+ * same label (setSpawnStaleNote) that changes no hands.
  */
-function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: string | null): void {
+function pushSpawnProgress(
+  mainWindow: BrowserWindow,
+  taskId: string,
+  label: string | null,
+  owner: SpawnProgressOwner | null | 'keep',
+): void {
   const wasTracked = inFlightSpawnProgress.has(taskId);
   if (label === null) {
     inFlightSpawnProgress.delete(taskId);
@@ -208,7 +223,8 @@ function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: str
         spawnStaleNotes.set(taskId, pending.note);
       }
     }
-    inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now() });
+    const resolvedOwner = owner === 'keep' ? inFlightSpawnProgress.get(taskId)?.owner ?? null : owner;
+    inFlightSpawnProgress.set(taskId, { label, updatedAt: Date.now(), owner: resolvedOwner });
   }
   const isTracked = label !== null;
   if (wasTracked !== isTracked) {
@@ -284,7 +300,8 @@ export function setSpawnStaleNote(
       return;
     }
     spawnStaleNotes.set(taskId, note);
-    pushSpawnProgress(mainWindow, taskId, entry.label);
+    // A decoration of the same label, so whoever pushed it still owns it.
+    pushSpawnProgress(mainWindow, taskId, entry.label, 'keep');
     return;
   }
   if (probeGeneration === undefined) return;
@@ -365,7 +382,7 @@ export function emitSpawnProgress(
   taskId: string,
   phase: SpawnPhase,
 ): void {
-  pushSpawnProgress(mainWindow, taskId, PHASE_LABELS[phase]);
+  pushSpawnProgress(mainWindow, taskId, PHASE_LABELS[phase], null);
 }
 
 /**
@@ -435,7 +452,7 @@ export function emitSpawnWaiting(
   } else {
     label = 'Waiting...';
   }
-  pushSpawnProgress(mainWindow, taskId, label);
+  pushSpawnProgress(mainWindow, taskId, label, null);
 }
 
 /**
@@ -449,7 +466,7 @@ export function createProgressCallback(
   taskId: string,
 ): (phase: string) => void {
   return (phase: string) => {
-    pushSpawnProgress(mainWindow, taskId, PHASE_LABELS[phase as SpawnPhase] ?? phase);
+    pushSpawnProgress(mainWindow, taskId, PHASE_LABELS[phase as SpawnPhase] ?? phase, null);
   };
 }
 
@@ -461,5 +478,43 @@ export function clearSpawnProgress(
   mainWindow: BrowserWindow,
   taskId: string,
 ): void {
-  pushSpawnProgress(mainWindow, taskId, null);
+  pushSpawnProgress(mainWindow, taskId, null, null);
+}
+
+/** A labelled region that clears only its own label. See claimSpawnProgress. */
+export interface SpawnProgressClaim {
+  /** Same contract as createProgressCallback's callback; each push is owned by this claim. */
+  onProgress: (phase: string) => void;
+  /** Clear the task's label, unless a push from another path replaced this claim's since. */
+  release: () => void;
+}
+
+/**
+ * Like createProgressCallback, for a region whose clear must not wipe another
+ * path's label. The label slot is per task, so a region that runs alongside
+ * another spawn of the same task (SESSION_RESUME next to a phone Start, or an
+ * aborted resume next to the resume that aborted it) would otherwise clear
+ * the label the other one is still showing.
+ *
+ * release() clears when this claim still owns the label, or when there is no
+ * label at all (a TTL sweep pushes nothing, so the null still corrects the
+ * renderer). Any other push since this claim's last one means another path
+ * owns the label and clears it itself, so release() leaves it.
+ *
+ * One direction only: an unconditional clearSpawnProgress() elsewhere still
+ * clears a claim's label. Every other region clears that way because
+ * spawnAgent pushes labels of its own and relies on its caller to clear them.
+ */
+export function claimSpawnProgress(mainWindow: BrowserWindow, taskId: string): SpawnProgressClaim {
+  const owner: SpawnProgressOwner = {};
+  return {
+    onProgress: (phase: string) => {
+      pushSpawnProgress(mainWindow, taskId, PHASE_LABELS[phase as SpawnPhase] ?? phase, owner);
+    },
+    release: () => {
+      const entry = inFlightSpawnProgress.get(taskId);
+      if (entry && entry.owner !== owner) return;
+      pushSpawnProgress(mainWindow, taskId, null, null);
+    },
+  };
 }

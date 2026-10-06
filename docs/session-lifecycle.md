@@ -454,8 +454,11 @@ now prevent that:
   resolved and the git op queues.
 - The Resume button's own handler (`SESSION_RESUME`) does the same once it knows it will spawn
   (its self-heal return spawns nothing): it emits `resuming`, threads `onProgress` into
-  `ensureTaskWorktree`, and clears the label in one `finally`, so a paused card stops reading
-  "Paused" while its resume runs.
+  `ensureTaskWorktree`, and releases the label in one `finally`, so a paused card stops reading
+  "Paused" while its resume runs. It labels through `claimSpawnProgress`, whose release clears
+  only while no other path has labelled the task since. The label slot is per task, and a phone
+  Start or a newer resume can be labelling the same task when this one unwinds. Every other spawn
+  path still clears unconditionally.
 - `getTaskProgress` lets an in-flight spawn label outrank a `suspended` session (only `suspended`;
   a running or queued session owns its own display). An emitted label means main is spawning right
   now, which is newer than a record suspended earlier.
