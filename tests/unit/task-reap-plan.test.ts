@@ -663,6 +663,33 @@ describe('planReapDetailed: a process other Kangentic work is connected to is sh
     expect(keptOf(plan)).toEqual([[2101, 'shared', TASK]]);
   });
 
+  it('keeps a tagged shell whose only child is the spared listener, and reports the shell, not the listener', () => {
+    const plan = withConnections([
+      main,
+      scanned(2100, 1, { tag: TASK }),
+      scanned(2101, 2100, { tag: TASK }),
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+    ], connected([[2101, 3001]], [2101]));
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(plan.roots).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2100, 'shared', TASK]]);
+    expect([...plan.keptIdentities].sort()).toEqual(['2100:start-2100', '2101:start-2101']);
+  });
+
+  it('reports a spared listener under the task of the tagged root above it when the listener is no root itself (its environment is unreadable)', () => {
+    const plan = withConnections([
+      main,
+      scanned(2001, 1, { tag: TASK }),
+      // Untagged only because its environment could not be read: collected with 2001, never a kill root of its own.
+      scanned(2002, 2001, { tag: null, environmentUnreadable: true }),
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      // 2001 listens too, so it is not kept as a launcher for its one spared child and 2002 is what the report names.
+    ], connected([[2002, 3001]], [2001, 2002]));
+    expect(targetPidsOf(plan)).toEqual([2001]);
+    expect(plan.roots.map((root) => [root.process.pid, root.taskId])).toEqual([[2001, TASK]]);
+    expect(keptOf(plan)).toEqual([[2002, 'shared', TASK]]);
+  });
+
   it('spares the whole subtree of a shared listener, a worker that accepted the connection included', () => {
     const plan = withConnections([
       main,
@@ -722,6 +749,46 @@ describe('planReapDetailed: a process whose every child is kept is kept too', ()
     expect(targetPidsOf(plan)).toEqual([]);
   });
 
+  describe('the reason a kept launcher is reported under', () => {
+    // 2012 listens in the task's worktree and another task's command holds a connection to it, so it is spared as shared.
+    const sparedListener = scanned(2012, 2010, { tag: TASK });
+    const otherTaskClient = scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE });
+    const multiplexerChild = scanned(2013, 2010, { tag: TASK, role: 'multiplexer' });
+    const sparedListenerConnections = connected([[2012, 3001]], [2012]);
+
+    it('is the window when the children are a spared listener and a window, whichever is listed first', () => {
+      const plan = withConnections([main, launcher, sparedListener, windowedChild, otherTaskClient], sparedListenerConnections);
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(plan.roots).toEqual([]);
+      expect(keptOf(plan)).toEqual([[2010, 'window', TASK]]);
+    });
+
+    it('is the multiplexer when the only child is a tmux server', () => {
+      const plan = withConnections([main, launcher, multiplexerChild], connected([], []));
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(keptOf(plan)).toEqual([[2010, 'multiplexer', TASK]]);
+    });
+
+    it('is the multiplexer over a spared listener, whichever is listed first', () => {
+      const plan = withConnections([main, launcher, sparedListener, multiplexerChild, otherTaskClient], sparedListenerConnections);
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(keptOf(plan)).toEqual([[2010, 'multiplexer', TASK]]);
+    });
+
+    it('is the window over a multiplexer, whichever is listed first', () => {
+      const plan = withConnections([main, launcher, multiplexerChild, windowedChild], connected([], []));
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(keptOf(plan)).toEqual([[2010, 'window', TASK]]);
+    });
+
+    it('is still the window or the multiplexer when that child is not the task\'s own to report (it works outside the task\'s directories)', () => {
+      const windowOutside = scanned(2014, 2010, { tag: TASK, role: 'visible-app', workingDirectory: '/' });
+      expect(keptOf(withConnections([main, launcher, windowOutside], connected([], [])))).toEqual([[2010, 'window', TASK]]);
+      const multiplexerOutside = scanned(2015, 2010, { tag: TASK, role: 'multiplexer', workingDirectory: '/' });
+      expect(keptOf(withConnections([main, launcher, multiplexerOutside], connected([], [])))).toEqual([[2010, 'multiplexer', TASK]]);
+    });
+  });
+
   it('keeps nothing for its children alone without a connection read, which is what tells a launcher from a dev server', () => {
     expect(targetPidsOf(withConnections([main, launcher, windowedChild], undefined))).toEqual([2010]);
   });
@@ -771,5 +838,60 @@ describe('connectionQueryOf', () => {
   it('asks about nothing when no process is the reaped task\'s', () => {
     expect(connectionQueryOf({ processes: [main, scanned(4001, 1, { tag: OTHER_TASK })], tasks: tasks(), mainPid: MAIN_PID, liveRootPids: [] }))
       .toEqual({ listeners: [], clients: [] });
+  });
+
+  const queryOf = (processes: ScannedProcess[], liveRootPids: number[] = []) => (
+    connectionQueryOf({ processes, tasks: tasks(), mainPid: MAIN_PID, liveRootPids, caseInsensitivePaths: false })
+  );
+  const pidsOf = (entries: ScannedProcess[]) => entries.map((entry) => entry.pid).sort((left, right) => left - right);
+
+  it('asks about a macOS withheld orphan in the reaped task\'s worktree, and what runs under it, as listeners and as clients', () => {
+    const query = queryOf([
+      main,
+      // SIP hides its tag, its parent is launchd, and it works in the worktree. No tag names it.
+      scanned(2001, 1, { tag: null, environmentWithheld: true }),
+      // Untagged under it, as on a SIP-off machine.
+      scanned(2002, 2001, { tag: null }),
+      // An untagged stranger outside Kangentic is neither.
+      scanned(4003, 1, { tag: null, workingDirectory: '/home/dev' }),
+    ]);
+    expect(pidsOf(query.listeners)).toEqual([2001, 2002]);
+    expect(pidsOf(query.clients)).toEqual([2001, 2002]);
+  });
+
+  it('does not ask about a withheld process with a live parent, a withheld orphan outside the worktree, or a readable untagged orphan in it', () => {
+    const query = queryOf([
+      main,
+      // The user's own shell, and the process it started after a cd into the worktree.
+      scanned(300, 1, { tag: null, workingDirectory: '/home/dev' }),
+      scanned(301, 300, { tag: null, environmentWithheld: true }),
+      // An orphan whose directory is the project but not the worktree.
+      scanned(302, 1, { tag: null, environmentWithheld: true, workingDirectory: PROJECT }),
+      // Readable and untagged: the directory alone never makes it the task's.
+      scanned(303, 1, { tag: null }),
+      // Positive control, so an empty answer cannot be mistaken for a pass.
+      scanned(2001, 1, { tag: TASK }),
+    ]);
+    expect(pidsOf(query.listeners)).toEqual([2001]);
+    expect(pidsOf(query.clients)).toEqual([2001]);
+  });
+
+  it('never asks about a protected process that carries the reaped task\'s tag, a window or a held PTY, nor what runs under one', () => {
+    const query = queryOf([
+      main,
+      // A dev server, and a window it opened (untagged, so only the walk under the server reaches it) with its helper.
+      scanned(2001, 1, { tag: TASK }),
+      scanned(2002, 2001, { tag: null, role: 'visible-app' }),
+      scanned(2003, 2002, { tag: null }),
+      // A window the agent opened by itself, and its tagged helper.
+      scanned(2050, 1, { tag: TASK, role: 'visible-app' }),
+      scanned(2051, 2050, { tag: TASK }),
+      // A PTY the host still holds, running the same task's agent.
+      scanned(3000, 1, { tag: TASK }),
+      scanned(3001, 3000, { tag: TASK }),
+    ], [3000]);
+    expect(pidsOf(query.listeners)).toEqual([2001]);
+    // The held PTY's tree is another session's work, so it is evidence, and the windows (the task's own) are not.
+    expect(pidsOf(query.clients)).toEqual([2001, 3000, 3001]);
   });
 });

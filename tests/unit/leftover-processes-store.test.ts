@@ -46,7 +46,7 @@ function makeProcess(id: string): LeftoverProcess {
 }
 
 function makeReport(id: string, processIds: string[] = [`${id}-process`]): LeftoverProcessReport {
-  return { id, stoppingEnabled: true, processes: processIds.map(makeProcess) };
+  return { id, stoppingEnabled: true, processes: processIds.map(makeProcess), reportedAt: '2026-01-01T00:00:00.000Z' };
 }
 
 /** Adds `count` reports named report-0 .. report-<count-1>, each listing one process, process-<n>. */

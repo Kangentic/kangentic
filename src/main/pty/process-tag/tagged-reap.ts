@@ -212,8 +212,6 @@ async function describeSafely(reader: TaggedProcessReader, targets: readonly Sca
   }
 }
 
-const identityOf = processIdentity;
-
 /**
  * Plan from one scan, with the connections read right after it. A reader
  * without `connections` contributes none, and a scan with nothing a reaped
@@ -391,27 +389,27 @@ export async function reapTaggedOnce(
     // as null, a new child made it shared) was not force-killed, so only a later
     // scan can say whether it stopped. Scan two alone cannot: on Windows a
     // process can still be listed there while it exits.
-    const listedAfterFirst = new Set(secondScan.processes.map(identityOf));
-    const rootStillListed = firstPlan.roots.some((root) => listedAfterFirst.has(identityOf(root.process)));
+    const listedAfterFirst = new Set(secondScan.processes.map(processIdentity));
+    const rootStillListed = firstPlan.roots.some((root) => listedAfterFirst.has(processIdentity(root.process)));
     if (secondPlan.targets.length > 0 || rootStillListed) {
       await wait(SURVIVOR_CHECK_MS);
       pass = 'last';
       const lastScan = requireProcesses(await deps.reader.scan());
       unreadableCount = lastScan.unreadableCount;
-      const alive = new Set(lastScan.processes.map(identityOf));
+      const alive = new Set(lastScan.processes.map(processIdentity));
       // By identity, not pid: a root that exited can have its pid reused by a
       // new process, which must not be reported as that root failing.
-      const reportedRootPidByIdentity = new Map(firstPlan.roots.map((root) => [identityOf(root.process), root.process.pid]));
-      for (const root of firstPlan.roots) if (alive.has(identityOf(root.process))) failedRootPids.add(root.process.pid);
+      const reportedRootPidByIdentity = new Map(firstPlan.roots.map((root) => [processIdentity(root.process), root.process.pid]));
+      for (const root of firstPlan.roots) if (alive.has(processIdentity(root.process))) failedRootPids.add(root.process.pid);
       const secondByPid = new Map(secondScan.processes.map((scanned) => [scanned.pid, scanned]));
       for (const survivor of secondPlan.targets) {
-        if (!alive.has(identityOf(survivor))) continue;
-        let owner: number | null = reportedRootPidByIdentity.get(identityOf(survivor)) ?? null;
+        if (!alive.has(processIdentity(survivor))) continue;
+        let owner: number | null = reportedRootPidByIdentity.get(processIdentity(survivor)) ?? null;
         let cursor = survivor;
         for (let depth = 0; owner === null && depth < 64; depth += 1) {
           const parent = secondByPid.get(cursor.ppid);
           if (!parent || parent.pid === cursor.pid) break;
-          owner = reportedRootPidByIdentity.get(identityOf(parent)) ?? null;
+          owner = reportedRootPidByIdentity.get(processIdentity(parent)) ?? null;
           cursor = parent;
         }
         if (owner !== null) {
@@ -522,8 +520,8 @@ export async function stopProcessTree(
     pass = 'second';
     // An empty later scan throws, so it reads as `failed`, never as `stopped`.
     const secondScan = requireProcesses(await deps.reader.scan());
-    const aliveAfterFirst = new Set(secondScan.processes.map(identityOf));
-    const survivors = tree.filter((scanned) => aliveAfterFirst.has(identityOf(scanned)));
+    const aliveAfterFirst = new Set(secondScan.processes.map(processIdentity));
+    const survivors = tree.filter((scanned) => aliveAfterFirst.has(processIdentity(scanned)));
     if (survivors.length === 0) return stopAnswer('stopped');
     await killAll(deps.reader, survivors, 'force');
     await wait(SURVIVOR_CHECK_MS);
@@ -531,8 +529,8 @@ export async function stopProcessTree(
     const lastScan = requireProcesses(await deps.reader.scan());
     // Any survivor, not only the target: a child that outlived its parent
     // keeps the tree running.
-    const aliveAtLast = new Set(lastScan.processes.map(identityOf));
-    return stopAnswer(survivors.some((survivor) => aliveAtLast.has(identityOf(survivor))) ? 'failed' : 'stopped');
+    const aliveAtLast = new Set(lastScan.processes.map(processIdentity));
+    return stopAnswer(survivors.some((survivor) => aliveAtLast.has(processIdentity(survivor))) ? 'failed' : 'stopped');
   } catch (error) {
     return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureReason: messageOf(error) };
   }

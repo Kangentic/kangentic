@@ -5,8 +5,9 @@
  * or a red failure in the same slot. A toast for a report that leaves something
  * running or could not be stopped stays until the user closes it (Review is the
  * only way into the list), leads with what is still running, and shows how long
- * ago the report came, as does the list's header; one for a report where every
- * process was stopped closes on its own like any other toast, with no age.
+ * ago the report came, as does the list's header, and both labels keep ticking
+ * while they stay on screen; one for a report where every process was stopped
+ * closes on its own like any other toast, with no age.
  *
  * Every test launches its own page (cross-platform-parity.md).
  *
@@ -282,6 +283,63 @@ async function launchPageWithToastSeconds(durationSeconds: number): Promise<{ br
     throw error;
   }
 }
+
+/**
+ * `launchPage` with Playwright's fake clock installed before the app boots, so a
+ * test can move page time with `page.clock.runFor`. The clock is installed
+ * before navigation (the same order spawn-stall-toast.spec.ts uses) because it
+ * can only fake timers the page creates after it. Without `pauseAt`, page time
+ * still flows with real time, so the app boots and animates as it normally does.
+ */
+async function launchPageWithClock(): Promise<{ browser: Browser; page: Page }> {
+  await waitForViteReady();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+    const page = await context.newPage();
+    await page.clock.install();
+    await page.addInitScript({ path: MOCK_SCRIPT });
+    await gotoVite(page);
+    await page.waitForLoadState('load');
+    await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+    return { browser, page };
+  } catch (error) {
+    await browser.close();
+    throw error;
+  }
+}
+
+test.describe('Leftover processes age label', () => {
+  test('the toast and the open list both keep their age current as time passes', async () => {
+    const { browser, page } = await launchPageWithClock();
+    try {
+      // Stamp the report from the PAGE's clock, which the fake clock owns, not
+      // the test process's: the two only agree by accident.
+      const pageNow = await page.evaluate(() => Date.now());
+      await fireReport(page, { ...ONE_TASK, reportedAt: new Date(pageNow - REPORT_AGE_MS).toISOString() });
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'are still running.' });
+      const toastAge = toast.locator('[data-testid="toast-age"]');
+      await expect(toastAge).toHaveText('37 minutes ago', { timeout: 5000 });
+
+      // The list has to be open BEFORE time moves. A list opened afterwards
+      // reads the new time when it mounts and would pass with no interval at all.
+      await openReview(page, 'are still running.');
+      const listAge = page.locator('[data-testid="leftover-processes-dialog"] [data-testid="leftover-processes-age"]');
+      await expect(listAge).toHaveText('37 minutes ago');
+
+      // 37m10s plus a minute is 38m10s: past the next minute boundary, short of 39.
+      // Both labels re-read the clock on a 30 s tick, so the jump covers two ticks.
+      await page.clock.runFor(60_000);
+
+      // The toast stays up behind the list (Review does not dismiss it), so both
+      // labels are on screen the whole time.
+      await expect(listAge).toHaveText('38 minutes ago', { timeout: 5000 });
+      await expect(toastAge).toHaveText('38 minutes ago', { timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+});
 
 test.describe('Leftover processes toast lifetime', () => {
   test('a toast that leaves a process running outlives the auto-dismiss time, so Review stays reachable', async () => {
