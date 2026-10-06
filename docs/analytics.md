@@ -471,7 +471,7 @@ in one Sentry org, one triage surface.
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a task leftover reap or a leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
-  `empty_scan`, `process_list`, `window_list`, `reap_error`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
+  `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
   fixed, and only a `reader_load` event carries text, the path-stripped load error in a
   `task_reap` context, since any other failure's text can come from a process scan. A failure in
   a scan pass also carries a `pass` tag. `first`: nothing was signalled yet. `second`: the

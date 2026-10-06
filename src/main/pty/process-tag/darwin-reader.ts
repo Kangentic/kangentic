@@ -32,6 +32,12 @@
  *   a process exists) or by being the main executable of an app in an
  *   Applications folder (`lsappinfo` can miss an app still starting). Not "any
  *   app bundle": `/usr/bin/python3` runs from inside `Python.app`.
+ * - `connections`: each process's TCP sockets from `proc_pidinfo` with
+ *   `PROC_PIDLISTFDS` and `proc_pidfdinfo` with `PROC_PIDFDSOCKETINFO`, the
+ *   calls `lsof -i` makes, for a same-user process. macOS has no table of
+ *   every socket with its owner, so the listeners' sockets are read first and
+ *   clients' only until every connection's peer is found. The pairing is
+ *   `local-connections.ts`; no address or port leaves this file.
  *
  * The struct offsets below are XNU's (`bsd/sys/proc_info.h`), unchanged since
  * macOS 10.5. `tests/unit/task-process-readers.test.ts` checks them against
@@ -49,7 +55,16 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
-import { ScanStepError, seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import { connectionsToListeners, ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
+import {
+  ScanStepError,
+  seedsAndDescendants,
+  type KillStrength,
+  type LocalConnectionRead,
+  type ProcessScan,
+  type ScannedProcess,
+  type TaggedProcessReader,
+} from './process-scan';
 
 const TOOL_TIMEOUT_MS = 5000;
 const LAUNCHD_PID = 1;
@@ -72,6 +87,36 @@ const PROC_BSDSHORTINFO_SIZE = 64;
 /** `pvi_cdir.vip_path`: after a 136-byte `vinfo_stat`, `vi_type`, `vi_pad` and an 8-byte `fsid_t`. */
 const CURRENT_DIRECTORY_PATH_OFFSET = 152;
 const MAXPATHLEN = 1024;
+/** `proc_pidinfo` flavor listing a process's fds as `struct proc_fdinfo` (`proc_fd`, `proc_fdtype`). */
+const PROC_PIDLISTFDS = 1;
+const PROC_FDINFO_SIZE = 8;
+const PROX_FDTYPE_SOCKET = 2;
+/** Room for this many fds on the first `PROC_PIDLISTFDS` call; doubled while it fills, up to the cap. */
+const INITIAL_FD_CAPACITY = 1024;
+const MAX_FD_CAPACITY = 1024 * 1024;
+/** `proc_pidfdinfo` flavor filling a `struct socket_fdinfo` (792 bytes); the buffer leaves room. */
+const PROC_PIDFDSOCKETINFO = 3;
+const SOCKET_FDINFO_BUFFER_BYTES = 1024;
+/**
+ * Offsets in `struct socket_fdinfo`: a 24-byte `proc_fileinfo`, then
+ * `socket_info`, whose `soi_kind` sits 232 bytes in and `soi_proto` 240. For
+ * TCP, `soi_proto` is a `tcp_sockinfo`: `in_sockinfo` (`insi_fport` 0,
+ * `insi_lport` 4, `insi_vflag` 24, `insi_faddr` 32, `insi_laddr` 48, each
+ * address a 16-byte `in6_addr`, or an `in4in6_addr` with the IPv4 address in
+ * its last four bytes), then `tcpsi_state` at 80.
+ */
+const SOI_KIND_OFFSET = 24 + 232;
+const SOI_PROTO_OFFSET = 24 + 240;
+const INSI_FPORT_OFFSET = SOI_PROTO_OFFSET;
+const INSI_LPORT_OFFSET = SOI_PROTO_OFFSET + 4;
+const INSI_VFLAG_OFFSET = SOI_PROTO_OFFSET + 24;
+const INSI_FADDR_OFFSET = SOI_PROTO_OFFSET + 32;
+const INSI_LADDR_OFFSET = SOI_PROTO_OFFSET + 48;
+const TCPSI_STATE_OFFSET = SOI_PROTO_OFFSET + 80;
+const SOCKINFO_TCP = 2;
+const INI_IPV4 = 0x1;
+const TSI_S_LISTEN = 1;
+const TSI_S_ESTABLISHED = 4;
 
 const TAG_PREFIX = `${TASK_PROCESS_TAG_ENV}=`;
 /**
@@ -115,6 +160,8 @@ export interface DarwinKernel {
   workingDirectory(pid: number): string | null;
   /** The pid's `KERN_PROCARGS2` record, a view the next call overwrites, or null. */
   procArgs(pid: number): Buffer | null;
+  /** The pid's TCP sockets, each owned by `pid`, or null when it is gone or another user's. */
+  tcpSockets(pid: number): SocketRow[] | null;
 }
 
 /**
@@ -221,6 +268,27 @@ export function parseCurrentDirectory(record: Buffer): string | null {
   return directory.length > 0 ? directory : null;
 }
 
+/**
+ * A `struct socket_fdinfo` as one TCP socket owned by `pid`, or null for any
+ * other kind of socket. Each port is an `int` holding the port in network
+ * order, so it reads big-endian from the int's first two bytes. Exported for
+ * fixture tests.
+ */
+export function parseSocketFdInfo(record: Buffer, pid: number): SocketRow | null {
+  if (record.length < TCPSI_STATE_OFFSET + 4) return null;
+  if (record.readInt32LE(SOI_KIND_OFFSET) !== SOCKINFO_TCP) return null;
+  const isIpv4 = (record[INSI_VFLAG_OFFSET] & INI_IPV4) !== 0;
+  const state = record.readInt32LE(TCPSI_STATE_OFFSET);
+  return {
+    state: state === TSI_S_LISTEN ? 'listen' : state === TSI_S_ESTABLISHED ? 'established' : 'other',
+    localAddress: isIpv4 ? ipv4FromBytes(record, INSI_LADDR_OFFSET + 12) : ipv6FromBytes(record, INSI_LADDR_OFFSET),
+    localPort: record.readUInt16BE(INSI_LPORT_OFFSET),
+    remoteAddress: isIpv4 ? ipv4FromBytes(record, INSI_FADDR_OFFSET + 12) : ipv6FromBytes(record, INSI_FADDR_OFFSET),
+    remotePort: record.readUInt16BE(INSI_FPORT_OFFSET),
+    ownerPids: [pid],
+  };
+}
+
 /** Pids LaunchServices lists as UI apps (Foreground or UIElement). Exported for fixture tests. */
 export function parseLsappinfoUiPids(output: string): Set<number> {
   const pids = new Set<number>();
@@ -274,7 +342,10 @@ async function loadDarwinKernel(): Promise<DarwinKernel> {
   const sysctl = libSystem.func('int sysctl(int32 *name, uint32 namelen, _Out_ uint8_t *oldp, _Inout_ size_t *oldlenp, void *newp, size_t newlen)');
   const listAllPids = libSystem.func('int proc_listallpids(_Out_ uint8_t *buffer, int buffersize)');
   const pidInfo = libSystem.func('int proc_pidinfo(int pid, int flavor, uint64_t arg, _Out_ uint8_t *buffer, int buffersize)');
+  const pidFdInfo = libSystem.func('int proc_pidfdinfo(int pid, int fd, int flavor, _Out_ uint8_t *buffer, int buffersize)');
   const procArgsBuffer = Buffer.alloc(PROCARGS_BUFFER_BYTES);
+  const socketInfoBuffer = Buffer.alloc(SOCKET_FDINFO_BUFFER_BYTES);
+  let fdListBuffer = Buffer.alloc(INITIAL_FD_CAPACITY * PROC_FDINFO_SIZE);
   const bsdInfoBuffer = Buffer.alloc(PROC_BSDINFO_SIZE);
   const shortInfoBuffer = Buffer.alloc(PROC_BSDSHORTINFO_SIZE);
   const vnodePathBuffer = Buffer.alloc(PROC_VNODEPATHINFO_SIZE);
@@ -308,6 +379,26 @@ async function loadDarwinKernel(): Promise<DarwinKernel> {
       if (sysctl(Int32Array.from([CTL_KERN, KERN_PROCARGS2, pid]), 3, procArgsBuffer, length, null, 0) !== 0) return null;
       // The caller reads this view before the next call reuses the buffer.
       return procArgsBuffer.subarray(0, Number(length[0]));
+    },
+    tcpSockets(pid) {
+      // The bytes filled, 0 when the process is gone or another user's. A
+      // full buffer may have cut the list short.
+      let filled = pidInfo(pid, PROC_PIDLISTFDS, 0, fdListBuffer, fdListBuffer.length);
+      while (filled >= fdListBuffer.length && fdListBuffer.length < MAX_FD_CAPACITY * PROC_FDINFO_SIZE) {
+        fdListBuffer = Buffer.alloc(fdListBuffer.length * 2);
+        filled = pidInfo(pid, PROC_PIDLISTFDS, 0, fdListBuffer, fdListBuffer.length);
+      }
+      if (filled <= 0) return null;
+      const rows: SocketRow[] = [];
+      for (let offset = 0; offset + PROC_FDINFO_SIZE <= filled; offset += PROC_FDINFO_SIZE) {
+        if (fdListBuffer.readUInt32LE(offset + 4) !== PROX_FDTYPE_SOCKET) continue;
+        const size = pidFdInfo(pid, fdListBuffer.readInt32LE(offset), PROC_PIDFDSOCKETINFO, socketInfoBuffer, socketInfoBuffer.length);
+        // Closed since the list, or not ours.
+        if (size <= 0) continue;
+        const row = parseSocketFdInfo(socketInfoBuffer.subarray(0, size), pid);
+        if (row) rows.push(row);
+      }
+      return rows;
     },
   };
 }
@@ -431,6 +522,45 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       } catch { /* gone, or not ours */ }
     }
     return labels;
+  }
+
+  async connections(listeners: readonly ScannedProcess[], clients: readonly ScannedProcess[]): Promise<LocalConnectionRead> {
+    const kernel = await this.loadKernel();
+    const rows: SocketRow[] = [];
+    const walked = new Set<number>();
+    let reads = 0;
+    const readSockets = async (scanned: ScannedProcess): Promise<void> => {
+      // An empty start key is another user's process, whose fds the kernel refuses.
+      if (walked.has(scanned.pid) || !scanned.startKey) return;
+      walked.add(scanned.pid);
+      reads += 1;
+      if (reads % YIELD_EVERY_PROCESSES === 0) await yieldToEventLoop();
+      let sockets: SocketRow[] | null;
+      try {
+        sockets = kernel.tcpSockets(scanned.pid);
+      } catch (error) {
+        // A koffi throw in the call: the reap names the step.
+        throw new ScanStepError('connection_list', error instanceof Error ? error.message : String(error));
+      }
+      if (sockets) rows.push(...sockets);
+    };
+    const listenerPids = new Set(listeners.map((scanned) => scanned.pid));
+    for (const listener of listeners) await readSockets(listener);
+    const listeningPids = listeningPidsOf(rows, listenerPids);
+    const found = connectionsToListeners(rows, listenerPids);
+    if (found.length === 0) return { pairs: [], listeningPids };
+    // A peer row exists only once its owner's sockets are read, so clients are
+    // read until every connection has one: until a read turns up a socket at
+    // each endpoint a server's accepted socket points at. A client on another
+    // host never does, which costs a read of each client, never a wrong pair.
+    const missingPeers = new Set(found.filter(({ peer }) => peer === null).map(({ server }) => `${server.remoteAddress}|${server.remotePort}`));
+    for (const client of clients) {
+      if (missingPeers.size === 0) break;
+      const readBefore = rows.length;
+      await readSockets(client);
+      for (let index = readBefore; index < rows.length; index += 1) missingPeers.delete(`${rows[index].localAddress}|${rows[index].localPort}`);
+    }
+    return { pairs: pairLocalConnections(rows, listenerPids, new Set(clients.map((scanned) => scanned.pid))), listeningPids };
   }
 
   /**

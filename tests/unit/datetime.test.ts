@@ -6,6 +6,7 @@ import {
   formatDate,
   formatTime,
   formatRelativeTime,
+  formatTimeAgo,
   formatDurationBetween,
 } from '../../src/renderer/lib/datetime';
 
@@ -127,6 +128,36 @@ describe('formatRelativeTime', () => {
   it('returns empty string for invalid input', () => {
     expect(formatRelativeTime(null)).toBe('');
     expect(formatRelativeTime('bogus')).toBe('');
+  });
+});
+
+describe('formatTimeAgo', () => {
+  const at = Date.parse('2026-04-14T12:00:00Z');
+
+  it('says "just now" under a minute, never a bare "now" that reads as an instruction after a link', () => {
+    __setLocaleForTests('en-US');
+    expect(formatTimeAgo(at, at)).toBe('just now');
+    expect(formatTimeAgo(at, at + 59_999)).toBe('just now');
+    // A time a little ahead of the clock (skew) is not "in 3 seconds".
+    expect(formatTimeAgo(at + 3_000, at)).toBe('just now');
+  });
+
+  it('rounds down to whole units, so a label that ticks once a minute never runs ahead', () => {
+    __setLocaleForTests('en-US');
+    expect(formatTimeAgo(at, at + 60_000)).toBe('1 minute ago');
+    expect(formatTimeAgo(at, at + 37 * 60_000 + 59_000)).toBe('37 minutes ago');
+    expect(formatTimeAgo(at, at + 59 * 60_000 + 59_000)).toBe('59 minutes ago');
+    expect(formatTimeAgo(at, at + 60 * 60_000)).toBe('1 hour ago');
+    expect(formatTimeAgo(at, at + 24 * 60 * 60_000)).toBe('yesterday');
+  });
+
+  it('reads the clock when no time is given, and is empty for an unreadable value', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(at + 5 * 60_000));
+    __setLocaleForTests('en-US');
+    expect(formatTimeAgo('2026-04-14T12:00:00Z')).toBe('5 minutes ago');
+    expect(formatTimeAgo(null)).toBe('');
+    expect(formatTimeAgo('bogus')).toBe('');
   });
 });
 

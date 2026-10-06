@@ -14,6 +14,12 @@ export interface Toast {
   variant: ToastVariant;
   duration: number;
   action?: ToastAction;
+  /**
+   * When what the toast reports happened (UTC ISO 8601). Shown as its age
+   * ("37 minutes ago") after the message, ticking while the toast is up, so
+   * a toast that waits to be closed does not read as current later.
+   */
+  since?: string;
 }
 
 export interface ToastInput {
@@ -21,6 +27,7 @@ export interface ToastInput {
   variant?: ToastVariant;
   duration?: number;
   action?: ToastAction;
+  since?: string;
 }
 
 interface ToastStore {
@@ -75,6 +82,7 @@ export const useToastStore = create<ToastStore>((set) => ({
       variant: input.variant ?? 'info',
       duration: input.duration ?? defaultDuration,
       action: input.action,
+      since: input.since,
     };
     set((s) => ({
       toasts: withinToastLimit([...s.toasts, toast], maxCount),

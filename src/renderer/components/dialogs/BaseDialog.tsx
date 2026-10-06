@@ -25,6 +25,9 @@ interface BaseDialogProps {
 
   // Standard header (renders title + X button)
   title?: React.ReactNode;
+  // A short muted line under the title, outside the heading (so not part of
+  // the dialog's name): when a report came, say.
+  subtitle?: React.ReactNode;
   icon?: React.ReactNode;
   headerRight?: React.ReactNode;
 
@@ -108,6 +111,7 @@ export function BaseDialog({
   onClose,
   children,
   title,
+  subtitle,
   icon,
   headerRight,
   header,
@@ -259,7 +263,14 @@ export function BaseDialog({
             className="flex items-center gap-3 px-4 py-3 border-b border-edge flex-shrink-0"
           >
             {icon && <div className="flex-shrink-0">{icon}</div>}
-            <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">{title}</h3>
+            {subtitle ? (
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-semibold text-fg">{title}</h3>
+                <div className="mt-0.5 text-xs text-fg-muted">{subtitle}</div>
+              </div>
+            ) : (
+              <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">{title}</h3>
+            )}
             {headerRight}
             <button
               type="button"

@@ -1,14 +1,17 @@
 /**
  * What the leftover-process toast and list say (src/renderer/lib/leftover-processes.ts),
  * pinned to the approved design: the toast gives counts and stays only while
- * something is still running or could not be stopped; the list names each
- * process and why it kept running.
+ * something is still running or could not be stopped, leads with that, and
+ * shows how long ago it came; the list names each process and why it kept
+ * running, under how long ago the report came.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { __setLocaleForTests } from '../../src/renderer/lib/datetime';
 import {
   describeLeftoverReport,
   groupByTask,
+  reportAgeOf,
   reportTitleOf,
   rowDetailOf,
   rowStateOf,
@@ -34,31 +37,43 @@ function leftoverProcess(overrides: Partial<LeftoverProcess> = {}): LeftoverProc
   };
 }
 
+const REPORTED_AT = '2026-10-06T19:59:13.000Z';
+
 function report(processes: LeftoverProcess[], stoppingEnabled = true): LeftoverProcessReport {
-  return { id: 'report-1', stoppingEnabled, processes };
+  return { id: 'report-1', stoppingEnabled, processes, reportedAt: REPORTED_AT };
 }
 
 describe('describeLeftoverReport', () => {
-  it('A: all stopped, closes on its own', () => {
+  it('A: all stopped, closes on its own, with no age', () => {
     expect(describeLeftoverReport(report([leftoverProcess(), leftoverProcess({ label: 'python3 (http.server)' })]))).toEqual({
       message: 'Stopped 2 leftover processes from "Fix login".', variant: 'info', sticky: false,
     });
   });
 
-  it('B: some still running, stays', () => {
+  it('B: some still running, stays, and leads with what is still running; what stopped is in the list', () => {
     expect(describeLeftoverReport(report([
       leftoverProcess(),
       leftoverProcess({ outcome: 'kept', reason: 'window', label: 'chrome' }),
       leftoverProcess({ outcome: 'kept', reason: 'multiplexer', label: 'tmux' }),
-    ]))).toEqual({ message: 'Stopped 1 leftover process from "Fix login". 2 still running.', variant: 'info', sticky: true });
+    ]))).toEqual({ message: '2 processes from "Fix login" are still running.', variant: 'info', sticky: true, since: REPORTED_AT });
   });
 
-  it('C: one could not be stopped, a warning that stays', () => {
+  it('C: one could not be stopped, a warning that stays, with anything still running after it', () => {
     expect(describeLeftoverReport(report([leftoverProcess({ outcome: 'failed' })]))).toEqual({
-      message: 'Couldn\'t stop 1 process from "Fix login".', variant: 'warning', sticky: true,
+      message: 'Couldn\'t stop 1 process from "Fix login".', variant: 'warning', sticky: true, since: REPORTED_AT,
     });
     expect(describeLeftoverReport(report([leftoverProcess(), leftoverProcess({ outcome: 'failed' })]))?.message)
-      .toBe('Stopped 1 leftover process from "Fix login". Couldn\'t stop 1.');
+      .toBe('Couldn\'t stop 1 process from "Fix login".');
+    expect(describeLeftoverReport(report([
+      leftoverProcess({ outcome: 'failed' }),
+      leftoverProcess({ outcome: 'kept', reason: 'shared', label: 'adb' }),
+    ]))?.message).toBe('Couldn\'t stop 1 process from "Fix login", and 1 more is still running.');
+    expect(describeLeftoverReport(report([
+      leftoverProcess({ outcome: 'failed' }),
+      leftoverProcess({ outcome: 'failed' }),
+      leftoverProcess({ outcome: 'kept' }),
+      leftoverProcess({ outcome: 'kept' }),
+    ]))?.message).toBe('Couldn\'t stop 2 processes from "Fix login", and 2 more are still running.');
   });
 
   it('D: several tasks, one toast', () => {
@@ -67,7 +82,7 @@ describe('describeLeftoverReport', () => {
       leftoverProcess({ taskId: 'task-b', taskTitle: 'Update deps' }),
       leftoverProcess({ taskId: 'task-c', taskTitle: 'Add search' }),
       leftoverProcess({ taskId: 'task-c', taskTitle: 'Add search', outcome: 'kept', reason: 'window', label: 'Code' }),
-    ]))).toEqual({ message: 'Stopped 3 leftover processes from 3 tasks. 1 still running.', variant: 'info', sticky: true });
+    ]))).toEqual({ message: '1 process from 3 tasks is still running.', variant: 'info', sticky: true, since: REPORTED_AT });
   });
 
   it('E: stopping turned off, closes on its own', () => {
@@ -80,12 +95,31 @@ describe('describeLeftoverReport', () => {
 
   it('a task that left only a window says so, and stays', () => {
     expect(describeLeftoverReport(report([leftoverProcess({ outcome: 'kept', reason: 'window' })]))).toEqual({
-      message: '"Fix login" left 1 process running.', variant: 'info', sticky: true,
+      message: '1 process from "Fix login" is still running.', variant: 'info', sticky: true, since: REPORTED_AT,
     });
   });
 
   it('nothing left running: no toast', () => {
     expect(describeLeftoverReport(report([]))).toBeNull();
+  });
+});
+
+describe('reportAgeOf', () => {
+  const reportedMs = Date.parse(REPORTED_AT);
+  // The age is the user's locale's wording; pin one so every machine reads the same.
+  beforeAll(() => __setLocaleForTests('en-US'));
+  afterAll(() => __setLocaleForTests(undefined));
+
+  it('says how long ago the report came, in whole units rounded down, and "just now" under a minute', () => {
+    expect(reportAgeOf(report([]), reportedMs + 12_000)).toBe('just now');
+    expect(reportAgeOf(report([]), reportedMs + 60_000)).toBe('1 minute ago');
+    // The incident: the toast was still up 37 minutes later.
+    expect(reportAgeOf(report([]), reportedMs + 37 * 60_000 + 50_000)).toBe('37 minutes ago');
+    expect(reportAgeOf(report([]), reportedMs + 2 * 60 * 60_000 + 59 * 60_000)).toBe('2 hours ago');
+  });
+
+  it('is empty for a report with no readable time', () => {
+    expect(reportAgeOf({ ...report([]), reportedAt: 'not a time' }, reportedMs)).toBe('');
   });
 });
 
@@ -114,7 +148,8 @@ describe('the list', () => {
   it('says why each process kept running, or where it ran', () => {
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'window' }), 'running').text).toBe('Has an open window.');
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'multiplexer' }), 'running').text).toBe('A tmux server. Stopping it ends all your tmux sessions.');
-    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'shared' }), 'running').text).toBe('Also runs work you started. Stopping it stops that too.');
+    // Shared covers a supervisor running the user's work and a server another task is connected to.
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'shared' }), 'running').text).toBe('Other work uses it too. Stopping it can break that work.');
     expect(rowDetailOf(leftoverProcess(), 'stopped').text).toBe('Ran in the worktree.');
     expect(rowDetailOf(leftoverProcess({ place: 'project' }), 'stopped').text).toBe('Ran in the project folder.');
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept' }), 'running').text).toBe('Runs in the worktree.');

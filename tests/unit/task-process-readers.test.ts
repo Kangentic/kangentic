@@ -5,11 +5,11 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LinuxTaggedProcessReader, findTagInEnviron, parseProcStat } from '../../src/main/pty/process-tag/linux-reader';
+import { LinuxTaggedProcessReader, addressFromProcHex, findTagInEnviron, parseProcNetTcp, parseProcStat } from '../../src/main/pty/process-tag/linux-reader';
 import {
   DarwinTaggedProcessReader,
   argumentsFromProcArgs,
@@ -18,15 +18,17 @@ import {
   parseCurrentDirectory,
   parseLsappinfoUiPids,
   parseShortBsdInfo,
+  parseSocketFdInfo,
   runTool as runDarwinTool,
   summarizeProcArgs,
   type DarwinKernel,
   type DarwinProcessRow,
 } from '../../src/main/pty/process-tag/darwin-reader';
 import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
-import { findTagInWindowsEnvironment, listWin32Processes } from '../../src/main/pty/process-tag/win32-reader';
+import { Win32TaggedProcessReader, findTagInWindowsEnvironment, listWin32Processes } from '../../src/main/pty/process-tag/win32-reader';
 import { toProcessInfo } from '../../src/main/pty/host/host-process-table';
-import { seedsAndDescendants, type ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
+import { seedsAndDescendants, type LocalConnection, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import type { SocketRow } from '../../src/main/pty/process-tag/local-connections';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const temporaryRoots: string[] = [];
@@ -211,6 +213,88 @@ describe('Linux reader', () => {
     const reader = new LinuxTaggedProcessReader({ procRoot: missingProcRoot, uid: 1000 });
     // Not a throw and not a listing: the reap turns the empty scan into an `empty_scan` failure, never "all gone".
     await expect(reader.scan()).resolves.toEqual({ processes: [], unreadableCount: 0 });
+  });
+});
+
+describe('Linux reader: TCP connections from net/tcp and the fd links', () => {
+  const header = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode';
+  const tcpLine = (index: number, local: string, remote: string, state: string, inode: number) =>
+    `  ${index}: ${local} ${remote} ${state} 00000000:00000000 00:00000000 00000000  1000        0 ${inode} 1 0000000000000000 100 0 0 10 0`;
+  // 5037 is 13AD, 52000 CB20, 8080 1F90, 52001 CB21.
+  const tcp = [
+    header,
+    tcpLine(0, '0100007F:13AD', '00000000:0000', '0A', 1001),
+    tcpLine(1, '0100007F:13AD', '0100007F:CB20', '01', 1002),
+    tcpLine(2, '0100007F:CB20', '0100007F:13AD', '01', 1003),
+    // The IPv4 client of the dual-stack listener below.
+    tcpLine(3, '0100007F:CB21', '0100007F:1F90', '01', 2003),
+    // A closed connection: no inode, and no state that pairs.
+    tcpLine(4, '0100007F:CB22', '0100007F:13AD', '06', 0),
+  ].join('\n');
+  // `::` and `::ffff:127.0.0.1`, each 32-bit word in little-endian order.
+  const tcp6 = [
+    header,
+    tcpLine(0, '00000000000000000000000000000000:1F90', '00000000000000000000000000000000:0000', '0A', 2001),
+    tcpLine(1, '0000000000000000FFFF00000100007F:1F90', '0000000000000000FFFF00000100007F:CB21', '01', 2002),
+  ].join('\n');
+
+  it('reads addresses word by word in the kernel\'s byte order, and a v4-mapped address as its IPv4 form', () => {
+    expect(addressFromProcHex('0100007F', true)).toBe('127.0.0.1');
+    expect(addressFromProcHex('7F000001', false)).toBe('127.0.0.1');
+    expect(addressFromProcHex('0000000000000000FFFF00000100007F', true)).toBe('127.0.0.1');
+    expect(addressFromProcHex('00000000000000000000000001000000', true)).toBe('0:0:0:0:0:0:0:1');
+    expect(addressFromProcHex('0100', true)).toBeNull();
+  });
+
+  it('parses rows with state, ports and inode, and skips the header and short lines', () => {
+    const rows = parseProcNetTcp(`${tcp}\n  9: garbage\n`, true);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toEqual({ state: 'listen', localAddress: '127.0.0.1', localPort: 5037, remoteAddress: '0.0.0.0', remotePort: 0, ownerPids: [], inode: '1001' });
+    expect(rows[1]).toMatchObject({ state: 'established', localPort: 5037, remotePort: 52000, inode: '1002' });
+    expect(rows[4].state).toBe('other');
+  });
+
+  function procWithSockets(links: Record<number, number[]>, options: { withTcp6?: boolean; withTcp?: boolean } = {}): string {
+    const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-net-'));
+    temporaryRoots.push(procRoot);
+    fs.mkdirSync(path.join(procRoot, 'net'));
+    if (options.withTcp !== false) fs.writeFileSync(path.join(procRoot, 'net', 'tcp'), tcp);
+    if (options.withTcp6 !== false) fs.writeFileSync(path.join(procRoot, 'net', 'tcp6'), tcp6);
+    for (const [pid, inodes] of Object.entries(links)) {
+      const fdDirectory = path.join(procRoot, pid, 'fd');
+      fs.mkdirSync(fdDirectory, { recursive: true });
+      inodes.forEach((inode, index) => fs.symlinkSync(`socket:[${inode}]`, path.join(fdDirectory, String(index + 3))));
+      // A plain file link beside the sockets.
+      fs.symlinkSync('/dev/null', path.join(fdDirectory, '0'));
+    }
+    return procRoot;
+  }
+
+  const asProcess = (pid: number): ScannedProcess => ({ pid, ppid: 1, startKey: String(pid), startedAtMs: null, tagValue: TASK });
+  // A Windows symlink cannot name `socket:[1001]`, so the fd walk runs on POSIX.
+  const posixLinks = process.platform !== 'win32';
+
+  it.runIf(posixLinks)('pairs through the inodes the fd links name, across tcp and tcp6, and reports which listeners listen', async () => {
+    // 50 listens on 5037 and accepted 3001's connection; 51 listens dual-stack on 8080; 52 listens on nothing.
+    const procRoot = procWithSockets({ 50: [1001, 1002], 60: [1003], 51: [2001, 2002], 61: [2003], 52: [] });
+    const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+    const read = await reader.connections([asProcess(50), asProcess(51), asProcess(52)], [asProcess(60), asProcess(61)]);
+    expect(read.pairs).toEqual([{ listenerPid: 50, clientPid: 60 }, { listenerPid: 51, clientPid: 61 }]);
+    expect(read.listeningPids.sort()).toEqual([50, 51]);
+  });
+
+  it.runIf(posixLinks)('reads no client when no listener has a connected peer, and a missing tcp6 is a kernel without IPv6', async () => {
+    const procRoot = procWithSockets({ 52: [] }, { withTcp6: false });
+    const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+    // 60 has no fd directory at all: a read of it would find nothing, and none is made.
+    expect(await reader.connections([asProcess(52)], [asProcess(60)])).toEqual({ pairs: [], listeningPids: [] });
+  });
+
+  it('fails as connection_list when net/tcp cannot be read', async () => {
+    const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-net-'));
+    temporaryRoots.push(procRoot);
+    const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
+    await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list' });
   });
 });
 
@@ -572,6 +656,88 @@ describe('macOS reader', () => {
   });
 });
 
+describe('macOS reader: TCP connections from libproc socket info', () => {
+  /**
+   * A `struct socket_fdinfo` laid out from XNU's `proc_info.h`: a 24-byte
+   * `proc_fileinfo`, `socket_info` with `soi_kind` 232 bytes in and
+   * `soi_proto` at 240, whose `tcp_sockinfo` holds `in_sockinfo`
+   * (`insi_fport` 0, `insi_lport` 4, `insi_vflag` 24, `insi_faddr` 32,
+   * `insi_laddr` 48) and then `tcpsi_state` at 80. 792 bytes in all.
+   */
+  function socketFdInfo(options: { kind?: number; ipv4: boolean; local: number[]; localPort: number; remote: number[]; remotePort: number; state: number }): Buffer {
+    const record = Buffer.alloc(792);
+    const proto = 24 + 240;
+    record.writeInt32LE(options.kind ?? 2, 24 + 232);
+    record.writeUInt16BE(options.remotePort, proto);
+    record.writeUInt16BE(options.localPort, proto + 4);
+    record[proto + 24] = options.ipv4 ? 0x1 : 0x2;
+    // An IPv4 address sits in the last four bytes of its 16-byte `in4in6_addr`.
+    Buffer.from(options.remote).copy(record, proto + 32 + (options.ipv4 ? 12 : 0));
+    Buffer.from(options.local).copy(record, proto + 48 + (options.ipv4 ? 12 : 0));
+    record.writeInt32LE(options.state, proto + 80);
+    return record;
+  }
+
+  const loopback6 = [...new Array<number>(15).fill(0), 1];
+
+  it('parses a TCP socket\'s state, ports and addresses for both families, and nothing else', () => {
+    expect(parseSocketFdInfo(socketFdInfo({ ipv4: true, local: [127, 0, 0, 1], localPort: 5037, remote: [0, 0, 0, 0], remotePort: 0, state: 1 }), 2001))
+      .toEqual({ state: 'listen', localAddress: '127.0.0.1', localPort: 5037, remoteAddress: '0.0.0.0', remotePort: 0, ownerPids: [2001] });
+    expect(parseSocketFdInfo(socketFdInfo({ ipv4: false, local: loopback6, localPort: 52000, remote: loopback6, remotePort: 5037, state: 4 }), 3001))
+      .toEqual({ state: 'established', localAddress: '0:0:0:0:0:0:0:1', localPort: 52000, remoteAddress: '0:0:0:0:0:0:0:1', remotePort: 5037, ownerPids: [3001] });
+    // A Unix-domain socket (`SOCKINFO_UN`, 3) is no TCP row; a short record is none either.
+    expect(parseSocketFdInfo(socketFdInfo({ kind: 3, ipv4: true, local: [0, 0, 0, 0], localPort: 0, remote: [0, 0, 0, 0], remotePort: 0, state: 0 }), 1)).toBeNull();
+    expect(parseSocketFdInfo(Buffer.alloc(300), 1)).toBeNull();
+  });
+
+  function socketRow(state: SocketRow['state'], localPort: number, remotePort: number, pid: number): SocketRow {
+    return { state, localAddress: '127.0.0.1', localPort, remoteAddress: state === 'listen' ? '0.0.0.0' : '127.0.0.1', remotePort, ownerPids: [pid] };
+  }
+
+  function kernelWithSockets(sockets: Map<number, SocketRow[]>, socketReads: number[], fault?: Error): DarwinKernel {
+    return {
+      listPids: () => [],
+      processRow: () => null,
+      workingDirectory: () => null,
+      procArgs: () => null,
+      tcpSockets: (pid) => {
+        socketReads.push(pid);
+        if (fault) throw fault;
+        return sockets.get(pid) ?? null;
+      },
+    };
+  }
+
+  const asProcess = (pid: number, startKey = `${pid}.000000`): ScannedProcess => ({ pid, ppid: 1, startKey, startedAtMs: null, tagValue: TASK });
+
+  it('reads clients only until every connection has its peer, never another user\'s process, and pairs them', async () => {
+    const sockets = new Map<number, SocketRow[]>([
+      [2001, [socketRow('listen', 5037, 0, 2001), socketRow('established', 5037, 52000, 2001)]],
+      [3001, [socketRow('established', 52000, 5037, 3001)]],
+      [3002, [socketRow('established', 52500, 443, 3002)]],
+    ]);
+    const socketReads: number[] = [];
+    const reader = new DarwinTaggedProcessReader({ loadKernel: async () => kernelWithSockets(sockets, socketReads) });
+    const read = await reader.connections([asProcess(2001), asProcess(4001, '')], [asProcess(3001), asProcess(3002)]);
+    expect(read).toEqual({ pairs: [{ listenerPid: 2001, clientPid: 3001 }], listeningPids: [2001] });
+    // 4001 is another user's process (no start key) and is never read, and
+    // 3002 is not read once 3001's socket was the last peer missing.
+    expect(socketReads).toEqual([2001, 3001]);
+  });
+
+  it('reads no client when no listener has a connection', async () => {
+    const socketReads: number[] = [];
+    const reader = new DarwinTaggedProcessReader({ loadKernel: async () => kernelWithSockets(new Map([[2001, [socketRow('listen', 5037, 0, 2001)]]]), socketReads) });
+    expect(await reader.connections([asProcess(2001)], [asProcess(3001)])).toEqual({ pairs: [], listeningPids: [2001] });
+    expect(socketReads).toEqual([2001]);
+  });
+
+  it('fails as connection_list when libproc\'s call throws', async () => {
+    const reader = new DarwinTaggedProcessReader({ loadKernel: async () => kernelWithSockets(new Map(), [], new Error('symbol not found')) });
+    await expect(reader.connections([asProcess(2001)], [])).rejects.toMatchObject({ code: 'connection_list', message: 'symbol not found' });
+  });
+});
+
 describe.runIf(process.platform === 'darwin')('macOS libproc against ps and lsof (real)', () => {
   /** `ps` and `lsof` read the same kernel data through their own code: the offsets must agree with them. */
   function runTool(command: string, args: string[]): string {
@@ -629,6 +795,91 @@ describe('Windows environment block', () => {
   it('stops at the block terminator', () => {
     const block = Buffer.concat([windowsBlock(['Path=C:\\Windows']), Buffer.from(`KANGENTIC_TASK_ID=${TASK}\0`, 'utf16le')]);
     expect(findTagInWindowsEnvironment(block)).toBeNull();
+  });
+});
+
+describe.runIf(['win32', 'darwin', 'linux'].includes(process.platform))('local TCP connections (real)', () => {
+  function platformReader(): TaggedProcessReader {
+    if (process.platform === 'win32') return new Win32TaggedProcessReader();
+    if (process.platform === 'darwin') return new DarwinTaggedProcessReader();
+    return new LinuxTaggedProcessReader();
+  }
+
+  /** A node child running `script`, and its first line of output. */
+  function startNode(script: string, children: ChildProcess[]): Promise<{ pid: number; line: string }> {
+    const child = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(child);
+    return new Promise((resolve, reject) => {
+      let output = '';
+      const timer = setTimeout(() => reject(new Error(`no output from: ${script}`)), 10000);
+      child.stdout!.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+        const newline = output.indexOf('\n');
+        if (newline < 0) return;
+        clearTimeout(timer);
+        resolve({ pid: child.pid!, line: output.slice(0, newline).trim() });
+      });
+      child.on('error', reject);
+    });
+  }
+
+  const listenerScript = (host: string | null) => `const server = require('net').createServer(() => {}); server.listen(0${host ? `, '${host}'` : ''}, () => console.log(server.address().port)); setInterval(() => {}, 1000);`;
+  const clientScript = (port: string, host: string) => `require('net').connect(${port}, '${host}', () => console.log('connected')); setInterval(() => {}, 1000);`;
+  const sortPairs = (pairs: LocalConnection[]) => [...pairs].sort((left, right) => left.listenerPid - right.listenerPid || left.clientPid - right.clientPid);
+
+  /** The OS tool's own view: whether `clientPid` holds an established connection to `port`. */
+  function toolSeesConnection(clientPid: number, port: string): boolean {
+    if (process.platform === 'win32') {
+      return execFileSync('netstat', ['-ano'], { encoding: 'utf8' }).split('\n')
+        .some((line) => /ESTABLISHED/.test(line) && line.trim().split(/\s+/)[2]?.endsWith(`:${port}`) && line.trim().endsWith(` ${clientPid}`));
+    }
+    if (process.platform === 'darwin') {
+      return execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-iTCP', '-sTCP:ESTABLISHED', '-Fn', '-p', String(clientPid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } })
+        .split('\n').some((line) => line.startsWith('n') && line.endsWith(`:${port}`));
+    }
+    return execFileSync('ss', ['-tnpH', 'state', 'established'], { encoding: 'utf8' }).split('\n')
+      .some((line) => line.includes(`:${port} `) && line.includes(`pid=${clientPid},`));
+  }
+
+  it('pairs each client with the listener it is connected to, a dual-stack one included, and nothing with an idle one, as the OS tool sees it', async () => {
+    const children: ChildProcess[] = [];
+    try {
+      const dualStack = await startNode(listenerScript(null), children);
+      const ipv4Only = await startNode(listenerScript('127.0.0.1'), children);
+      const idle = await startNode(listenerScript('127.0.0.1'), children);
+      // An explicit IPv4 client of a default listener, which binds `::` dual-stack.
+      const dualStackClient = await startNode(clientScript(dualStack.line, '127.0.0.1'), children);
+      const ipv4Client = await startNode(clientScript(ipv4Only.line, '127.0.0.1'), children);
+      expect(toolSeesConnection(dualStackClient.pid, dualStack.line)).toBe(true);
+      expect(toolSeesConnection(ipv4Client.pid, ipv4Only.line)).toBe(true);
+
+      const reader = platformReader();
+      const scan = await reader.scan();
+      const pick = (pid: number): ScannedProcess => {
+        const scanned = scan.processes.find((entry) => entry.pid === pid);
+        expect(scanned, `pid ${pid} in the scan`).toBeDefined();
+        return scanned!;
+      };
+      const listeners = [dualStack, ipv4Only, idle].map((started) => pick(started.pid));
+      const clients = [dualStackClient, ipv4Client].map((started) => pick(started.pid));
+      const startedAt = performance.now();
+      const read = await reader.connections!(listeners, clients);
+      // The measurement the reap's cost note records; printed, never asserted.
+      console.log(`[reap-connections] ${process.platform} connections() over ${listeners.length} listeners and ${clients.length} clients: ${(performance.now() - startedAt).toFixed(1)} ms`);
+      expect(sortPairs(read.pairs)).toEqual(sortPairs([
+        { listenerPid: dualStack.pid, clientPid: dualStackClient.pid },
+        { listenerPid: ipv4Only.pid, clientPid: ipv4Client.pid },
+      ]));
+      expect([...read.listeningPids].sort((left, right) => left - right)).toEqual([dualStack.pid, ipv4Only.pid, idle.pid].sort((left, right) => left - right));
+      // A client the caller did not name is never paired.
+      expect((await reader.connections!(listeners, [clients[0]])).pairs).toEqual([{ listenerPid: dualStack.pid, clientPid: dualStackClient.pid }]);
+      // An idle listener alone has no pair, and still reads as listening.
+      expect(await reader.connections!([pick(idle.pid)], clients)).toEqual({ pairs: [], listeningPids: [idle.pid] });
+      // A client is no listener: asked about as one, it listens on nothing.
+      expect(await reader.connections!([clients[0]], clients)).toEqual({ pairs: [], listeningPids: [] });
+    } finally {
+      for (const child of children) child.kill('SIGKILL');
+    }
   });
 });
 

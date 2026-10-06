@@ -142,7 +142,7 @@ export class LeftoverProcessReports {
     this.pending.delete(stoppingEnabled);
     if (report.quietTimer) clearTimeout(report.quietTimer);
     clearTimeout(report.maxTimer);
-    const outgoing: LeftoverProcessReport = { id: randomUUID(), stoppingEnabled, processes: report.processes };
+    const outgoing: LeftoverProcessReport = { id: randomUUID(), stoppingEnabled, processes: report.processes, reportedAt: new Date().toISOString() };
     try {
       report.send(outgoing);
     } catch (error) {

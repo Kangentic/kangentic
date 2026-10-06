@@ -44,11 +44,17 @@
  *
  * `listWin32Processes` is that listing alone, and answers the background-shell
  * watcher's process table in the pty host (`host-process-table.ts`).
+ *
+ * `connections` reads the machine's TCP table with `GetExtendedTcpTable`
+ * (`TCP_TABLE_OWNER_PID_ALL`, IPv4 and IPv6), which names each socket's owning
+ * pid and needs no process handle at all. The pairing is `local-connections.ts`;
+ * no address or port leaves this file.
  */
 
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess, splitWindowsCommandLine } from './process-label';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from './process-scan';
+import { ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
+import { ScanStepError, type KillStrength, type LocalConnectionRead, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
 
 /** The part of koffi this reader uses. */
 type KoffiApi = Pick<typeof import('koffi'), 'load' | 'struct' | 'array' | 'sizeof' | 'address' | 'proto' | 'register' | 'unregister' | 'pointer'>;
@@ -69,6 +75,19 @@ const YIELD_EVERY_PROCESSES = 16;
 const CONSOLE_HOST_IMAGES = new Set(['conhost.exe', 'openconsole.exe']);
 /** 100 ns FILETIME ticks between 1601-01-01 and the Unix epoch. */
 const FILETIME_UNIX_EPOCH_TICKS = 116444736000000000n;
+const AF_INET = 2;
+const AF_INET6 = 23;
+const TCP_TABLE_OWNER_PID_ALL = 5;
+const NO_ERROR = 0;
+const ERROR_INSUFFICIENT_BUFFER = 122;
+const MIB_TCP_STATE_LISTEN = 2;
+const MIB_TCP_STATE_ESTAB = 5;
+/** `MIB_TCPROW_OWNER_PID` and `MIB_TCP6ROW_OWNER_PID`, after the table's 4-byte count. */
+const TCP4_ROW_BYTES = 24;
+const TCP6_ROW_BYTES = 56;
+const INITIAL_TCP_TABLE_BYTES = 64 * 1024;
+/** Calls to size the table before giving up: it can grow between two calls. */
+const TCP_TABLE_ATTEMPTS = 4;
 
 interface Win32Api {
   koffi: KoffiApi;
@@ -91,6 +110,8 @@ interface Win32Api {
   getLongPathName(shortPath: string, buffer: Buffer, characters: number): number;
   /** Pids that own a visible top-level window. */
   visibleWindowPids(): Set<number>;
+  /** `GetExtendedTcpTable`: fills `table`, or returns `ERROR_INSUFFICIENT_BUFFER` with the size it needs in `size[0]`. */
+  getExtendedTcpTable(table: Buffer, size: number[], order: number, family: number, tableClass: number, reserved: number): number;
 }
 
 interface ProcessEntry {
@@ -112,6 +133,7 @@ async function loadWin32Api(): Promise<Win32Api> {
   const advapi32 = koffi.load('advapi32.dll');
   const ntdll = koffi.load('ntdll.dll');
   const user32 = koffi.load('user32.dll');
+  const iphlpapi = koffi.load('iphlpapi.dll');
   const processEntry = koffi.struct('KANGENTIC_PROCESSENTRY32W', {
     dwSize: 'uint32',
     cntUsage: 'uint32',
@@ -170,6 +192,7 @@ async function loadWin32Api(): Promise<Win32Api> {
     queryInformationProcess: ntdll.func('int32 NtQueryInformationProcess(void *handle, int32 infoClass, _Out_ uint8_t *buffer, uint32 length, _Out_ uint32 *returnLength)'),
     getLongPathName: kernel32.func('uint32 GetLongPathNameW(const char16_t *shortPath, _Out_ uint8_t *buffer, uint32 characters)'),
     visibleWindowPids,
+    getExtendedTcpTable: iphlpapi.func('uint32 __stdcall GetExtendedTcpTable(_Out_ uint8_t *table, _Inout_ uint32 *size, int order, uint32 family, int tableClass, uint32 reserved)'),
   };
 }
 
@@ -403,6 +426,63 @@ export async function listWin32Processes(loadApi: () => Promise<Win32Api> = shar
   return enumerateProcesses(await loadApi());
 }
 
+function tcpStateOf(state: number): SocketRow['state'] {
+  if (state === MIB_TCP_STATE_LISTEN) return 'listen';
+  if (state === MIB_TCP_STATE_ESTAB) return 'established';
+  return 'other';
+}
+
+/**
+ * Rows of a `MIB_TCPTABLE_OWNER_PID` (`ipv4`) or `MIB_TCP6TABLE_OWNER_PID`
+ * (`ipv6`): a 4-byte count, then fixed-size rows. Each port sits in the low
+ * 16 bits of its DWORD in network order, so it reads big-endian from the
+ * DWORD's first two bytes. Exported for fixture tests.
+ */
+export function parseTcpOwnerPidTable(table: Buffer, family: 'ipv4' | 'ipv6'): SocketRow[] {
+  if (table.length < 4) return [];
+  const count = table.readUInt32LE(0);
+  const rowBytes = family === 'ipv4' ? TCP4_ROW_BYTES : TCP6_ROW_BYTES;
+  const rows: SocketRow[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const offset = 4 + index * rowBytes;
+    if (offset + rowBytes > table.length) break;
+    if (family === 'ipv4') {
+      rows.push({
+        state: tcpStateOf(table.readUInt32LE(offset)),
+        localAddress: ipv4FromBytes(table, offset + 4),
+        localPort: table.readUInt16BE(offset + 8),
+        remoteAddress: ipv4FromBytes(table, offset + 12),
+        remotePort: table.readUInt16BE(offset + 16),
+        ownerPids: [table.readUInt32LE(offset + 20)],
+      });
+    } else {
+      rows.push({
+        state: tcpStateOf(table.readUInt32LE(offset + 48)),
+        localAddress: ipv6FromBytes(table, offset),
+        localPort: table.readUInt16BE(offset + 20),
+        remoteAddress: ipv6FromBytes(table, offset + 24),
+        remotePort: table.readUInt16BE(offset + 44),
+        ownerPids: [table.readUInt32LE(offset + 52)],
+      });
+    }
+  }
+  return rows;
+}
+
+/** One family's TCP table, sized as the call asks. Throws when the call fails or the table keeps outgrowing its buffer. */
+function readTcpTable(api: Win32Api, family: 'ipv4' | 'ipv6'): SocketRow[] {
+  const size = [INITIAL_TCP_TABLE_BYTES];
+  for (let attempt = 0; attempt < TCP_TABLE_ATTEMPTS; attempt += 1) {
+    // Room for rows that arrive between the sizing call and this one.
+    const table = Buffer.alloc(size[0] + 4096);
+    size[0] = table.length;
+    const status = api.getExtendedTcpTable(table, size, 0, family === 'ipv4' ? AF_INET : AF_INET6, TCP_TABLE_OWNER_PID_ALL, 0);
+    if (status === NO_ERROR) return parseTcpOwnerPidTable(table, family);
+    if (status !== ERROR_INSUFFICIENT_BUFFER) throw new Error(`GetExtendedTcpTable failed with ${status}`);
+  }
+  throw new Error('GetExtendedTcpTable outgrew its buffer');
+}
+
 export class Win32TaggedProcessReader implements TaggedProcessReader {
   private readonly loadApi: () => Promise<Win32Api>;
 
@@ -524,5 +604,22 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       }
     }
     return labels;
+  }
+
+  async connections(listeners: readonly ScannedProcess[], clients: readonly ScannedProcess[]): Promise<LocalConnectionRead> {
+    const api = await this.loadApi();
+    let rows: SocketRow[];
+    try {
+      // The whole table, one call per family: it names every socket's owner,
+      // so there is nothing to narrow by reading fewer processes.
+      rows = [...readTcpTable(api, 'ipv4'), ...readTcpTable(api, 'ipv6')];
+    } catch (error) {
+      throw new ScanStepError('connection_list', error instanceof Error ? error.message : String(error));
+    }
+    const listenerPids = new Set(listeners.map((scanned) => scanned.pid));
+    return {
+      pairs: pairLocalConnections(rows, listenerPids, new Set(clients.map((scanned) => scanned.pid))),
+      listeningPids: listeningPidsOf(rows, listenerPids),
+    };
   }
 }
