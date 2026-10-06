@@ -344,6 +344,61 @@ describe('event-loop watchdog when the thread cannot start', () => {
       warnSpy.mockRestore();
     }
   });
+
+  // `online` must settle when the thread fails before it ever comes online, or a caller
+  // that awaits it hangs forever. Each case emits only the failure event, never 'online'.
+  // The race against a short timer turns a regression into a clear assertion failure
+  // instead of a test timeout. Red-green: drop the matching `watchdog.once(...)` line in
+  // startEventLoopWatchdog and the matching case reads 'still pending'.
+  const ONLINE_SETTLE_BUDGET_MS = 500;
+
+  async function settleStateOfOnlineAfter(failureEvent: 'error' | 'exit'): Promise<'settled' | 'still pending'> {
+    const { EventEmitter } = await import('node:events');
+    const constructed: { instance: EventEmitter | null } = { instance: null };
+    vi.resetModules();
+    vi.doMock('node:worker_threads', () => ({
+      Worker: class extends EventEmitter {
+        constructor() {
+          super();
+          constructed.instance = this;
+        }
+        unref(): void {}
+        terminate(): Promise<number> {
+          return Promise.resolve(0);
+        }
+      },
+    }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const freshLag = await import('../../src/main/diagnostics/event-loop-lag');
+    let started: EventLoopWatchdog | undefined;
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const freshWatchdog = await import('../../src/main/retrieval/worker/event-loop-watchdog');
+      started = freshWatchdog.startEventLoopWatchdog();
+      expect(constructed.instance).not.toBeNull();
+
+      if (failureEvent === 'error') constructed.instance?.emit('error', new Error('thread failed to start'));
+      else constructed.instance?.emit('exit', 1);
+
+      const budget = new Promise<'still pending'>((resolve) => {
+        budgetTimer = setTimeout(() => resolve('still pending'), ONLINE_SETTLE_BUDGET_MS);
+      });
+      return await Promise.race([started.online.then(() => 'settled' as const), budget]);
+    } finally {
+      clearTimeout(budgetTimer);
+      await started?.stop();
+      freshLag.setSyncSpanLabelSink(null);
+      warnSpy.mockRestore();
+    }
+  }
+
+  it('settles online when the thread errors before it ever comes online', async () => {
+    expect(await settleStateOfOnlineAfter('error')).toBe('settled');
+  });
+
+  it('settles online when the thread exits before it ever comes online', async () => {
+    expect(await settleStateOfOnlineAfter('exit')).toBe('settled');
+  });
 });
 
 describe('setSyncSpanLabelSink', () => {
@@ -363,6 +418,34 @@ describe('setSyncSpanLabelSink', () => {
     });
 
     expect(seen).toEqual(['outer', 'inner', 'outer', 'failing', 'outer', null]);
+  });
+
+  it('stops notifying the old sink once it is cleared with null', () => {
+    const seen: Array<string | null> = [];
+    setSyncSpanLabelSink((label) => seen.push(label));
+    timeSyncWork('while-installed', () => undefined);
+    expect(seen).toEqual(['while-installed', null]);
+
+    setSyncSpanLabelSink(null);
+    const callsBeforeClear = seen.length;
+    const result = timeSyncWork('after-clear', () => 'work result');
+
+    expect(result).toBe('work result');
+    expect(seen).toHaveLength(callsBeforeClear);
+  });
+
+  it('forgets the enclosing label when a new sink replaces one mid-span, so the new sink restores to null', () => {
+    // Red-green: delete `currentSpanLabel = null` from setSyncSpanLabelSink and the new sink
+    // sees ['inner', 'outer'], a label for a span it was never told about.
+    setSyncSpanLabelSink(() => undefined);
+    const replacementSeen: Array<string | null> = [];
+    timeSyncWork('outer', () => {
+      setSyncSpanLabelSink((label) => replacementSeen.push(label));
+      timeSyncWork('inner', () => undefined);
+    });
+
+    // The outer span's own finally reports to the sink it started with, not the replacement.
+    expect(replacementSeen).toEqual(['inner', null]);
   });
 
   it('is set only by the retrieval worker\'s watchdog, so main\'s spans keep their one null check', () => {
