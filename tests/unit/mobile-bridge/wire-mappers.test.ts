@@ -146,6 +146,28 @@ describe('toSpawnProgressLabelWire', () => {
     const technologist = '\u{1F9D1}\u{200D}\u{1F4BB}';
     expect(toSpawnProgressLabelWire(`Running "${technologist} review"...`)).toBe(`Running "${technologist} review"...`);
   });
+
+  it('strips the soft hyphen and the invisible math operators', () => {
+    const label = 'Running "de\u{00AD}ploy\u{2061}\u{2062}\u{2063}\u{2064}"...';
+    expect(toSpawnProgressLabelWire(label)).toBe('Running "deploy"...');
+  });
+
+  it('strips tag characters, which render as nothing and can spell a hidden string', () => {
+    // "ignore" written in tag letters, then a stray cancel tag.
+    const hidden = '\u{E0069}\u{E0067}\u{E006E}\u{E006F}\u{E0072}\u{E0065}\u{E007F}';
+    expect(toSpawnProgressLabelWire(`Running "deploy${hidden}"...`)).toBe('Running "deploy"...');
+  });
+
+  it('keeps a subdivision flag, the one emoji spelled with tag characters', () => {
+    // The black flag, "gbsct" in tag letters, then the cancel tag: Scotland.
+    const scotland = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}';
+    expect(toSpawnProgressLabelWire(`Running "${scotland} deploy"...`)).toBe(`Running "${scotland} deploy"...`);
+  });
+
+  it('strips the tags after a black flag that do not close as a flag, and keeps the flag', () => {
+    const unterminated = '\u{1F3F4}\u{E0067}\u{E0062}';
+    expect(toSpawnProgressLabelWire(`Running "${unterminated} deploy"...`)).toBe('Running "\u{1F3F4} deploy"...');
+  });
 });
 
 function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {

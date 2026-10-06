@@ -340,9 +340,10 @@ export interface BoardTaskWire {
    * `spawnProgressLabel`: never parse it or switch on it, and fall back to
    * generic copy. It can carry text the desktop did not write: a column
    * automation's name, in `Running "<name>"...`, from a config a team may
-   * share. From 0.16.0 the desktop strips escape sequences, control characters
-   * and invisible format characters (bidi controls, the zero-width space, the
-   * byte order mark), turns line breaks and tabs into spaces, and caps it at
+   * share. From 0.16.0 the desktop strips escape sequences, control characters,
+   * invisible format characters (bidi controls, the zero-width space, the soft
+   * hyphen, the byte order mark) and tag characters outside a subdivision flag
+   * emoji, turns line breaks and tabs into spaces, and caps it at
    * 120 characters ending in "...", but a client still caps it for its own
    * layout.
    *
