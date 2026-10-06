@@ -20,7 +20,15 @@ import type { Session, Task } from '../../../src/shared/types';
 
 const TASK_ID = 'task-paused';
 const PROJECT_ID = 'proj-1';
-const LANE = { id: 'lane-review', name: 'Code Review', role: null, permission_mode: null };
+interface TestLane {
+  id: string;
+  name: string;
+  role: string | null;
+  permission_mode: string | null;
+}
+const LANE: TestLane = { id: 'lane-review', name: 'Code Review', role: null, permission_mode: null };
+// Where a task sits once it is moved to Done: the column a resume refuses.
+const DONE_LANE: TestLane = { id: 'lane-done', name: 'Done', role: 'done', permission_mode: null };
 
 let storedTask: Task;
 let registryRows: Session[] = [];
@@ -61,7 +69,9 @@ const taskRepo = {
 };
 const repos = {
   tasks: taskRepo,
-  swimlanes: { getById: vi.fn(() => LANE) },
+  // Keyed by id so a test can move the task to Done by changing the task's
+  // column, with nothing to restore afterwards.
+  swimlanes: { getById: vi.fn((laneId?: string): TestLane => (laneId === DONE_LANE.id ? DONE_LANE : LANE)) },
   automations: {},
   automationRuns: {},
   attachments: {},
@@ -97,7 +107,9 @@ vi.mock('../../../src/main/ipc/helpers/task-profile', () => ({
 
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
 import { handleStartSession } from '../../../src/main/mobile-bridge/handlers/start-session';
-import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
+import { startTaskSession } from '../../../src/main/ipc/handlers/session-start';
+import { getInFlightSpawnProgress, onSpawnProgressChange, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
+import { resumeBlockMessage } from '../../../src/shared/session-resume-eligibility';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 
 function fakeRequest(): CapabilityRequestMessage {
@@ -272,5 +284,112 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
     expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
     // Phase 1 found a live session, so no label was ever raised.
     expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+  });
+
+  it('refuses with the desktop Done copy, raising no label, when the task reached Done between the decision and the resume\'s Phase 1', async () => {
+    // The decision reads the task in its own column, so it passes and picks the
+    // resume path. The resume's Phase 1 reads the task again and finds it in
+    // Done (the move to Done landed in the gap), so ITS refusal is the one
+    // that fires. A decision that already saw Done would refuse before any
+    // resume existed and could not tell the two checks apart.
+    mockReconcileTaskSessionRef
+      .mockImplementationOnce(() => ({ task: storedTask, liveSession: null }))
+      .mockImplementationOnce(() => ({ task: { ...storedTask, swimlane_id: DONE_LANE.id }, liveSession: null }));
+    const labelPushes: Array<string | null> = [];
+    const stopListening = onSpawnProgressChange((taskId, label) => {
+      if (taskId === TASK_ID) labelPushes.push(label);
+    });
+
+    try {
+      // This harness has no capability router, so the refusal surfaces as the
+      // handler's rejection; the router turns that into the phone's ok:false.
+      await expect(handleStartSession(fakeRequest(), fakeContext())).rejects.toThrow(resumeBlockMessage('done'));
+    } finally {
+      stopListening();
+    }
+
+    // Both reconciles ran, so the refusal came from the resume's own Phase 1.
+    expect(mockReconcileTaskSessionRef).toHaveBeenCalledTimes(2);
+    // The refusal is before acceptance: no label was pushed, not even a
+    // raised-then-cleared one, and nothing downstream of Phase 1 ran.
+    expect(labelPushes).toEqual([]);
+    expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(engine.executeTransition).not.toHaveBeenCalled();
+    expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+  });
+
+  describe('when the git phase fails after the phone was answered', () => {
+    /**
+     * Parks the git phase on a deferred the test rejects, so the rejection
+     * lands AFTER the answer by construction instead of by microtask order.
+     */
+    function armFailingGitPhase(): { failGitPhase: (error: Error) => void } {
+      let failGitPhase: (error: Error) => void = () => {};
+      const gitPhase = new Promise<void>((_resolve, reject) => {
+        failGitPhase = reject;
+      });
+      // Handled up front: the mock below awaits it, but a test that fails
+      // before the git phase starts must not add an unhandled rejection.
+      gitPhase.catch(() => {});
+      mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+        labelDuringGitPhase = getInFlightSpawnProgress()[TASK_ID];
+        await gitPhase;
+      });
+      return { failGitPhase };
+    }
+
+    it('answers starting, then settled rejects with the worktree failure and the Resuming label is retired', async () => {
+      const { failGitPhase } = armFailingGitPhase();
+      let settled: Promise<void> | undefined;
+
+      try {
+        const result = await startTaskSession(fakeContext(), PROJECT_ID, TASK_ID);
+        if (result.outcome !== 'starting') throw new Error(`expected outcome starting, got ${result.outcome}`);
+        settled = result.settled;
+
+        // Answered with the git phase still parked: the label is up and the
+        // engine's resume, which runs after it, has not been reached.
+        expect(labelDuringGitPhase).toBe('Resuming session...');
+        expect(getInFlightSpawnProgress()[TASK_ID]).toBe('Resuming session...');
+        expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      } finally {
+        failGitPhase(new Error('fetch failed'));
+      }
+
+      await expect(settled).rejects.toThrow('Worktree setup failed: fetch failed');
+      // The claim's release runs in a finally before the rejection propagates,
+      // so the label is already gone by the time settled has rejected.
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      expect(engine.executeTransition).not.toHaveBeenCalled();
+      expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+    });
+
+    it('the bridge handler still answers starting and logs the failure instead of leaving a rejection unhandled', async () => {
+      const { failGitPhase } = armFailingGitPhase();
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const response = await handleStartSession(fakeRequest(), fakeContext());
+        expect(response.ok).toBe(true);
+        expect(response.payload).toEqual({ ok: true, outcome: 'starting' });
+
+        failGitPhase(new Error('fetch failed'));
+
+        // The handler's own catch on settled logs it; a missing catch would
+        // surface as an unhandled rejection, which fails the vitest run.
+        await vi.waitFor(() => {
+          expect(consoleErrorSpy.mock.calls.some(([message]) => typeof message === 'string' && message.includes('failed after accept'))).toBe(true);
+        });
+        const loggedCall = consoleErrorSpy.mock.calls.find(([message]) => typeof message === 'string' && message.includes('failed after accept'));
+        expect((loggedCall?.[1] as Error).message).toContain('Worktree setup failed: fetch failed');
+        expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
+      } finally {
+        failGitPhase(new Error('fetch failed'));
+        consoleErrorSpy.mockRestore();
+      }
+    });
   });
 });

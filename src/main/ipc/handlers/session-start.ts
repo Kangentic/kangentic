@@ -107,13 +107,7 @@ export async function startTaskSession(
   // and runs the git phase and the engine resume behind the answer. Its Phase 1
   // re-reads under the lock, so a session that went live in the gap since the
   // decision above is reported as `live` and nothing spawns.
-  //
-  // The executor runs synchronously, so `onAccepted` is the promise's own
-  // resolve by the time the resume receives it.
-  let onAccepted: (acceptance: ResumeAcceptance) => void = () => {};
-  const accepted = new Promise<ResumeAcceptance>((resolve) => {
-    onAccepted = resolve;
-  });
+  const { promise: accepted, resolve: onAccepted } = Promise.withResolvers<ResumeAcceptance>();
   const resumed = resumeTaskSession(context, taskId, { projectId, onAccepted });
   // A refusal in the resume's Phase 1 rejects before acceptance and reaches
   // the phone as ok:false, as the decision's own refusals do.

@@ -137,6 +137,11 @@ describe('toSpawnProgressLabelWire', () => {
     expect(toSpawnProgressLabelWire(label)).toBe('Running "deploy prod"...');
   });
 
+  it('strips the Arabic letter mark and the word joiner, and turns the Unicode line and paragraph separators into spaces', () => {
+    const label = 'Running "\u{061C}deploy\u{2060}\u{2028}prod\u{2029}eu"...';
+    expect(toSpawnProgressLabelWire(label)).toBe('Running "deploy prod eu"...');
+  });
+
   it('keeps the zero-width joiner, which an emoji sequence needs', () => {
     const technologist = '\u{1F9D1}\u{200D}\u{1F4BB}';
     expect(toSpawnProgressLabelWire(`Running "${technologist} review"...`)).toBe(`Running "${technologist} review"...`);

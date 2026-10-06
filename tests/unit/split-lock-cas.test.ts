@@ -123,9 +123,13 @@ const mockSpawnAgent = vi.fn(async () => {});
 const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
 const mockDeleteTaskWorktree = vi.fn(async () => true);
+const mockResolveSpawnOverrides = vi.fn((..._args: unknown[]) => ({}));
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
+  // Read by SESSION_RESUME's Phase 3 just before the engine call; the scenarios
+  // that stop at a Phase 1 or Phase 2 exit never reach it.
+  resolveSpawnOverrides: (...args: unknown[]) => mockResolveSpawnOverrides(...args),
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
   ensureTaskBranchCheckout: (...args: unknown[]) => mockEnsureTaskBranchCheckout(...args),
   spawnAgent: (...args: unknown[]) => mockSpawnAgent(...args),
@@ -928,6 +932,47 @@ describe('SESSION_RESUME split-lock dedup', () => {
 
     await expect(handler(null, 'task-2')).rejects.toThrow(/Worktree setup failed/);
     expect(resumeClaim()?.release).toHaveBeenCalledTimes(1);
+  });
+
+  // The IPC handler is a one-line delegation to resumeTaskSession. Every call
+  // above passes only a task id, so dropping either trailing argument from that
+  // delegation would leave them all green. This one drives a full resume.
+  it('forwards the resume prompt and the explicit project id to the resume, not the ambient project', async () => {
+    const handler = capturedHandlers.get(IPC.SESSION_RESUME);
+    if (!handler) throw new Error('SESSION_RESUME handler not registered');
+
+    // clearAllMocks keeps implementations, so an earlier test's hold or throw
+    // would still be armed here.
+    mockEnsureTaskWorktree.mockImplementation(async () => {});
+    const resumeSuspendedSession = vi.fn(async (..._args: unknown[]) => {
+      // The engine records the spawned session on the task, as the real one does.
+      storedTask = { ...storedTask, session_id: 'sess-fresh' };
+    });
+    mockCreateTransitionEngine.mockReturnValue({ resumeSuspendedSession });
+    // The ambient project is 'proj-1'. The explicit one resolves its path from
+    // the project repo, as resolveProjectContext does for a non-current project.
+    context.projectRepo.getById.mockImplementation(() => ({ default_agent: 'claude', path: '/mock/other-project' }));
+
+    await handler(null, 'task-2', '/resume-prompt', 'proj-2');
+
+    expect(resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    // Argument 4 of engine.resumeSuspendedSession is the resume prompt.
+    const resumeArguments = resumeSuspendedSession.mock.calls[0] as unknown[];
+    expect(resumeArguments[3]).toBe('/resume-prompt');
+
+    // createTransitionEngine(context, automations, automationRuns, tasks,
+    // sessionRepo, attachmentRepo, projectId, projectPath): the engine is built
+    // for the explicit project and its path.
+    const engineArguments = mockCreateTransitionEngine.mock.calls[0] as unknown[];
+    expect(engineArguments[6]).toBe('proj-2');
+    expect(engineArguments[7]).toBe('/mock/other-project');
+
+    // Every repository read in the resume (Phase 1, the reconcile, Phase 3)
+    // targets the explicit project, never the ambient 'proj-1'.
+    expect(mockGetProjectRepos).toHaveBeenCalled();
+    for (const [, projectIdArgument] of mockGetProjectRepos.mock.calls) {
+      expect(projectIdArgument).toBe('proj-2');
+    }
   });
 });
 
