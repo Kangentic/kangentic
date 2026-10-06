@@ -238,7 +238,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
 | `session:kill` | invoke | Kill session |
 | `session:suspend` | invoke | Suspend session (preserves for resume) |
-| `session:resume` | invoke | Resume suspended session |
+| `session:resume` | invoke | Resume suspended session. Resolves null when a newer resume, a suspend, a reset or a project relocation cancelled it. |
 | `session:reconcile` | invoke | Targeted self-heal probe: returns the live registry session for a task (or null) and clears stale `task.session_id`. Used by the task detail dialog to heal a renderer cache that drifted to `suspended`. |
 | `session:reset` | invoke | Reset unrecoverable session (kill PTY, mark DB exited, clear task reference) |
 | `session:write` | invoke | Write to session stdin |

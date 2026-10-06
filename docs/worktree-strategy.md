@@ -274,12 +274,18 @@ Two distinct failure modes raise an actionable `Error` rather than falling back 
 that error goes depends on the entry point:
 
 - **Task move** (`handleTaskMove` in `src/main/ipc/handlers/task-move.ts`) and **`SESSION_RESUME`**
-  wrap and re-throw it, so the user sees a toast reading `Worktree setup failed: <message>`.
+  (whose body is `resumeTaskSession` in `src/main/ipc/handlers/session-resume.ts`) wrap and
+  re-throw it, so the user sees a toast reading `Worktree setup failed: <message>`.
 - **Task create, unarchive, backlog promote, and MCP auto-spawn** catch it and skip worktree
   creation, keeping the task. They also emit `task:spawnBlocked`, so the failure reaches the user
   as a toast rather than only a console line (`notifySpawnBlocked` in `ipc/helpers/task-git.ts`,
   which covers the worktree and checkout steps plus the `agent` step - the spawn itself, whose
   most common failure is an agent CLI that is not installed or not on PATH).
+- **The phone's `start-session` verb** reports the same way. Its answer went back to the phone
+  when the start was accepted, so no rejection reaches a toast: a Start of a task with no session
+  or an exited one goes through `autoSpawnForTask`, and a Resume of a paused task through
+  `resumeTaskSession`'s `onFailed` hook (`handlers/session-start.ts`). Both emit
+  `task:spawnBlocked`. A refusal (To Do, Done, archived) is not a failure and stays silent there.
 - **`TASK_SWITCH_BRANCH`** (`src/main/ipc/handlers/task-branch.ts`) calls `ensureTaskWorktree`
   uncaught, so the error propagates as a rejected `ipcMain.handle` promise - Electron forwards it
   to the renderer's `invoke()` call, not a toast from this list, but however the branch-switch UI
