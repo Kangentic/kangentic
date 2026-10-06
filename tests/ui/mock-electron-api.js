@@ -2087,6 +2087,11 @@
         }
       },
       resume: async function (taskId, resumePrompt) {
+        // Main labels a resume "Resuming session..." until the session is up. The
+        // mock pushes no spawn-progress label from this or any other method (a
+        // move into a spawn column and an unarchive label in main too): it would
+        // set and clear inside this one call, so nothing would render. A spec
+        // that needs a label on screen fires it through __mockFireSpawnProgress.
         var newSession = {
           id: uuid(),
           taskId: taskId,

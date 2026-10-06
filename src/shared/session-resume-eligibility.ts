@@ -75,6 +75,22 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
 }
 
 /**
+ * The ids of the tasks that have a paused session (`isPausedTaskSession`)
+ * among the given registry rows. The one registry scan behind both ends of the
+ * phone's Resume promise: read-board's `resumable` for every task on a board,
+ * and `startTaskSession` choosing the Resume path for one task. Reads the
+ * registry by task rather than by `task.session_id`, because a pause clears
+ * that pointer while the suspended row stays.
+ */
+export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>): Set<string> {
+  const taskIds = new Set<string>();
+  for (const session of sessions) {
+    if (session.taskId && isPausedTaskSession(session)) taskIds.add(session.taskId);
+  }
+  return taskIds;
+}
+
+/**
  * Whether the desktop offers Resume for a task: its session is paused (a
  * `suspended` registry row, `isPausedTaskSession`) and
  * `resumeBlockReasonForTask` refuses nothing. This is the resume direction of

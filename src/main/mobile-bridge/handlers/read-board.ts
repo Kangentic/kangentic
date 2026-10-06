@@ -13,7 +13,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
-import { isPausedTaskSession, isResumeOffered } from '../../../shared/session-resume-eligibility';
+import { isResumeOffered, pausedTaskIdsOf } from '../../../shared/session-resume-eligibility';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -84,11 +84,7 @@ export async function handleReadBoard(
   // archive each already fire a board event, so a phone re-reads this.
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
-  const pausedTaskIds = new Set(
-    context.sessionManager.listSessions()
-      .filter(isPausedTaskSession)
-      .map((session) => session.taskId),
-  );
+  const pausedTaskIds = pausedTaskIdsOf(context.sessionManager.listSessions());
   const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(
     task,
     spawnProgressByTaskId[task.id] ?? null,

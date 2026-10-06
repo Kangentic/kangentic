@@ -25,6 +25,7 @@ import {
   RESUME_HIDDEN_ROLES,
   isPausedTaskSession,
   isResumeOffered,
+  pausedTaskIdsOf,
   resumeBlockMessage,
   resumeBlockReason,
   resumeBlockReasonForTask,
@@ -156,6 +157,24 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
     }
   });
 
+  it('pausedTaskIdsOf keeps each task with a paused row once, and nothing else', () => {
+    const taskIds = pausedTaskIdsOf([
+      { taskId: 'task-paused', status: 'suspended' },
+      // A resume's queued successor beside the paused row it will replace.
+      { taskId: 'task-paused', status: 'queued' },
+      { taskId: 'task-paused-twice', status: 'suspended' },
+      { taskId: 'task-paused-twice', status: 'suspended', transient: false },
+      { taskId: 'task-running', status: 'running' },
+      { taskId: 'task-queued', status: 'queued' },
+      { taskId: 'task-exited', status: 'exited' },
+      // A Command Terminal row is never a task's pause, even carrying its id.
+      { taskId: 'task-command-terminal', status: 'suspended', transient: true },
+      // A Command Terminal with no task, which carries an empty id.
+      { taskId: '', status: 'suspended' },
+    ]);
+    expect([...taskIds].sort()).toEqual(['task-paused', 'task-paused-twice']);
+  });
+
   it('isResumeOffered needs a paused session AND a column and archive state that allow Resume', () => {
     const liveTask = { archived_at: null };
     const archivedTask = { archived_at: '2026-01-01T00:00:00.000Z' };
@@ -183,14 +202,16 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
   // start-session's resume path and the `resumable` flag the phone gates
   // Resume on must agree on what "paused" means, or the flag promises a resume
   // the verb does not deliver. Each site wrote it out by hand before, and
-  // start-session's copy missed the Command Terminal exclusion.
+  // start-session's copy missed the Command Terminal exclusion. The two that
+  // scan the registry by task share one scan; read-stream asks about the one
+  // session it streams.
   it.each([
-    'src/main/ipc/handlers/session-start.ts',
-    'src/main/mobile-bridge/handlers/read-board.ts',
-    'src/main/mobile-bridge/handlers/read-stream.ts',
-  ])('%s decides "paused" through isPausedTaskSession, with no hand-rolled suspended comparison', (relativePath) => {
+    ['src/main/ipc/handlers/session-start.ts', /pausedTaskIdsOf\(/],
+    ['src/main/mobile-bridge/handlers/read-board.ts', /pausedTaskIdsOf\(/],
+    ['src/main/mobile-bridge/handlers/read-stream.ts', /isPausedTaskSession\(/],
+  ])('%s decides "paused" through the shared definition, with no hand-rolled suspended comparison', (relativePath, sharedCall) => {
     const source = readSource(relativePath);
-    expect(source).toMatch(/isPausedTaskSession\(|\.filter\(isPausedTaskSession\)/);
+    expect(source).toMatch(sharedCall);
     expect(source.match(/[!=]==\s*'suspended'/g) ?? []).toEqual([]);
   });
 });

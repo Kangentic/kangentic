@@ -33,7 +33,7 @@ import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { notifySpawnBlocked } from '../helpers/task-git';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
-import { isPausedTaskSession, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
+import { pausedTaskIdsOf, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
 export type StartTaskSessionResult =
@@ -49,17 +49,6 @@ export type StartTaskSessionResult =
    * handler.
    */
   | { outcome: 'starting'; settled: Promise<void> };
-
-/**
- * Whether the task's session is paused, by `isPausedTaskSession`: the same
- * definition read-board and read-stream use for `resumable`, the flag that
- * promises this path to the phone. A suspended row survives
- * `reconcileTaskSessionRef` (it clears only the task's pointer), so this reads
- * the registry by task, not the pointer.
- */
-function hasPausedTaskSession(context: IpcContext, taskId: string): boolean {
-  return context.sessionManager.listSessions().some((session) => session.taskId === taskId && isPausedTaskSession(session));
-}
 
 /**
  * Refuses a To Do or Done column and an archived task with the same copy the
@@ -94,7 +83,10 @@ export async function startTaskSession(
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
 
-    if (hasPausedTaskSession(context, taskId)) return { path: 'resume' as const };
+    // The same scan read-board's `resumable` runs, so the flag that promises
+    // the phone this path and the choice of it cannot disagree. A suspended row
+    // survives reconcileTaskSessionRef, which clears only the task's pointer.
+    if (pausedTaskIdsOf(context.sessionManager.listSessions()).has(taskId)) return { path: 'resume' as const };
 
     if (!lane) throw new Error(`Column ${task.swimlane_id} not found for task ${taskId}`);
     return { path: 'start' as const, task: { id: task.id, title: task.title }, laneId: lane.id };

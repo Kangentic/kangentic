@@ -131,13 +131,16 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
  * Resume rather than offering one start-session would refuse.
  */
 function isSessionResumable(context: IpcContext, session: Session): boolean {
-  if (!isPausedTaskSession(session) || !session.taskId || !session.projectId) return false;
+  // This session, not any row of its task: the stream's copy answers for the
+  // session it carries. Decided before the task lookup, which it gates.
+  const hasPausedSession = isPausedTaskSession(session);
+  if (!hasPausedSession || !session.taskId || !session.projectId) return false;
   try {
     const { tasks, swimlanes } = getProjectRepos(context, session.projectId);
     const task = tasks.getById(session.taskId);
     if (!task) return false;
     const lane = swimlanes.getById(task.swimlane_id);
-    return isResumeOffered({ hasPausedSession: true, task, laneRole: lane?.role });
+    return isResumeOffered({ hasPausedSession, task, laneRole: lane?.role });
   } catch (error) {
     // Logged because the false is silent on the phone: Resume just never shows.
     console.warn(`[mobile-bridge] could not read task ${session.taskId.slice(0, 8)} for resumable:`, error);
