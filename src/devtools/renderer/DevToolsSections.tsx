@@ -47,17 +47,21 @@ function buildAnnouncementFixture(): {
   const stamp = Date.now();
   const headline: Announcement = {
     id: `dev-fixture-headline-${stamp}`,
-    title: 'Kangentic Mobile is almost here - iOS in review, Android in beta',
-    body: 'The mobile companion app is on its way to **both stores**. Here is where each platform stands.',
+    title: 'Kangentic Mobile is live on iOS and Android',
+    body: 'Check on your agents, answer their prompts, and review diffs from your phone. Scan a code below with your phone\'s camera to open its store listing.',
     links: [],
     sections: [
-      { heading: 'iOS: in App Store review', body: 'Submitted and waiting on Apple. Nothing to do yet.' },
       {
-        heading: 'Android: open for beta testers',
-        body: 'Two steps: join the group, then become a tester.',
+        heading: 'Get the app',
         links: [
-          { label: 'Join the testers Google Group', url: 'https://groups.google.com/g/kangentic-testers', qr: true },
+          { label: 'App Store (iPhone)', url: 'https://apps.apple.com/app/kangentic/id6794952339', qr: true },
+          { label: 'Google Play (Android)', url: 'https://play.google.com/store/apps/details?id=com.kangentic.mobile', qr: true },
         ],
+      },
+      {
+        heading: 'After installing: pair your desktop',
+        body: 'Turn on **Mobile bridge** in Settings > Mobile Devices, click **Pair a device**, and scan the code it shows with the app.',
+        links: [{ label: 'Kangentic Mobile docs', url: DOCS_URLS.mobile }],
       },
     ],
     publishedAt: isoDaysAgo(2),
