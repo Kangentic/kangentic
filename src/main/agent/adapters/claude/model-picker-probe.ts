@@ -219,9 +219,10 @@ type ProbeStopStage =
 type ScreenWaitResult = 'found' | 'trust-dialog' | 'select-dialog' | 'exited' | 'timeout';
 
 /**
- * The last non-blank lines of a probe screen, safe for the local log: paths,
- * email-shaped tokens, a welcome greeting's name and API keys are replaced,
- * and each line is capped.
+ * The last non-blank lines of a probe screen, safe for the local log: absolute
+ * paths, email-shaped tokens, a welcome greeting's name and API keys are
+ * replaced, and each line is capped. A `~` path is left as drawn, since the
+ * `~` already stands in for the home directory.
  */
 export function probeScreenTail(screenText: string): string[] {
   return screenText
@@ -676,7 +677,7 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
    */
   const waitForScreen = async (
     isReady: (frame: string) => boolean,
-    guardDialogs: boolean,
+    { guardDialogs }: { guardDialogs: boolean },
   ): Promise<ScreenWaitResult> => {
     while (Date.now() < deadline) {
       const frame = screen.text();
@@ -694,7 +695,7 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
 
   try {
     // The input box is ready for keys once its '❯' prompt line renders.
-    const promptResult = await waitForScreen((frame) => inputBoxPromptLine(frame) !== null, true);
+    const promptResult = await waitForScreen((frame) => inputBoxPromptLine(frame) !== null, { guardDialogs: true });
     if (promptResult !== 'found') return failWait(promptResult, 'no-prompt', 'no keys sent');
     await delay(timings.typeDelayMs);
     probeProcess.write('/model');
@@ -706,12 +707,13 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     const echoResult = await waitForScreen((frame) => {
       const promptLine = inputBoxPromptLine(frame);
       return promptLine !== null && MODEL_COMMAND_ECHO_PATTERN.test(promptLine);
-    }, true);
+    }, { guardDialogs: true });
     if (echoResult !== 'found') return failWait(echoResult, 'input-not-echoed', 'before Enter');
     modelCommandSubmitted = true;
     probeProcess.write('\r');
 
-    const pickerResult = await waitForScreen((frame) => frame.includes('Select model'), false);
+    // Unguarded: the picker is itself a select dialog (see below).
+    const pickerResult = await waitForScreen((frame) => frame.includes('Select model'), { guardDialogs: false });
     if (pickerResult !== 'found') {
       // Enter opened something other than the picker. A dialog that now holds
       // the keyboard would take the teardown's Esc and `/exit` Enter as its
