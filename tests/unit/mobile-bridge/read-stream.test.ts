@@ -781,6 +781,30 @@ describe('handleReadStream', () => {
       expectPhoneAcceptsEveryActivityEvent(session);
     });
 
+    it('a resume whose label is still in flight ends the old feed with BOTH the label and the successor', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      // resumeTaskSession labels the task 'resuming' before its git phase and
+      // releases that claim only in its `finally`, which runs after the spawn
+      // flow has dropped the paused row and announced the successor. So the
+      // label is still up when the feed ends.
+      emitSpawnProgress(fakeWindow(), 'task-1', 'resuming');
+      sessionManager.getSession.mockImplementation((id: string) => (
+        id === 'sess-2' ? { id, taskId: 'task-1', status: 'running', resuming: true } : undefined
+      ));
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'running', resuming: true });
+
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'session-ended', intentional: true, spawnProgressLabel: 'Resuming session...', successorSessionId: 'sess-2' },
+      ]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+      expectPhoneAcceptsEveryActivityEvent(session);
+    });
+
     it('a successor that appears while the paused row still exists (queue full) sends nothing until the row is dropped', async () => {
       sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
       const session = fakeSession();

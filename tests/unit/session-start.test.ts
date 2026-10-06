@@ -20,7 +20,8 @@
  * 6. A PAUSED task (a `suspended` registry row) takes the desktop Resume
  *    button's path, `resumeTaskSession`, never `autoSpawnForTask`, and the
  *    answer follows that path's own Phase 1 (`live` or `starting`). An exited
- *    row is not paused and still starts the column.
+ *    row, and a suspended Command Terminal row (`transient`), are not paused
+ *    and still start the column.
  *
  * session-resume-eligibility.ts is deliberately left unmocked: the refusal
  * copy is exactly what a phone shows, so the test asserts the real strings.
@@ -94,7 +95,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 /** The registry rows `listSessions` reports; empty means the task has no session at all. */
-let registryRows: Array<Pick<Session, 'id' | 'taskId' | 'status'>> = [];
+let registryRows: Array<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>> = [];
 
 function makeContext(): IpcContext {
   return { sessionManager: { listSessions: () => registryRows } } as unknown as IpcContext;
@@ -294,6 +295,9 @@ describe('startTaskSession', () => {
     it.each([
       ['an exited session', [{ id: 'sess-ended', taskId: TASK_ID, status: 'exited' as const }]],
       ['another task\'s paused session', [{ id: 'sess-other', taskId: 'task-other', status: 'suspended' as const }]],
+      // Same task id and `suspended`, so only the transient flag keeps it from
+      // being the task's paused session: a Command Terminal is never resumed.
+      ['a suspended Command Terminal row carrying the same task id', [{ id: 'sess-terminal', taskId: TASK_ID, status: 'suspended' as const, transient: true }]],
       ['no session at all', []],
     ])('%s still starts the column through autoSpawnForTask', async (_label, rows) => {
       registryRows = rows;

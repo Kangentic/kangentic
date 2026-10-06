@@ -124,9 +124,16 @@ const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
 const mockDeleteTaskWorktree = vi.fn(async () => true);
 const mockResolveSpawnOverrides = vi.fn((..._args: unknown[]) => ({}));
+const mockNotifySpawnBlocked = vi.fn((..._args: unknown[]) => {});
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
+  // sessions.ts imports it for the exit handler's startup-failure notice. A
+  // spy rather than a missing export: a SESSION_RESUME that started passing a
+  // failure hook through it would otherwise hit a missing-export error that
+  // resumeTaskSession's hook guard swallows, and the no-notice test below
+  // would stay green.
+  notifySpawnBlocked: (...args: unknown[]) => mockNotifySpawnBlocked(...args),
   // Read by SESSION_RESUME's Phase 3 just before the engine call; the scenarios
   // that stop at a Phase 1 or Phase 2 exit never reach it.
   resolveSpawnOverrides: (...args: unknown[]) => mockResolveSpawnOverrides(...args),
@@ -932,6 +939,39 @@ describe('SESSION_RESUME split-lock dedup', () => {
 
     await expect(handler(null, 'task-2')).rejects.toThrow(/Worktree setup failed/);
     expect(resumeClaim()?.release).toHaveBeenCalledTimes(1);
+  });
+
+  // The phone's start-session hands resumeTaskSession an onFailed hook that
+  // sends the spawn-blocked notice, because the phone was answered before the
+  // work ran and has no rejection to show. The desktop Resume passes none: its
+  // invoke rejects and the renderer toasts that rejection, so a notice here
+  // would be a second toast for the same failure.
+  it.each([
+    ['the git phase', 'Worktree setup failed: fetch failed', (): void => {
+      mockEnsureTaskWorktree.mockImplementation(async () => {
+        throw new Error('fetch failed');
+      });
+    }],
+    ['the engine resume', 'spawn exploded', (): void => {
+      // clearAllMocks keeps implementations, so an earlier test's throw or hold
+      // would still be armed on the git phase.
+      mockEnsureTaskWorktree.mockImplementation(async () => {});
+      mockCreateTransitionEngine.mockReturnValue({
+        resumeSuspendedSession: vi.fn(async () => {
+          throw new Error('spawn exploded');
+        }),
+      });
+    }],
+  ])('rejects without sending a spawn-blocked notice when %s fails', async (_label, expectedMessage, armFailure) => {
+    const handler = capturedHandlers.get(IPC.SESSION_RESUME);
+    if (!handler) throw new Error('SESSION_RESUME handler not registered');
+    armFailure();
+
+    await expect(handler(null, 'task-2')).rejects.toThrow(expectedMessage);
+
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+    const blockedSends = context.mainWindow.webContents.send.mock.calls.filter(([channel]) => channel === IPC.TASK_SPAWN_BLOCKED);
+    expect(blockedSends).toEqual([]);
   });
 
   // The IPC handler is a one-line delegation to resumeTaskSession. Every call
