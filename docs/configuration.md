@@ -437,8 +437,11 @@ has loaded it is recycled 30 minutes after its last session (a process exit is w
 model's memory reservation back) and comes back live-only. On Windows, a worker whose memory has
 grown past 1.5 GB of commit is recycled at the next two-minute gap instead, since the models grow
 with use and a heavy user never leaves a half-hour gap; that shorter window reads a commit figure
-Electron reports on Windows only, so macOS and Linux always use the half-hour one. Turning
-dictation off releases the worker at once.
+Electron reports on Windows only, so macOS and Linux always use the half-hour one. A worker that
+has only pre-warmed stays resident while under that ceiling. Each language or preset switch
+pre-warms another engine, and a disposed engine's memory stays reserved, so on Windows such a
+worker past 1.5 GB of commit is also recycled after two quiet minutes and re-warms only the engine
+in use. Turning dictation off releases the worker at once.
 
 The Mode choice is a preset for each language. Main resolves it to models each session
 (`resolveDictationSlots` in `src/shared/dictation-presets.ts`), so a preset follows the lineup
