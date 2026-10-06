@@ -53,11 +53,11 @@ minutes before something unrelated killed it".
 `utility_worker_crashed`'s `exitCode` is the raw value Electron's `utilityProcess` `exit` event
 reports, so it is NOT comparable across platforms (POSIX derives it from `waitpid`, Windows from
 `GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
-sentinel meaning "no process exit, so there is no exit code", which a real exit code cannot collide
-with. The matching Sentry tag spells that same case `unknown` rather than `-1`. `cause` says which
-case it was: `exit` carries a real code (or `-1` if the exit reported none), and `-1` comes with `fork_failed` (the fork threw, so no
-process started), `ready_timeout` (the worker never said ready) or `request_timeout` (the client
-killed a worker that stopped answering). Before `cause` was sent, a retrieval worker that hung read
+sentinel meaning "there is no exit code", which a real exit code cannot collide with. The matching
+Sentry tag spells that same case `unknown` rather than `-1`. `cause` says why there is none: an
+`exit` normally carries a real code and sends `-1` only if Electron reported none, while
+`fork_failed` (the fork threw, so no process started), `ready_timeout` (the worker never said
+ready) and `request_timeout` (the client killed a worker that stopped answering) always send `-1`. Before `cause` was sent, a retrieval worker that hung read
 as a fork failure. `phase` says which of the two per-run events it is: `first` counts the
 installs that hit a crash at all, `latched` counts the installs whose subsystem gave up (the same
 moment the Sentry issue is filed). The event used to tick on every crash, which with three crashes
