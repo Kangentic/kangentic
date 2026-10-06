@@ -23,7 +23,7 @@ import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_ARCHIVED_TASKS, DEMO_COLUMN_MODELS, DEMO_HISTORY, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS,
   archivedRunPromptOf, taskSlugOf,
 } from '../../tests/captures/helpers/demo-dataset';
-import { archivedClonePath, archivedCloneSegments, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
+import { archivedClonePath, archivedCloneSegments, scratchClonePath, scratchRootFromArgv } from '../../scripts/lib/demo-archived-clone.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
@@ -204,6 +204,78 @@ describe('demo archived run model names', () => {
   });
 });
 
+/**
+ * The recorder (scripts/capture-demo-archived-runs.mjs) reads its plan from the manifest's `archived`
+ * block: the commit a task starts from (`refs`) and a permission mode that differs from the default
+ * (`permissionModes`). Each is looked up by task id, so a key that matches no task does nothing and
+ * the run is made at the default, which for a task already merged upstream is a run that has no work
+ * to do. The recorded runs are the record of what the plan did, so this holds one to the other.
+ */
+describe('demo archived runs follow the manifest\'s plan', () => {
+  interface ArchivedPlan {
+    model: string;
+    permissionMode: string;
+    permissionModes?: Record<string, string>;
+    refs?: Record<string, string>;
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/fixtures/demo/manifest.json'), 'utf-8')) as {
+    archived: ArchivedPlan;
+    repos: Record<string, { git?: string; scaffold?: string }>;
+  };
+  const plan = manifest.archived;
+  // A `$comment` key documents the block it sits in, and is not a task.
+  const withoutComment = (entries: Record<string, string> | undefined): Array<[string, string]> => Object.entries(entries ?? {}).filter(([key]) => key !== '$comment');
+  const refs = withoutComment(plan.refs);
+  const permissionModes = withoutComment(plan.permissionModes);
+  const historyIds = new Set(DEMO_HISTORY.tasks.map((entry) => entry.id));
+  const boardRunIds = DEMO_ARCHIVED_TASKS.map((task) => task.id).filter((taskId) => !historyIds.has(taskId));
+
+  it('names only board tasks that have a recorded run, each start a whole commit id', () => {
+    // Vacuity: the plan pins starts and a permission override, or the loops below say nothing.
+    expect(refs.length).toBeGreaterThan(0);
+    expect(permissionModes.length).toBeGreaterThan(0);
+    for (const [taskId, ref] of refs) {
+      expect(boardRunIds, `manifest.archived.refs names ${taskId}, which is not an archived board task`).toContain(taskId);
+      expect(ref, taskId).toMatch(/^[0-9a-f]{40}$/);
+    }
+    for (const [taskId] of permissionModes) {
+      expect(boardRunIds, `manifest.archived.permissionModes names ${taskId}, which is not an archived board task`).toContain(taskId);
+    }
+  });
+
+  it('records each board run in the permission mode the plan gave its task', () => {
+    const overrides = new Map(permissionModes);
+    for (const taskId of boardRunIds) {
+      expect(DEMO_ARCHIVED_RUNS[taskId].permissionMode, taskId).toBe(overrides.get(taskId) ?? plan.permissionMode);
+    }
+    // The override took: at least one run is in a mode other than the default.
+    expect(boardRunIds.some((taskId) => DEMO_ARCHIVED_RUNS[taskId].permissionMode !== plan.permissionMode)).toBe(true);
+  });
+
+  it('starts each run where its project\'s repository starts it: the scaffold with no commit, an upstream sample at a pinned or recorded one', () => {
+    const pinned = new Map(refs);
+    let scaffolded = 0;
+    let upstream = 0;
+    for (const task of DEMO_ARCHIVED_TASKS) {
+      const project = DEMO_PROJECTS.find((candidate) => candidate.id === task.projectId);
+      const spec = manifest.repos[project?.name ?? ''];
+      const run = DEMO_ARCHIVED_RUNS[task.id];
+      if (spec?.scaffold) {
+        scaffolded += 1;
+        expect(run.ref, `${task.id} runs in a scaffold, which has no upstream commit to name`).toBeNull();
+        continue;
+      }
+      upstream += 1;
+      expect(run.ref, `${task.id} runs in an upstream sample and records no commit`).toMatch(/^[0-9a-f]{40}$/);
+      const pin = pinned.get(task.id);
+      if (pin) expect(run.ref, `${task.id} was started at ${String(run.ref)}, not the commit the manifest pins`).toBe(pin);
+    }
+    // Both kinds of project have archived runs.
+    expect(scaffolded).toBeGreaterThan(0);
+    expect(upstream).toBeGreaterThan(0);
+  });
+});
+
 describe('demo archived run clone path', () => {
   const contosoPath = 'C:\\Users\\dev\\work\\contoso-web';
 
@@ -218,6 +290,19 @@ describe('demo archived run clone path', () => {
   it('roots the clone under the directory it is given', () => {
     const root = path.join(os.tmpdir(), 'demo-home');
     expect(archivedClonePath(root, contosoPath, 'task-cw-done-deploy')).toBe(path.join(root, 'work', 'contoso-web-cw-done-deploy'));
+  });
+
+  it('roots the scratch clone under the same directory, and puts every run beside it rather than inside it', () => {
+    const root = path.join(os.tmpdir(), 'demo-home');
+    const scratch = scratchClonePath(root, contosoPath);
+    expect(scratch).toBe(path.join(root, 'work', 'contoso-web'));
+    // A sibling, so the project's own clone (the History pane's and the graph's commit count) is never a run's working tree.
+    const run = archivedClonePath(root, contosoPath, 'task-cw-done-deploy');
+    expect(path.dirname(run)).toBe(path.dirname(scratch));
+    expect(run).not.toBe(scratch);
+    expect(path.basename(run).startsWith(`${path.basename(scratch)}-`)).toBe(true);
+    // The same rule for a forward-slash dataset path, as on a recording machine that spells it so.
+    expect(scratchClonePath(root, 'C:/Users/dev/work/contoso-web')).toBe(scratch);
   });
 
   // The clone rule lives in a script library and the slug rule in the dataset; the two must name
