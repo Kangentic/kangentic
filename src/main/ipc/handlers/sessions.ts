@@ -24,6 +24,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
+import { clearSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -186,66 +187,81 @@ export function registerSessionHandlers(context: IpcContext): void {
         }
         const planTask = phase1Result.task;
 
-        // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
-        // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
-        // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
+        // Label the resume from here on, as restoring from Done does
+        // (task-archive.ts). The git phase below can take seconds, and without
+        // a label the card (and a paired phone's card) reads "Paused" behind a
+        // Resume button while the conversation is already being restored. The
+        // label also rides the paused session's `session-ended` to a paired
+        // phone, which then reads the swap as a respawn rather than a stop.
+        // Emitted only now that the resume will spawn: the self-heal return
+        // above spawns nothing. One `finally` retires it on every exit, the
+        // abort included.
+        const onProgress = createProgressCallback(context.mainWindow, taskId);
+        onProgress('resuming');
         try {
-          // The explicit projectId: if the user switches projects during this
-          // slow git phase, a base-fetch failure's spawn warning must stamp
-          // the resumed task's project, not whatever became ambient.
-          await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, projectId: resolvedProjectId });
-        } catch (worktreeError) {
-          if (isAbortError(worktreeError)) throw worktreeError;
-          const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-          throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
-        }
+          // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
+          // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
+          // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
+          try {
+            // The explicit projectId: if the user switches projects during this
+            // slow git phase, a base-fetch failure's spawn warning must stamp
+            // the resumed task's project, not whatever became ambient.
+            await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress, projectId: resolvedProjectId });
+          } catch (worktreeError) {
+            if (isAbortError(worktreeError)) throw worktreeError;
+            const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
+            throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
+          }
 
-        // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY
-        // and write session_id. Re-read task because Phase 2 could have raced
-        // with a concurrent handler that cleared session_id, moved the task
-        // to To Do, or already spawned a session.
-        return await withTaskLock(taskId, async () => {
-          signal.throwIfAborted();
-          // Reconcile against the registry: if a concurrent handler spawned a
-          // live session during our Phase 2 gap, return it (don't duplicate).
-          // If session_id is stale (registry-suspended/missing), reconcile
-          // clears it so we proceed to spawn fresh.
-          const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
-          if (liveSession) return liveSession;
-          // Folded through the task's Board Profile so an explicit Resume
-          // restarts on the same rung the task was running, not the column's
-          // base settings. Identity fields (including `role`, checked next) pass
-          // through the fold untouched.
-          const currentLane = applyProfileToLane(
-            swimlanes.getById(current.swimlane_id),
-            loadTaskProfile(context, current, resolvedProjectPath),
-          );
-          // Re-read, not the Phase 1 snapshot: the task could have been moved or
-          // archived (a move to Done archives in the same tick) during the
-          // unlocked git I/O above.
-          const currentBlocked = resumeBlockReason({
-            laneRole: currentLane?.role,
-            isArchived: Boolean(current.archived_at),
+          // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY
+          // and write session_id. Re-read task because Phase 2 could have raced
+          // with a concurrent handler that cleared session_id, moved the task
+          // to To Do, or already spawned a session.
+          return await withTaskLock(taskId, async () => {
+            signal.throwIfAborted();
+            // Reconcile against the registry: if a concurrent handler spawned a
+            // live session during our Phase 2 gap, return it (don't duplicate).
+            // If session_id is stale (registry-suspended/missing), reconcile
+            // clears it so we proceed to spawn fresh.
+            const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
+            if (liveSession) return liveSession;
+            // Folded through the task's Board Profile so an explicit Resume
+            // restarts on the same rung the task was running, not the column's
+            // base settings. Identity fields (including `role`, checked next) pass
+            // through the fold untouched.
+            const currentLane = applyProfileToLane(
+              swimlanes.getById(current.swimlane_id),
+              loadTaskProfile(context, current, resolvedProjectPath),
+            );
+            // Re-read, not the Phase 1 snapshot: the task could have been moved or
+            // archived (a move to Done archives in the same tick) during the
+            // unlocked git I/O above.
+            const currentBlocked = resumeBlockReason({
+              laneRole: currentLane?.role,
+              isArchived: Boolean(current.archived_at),
+            });
+            if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
+
+            const db = getProjectDb(resolvedProjectId);
+            const sessionRepo = new SessionRepository(db);
+            const engine = createTransitionEngine(
+              context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
+              resolvedProjectId, resolvedProjectPath,
+            );
+
+            const project = context.projectRepo.getById(resolvedProjectId);
+            const overrides = resolveSpawnOverrides(current, currentLane, project);
+            await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, resumePrompt, signal, undefined, undefined, overrides);
+
+            const updated = tasks.getById(taskId);
+            if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
+            const newSession = context.sessionManager.getSession(updated.session_id);
+            if (!newSession) throw new Error('Session resume failed - session not in manager');
+            return newSession;
           });
-          if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
-
-          const db = getProjectDb(resolvedProjectId);
-          const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(
-            context, automations, automationRuns, tasks, sessionRepo, attachmentRepo,
-            resolvedProjectId, resolvedProjectPath,
-          );
-
-          const project = context.projectRepo.getById(resolvedProjectId);
-          const overrides = resolveSpawnOverrides(current, currentLane, project);
-          await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, resumePrompt, signal, undefined, undefined, overrides);
-
-          const updated = tasks.getById(taskId);
-          if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
-          const newSession = context.sessionManager.getSession(updated.session_id);
-          if (!newSession) throw new Error('Session resume failed - session not in manager');
-          return newSession;
-        });
+        } finally {
+          clearSpawnProgress(context.mainWindow, taskId);
+        }
       } catch (error) {
         if (isAbortError(error)) {
           console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);

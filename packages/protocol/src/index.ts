@@ -56,6 +56,7 @@ export {
   parseTranscriptWindowResponsePayload,
   parseRegisterPushRequestPayload,
   parseStartSessionResponsePayload,
+  isReadStreamSessionStatusWire,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
   type ReadStreamRequestPayload,

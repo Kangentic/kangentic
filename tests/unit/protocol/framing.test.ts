@@ -139,6 +139,19 @@ describe('wire message framing', () => {
     expect(decodeMessage(encodeMessage(message))).toEqual(message);
   });
 
+  it('decodes an activity event whose payload type this build does not know, leaving the drop to isBridgeEvent', () => {
+    // Why a new live signal ships as an activity payload TYPE rather than a
+    // new event KIND: framing checks only the activity envelope, so an older
+    // phone still decodes the frame and drops the one event, while an unknown
+    // KIND (below) fails the whole decode.
+    const bytes = rawJsonFrame({
+      type: 'event',
+      event: { kind: 'activity', sessionId: 'sess-1', taskId: 'task-1', payload: { type: 'some-future-signal', value: 1 } },
+    });
+    const decoded = decodeMessage(bytes);
+    expect(decoded.type).toBe('event');
+  });
+
   it('rejects an unknown event kind', () => {
     const bytes = new TextEncoder().encode(
       JSON.stringify({ type: 'event', event: { kind: 'shell-output', taskId: 'abc', payload: {} } }),

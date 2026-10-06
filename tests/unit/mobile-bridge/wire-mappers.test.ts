@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { columnSpawnsSession, toBoardColumnWire, toBoardTaskWire } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
-import { parseBoardColumnWire } from '@kangentic/protocol';
+import { parseBoardColumnWire, parseBoardTaskWire } from '@kangentic/protocol';
 import type { JsonValue } from '@kangentic/protocol';
 import type { Swimlane, Task } from '../../../src/shared/types';
 
@@ -47,12 +47,22 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 describe('toBoardTaskWire', () => {
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
-    expect(toBoardTaskWire(task).pr_merge_readiness).toBe('ready');
+    expect(toBoardTaskWire(task, null).pr_merge_readiness).toBe('ready');
   });
 
   it('passes null through when the PR has no judged readiness', () => {
     const task = makeTask({ pr_merge_readiness: null });
-    expect(toBoardTaskWire(task).pr_merge_readiness).toBeNull();
+    expect(toBoardTaskWire(task, null).pr_merge_readiness).toBeNull();
+  });
+
+  it('carries the spawn-progress label, and null when none is in flight', () => {
+    expect(toBoardTaskWire(makeTask(), 'Waiting (2 ahead)').spawn_progress).toBe('Waiting (2 ahead)');
+    expect(toBoardTaskWire(makeTask(), null).spawn_progress).toBeNull();
+  });
+
+  it('the label survives the phone-side parse', () => {
+    const wire = toBoardTaskWire(makeTask(), 'Switching model...');
+    expect(parseBoardTaskWire(wire as unknown as JsonValue).spawn_progress).toBe('Switching model...');
   });
 });
 

@@ -327,6 +327,38 @@ export interface BoardTaskWire {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * The task's in-flight spawn-progress label, exactly as the desktop card's
+   * preparing footer shows it: "Creating worktree...", "Fetching latest...",
+   * "Waiting (2 ahead)", "Switching model...", "Starting agent...", a git-queue
+   * wait with its elapsed time, and any staleness note the desktop appends
+   * ("Starting agent... (base 3 behind)"). The desktop announces every change
+   * with a `task-updated` board event, coalesced to at most about one a
+   * second per task.
+   *
+   * Untrusted display text, the same terms as `session-ended`'s
+   * `spawnProgressLabel`: cap its length, never parse it or switch on it, and
+   * fall back to generic copy. It includes raw git progress lines passed
+   * through verbatim.
+   *
+   * Precedence, matching the desktop card: a label overrides a `suspended`
+   * session status (a respawn is in flight behind a session that was just
+   * suspended for it), and never a `running` or `queued` one. A client that
+   * reads the read-stream feed's `status: 'suspended'` during a model or
+   * effort switch shows this label, not "Paused".
+   *
+   * A spawn path that dies without clearing its label leaves it in place for
+   * up to the desktop's 120s spawn-progress TTL, and the TTL expiry sends no
+   * board event, so a stale label can outlive its spawn until the next
+   * snapshot. Null or absent means no spawn is in flight, or a desktop that
+   * predates the field (pre-0.16.0). Under `view: 'sessions'` a task with a
+   * label is kept even while its `session_id` is null, so a first start and
+   * a respawn's gap stay visible.
+   *
+   * Declared OPTIONAL (`?`) like `pr_merge_readiness`; `parseBoardTaskWire`
+   * populates the key from every real wire response.
+   */
+  spawn_progress?: string | null;
 }
 
 /** Phone-needed subset of the desktop's BacklogTask row. */
@@ -629,6 +661,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     archived_at: nullableString(value, 'archived_at'),
     created_at: requireString(value, 'created_at', 'board task'),
     updated_at: requireString(value, 'updated_at', 'board task'),
+    spawn_progress: nullableString(value, 'spawn_progress'),
   };
 }
 

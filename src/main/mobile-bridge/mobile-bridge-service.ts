@@ -37,6 +37,7 @@ import { registerCapabilityHandlers } from './handlers';
 import { terminalStreamKeyFor, TERMINAL_STREAM_KEY_PREFIX } from './handlers/read-stream';
 import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
+import { SpawnProgressFeed } from './spawn-progress-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
 import { collectConnectedDeviceIds, PushNotifier } from './push/push-notifier';
 import { SpawnStallWatcher } from './push/spawn-stall-watcher';
@@ -167,6 +168,8 @@ export class MobileBridgeService extends EventEmitter {
   private ipcContext: IpcContext | null = null;
   /** Feeds session lifecycle edges onto the board-changed bus so phones' board views track spawn/queue/suspend/exit. */
   private sessionLifecycleFeed: SessionLifecycleBoardFeed | null = null;
+  /** Throttled spawn-progress label changes, which read-board forwards to phones as task-updated (kept off the board bus). */
+  private spawnProgressFeed: SpawnProgressFeed | null = null;
   /** Per-device push registrations (Expo token + envelope key), written by the register-push handler and read by the notifier. */
   readonly pushRegistrations = new PushRegistrationStore();
   /** Seals and sends E2E push notifications on permission/turn-complete/crash/plan/stall triggers. */
@@ -238,11 +241,16 @@ export class MobileBridgeService extends EventEmitter {
       // reveals (observed live 2026-08-02).
       hasStreamSubscriber: (sessionId) => this.anyDeviceSubscriptionHas(terminalStreamKeyFor(sessionId)),
     });
+    this.spawnProgressFeed = new SpawnProgressFeed({
+      resolveProjectIdForTask: (taskId) => this.findTaskOwner(context, taskId)?.projectId ?? null,
+    });
+    this.spawnProgressFeed.start();
     registerCapabilityHandlers(this.capabilityRouter, {
       context,
       diffWatcher: this.diffWatcher,
       getSubscriptions: (deviceId) => this.getOrCreateSubscriptions(deviceId),
       pushRegistrations: this.pushRegistrations,
+      spawnProgressFeed: this.spawnProgressFeed,
     });
     this.sessionLifecycleFeed = new SessionLifecycleBoardFeed({
       sessionManager: context.sessionManager,
@@ -270,19 +278,10 @@ export class MobileBridgeService extends EventEmitter {
         return { projectId, taskId, taskTitle };
       },
       // A spawn stall has no session yet, so there is no getSessionProjectId
-      // to consult - scan every known project's task repo instead. Rare
-      // (fires once per stalled spawn, 8s after it starts), so a linear
-      // scan over the project list is fine.
+      // to consult; findTaskOwner scans the project list instead.
       resolveTaskContextByTaskId: (taskId) => {
-        for (const project of context.projectRepo.list()) {
-          try {
-            const task = getProjectRepos(context, project.id).tasks.getById(taskId);
-            if (task) return { projectId: project.id, taskId, taskTitle: task.title };
-          } catch {
-            // This project's repos may not be initialized; try the next one.
-          }
-        }
-        return null;
+        const owner = this.findTaskOwner(context, taskId);
+        return owner ? { projectId: owner.projectId, taskId, taskTitle: owner.taskTitle } : null;
       },
       getDeviceStaticPublicKey: (deviceId) => {
         const identity = this.loadedIdentity();
@@ -299,6 +298,26 @@ export class MobileBridgeService extends EventEmitter {
     // (migrateDevicesToFullCapabilityGrant) before any BridgeSession opens:
     // runSyncSessions() awaits the same warm-up before it opens one.
     void this.whenStorageReady();
+  }
+
+  /**
+   * Which project owns a task, by scanning every known project's task repo: a
+   * task with no session yet has no getSessionProjectId to consult. One
+   * indexed lookup per project. Callers are rare by construction: the
+   * spawn-stall push (once per stalled spawn) and the spawn-progress feed (at
+   * most one a second per spawning task, and only while a phone watches a
+   * board).
+   */
+  private findTaskOwner(context: IpcContext, taskId: string): { projectId: string; taskTitle: string } | null {
+    for (const project of context.projectRepo.list()) {
+      try {
+        const task = getProjectRepos(context, project.id).tasks.getById(taskId);
+        if (task) return { projectId: project.id, taskTitle: task.title };
+      } catch {
+        // This project's repos may not be initialized; try the next one.
+      }
+    }
+    return null;
   }
 
   /**
@@ -1038,6 +1057,8 @@ export class MobileBridgeService extends EventEmitter {
     this.devQuickPair?.stop();
     this.sessionLifecycleFeed?.dispose();
     this.sessionLifecycleFeed = null;
+    this.spawnProgressFeed?.dispose();
+    this.spawnProgressFeed = null;
     this.pushNotifier?.dispose();
     this.pushNotifier = null;
     this.spawnStallWatcher?.dispose();

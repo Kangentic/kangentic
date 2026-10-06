@@ -3,6 +3,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { CapabilityRouter } from '../capability-router';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { PushRegistrationStore } from '../push/push-registration-store';
+import type { SpawnProgressFeed } from '../spawn-progress-feed';
 import { handleReadStream } from './read-stream';
 import { handleReadBoard } from './read-board';
 import { handleReadDiff } from './read-diff';
@@ -21,6 +22,8 @@ export interface CapabilityHandlerDeps {
   getSubscriptions: (deviceId: string) => SubscriptionRegistry;
   /** Bridge-owned push registration sidecar; register-push writes it, the push notifier reads it. */
   pushRegistrations: PushRegistrationStore;
+  /** Bridge-owned, throttled spawn-progress label changes; read-board forwards them as task-updated. */
+  spawnProgressFeed: Pick<SpawnProgressFeed, 'onTaskSpawnProgressChanged'>;
 }
 
 /**
@@ -33,7 +36,7 @@ export function registerCapabilityHandlers(router: CapabilityRouter, deps: Capab
   router.register('read-stream', (request, session) =>
     handleReadStream(request, session, deps.context, deps.getSubscriptions(session.deviceId)));
   router.register('read-board', (request, session) =>
-    handleReadBoard(request, session, deps.context, deps.getSubscriptions(session.deviceId)));
+    handleReadBoard(request, session, deps.context, deps.getSubscriptions(session.deviceId), deps.spawnProgressFeed));
   router.register('read-diff', (request, session) =>
     handleReadDiff(request, session, deps.context, deps.getSubscriptions(session.deviceId), deps.diffWatcher));
   router.register('send-user-message', (request) => handleSendUserMessage(request, deps.context));

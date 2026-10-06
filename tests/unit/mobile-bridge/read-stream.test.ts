@@ -59,7 +59,10 @@ function flushProbe(): Promise<void> {
 }
 
 class FakeSessionManager extends EventEmitter {
-  getSession = vi.fn((id: string) => ({ id, taskId: 'task-1', status: 'running' }));
+  getSession = vi.fn((id: string): { id: string; taskId: string; status: string; resuming: boolean; transient?: boolean } | undefined => (
+    { id, taskId: 'task-1', status: 'running', resuming: false }
+  ));
+  getSessionTaskId = vi.fn((id: string): string | undefined => (id === 'sess-1' ? 'task-1' : undefined));
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
   // The mobile seed uses the parsed-grid serialized frame, not the raw replay.
   getSerializedFrame = vi.fn(() => Promise.resolve('serialized-frame'));
@@ -436,6 +439,8 @@ describe('handleReadStream', () => {
     expect(sessionManager.listenerCount('usage')).toBe(0);
     expect(sessionManager.listenerCount('event')).toBe(0);
     expect(sessionManager.listenerCount('exit')).toBe(0);
+    expect(sessionManager.listenerCount('session-changed')).toBe(0);
+    expect(sessionManager.listenerCount('session-removed')).toBe(0);
     expect(subscriptions.has('stream:sess-1')).toBe(false);
   });
 
@@ -507,11 +512,194 @@ describe('handleReadStream', () => {
   });
 
   it('subscribing a suspended-but-registered session reports its suspended status', async () => {
-    sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended' });
+    sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
     const context = { sessionManager } as unknown as IpcContext;
     const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
     expect(response.ok).toBe(true);
     expect((response.payload as { sessionStatus?: string }).sessionStatus).toBe('suspended');
+  });
+
+  describe('resuming, live status, and the successor hop', () => {
+    /** Every activity payload this bridge session was sent, in order. */
+    function sentActivityPayloads(session: BridgeSession): Array<Record<string, unknown>> {
+      return vi
+        .mocked(session.sendMessage)
+        .mock.calls.map((call) => call[0] as { event?: { kind?: string; payload?: Record<string, unknown> } })
+        .filter((message) => message.event?.kind === 'activity')
+        .map((message) => message.event?.payload ?? {});
+    }
+
+    it('the snapshot carries resuming from the session row', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+      expect((response.payload as { resuming?: boolean }).resuming).toBe(true);
+    });
+
+    it('status and resuming come from the row read AFTER the frame serialize, not the one read before it', async () => {
+      // A queue promotion inside the serialize await replaces the registry row:
+      // the pre-await read says queued, the post-await read says running.
+      sessionManager.getSession
+        .mockReturnValueOnce({ id: 'sess-1', taskId: 'task-1', status: 'queued', resuming: false })
+        .mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      const payload = response.payload as { sessionStatus?: string; resuming?: boolean };
+      expect(payload.sessionStatus).toBe('running');
+      expect(payload.resuming).toBe(true);
+      // The post-await row is also the dedupe baseline: re-announcing it pushes nothing.
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: true });
+      expect(sentActivityPayloads(session).filter((payload) => payload.type === 'status')).toHaveLength(0);
+    });
+
+    it('pushes one status event per real change and none on a repeat or for another session', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'queued', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, new SubscriptionRegistry());
+
+      // A session-changed with no status change (an agent session id captured).
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'queued', resuming: false });
+      // Another task's session.
+      sessionManager.emit('session-changed', 'sess-9', { id: 'sess-9', taskId: 'task-9', status: 'running', resuming: false });
+      expect(sentActivityPayloads(session)).toEqual([]);
+
+      // The queue promotes it.
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'running', resuming: false });
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'status', status: 'running', resuming: false }]);
+    });
+
+    it('running -> suspended pushes status before the exit\'s session-ended, then tears down', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+      // SessionManager.suspend(): status flip and session-changed, then the PTY exit.
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      sessionManager.emit('exit', 'sess-1', 0, true);
+
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'status', status: 'suspended', resuming: false },
+        { type: 'session-ended', intentional: true },
+      ]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('an exited status (the agent-absence sweep) is pushed without tearing the feed down; the exit that follows ends it', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+      sessionManager.emit('session-changed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'exited', resuming: false });
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+      sessionManager.emit('exit', 'sess-1', 0, true);
+
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'status', status: 'exited', resuming: false },
+        { type: 'session-ended', intentional: true },
+      ]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('a resume that replaces the paused row ends the old feed naming the successor', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      // The spawn flow drops the paused row with no event, then announces the
+      // new session, which carries a fresh id.
+      sessionManager.getSession.mockImplementation((id: string) => (
+        id === 'sess-2' ? { id, taskId: 'task-1', status: 'running', resuming: true } : undefined
+      ));
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'running', resuming: true });
+
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'session-ended', intentional: true, successorSessionId: 'sess-2' },
+      ]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+      expect(sessionManager.listenerCount('session-changed')).toBe(0);
+    });
+
+    it('a successor that appears while the paused row still exists (queue full) sends nothing until the row is dropped', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      // Queued behind the concurrency limit: the paused row is still registered.
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'queued', resuming: true });
+      expect(sentActivityPayloads(session)).toEqual([]);
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+
+      // Promotion drops the paused row, then announces the successor running.
+      sessionManager.getSession.mockImplementation((id: string) => (
+        id === 'sess-2' ? { id, taskId: 'task-1', status: 'running', resuming: true } : undefined
+      ));
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'task-1', status: 'running', resuming: true });
+      expect(sentActivityPayloads(session)).toEqual([
+        { type: 'session-ended', intentional: true, successorSessionId: 'sess-2' },
+      ]);
+    });
+
+    it('a removed paused row ends the feed with no successor', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      sessionManager.emit('session-removed', 'sess-OTHER', { id: 'sess-OTHER', taskId: 'task-9', status: 'exited', resuming: false });
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+      sessionManager.emit('session-removed', 'sess-1', { id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('a successor whose spawn failed after the drain ends the feed with no successor', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'task-1', status: 'suspended', resuming: false });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      // Another task's session exiting while this row still exists changes nothing.
+      sessionManager.emit('exit', 'sess-9', -1);
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+
+      // spawn-failure-handler: the paused row is gone, the successor is
+      // registered 'exited' and reports only 'exit'.
+      sessionManager.getSession.mockImplementation((id: string) => (
+        id === 'sess-2' ? { id, taskId: 'task-1', status: 'exited', resuming: true } : undefined
+      ));
+      sessionManager.getSessionTaskId.mockImplementation((id: string) => (id === 'sess-2' ? 'task-1' : undefined));
+      sessionManager.emit('exit', 'sess-2', -1);
+
+      expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
+      expect(subscriptions.has('stream:sess-1')).toBe(false);
+    });
+
+    it('a Command Terminal session never treats another session as its successor', async () => {
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: '', status: 'running', resuming: false, transient: true });
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+
+      sessionManager.getSession.mockReturnValue(undefined);
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: '', status: 'running', resuming: false, transient: true });
+
+      expect(sentActivityPayloads(session)).toEqual([]);
+      expect(subscriptions.has('stream:sess-1')).toBe(true);
+    });
   });
 
   it('a small data-tap chunk flushes immediately (keystroke-echo fast path); a different session never pushes', async () => {
