@@ -226,13 +226,18 @@ export function resumeTaskSession(
         }
       } catch (error) {
         if (isAbortError(error)) {
+          // A suspend, reset, relocation or newer resume took the task over,
+          // and each settles the task under its own lock. No cleanup here,
+          // deliberately, as in autoSpawnForTask's abort path: every abort
+          // lands before this resume registers a row or writes session_id.
+          // The engine's last checkpoint precedes sessionManager.spawn, the
+          // session_id write follows it with no further checkpoint, and a
+          // spawn a teardown cancels registers nothing. A removeByTaskId here
+          // used to drop the task's PAUSED row while the newer resume was
+          // still in its git phase, so a paired phone's feed on that row
+          // ended with no successor and `resumable` read false until the new
+          // session spawned. A Pause that cancelled the resume lost the same row.
           console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
-          // Clean up partial state under the lock so a concurrent handler
-          // cannot observe a half-written session_id.
-          await withTaskLock(taskId, async () => {
-            context.sessionManager.removeByTaskId(taskId);
-            tasks.update({ id: taskId, session_id: null });
-          });
           return null;
         }
         throw error;

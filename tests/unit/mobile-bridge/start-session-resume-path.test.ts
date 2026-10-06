@@ -551,14 +551,16 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
           throw new DOMException('The operation was aborted', 'AbortError');
         });
       }],
-    ])('does not report an abort during %s, which resolves null after cleaning up', async (_label, armAbort) => {
+    ])('does not report an abort during %s, which resolves null and leaves the paused row', async (_label, armAbort) => {
       armAbort();
       const context = fakeContext();
 
       await expect(resume(context)).resolves.toBeNull();
 
-      // The abort branch ran: it removes the registry row and clears the pointer.
-      expect(context.sessionManager.removeByTaskId).toHaveBeenCalledWith(TASK_ID);
+      // The abort branch cleans up nothing. A removal here dropped the paused
+      // row while the resume that aborted this one was still in its git
+      // phase, ending a phone's feed on it with no successor.
+      expect(context.sessionManager.removeByTaskId).not.toHaveBeenCalled();
       expect(onFailed).not.toHaveBeenCalled();
     });
 

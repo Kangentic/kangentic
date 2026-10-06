@@ -684,15 +684,18 @@ describe('SESSION_RESUME AbortError cleanup', () => {
     registerSessionHandlers(context as never);
   });
 
-  it('returns null, removes session, and nulls session_id on AbortError mid-Phase-2', async () => {
+  it('returns null and leaves the task\'s rows and session_id alone on AbortError mid-Phase-2', async () => {
     const handler = capturedHandlers.get(IPC.SESSION_RESUME);
     if (!handler) throw new Error('SESSION_RESUME handler not registered');
 
     let signalEntered!: () => void;
     const phase2Entered = new Promise<void>((resolve) => { signalEntered = resolve; });
 
-    mockEnsureTaskWorktree.mockImplementation(async (_ctx: unknown, _task: unknown, _tasks: unknown, _path: unknown, _opts: unknown) => {
+    mockEnsureTaskWorktree.mockImplementation(async (_context: unknown, _task: unknown, _tasks: unknown, _path: unknown, _options: unknown) => {
       signalEntered();
+      // Whatever the task holds when the abort lands belongs to the path that
+      // took it over: here, a session_id another spawn has written.
+      storedTask = { ...storedTask, session_id: 'sess-newer' };
       // DOMException with name 'AbortError' is what isAbortError() checks for.
       throw new DOMException('The operation was aborted', 'AbortError');
     });
@@ -705,12 +708,12 @@ describe('SESSION_RESUME AbortError cleanup', () => {
     const result = await firstResumePromise;
     expect(result).toBeNull();
 
-    // removeByTaskId must be called inside the locked micro-step.
-    expect(context.sessionManager.removeByTaskId).toHaveBeenCalledWith('task-resume-abort');
-
-    // session_id must have been nulled.
-    const lastRepos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { update: MockInstance } };
-    expect(lastRepos?.tasks.update).toHaveBeenCalledWith({ id: 'task-resume-abort', session_id: null });
+    // No cleanup: an abort lands before this resume registers a row or writes
+    // session_id. A removeByTaskId here dropped the task's paused row, which a
+    // newer resume and a paired phone's feed still read, and nulling
+    // session_id would orphan the other path's session.
+    expect(context.sessionManager.removeByTaskId).not.toHaveBeenCalled();
+    expect(storedTask.session_id).toBe('sess-newer');
 
     // The aborted resume releases its own "Resuming session..." label, which
     // clears it only while no other spawn has labelled the task since.

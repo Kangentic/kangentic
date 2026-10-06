@@ -875,9 +875,9 @@ export async function autoSpawnForTask(
         // further checkpoint, so an abort never leaves a half-written
         // session, and the aborter reconciles a live one under its own lock.
         // (An enter-automation row that already ran stays run, as it does
-        // for an aborted drag.) SESSION_RESUME's removeByTaskId cleanup is
-        // defensive, and it would also drop the suspended placeholder the
-        // Pause that aborted us just wrote.
+        // for an aborted drag.) resumeTaskSession's abort path
+        // (session-resume.ts) cleans up nothing either, for the same reason: a
+        // removeByTaskId there dropped the task's paused row.
         console.log(
           `[auto-spawn] Aborted in-flight spawn for task ${task.id.slice(0, 8)} (a suspend, reset, or newer resume took over)`,
         );
