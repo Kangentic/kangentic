@@ -28,6 +28,9 @@
  */
 import type { JsonValue } from '../wire/messages';
 import { isRecord } from '../wire/json-value';
+// A value import in this direction only: wire/ imports events/event for types
+// alone, so there is no runtime cycle.
+import { isReadStreamSessionStatusWire, type ReadStreamSessionStatusWire } from '../wire/payloads';
 import {
   isActivityReasonWire,
   isActivityStateWire,
@@ -64,11 +67,25 @@ export type ActivityEventPayload =
    */
   | { type: 'permission'; promptId: string; pending: boolean; options?: string[] }
   /**
-   * The streamed session's PTY exited. Pushed once by the desktop's
-   * read-stream subscription right before it tears itself down, so the
-   * phone learns "this session is over" from the feed itself instead of
-   * inferring it from silence. `intentional` distinguishes a deliberate
-   * stop (desktop Stop button, suspend, shutdown) from a crash.
+   * The feed's last word: the desktop's read-stream subscription pushes this
+   * once, right before it tears itself down, so the phone learns "this
+   * session is over" from the feed itself instead of inferring it from
+   * silence. Sent when the streamed session's PTY exits, and (from 0.16.0)
+   * when a session the feed was held on without a PTY - a paused row - is
+   * replaced or removed. `intentional` distinguishes a deliberate stop
+   * (desktop Stop button, suspend, shutdown, a resume replacing a paused row)
+   * from a crash.
+   *
+   * `successorSessionId`, when present, names the session that replaced this
+   * one for the same task. A desktop resume never reuses the paused session's
+   * id: it spawns a new session and drops the paused row, so a feed held on
+   * the paused session can only end, never turn back into `running`. The task
+   * continues as the successor; subscribe to it. Its snapshot carries
+   * `sessionStatus` (`queued` when the desktop's concurrency limit holds it)
+   * and `resuming: true`. Absent when no successor exists (a removed paused
+   * row, or a successor whose own spawn failed), and from pre-0.16.0
+   * desktops, which never end a feed this way and leave it silent instead. An
+   * older phone ignores the field and still sees an ended session.
    *
    * `spawnProgressLabel`, when present, means the desktop had a respawn in
    * flight for this task when the session ended - a same-column respawn
@@ -107,7 +124,30 @@ export type ActivityEventPayload =
    * spawn fails still has its label in flight when the PTY dies. The two
    * fields are independent; do not read them as mutually exclusive.
    */
-  | { type: 'session-ended'; intentional: boolean; spawnProgressLabel?: string }
+  | { type: 'session-ended'; intentional: boolean; spawnProgressLabel?: string; successorSessionId?: string }
+  /**
+   * The streamed session's lifecycle status changed after the subscribe
+   * snapshot: `queued` -> `running` when the desktop's concurrency limit
+   * frees a slot, -> `suspended` on a pause or a respawn, -> `exited` when the
+   * desktop retires a session whose agent already ended. Sent only on an
+   * actual change, for the same session id only. A resume is a NEW session
+   * id, so suspended -> running never arrives here: see `session-ended`'s
+   * `successorSessionId`.
+   *
+   * A `suspended` push precedes the PTY's `session-ended` when a running
+   * session is suspended, so for an instant both say the session is parked.
+   *
+   * Precedence, matching the desktop card: a non-null `spawn_progress` on the
+   * task's board row overrides `suspended` (the desktop suspends a session
+   * before every model, agent or effort respawn), and never `running` or
+   * `queued`. Read `suspended` alone as "Paused"; read it next to a label as
+   * that label.
+   *
+   * `resuming` repeats the snapshot field so the payload is complete on its
+   * own. Absent from pre-0.16.0 desktops, whose phones drop the unknown type
+   * through `isBridgeEvent` and keep inferring status from activity events.
+   */
+  | { type: 'status'; status: ReadStreamSessionStatusWire; resuming: boolean }
   /**
    * The agent's most recent assistant message, already collapsed to a short
    * plain-text preview, pushed whenever it changes.
@@ -197,11 +237,23 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
     }
     case 'session-ended': {
       if (typeof payload.intentional !== 'boolean') throw new Error('session-ended payload is missing "intentional"');
-      if (payload.spawnProgressLabel === undefined) {
-        return { type: 'session-ended', intentional: payload.intentional };
+      if (payload.spawnProgressLabel !== undefined && typeof payload.spawnProgressLabel !== 'string') {
+        throw new Error('session-ended payload has an invalid "spawnProgressLabel"');
       }
-      if (typeof payload.spawnProgressLabel !== 'string') throw new Error('session-ended payload has an invalid "spawnProgressLabel"');
-      return { type: 'session-ended', intentional: payload.intentional, spawnProgressLabel: payload.spawnProgressLabel };
+      if (payload.successorSessionId !== undefined && typeof payload.successorSessionId !== 'string') {
+        throw new Error('session-ended payload has an invalid "successorSessionId"');
+      }
+      return {
+        type: 'session-ended',
+        intentional: payload.intentional,
+        ...(payload.spawnProgressLabel !== undefined ? { spawnProgressLabel: payload.spawnProgressLabel } : {}),
+        ...(payload.successorSessionId !== undefined ? { successorSessionId: payload.successorSessionId } : {}),
+      };
+    }
+    case 'status': {
+      if (!isReadStreamSessionStatusWire(payload.status)) throw new Error('status payload has an invalid "status"');
+      if (typeof payload.resuming !== 'boolean') throw new Error('status payload is missing "resuming"');
+      return { type: 'status', status: payload.status, resuming: payload.resuming };
     }
     case 'message-preview': {
       if (typeof payload.text !== 'string') throw new Error('message-preview payload is missing "text"');

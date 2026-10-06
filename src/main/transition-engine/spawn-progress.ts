@@ -16,15 +16,16 @@ import { sendToRenderer } from '../ipc/send-to-renderer';
 //   Has worktree:       starting-agent (a base-drift probe may decorate it, see below)
 //   Cross-agent:        switching-agent → starting-agent → packaging-handoff → detecting-agent
 //   Restore from Done:  resuming → (whichever of the above the task needs)
+//   Resume button:      resuming → (whichever of the above the task needs)
 //   Model change:       switching-model → (whichever of the above the task needs)
 //   Effort respawn:     applying-settings → (whichever of the above the task needs)
 //   Session switch:     new-session → (whichever of the above the task needs)
 //   In-place restart:   switching-model | applying-settings | resending-command
 //                       (restartSessionForSettingsChange: no git work follows)
 //
-// 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE before any git
-// work, so the card is never silent while the lane resolves and the git op
-// queues. 'switching-model', 'switching-agent', 'applying-settings', and
+// 'resuming' is emitted by TASK_UNARCHIVE / TASK_BULK_UNARCHIVE and by
+// SESSION_RESUME (once it knows it will spawn) before any git work, so the
+// card is never silent while the lane resolves and the git op queues. 'switching-model', 'switching-agent', 'applying-settings', and
 // 'new-session' are emitted the same way by task-move.ts's Phase 1
 // suspend-for-respawn branches, before the suspend that would otherwise leave
 // the card reading a stale "Paused" for the whole unlocked Phase 2 window (see
@@ -157,6 +158,23 @@ export function onSpawnProgressTransition(listener: SpawnProgressTransitionListe
 }
 
 /**
+ * Fired on EVERY push, with the label exactly as the renderer receives it
+ * (staleness note applied), or null when the spawn clears. Unlike the
+ * transition listener above it does fire on a label-only change, and on a
+ * re-push of an unchanged label, so a listener that forwards labels elsewhere
+ * (the mobile bridge's spawn-progress feed) dedupes and throttles for itself.
+ * A TTL expiry in getInFlightSpawnProgress() is not a push and fires nothing.
+ */
+type SpawnProgressChangeListener = (taskId: string, label: string | null) => void;
+const spawnProgressChangeListeners = new Set<SpawnProgressChangeListener>();
+
+/** Subscribe to every spawn-progress label push. Returns an unsubscribe function. */
+export function onSpawnProgressChange(listener: SpawnProgressChangeListener): () => void {
+  spawnProgressChangeListeners.add(listener);
+  return () => spawnProgressChangeListeners.delete(listener);
+}
+
+/**
  * TTL safety net. Longer than any realistic worktree-create + fetch + agent
  * spawn (those are bounded by AbortControllers anyway); this only catches the
  * pathological "never cleared" case. Normal cleanup is clearSpawnProgress().
@@ -193,11 +211,13 @@ function pushSpawnProgress(mainWindow: BrowserWindow, taskId: string, label: str
   if (wasTracked !== isTracked) {
     for (const listener of spawnProgressTransitionListeners) listener(taskId, isTracked);
   }
+  const decoratedLabel = label === null ? null : decorateLabel(taskId, label);
+  for (const listener of spawnProgressChangeListeners) listener(taskId, decoratedLabel);
   // Through the recorded chokepoint, not a raw `webContents.send`: a label is
   // what tells a card and a paired phone that a suspend is a respawn rather
   // than a park, so when that goes wrong the IPC log is where the answer is
   // looked for, and a raw send left every spawn-progress push out of it.
-  sendToRenderer(mainWindow, IPC.TASK_SPAWN_PROGRESS, taskId, label === null ? null : decorateLabel(taskId, label));
+  sendToRenderer(mainWindow, IPC.TASK_SPAWN_PROGRESS, taskId, decoratedLabel);
 }
 
 /**

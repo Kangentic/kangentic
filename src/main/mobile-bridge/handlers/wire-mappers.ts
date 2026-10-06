@@ -298,7 +298,13 @@ export function toBoardColumnWire(swimlane: Swimlane): BoardColumnWire {
   };
 }
 
-export function toBoardTaskWire(task: Task): BoardTaskWire {
+/**
+ * `spawnProgressLabel` is the task's in-flight label from
+ * getInFlightSpawnProgress(), or null. Required rather than optional so every
+ * call site decides, and so a bare `.map(toBoardTaskWire)` (which would pass
+ * the array index here) fails to compile.
+ */
+export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null): BoardTaskWire {
   return {
     id: task.id,
     display_id: task.display_id,
@@ -321,6 +327,7 @@ export function toBoardTaskWire(task: Task): BoardTaskWire {
     archived_at: task.archived_at,
     created_at: task.created_at,
     updated_at: task.updated_at,
+    spawn_progress: spawnProgressLabel,
   };
 }
 

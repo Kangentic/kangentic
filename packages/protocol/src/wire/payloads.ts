@@ -85,6 +85,11 @@ export type ReadStreamSessionStatusWire = 'running' | 'queued' | 'suspended' | '
 
 const READ_STREAM_SESSION_STATUSES: readonly string[] = ['running', 'queued', 'suspended', 'exited'];
 
+/** True for a value that is one of the four session lifecycle statuses. */
+export function isReadStreamSessionStatusWire(value: unknown): value is ReadStreamSessionStatusWire {
+  return typeof value === 'string' && READ_STREAM_SESSION_STATUSES.includes(value);
+}
+
 /** Initial snapshot returned on subscribe; live updates arrive as TerminalEvent/ActivityEvent/TranscriptEvent. */
 export interface ReadStreamResponsePayload {
   scrollback: string;
@@ -109,9 +114,18 @@ export interface ReadStreamResponsePayload {
   ptyDimensions?: TerminalDimensionsWire;
   /**
    * The session's lifecycle status at snapshot time. Absent from
-   * pre-0.5.0 desktops; the phone then assumes 'running'.
+   * pre-0.5.0 desktops; the phone then assumes 'running'. Later changes for
+   * the same session id arrive as the `status` activity payload.
    */
   sessionStatus?: ReadStreamSessionStatusWire;
+  /**
+   * True when the desktop spawned this session as a resume of an earlier
+   * conversation. The desktop card then reads "Resuming agent..." where it
+   * would read "Starting agent...", for as long as a running session has no
+   * model name yet. Fixed for the life of a session id. Absent from pre-0.16.0
+   * desktops; read absent as false.
+   */
+  resuming?: boolean;
 }
 
 /** Phone-side narrowing of a read-stream subscribe response. Throws on a malformed required field. */
@@ -145,10 +159,14 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
     response.ptyDimensions = parseTerminalDimensionsWire(payload.ptyDimensions as JsonValue);
   }
   if (payload.sessionStatus !== undefined) {
-    if (typeof payload.sessionStatus !== 'string' || !READ_STREAM_SESSION_STATUSES.includes(payload.sessionStatus)) {
+    if (!isReadStreamSessionStatusWire(payload.sessionStatus)) {
       throw new Error('read-stream response has an invalid "sessionStatus"');
     }
-    response.sessionStatus = payload.sessionStatus as ReadStreamSessionStatusWire;
+    response.sessionStatus = payload.sessionStatus;
+  }
+  if (payload.resuming !== undefined) {
+    if (typeof payload.resuming !== 'boolean') throw new Error('read-stream response has an invalid "resuming"');
+    response.resuming = payload.resuming;
   }
   return response;
 }

@@ -12,9 +12,12 @@ import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
+import type { Task } from '../../../shared/types';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
+import type { SpawnProgressFeed } from '../spawn-progress-feed';
+import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
 import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
@@ -38,6 +41,7 @@ export async function handleReadBoard(
   session: BridgeSession,
   context: IpcContext,
   subscriptions: SubscriptionRegistry,
+  spawnProgressFeed: Pick<SpawnProgressFeed, 'onTaskSpawnProgressChanged'>,
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('read-board', request.payload);
 
@@ -72,6 +76,9 @@ export async function handleReadBoard(
   }
 
   const repos = getProjectRepos(context, projectId);
+  // Read once per response: each call also sweeps TTL-expired labels.
+  const spawnProgressByTaskId = getInFlightSpawnProgress();
+  const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null);
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot
   // and NOT subscribed: a board subscription re-snapshots on every board
@@ -89,18 +96,26 @@ export async function handleReadBoard(
     }
     const archivedPayload: ReadBoardArchivedResponsePayload = {
       projectId,
-      archivedTasks: page.tasks.map(toBoardTaskWire),
+      // A restore from Done labels the task ("Resuming session...") while
+      // its row is still archived.
+      archivedTasks: page.tasks.map(toTaskWire),
       archivedTotalCount: page.totalCount,
       summariesByTaskId,
     };
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(archivedPayload) };
   }
-  const allTasks = repos.tasks.list().map(toBoardTaskWire);
+  const allTasks = repos.tasks.list().map(toTaskWire);
 
   // A phone that names a `view` (protocol 0.9.0) gets only what it renders:
   // no backlog in either projection, and under 'sessions' only the tasks an
   // agent feed draws. A phone that names none gets the pre-0.9.0 payload
   // verbatim, backlog included.
+  //
+  // 'sessions' keeps a task with a spawn label in flight even while its
+  // session_id is null: a first start has no session yet, and a respawn nulls
+  // session_id (task-move.ts suspendLiveSessionForRespawn) for the whole gap
+  // the label describes, so the card would otherwise vanish exactly while it
+  // has something to say.
   const view = payload.view;
   const sessionTasksOnly = view === 'sessions';
   const backlog = view === undefined ? new BacklogRepository(getProjectDb(projectId)).list().map(toBacklogItemWire) : undefined;
@@ -108,7 +123,7 @@ export async function handleReadBoard(
   const responsePayload: ReadBoardResponsePayload = {
     projectId,
     columns: repos.swimlanes.list().map(toBoardColumnWire),
-    tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null) : allTasks,
+    tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null || typeof task.spawn_progress === 'string') : allTasks,
     ...(backlog !== undefined ? { backlog } : {}),
     projectColor: deriveProjectAccentColor(projectId),
     // The Layout "Ticket Numbers" setting travels with the snapshot so the
@@ -130,8 +145,24 @@ export async function handleReadBoard(
       payload: { change: event.change, ids: event.ids },
     });
   };
-  const unsubscribe = context.boardEvents.onBoardChanged(listener);
-  subscriptions.set(subscriptionKey, unsubscribe);
+  const unsubscribeBoard = context.boardEvents.onBoardChanged(listener);
+  // A spawn-progress label change reaches the phone as the same task-updated a
+  // row change does, so it re-reads `spawn_progress` from the next snapshot.
+  // The feed is throttled per task and kept off the board bus; see
+  // spawn-progress-feed.ts for both reasons.
+  const unsubscribeSpawnProgress = spawnProgressFeed.onTaskSpawnProgressChanged((changedProjectId, taskId) => {
+    if (changedProjectId !== projectId) return;
+    sendEvent(session, {
+      kind: 'board',
+      projectId,
+      taskId,
+      payload: { change: 'task-updated', ids: [taskId] },
+    });
+  });
+  subscriptions.set(subscriptionKey, () => {
+    unsubscribeBoard();
+    unsubscribeSpawnProgress();
+  });
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

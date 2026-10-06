@@ -8,6 +8,8 @@
  *  - createProgressCallback resolves known phases to labels and passes
  *    unknown strings (raw git progress) through verbatim.
  *  - getInFlightSpawnProgress() prunes TTL-expired entries on read.
+ *  - onSpawnProgressChange hears every push (decorated label, null on clear);
+ *    a TTL prune is not a push.
  *  - The map is updated even when the window is destroyed (it is the
  *    authoritative source of truth); only the IPC send is skipped.
  */
@@ -20,6 +22,7 @@ import {
   clearSpawnProgress,
   getInFlightSpawnProgress,
   onSpawnProgressTransition,
+  onSpawnProgressChange,
   setSpawnStaleNote,
   beginSpawnStaleProbe,
   touchSpawnStaleProbe,
@@ -238,6 +241,47 @@ describe('spawn-progress queryable map', () => {
 
     emitSpawnProgress(window, 'task-1', 'fetching');
     expect(events).toEqual([]);
+  });
+
+  it('onSpawnProgressChange fires on every push with the decorated label, and null on clear', () => {
+    const { window } = makeWindow();
+    const events: Array<[string, string | null]> = [];
+    const unsubscribe = onSpawnProgressChange((taskId, label) => events.push([taskId, label]));
+
+    emitSpawnProgress(window, 'task-1', 'fetching'); // first entry
+    emitSpawnProgress(window, 'task-1', 'starting-agent'); // label-only change
+    setSpawnStaleNote(window, 'task-1', 'base 3 behind'); // re-push with the note applied
+    emitSpawnWaiting(window, 'task-1', 2);
+    emitSpawnWaiting(window, 'task-1', 2); // an unchanged re-push still fires
+    clearSpawnProgress(window, 'task-1');
+
+    unsubscribe();
+    expect(events).toEqual([
+      ['task-1', 'Fetching latest...'],
+      ['task-1', 'Starting agent...'],
+      ['task-1', 'Starting agent... (base 3 behind)'],
+      ['task-1', 'Waiting (2 ahead) (base 3 behind)'],
+      ['task-1', 'Waiting (2 ahead) (base 3 behind)'],
+      ['task-1', null],
+    ]);
+  });
+
+  it('onSpawnProgressChange stops firing after unsubscribe, and a TTL expiry fires nothing', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const { window } = makeWindow();
+    const events: Array<[string, string | null]> = [];
+    const unsubscribe = onSpawnProgressChange((taskId, label) => events.push([taskId, label]));
+
+    nowSpy.mockReturnValue(0);
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    // Past the TTL: the read prunes the entry without a push.
+    nowSpy.mockReturnValue(10 * 60_000);
+    expect(getInFlightSpawnProgress()).toEqual({});
+    expect(events).toEqual([['task-1', 'Fetching latest...']]);
+
+    unsubscribe();
+    emitSpawnProgress(window, 'task-1', 'fetching');
+    expect(events).toEqual([['task-1', 'Fetching latest...']]);
   });
 
   it('updates the map even when the window is destroyed, but skips the IPC send', () => {

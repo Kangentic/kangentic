@@ -5,7 +5,7 @@ import {
   type ReadStreamResponsePayload,
   type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
-import type { ActivityReason, ActivityState, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatus, SessionUsage } from '../../../shared/types';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -138,13 +138,14 @@ async function probePromptOptions(context: IpcContext, sessionId: string): Promi
 
 function subscribeReadStream(
   sessionId: string,
-  taskId: string,
+  snapshotSession: Session,
   initialAwaitedPromptId: string | null,
   session: BridgeSession,
   context: IpcContext,
   subscriptions: SubscriptionRegistry,
   wantsTerminal: boolean,
 ): void {
+  const taskId = snapshotSession.taskId;
   // A session with no owning project (a Command Terminal session carries
   // none) has no transcript to stream. This used to open the database named
   // '' instead, which creates a stray `projects/.db` file.
@@ -160,6 +161,12 @@ function subscribeReadStream(
   let pendingUsage: SessionUsage | null = null;
   let usageFlushTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  // The snapshot already told the phone these; only a change is pushed.
+  let lastSentStatus: SessionStatus = snapshotSession.status;
+  let lastSentResuming = snapshotSession.resuming;
+  // A Command Terminal session belongs to no task, so no other session can
+  // be its successor.
+  const tracksSuccessor = taskId !== '' && snapshotSession.transient !== true;
 
   const flushUsage = (): void => {
     usageFlushTimer = null;
@@ -339,11 +346,11 @@ function subscribeReadStream(
     pushTranscriptIfChanged();
   };
 
-  // When the session exits, tear our own subscription down: nothing else
+  // When the session ends, tear our own subscription down: nothing else
   // removes these listeners until the device disconnects, so without this a
-  // long-lived phone connection would leak four listeners per session it ever
-  // streamed onto the singleton SessionManager. Before tearing down, tell the
-  // phone the session ended (with the deliberate-stop flag the session
+  // long-lived phone connection would leak its listeners for every session it
+  // ever streamed onto the singleton SessionManager. Before tearing down, tell
+  // the phone the session ended (with the deliberate-stop flag the session
   // manager's exit event carries) - the feed's last word, so the phone never
   // has to infer "over" from silence. The queued-removal exit path emits the
   // flag explicitly; the spawn-failure path emits no flag, and a spawn
@@ -363,8 +370,15 @@ function subscribeReadStream(
   // the 120s TTL sweeps it, so the label is a strong hint, not proof. See
   // the doc comment on ActivityEventPayload's session-ended variant in
   // @kangentic/protocol.
-  const onExit = (exitedSessionId: string, _exitCode: number, intentional?: boolean): void => {
-    if (exitedSessionId !== sessionId) return;
+  //
+  // A PTY exit is not the only end. A feed held on a session with no PTY (a
+  // paused row, which the phone's session list subscribes to like any other)
+  // never sees an 'exit': a resume spawns a NEW session id and the spawn flow
+  // drops the paused row without any event, and a removed paused row emits
+  // only 'session-removed'. Those paths end the feed here too, so it is not
+  // left silent with its listeners attached until the phone disconnects.
+  const endFeed = (ending: { intentional: boolean; successorSessionId?: string }): void => {
+    if (disposed) return;
     flushTerminal(); // push any last coalesced output before we stop listening
     // Same for the coalesced usage: the final token count of a finished turn
     // is the one number a user is most likely to look at.
@@ -380,11 +394,85 @@ function subscribeReadStream(
       taskId,
       payload: {
         type: 'session-ended',
-        intentional: intentional === true,
+        intentional: ending.intentional,
         ...(spawnProgressLabel ? { spawnProgressLabel } : {}),
+        ...(ending.successorSessionId ? { successorSessionId: ending.successorSessionId } : {}),
       },
     });
     subscriptions.remove(subscriptionKeyFor(sessionId));
+  };
+
+  const ownRowGone = (): boolean => context.sessionManager.getSession(sessionId) === undefined;
+
+  const onExit = (exitedSessionId: string, _exitCode: number, intentional?: boolean): void => {
+    if (exitedSessionId === sessionId) {
+      endFeed({ intentional: intentional === true });
+      return;
+    }
+    // A successor whose own spawn failed after the spawn flow dropped this
+    // row reports only 'exit' (spawn-failure-handler.ts), never a
+    // 'session-changed'. There is no live successor to name, but this feed's
+    // session is gone all the same.
+    if (tracksSuccessor && context.sessionManager.getSessionTaskId(exitedSessionId) === taskId && ownRowGone()) {
+      endFeed({ intentional: true });
+    }
+  };
+
+  const pushStatusIfChanged = (current: Session): void => {
+    if (current.status === lastSentStatus && current.resuming === lastSentResuming) return;
+    lastSentStatus = current.status;
+    lastSentResuming = current.resuming;
+    sendEvent(session, {
+      kind: 'activity',
+      sessionId,
+      taskId,
+      payload: { type: 'status', status: toReadStreamSessionStatusWire(current.status), resuming: current.resuming },
+    });
+  };
+
+  // 'session-changed' carries every status edge that keeps the session id:
+  // a queue promotion, a suspend (pushed before the PTY's exit, which then
+  // ends the feed), and the agent-absence sweep's 'exited'. It also fires
+  // with no status change (an agent session id captured, suspend's trailing
+  // emit), hence the dedupe. An 'exited' status does NOT end the feed: the
+  // PTY's 'exit' follows on every path that sets it (the exit handler emits
+  // it whatever the status already says), and onExit stays the one place
+  // session-ended is sent from for a PTY. The exception is
+  // announceSessionEnded after awaitExit gave up waiting, which emits no
+  // 'exit'; that feed keeps its listeners until the phone unsubscribes.
+  //
+  // Another session of the same task arriving while this feed's row is gone
+  // is a resume replacing a paused row (the spawn flow drops the paused
+  // sibling silently, then announces the new session). Keyed on "this row is
+  // gone" rather than on the newcomer's status: with the concurrency limit
+  // full, the newcomer first appears as 'queued' while the paused row still
+  // exists, and the row is only dropped when the newcomer is promoted.
+  const onSessionChanged = (changedSessionId: string, changedSession: Session): void => {
+    if (changedSessionId === sessionId) {
+      pushStatusIfChanged(changedSession);
+      return;
+    }
+    if (!tracksSuccessor || changedSession.taskId !== taskId || changedSession.transient === true) return;
+    if (!ownRowGone()) return;
+    endFeed({
+      intentional: true,
+      ...(changedSession.status !== 'exited' ? { successorSessionId: changedSessionId } : {}),
+    });
+  };
+
+  // A row removed outright (a paused task moved to To Do) announces itself
+  // only here. A running session's removal also lands here before its PTY's
+  // asynchronous 'exit', and every removal is a deliberate teardown.
+  //
+  // Coupling: the successor hop above depends on the spawn flow's sibling
+  // drain (session-spawn-flow.ts) dropping the paused row WITHOUT a
+  // 'session-removed'. If that drain starts emitting one, as
+  // session-replica-contract.md says every removal should, this listener ends
+  // the feed before the successor is registered, and the hop silently loses
+  // its successorSessionId. Whoever changes the drain keeps the hop working.
+  const onSessionRemoved = (removedSessionId: string): void => {
+    if (removedSessionId !== sessionId) return;
+    endFeed({ intentional: true });
   };
 
   // A list-only subscriber (a phone showing its session feed) discards PTY
@@ -404,6 +492,8 @@ function subscribeReadStream(
   context.sessionManager.on('usage', onUsage);
   context.sessionManager.on('event', onSessionEvent);
   context.sessionManager.on('exit', onExit);
+  context.sessionManager.on('session-changed', onSessionChanged);
+  context.sessionManager.on('session-removed', onSessionRemoved);
 
   subscriptions.set(subscriptionKeyFor(sessionId), () => {
     disposed = true; // parks any in-flight prompt-options probe so it never sends after teardown
@@ -414,6 +504,8 @@ function subscribeReadStream(
     context.sessionManager.off('usage', onUsage);
     context.sessionManager.off('event', onSessionEvent);
     context.sessionManager.off('exit', onExit);
+    context.sessionManager.off('session-changed', onSessionChanged);
+    context.sessionManager.off('session-removed', onSessionRemoved);
     if (terminalFlushTimer) clearTimeout(terminalFlushTimer);
     if (usageFlushTimer) clearTimeout(usageFlushTimer);
     if (transcriptTimer) clearTimeout(transcriptTimer);
@@ -535,15 +627,22 @@ export async function handleReadStream(
       subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
       throw serializeError;
     }
-    // The session can exit DURING that await. Registering the subscription
-    // then would be post-mortem: its own onExit teardown never fires (the
-    // exit already happened), so the listeners and the marker above would
-    // leak until the device disconnects - and the dead id would ride the
-    // terminal-streamed set into the renderer indefinitely.
-    if (!context.sessionManager.getSession(payload.sessionId)) {
-      subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
-      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
-    }
+  }
+  // Re-read the row now rather than trusting `liveSession`. The session can
+  // exit DURING the await above. Registering the subscription then would be
+  // post-mortem: its own onExit teardown never fires (the exit already
+  // happened), so the listeners and the marker above would leak until the
+  // device disconnects - and the dead id would ride the terminal-streamed set
+  // into the renderer indefinitely. And a queue promotion inside that await
+  // replaces the registry row (session-spawn-flow.ts), so `liveSession` can
+  // still say 'queued' while the registry says 'running'. The snapshot's
+  // status, and the baseline the live `status` push dedupes against, both
+  // come from this read. A list-only subscribe has no await, so this reads
+  // the same row it already had.
+  const snapshotSession = context.sessionManager.getSession(payload.sessionId);
+  if (!snapshotSession) {
+    subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
+    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
   }
   const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
   const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
@@ -566,10 +665,11 @@ export async function handleReadStream(
     awaitedPromptId,
     ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
     ...(ptyDimensions ? { ptyDimensions } : {}),
-    sessionStatus: toReadStreamSessionStatusWire(liveSession.status),
+    sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
+    resuming: snapshotSession.resuming,
   };
 
-  subscribeReadStream(payload.sessionId, liveSession.taskId, awaitedPromptId, session, context, subscriptions, wantsTerminal);
+  subscribeReadStream(payload.sessionId, snapshotSession, awaitedPromptId, session, context, subscriptions, wantsTerminal);
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }
