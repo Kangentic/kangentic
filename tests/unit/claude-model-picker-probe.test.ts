@@ -1337,6 +1337,46 @@ describe('the probe failure log line', () => {
       .filter((line) => line.startsWith('[model-picker-probe]'));
   }
 
+  let churnTimer: ReturnType<typeof setInterval> | undefined;
+
+  function stopChurn(): void {
+    if (churnTimer !== undefined) clearInterval(churnTimer);
+    churnTimer = undefined;
+  }
+
+  afterEach(() => {
+    stopChurn();
+  });
+
+  /**
+   * A fake CLI that paints `pickerLines` on Enter and, when `churnTrigger`
+   * arrives (Enter itself, or the first Arrow Down), repaints `churnLines`
+   * every 5 ms with a strictly increasing tick, so two reads never see the
+   * same frame and the screen cannot settle (alternating contents could
+   * coincide). The teardown's Esc stops it.
+   */
+  function installChurningPty(
+    pickerLines: string[],
+    churnTrigger: string,
+    churnLines: (tick: number) => string[],
+  ): FakePtyProcess {
+    return installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(repaint(pickerLines));
+        if (input === churnTrigger) {
+          let tick = 0;
+          stopChurn();
+          churnTimer = setInterval(() => {
+            tick += 1;
+            self.emitData(repaint(churnLines(tick)));
+          }, 5);
+        }
+        if (input === '\x1b') stopChurn();
+      },
+    );
+  }
+
   it('names the no-prompt stage and carries the screen tail, with paths and emails redacted', async () => {
     setShortTimeoutTimings();
     // The screen a Start-menu launch got before the TERM fix: the prompt drawn
@@ -1452,6 +1492,73 @@ describe('the probe failure log line', () => {
     expect(lines[0]).toMatch(/failed at input-not-echoed after \d+ ms \(timed out\)/);
   });
 
+  it('says the screen was blank, with no tail rows, when the CLI drew only whitespace', async () => {
+    setShortTimeoutTimings();
+    // Whitespace, not silence: the tail filter has to drop rows that hold only spaces.
+    installFakePty((self) => self.emitData('   \r\n   \r\n'));
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    const messageLines = lines[0].split('\n');
+    expect(messageLines).toHaveLength(2);
+    expect(messageLines[0]).toMatch(/^\[model-picker-probe\] failed at no-prompt after \d+ ms \(timed out\)$/);
+    expect(messageLines[1]).toBe('screen was blank');
+    expect(lines[0]).not.toContain('screen tail:');
+    expect(lines[0]).not.toContain('  | ');
+  });
+
+  // The write to the CLI throws once the input box has rendered. The run ends
+  // on the catch-all stage, and since `/model` was never submitted the
+  // teardown is the plain kill, with no Esc and no `/exit`.
+  describe('when writing /model to the CLI throws', () => {
+    it('names the error stage with the error name and message, and plain-kills', async () => {
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input) => {
+          if (input === '/model') throw new Error('pty write failed');
+        },
+        { echoModelCommand: false },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      expect(fake.killMock).toHaveBeenCalled();
+      // A graceful exit's `/exit` lands a type delay after the Esc. Absence
+      // cannot be polled for: give it a fixed budget.
+      await allowStrayWriteBudget();
+      expect(fake.writes).toEqual(['/model']);
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0].split('\n')[0]).toMatch(
+        /^\[model-picker-probe\] failed at error after \d+ ms \(Error: pty write failed\)$/,
+      );
+      // The input box was on screen when the write threw.
+      expect(lines[0]).toContain('screen tail:');
+      expect(lines[0]).toContain('❯ Try "how do I log an error?"');
+    });
+
+    it('names the error stage without the thrown text when the thrown value is not an Error', async () => {
+      const fake = installFakePty(
+        (self) => self.emitData(PROMPT_FRAME),
+        (input) => {
+          if (input === '/model') throw 'pty write rejected';
+        },
+        { echoModelCommand: false },
+      );
+
+      expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+      expect(fake.killMock).toHaveBeenCalled();
+      await allowStrayWriteBudget();
+      expect(fake.writes).toEqual(['/model']);
+      const lines = probeLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0].split('\n')[0]).toMatch(
+        /^\[model-picker-probe\] failed at error after \d+ ms \(non-Error thrown\)$/,
+      );
+      expect(lines[0]).not.toContain('pty write rejected');
+    });
+  });
+
   // Enter was sent, then something other than the picker answered. Whatever now
   // holds the keyboard would take the teardown's Esc and `/exit` Enter as its
   // answer, so these runs end on the plain kill with no further key.
@@ -1540,6 +1647,56 @@ describe('the probe failure log line', () => {
     });
   });
 
+  it('names the frame-not-settled stage when the picker keeps repainting until the deadline', async () => {
+    // The setter merges onto the defaults, not the shared beforeEach timings, so
+    // the fields this test needs are restated. settleIntervalMs stays well above
+    // the 5 ms repaint period, so the second read of the settle loop always
+    // follows a new frame.
+    setModelPickerProbeTimingsForTests({
+      pollIntervalMs: 2,
+      typeDelayMs: 2,
+      settleIntervalMs: 40,
+      overallTimeoutMs: 400,
+      exitGraceMs: 5,
+    });
+    const fake = installChurningPty(
+      ['  Select model', '  ❯ 1.  Default (recommended) ✔  Sonnet 5.5', '    2.  Sonnet 5.5               repaint 0'],
+      '\r',
+      (tick) => ['  Select model', '  ❯ 1.  Default (recommended) ✔  Sonnet 5.5', `    2.  Sonnet 5.5               repaint ${tick}`],
+    );
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split('\n')[0]).toMatch(
+      /^\[model-picker-probe\] failed at frame-not-settled after \d+ ms \(timed out\)$/,
+    );
+    // The run failed before the scroll: no Arrow Down.
+    expect(fake.writes).not.toContain(ARROW_DOWN);
+    // Enter was sent, so the teardown is the detached graceful exit.
+    await expectFallbackKill(fake);
+  });
+
+  it('names the no-rows stage with the frame count when the picker holds no numbered rows', async () => {
+    const fake = installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        // A full repaint, not `repaint`: the typed screen's lower rows must not linger.
+        if (input === '\r') self.emitData(asRepaint(['  Select model', '  Switch between Claude models.', '']));
+      },
+    );
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    // No row marker below, so no scroll: the settled first frame is the only one read.
+    expect(lines[0].split('\n')[0]).toMatch(
+      /^\[model-picker-probe\] failed at no-rows after \d+ ms \(1 frames read\)$/,
+    );
+    expect(fake.writes).not.toContain(ARROW_DOWN);
+    await expectFallbackKill(fake);
+  });
+
   it('logs a partial scan as scroll-incomplete', async () => {
     setFastScrollTimings();
     installStaticPickerPty(NEVER_ENDING_PICKER_LINES);
@@ -1550,6 +1707,41 @@ describe('the probe failure log line', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('returned a partial scan at scroll-incomplete');
     expect(lines[0]).toContain('40 presses, 2 models');
+  });
+
+  it('logs a partial scan whose scroll never settled as timed out, not as a press count', async () => {
+    // scrollSettleMs stays well above the 5 ms repaint period, as in the
+    // scrolling suite's unsettled-scroll test.
+    setModelPickerProbeTimingsForTests({
+      pollIntervalMs: 2,
+      typeDelayMs: 2,
+      settleIntervalMs: 5,
+      overallTimeoutMs: 400,
+      exitGraceMs: 5,
+      scrollSettleMs: 40,
+    });
+    const fake = installChurningPty(
+      NEVER_ENDING_PICKER_LINES,
+      ARROW_DOWN,
+      (tick) => [
+        '  Select model',
+        `    2.  Sonnet 5.5               churn ${tick}`,
+        '  ↓ 3.  Sonnet 5                 Efficient for routine tasks',
+        '     … +2 models',
+      ],
+    );
+
+    // The first frame alone is still returned: rows 1 to 3 of the picker.
+    const scan = await probeModelPickerModels('/usr/bin/claude');
+    expect(scan?.models).toEqual(PARTIAL_MODELS);
+    await expectFallbackKill(fake);
+    const lines = probeLines();
+    expect(lines).toHaveLength(1);
+    const headline = lines[0].split('\n')[0];
+    expect(headline).toMatch(
+      /^\[model-picker-probe\] returned a partial scan at scroll-incomplete after \d+ ms \(timed out, 2 models\)$/,
+    );
+    expect(headline).not.toContain('presses');
   });
 
   it('logs nothing for a complete scan', async () => {

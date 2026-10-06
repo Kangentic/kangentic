@@ -309,3 +309,60 @@ describe('config-store rememberDiscoveredModel reloads the agent list', () => {
     expect(agentsList).not.toHaveBeenCalled();
   });
 });
+
+// The reload `updateConfig` starts is fire-and-forget: it is neither awaited nor
+// returned, so a rejecting `agents.list` can never fail `updateConfig` itself. The
+// only observable symptom of a missing `.catch(() => undefined)` is Node's
+// 'unhandledRejection', so this block listens for that. It uses REAL timers on
+// purpose: `vi.useFakeTimers()` fakes `setImmediate`, which is how the macrotask
+// boundary below lets Node run its unhandled-rejection check.
+describe('config-store updateConfig survives a failed agent list reload', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves, keeps the list already shown, and raises no unhandled rejection when the reload rejects', async () => {
+    const alreadyShownAgent = makeClaudeAgentInfo(['claude-opus-4-8']);
+    const agentsList = vi.fn(async (_forceRefresh?: boolean): Promise<AgentDetectionInfo[]> => {
+      throw new Error('agent list failed');
+    });
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+    const alreadyShownList = [alreadyShownAgent];
+    useConfigStore.setState({ agentList: alreadyShownList, agentListLoaded: true });
+
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await expect(
+        useConfigStore.getState().updateConfig({
+          discoveredModelsByAgent: { claude: ['claude-opus-4-1-20250805'] },
+        }),
+      ).resolves.toBeUndefined();
+
+      // Cross a macrotask boundary so Node's unhandled-rejection check, which
+      // runs after the microtask queue drains, can fire before we assert on it.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+
+    // Positive controls: the write landed and the reload really was attempted
+    // (unforced), so the assertions below are about the failure path and not a
+    // reload that never ran.
+    expect(configSet).toHaveBeenCalledWith({
+      discoveredModelsByAgent: { claude: ['claude-opus-4-1-20250805'] },
+    });
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(agentsList.mock.calls[0][0]).toBeFalsy();
+
+    // The failed reload keeps the list the user already sees.
+    expect(useConfigStore.getState().agentList).toBe(alreadyShownList);
+    expect(useConfigStore.getState().agentListLoaded).toBe(true);
+
+    // The behavior under test: the rejection was swallowed, not left unhandled.
+    expect(unhandledRejections).toEqual([]);
+  });
+});
