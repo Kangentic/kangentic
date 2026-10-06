@@ -30,7 +30,7 @@ import type {
 } from '../../../shared/types';
 import { NO_SOURCE, sourceStatusOf, summaryStatusOf } from '../../../shared/index-summary';
 import { settingProps } from '../settings/settings-registry';
-import { formatBytes } from './PanelRow';
+import { formatBytes } from '../../lib/format-bytes';
 
 export interface IndexSourceLinesInput {
   index: KnowledgeGraphIndexSummary;

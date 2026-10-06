@@ -77,7 +77,7 @@ interface FileTreePanelProps {
 
 const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
   A: { icon: Plus, colorClass: 'text-green-400', label: 'Added' },
-  M: { icon: Pencil, colorClass: 'text-yellow-400', label: 'Modified' },
+  M: { icon: Pencil, colorClass: 'text-modified', label: 'Modified' },
   D: { icon: Minus, colorClass: 'text-red-400', label: 'Deleted' },
   R: { icon: ArrowRight, colorClass: 'text-blue-400', label: 'Renamed' },
   C: { icon: Copy, colorClass: 'text-blue-400', label: 'Copied' },
@@ -1020,35 +1020,46 @@ export function FileTreePanel({
       )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control
-          (single-select among 3 fixed options) rather than a dropdown. */}
+          (single-select among 3 fixed options) rather than a dropdown. Its
+          labels need ~172px at full padding; below a 200px rail (it gives
+          ground down to 160px, see RAIL_DEFAULT_WIDTH_CLAMP in ChangesPanel.tsx)
+          the padding and type step down so all three still fit. Budgeted for
+          DejaVu Sans, Linux's usual system-ui and ~12% wider than Segoe UI:
+          ~139px of 146px at the floor. flex-1 hands any spare width back as
+          padding, so the tight padding only shows when space is short. The query
+          container wraps this row alone: the row and history menus below are
+          `position: fixed` at the cursor, and nothing that can become their
+          containing block may sit above them. */}
       {scope && onScopeChange && (
-        <div className="px-2 py-1.5 border-b border-edge flex-shrink-0">
-          <div
-            role="radiogroup"
-            aria-label="Diff scope"
-            data-testid="changes-scope-select"
-            className="flex gap-0.5 rounded border border-edge-input bg-surface-hover p-0.5"
-          >
-            {SCOPE_OPTIONS.map((option) => {
-              const active = scope === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => onScopeChange(option.value)}
-                  data-testid={`changes-scope-${option.value}`}
-                  className={`flex-1 rounded px-2 py-1 text-xs transition-colors ${
-                    active
-                      ? 'bg-accent-emphasis text-accent-on font-medium'
-                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+        <div className="@container/file-tree flex-shrink-0">
+          <div className="px-1 @[200px]/file-tree:px-2 py-1.5 border-b border-edge">
+            <div
+              role="radiogroup"
+              aria-label="Diff scope"
+              data-testid="changes-scope-select"
+              className="flex gap-0.5 rounded border border-edge-input bg-surface-hover p-0.5"
+            >
+              {SCOPE_OPTIONS.map((option) => {
+                const active = scope === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => onScopeChange(option.value)}
+                    data-testid={`changes-scope-${option.value}`}
+                    className={`flex-1 whitespace-nowrap rounded px-0.5 py-1 text-[11px] transition-colors @[200px]/file-tree:px-2 @[200px]/file-tree:text-xs ${
+                      active
+                        ? 'bg-accent-emphasis text-accent-on font-medium'
+                        : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -1059,7 +1070,7 @@ export function FileTreePanel({
           the viewed count (its width transition is the live feedback; a restore
           paints once at the final width, so nothing replays). */}
       {/* Small-layout discipline: this row must hold ONE line at the rail's
-          220px minimum - every text span is nowrap, the counts are compact
+          160px floor - every text span is nowrap, the counts are compact
           numerals with the full sentences in tooltips, and the row clips
           (overflow-hidden) rather than wraps if extreme numbers exceed it.
           Rhythm: the +/- diffstat is a tight PAIR (gap-1, like the file rows)

@@ -211,4 +211,61 @@ test.describe('Changes panel: diff scope selector', () => {
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
+
+  test('on a narrow window the rail gives ground first, so the diff pane keeps its minimum', async () => {
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    const handle = page.locator('[data-testid="changes-tree-resize"]');
+    await page.locator('[data-swimlane-name="Code Review"]').locator('text=Scope Task').first().click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+    if (!(await page.locator('[data-testid="changes-file-tree"]').isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+    await handle.waitFor({ state: 'visible', timeout: 8000 });
+    // The drag test above stores a width for this task; the default is under test.
+    await handle.dblclick();
+
+    // Pin the panel row (the rail's flex container, which its clamp resolves
+    // against) instead of resizing the viewport: the task window keeps the
+    // geometry earlier tests gave it, so a viewport change alone moves nothing.
+    const setRowWidth = (width: string) => page.evaluate((value) => {
+      const row = document.querySelector('[data-testid="changes-tree-resize"]')!.parentElement as HTMLElement;
+      row.style.width = value;
+    }, width);
+    const measure = () => page.evaluate(() => {
+      const divider = document.querySelector('[data-testid="changes-tree-resize"]')!;
+      const rail = divider.previousElementSibling!.getBoundingClientRect();
+      const pane = divider.nextElementSibling!.getBoundingClientRect();
+      const scope = document.querySelector('[data-testid="changes-scope-select"]') as HTMLElement;
+      return { rail: Math.round(rail.width), pane: Math.round(pane.width), scopeFits: scope.scrollWidth <= scope.clientWidth + 1 };
+    });
+
+    try {
+      // 417px is the row the default 58%-wide window gives on a 1440px screen.
+      // The rail's 220px default used to leave the pane 193px of it.
+      await setRowWidth('417px');
+      await expect.poll(async () => (await measure()).pane).toBeGreaterThanOrEqual(239);
+      const squeezed = await measure();
+      expect(squeezed.rail).toBeLessThan(200);
+      expect(squeezed.scopeFits).toBe(true);
+
+      // Pressing the divider starts the drag where the rail already is. It used
+      // to seed the drag from the 220px constant and jump on the first frame.
+      await pressResizeHandle(page, '[data-testid="changes-tree-resize"]');
+      expect(Math.abs((await measure()).rail - squeezed.rail)).toBeLessThan(2);
+      await page.mouse.up();
+      await expect(handle).toHaveAttribute('data-resizing', 'false');
+      await handle.dblclick();
+
+      // Narrower still, the rail stops at its 160px floor and the pane pays the
+      // rest. All three scope labels have to fit at the floor.
+      await setRowWidth('370px');
+      await expect.poll(async () => (await measure()).rail).toBe(160);
+      expect((await measure()).scopeFits).toBe(true);
+    } finally {
+      await setRowWidth('');
+      await page.locator('[data-testid="changes-toggle"]').click();
+      await page.keyboard.press('Control+Shift+W');
+      await expect(dialog).not.toBeVisible({ timeout: 8000 });
+    }
+  });
 });

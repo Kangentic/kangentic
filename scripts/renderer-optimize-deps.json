@@ -8,5 +8,6 @@
   "monaco-editor", "monaco-editor/base/common/errors",
   "recharts",
   "three", "camera-controls",
-  "turndown", "turndown-plugin-gfm"
+  "turndown", "turndown-plugin-gfm",
+  "pixelmatch"
 ]

@@ -20,11 +20,16 @@ import { copyDiffSelection } from '../../../../utils/diff-clipboard';
 import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funnel';
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
 import { snapshotDiffViewer } from './diff-viewer-snapshot';
+import { ImageDiffView, type ImageCompareMode } from './ImageDiffView';
+import { statusHasModified, statusHasOriginal, type DiffImageContent } from './diff-content';
+import { imageKindForPath } from '../../../../../shared/image-preview';
 
 interface DiffViewerProps {
   original: string;
   modified: string;
   language: string;
+  /** Prepared image sides for a raster image or an SVG (see diff-content.ts), null for every other file. */
+  image: DiffImageContent | null;
   filePath: string;
   /** Path the displayed `original`/`modified` were fetched for, or null before
    *  the first content arrives. When it does not equal `filePath`, the props
@@ -72,7 +77,7 @@ interface DiffViewerProps {
 
 const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
   A: { label: 'Added', colorClass: 'text-green-400' },
-  M: { label: 'Modified', colorClass: 'text-yellow-400' },
+  M: { label: 'Modified', colorClass: 'text-modified' },
   D: { label: 'Deleted', colorClass: 'text-red-400' },
   R: { label: 'Renamed', colorClass: 'text-blue-400' },
   C: { label: 'Copied', colorClass: 'text-blue-400' },
@@ -99,6 +104,7 @@ export function DiffViewer({
   original,
   modified,
   language,
+  image,
   filePath,
   contentFilePath,
   scrollKey,
@@ -125,16 +131,44 @@ export function DiffViewer({
   // NEW content. `language` is the server-derived signal (diff-service maps
   // .md/.mdx/.markdown -> 'markdown'); a binary-flagged file is excluded because
   // it has no renderable text and its content pane shows the binary placeholder,
-  // not the preview. The diff shows by default and the toggle resets per file
-  // (see below), so every file opens on its diff.
+  // not the preview. An SVG gets the same toggle, previewing both sides as
+  // images (an SVG is text, so git does not flag it binary). The diff shows by
+  // default and the toggle resets per file (see below), so every file opens on
+  // its diff. The extension decides image-ness, not `language`: `.svg` and
+  // `.xml` both map to 'xml'.
+  const imageKind = imageKindForPath(filePath);
   const isMarkdown = language === 'markdown' && !binary;
-  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
-  const previewActive = isMarkdown && showMarkdownPreview;
+  const isPreviewableSvg = imageKind === 'svg' && !binary;
+  const [showPreview, setShowPreview] = useState(false);
+  const previewActive = (isMarkdown || isPreviewableSvg) && showPreview;
+
+  // The image view replaces the text diff for a raster image (no text form at
+  // all), for an SVG `.gitattributes` marks binary (no text diff to show), and
+  // for an SVG while previewing.
+  const imageViewActive = imageKind === 'raster' || (imageKind === 'svg' && (binary || previewActive));
+  // Every state that unmounts the Monaco DiffEditor. One flag feeds every
+  // consequence of that (ref cleanup, scroll re-arm, the copy key, the
+  // diff-only toolbar controls) so a new state cannot miss one.
+  const diffEditorHidden = binary || previewActive || imageViewActive;
+  // Not reset per file: stepping through a branch of screenshots keeps the
+  // chosen comparison. Never persisted, the way GitHub opens on 2-up each time.
+  const [imageCompareMode, setImageCompareMode] = useState<ImageCompareMode>('side-by-side');
+  const hasBothImageSides = statusHasOriginal(status) && statusHasModified(status);
+  // Decoding happens while fetching (diff-content.ts), so whether both sides
+  // are real images is known here. The overlay modes need both; without them
+  // the view shows Side by side, and the toolbar has to agree.
+  const decodedImageSideCount = image === null
+    ? 0
+    : [image.original, image.modified].filter((side) => side?.kind === 'image').length;
+  const showImageLayoutToggle = imageViewActive
+    && hasBothImageSides
+    && decodedImageSideCount > 0
+    && (imageCompareMode === 'side-by-side' || decodedImageSideCount < 2);
 
   // Blame gutter: off by default, toggled per file (reset below on file switch).
   const [blameOn, setBlameOn] = useState(false);
   const blameDecorationsRef = useRef<MonacoEditorNamespace.IEditorDecorationsCollection | null>(null);
-  const blameUnavailable = binary || status === 'D' || !blameEligible;
+  const blameUnavailable = binary || imageKind === 'raster' || status === 'D' || !blameEligible;
 
   // Reset the preview toggle and blame whenever the selected file changes, so
   // each file opens on its diff - like changeIndexRef / pendingRevealRef,
@@ -147,7 +181,7 @@ export function DiffViewer({
   const [previousFilePath, setPreviousFilePath] = useState(filePath);
   if (previousFilePath !== filePath) {
     setPreviousFilePath(filePath);
-    setShowMarkdownPreview(false);
+    setShowPreview(false);
     setBlameOn(false);
   }
 
@@ -400,7 +434,7 @@ export function DiffViewer({
   // commit; see the nav refs above.
   const scrollMemoryKey = makeDiffScrollKey(scrollKey, filePath);
   const scrollMemoryKeyRef = useRef(scrollMemoryKey);
-  const contentMatches = contentFilePath !== null && contentFilePath === filePath && !binary;
+  const contentMatches = contentFilePath !== null && contentFilePath === filePath && !diffEditorHidden;
   const contentMatchesRef = useRef(contentMatches);
   useLayoutEffect(() => {
     scrollMemoryKeyRef.current = scrollMemoryKey;
@@ -568,37 +602,46 @@ export function DiffViewer({
   // stale here.
   useEffect(() => {
     consumePendingReveal(false);
-  }, [scrollMemoryKey, contentFilePath, binary, consumePendingReveal]);
+  }, [scrollMemoryKey, contentFilePath, diffEditorHidden, consumePendingReveal]);
 
-  // The binary placeholder and the markdown preview both unmount the child
-  // DiffEditor, which disposes the editor before this parent effect runs. Drop
-  // the stale ref so nothing (the whitespace/collapse effects below, reachable
-  // from the Changes settings tab while previewing) touches a disposed editor;
-  // onMount repopulates it on remount.
+  // The binary placeholder, the markdown preview and the image view all unmount
+  // the child DiffEditor, which disposes the editor before this parent effect
+  // runs. Drop the stale ref so nothing (the whitespace/collapse effects below,
+  // reachable from the Changes settings tab while previewing) touches a disposed
+  // editor; onMount repopulates it on remount.
   useEffect(() => {
-    if (binary || previewActive) {
+    if (diffEditorHidden) {
       diffEditorRef.current = null;
       blameDecorationsRef.current = null;
     }
-  }, [binary, previewActive]);
+  }, [diffEditorHidden]);
 
-  // Leaving the preview mounts a brand-new DiffEditor for the same file. The
-  // per-file arm effect above is keyed on scrollMemoryKey, so it does not fire on
-  // a preview toggle - without this, the fresh editor would open at Monaco's
-  // default top instead of the file's remembered/first-change position. Re-arm the
-  // reveal on the true->false transition so onMount restores it, mirroring a file
-  // open. (Deliberately not saving the live scroll on the false->true transition:
-  // the DiffEditor's disposal fires a clamp-to-zero scroll event, which would
-  // poison the saved position.)
-  const previousPreviewActiveRef = useRef(previewActive);
+  // Coming back from a hidden editor (leaving a preview) mounts a brand-new
+  // DiffEditor for the same file. The per-file arm effect above is keyed on
+  // scrollMemoryKey, so it does not fire on a preview toggle - without this, the
+  // fresh editor would open at Monaco's default top instead of the file's
+  // remembered/first-change position. Re-arm the reveal on the true->false
+  // transition so onMount restores it, mirroring a file open. (Deliberately not
+  // saving the live scroll on the false->true transition: the DiffEditor's
+  // disposal fires a clamp-to-zero scroll event, which would poison the saved
+  // position.)
+  const previousDiffEditorHiddenRef = useRef(diffEditorHidden);
   useEffect(() => {
-    const wasPreviewActive = previousPreviewActiveRef.current;
-    previousPreviewActiveRef.current = previewActive;
-    if (wasPreviewActive && !previewActive) {
+    const wasHidden = previousDiffEditorHiddenRef.current;
+    previousDiffEditorHiddenRef.current = diffEditorHidden;
+    if (wasHidden && !diffEditorHidden) {
       pendingRevealRef.current = scrollMemoryKey;
       changeIndexRef.current = -1;
     }
-  }, [previewActive, scrollMemoryKey]);
+  }, [diffEditorHidden, scrollMemoryKey]);
+
+  // Rolling into a file that has no editor (an image, a binary) leaves nothing
+  // to land the first/last change on, and only an editor event consumes the
+  // request. Clear it here, or it would wait for the next text file the user
+  // CLICKS and jump that one to its first change instead of restoring its scroll.
+  useEffect(() => {
+    if (diffEditorHidden && !previewActive && pendingChangeFocus) onPendingChangeFocusConsumed?.();
+  }, [diffEditorHidden, previewActive, pendingChangeFocus, onPendingChangeFocusConsumed]);
 
   // Apply whitespace changes to the live editor so a toolbar or settings toggle
   // takes effect immediately, not just on the next file open.
@@ -678,10 +721,13 @@ export function DiffViewer({
   // Keyboard navigation: next/prev change, rolling into the adjacent file at a
   // boundary. Gated on the window being focused; capture phase so it beats the
   // embedded terminal. Also gated off while previewing markdown: the diff editor
-  // is unmounted then, so there are no line changes to navigate. Bound here
-  // because the diff editor owns the line changes.
-  useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
-  useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
+  // is unmounted then, so there are no line changes to navigate. The image view
+  // keeps the keys: with no editor, navigateChange rolls straight to the
+  // adjacent file, which is how a branch of screenshots is stepped through.
+  // Bound here because the diff editor owns the line changes.
+  const changeNavigationEnabled = isFocused && (!previewActive || imageViewActive);
+  useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: changeNavigationEnabled });
+  useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: changeNavigationEnabled });
   // Live combo strings for the nav-button tooltips ('' when unbound).
   const nextChangeCombo = useFormattedCombo('changes.nextChange');
   const prevChangeCombo = useFormattedCombo('changes.prevChange');
@@ -696,7 +742,7 @@ export function DiffViewer({
     if (diffEditor) copyDiffSelection(diffEditor);
   }, {
     capture: true,
-    enabled: isFocused && !previewActive,
+    enabled: isFocused && !diffEditorHidden,
     when: () => {
       const diffEditor = diffEditorRef.current;
       return !!diffEditor
@@ -779,29 +825,61 @@ export function DiffViewer({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-edge flex-shrink-0">
+      {/* Toolbar. The minimum height is what its 28px buttons give it (plus
+          padding and border), so a state that shows no buttons (an image in
+          Slider, Overlay or Diff, or an added image) does not shrink the row
+          and shift the pane up by 12px. */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-edge flex-shrink-0 min-h-[41px]">
         <FileCode size={12} className="text-fg-muted flex-shrink-0" />
-        <span className="text-xs text-fg-secondary truncate">{filePath}</span>
+        {/* min-w-0 lets a long path truncate instead of setting the row's
+            minimum width, which pushed a narrow pane past the window's edge. */}
+        <span className="text-xs text-fg-secondary truncate min-w-0">{filePath}</span>
         <span className={`text-xs ${statusConfig.colorClass} flex-shrink-0`}>{statusConfig.label}</span>
 
         <div className="ml-auto flex items-center gap-1">
           {/* Markdown files toggle between the diff and a rendered preview of the
-              new content. Only shown for markdown; while previewing, the diff-only
-              controls below are hidden since they do not apply to a rendered view. */}
-          {isMarkdown && (
+              new content, and SVGs between the diff and the image view. Only
+              shown for those; while previewing, the diff-only controls below
+              are hidden since they do not apply to a rendered view. */}
+          {(isMarkdown || isPreviewableSvg) && (
             <button
-              onClick={() => setShowMarkdownPreview((value) => !value)}
+              onClick={() => setShowPreview((value) => !value)}
               className={toolbarButtonClass(previewActive)}
-              title={previewActive ? 'Show diff' : 'Preview rendered markdown'}
+              title={isMarkdown
+                ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
+                : (previewActive ? 'Show text diff' : 'Preview image')}
               aria-pressed={previewActive}
-              data-testid="diff-markdown-preview"
+              data-testid={isMarkdown ? 'diff-markdown-preview' : 'diff-svg-preview'}
             >
               <Eye size={16} />
             </button>
           )}
 
-          {!previewActive && (
+          {/* The image view keeps only the layout toggle, and only where it
+              applies: Side by side with both images (the toggle stacks them). */}
+          {showImageLayoutToggle && (
+            <>
+              {isPreviewableSvg && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
+              <button
+                onClick={() => onViewModeChange('split')}
+                className={toolbarButtonClass(viewMode === 'split')}
+                title="Side by side"
+                data-testid="diff-view-split"
+              >
+                <Columns2 size={16} />
+              </button>
+              <button
+                onClick={() => onViewModeChange('inline')}
+                className={toolbarButtonClass(viewMode === 'inline')}
+                title="Stacked"
+                data-testid="diff-view-inline"
+              >
+                <Rows2 size={16} />
+              </button>
+            </>
+          )}
+
+          {!previewActive && !imageViewActive && (
             <>
               {isMarkdown && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
 
@@ -870,7 +948,24 @@ export function DiffViewer({
 
       {/* Editor area - Monaco stays mounted to avoid expensive re-initialization */}
       <div className="flex-1 min-h-0 relative" data-testid="diff-editor-area">
-        {binary ? (
+        {imageViewActive ? (
+          // Unlike Monaco, which keeps the previous file's text while the next
+          // loads, the image view waits for THIS file's content, so a previous
+          // image never paints under the new file's header.
+          contentFilePath === filePath && image !== null ? (
+            <ImageDiffView
+              image={image}
+              layout={viewMode}
+              mode={imageCompareMode}
+              onModeChange={setImageCompareMode}
+              scalable={imageKind === 'svg'}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            </div>
+          )
+        ) : binary ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center">
             <FileCode size={22} className="text-fg-disabled" />
             <span className="text-sm text-fg-muted">Binary file - cannot display diff</span>

@@ -2,7 +2,9 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { Loader2 } from 'lucide-react';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
-import type { GitDiffFileEntry, GitFileContentResult } from '../../../shared/types';
+import type { GitDiffFileEntry } from '../../../shared/types';
+// No Monaco in this module's graph, so the root chunk stays light.
+import { fetchDiffContent, type DiffContent } from '../../components/dialogs/task-detail/changes/diff-content';
 
 const ChangesFileDiffPane = lazy(() =>
   import('./ChangesFileDiffPane').then((module) => ({ default: module.ChangesFileDiffPane })),
@@ -11,7 +13,7 @@ const ChangesFileDiffPane = lazy(() =>
 /** Displayed file content paired with the path it was fetched for, mirroring
  *  ChangesPanel's DisplayedFileContent (DiffViewer's stale-content contract). */
 export interface DisplayedFileDiffContent {
-  result: GitFileContentResult;
+  result: DiffContent;
   filePath: string;
 }
 
@@ -64,7 +66,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   const runFetch = useCallback(async (seedEntry: GitDiffFileEntry | null) => {
     const generation = ++fetchGenerationRef.current;
     const applyContent = async (fileEntry: GitDiffFileEntry) => {
-      const result = await window.electronAPI.git.fileContent({
+      const result = await fetchDiffContent({
         worktreePath,
         projectPath,
         baseBranch,
@@ -73,7 +75,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
         oldPath: fileEntry.oldPath,
         scope,
         commitOid,
-      });
+      }, fileEntry.binary);
       if (generation !== fetchGenerationRef.current) return;
       setContent({ result, filePath });
       setLoadError(null);

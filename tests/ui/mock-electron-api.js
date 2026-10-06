@@ -3533,6 +3533,42 @@
         }
         return { original: '', modified: '', language: 'plaintext' };
       },
+      // Image bytes for the Changes panel's image view, mirroring
+      // DiffService.getImageContent. A fixture entry carries the bytes as
+      // `originalImageBase64` / `modifiedImageBase64`; `originalImageSize` /
+      // `modifiedImageSize` override the reported size, and a size over the
+      // 10 MB preview cap reports 'too-large' with no bytes, as main does. A
+      // side with no base64 reads 'unreadable', and bytes that start with the
+      // Git LFS pointer header read 'lfs-pointer'. Added/Untracked have no
+      // original side and Deleted has no modified side.
+      fileImage: async function (request) {
+        var IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+        var LFS_POINTER_PREFIX = 'version https://git-lfs.github.com/spec/';
+        var status = (request && request.status) || 'M';
+        var fixture = resolveGitDiffFixture(request);
+        var match = fixture && Array.isArray(fixture.files)
+          ? fixture.files.find(function (entry) { return entry.path === (request && request.filePath); })
+          : null;
+        function readSide(base64, sizeOverride) {
+          if (typeof sizeOverride === 'number' && sizeOverride > IMAGE_PREVIEW_MAX_BYTES) {
+            return { kind: 'too-large', size: sizeOverride };
+          }
+          if (!base64) return { kind: 'unreadable' };
+          var binary = atob(base64);
+          var bytes = new Uint8Array(binary.length);
+          for (var byteIndex = 0; byteIndex < binary.length; byteIndex++) bytes[byteIndex] = binary.charCodeAt(byteIndex);
+          if (binary.length <= 1024 && binary.indexOf(LFS_POINTER_PREFIX) === 0) {
+            return { kind: 'lfs-pointer', size: bytes.length };
+          }
+          return { kind: 'bytes', size: typeof sizeOverride === 'number' ? sizeOverride : bytes.length, bytes: bytes };
+        }
+        var needsOriginal = status !== 'A' && status !== 'U';
+        var needsModified = status !== 'D';
+        return {
+          original: needsOriginal ? readSide(match && match.originalImageBase64, match && match.originalImageSize) : null,
+          modified: needsModified ? readSide(match && match.modifiedImageBase64, match && match.modifiedImageSize) : null,
+        };
+      },
       subscribeDiff: function () {},
       unsubscribeDiff: function () {},
       // Test hook: fire a live diff-changed push to every registered listener

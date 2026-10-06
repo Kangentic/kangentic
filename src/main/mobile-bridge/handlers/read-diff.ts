@@ -69,6 +69,13 @@ export async function handleReadDiff(
     if (!entry) {
       return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such file in the diff: ${payload.filePath}` };
     }
+    // A binary file has no text to diff, and reading it as UTF-8 would ship a
+    // garbled decode of its bytes (megabytes for a screenshot) over the relay.
+    // The phone already knows the file is binary from the list entry.
+    if (entry.binary) {
+      const emptyPayload: DiffFileContentWire = { original: '', modified: '', language: 'plaintext' };
+      return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(emptyPayload) };
+    }
     const content = await service.getFileContent({
       worktreePath,
       projectPath: project.path,

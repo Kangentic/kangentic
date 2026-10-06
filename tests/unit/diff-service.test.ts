@@ -10,6 +10,8 @@ const mockGit = {
   diffSummary: vi.fn(),
   diff: vi.fn(),
   show: vi.fn(),
+  showBuffer: vi.fn(),
+  catFile: vi.fn(),
   raw: vi.fn(),
   status: vi.fn(),
 };
@@ -1129,6 +1131,146 @@ describe('DiffService', () => {
         expect(mockGit.raw).toHaveBeenCalledTimes(2);
         expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/b.ts']);
       });
+    });
+  });
+
+  // The image view's byte reader. Same per-scope revisions as getFileContent;
+  // what differs is that no side is ever decoded as text, and a side's size is
+  // checked before its bytes are read.
+  describe('getImageContent', () => {
+    const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+    const OVER_CAP = 10 * 1024 * 1024 + 1;
+    const baseInput = {
+      projectPath: '/project',
+      worktreePath: '/project/wt',
+      baseBranch: 'main',
+      filePath: 'img/a.png',
+    } as const;
+
+    /** Answers `cat-file -s <spec>` and `show <spec>` from one table keyed by object spec. */
+    function routeObjects(objects: Record<string, Buffer>): void {
+      mockGit.catFile.mockImplementation(async (args: string[]) => {
+        const bytes = objects[args[1]];
+        if (!bytes) throw new Error(`fatal: path does not exist: ${args[1]}`);
+        return `${bytes.length}\n`;
+      });
+      mockGit.showBuffer.mockImplementation(async (args: string[]) => {
+        const bytes = objects[args[0]];
+        if (!bytes) throw new Error(`fatal: path does not exist: ${args[0]}`);
+        return bytes;
+      });
+    }
+
+    function mockDiskFile(bytes: Buffer): void {
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: bytes.length } as never);
+      vi.mocked(fs.promises.readFile).mockResolvedValue(bytes as never);
+    }
+
+    it('working scope: original is the index blob, modified is read from disk with no encoding', async () => {
+      routeObjects({ ':img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'working' });
+
+      expect(mockGit.catFile).toHaveBeenCalledWith(['-s', ':img/a.png']);
+      expect(mockGit.showBuffer).toHaveBeenCalledWith([':img/a.png']);
+      expect(fs.promises.readFile).toHaveBeenCalledWith(expect.stringMatching(/img[/\\]a\.png$/));
+      expect(vi.mocked(fs.promises.readFile).mock.calls[0]).toHaveLength(1);
+      expect(result.original).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES });
+      expect(result.modified).toEqual({ kind: 'bytes', size: PNG_BYTES.length, bytes: PNG_BYTES });
+      expect(mockGit.show).not.toHaveBeenCalled();
+    });
+
+    it('staged scope: original is HEAD, modified is the index blob, nothing from disk', async () => {
+      routeObjects({ 'HEAD:img/a.png': PNG_BYTES, ':img/a.png': PNG_BYTES });
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'staged' });
+
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['HEAD:img/a.png']);
+      expect(mockGit.showBuffer).toHaveBeenCalledWith([':img/a.png']);
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+      expect(result.original?.kind).toBe('bytes');
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
+    it('branch scope (the default): original is the merge base', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/a.png']);
+      expect(result.original?.kind).toBe('bytes');
+    });
+
+    it('commit selection: both sides come from the commit and its parent, never disk', async () => {
+      mockGit.raw.mockResolvedValue('parent999\n');
+      routeObjects({ 'parent999:img/a.png': PNG_BYTES, 'commit123:img/a.png': PNG_BYTES });
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M', commitOid: 'commit123' });
+
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['parent999:img/a.png']);
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['commit123:img/a.png']);
+      expect(fs.promises.stat).not.toHaveBeenCalled();
+      expect(result.original?.kind).toBe('bytes');
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
+    it('rename: the original side reads from the old path', async () => {
+      routeObjects({ 'abc123:img/old.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'R', oldPath: 'img/old.png' });
+
+      expect(mockGit.showBuffer).toHaveBeenCalledWith(['abc123:img/old.png']);
+      expect(result.original?.kind).toBe('bytes');
+    });
+
+    it('Added and Untracked have no original side; Deleted has no modified side', async () => {
+      routeObjects({ 'abc123:img/a.png': PNG_BYTES });
+      mockDiskFile(PNG_BYTES);
+
+      const added = await service.getImageContent({ ...baseInput, status: 'A' });
+      const untracked = await service.getImageContent({ ...baseInput, status: 'U' });
+      const deleted = await service.getImageContent({ ...baseInput, status: 'D' });
+
+      expect(added.original).toBeNull();
+      expect(added.modified?.kind).toBe('bytes');
+      expect(untracked.original).toBeNull();
+      expect(deleted.modified).toBeNull();
+      expect(deleted.original?.kind).toBe('bytes');
+    });
+
+    it('a side over the 10 MB cap reports its size and is never read', async () => {
+      mockGit.catFile.mockResolvedValue(`${OVER_CAP}\n`);
+      vi.mocked(fs.promises.stat).mockResolvedValue({ size: OVER_CAP } as never);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result.original).toEqual({ kind: 'too-large', size: OVER_CAP });
+      expect(result.modified).toEqual({ kind: 'too-large', size: OVER_CAP });
+      expect(mockGit.showBuffer).not.toHaveBeenCalled();
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+    });
+
+    it('a Git LFS pointer in place of the image is reported as one', async () => {
+      const pointer = Buffer.from('version https://git-lfs.github.com/spec/v1\noid sha256:4d7a\nsize 12345\n');
+      routeObjects({ 'abc123:img/a.png': pointer });
+      mockDiskFile(PNG_BYTES);
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result.original).toEqual({ kind: 'lfs-pointer', size: pointer.length });
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
+    it('a failed read on either side is unreadable, not an exception', async () => {
+      mockGit.catFile.mockRejectedValue(new Error('fatal: bad object'));
+      vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M' });
+
+      expect(result).toEqual({ original: { kind: 'unreadable' }, modified: { kind: 'unreadable' } });
     });
   });
 });

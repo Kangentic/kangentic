@@ -1,7 +1,8 @@
 import simpleGit from 'simple-git';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult } from '../../shared/types';
+import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitImageContentResult, GitImageSide } from '../../shared/types';
+import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-preview';
 import { countFileLines } from './line-count/count-lines';
 import { lineCountClient } from './line-count/line-count-client';
 
@@ -385,65 +386,112 @@ export class DiffService {
 
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
     const git = simpleGit(this.gitDirectory);
-    const { baseBranch, filePath, status, oldPath, commitOid } = input;
-    const scope = input.scope ?? 'branch';
-    const language = inferLanguage(filePath);
-
-    const needsOriginal = status !== 'A' && status !== 'U';
-    const needsModified = status !== 'D';
-    const showPath = oldPath ?? filePath;
-
-    // Resolve the "original" (left) side per scope. The revision is joined with
-    // `:path`: '' yields ":path" (the staged/index blob), 'HEAD' yields
-    // "HEAD:path", and the merge-base yields "<base>:path". A commit selection
-    // overrides scope entirely: original is that commit's parent tree.
-    //   commit  -> <oid>^ (or the empty tree for a root commit)
-    //   working -> index   (vs working tree on disk)
-    //   staged  -> HEAD    (vs the index blob)
-    //   branch  -> base    (vs working tree on disk)
-    const resolveOriginalRevision = async (): Promise<string> => {
-      if (commitOid) return this.resolveParentRef(git, commitOid);
-      if (scope === 'working') return '';
-      if (scope === 'staged') return 'HEAD';
-      return this.getMergeBase(git, baseBranch);
-    };
-    // The "modified" (right) side reads from disk for working/branch, from the
-    // staged index blob for the staged scope, and from the commit tree itself
-    // (never disk) for a commit selection - history is immutable.
-    const modifiedFromIndex = !commitOid && scope === 'staged';
+    const language = inferLanguage(input.filePath);
+    const { needsOriginal, needsModified } = sidesForStatus(input.status);
 
     // Fetch original and modified in parallel - independent I/O whose overlap
     // cuts latency for modified files (the common case) by ~30-50%.
     const [original, modified] = await Promise.all([
-      needsOriginal
-        ? (async () => {
-            try {
-              const revision = await resolveOriginalRevision();
-              return await git.show([`${revision}:${showPath}`]);
-            } catch {
-              return '';
-            }
-          })()
-        : '',
-      needsModified
-        ? (async () => {
-            try {
-              if (commitOid) {
-                return await git.show([`${commitOid}:${filePath}`]);
-              }
-              if (modifiedFromIndex) {
-                return await git.show([`:${filePath}`]);
-              }
-              const workingDirectory = input.worktreePath ?? input.projectPath;
-              const absolutePath = path.join(workingDirectory, filePath);
-              return await fs.promises.readFile(absolutePath, 'utf-8');
-            } catch {
-              return '';
-            }
-          })()
-        : '',
+      needsOriginal ? readSideAsText(git, () => this.resolveOriginalSource(git, input)) : '',
+      needsModified ? readSideAsText(git, async () => resolveModifiedSource(input)) : '',
     ]);
 
     return { original, modified, language };
+  }
+
+  /**
+   * Both sides of a changed image as bytes, for the Changes panel's image
+   * view. Same per-scope revisions as {@link getFileContent}; only the readers
+   * differ. Each side's size is read first (`git cat-file -s` or `stat`), so a
+   * side over IMAGE_PREVIEW_MAX_BYTES is never read into memory or sent over IPC.
+   */
+  async getImageContent(input: GitFileContentInput): Promise<GitImageContentResult> {
+    const git = simpleGit(this.gitDirectory);
+    const { needsOriginal, needsModified } = sidesForStatus(input.status);
+
+    const [original, modified] = await Promise.all([
+      needsOriginal ? readSideAsImage(git, () => this.resolveOriginalSource(git, input)) : null,
+      needsModified ? readSideAsImage(git, async () => resolveModifiedSource(input)) : null,
+    ]);
+
+    return { original, modified };
+  }
+
+  /**
+   * Resolve the "original" (left) side per scope. The revision is joined with
+   * `:path`: '' yields ":path" (the staged/index blob), 'HEAD' yields
+   * "HEAD:path", and the merge-base yields "<base>:path". A commit selection
+   * overrides scope entirely: original is that commit's parent tree. A rename
+   * reads the left side from its old path.
+   *   commit  -> <oid>^ (or the empty tree for a root commit)
+   *   working -> index   (vs working tree on disk)
+   *   staged  -> HEAD    (vs the index blob)
+   *   branch  -> base    (vs working tree on disk)
+   */
+  private async resolveOriginalSource(git: ReturnType<typeof simpleGit>, input: GitFileContentInput): Promise<FileSideSource> {
+    const scope = input.scope ?? 'branch';
+    const showPath = input.oldPath ?? input.filePath;
+    let revision: string;
+    if (input.commitOid) revision = await this.resolveParentRef(git, input.commitOid);
+    else if (scope === 'working') revision = '';
+    else if (scope === 'staged') revision = 'HEAD';
+    else revision = await this.getMergeBase(git, input.baseBranch);
+    return { kind: 'revision', spec: `${revision}:${showPath}` };
+  }
+}
+
+/**
+ * Where one side of a changed file lives: a git object (`<rev>:<path>`, or
+ * `:<path>` for the index blob) or a file in the working tree.
+ */
+type FileSideSource =
+  | { kind: 'revision'; spec: string }
+  | { kind: 'disk'; absolutePath: string };
+
+/** Added and Untracked files have no original side; Deleted files have no modified side. */
+function sidesForStatus(status: GitDiffStatus): { needsOriginal: boolean; needsModified: boolean } {
+  return { needsOriginal: status !== 'A' && status !== 'U', needsModified: status !== 'D' };
+}
+
+/**
+ * The "modified" (right) side reads from disk for working/branch, from the
+ * staged index blob for the staged scope, and from the commit tree itself
+ * (never disk) for a commit selection - history is immutable.
+ */
+function resolveModifiedSource(input: GitFileContentInput): FileSideSource {
+  if (input.commitOid) return { kind: 'revision', spec: `${input.commitOid}:${input.filePath}` };
+  if ((input.scope ?? 'branch') === 'staged') return { kind: 'revision', spec: `:${input.filePath}` };
+  const workingDirectory = input.worktreePath ?? input.projectPath;
+  return { kind: 'disk', absolutePath: path.join(workingDirectory, input.filePath) };
+}
+
+/** Any failure (missing object, missing file, unresolvable merge base) reads as empty text. */
+async function readSideAsText(git: ReturnType<typeof simpleGit>, resolveSource: () => Promise<FileSideSource>): Promise<string> {
+  try {
+    const source = await resolveSource();
+    if (source.kind === 'revision') return await git.show([source.spec]);
+    return await fs.promises.readFile(source.absolutePath, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+async function readSideAsImage(git: ReturnType<typeof simpleGit>, resolveSource: () => Promise<FileSideSource>): Promise<GitImageSide> {
+  try {
+    const source = await resolveSource();
+    const size = source.kind === 'revision'
+      ? Number.parseInt((await git.catFile(['-s', source.spec])).trim(), 10)
+      : (await fs.promises.stat(source.absolutePath)).size;
+    if (!Number.isFinite(size)) return { kind: 'unreadable' };
+    if (size > IMAGE_PREVIEW_MAX_BYTES) return { kind: 'too-large', size };
+    // No encoding on either reader: the bytes must arrive untouched. Electron
+    // delivers a Buffer to the renderer as a Uint8Array.
+    const bytes = source.kind === 'revision'
+      ? await git.showBuffer([source.spec])
+      : await fs.promises.readFile(source.absolutePath);
+    if (isGitLfsPointer(bytes)) return { kind: 'lfs-pointer', size: bytes.length };
+    return { kind: 'bytes', size: bytes.length, bytes };
+  } catch {
+    return { kind: 'unreadable' };
   }
 }

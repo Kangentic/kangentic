@@ -43,7 +43,8 @@ const preConfig = `
     files: [
       { path: 'src/blamed.ts', status: 'M', insertions: 2, deletions: 1, original: 'line one\\nline two\\n', modified: 'line one\\nline two changed\\nline three\\n', language: 'typescript' },
       { path: 'assets/deleted.ts', status: 'D', insertions: 0, deletions: 3, original: 'gone\\n', modified: '', language: 'typescript' },
-      { path: 'assets/logo.png', status: 'M', insertions: 0, deletions: 0, binary: true, original: '', modified: '', language: 'plaintext' },
+      // A non-image binary: an image would open in the image view, which has no View options menu at all.
+      { path: 'assets/font.woff2', status: 'M', insertions: 0, deletions: 0, binary: true, original: '', modified: '', language: 'plaintext' },
     ],
     totalInsertions: 2,
     totalDeletions: 4,
@@ -251,7 +252,7 @@ test.describe('DiffViewer: blame gutter', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
 
-    await fileTree.locator('text=logo.png').click();
+    await fileTree.locator('text=font.woff2').click();
     await expect(await openBlameOption(page)).toBeDisabled();
     await closeViewOptions(page);
 
