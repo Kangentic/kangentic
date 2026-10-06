@@ -6,8 +6,16 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildProtectedPids, isInsideDirectory, normalizeDirectory, planReap, planReapDetailed, type ReapTaskScope } from '../../src/main/pty/process-tag/reap-plan';
-import type { ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
+import {
+  buildProtectedPids,
+  connectionQueryOf,
+  isInsideDirectory,
+  normalizeDirectory,
+  planReap,
+  planReapDetailed,
+  type ReapTaskScope,
+} from '../../src/main/pty/process-tag/reap-plan';
+import type { LocalConnectionRead, ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const OTHER_TASK = '0b1c2d3e-4f50-4617-8829-3a4b5c6d7e8f';
@@ -494,5 +502,274 @@ describe('planReapDetailed: what the report names', () => {
       scanned(2001, 1, { tag: null, environmentWithheld: true }),
     ]);
     expect(plan.roots.map((root) => [root.process.pid, root.taskId])).toEqual([[2001, TASK]]);
+  });
+});
+
+const OTHER_WORKTREE = `${PROJECT}/.kangentic/worktrees/task-2`;
+const OTHER_PROJECT = '/home/dev/other';
+const OUTER_TASK = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
+
+function connected(pairs: Array<[listenerPid: number, clientPid: number]>, listeningPids: number[]): LocalConnectionRead {
+  return { pairs: pairs.map(([listenerPid, clientPid]) => ({ listenerPid, clientPid })), listeningPids };
+}
+
+function withConnections(
+  processes: ScannedProcess[],
+  connections: LocalConnectionRead | undefined,
+  options: { liveRootPids?: number[]; reaped?: Map<string, ReapTaskScope>; keepIdentities?: Set<string>; signalledIdentities?: Set<string> } = {},
+) {
+  return planReapDetailed({
+    processes,
+    tasks: options.reaped ?? tasks(),
+    mainPid: MAIN_PID,
+    liveRootPids: options.liveRootPids ?? [],
+    caseInsensitivePaths: false,
+    connections,
+    keepIdentities: options.keepIdentities,
+    signalledIdentities: options.signalledIdentities,
+  });
+}
+
+const targetPidsOf = (plan: ReturnType<typeof withConnections>) => plan.targets.map((target) => target.pid).sort((left, right) => left - right);
+const keptOf = (plan: ReturnType<typeof withConnections>) => plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.taskId]);
+
+describe('planReapDetailed: a process other Kangentic work is connected to is shared', () => {
+  // 2001 listens in the task's worktree (an adb server the task's agent started).
+  const server = scanned(2001, 1, { tag: TASK });
+
+  it('keeps a listener a client carrying another task\'s tag is connected to', () => {
+    const plan = withConnections([
+      main,
+      server,
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+    ], connected([[2001, 3001]], [2001]));
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK]]);
+  });
+
+  it('keeps it for an untagged client under a live PTY: the user\'s Command Terminal', () => {
+    const plan = withConnections([
+      main,
+      scanned(1100, MAIN_PID, { workingDirectory: '/home/dev' }),
+      scanned(3000, 1100, { tag: null, workingDirectory: '/home/dev' }),
+      scanned(3001, 3000, { tag: null, workingDirectory: '/home/dev' }),
+      server,
+    ], connected([[2001, 3001]], [2001]), { liveRootPids: [3000] });
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK]]);
+  });
+
+  it('keeps it for a client that cleared the tag: the opt-out is someone\'s own work', () => {
+    const plan = withConnections([main, server, scanned(3001, 1, { tag: '', workingDirectory: '/home/dev' })], connected([[2001, 3001]], [2001]));
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK]]);
+  });
+
+  it('the incident: another task\'s adb command keeps the adb server, the server keeps the emulator, and the launcher is kept with its window', () => {
+    const processes = [
+      main,
+      // The pty host, and the other task's live session running `adb install`.
+      scanned(1100, MAIN_PID, { workingDirectory: '/home/dev' }),
+      scanned(3000, 1100, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      scanned(3001, 3000, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      // The reaped task's adb server: its launching client's cwd, no children.
+      server,
+      // The emulator launcher, and qemu under it with the emulator's window.
+      scanned(2010, 1, { tag: TASK }),
+      scanned(2011, 2010, { tag: TASK, role: 'visible-app' }),
+      scanned(2012, 2011, { tag: TASK, role: 'console-host', workingDirectory: '/windows' }),
+      scanned(2013, 2011, { tag: TASK }),
+      scanned(2014, 2011, { tag: TASK }),
+    ];
+    // Measured: the adb server is a client of qemu's adb port; qemu of netsimd's.
+    const plan = withConnections(processes, connected([[2001, 3001], [2011, 2001], [2014, 2011]], [2001, 2011, 2014]), { liveRootPids: [3000] });
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(plan.roots).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK], [2010, 'window', TASK]]);
+    expect([...plan.keptIdentities].sort()).toEqual(['2001:start-2001', '2010:start-2010']);
+  });
+
+  it('a headless emulator whose only client is that shared adb server is kept through it, and its launcher with it', () => {
+    const processes = [
+      main,
+      scanned(1100, MAIN_PID, { workingDirectory: '/home/dev' }),
+      scanned(3000, 1100, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      scanned(3001, 3000, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      server,
+      scanned(2010, 1, { tag: TASK }),
+      // `-no-window`: no role, so nothing protects it but the connection.
+      scanned(2011, 2010, { tag: TASK }),
+      scanned(2013, 2011, { tag: TASK }),
+    ];
+    // The emulator's pair comes first, so it is decided only once the adb server is.
+    const plan = withConnections(processes, connected([[2011, 2001], [2001, 3001]], [2001, 2011]), { liveRootPids: [3000] });
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK], [2010, 'shared', TASK]]);
+  });
+
+  it('kills a listener only the task\'s own processes are connected to, its kept window included (the agent\'s browser on its dev server)', () => {
+    expect(targetPidsOf(withConnections([main, server, scanned(2002, 1, { tag: TASK })], connected([[2001, 2002]], [2001]))))
+      .toEqual([2001, 2002]);
+    const plan = withConnections([
+      main,
+      server,
+      scanned(2050, 1, { tag: TASK, role: 'visible-app' }),
+      // The browser's network service holds the socket.
+      scanned(2051, 2050, { tag: TASK }),
+    ], connected([[2001, 2051]], [2001]));
+    expect(targetPidsOf(plan)).toEqual([2001]);
+    expect(keptOf(plan)).toEqual([[2050, 'window', TASK]]);
+  });
+
+  it('takes no evidence from Kangentic\'s own processes, such as the network service behind a Browser pane, whatever tag main carries', () => {
+    const networkService = scanned(1150, MAIN_PID, { tag: null, workingDirectory: '/home/dev' });
+    expect(targetPidsOf(withConnections([main, networkService, server], connected([[2001, 1150]], [2001])))).toEqual([2001]);
+    // Kangentic itself running from a task's terminal: main and its children carry that outer task's tag.
+    const outerMain = scanned(MAIN_PID, 900, { tag: OUTER_TASK, workingDirectory: '/home/dev' });
+    const outerNetworkService = scanned(1150, MAIN_PID, { tag: OUTER_TASK, workingDirectory: '/home/dev' });
+    expect(targetPidsOf(withConnections([outerMain, outerNetworkService, server], connected([[2001, 1150]], [2001])))).toEqual([2001]);
+  });
+
+  it('takes no evidence from an untagged client outside Kangentic: the user\'s own browser or Android Studio', () => {
+    expect(targetPidsOf(withConnections([main, server, scanned(4001, 1, { tag: null, workingDirectory: '/home/dev' })], connected([[2001, 4001]], [2001]))))
+      .toEqual([2001]);
+  });
+
+  it('takes no evidence from a client whose task this same reap ends', () => {
+    const reaped = tasks([
+      [TASK, { directories: [PROJECT], worktreePath: WORKTREE }],
+      [OTHER_TASK, { directories: [OTHER_PROJECT], worktreePath: null }],
+    ]);
+    const plan = withConnections([
+      main,
+      server,
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_PROJECT }),
+    ], connected([[2001, 3001]], [2001]), { reaped });
+    expect(targetPidsOf(plan)).toEqual([2001, 3001]);
+  });
+
+  it('kills an idle listener: nothing connected at the scan', () => {
+    expect(targetPidsOf(withConnections([main, server], connected([], [2001])))).toEqual([2001]);
+  });
+
+  it('spares only the listener: the tagged shell that started it, and a dev server beside it, still go', () => {
+    const plan = withConnections([
+      main,
+      scanned(2100, 1, { tag: TASK }),
+      scanned(2101, 2100, { tag: TASK }),
+      scanned(2102, 2100, { tag: TASK }),
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+    ], connected([[2101, 3001]], [2101, 2102]));
+    expect(targetPidsOf(plan)).toEqual([2100, 2102]);
+    expect(plan.roots.map((root) => root.process.pid)).toEqual([2100]);
+    expect(keptOf(plan)).toEqual([[2101, 'shared', TASK]]);
+  });
+
+  it('spares the whole subtree of a shared listener, a worker that accepted the connection included', () => {
+    const plan = withConnections([
+      main,
+      server,
+      scanned(2002, 2001, { tag: TASK }),
+      scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+    ], connected([[2001, 3001], [2002, 3001]], [2001]));
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2001, 'shared', TASK]]);
+  });
+});
+
+describe('planReapDetailed: a process whose every child is kept is kept too', () => {
+  const launcher = scanned(2010, 1, { tag: TASK });
+  const windowedChild = scanned(2011, 2010, { tag: TASK, role: 'visible-app' });
+
+  it('keeps a launcher that listens on nothing and whose only child is a window, and reports it in the window\'s place', () => {
+    const plan = withConnections([main, launcher, windowedChild], connected([], [2011]));
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(plan.roots).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2010, 'window', TASK]]);
+  });
+
+  it('keeps each launcher in a chain, and reports only the top', () => {
+    const plan = withConnections([
+      main,
+      launcher,
+      scanned(2020, 2010, { tag: TASK }),
+      scanned(2011, 2020, { tag: TASK, role: 'visible-app' }),
+    ], connected([], []));
+    expect(targetPidsOf(plan)).toEqual([]);
+    expect(keptOf(plan)).toEqual([[2010, 'window', TASK]]);
+  });
+
+  it('still stops a dev server that opened a window: it listens on its port', () => {
+    const plan = withConnections([main, scanned(2001, 1, { tag: TASK }), scanned(2002, 2001, { tag: TASK, role: 'visible-app' })], connected([], [2001]));
+    expect(targetPidsOf(plan)).toEqual([2001]);
+    expect(keptOf(plan)).toEqual([[2002, 'window', TASK]]);
+  });
+
+  it('still stops a launcher with a killable child beside the window', () => {
+    const plan = withConnections([main, launcher, windowedChild, scanned(2015, 2010, { tag: TASK })], connected([], []));
+    expect(targetPidsOf(plan)).toEqual([2010, 2015]);
+  });
+
+  it('still stops a launcher whose only child survives for another reason: its directory could not be read', () => {
+    expect(targetPidsOf(withConnections([main, launcher, scanned(2016, 2010, { tag: null, workingDirectory: null })], connected([], [])))).toEqual([2010]);
+  });
+
+  it('ignores a console host when it asks whether every child is kept', () => {
+    const plan = withConnections([
+      main,
+      launcher,
+      scanned(2012, 2010, { tag: TASK, role: 'console-host', workingDirectory: '/windows' }),
+      windowedChild,
+    ], connected([], []));
+    expect(targetPidsOf(plan)).toEqual([]);
+  });
+
+  it('keeps nothing for its children alone without a connection read, which is what tells a launcher from a dev server', () => {
+    expect(targetPidsOf(withConnections([main, launcher, windowedChild], undefined))).toEqual([2010]);
+  });
+});
+
+describe('planReapDetailed: what an earlier pass kept stays kept', () => {
+  it('blocks a kept identity and everything under it, and not a reused pid', () => {
+    const processes = [main, scanned(2001, 1, { tag: TASK }), scanned(2002, 2001, { tag: TASK })];
+    expect(targetPidsOf(withConnections(processes, connected([], [2001]), { keepIdentities: new Set(['2001:start-2001']) }))).toEqual([]);
+    expect(targetPidsOf(withConnections(processes, connected([], [2001]), { keepIdentities: new Set(['2001:start-old']) }))).toEqual([2001, 2002]);
+  });
+
+  it('never keeps a process an earlier pass signalled for its children alone: a shell that ignored SIGTERM still gets the force kill', () => {
+    // Pass 2: the shell survived SIGTERM, its dev server exited, and its only child left is the server pass 1 kept.
+    const processes = [main, scanned(2100, 1, { tag: TASK }), scanned(2101, 2100, { tag: TASK })];
+    const keepIdentities = new Set(['2101:start-2101']);
+    // Positive control: unsignalled, the shell would be kept as a launcher.
+    expect(targetPidsOf(withConnections(processes, connected([], [2101]), { keepIdentities }))).toEqual([]);
+    expect(targetPidsOf(withConnections(processes, connected([], [2101]), { keepIdentities, signalledIdentities: new Set(['2100:start-2100']) }))).toEqual([2100]);
+  });
+});
+
+describe('connectionQueryOf', () => {
+  it('asks about the task\'s processes as listeners, and as clients about what could be evidence, never Kangentic\'s own', () => {
+    const processes = [
+      scanned(MAIN_PID, 900, { tag: OUTER_TASK, workingDirectory: '/home/dev' }),
+      // Kangentic's network service, carrying the outer tag main carries.
+      scanned(1150, MAIN_PID, { tag: OUTER_TASK, workingDirectory: '/home/dev' }),
+      scanned(1100, MAIN_PID, { workingDirectory: '/home/dev' }),
+      // A live session, an untagged Command Terminal client under it.
+      scanned(3000, 1100, { tag: null, workingDirectory: '/home/dev' }),
+      scanned(3001, 3000, { tag: null, workingDirectory: '/home/dev' }),
+      // The reaped task's processes, one of them outside its directories.
+      scanned(2001, 1, { tag: TASK }),
+      scanned(2002, 2001, { tag: null, environmentUnreadable: true }),
+      scanned(2003, 1, { tag: TASK, workingDirectory: '/' }),
+      // Another task's process, a cleared tag, and an untagged stranger.
+      scanned(4001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE }),
+      scanned(4002, 1, { tag: '', workingDirectory: '/home/dev' }),
+      scanned(4003, 1, { tag: null, workingDirectory: '/home/dev' }),
+    ];
+    const query = connectionQueryOf({ processes, tasks: tasks(), mainPid: MAIN_PID, liveRootPids: [3000], caseInsensitivePaths: false });
+    expect(query.listeners.map((entry) => entry.pid).sort()).toEqual([2001, 2002, 2003]);
+    expect(query.clients.map((entry) => entry.pid).sort()).toEqual([2001, 2002, 2003, 3000, 3001, 4001, 4002]);
+  });
+
+  it('asks about nothing when no process is the reaped task\'s', () => {
+    expect(connectionQueryOf({ processes: [main, scanned(4001, 1, { tag: OTHER_TASK })], tasks: tasks(), mainPid: MAIN_PID, liveRootPids: [] }))
+      .toEqual({ listeners: [], clients: [] });
   });
 });

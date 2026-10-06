@@ -15,7 +15,14 @@ import {
   SURVIVOR_CHECK_MS,
   type TaggedReapTask,
 } from '../../src/main/pty/process-tag/tagged-reap';
-import { ScanStepError, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import {
+  ScanStepError,
+  type KillStrength,
+  type LocalConnectionRead,
+  type ProcessScan,
+  type ScannedProcess,
+  type TaggedProcessReader,
+} from '../../src/main/pty/process-tag/process-scan';
 import { DarwinTaggedProcessReader, type DarwinKernel, type DarwinProcessRow } from '../../src/main/pty/process-tag/darwin-reader';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
@@ -491,13 +498,14 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     [2001, procArgsRecord('/usr/local/bin/node', ['node', 'server.js'], [`KANGENTIC_TASK_ID=${TASK}`])],
   ]);
 
-  /** Main and one tagged process working in the project. */
+  /** Main and one tagged process working in the project, with no TCP sockets. */
   function fakeKernel(overrides: Partial<DarwinKernel> = {}): DarwinKernel {
     return {
       listPids: () => ROWS.map((row) => row.pid),
       processRow: (pid) => ROWS.find((row) => row.pid === pid) ?? null,
       workingDirectory: (pid) => (pid === 2001 ? PROJECT : null),
       procArgs: (pid) => RECORDS.get(pid) ?? null,
+      tcpSockets: () => [],
       ...overrides,
     };
   }
@@ -541,6 +549,118 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     });
     expect(runLsappinfo).not.toHaveBeenCalled();
     expect(signals).toEqual([]);
+  });
+
+  it('reports connection_list in the first pass when the socket read throws, and kills nothing', async () => {
+    const signals: number[] = [];
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel({ tcpSockets: () => { throw new Error('proc_pidfdinfo is not a function'); } }),
+      runLsappinfo: async () => '',
+      signal: (pid) => { signals.push(pid); },
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    expect(result).toEqual({
+      killedPids: [], unreadableCount: 0, failureReason: 'proc_pidfdinfo is not a function', failureCode: 'connection_list', failurePass: 'first', entries: [],
+    });
+    expect(signals).toEqual([]);
+  });
+});
+
+/** A fake reader that also answers `connections`, one read per call, in order; an Error is thrown. */
+class ConnectionReader extends FakeReader {
+  connectionCalls: Array<{ listeners: number[]; clients: number[] }> = [];
+
+  constructor(scans: ScannedProcess[][], private readonly reads: Array<LocalConnectionRead | Error>) {
+    super(scans);
+  }
+
+  async connections(listeners: readonly ScannedProcess[], clients: readonly ScannedProcess[]): Promise<LocalConnectionRead> {
+    this.connectionCalls.push({ listeners: listeners.map((entry) => entry.pid), clients: clients.map((entry) => entry.pid) });
+    const read = this.reads[Math.min(this.connectionCalls.length - 1, this.reads.length - 1)];
+    if (read instanceof Error) throw read;
+    return read;
+  }
+}
+
+describe('reapTaggedOnce with the connections another task holds', () => {
+  // 2001 listens in the task's worktree (an adb server the task started);
+  // 3001 is another task's client of it; 2002 is the task's own dev server.
+  const server = tagged(2001, TASK);
+  const otherTaskClient = tagged(3001, OTHER_TASK, 'start-3001', OTHER_PROJECT);
+  const devServer = tagged(2002, TASK);
+  const connected: LocalConnectionRead = { pairs: [{ listenerPid: 2001, clientPid: 3001 }], listeningPids: [2001, 2002] };
+  const idle: LocalConnectionRead = { pairs: [], listeningPids: [2001, 2002] };
+
+  it('reads after each scan, asks about the task\'s processes and the possible clients, and keeps the server through both passes', async () => {
+    const reader = new ConnectionReader([
+      [server, otherTaskClient, devServer],
+      // The dev server ignored SIGTERM; the client is still connected.
+      [server, otherTaskClient, devServer],
+      [server, otherTaskClient],
+    ], [connected]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.connectionCalls).toHaveLength(2);
+    expect(reader.connectionCalls[0].listeners.sort()).toEqual([2001, 2002]);
+    expect(reader.connectionCalls[0].clients.sort()).toEqual([2001, 2002, 3001]);
+    expect(reader.kills).toEqual([
+      { pid: 2002, startKey: 'start-2002', strength: 'graceful' },
+      { pid: 2002, startKey: 'start-2002', strength: 'force' },
+    ]);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}:${entry.reason}`)).toEqual(['2002:stopped:null', '2001:kept:shared']);
+  });
+
+  it('keeps what the first pass kept when the client\'s command ended inside the grace', async () => {
+    const reader = new ConnectionReader([
+      [server, otherTaskClient, devServer],
+      // 3001's command finished: in this scan the server is idle.
+      [server, devServer],
+      [server],
+    ], [connected, idle]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.filter((kill) => kill.pid === 2001)).toEqual([]);
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2002:graceful', '2002:force']);
+    expect(result.entries.find((entry) => entry.pid === 2001)).toMatchObject({ outcome: 'kept', reason: 'shared' });
+  });
+
+  it('reports connection_list in the second pass when the read throws there, lists what it signalled as not stopped, and runs no force pass', async () => {
+    const reader = new ConnectionReader([
+      [server, otherTaskClient, devServer],
+      [server, otherTaskClient, devServer],
+    ], [connected, new ScanStepError('connection_list', 'GetExtendedTcpTable failed with 87')]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(result).toMatchObject({ failureCode: 'connection_list', failurePass: 'second', failureReason: 'GetExtendedTcpTable failed with 87', killedPids: [2002] });
+    expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}`)).toEqual(['2002:failed', '2001:kept']);
+  });
+
+  it('reports connection_list in the first pass, and kills nothing, when the first read throws', async () => {
+    const reader = new ConnectionReader([[server, otherTaskClient, devServer]], [new ScanStepError('connection_list', 'net/tcp unreadable')]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(result).toEqual({
+      killedPids: [], unreadableCount: 0, failureReason: 'net/tcp unreadable', failureCode: 'connection_list', failurePass: 'first', entries: [],
+    });
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('still force-kills a shell that ignored SIGTERM when the only child it has left is the server pass 1 kept', async () => {
+    const shell = tagged(2100, TASK);
+    const shellServer = tagged(2101, TASK, 'start-2101', PROJECT, 2100);
+    const shellDevServer = tagged(2102, TASK, 'start-2102', PROJECT, 2100);
+    const reader = new ConnectionReader([
+      [shell, shellServer, shellDevServer, otherTaskClient],
+      // The dev server exited on SIGTERM; the shell did not.
+      [shell, shellServer, otherTaskClient],
+      [shellServer, otherTaskClient],
+    ], [{ pairs: [{ listenerPid: 2101, clientPid: 3001 }], listeningPids: [2101, 2102] }]);
+    await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2100:graceful', '2102:graceful', '2100:force']);
+  });
+
+  it('reads no connections when no process carries a reaped task\'s tag', async () => {
+    const reader = new ConnectionReader([[otherTaskClient]], [connected]);
+    await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.connectionCalls).toEqual([]);
   });
 });
 

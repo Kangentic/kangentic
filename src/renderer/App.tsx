@@ -952,6 +952,7 @@ export function App() {
           message: toast.message,
           variant: toast.variant,
           ...(toast.sticky ? { duration: 0 } : {}),
+          since: toast.since,
           action: {
             label: 'Review',
             onClick: () => useLeftoverProcessesStore.getState().openReport(report.id),

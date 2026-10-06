@@ -72,9 +72,32 @@ export interface ProcessScan {
 /**
  * A scan step a reader can name when it fails. `process_list`: the OS refused
  * the list of processes. `window_list`: the list of visible apps could not be
- * read (macOS `lsappinfo`).
+ * read (macOS `lsappinfo`). `connection_list`: the TCP connections between
+ * local processes could not be read.
  */
-export type ScanStepFailureCode = 'process_list' | 'window_list';
+export type ScanStepFailureCode = 'process_list' | 'window_list' | 'connection_list';
+
+/**
+ * One loopback TCP connection between two local processes: `clientPid` holds a
+ * connection to a port `listenerPid` listens on (or accepted it on). Pids
+ * only: a reader never returns an address or a port.
+ */
+export interface LocalConnection {
+  listenerPid: number;
+  clientPid: number;
+}
+
+/** What one read of the local TCP connections says, in pids only. */
+export interface LocalConnectionRead {
+  /** Each client connected to a port one of the listeners listens on. */
+  pairs: LocalConnection[];
+  /**
+   * The listeners asked about that hold a listening TCP socket, connected to
+   * or not. A process that listens does work of its own, so the reap never
+   * keeps it merely because every child it has is kept.
+   */
+  listeningPids: number[];
+}
 
 /**
  * A scan that failed at a step the reader names, so the reap reports the step
@@ -142,4 +165,14 @@ export interface TaggedProcessReader {
    * process it cannot read is absent from the map. Never throws.
    */
   describe(targets: readonly ScannedProcess[]): Promise<Map<number, string>>;
+  /**
+   * Which of `clients` holds an established loopback TCP connection to a port
+   * one of `listeners` listens on, and which of `listeners` listen at all
+   * (`local-connections.ts`). A reap reads it after each scan, so a process
+   * another task is using is kept as shared. The reader reads sockets only
+   * for these processes, and only as far as it needs to. Throws
+   * `ScanStepError('connection_list')` when the connections cannot be read at
+   * all; a process that exited mid-read is skipped.
+   */
+  connections?(listeners: readonly ScannedProcess[], clients: readonly ScannedProcess[]): Promise<LocalConnectionRead>;
 }

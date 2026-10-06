@@ -16,6 +16,12 @@
  * pass's kills ends the reap there, with no force pass, and the roots it
  * signalled are reported as not stopped.
  *
+ * Each plan also reads, right after its scan, which processes other Kangentic
+ * work holds a TCP connection to (`connectionQueryOf`, the reader's
+ * `connections`), and what the first plan left running stays running in the
+ * second (`keepIdentities`): a client command that ends inside the grace must
+ * not let the force pass kill the server it was using.
+ *
  * The result reports, per task, the top of each subtree it stopped and the
  * task's own processes it left running on purpose (a window, a tmux server, a
  * shared tool), each under a short label (`process-label.ts`). With stopping
@@ -36,15 +42,19 @@ import { isValidTaskTagValue } from './task-process-tag';
 import { isUsableReapRoot } from './task-directories';
 import {
   buildSafetyProtectedPids,
+  connectionQueryOf,
   isInsideDirectory,
   planReapDetailed,
+  processIdentity,
   subtreeOf,
   type KeptReason,
+  type ReapPlan,
   type ReapPlanInput,
   type ReapTaskScope,
 } from './reap-plan';
 import {
   ScanStepError,
+  type LocalConnectionRead,
   type ProcessScan,
   type ScannedProcess,
   type ScanStepFailureCode,
@@ -98,8 +108,9 @@ export interface LeftoverProcessEntry {
 /**
  * Why a reap gave up, as a fixed code. `reader_load`: koffi or an OS library
  * would not load. `empty_scan`: the scan listed no process at all, which is
- * never true (the host and main are always running). `process_list` and
- * `window_list`: a scan step the reader named failed (`ScanStepError`).
+ * never true (the host and main are always running). `process_list`,
+ * `window_list` and `connection_list`: a scan step the reader named failed
+ * (`ScanStepError`).
  * `reap_error`: anything else threw.
  */
 export type ReapFailureCode = 'reader_load' | 'empty_scan' | ScanStepFailureCode | 'reap_error';
@@ -201,8 +212,21 @@ async function describeSafely(reader: TaggedProcessReader, targets: readonly Sca
   }
 }
 
-function identityOf(scanned: ScannedProcess): string {
-  return `${scanned.pid}:${scanned.startKey}`;
+const identityOf = processIdentity;
+
+/**
+ * Plan from one scan, with the connections read right after it. A reader
+ * without `connections` contributes none, and a scan with nothing a reaped
+ * task runs reads nothing. A failed read throws
+ * `ScanStepError('connection_list')`, which fails the pass it is in.
+ */
+async function planWithConnections(reader: TaggedProcessReader, input: ReapPlanInput): Promise<ReapPlan> {
+  if (!reader.connections) return planReapDetailed(input);
+  const query = connectionQueryOf(input);
+  const connections: LocalConnectionRead = query.listeners.length > 0
+    ? await reader.connections(query.listeners, query.clients)
+    : { pairs: [], listeningPids: [] };
+  return planReapDetailed({ ...input, connections });
 }
 
 /**
@@ -310,7 +334,7 @@ export async function reapTaggedOnce(
     if (firstScan.processes.length === 0) {
       return { ...emptyReapResult(), failureReason: 'the process scan listed nothing', failureCode: 'empty_scan', failurePass: pass };
     }
-    const firstPlan = planReapDetailed(planInput(firstScan.processes));
+    const firstPlan = await planWithConnections(deps.reader, planInput(firstScan.processes));
     const labels = await describeSafely(deps.reader, [
       ...firstPlan.roots.map((root) => root.process),
       ...firstPlan.kept.map((kept) => kept.process),
@@ -345,7 +369,13 @@ export async function reapTaggedOnce(
     await wait(REAP_GRACE_MS);
     pass = 'second';
     const secondScan = requireProcesses(await deps.reader.scan());
-    const secondPlan = planReapDetailed(planInput(secondScan.processes));
+    // What the first plan left running on purpose stays running, whatever this
+    // scan reads, and what it asked to exit is never kept for its children alone.
+    const secondPlan = await planWithConnections(deps.reader, {
+      ...planInput(secondScan.processes),
+      keepIdentities: firstPlan.keptIdentities,
+      signalledIdentities: new Set(firstPlan.targets.map(processIdentity)),
+    });
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
 
     // What outlived even the force pass is reported as not stopped, under the

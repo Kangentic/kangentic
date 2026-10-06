@@ -99,6 +99,27 @@ export function formatRelativeTime(value: DateLike): string {
   return '';
 }
 
+const MINUTE_MS = 60 * 1000;
+
+/**
+ * How long before `now` a moment was: "just now" under a minute, then "37
+ * minutes ago", "2 hours ago", "yesterday". Whole units, rounded down, so a
+ * label that ticks once a minute never runs ahead of the clock. Unlike
+ * `formatRelativeTime` it never says "now" on its own, which after a link
+ * reads as an instruction.
+ */
+export function formatTimeAgo(value: DateLike, now: number = Date.now()): string {
+  const date = toDate(value);
+  if (!date) return '';
+  const elapsedMs = now - date.getTime();
+  if (elapsedMs < MINUTE_MS) return 'just now';
+  const formatter = getRelativeFormatter();
+  for (const { unit, unitMs } of RELATIVE_UNITS) {
+    if (elapsedMs >= unitMs) return formatter.format(-Math.floor(elapsedMs / unitMs), unit);
+  }
+  return '';
+}
+
 /** Elapsed duration between two instants, reusing the locale-neutral "1h 30m" format. */
 export function formatDurationBetween(start: DateLike, end: DateLike): string {
   const startDate = toDate(start);

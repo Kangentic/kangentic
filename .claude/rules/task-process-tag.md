@@ -43,17 +43,24 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 - **A kill needs the tag AND the task's directory, and nothing in `reap-plan.ts` may relax that.**
   In the host reap, a process is killed only when it carries the task's tag, works inside the task's project or
   worktree, nothing under it shows it is shared (a readable descendant without this task's tag, or
-  one working elsewhere), and it is not protected (Kangentic's tree, a held PTY, a visible app, a
-  tmux server, each with everything under them). A process whose directory cannot be read is never
+  one working elsewhere), no other Kangentic work holds a loopback TCP connection to a port it
+  listens on (a client under a live PTY, or one carrying another task's tag or a cleared one, or a
+  client spared as shared itself), and it is not protected (Kangentic's tree, a held PTY, a visible app, a
+  tmux server, each with everything under them). A process whose every child is kept is kept too,
+  unless it listens on a port itself or the first pass already signalled it. What the first pass
+  kept, the second pass keeps. A process
+  whose directory cannot be read is never
   killed. Do not add a kill path that skips any of these, and do not exempt processes by name: each
   protection rests on a measured mechanism (`docs/worktree-strategy.md`, "What the reap kills").
+  An untagged client outside Kangentic (the user's browser, Android Studio) is no evidence, by
+  decision: a dev server open in a browser tab must still stop at Done.
 - **On macOS a withheld orphan in the worktree is the task's.** SIP hides the environment of
   Apple's `CS_RESTRICT` tools from the kernel record, so the reap also kills a process whose
   environment was withheld, whose parent is `launchd`, and whose working directory is inside a
   reaped task's worktree. All four conditions, never fewer.
 - **The in-distro WSL reap applies the tag and the directory only.** A WSL task's processes run
   inside the distro, out of the host scan's sight, so `wsl-reap.ts` scans there itself and cannot
-  see the shared-subtree, visible-app or tmux signals. It runs only while the distro is running,
+  see the shared-subtree, connection, visible-app or tmux signals. It runs only while the distro is running,
   leaves out a task with a live or starting session (asked again just before the script runs),
   validates task ids before they enter the script text, and takes directories only as positional
   arguments. Do not interpolate a directory or any other caller value into the script. Its
@@ -82,6 +89,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the program's name and at most one more short name (an existing script's file or package name,
   the module after `-m`, or the first word of a title the process set). Do not widen the label to
   any other argument.
+- **A connection read returns pids only.** `connections` pairs listeners and clients inside the
+  reader (`local-connections.ts`) and returns `LocalConnectionRead`: the pairs and the listening
+  pids. No address or port leaves a reader or reaches a log. It never spawns a tool
+  (`GetExtendedTcpTable` on Windows, `/proc/net/tcp` and fd links on Linux, libproc on macOS).
 - **A failed reap reports a fixed code, never its text.** A reap or Stop that fails kills nothing
   after the failure: one that fails after its graceful pass skips the force pass and reports what
   it signalled as not stopped (an empty later scan is a failure too, never "all gone"). Main
@@ -90,7 +101,8 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   local logs: it can come from a scan. The one text that leaves is a `reader_load` error, path
   stripped, since it is about this install and not about a process.
 - **A reader names the scan step that failed by type, never by message.** It throws
-  `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`), and the
+  `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`,
+  `connection_list`), and the
   reap maps the type to that code. The pass a reap failed in (`failurePass`: `first`, `second`,
   `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
   returns the same code and pass (`StopProcessResult`), and main reports it as stage `stop`. A
@@ -104,7 +116,10 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 
 - **Test (plan):** `tests/unit/task-reap-plan.test.ts` pins every condition of a kill and every
   protection, with fixtures shaped like the processes measured on GitHub's Linux, macOS and
-  Windows runners (tmux, pm2, console hosts, visible apps, daemons that move away).
+  Windows runners (tmux, pm2, console hosts, visible apps, daemons that move away), and the
+  connection evidence and kept launchers measured on a developer's Windows machine (the adb
+  server, qemu, netsimd and the emulator launcher; which clients count; propagation; a listener
+  that is never kept for its children). `tests/unit/local-connections.test.ts` pins the pairing.
   `tests/unit/task-directories.test.ts` pins the roots that are never accepted.
 - **Test (wiring):** `tests/unit/session-leftover-reap-wiring.test.ts` pins the Done and
   `cleanupTaskSession` orderings (exit, then reap, then worktree removal), a Done move whose
@@ -126,17 +141,23 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   pins that no argument but the script, module or title word reaches a label.
   `tests/unit/leftover-process-reports.test.ts` pins one report per burst and that a Stop
   resolves only a minted id. `tests/unit/leftover-processes-copy.test.ts` and
-  `tests/ui/leftover-processes.spec.ts` pin the toast and the list.
+  `tests/ui/leftover-processes.spec.ts` pin the toast and the list. The same reap test pins that
+  each pass reads connections after its scan, and that the second pass keeps what the first kept
+  after the client's connection is gone.
 - **Test (Windows reader gates):** `tests/unit/win32-reader-gates.test.ts` runs the Windows
   reader on a fake API on every OS: no handle for another session's process, no
   `PROCESS_VM_READ` for another user's or an untagged one, a failed scan when the caller's own
   session or user cannot be read, a kill only through a handle whose creation time matches, and
   every handle closed. It also walks a 32-bit (WOW64) PEB laid out
   from Windows' own offsets, caps an environment read at 1 MiB whatever size the PEB claims, and
-  expands an 8.3 working directory.
+  expands an 8.3 working directory. It reads a fake TCP table laid out from iphlpapi's headers,
+  opening no process, and fails as `connection_list` when the call fails.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
-  the project, an opt-out child's parent, a tmux server, and under CI a visible app). CI's unit
+  the project, an opt-out child's parent, a tmux server, a server another task holds a TCP
+  connection to, and under CI a visible app). `task-process-readers.test.ts` reads real loopback
+  connections, a dual-stack listener included, and checks them against `ss`, `lsof` and
+  `netstat`. CI's unit
   tier runs it on Linux; `.github/workflows/task-reap-real-processes.yml` runs it on Linux with a
   display, macOS on Apple silicon and Intel, and Windows whenever `process-tag/` changes (not a
   required check). GitHub's macOS runners run with SIP off, so the redaction itself is never
@@ -145,8 +166,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `ps` and `lsof` on the same processes, so a wrong struct offset fails there; on Windows it runs
   the real Toolhelp listing.
 - **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load`,
-  `empty_scan`, the failing pass, and, over the macOS reader with a fake kernel, `window_list`
-  and `process_list`, and a Stop's code and pass (none for a refusal or a survivor);
+  `empty_scan`, `connection_list` in either pass, the failing pass, and, over the macOS reader
+  with a fake kernel, `window_list`, `process_list` and `connection_list`, and a Stop's code and
+  pass (none for a refusal or a survivor);
   `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
   fixed message, that no other failure's text reaches the event, and SessionManager's reports,
   the WSL one included. `tests/unit/wsl-reap-script-budget.test.ts` pins that a WSL reap whose

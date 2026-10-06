@@ -1,6 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import type { Toast } from '../../stores/toast-store';
+import { useNow } from '../../hooks/useNow';
+import { formatTimeAgo } from '../../lib/datetime';
+
+/** How often a toast's age re-reads the clock; it shows whole minutes. */
+const AGE_TICK_MS = 30_000;
+
+/**
+ * "37 minutes ago" for a toast's `since`, kept current while it is up. No
+ * hover title: the card is inert (see the root below), so one would never show.
+ */
+function ToastAge({ since }: { since: string }) {
+  const now = useNow(AGE_TICK_MS);
+  const age = formatTimeAgo(since, now);
+  if (!age) return null;
+  return (
+    <span data-testid="toast-age" className="ml-1 whitespace-nowrap text-xs text-fg-muted">
+      {age}
+    </span>
+  );
+}
 
 const variantStyles: Record<Toast['variant'], { border: string; accent: string }> = {
   info: { border: 'border-accent/50', accent: 'bg-accent' },
@@ -151,6 +171,7 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
               </button>
             </>
           )}
+          {toast.since && <>{' '}<ToastAge since={toast.since} /></>}
         </span>
 
         {toast.variant === 'error' && (

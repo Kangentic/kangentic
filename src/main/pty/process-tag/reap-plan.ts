@@ -23,6 +23,32 @@
  * setuid helper). So a child that cleared the tag (the documented opt-out) is
  * never killed through its parent; it saves the parent instead.
  *
+ * A process is spared the same way, with everything under it, when other
+ * Kangentic work holds a loopback TCP connection to a port it listens on
+ * (`connections`, read by the reader after each scan). A shared server is not
+ * always a parent: an adb server keeps the cwd of the client that started it,
+ * has no children, and every other client reaches it over TCP. The client
+ * counts when it runs under a live session's PTY (another task's agent, the
+ * user's Command Terminal), or carries a tag no task of this reap owns
+ * (another task's, or a cleared one), or is itself spared as shared: the adb
+ * server another task is using holds a connection to the emulator's adb port,
+ * so a headless emulator is spared through it. The reaped tasks' own
+ * processes are no evidence (the agent's own browser on its dev server), and
+ * neither are Kangentic's other processes (the network service behind a
+ * Browser pane), found by walking up to main without passing a live PTY, nor
+ * an untagged process outside Kangentic. Only the listener is spared, not the
+ * process above it: a tagged shell that started the server still goes.
+ *
+ * A process whose every child is kept is kept too (`keptAncestorPids`), unless
+ * it listens on a TCP port itself: an emulator launcher, which holds no socket
+ * (measured on Windows), whose only child is the emulator's window. Killing it
+ * frees nothing while the child runs, and the report would call a running app
+ * stopped. A dev server that opened a window listens on its port, so it is
+ * still stopped and the window kept. Only the ancestor's own pid is kept;
+ * everything under it already is. Without a connection read nothing tells the
+ * two apart, so the rule applies only with one, and never to a process an
+ * earlier pass of the same reap already signalled (`signalledIdentities`).
+ *
  * Protected, never killed, with everything under them:
  * - pids 0 to 4 (System, Idle, init),
  * - Kangentic's main process (and its ancestors, which are protected alone),
@@ -59,10 +85,11 @@
  * the root, as it does under a tagged one.
  */
 
-import type { ScannedProcess } from './process-scan';
+import type { LocalConnectionRead, ScannedProcess } from './process-scan';
 
 const LOWEST_KILLABLE_PID = 4;
 const LAUNCHD_PID = 1;
+const MAX_TREE_DEPTH = 64;
 
 /** Where one reaped task's processes work. */
 export interface ReapTaskScope {
@@ -83,6 +110,31 @@ export interface ReapPlanInput {
   liveRootPids: readonly number[];
   /** Compare paths without regard to case. True on Windows and macOS. */
   caseInsensitivePaths?: boolean;
+  /**
+   * Loopback TCP connections among the processes `connectionQueryOf` names,
+   * and which of them listen, read after the same scan. Absent: no
+   * connection is evidence, and no process is kept for its children alone.
+   */
+  connections?: LocalConnectionRead;
+  /**
+   * Identities (`processIdentity`) an earlier plan of the same reap left
+   * running on purpose (`ReapPlan.keptIdentities`). They stay running, with
+   * everything under them, however this scan reads: a client's command can
+   * end inside the grace, and the force pass must not kill a server the first
+   * pass kept and never signalled.
+   */
+  keepIdentities?: ReadonlySet<string>;
+  /**
+   * Identities an earlier plan of the same reap asked to exit. One is never
+   * kept for its children alone: a shell that ignored SIGTERM, whose only
+   * child left is a spared server, still gets the force kill.
+   */
+  signalledIdentities?: ReadonlySet<string>;
+}
+
+/** A process's identity across scans: its pid and the start key that pid had. */
+export function processIdentity(scanned: ScannedProcess): string {
+  return `${scanned.pid}:${scanned.startKey}`;
 }
 
 /**
@@ -121,6 +173,12 @@ function isInsideAny(directory: string | null | undefined, roots: readonly strin
 function isRealChild(parent: ScannedProcess, child: ScannedProcess): boolean {
   if (parent.startedAtMs === null || child.startedAtMs === null) return true;
   return child.startedAtMs >= parent.startedAtMs;
+}
+
+function indexByPid(processes: readonly ScannedProcess[]): Map<number, ScannedProcess> {
+  const byPid = new Map<number, ScannedProcess>();
+  for (const scanned of processes) byPid.set(scanned.pid, scanned);
+  return byPid;
 }
 
 function indexChildren(processes: readonly ScannedProcess[]): Map<number, ScannedProcess[]> {
@@ -189,8 +247,7 @@ export function buildProtectedPids(input: Pick<ReapPlanInput, 'processes' | 'mai
 }
 
 function protectedPidsOf(input: Pick<ReapPlanInput, 'processes' | 'mainPid' | 'liveRootPids'>, includeRoles: boolean): Set<number> {
-  const byPid = new Map<number, ScannedProcess>();
-  for (const scanned of input.processes) byPid.set(scanned.pid, scanned);
+  const byPid = indexByPid(input.processes);
   const children = indexChildren(input.processes);
   const protectedPids = new Set<number>([input.mainPid, ...input.liveRootPids]);
 
@@ -299,6 +356,13 @@ export interface ReapPlan {
    * PTYs are never here.
    */
   kept: Array<ReportedProcess & { reason: KeptReason }>;
+  /**
+   * Everything this plan left running on purpose, by `processIdentity`: what
+   * it spared as shared, with everything under it, and each process kept
+   * because all its children were. The next plan of the same reap takes it
+   * as `keepIdentities`.
+   */
+  keptIdentities: ReadonlySet<string>;
 }
 
 /** The processes a reap kills, from one scan. */
@@ -309,7 +373,7 @@ export function planReap(input: ReapPlanInput): ScannedProcess[] {
 /** Walk `scanned`'s real ancestors, nearest first. */
 function* ancestorsOf(scanned: ScannedProcess, byPid: Map<number, ScannedProcess>): Generator<ScannedProcess> {
   let cursor = scanned;
-  for (let depth = 0; depth < 64; depth += 1) {
+  for (let depth = 0; depth < MAX_TREE_DEPTH; depth += 1) {
     const parent = byPid.get(cursor.ppid);
     if (!parent || parent.pid === cursor.pid || !isRealChild(parent, cursor)) return;
     yield parent;
@@ -317,22 +381,105 @@ function* ancestorsOf(scanned: ScannedProcess, byPid: Map<number, ScannedProcess
   }
 }
 
-/** What a reap kills from one scan, and what it reports as stopped and as left running. */
-export function planReapDetailed(input: ReapPlanInput): ReapPlan {
-  if (input.tasks.size === 0) return { targets: [], roots: [], kept: [] };
+/**
+ * Kangentic's own processes that are not session work: main and everything
+ * under it except what runs under a live PTY (the network service behind a
+ * Browser pane, the pty host). A connection from one is no evidence, whatever
+ * tag main carries.
+ */
+function kangenticOwnPids(
+  input: Pick<ReapPlanInput, 'mainPid'>,
+  byPid: Map<number, ScannedProcess>,
+  children: Map<number, ScannedProcess[]>,
+  liveSessionPids: ReadonlySet<number>,
+): Set<number> {
+  const own = new Set<number>();
+  const main = byPid.get(input.mainPid);
+  if (main) collectSubtree(main, children, own, liveSessionPids);
+  return own;
+}
+
+/** Every live PTY root and everything under it. */
+function liveSessionPidsOf(input: Pick<ReapPlanInput, 'liveRootPids'>, byPid: Map<number, ScannedProcess>, children: Map<number, ScannedProcess[]>): Set<number> {
+  const live = new Set<number>();
+  for (const pid of input.liveRootPids) {
+    const root = byPid.get(pid);
+    if (root) collectSubtree(root, children, live);
+  }
+  return live;
+}
+
+/**
+ * Whose sockets a reap reads after a scan (`TaggedProcessReader.connections`).
+ * Listeners: every process carrying a reaped task's tag, every macOS withheld
+ * orphan a reap could kill, and everything under them, never a protected one.
+ * Clients: what could be evidence (a process under a live PTY, one carrying
+ * another task's tag or a cleared one) and the listeners themselves, since a
+ * listener spared as shared is evidence for the next. Kangentic's own
+ * processes are left out: they are never evidence. No listener: no read.
+ */
+export function connectionQueryOf(input: ReapPlanInput): { listeners: ScannedProcess[]; clients: ScannedProcess[] } {
+  if (input.tasks.size === 0) return { listeners: [], clients: [] };
   const caseInsensitive = input.caseInsensitivePaths ?? true;
   const protectedPids = buildProtectedPids(input);
   const children = indexChildren(input.processes);
+  const byPid = indexByPid(input.processes);
+  const reapedTaskIds = new Set(input.tasks.keys());
+  const listenerPids = new Set<number>();
+  for (const scanned of input.processes) {
+    if (protectedPids.has(scanned.pid) || listenerPids.has(scanned.pid)) continue;
+    const reapedTag = scanned.tagValue !== null && reapedTaskIds.has(scanned.tagValue);
+    if (reapedTag || rootScope(scanned, input, caseInsensitive)?.taskId === null) {
+      collectSubtree(scanned, children, listenerPids, protectedPids);
+    }
+  }
+  if (listenerPids.size === 0) return { listeners: [], clients: [] };
+  const liveSessionPids = liveSessionPidsOf(input, byPid, children);
+  const kangenticPids = kangenticOwnPids(input, byPid, children, liveSessionPids);
+  const clientPids = new Set<number>([...listenerPids, ...liveSessionPids]);
+  for (const scanned of input.processes) {
+    if (scanned.tagValue !== null && !reapedTaskIds.has(scanned.tagValue) && !kangenticPids.has(scanned.pid)) clientPids.add(scanned.pid);
+  }
+  return {
+    listeners: input.processes.filter((scanned) => listenerPids.has(scanned.pid)),
+    clients: input.processes.filter((scanned) => clientPids.has(scanned.pid)),
+  };
+}
+
+/** The order a kept ancestor takes its reason from its kept children in. */
+const KEPT_REASON_ORDER: readonly KeptReason[] = ['window', 'multiplexer', 'shared'];
+
+/** What a reap kills from one scan, and what it reports as stopped and as left running. */
+export function planReapDetailed(input: ReapPlanInput): ReapPlan {
+  if (input.tasks.size === 0) return { targets: [], roots: [], kept: [], keptIdentities: new Set() };
+  const caseInsensitive = input.caseInsensitivePaths ?? true;
+  const protectedPids = buildProtectedPids(input);
+  const children = indexChildren(input.processes);
+  const byPid = indexByPid(input.processes);
   const reapedTaskIds = new Set(input.tasks.keys());
   const roots: Array<{ scanned: ScannedProcess; scope: readonly string[]; taskId: string | null; ownerTaskId: string }> = [];
   const sharedRoots: ReportedProcess[] = [];
-  // First pass: a shared root shields its whole subtree, including the task's
-  // own processes under it (pm2 would restart an app killed under its daemon).
+  // The task each kill root belongs to, shared or not, so a process under one
+  // is reported under that task.
+  const rootTaskByPid = new Map<number, string>();
   const sparedPids = new Set<number>();
+  // What an earlier plan of this reap left running stays running.
+  const keptEarlier = new Set<number>();
+  if (input.keepIdentities && input.keepIdentities.size > 0) {
+    for (const scanned of input.processes) {
+      if (!protectedPids.has(scanned.pid) && input.keepIdentities.has(processIdentity(scanned))) {
+        collectSubtree(scanned, children, keptEarlier, protectedPids);
+      }
+    }
+    for (const pid of keptEarlier) sparedPids.add(pid);
+  }
+  // First: a shared root shields its whole subtree, including the task's own
+  // processes under it (pm2 would restart an app killed under its daemon).
   for (const scanned of input.processes) {
-    if (protectedPids.has(scanned.pid)) continue;
+    if (protectedPids.has(scanned.pid) || keptEarlier.has(scanned.pid)) continue;
     const root = rootScope(scanned, input, caseInsensitive);
     if (!root) continue;
+    rootTaskByPid.set(scanned.pid, root.ownerTaskId);
     if (isShared(scanned, children, protectedPids, root.scope, root.taskId, reapedTaskIds, caseInsensitive)) {
       collectSubtree(scanned, children, sparedPids, protectedPids);
       sharedRoots.push({ process: scanned, taskId: root.ownerTaskId });
@@ -340,8 +487,18 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
       roots.push({ scanned, ...root });
     }
   }
-  const blockedPids = new Set([...protectedPids, ...sparedPids]);
+  const owningTaskOf = (scanned: ScannedProcess): string | null => {
+    const own = rootTaskByPid.get(scanned.pid);
+    if (own !== undefined) return own;
+    for (const ancestor of ancestorsOf(scanned, byPid)) {
+      const taskId = rootTaskByPid.get(ancestor.pid);
+      if (taskId !== undefined) return taskId;
+    }
+    return null;
+  };
+
   const collectedPids = new Set<number>();
+  const blockedPids = new Set([...protectedPids, ...sparedPids]);
   for (const { scanned, ...root } of roots) {
     if (sparedPids.has(scanned.pid)) continue;
     // What goes with the root: descendants inside its directories that carry
@@ -355,15 +512,71 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
         : child.tagValue === root.taskId || Boolean(child.environmentUnreadable) || Boolean(child.environmentWithheld))
     ));
   }
-  const targets = input.processes.filter((scanned) => (
-    collectedPids.has(scanned.pid)
-    && !blockedPids.has(scanned.pid)
-    && Number.isInteger(scanned.pid)
-    && scanned.pid > LOWEST_KILLABLE_PID
-  ));
-  const targetPids = new Set(targets.map((scanned) => scanned.pid));
-  const byPid = new Map<number, ScannedProcess>();
-  for (const scanned of input.processes) byPid.set(scanned.pid, scanned);
+  const targetPids = new Set(input.processes
+    .filter((scanned) => collectedPids.has(scanned.pid) && !blockedPids.has(scanned.pid) && Number.isInteger(scanned.pid) && scanned.pid > LOWEST_KILLABLE_PID)
+    .map((scanned) => scanned.pid));
+
+  // Second: a target other Kangentic work is connected to is spared with its
+  // subtree, and in turn so is a target a spared one is connected to, until
+  // nothing changes. Sparing only removes targets, so a process this plan
+  // would not kill is never reported here.
+  const connections = input.connections?.pairs ?? [];
+  if (connections.length > 0) {
+    const liveSessionPids = liveSessionPidsOf(input, byPid, children);
+    const kangenticPids = kangenticOwnPids(input, byPid, children, liveSessionPids);
+    const isEvidence = (client: ScannedProcess): boolean => {
+      if (liveSessionPids.has(client.pid)) return true;
+      if (kangenticPids.has(client.pid)) return false;
+      if (client.tagValue !== null && !reapedTaskIds.has(client.tagValue)) return true;
+      return sparedPids.has(client.pid);
+    };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const connection of connections) {
+        if (!targetPids.has(connection.listenerPid)) continue;
+        const listener = byPid.get(connection.listenerPid);
+        const client = byPid.get(connection.clientPid);
+        if (!listener || !client || !isEvidence(client)) continue;
+        const sparedNow = new Set<number>();
+        collectSubtree(listener, children, sparedNow, protectedPids);
+        for (const pid of sparedNow) {
+          sparedPids.add(pid);
+          targetPids.delete(pid);
+        }
+        const taskId = owningTaskOf(listener);
+        if (taskId !== null) sharedRoots.push({ process: listener, taskId });
+        changed = true;
+      }
+    }
+  }
+
+  // Third: a target whose every child is kept frees nothing when killed (an
+  // emulator launcher whose only child is the emulator's window), so it is
+  // kept too, bottom up. Not one that listens on a port: it does work of its
+  // own (a dev server that opened a window). A console host is not a child
+  // for this, and a child that survives for any other reason (an unreadable
+  // directory) does not count as kept.
+  const keptAncestorPids = new Set<number>();
+  const listeningPids = input.connections ? new Set(input.connections.listeningPids) : null;
+  const isKeptChild = (pid: number): boolean => protectedPids.has(pid) || sparedPids.has(pid) || keptAncestorPids.has(pid);
+  const realChildrenOf = (parent: ScannedProcess): ScannedProcess[] => (children.get(parent.pid) ?? [])
+    .filter((child) => child.pid !== parent.pid && isRealChild(parent, child) && child.role !== 'console-host');
+  let grew = listeningPids !== null;
+  while (grew && listeningPids !== null) {
+    grew = false;
+    for (const pid of targetPids) {
+      const target = byPid.get(pid);
+      if (!target || listeningPids.has(pid) || input.signalledIdentities?.has(processIdentity(target))) continue;
+      const realChildren = realChildrenOf(target);
+      if (realChildren.length > 0 && realChildren.every((child) => isKeptChild(child.pid))) {
+        keptAncestorPids.add(pid);
+        targetPids.delete(pid);
+        grew = true;
+      }
+    }
+  }
+  const targets = input.processes.filter((scanned) => targetPids.has(scanned.pid));
 
   // Reported as stopped: each killed root whose parent is not killed with it.
   const reportedRoots: ReportedProcess[] = [];
@@ -395,6 +608,24 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     if (safetyPids.has(shared.process.pid) || keptByPid.has(shared.process.pid)) continue;
     keptByPid.set(shared.process.pid, { ...shared, reason: 'shared' });
   }
+  // A kept ancestor is reported with the reason of what it was kept for, so
+  // the list names the launcher, and its Stop takes the window with it.
+  const reasonOf = (scanned: ScannedProcess, depth: number): KeptReason | null => {
+    const entry = keptByPid.get(scanned.pid);
+    if (entry) return entry.reason;
+    if (protectedPids.has(scanned.pid) && scanned.role === 'visible-app') return 'window';
+    if (protectedPids.has(scanned.pid) && scanned.role === 'multiplexer') return 'multiplexer';
+    if (sparedPids.has(scanned.pid)) return 'shared';
+    if (!keptAncestorPids.has(scanned.pid) || depth >= MAX_TREE_DEPTH) return null;
+    const childReasons = new Set(realChildrenOf(scanned).map((child) => reasonOf(child, depth + 1)));
+    return KEPT_REASON_ORDER.find((reason) => childReasons.has(reason)) ?? null;
+  };
+  for (const pid of keptAncestorPids) {
+    const scanned = byPid.get(pid);
+    const taskId = scanned ? owningTaskOf(scanned) : null;
+    if (!scanned || taskId === null || safetyPids.has(pid)) continue;
+    keptByPid.set(pid, { process: scanned, taskId, reason: reasonOf(scanned, 0) ?? 'shared' });
+  }
   const kept = [...keptByPid.values()].filter((entry) => {
     for (const ancestor of ancestorsOf(entry.process, byPid)) {
       if (keptByPid.has(ancestor.pid)) return false;
@@ -402,5 +633,10 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     return true;
   });
 
-  return { targets, roots: reportedRoots, kept };
+  const keptIdentities = new Set<string>();
+  for (const pid of [...sparedPids, ...keptAncestorPids]) {
+    const scanned = byPid.get(pid);
+    if (scanned) keptIdentities.add(processIdentity(scanned));
+  }
+  return { targets, roots: reportedRoots, kept, keptIdentities };
 }

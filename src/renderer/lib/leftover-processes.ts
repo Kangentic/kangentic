@@ -3,10 +3,14 @@
  * (`LeftoverProcessReport`). Pure, so every sentence is pinned by unit tests.
  *
  * The toast gives counts only and opens the list with Review; the names, and
- * the reason each still-running process was kept, live in the list.
+ * the reason each still-running process was kept, live in the list. A toast
+ * that stays up leads with what is still running (or could not be stopped),
+ * since that is why it stays; what stopped is in the list. It also shows how
+ * long ago the report came, so one still on screen later does not read as new.
  */
 
 import type { LeftoverProcess, LeftoverProcessReport } from '../../shared/types';
+import { formatTimeAgo } from './datetime';
 
 export interface LeftoverToast {
   message: string;
@@ -17,6 +21,8 @@ export interface LeftoverToast {
    * must not vanish before the user looks.
    */
   sticky: boolean;
+  /** When the report came (UTC ISO), for the toast's age; only on a toast that stays up. */
+  since?: string;
 }
 
 function processCount(count: number): string {
@@ -44,15 +50,23 @@ export function describeLeftoverReport(report: LeftoverProcessReport): LeftoverT
   const stopped = processes.filter((entry) => entry.outcome === 'stopped').length;
   const failed = processes.filter((entry) => entry.outcome === 'failed').length;
   const kept = processes.filter((entry) => entry.outcome === 'kept').length;
-  const sentences: string[] = [];
-  if (stopped > 0) sentences.push(`Stopped ${leftoverCount(stopped)} from ${source}.`);
-  if (failed > 0) sentences.push(stopped > 0 ? `Couldn't stop ${failed}.` : `Couldn't stop ${processCount(failed)} from ${source}.`);
-  if (kept > 0) sentences.push(stopped > 0 || failed > 0 ? `${kept} still running.` : `${source} left ${processCount(kept)} running.`);
+  if (failed === 0 && kept === 0) {
+    return { message: `Stopped ${leftoverCount(stopped)} from ${source}.`, variant: 'info', sticky: false };
+  }
+  const message = failed > 0
+    ? `Couldn't stop ${processCount(failed)} from ${source}${kept > 0 ? `, and ${kept} more ${kept === 1 ? 'is' : 'are'} still running.` : '.'}`
+    : `${processCount(kept)} from ${source} ${kept === 1 ? 'is' : 'are'} still running.`;
   return {
-    message: sentences.join(' '),
+    message,
     variant: failed > 0 ? 'warning' : 'info',
-    sticky: failed > 0 || kept > 0,
+    sticky: true,
+    since: report.reportedAt,
   };
+}
+
+/** The list header's line under its title: how long ago the report came ("37 minutes ago"). */
+export function reportAgeOf(report: LeftoverProcessReport, now: number): string {
+  return formatTimeAgo(report.reportedAt, now);
 }
 
 /** "node (vite)" as its two parts, so the list can mute the script. */
@@ -84,7 +98,7 @@ export function rowDetailOf(entry: LeftoverProcess, state: LeftoverRowState): { 
   if (state === 'stopped') return { text: `Ran in ${folder}.`, failure: false };
   if (entry.reason === 'window') return { text: 'Has an open window.', failure: false };
   if (entry.reason === 'multiplexer') return { text: 'A tmux server. Stopping it ends all your tmux sessions.', failure: false };
-  if (entry.reason === 'shared') return { text: 'Also runs work you started. Stopping it stops that too.', failure: false };
+  if (entry.reason === 'shared') return { text: 'Other work uses it too. Stopping it can break that work.', failure: false };
   return { text: `Runs in ${folder}.`, failure: false };
 }
 

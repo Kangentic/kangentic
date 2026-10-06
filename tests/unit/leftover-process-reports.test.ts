@@ -41,6 +41,16 @@ describe('LeftoverProcessReports', () => {
     expect(sent[0].processes.map((process) => [process.pid, process.taskTitle])).toEqual([[2001, 'Fix login'], [3001, 'Update deps']]);
   });
 
+  it('stamps the report with when it was sent, in UTC, for the toast\'s age', () => {
+    vi.setSystemTime(new Date('2026-10-06T19:59:10.000Z'));
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    reports.add((report) => sent.push(report), [entry(2001)], TITLES, true);
+    vi.advanceTimersByTime(REPORT_QUIET_MS);
+    expect(sent[0].reportedAt).toBe(new Date(Date.parse('2026-10-06T19:59:10.000Z') + REPORT_QUIET_MS).toISOString());
+    expect(sent[0].reportedAt).toMatch(/Z$/);
+  });
+
   it('holds the report while another reap is still running, so two tasks reset together are one toast', () => {
     // The shape a preview measured: the host runs the second request in its
     // next batch, so its result lands a second after the first's.

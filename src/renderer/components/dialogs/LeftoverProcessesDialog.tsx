@@ -4,8 +4,11 @@ import { BaseDialog } from './BaseDialog';
 import { CountBadge } from '../CountBadge';
 import { useLeftoverProcessesStore } from '../../stores/leftover-processes-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useNow } from '../../hooks/useNow';
+import { formatDateTime } from '../../lib/datetime';
 import {
   groupByTask,
+  reportAgeOf,
   reportTitleOf,
   rowDetailOf,
   rowStateOf,
@@ -35,13 +38,19 @@ function openBehaviorSettings(onClose: () => void): void {
   store.setSettingsOpen(true);
 }
 
+/** How often the header's age re-reads the clock; it shows whole minutes. */
+const AGE_TICK_MS = 30_000;
+
 function LeftoverProcessesDialogBody({ report, onClose }: { report: LeftoverProcessReport; onClose: () => void }) {
   const { stillRunning, stopped } = sectionsOf(report);
   const spansTasks = new Set(report.processes.map((entry) => entry.taskId)).size > 1;
+  const now = useNow(AGE_TICK_MS);
+  const age = reportAgeOf(report, now);
   return (
     <BaseDialog
       onClose={onClose}
       title={reportTitleOf(report)}
+      subtitle={age ? <span title={formatDateTime(report.reportedAt)} data-testid="leftover-processes-age">{age}</span> : undefined}
       icon={<Cpu size={16} className="text-accent-fg" />}
       className="w-[560px] max-w-[calc(100vw-2rem)]"
       bodyClassName="max-h-[60vh] overflow-y-auto"

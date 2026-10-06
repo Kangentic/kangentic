@@ -4,8 +4,9 @@
  * opens the list, and a row's Stop walks Stop, Stopping, then Stopped, Ended
  * or a red failure in the same slot. A toast for a report that leaves something
  * running or could not be stopped stays until the user closes it (Review is the
- * only way into the list), while one for a report where every process was
- * stopped closes on its own like any other toast.
+ * only way into the list), leads with what is still running, and shows how long
+ * ago the report came, as does the list's header; one for a report where every
+ * process was stopped closes on its own like any other toast, with no age.
  *
  * Every test launches its own page (cross-platform-parity.md).
  *
@@ -35,7 +36,10 @@ function leftover(id: string, overrides: Partial<LeftoverProcess> = {}): Leftove
   };
 }
 
-const ONE_TASK: LeftoverProcessReport = {
+/** A report as a test writes it: `fireReport` stamps the time main would. */
+type TestReport = Omit<LeftoverProcessReport, 'reportedAt'> & { reportedAt?: string };
+
+const ONE_TASK: TestReport = {
   id: 'report-one-task',
   stoppingEnabled: true,
   processes: [
@@ -45,11 +49,18 @@ const ONE_TASK: LeftoverProcessReport = {
   ],
 };
 
-async function fireReport(page: Page, report: LeftoverProcessReport): Promise<void> {
+/**
+ * Ten seconds past 37 minutes before the push, so the age reads "37 minutes
+ * ago" (whole minutes, rounded down) for the next 49 seconds of the test.
+ */
+const REPORT_AGE_MS = 37 * 60_000 + 10_000;
+
+async function fireReport(page: Page, report: TestReport): Promise<void> {
   await expect
     .poll(() => page.evaluate(() => typeof window.__mockFireLeftoverReport === 'function'), { timeout: 5000 })
     .toBe(true);
-  await page.evaluate((payload) => window.__mockFireLeftoverReport?.(payload), report);
+  const stamped: LeftoverProcessReport = { reportedAt: new Date(Date.now() - REPORT_AGE_MS).toISOString(), ...report };
+  await page.evaluate((payload) => window.__mockFireLeftoverReport?.(payload), stamped);
 }
 
 async function openReview(page: Page, message: string): Promise<void> {
@@ -64,14 +75,24 @@ function row(page: Page, text: string) {
 }
 
 test.describe('Leftover processes', () => {
-  test('a report becomes a counts-only toast, and Review lists still running first, then stopped', async () => {
+  test('a report becomes a counts-only toast with its age, and Review lists still running first, then stopped', async () => {
     const { browser, page } = await launchPage();
     try {
       await fireReport(page, ONE_TASK);
-      await openReview(page, 'Stopped 1 leftover process from "Fix login". 2 still running.');
+      const toast = page.locator('[data-testid="toast"]', { hasText: '2 processes from "Fix login" are still running.' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      // What stopped is in the list, not the toast.
+      await expect(toast).not.toContainText('Stopped');
+      await expect(toast.locator('[data-testid="toast-age"]')).toHaveText('37 minutes ago');
+      await openReview(page, 'are still running.');
 
       const dialog = page.locator('[data-testid="leftover-processes-dialog"]');
       await expect(dialog).toContainText('Processes from "Fix login"');
+      const age = dialog.locator('[data-testid="leftover-processes-age"]');
+      await expect(age).toHaveText('37 minutes ago');
+      // The exact time is on hover, outside the heading, so the dialog's name stays its title.
+      await expect(age).toHaveAttribute('title', /\d/);
+      await expect(dialog.getByRole('heading')).toHaveText('Processes from "Fix login"');
       await expect(page.locator('[data-testid="leftover-processes-running"] [data-testid="leftover-process-row"]')).toHaveCount(2);
       await expect(page.locator('[data-testid="leftover-processes-stopped"] [data-testid="leftover-process-row"]')).toHaveCount(1);
       await expect(row(page, 'chrome')).toContainText('Has an open window.');
@@ -89,7 +110,7 @@ test.describe('Leftover processes', () => {
     const { browser, page } = await launchPage();
     try {
       await fireReport(page, ONE_TASK);
-      await openReview(page, '2 still running.');
+      await openReview(page, 'are still running.');
 
       const chrome = row(page, 'chrome');
       const runningRows = page.locator('[data-testid="leftover-processes-running"] [data-testid="leftover-process-row"]');
@@ -119,7 +140,7 @@ test.describe('Leftover processes', () => {
         window.__mockLeftoverStopGate = new Promise<void>((resolve) => { window.__mockReleaseLeftoverStopGate = resolve; });
       });
       await fireReport(page, ONE_TASK);
-      await openReview(page, '2 still running.');
+      await openReview(page, 'are still running.');
 
       const chrome = row(page, 'chrome');
       const action = chrome.locator('[data-testid="leftover-process-stop"]');
@@ -151,7 +172,7 @@ test.describe('Leftover processes', () => {
     try {
       await page.evaluate(() => { window.__mockLeftoverStopOutcomes = { 'kept-chrome': 'failed', 'kept-tmux': 'ended' }; });
       await fireReport(page, ONE_TASK);
-      await openReview(page, '2 still running.');
+      await openReview(page, 'are still running.');
 
       await row(page, 'chrome').getByRole('button', { name: 'Stop chrome' }).click();
       await expect(row(page, 'chrome')).toHaveAttribute('data-state', 'failed', { timeout: 5000 });
@@ -180,7 +201,7 @@ test.describe('Leftover processes', () => {
           leftover('c-code', { taskId: 'task-c', taskTitle: 'Add search', label: 'Code', outcome: 'kept', reason: 'window' }),
         ],
       });
-      await openReview(page, 'Stopped 3 leftover processes from 3 tasks. 1 still running.');
+      await openReview(page, '1 process from 3 tasks is still running.');
       await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toContainText('Processes from 3 tasks');
       const stopped = page.locator('[data-testid="leftover-processes-stopped"]');
       await expect(stopped).toContainText('Fix login');
@@ -268,7 +289,7 @@ test.describe('Leftover processes toast lifetime', () => {
     try {
       // ONE_TASK stopped one process and left two running, which makes the toast sticky.
       await fireReport(page, ONE_TASK);
-      const toast = page.locator('[data-testid="toast"]', { hasText: '2 still running.' });
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'are still running.' });
       await expect(toast).toBeVisible({ timeout: 5000 });
 
       // A timed toast would be gone after its 1 s, plus its exit (250 ms, or the
@@ -295,10 +316,11 @@ test.describe('Leftover processes toast lifetime', () => {
     const { browser, page } = await launchPage();
     try {
       await fireReport(page, ONE_TASK);
-      const waitingToast = page.locator('[data-testid="toast"]', { hasText: '2 still running.' });
+      const waitingToast = page.locator('[data-testid="toast"]', { hasText: 'are still running.' });
       await expect(waitingToast).toBeVisible({ timeout: 5000 });
 
       const stoppedOnly = (index: number): LeftoverProcessReport => ({
+        reportedAt: new Date().toISOString(),
         id: `report-stopped-${index}`,
         stoppingEnabled: true,
         processes: [leftover(`stopped-${index}`)],
@@ -334,6 +356,8 @@ test.describe('Leftover processes toast lifetime', () => {
       });
       const toast = page.locator('[data-testid="toast"]', { hasText: 'Stopped 1 leftover process from "Fix login".' });
       await expect(toast).toBeVisible({ timeout: 5000 });
+      // It closes on its own within seconds, so it shows no age.
+      expect(await toast.locator('[data-testid="toast-age"]').count()).toBe(0);
 
       // Nothing is left to review, so the toast takes the configured 2 s, plus its
       // exit, plus slack for a loaded runner. Polled, so it passes as soon as it

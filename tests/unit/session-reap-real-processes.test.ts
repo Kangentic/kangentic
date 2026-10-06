@@ -122,6 +122,34 @@ function writeOptOutParent(directory: string, sleeperPath: string): string {
   return parentPath;
 }
 
+/**
+ * A TCP server on 127.0.0.1 that keeps every connection it accepts. Writes
+ * `<pid> <port>` to argv[2] once it listens, and exits after a minute.
+ */
+function writeTcpServer(directory: string): string {
+  const serverPath = path.join(directory, 'tcp-server.js');
+  fs.writeFileSync(serverPath, [
+    "const fs = require('fs');",
+    'const sockets = [];',
+    "const server = require('net').createServer((socket) => { sockets.push(socket); socket.on('error', () => {}); });",
+    "server.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], process.pid + ' ' + server.address().port));",
+    'setTimeout(() => process.exit(0), 60000);',
+  ].join('\n'));
+  return serverPath;
+}
+
+/** A client that connects to 127.0.0.1:argv[3], holds the connection, and writes its pid to argv[2] once connected. */
+function writeTcpClient(directory: string): string {
+  const clientPath = path.join(directory, 'tcp-client.js');
+  fs.writeFileSync(clientPath, [
+    "const fs = require('fs');",
+    "const socket = require('net').connect(Number(process.argv[3]), '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(process.pid)));",
+    "socket.on('error', () => {});",
+    'setTimeout(() => process.exit(0), 60000);',
+  ].join('\n'));
+  return clientPath;
+}
+
 function envWithTag(tagValue: string | null): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env[TASK_PROCESS_TAG_ENV];
@@ -408,6 +436,43 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(result.killedPids).not.toContain(childPid);
     expect(isProcessAlive(parentPid)).toBe(true);
     expect(isProcessAlive(childPid)).toBe(true);
+  }, 60_000);
+
+  it('keeps a server another task holds a TCP connection to, and stops one only its own task uses and an idle one', async () => {
+    const scratch = makeScratch();
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const serverPath = writeTcpServer(scratch.root);
+    const clientPath = writeTcpClient(scratch.root);
+    const detached = { stdio: 'ignore' as const, windowsHide: true };
+    const startServer = async (name: string): Promise<{ pid: number; port: string }> => {
+      const file = path.join(scratch.root, `${name}.server`);
+      spawn(process.execPath, [launcherPath, serverPath, file], { ...detached, cwd: scratch.worktree, env: envWithTag(TASK_ID) });
+      const [pid, port] = (await waitForFile(file)).split(' ');
+      startedPids.push(Number(pid));
+      return { pid: Number(pid), port };
+    };
+    const startClient = (name: string, port: string, cwd: string, tagValue: string): Promise<number> => {
+      const file = path.join(scratch.root, `${name}.client`);
+      spawn(process.execPath, [launcherPath, clientPath, file, port], { ...detached, cwd, env: envWithTag(tagValue) });
+      return waitForPidFile(file);
+    };
+
+    // The incident's shape: a detached server in the task's worktree, with no
+    // children, and another task's command connected to it over TCP.
+    const shared = await startServer('shared');
+    const otherTaskClient = await startClient('other-task', shared.port, scratch.elsewhere, OTHER_TASK_ID);
+    // A server only the task's own client uses, and one nothing is connected to.
+    const own = await startServer('own');
+    const ownClient = await startClient('own', own.port, scratch.worktree, TASK_ID);
+    const idle = await startServer('idle');
+
+    const result = await reap(scratch);
+    expect(result.killedPids).not.toContain(shared.pid);
+    expect(result.entries).toContainEqual(expect.objectContaining({ pid: shared.pid, outcome: 'kept', reason: 'shared', place: 'worktree' }));
+    expect(isProcessAlive(shared.pid)).toBe(true);
+    expect(isProcessAlive(otherTaskClient)).toBe(true);
+    for (const pid of [own.pid, ownClient, idle.pid]) expect(result.killedPids).toContain(pid);
+    expect(await waitUntilDead([own.pid, ownClient, idle.pid])).toEqual([]);
   }, 60_000);
 
   it.runIf(process.platform !== 'win32' && hasCommand('tmux'))('never kills a tmux server or anything under it: it copies its environment into every later session', async () => {

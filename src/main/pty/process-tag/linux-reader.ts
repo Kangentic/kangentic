@@ -22,15 +22,38 @@
  *
  * Reads are async and batched, so a scan never holds the pty host's event loop,
  * which carries every terminal byte.
+ *
+ * `connections` reads `net/tcp` and `net/tcp6` (the table for this network
+ * namespace, with each socket's inode) and maps inodes to processes through
+ * their `fd` links (`socket:[inode]`), which a same-user reader can read. It
+ * reads the listeners' links first and stops when none of them has a
+ * connected local peer; it reads clients' links only until every peer has an
+ * owner. The pairing is `local-connections.ts`; no address or port leaves
+ * this file.
  */
 
 import { promises as fsPromises } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess } from './process-label';
-import { seedsAndDescendants, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import { connectionsToListeners, ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
+import {
+  ScanStepError,
+  seedsAndDescendants,
+  type KillStrength,
+  type LocalConnectionRead,
+  type ProcessScan,
+  type ScannedProcess,
+  type TaggedProcessReader,
+} from './process-scan';
 
 const READ_BATCH_SIZE = 64;
+/** Processes whose fd links are read at once. A browser can hold hundreds of links. */
+const FD_BATCH_SIZE = 16;
+const SOCKET_LINK_PATTERN = /^socket:\[(\d+)\]$/;
+const TCP_STATE_ESTABLISHED = '01';
+const TCP_STATE_LISTEN = '0A';
 const TAG_PREFIX = Buffer.from(`${TASK_PROCESS_TAG_ENV}=`);
 /** Libraries a process maps when it draws a window (X11, Wayland, GTK, Qt). */
 const GUI_LIBRARY_PATTERN = /\/lib(?:X11\.so|xcb\.so|wayland-client\.so|gtk-[34]|Qt[56]Gui)/;
@@ -81,23 +104,72 @@ export function parseProcStat(stat: string): { state: string; ppid: number; star
   return { state: fields[0] ?? '', ppid, startTicks };
 }
 
+/**
+ * An address as `net/tcp` and `net/tcp6` print it: hex 32-bit words, each in
+ * the kernel's byte order, one word for IPv4 and four for IPv6. Exported for
+ * fixture tests.
+ */
+export function addressFromProcHex(hex: string, littleEndian: boolean): string | null {
+  if (hex.length !== 8 && hex.length !== 32) return null;
+  const bytes = Buffer.alloc(hex.length / 2);
+  for (let word = 0; word < hex.length / 8; word += 1) {
+    const value = Number.parseInt(hex.slice(word * 8, word * 8 + 8), 16);
+    if (!Number.isFinite(value)) return null;
+    if (littleEndian) bytes.writeUInt32LE(value, word * 4);
+    else bytes.writeUInt32BE(value, word * 4);
+  }
+  return hex.length === 8 ? ipv4FromBytes(bytes) : ipv6FromBytes(bytes);
+}
+
+/** The rows of a `net/tcp` or `net/tcp6` file, owners not yet known. Exported for fixture tests. */
+export function parseProcNetTcp(text: string, littleEndian: boolean): SocketRow[] {
+  const rows: SocketRow[] = [];
+  // The first line is the header.
+  for (const line of text.split('\n').slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 10) continue;
+    const [localHex, localPortHex] = fields[1].split(':');
+    const [remoteHex, remotePortHex] = fields[2].split(':');
+    const localAddress = addressFromProcHex(localHex ?? '', littleEndian);
+    const remoteAddress = addressFromProcHex(remoteHex ?? '', littleEndian);
+    const localPort = Number.parseInt(localPortHex ?? '', 16);
+    const remotePort = Number.parseInt(remotePortHex ?? '', 16);
+    if (localAddress === null || remoteAddress === null || !Number.isInteger(localPort) || !Number.isInteger(remotePort)) continue;
+    const state = fields[3].toUpperCase();
+    rows.push({
+      state: state === TCP_STATE_LISTEN ? 'listen' : state === TCP_STATE_ESTABLISHED ? 'established' : 'other',
+      localAddress,
+      localPort,
+      remoteAddress,
+      remotePort,
+      ownerPids: [],
+      inode: fields[9],
+    });
+  }
+  return rows;
+}
+
 export interface LinuxReaderOptions {
   /** `/proc`, or a fixture directory in tests. */
   procRoot?: string;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
   uid?: number;
+  /** The byte order `net/tcp` prints addresses in. Defaults to this machine's. */
+  littleEndian?: boolean;
 }
 
 export class LinuxTaggedProcessReader implements TaggedProcessReader {
   private readonly procRoot: string;
   private readonly sendSignal: (pid: number, signalName: NodeJS.Signals) => void;
   private readonly ownUid: number | null;
+  private readonly littleEndian: boolean;
 
   constructor(options: LinuxReaderOptions = {}) {
     this.procRoot = options.procRoot ?? '/proc';
     this.sendSignal = options.signal ?? ((pid, signalName) => process.kill(pid, signalName));
     this.ownUid = options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null);
+    this.littleEndian = options.littleEndian ?? os.endianness() === 'LE';
   }
 
   async scan(): Promise<ProcessScan> {
@@ -157,8 +229,76 @@ export class LinuxTaggedProcessReader implements TaggedProcessReader {
     return labels;
   }
 
+  async connections(listeners: readonly ScannedProcess[], clients: readonly ScannedProcess[]): Promise<LocalConnectionRead> {
+    let rows: SocketRow[];
+    try {
+      rows = [...await this.readTcpTable('tcp', true), ...await this.readTcpTable('tcp6', false)];
+    } catch (error) {
+      throw new ScanStepError('connection_list', error instanceof Error ? error.message : String(error));
+    }
+    const listenerPids = new Set(listeners.map((scanned) => scanned.pid));
+    const clientPids = new Set(clients.map((scanned) => scanned.pid));
+    const ownersByInode = new Map<string, Set<number>>();
+    const walked = new Set<number>();
+    const withOwners = (): SocketRow[] => rows.map((row) => ({ ...row, ownerPids: [...(row.inode ? ownersByInode.get(row.inode) ?? [] : [])] }));
+
+    await this.readSocketLinks([...listenerPids], ownersByInode, walked);
+    let current = withOwners();
+    const listeningPids = listeningPidsOf(current, listenerPids);
+    const found = connectionsToListeners(current, listenerPids);
+    if (found.length === 0) return { pairs: [], listeningPids };
+    // Peers whose owner is not yet known: their inodes are what the clients' links must name.
+    const unowned = new Set(found.flatMap(({ peer }) => (peer && peer.ownerPids.length === 0 && peer.inode ? [peer.inode] : [])));
+    const remaining = [...clientPids].filter((pid) => !walked.has(pid));
+    for (let offset = 0; unowned.size > 0 && offset < remaining.length; offset += FD_BATCH_SIZE) {
+      await this.readSocketLinks(remaining.slice(offset, offset + FD_BATCH_SIZE), ownersByInode, walked);
+      for (const inode of [...unowned]) if (ownersByInode.has(inode)) unowned.delete(inode);
+    }
+    current = withOwners();
+    return { pairs: pairLocalConnections(current, listenerPids, clientPids), listeningPids };
+  }
+
   private procPath(pid: number, entry: string): string {
     return path.join(this.procRoot, String(pid), entry);
+  }
+
+  /** `net/tcp` or `net/tcp6`. A missing `tcp6` is a kernel without IPv6, not a failure. */
+  private async readTcpTable(name: 'tcp' | 'tcp6', required: boolean): Promise<SocketRow[]> {
+    try {
+      return parseProcNetTcp(await fsPromises.readFile(path.join(this.procRoot, 'net', name), 'utf8'), this.littleEndian);
+    } catch (error) {
+      if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  /** Add each pid's socket inodes to `ownersByInode`, a few processes at a time. */
+  private async readSocketLinks(pids: readonly number[], ownersByInode: Map<string, Set<number>>, walked: Set<number>): Promise<void> {
+    for (let offset = 0; offset < pids.length; offset += FD_BATCH_SIZE) {
+      await Promise.all(pids.slice(offset, offset + FD_BATCH_SIZE).map(async (pid) => {
+        if (walked.has(pid)) return;
+        walked.add(pid);
+        const fdDirectory = this.procPath(pid, 'fd');
+        let entries: string[];
+        try {
+          entries = await fsPromises.readdir(fdDirectory);
+        } catch {
+          return; // not ours, or gone
+        }
+        await Promise.all(entries.map(async (entry) => {
+          try {
+            const match = SOCKET_LINK_PATTERN.exec(await fsPromises.readlink(path.join(fdDirectory, entry)));
+            if (!match) return;
+            let owners = ownersByInode.get(match[1]);
+            if (!owners) {
+              owners = new Set();
+              ownersByInode.set(match[1], owners);
+            }
+            owners.add(pid);
+          } catch { /* closed mid-read */ }
+        }));
+      }));
+    }
   }
 
   private async readStat(pid: number): Promise<{ state: string; ppid: number; startTicks: string } | null> {

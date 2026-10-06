@@ -145,6 +145,19 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     warn.mockRestore();
   });
 
+  it('reports a connection read that failed under its own code, with its pass, and never the failure\'s text', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const manager = managerWithHost({ reapTaggedProcesses: async () => failed('connection_list', 'GetExtendedTcpTable failed with 87', 'first') });
+    await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: true });
+    expect(reportHandledError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Task leftover reap failed: connection_list' }),
+      { source: 'task_reap', stage: 'reap', code: 'connection_list', pass: 'first' },
+      {},
+    );
+    expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('GetExtendedTcpTable');
+    warn.mockRestore();
+  });
+
   it('reports a Stop the host ran but could not finish, with its code and pass and never its text', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const manager = managerWithHost({

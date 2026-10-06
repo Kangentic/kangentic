@@ -27,6 +27,9 @@
  *   and a working directory longer than any Windows path is never read.
  * - An 8.3 working directory is expanded to its long form, and kept short
  *   when the expansion fails.
+ * - `connections` reads the TCP table (both families, owner pids) without
+ *   opening any process, and fails as `connection_list`, never as an empty
+ *   read, when the call fails or the table keeps outgrowing its buffer.
  *
  * Each refusal is asserted next to a positive control (the open that the gate
  * does allow), so a fake that silently stopped answering cannot pass for free.
@@ -157,6 +160,44 @@ function handleOf(handle: unknown): FakeHandle {
   return handle as FakeHandle;
 }
 
+interface TcpRowSpec {
+  /** MIB_TCP_STATE: 2 LISTEN, 5 ESTAB. */
+  state: number;
+  local: number[];
+  localPort: number;
+  remote: number[];
+  remotePort: number;
+  pid: number;
+}
+
+/** A port's DWORD as Windows stores it: the port in network order in the first two bytes. */
+function portDword(port: number): Buffer {
+  return Buffer.from([port >> 8, port & 0xff, 0, 0]);
+}
+
+/**
+ * A MIB_TCPTABLE_OWNER_PID (24-byte rows: state, local address, local port,
+ * remote address, remote port, pid) or a MIB_TCP6TABLE_OWNER_PID (56-byte
+ * rows: local address, scope id, local port, remote address, scope id, remote
+ * port, state, pid), laid out from iphlpapi's headers rather than the reader.
+ */
+function tcpTable(rows: TcpRowSpec[], family: 'ipv4' | 'ipv6' = 'ipv4'): Buffer {
+  const parts: Buffer[] = [unsigned32(rows.length)];
+  for (const spec of rows) {
+    if (family === 'ipv4') {
+      parts.push(unsigned32(spec.state), Buffer.from(spec.local), portDword(spec.localPort), Buffer.from(spec.remote), portDword(spec.remotePort), unsigned32(spec.pid));
+    } else {
+      parts.push(Buffer.from(spec.local), unsigned32(0), portDword(spec.localPort), Buffer.from(spec.remote), unsigned32(0), portDword(spec.remotePort), unsigned32(spec.state), unsigned32(spec.pid));
+    }
+  }
+  return Buffer.concat(parts);
+}
+
+const LOOPBACK = [127, 0, 0, 1];
+const ANY = [0, 0, 0, 0];
+const ANY6 = new Array<number>(16).fill(0);
+const MAPPED_LOOPBACK6 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1];
+
 /**
  * An in-memory Win32: a process table, per-process memory laid out the way the
  * reader walks a 64-bit PEB, and a ledger of every open, close, and terminate.
@@ -192,6 +233,14 @@ class FakeWin32 {
   ownTokenFault: OwnTokenFault | null = null;
   /** ProcessIdToSessionId reports failure for the caller's own pid. */
   ownSessionLookupFails = false;
+  /** What GetExtendedTcpTable answers, per family (`AF_INET` 2, `AF_INET6` 23). */
+  readonly tcpTables = new Map<number, Buffer>([[2, tcpTable([])], [23, tcpTable([], 'ipv6')]]);
+  /** Every GetExtendedTcpTable call: the family, the table class, and the buffer it was given. */
+  readonly tcpTableCalls: Array<{ family: number; tableClass: number; bufferBytes: number }> = [];
+  /** Calls still to answer ERROR_INSUFFICIENT_BUFFER with a size past the buffer given, as a table growing between calls does. */
+  tcpTableGrowths = 0;
+  /** A status GetExtendedTcpTable fails with every time. */
+  tcpTableFailure: number | null = null;
 
   private nextHandleId = 1;
   private snapshotCursor = 0;
@@ -329,6 +378,23 @@ class FakeWin32 {
       return long.length;
     },
     visibleWindowPids: () => new Set(this.processes.filter((fakeProcess) => fakeProcess.visible).map((fakeProcess) => fakeProcess.pid)),
+    // NO_ERROR 0; ERROR_INSUFFICIENT_BUFFER 122 with the size it needs.
+    getExtendedTcpTable: (table, size, _order, family, tableClass) => {
+      this.tcpTableCalls.push({ family, tableClass, bufferBytes: table.length });
+      if (this.tcpTableFailure !== null) return this.tcpTableFailure;
+      if (this.tcpTableGrowths > 0) {
+        this.tcpTableGrowths -= 1;
+        size[0] = table.length + 1;
+        return 122;
+      }
+      const contents = this.tcpTables.get(family) ?? tcpTable([]);
+      if (contents.length > table.length) {
+        size[0] = contents.length;
+        return 122;
+      }
+      contents.copy(table);
+      return 0;
+    },
   };
 
   startKeyOf(pid: number): string {
@@ -777,5 +843,50 @@ describe('Win32TaggedProcessReader.scan: an 8.3 working directory', () => {
     expect(fake.longPathLookups).toEqual([SHORT]);
     expect(scanned(scan, 970).workingDirectory).toBe(SHORT);
     expect(scanned(scan, 980).workingDirectory).toBe(WORKING_DIRECTORY);
+  });
+});
+
+describe('Win32TaggedProcessReader.connections: the TCP table', () => {
+  const listener = (pid: number): ScannedProcess => ({ pid, ppid: 1, startKey: String(creationOf(pid)), startedAtMs: null, tagValue: TASK });
+
+  it('reads both families with owner pids, reads each port in network order, pairs across the tables, and opens no process', async () => {
+    const fake = new FakeWin32([]);
+    fake.tcpTables.set(2, tcpTable([
+      { state: 2, local: ANY, localPort: 5037, remote: ANY, remotePort: 0, pid: 2001 },
+      { state: 5, local: LOOPBACK, localPort: 5037, remote: LOOPBACK, remotePort: 52000, pid: 2001 },
+      { state: 5, local: LOOPBACK, localPort: 52000, remote: LOOPBACK, remotePort: 5037, pid: 3001 },
+      // The IPv4 client of 2002's dual-stack listener.
+      { state: 5, local: LOOPBACK, localPort: 52001, remote: LOOPBACK, remotePort: 8080, pid: 3002 },
+    ]));
+    fake.tcpTables.set(23, tcpTable([
+      { state: 2, local: ANY6, localPort: 8080, remote: ANY6, remotePort: 0, pid: 2002 },
+      { state: 5, local: MAPPED_LOOPBACK6, localPort: 8080, remote: MAPPED_LOOPBACK6, remotePort: 52001, pid: 2002 },
+    ], 'ipv6'));
+    const read = await readerFor(fake).connections([listener(2001), listener(2002)], [listener(3001), listener(3002)]);
+
+    expect(read.pairs).toEqual([{ listenerPid: 2001, clientPid: 3001 }, { listenerPid: 2002, clientPid: 3002 }]);
+    expect(read.listeningPids).toEqual([2001, 2002]);
+    // TCP_TABLE_OWNER_PID_ALL, AF_INET then AF_INET6.
+    expect(fake.tcpTableCalls.map((call) => [call.family, call.tableClass])).toEqual([[2, 5], [23, 5]]);
+    expect(fake.opens).toEqual([]);
+  });
+
+  it('asks again with the size the table needs when it outgrew the buffer', async () => {
+    const fake = new FakeWin32([]);
+    fake.tcpTableGrowths = 2;
+    await readerFor(fake).connections([listener(2001)], []);
+    const ipv4Calls = fake.tcpTableCalls.filter((call) => call.family === 2);
+    expect(ipv4Calls).toHaveLength(3);
+    expect(ipv4Calls[1].bufferBytes).toBeGreaterThan(ipv4Calls[0].bufferBytes);
+  });
+
+  it('fails as connection_list, never as a clean read, when the call fails or the table keeps outgrowing its buffer', async () => {
+    const failing = new FakeWin32([]);
+    failing.tcpTableFailure = 87;
+    await expect(readerFor(failing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list' });
+    const growing = new FakeWin32([]);
+    growing.tcpTableGrowths = 100;
+    await expect(readerFor(growing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list' });
+    expect(growing.tcpTableCalls.length).toBeLessThan(10);
   });
 });

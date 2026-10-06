@@ -3211,6 +3211,11 @@ export interface LeftoverProcessReport {
   /** False when the user turned stopping off: every process is `kept`. */
   stoppingEnabled: boolean;
   processes: LeftoverProcess[];
+  /**
+   * When main sent the report, UTC ISO 8601. A toast that stays up shows how
+   * long ago it was, so one still on screen later does not read as current.
+   */
+  reportedAt: string;
 }
 
 /** `ended`: it had already exited. `failed`: it, or a process under it, is still running. */
