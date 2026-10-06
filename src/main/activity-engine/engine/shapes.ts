@@ -69,6 +69,22 @@ export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 export const MAX_PENDING_EXEMPT_SHELL_TOOL_IDS = 16;
 
 /**
+ * FIFO cap on `subagentLifecycleById`.
+ *
+ * The ledger only has to remember a stopped id long enough to recognize its
+ * duplicate stop, which in the captured incident (task #759) landed 12.7s
+ * after the first. A `/code-review` fan-out runs 9 or 10 subagents, so 64 holds
+ * several fan-outs. Evicting an entry is safe in both directions: the evicted
+ * id falls back to count-based tracking, which is the behavior before the
+ * ledger existed (a live id's stop still decrements; a duplicate of an evicted
+ * stopped id decrements once more, as it always did).
+ */
+export const MAX_TRACKED_SUBAGENT_IDS = 64;
+
+/** A correlated subagent's last lifecycle event in `subagentLifecycleById`. */
+export type SubagentLifecycle = 'live' | 'stopped';
+
+/**
  * Default stale-thinking safety net for hook loss. If a session is
  * stuck in `'thinking'` because `turnActive=true` (a thinking event
  * fired but the matching Idle hook never arrived) we force-idle it
@@ -230,7 +246,7 @@ export interface PendingTool {
  * Increments live for the lifetime of the session - never decremented.
  * Surfaced via `ActivityStatsSnapshot` so the debug overlay can render
  * a "click into the timeline to see what happened" cue when the
- * counters go non-zero. In a clean session, all eight read zero.
+ * counters go non-zero. In a clean session, all nine read zero.
  *
  * Reset only on `initSession()` (fresh state) or `dispose()`.
  */
@@ -263,6 +279,16 @@ export interface CompensationCounters {
    * discarded, not an error.
    */
   ignoredInnerSubagentStop: number;
+  /**
+   * A NAMED `subagent_stop` was ignored because its `subagentId`'s last event
+   * was already a stop. A background subagent that ends its turn without
+   * calling SubagentHandback stops, is re-prompted by the CLI, and stops again
+   * after the handback; counting the second stop took a live sibling's depth
+   * slot and false-idled the session (task #759). Also bumped by a late stop
+   * for a subagent whose slot a reset already released. Non-zero is benign:
+   * it counts duplicates the engine correctly discarded.
+   */
+  duplicateSubagentStop: number;
   /**
    * `timer:stuck-subagent` fired: `subagentDepth` was stuck > 0 (a named
    * terminal `subagent_stop` was lost after its empty inner stop was
@@ -310,6 +336,21 @@ export interface SessionEngineState {
   pendingToolCount: number;
   /** Nesting depth of active subagents. */
   subagentDepth: number;
+  /**
+   * Each correlated subagent's LAST lifecycle event, keyed by
+   * `SessionEvent.subagentId`. A dedupe ledger only: nothing reads it but the
+   * `SubagentStart` / `SubagentStop` cases and `releaseSubagentSlots`, and the
+   * predicate still keys on `subagentDepth` alone.
+   *
+   * A stop for an id already marked `'stopped'` is a duplicate and does not
+   * decrement (task #759). A start re-marks the id `'live'`, because a
+   * SendMessage continuation fires a fresh SubagentStart under the same id
+   * before its next stop. Events with no id, or an empty one, never touch the
+   * ledger.
+   *
+   * Bounded at `MAX_TRACKED_SUBAGENT_IDS` (FIFO by last write).
+   */
+  subagentLifecycleById: Map<string, SubagentLifecycle>;
   /**
    * Identity-aware bg shell tracking (set by Subsystem C). Until
    * shell_id is extracted from hooks this set will only be populated

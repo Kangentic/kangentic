@@ -18,6 +18,7 @@ import {
   captureHookContext,
   extractTool,
   extractToolId,
+  extractSubagentId,
   extractToolPath,
   extractDetail,
   extractDetailPath,
@@ -207,6 +208,40 @@ describe('event-bridge', () => {
     const stdin = JSON.stringify({ tool_use_id: 'tu_top', tool_input: { tool_use_id: 'tu_nested' } });
     runBridge(stdin, [outputFile, 'tool_start', extractToolId(['tool_use_id']), extractToolId(['tool_use_id'], { nested: 'tool_input' })]);
     expect(readEvent().toolId).toBe('tu_top');
+  });
+
+  // --- subagentId directive (task #759) ---
+
+  it('subagentId extracts the subagent correlation id alongside the type', () => {
+    // Shape captured from a real SubagentStop payload on CLI 2.1.290.
+    const stdin = JSON.stringify({
+      hook_event_name: 'SubagentStop',
+      agent_id: 'a0a114181178d1064',
+      agent_type: 'general-purpose',
+      stop_hook_active: false,
+    });
+    runBridge(stdin, [outputFile, 'subagent_stop', extractDetail(['agent_type', 'subagent_type']), extractSubagentId(['agent_id'])]);
+    const line = readEvent();
+    expect(line.detail).toBe('general-purpose');
+    expect(line.subagentId).toBe('a0a114181178d1064');
+    // Never written into the tool correlation field.
+    expect(line).not.toHaveProperty('toolId');
+  });
+
+  it('subagentId is absent when the payload carries no id', () => {
+    const stdin = JSON.stringify({ agent_type: 'Explore' });
+    runBridge(stdin, [outputFile, 'subagent_stop', extractSubagentId(['agent_id'])]);
+    expect(readEvent()).not.toHaveProperty('subagentId');
+  });
+
+  it('subagentId: the first directive to resolve wins', () => {
+    const stdin = JSON.stringify({ agent_id: 'a_first', subagent_id: 'a_second' });
+    runBridge(stdin, [outputFile, 'subagent_start', extractSubagentId(['agent_id']), extractSubagentId(['subagent_id'])]);
+    expect(readEvent().subagentId).toBe('a_first');
+  });
+
+  it('extractSubagentId rejects an empty field list', () => {
+    expect(() => extractSubagentId([])).toThrow('extractSubagentId requires at least one field');
   });
 
   // --- remap directive (top-level field) ---

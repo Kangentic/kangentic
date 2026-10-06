@@ -87,6 +87,20 @@ export function extractToolId(fields: string[], options: { nested?: string } = {
 }
 
 /**
+ * Extract `event.subagentId` from the first non-null top-level stdin field of
+ * `fields`. The subagent sibling of `extractToolId`: the engine uses it to
+ * release each subagent's depth slot once (task #759).
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default`
+ * (a logged no-op). The event then carries no id and the engine falls back to
+ * count-based depth tracking, which is the behavior before this directive.
+ */
+export function extractSubagentId(fields: string[]): string {
+  if (fields.length === 0) throw new Error('extractSubagentId requires at least one field');
+  return encodeDirective('extractSubagentId', { fields });
+}
+
+/**
  * Extract `event.detail` from the first non-null of `fields`, read from the
  * top-level stdin object or - when `nested` is given - from `ctx[nested]`.
  *

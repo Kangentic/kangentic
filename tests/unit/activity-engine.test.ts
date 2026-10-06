@@ -29,7 +29,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ActivityEngine, type ActivityEngineOptions } from '../../src/main/activity-engine/engine';
-import { MAX_PENDING_EXEMPT_SHELL_TOOL_IDS } from '../../src/main/activity-engine/engine/shapes';
+import { MAX_PENDING_EXEMPT_SHELL_TOOL_IDS, MAX_TRACKED_SUBAGENT_IDS } from '../../src/main/activity-engine/engine/shapes';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../src/shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
@@ -1412,6 +1412,199 @@ describe('ActivityEngine', () => {
       // does not match, and the stuck-pending predicate (depth === 0) does
       // not match either; no recovery fires while both holders co-exist.
       expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    });
+  });
+
+  describe('duplicate named SubagentStop dedupe by subagentId (task #759)', () => {
+    function subagentEvent(
+      type: EventType.SubagentStart | EventType.SubagentStop,
+      detail: string,
+      subagentId?: string,
+    ): SessionEvent {
+      return { ts: Date.now(), type, detail, subagentId };
+    }
+
+    function duplicateStops(): number | undefined {
+      return engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.duplicateSubagentStop;
+    }
+
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      transitions.length = 0;
+    });
+
+    it('keeps a live sibling slot when one agent fires two named stops (the #757 shape)', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder', 'finder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'test-builder', 'builder'));
+      // The finder ends without a handback, is re-prompted, then stops again.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder', 'finder'));
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(1);
+
+      // The parent's Stop arrives while test-builder is still live.
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(state.turnActive).toBe(true);
+      expect(state.activity).toBe('thinking');
+      expect(transitions.map((transition) => transition.activity)).not.toContain('idle');
+    });
+
+    it('never records the id of an ignored empty-detail stop', () => {
+      // If #237's guard ran after the ledger, this inner stop would mark the
+      // agent stopped and its real named stop would read as a duplicate.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'test-builder', 'builder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, '', 'builder'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'test-builder', 'builder'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      expect(duplicateStops()).toBe(0);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.ignoredInnerSubagentStop).toBe(1);
+    });
+
+    it('re-opens a stopped id on a fresh start (a SendMessage continuation keeps its id)', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'general-purpose', 'agent'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'general-purpose', 'agent'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'general-purpose', 'agent'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'general-purpose', 'agent'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      expect(duplicateStops()).toBe(0);
+    });
+
+    it('treats a late stop for a slot the Interrupted bypass released as a duplicate', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'old'));
+      engine.processEvent(SESSION_ID, event(EventType.Interrupted));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'new'));
+      // The released agent's own stop must not take the new agent's slot.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'old'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(1);
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'new'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+    });
+
+    it('treats a late stop for a slot forceIdle released as a duplicate', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'old'));
+      engine.forceIdle(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'new'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'old'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(1);
+    });
+
+    it('treats a late stop for a slot the stuck-subagent watchdog released as a duplicate', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'old'));
+      vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS + TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(1);
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      expect(engine.getState(SESSION_ID)!.subagentLifecycleById.get('old')).toBe('stopped');
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'new'));
+      // The released agent's own stop must not take the new agent's slot.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'old'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(1);
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'new'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+    });
+
+    it('keeps the ledger across a live turn_retrying hold, which preserves the depth (#532)', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'first'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'second'));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'rate_limit' }));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(2);
+      // Releasing the slots here would make this first, legitimate stop read
+      // as a duplicate and leave the depth one too high.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', 'first'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(0);
+    });
+
+    it('keeps the count-based decrement for stops that carry no id', () => {
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'review-finder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'test-builder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder'));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'review-finder'));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      expect(duplicateStops()).toBe(0);
+    });
+
+    it('treats an empty subagentId as id-less, never as a ledger key', () => {
+      // As a key, the first stop would mark "" stopped and the second would
+      // read as its duplicate, leaving depth at 1.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', ''));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', ''));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(2);
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', ''));
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', ''));
+      expect(engine.getState(SESSION_ID)!.subagentDepth).toBe(0);
+      expect(duplicateStops()).toBe(0);
+      expect(engine.getState(SESSION_ID)!.subagentLifecycleById.size).toBe(0);
+    });
+
+    it('caps the ledger, and an evicted id falls back to the count-based decrement', () => {
+      const subagentIds = Array.from(
+        { length: MAX_TRACKED_SUBAGENT_IDS + 1 },
+        (_unused, index) => `agent-${index}`,
+      );
+      for (const subagentId of subagentIds) {
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', subagentId));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', subagentId));
+      }
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'live-agent'));
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+      // Still tracked: its duplicate is recognized.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', subagentIds[2]));
+      expect(state.subagentDepth).toBe(1);
+      expect(duplicateStops()).toBe(1);
+      // Evicted: its duplicate decrements, as every duplicate did before the ledger.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', subagentIds[0]));
+      expect(state.subagentDepth).toBe(0);
+      expect(duplicateStops()).toBe(1);
+    });
+
+    /** Fill the ledger to exactly the cap with stopped ids, oldest first. */
+    function fillLedgerToCap(): string[] {
+      const subagentIds = Array.from(
+        { length: MAX_TRACKED_SUBAGENT_IDS },
+        (_unused, index) => `agent-${index}`,
+      );
+      for (const subagentId of subagentIds) {
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', subagentId));
+        engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStop, 'Explore', subagentId));
+      }
+      return subagentIds;
+    }
+
+    it('re-recording a tracked id at the cap evicts no other id', () => {
+      const subagentIds = fillLedgerToCap();
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+      // A mid-ledger id is already tracked, so the cap check must not run for it.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', subagentIds[10]));
+      expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+      expect(state.subagentLifecycleById.has(subagentIds[0])).toBe(true);
+      expect(state.subagentLifecycleById.get(subagentIds[10])).toBe('live');
+    });
+
+    it('re-recording the oldest id at the cap moves it to the newest slot', () => {
+      const subagentIds = fillLedgerToCap();
+      const state = engine.getState(SESSION_ID)!;
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', subagentIds[0]));
+      expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+      // A new id overflows the cap: the oldest by last write goes, not the re-started id.
+      engine.processEvent(SESSION_ID, subagentEvent(EventType.SubagentStart, 'Explore', 'fresh-agent'));
+      expect(state.subagentLifecycleById.size).toBe(MAX_TRACKED_SUBAGENT_IDS);
+      expect(state.subagentLifecycleById.has(subagentIds[0])).toBe(true);
+      expect(state.subagentLifecycleById.has(subagentIds[1])).toBe(false);
+      expect(state.subagentLifecycleById.has(subagentIds[2])).toBe(true);
     });
   });
 

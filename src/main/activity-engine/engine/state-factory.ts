@@ -1,4 +1,4 @@
-import type { SessionEngineState } from './shapes';
+import type { SessionEngineState, SubagentLifecycle } from './shapes';
 
 /**
  * Construct a fresh per-session state for the activity engine. All
@@ -11,6 +11,7 @@ export function createSessionEngineState(): SessionEngineState {
     turnActive: false,
     pendingToolCount: 0,
     subagentDepth: 0,
+    subagentLifecycleById: new Map<string, SubagentLifecycle>(),
     activeBackgroundShellIds: new Set<string>(),
     anonymousBackgroundShellCount: 0,
     exemptBackgroundShellIds: new Set<string>(),
@@ -39,6 +40,7 @@ export function createSessionEngineState(): SessionEngineState {
       forceIdle: 0,
       unmatchedBgShellEnd: 0,
       ignoredInnerSubagentStop: 0,
+      duplicateSubagentStop: 0,
       stuckSubagent: 0,
     },
     recentPtyChunks: [],

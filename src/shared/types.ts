@@ -1470,7 +1470,7 @@ export interface ActivityStatsSnapshot {
    * Increments on each watchdog fire or force-* call; never decrements.
    * Used by the debug overlay's counter strip to flag silent
    * compensations that don't visibly flip the activity pill. In a
-   * clean session, all eight fields read 0.
+   * clean session, all nine fields read 0.
    */
   compensationCounters: {
     /** `timer:stale-thinking` watchdog fires (turnActive held alone). */
@@ -1487,6 +1487,8 @@ export interface ActivityStatsSnapshot {
     unmatchedBgShellEnd: number;
     /** Empty-string `subagent_stop` (spurious inner-loop Stop) ignored, not counted. */
     ignoredInnerSubagentStop: number;
+    /** Named `subagent_stop` for an already-stopped `subagentId` ignored (re-prompted subagent, task #759). */
+    duplicateSubagentStop: number;
     /** `timer:stuck-subagent` fired (a named SubagentStop was dropped, depth reclaimed). */
     stuckSubagent: number;
   };
@@ -1707,6 +1709,18 @@ export interface SessionEvent {
    * engine falls back to name-matching automatically.
    */
   toolId?: string;
+  /**
+   * Optional correlation id for `subagent_start` / `subagent_stop`. When
+   * present, the activity engine releases each subagent's depth slot once:
+   * a second stop for an id whose last event was already a stop is ignored
+   * (task #759, a re-prompted subagent fires two named stops). A start with
+   * the same id re-opens it, because a continued agent keeps its id.
+   *
+   * Source: Claude Code's hook payload carries `agent_id` on SubagentStart
+   * and SubagentStop. Adapters without one leave it undefined and the
+   * engine keeps its count-based depth tracking.
+   */
+  subagentId?: string;
   /**
    * Polymorphic context for the event:
    * - For `tool_start`/`tool_end`: tool-specific info (file path, command)

@@ -26,7 +26,7 @@ import type {
 import { snapshotCounters, formatCounterDelta } from './counter-snapshot';
 import { createSessionEngineState } from './state-factory';
 import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTurn } from './predicate';
-import { updateCounters, updatePermissionFlag } from './event-handlers';
+import { updateCounters, updatePermissionFlag, releaseSubagentSlots } from './event-handlers';
 import { buildWatchdogHolds, findActiveWatchdogHold } from './watchdog';
 import type { WatchdogHold } from './watchdog';
 
@@ -400,7 +400,8 @@ export class ActivityEngine {
     state: SessionEngineState,
     options: {
       /**
-       * Keep `subagentDepth` across the reset. Set only by
+       * Keep `subagentDepth` (and the `subagentLifecycleById` ledger that
+       * agrees with it) across the reset. Set only by
        * `applyRetryableFailureHold`: a live `turn_retrying` leaves the agent
        * CLI process RUNNING and its subagents with it - they survive the
        * parent's API retry and self-heal through their own terminal
@@ -417,7 +418,7 @@ export class ActivityEngine {
     state.pendingToolCount = 0;
     state.pendingToolStack.length = 0;
     if (!options.preserveSubagentDepth) {
-      state.subagentDepth = 0;
+      releaseSubagentSlots(state);
     }
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
@@ -564,7 +565,7 @@ export class ActivityEngine {
     state.lastPtyOutputAt = null;
     state.pendingToolCount = 0;
     state.pendingToolStack.length = 0;
-    state.subagentDepth = 0;
+    releaseSubagentSlots(state);
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
     // Unlike `resetInFlightCounters`, this path is reached with a dead agent

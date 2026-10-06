@@ -7,7 +7,7 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
-import { extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractDetail, extractSubagentId, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -140,6 +140,11 @@ describe('hook-manager', () => {
       // SubagentStop: subagent_stop
       expect(hooks.SubagentStop).toHaveLength(1);
       expect(hooks.SubagentStop[0].hooks[0].command).toContain('subagent_stop');
+
+      // Both subagent hooks carry the agent_id correlation id, so the engine
+      // can release each subagent's depth slot once (task #759).
+      expect(hooks.SubagentStart[0].hooks[0].command).toContain(extractSubagentId(['agent_id']));
+      expect(hooks.SubagentStop[0].hooks[0].command).toContain(extractSubagentId(['agent_id']));
 
       // Notification: notification, with a "waiting for your input" -> idle_hint
       // classification directive (Claude-specific string lives here, not the engine)

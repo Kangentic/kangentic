@@ -71,6 +71,9 @@ interface ReplayResult {
   /** Empty-string `subagent_stop` events ignored as spurious inner-loop Stops
    *  (the fix for task #237's false idle). */
   ignoredInnerSubagentStopCompensations: number;
+  /** Named `subagent_stop` events ignored because their `subagentId` was
+   *  already stopped (the fix for task #759's re-prompted subagent). */
+  duplicateSubagentStopCompensations: number;
   /** Trigger of the last committed thinking->idle transition, or null. */
   lastThinkingToIdleTrigger: string | null;
 }
@@ -136,6 +139,7 @@ function replay(events: SessionEvent[]): ReplayResult {
     bgShellHatchCompensations: snapshot.compensationCounters.bgShellHatch,
     ignoredInnerSubagentStopCompensations:
       snapshot.compensationCounters.ignoredInnerSubagentStop,
+    duplicateSubagentStopCompensations: snapshot.compensationCounters.duplicateSubagentStop,
     lastThinkingToIdleTrigger: lastThinkingToIdle?.trigger ?? null,
   };
   engine.dispose();
@@ -1403,6 +1407,77 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-030-duplicate-named-subagent-stop', () => {
+    // Task #759. Reduced from the real false-idle on task #757 (session
+    // a0797fa5): `/code-review` fanned out 9 background agents, then the main
+    // agent started a background `test-builder`. The correctness review-finder
+    // ended its turn with plain text, fired a named stop, was re-prompted by
+    // the CLI's `[handback-send-enforce]` message, and fired a SECOND named stop
+    // after calling SubagentHandback. Counting both took test-builder's slot,
+    // so the main Stop (the last event) committed idle for 49s while
+    // test-builder was still running.
+    //
+    // The `subagentId` values are AUGMENTED: the bridge recorded only
+    // `agent_type` at the time, so the real ids were never captured. One id per
+    // start, named stops mapped by type, and the two stops at 1791242782151 and
+    // 1791242794857 share one id (`a0000000000000008`), as they did in the
+    // finder's single transcript file. The empty-detail stops stay id-less.
+    // Tool and bg-shell events were dropped: the bg-shell watcher drained those
+    // shells in production, and this harness does not drive the watcher.
+    const FIXTURE = 'session-030-duplicate-named-subagent-stop.jsonl';
+    const TEST_BUILDER_ID = 'a0000000000000010';
+
+    it('stays thinking at the main Stop while test-builder is live', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.turnActive).toBe(true);
+      // test-builder still holds its slot.
+      expect(result.finalState.subagentDepth).toBe(1);
+      // The crux: no thinking->idle ever committed. Pre-fix this was
+      // `event:idle`, the main Stop passing the depth-0 gate.
+      expect(result.lastThinkingToIdleTrigger).toBeNull();
+      const firstActive = result.transitions.findIndex((activity) => activity !== 'idle');
+      expect(firstActive).toBeGreaterThanOrEqual(0);
+      expect(result.transitions.slice(firstActive)).not.toContain('idle');
+      expect(result.duplicateSubagentStopCompensations).toBe(1);
+      // The 20 empty-detail inner stops are still ignored by #237's guard,
+      // which runs before the duplicate check.
+      expect(result.ignoredInnerSubagentStopCompensations).toBe(20);
+      expect(result.staleThinkingCompensations).toBe(0);
+      expect(result.forceThinkingCompensations).toBe(0);
+    });
+
+    it('idles on the main Stop when the ids are stripped (mechanical red-green)', () => {
+      // Without ids the engine is count-based, which is the pre-fix behavior:
+      // the second named stop decrements, depth reaches 0 with test-builder
+      // live, and the main Stop ends the turn.
+      const withoutIds = loadFixture(FIXTURE).map(({ subagentId: _subagentId, ...event }) => event);
+      const result = replay(withoutIds);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.lastThinkingToIdleTrigger).toMatch(/^event:idle/);
+      expect(result.duplicateSubagentStopCompensations).toBe(0);
+    });
+
+    it('settles to idle once test-builder stops and the parent Stops again (inverse preserved)', () => {
+      const events = [
+        ...loadFixture(FIXTURE),
+        {
+          ts: 1791243236627,
+          type: EventType.SubagentStop,
+          detail: 'test-builder',
+          subagentId: TEST_BUILDER_ID,
+        } as SessionEvent,
+        { ts: 1791243240000, type: EventType.Idle } as SessionEvent,
+      ];
+      const result = replay(events);
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.turnActive).toBe(false);
+      expect(result.lastThinkingToIdleTrigger).toMatch(/^event:idle/);
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -1429,6 +1504,7 @@ describe('ActivityEngine replay tests', () => {
         'session-027-preview-watcher-holds-active.jsonl',
         'session-027-preview-watcher-exempt.jsonl',
         'session-028-turn-retrying-wipes-subagent-depth.jsonl',
+        'session-030-duplicate-named-subagent-stop.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

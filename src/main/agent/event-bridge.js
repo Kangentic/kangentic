@@ -24,6 +24,8 @@
  *                                 stale copy rejects it via `default` instead of misreading
  *                                 the payload (see directive-builders.ts).
  *   extractToolId              { fields[], nested? } -> event.toolId = first non-null
+ *   extractSubagentId          { fields[] }          -> event.subagentId = first non-null
+ *                                 top-level field (a subagent's correlation id)
  *   extractDetail              { fields[], nested? } -> event.detail = first non-null
  *   extractDetailPath          { parents[], fields[] } -> event.detail = first non-null of
  *                                 fields under the nested container at parents
@@ -198,6 +200,12 @@ process.stdin.on('end', () => {
         const container = payload.nested ? (ctx && ctx[payload.nested]) : ctx;
         const value = firstNonNull(container, payload.fields);
         if (value !== undefined) event.toolId = value;
+        break;
+      }
+      case 'extractSubagentId': {
+        if (event.subagentId !== undefined) break;
+        const value = firstNonNull(ctx, payload.fields);
+        if (value !== undefined) event.subagentId = value;
         break;
       }
       // `extractDetailWhenTool` is the tool-scoped form. It is a SEPARATE kind

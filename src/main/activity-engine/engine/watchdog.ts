@@ -1,4 +1,5 @@
 import type { SessionEngineState, TransitionTrigger } from './shapes';
+import { releaseSubagentSlots } from './event-handlers';
 
 /**
  * Declarative timer-anchor strategy for a watchdog hold: which timestamp the
@@ -370,7 +371,7 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       parkedAnchor: 'signal',
       parkedWhen: (state) => state.retryFailurePending,
       reset: (state) => {
-        state.subagentDepth = 0;
+        releaseSubagentSlots(state);
         // The matching named SubagentStop was lost along with, most likely,
         // the parent's own Stop, so clear turnActive too - otherwise the
         // predicate would still read thinking after depth zeroes.
