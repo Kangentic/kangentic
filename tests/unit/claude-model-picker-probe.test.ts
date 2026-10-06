@@ -43,6 +43,7 @@ import {
   setModelPickerProbeScanFileForTests,
   type ModelPickerScan,
 } from '../../src/main/agent/adapters/claude/model-picker-probe';
+import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 const spawnMock = pty.spawn as unknown as ReturnType<typeof vi.fn>;
 
@@ -1408,6 +1409,31 @@ describe('the probe failure log line', () => {
     expect(lines[0]).toContain('❯ No (recommended)');
     expect(lines[0]).toContain('ANTHROPIC_API_KEY: <api-key>');
     expect(lines[0]).not.toContain('example-key-tail');
+  });
+
+  // The line carries the bottom of the CLI's screen, which can hold account text
+  // the redaction does not know about. It belongs in the local log only, so the
+  // Sentry console allowlist must not name its tag. The crumb below has the
+  // shape the SDK builds from a console call: the joined message plus the raw
+  // arguments.
+  it('stays out of Sentry: the breadcrumb filter drops the line, though it keeps an allowlisted one', async () => {
+    setShortTimeoutTimings();
+    installFakePty((self) => self.emitData('Welcome back dev@example.com\r\n> Try "how do I log an error?"\r\n'));
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    const probeCall = warnSpy.mock.calls.find((call) => String(call[0]).startsWith('[model-picker-probe]'));
+    expect(probeCall).toBeDefined();
+    const consoleCrumb = (consoleArguments: unknown[]) => ({
+      category: 'console',
+      level: 'warning',
+      message: consoleArguments.map(String).join(' '),
+      data: { arguments: consoleArguments, logger: 'console' },
+    });
+
+    // Positive control: this crumb shape is kept when the tag is allowlisted, so
+    // the null below is the tag's doing and not a malformed crumb.
+    expect(filterBreadcrumb(consoleCrumb(['[APP] Startup failed:']))).not.toBeNull();
+    expect(filterBreadcrumb(consoleCrumb(probeCall ?? []))).toBeNull();
   });
 
   it('names the spawn stage without a screen when the CLI cannot start', async () => {
