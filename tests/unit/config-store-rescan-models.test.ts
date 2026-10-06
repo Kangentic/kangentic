@@ -310,6 +310,56 @@ describe('config-store rememberDiscoveredModel reloads the agent list', () => {
   });
 });
 
+// `updateConfig` carries every config write: window layouts, announcement
+// dismissals, and the telemetry caches live sessions refresh. Only a CLI path
+// edit (`agent`) and a newly learned model id change what the list holds, so
+// those two reload it and every other write must not cost a list request. The
+// sibling context-window cache is the near miss: `rememberModelContextWindow`
+// writes it on live status updates, so a check widened to "any discovered
+// cache" would reload the list all session long.
+describe('config-store updateConfig reloads the agent list only for the keys that change it', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reloads the list, unforced, after a CLI path write', async () => {
+    const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+    const cliPathWrite: DeepPartial<AppConfig> = { agent: { cliPaths: { claude: '/mock/bin/claude' } } };
+
+    await useConfigStore.getState().updateConfig(cliPathWrite);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(configSet).toHaveBeenCalledWith(cliPathWrite);
+    expect(agentsList).toHaveBeenCalledTimes(1);
+    expect(agentsList.mock.calls[0][0]).toBeFalsy();
+  });
+
+  const unrelatedWrites: Array<[string, DeepPartial<AppConfig>]> = [
+    ['context-window cache', { discoveredContextWindowsByAgent: { claude: { 'claude-opus-5-5': 200_000 } } }],
+    ['announcement dismissal', { dismissedAnnouncementIds: ['announcement-one'] }],
+  ];
+
+  it.each(unrelatedWrites)('does not reload the list after a %s write', async (_label, unrelatedWrite) => {
+    const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+
+    await useConfigStore.getState().updateConfig(unrelatedWrite);
+    // The reload is fire-and-forget, so give one that should not exist the same
+    // flush the positive cases above need before asserting it never happened.
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(configSet).toHaveBeenCalledWith(unrelatedWrite);
+    expect(agentsList).not.toHaveBeenCalled();
+  });
+});
+
 // The reload `updateConfig` starts is fire-and-forget: it is neither awaited nor
 // returned, so a rejecting `agents.list` can never fail `updateConfig` itself. The
 // only observable symptom of a missing `.catch(() => undefined)` is Node's
