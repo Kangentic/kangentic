@@ -503,7 +503,7 @@ in one Sentry org, one triage surface.
   because Sentry normalizes contexts to depth 3, which turns an object inside the list into
   `[Object]`. The pending list names every job in flight, since the retrieval worker schedules
   nothing itself, but not which one held the loop. For that, the worker runs an event-loop watchdog
-  thread (`src/main/retrieval/worker/event-loop-watchdog.ts`): when its heartbeat stops for about
+  thread (`src/main/retrieval/worker/event-loop-watchdog.ts`). When its heartbeat stops for about
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
   `timeSyncWork` span that was running, so the line is in the stderr tail by the 15 s kill.
 - **Host memory pressure carries a `host_memory` context on every event** (`setHostMemoryContext`,
@@ -541,8 +541,8 @@ in one Sentry org, one triage surface.
   `[utility-process] <service> <what happened> (crash <i> of <cap>)` warning, which the log
   mirror persists to `<project>/.kangentic/logs/<date>.log`, so the text is on disk locally whether
   or not error reporting is on. An exit reads `exited with code <n>`. A crash with no exit says what
-  the worker failed to do, as in `did not answer projects.summaries in time`, and the package smoke matches the `(crash <i> of
-  <cap>)` suffix every cause shares. The Knowledge Graph settings tab shows the same reason, plus
+  the worker failed to do, as in `did not answer projects.summaries in time`. The package smoke
+  matches the `(crash <i> of <cap>)` suffix every cause shares. The Knowledge Graph settings tab shows the same reason, plus
   the first error line, while semantic search is off because of it.
 - **A GPU health escalation is reported once, and on the NEXT launch, not live.**
   `src/main/diagnostics/gpu-health.ts` counts GPU `child-process-gone` deaths the same way

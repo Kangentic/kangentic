@@ -98,7 +98,7 @@ export interface EventLoopWatchdogOptions {
 }
 
 export interface EventLoopWatchdog {
-  /** Resolves once the watchdog thread runs, so a test can hold the loop after it. */
+  /** Resolves once the watchdog thread runs, or fails to, so a test can hold the loop after it. */
   online: Promise<void>;
   stop: () => Promise<void>;
 }
@@ -135,7 +135,12 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
   watchdog.on('error', (error) => {
     console.warn('[retrieval-worker] event-loop watchdog stopped:', error);
   });
-  const online = new Promise<void>((resolve) => watchdog.once('online', () => resolve()));
+  // Settles on a failed start too, so a waiter never hangs on a thread that never runs.
+  const online = new Promise<void>((resolve) => {
+    watchdog.once('online', () => resolve());
+    watchdog.once('error', () => resolve());
+    watchdog.once('exit', () => resolve());
+  });
 
   setSyncSpanLabelSink((label) => {
     if (label === null) {

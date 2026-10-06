@@ -501,20 +501,7 @@ describe('utilityProcess.fork call sites', () => {
     const scanRoot = path.join(repoRoot, 'src/main');
     const offenders: string[] = [];
 
-    function collectSourceFiles(directory: string): string[] {
-      const files: string[] = [];
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        const fullPath = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-          files.push(...collectSourceFiles(fullPath));
-        } else if (fullPath.endsWith('.ts') && !fullPath.endsWith('.d.ts')) {
-          files.push(fullPath);
-        }
-      }
-      return files;
-    }
-
-    for (const filePath of collectSourceFiles(scanRoot)) {
+    for (const filePath of collectMainSourceFiles(scanRoot)) {
       const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
       const source = fs.readFileSync(filePath, 'utf-8');
       for (const lineNumber of findForkCallsMissingSharedStdio(source)) {
