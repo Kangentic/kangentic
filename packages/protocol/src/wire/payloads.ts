@@ -256,7 +256,10 @@ function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPay
  * - 'sessions': columns, per-column task counts, and only the non-archived
  *   tasks that carry a `session_id`. This is what an agent feed renders: it
  *   watches every project at once but only ever draws the handful of tasks
- *   with a live agent on them.
+ *   with a live agent on them. From 0.16.0 it also keeps a task with a
+ *   `spawn_progress` label in flight (a first start, or a respawn that has
+ *   nulled `session_id`) and a `resumable` paused task (a desktop pause
+ *   nulls `session_id` too), so the feed can draw "Paused" with a Resume.
  * - 'full': every non-archived task, for the one project whose board the user
  *   actually has open.
  *
@@ -351,7 +354,7 @@ export interface ReadBoardProjectListResponsePayload {
 export interface ReadBoardSnapshotResponsePayload {
   projectId: string;
   columns: BoardColumnWire[];
-  /** Non-archived tasks; filtered to the ones carrying a `session_id` when `view` is 'sessions'. */
+  /** Non-archived tasks; filtered when `view` is 'sessions' (see ReadBoardView for which tasks it keeps). */
   tasks: BoardTaskWire[];
   /** Absent whenever the request carried a `view` (protocol 0.9.0) - no phone has ever rendered it. */
   backlog?: BacklogItemWire[];
