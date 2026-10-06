@@ -91,7 +91,7 @@ export class LineCountClient {
       // policy rather than latching the cap directly - otherwise one transient
       // fork failure disabled offload permanently, with no decay.
       console.warn('[git] line-count worker fork failed:', error);
-      this.restartPolicy.recordCrash(null);
+      this.restartPolicy.recordCrash(null, undefined, { cause: 'fork_failed' });
       return null;
     }
     this.child = child;

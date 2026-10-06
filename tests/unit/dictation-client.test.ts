@@ -837,7 +837,7 @@ describe('DictationClient', () => {
 
     expect(mockFork).toHaveBeenCalledTimes(1);
     expect(recordCrashSpy).toHaveBeenCalledTimes(1);
-    expect(recordCrashSpy).toHaveBeenCalledWith(null);
+    expect(recordCrashSpy).toHaveBeenCalledWith(null, undefined, { cause: 'fork_failed' });
     expect(client.crashed).toBe(false);
     warnSpy.mockRestore();
   });

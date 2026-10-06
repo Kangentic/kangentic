@@ -55,7 +55,7 @@ reports, so it is NOT comparable across platforms (POSIX derives it from `waitpi
 `GetExitCodeProcess`). Group by `service` and platform before reading it. The value `-1` is a
 sentinel meaning "no process exit, so there is no exit code", which a real exit code cannot collide
 with. The matching Sentry tag spells that same case `unknown` rather than `-1`. `cause` says which
-case it was: `exit` carries a real code, and `-1` comes with `fork_failed` (the fork threw, so no
+case it was: `exit` carries a real code (or `-1` if the exit reported none), and `-1` comes with `fork_failed` (the fork threw, so no
 process started), `ready_timeout` (the worker never said ready) or `request_timeout` (the client
 killed a worker that stopped answering). Before `cause` was sent, a retrieval worker that hung read
 as a fork failure. `phase` says which of the two per-run events it is: `first` counts the

@@ -638,7 +638,7 @@ test.describe('Index card', () => {
 });
 
 test.describe('Local model error state', () => {
-  test('shows the worker error detail when the local model fails to start', async () => {
+  test('shows the worker error detail when the local model stops', async () => {
     const { browser, page } = await launchWithState(makeErrorPreConfig('exit 1: Cannot find module sharp'));
     try {
       await openKnowledgeGraphTab(page);
@@ -658,7 +658,7 @@ test.describe('Local model error state', () => {
       await openKnowledgeGraphTab(page);
       const status = page.getByTestId('semantic-status');
       await expect(status).toBeVisible();
-      await expect(status).toHaveText('The local model failed to start - showing keyword matches.');
+      await expect(status).toHaveText('The local model stopped - showing keyword matches.');
     } finally {
       await browser.close();
     }
