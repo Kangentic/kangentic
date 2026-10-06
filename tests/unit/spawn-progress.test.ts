@@ -286,6 +286,36 @@ describe('spawn-progress queryable map', () => {
     expect(events).toEqual([['task-1', 'Fetching latest...']]);
   });
 
+  it('a throwing change listener neither throws into the push nor skips later listeners or the renderer send', () => {
+    // pushSpawnProgress runs on the spawn path itself, so a listener that
+    // throws (the mobile bridge feed, say) must be contained.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { window, send } = makeWindow();
+    const listenerError = new Error('listener blew up');
+    const laterListenerEvents: Array<[string, string | null]> = [];
+    const unsubscribeThrowing = onSpawnProgressChange(() => {
+      throw listenerError;
+    });
+    const unsubscribeLater = onSpawnProgressChange((taskId, label) => laterListenerEvents.push([taskId, label]));
+
+    try {
+      expect(() => emitSpawnProgress(window, 'task-1', 'starting-agent')).not.toThrow();
+
+      // The listener AFTER the throwing one still heard the push.
+      expect(laterListenerEvents).toEqual([['task-1', 'Starting agent...']]);
+      // The renderer push that follows the listener loop still happened.
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith('task:spawnProgress', 'task-1', 'Starting agent...');
+      // The map was updated and the failure was logged, not swallowed silently.
+      expect(getInFlightSpawnProgress()).toEqual({ 'task-1': 'Starting agent...' });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith('[spawn-progress] change listener failed:', listenerError);
+    } finally {
+      unsubscribeThrowing();
+      unsubscribeLater();
+    }
+  });
+
   it('updates the map even when the window is destroyed, but skips the IPC send', () => {
     const { window, send } = makeWindow(true);
     emitSpawnProgress(window, 'task-1', 'starting-agent');

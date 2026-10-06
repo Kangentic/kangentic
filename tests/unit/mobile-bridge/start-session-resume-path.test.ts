@@ -37,6 +37,22 @@ const mockEnsureTaskWorktree = vi.fn(async (): Promise<void> => {
   labelDuringGitPhase = getInFlightSpawnProgress()[TASK_ID];
 });
 
+interface ReconcileResult {
+  task: Task;
+  liveSession: Partial<Session> | null;
+}
+
+// No live session for the task; the paused pointer is cleared, as the real
+// reconcile does for a suspended row. Once the resume has run, the task points
+// at the resumed session and that one is live.
+function defaultReconcile(..._args: unknown[]): ReconcileResult {
+  if (storedTask.session_id === 'sess-resumed') {
+    return { task: storedTask, liveSession: { id: 'sess-resumed', taskId: TASK_ID, status: 'running' } };
+  }
+  return { task: { ...storedTask, session_id: null }, liveSession: null };
+}
+const mockReconcileTaskSessionRef = vi.fn(defaultReconcile);
+
 const taskRepo = {
   getById: vi.fn(() => storedTask),
   update: vi.fn((patch: Partial<Task> & { id: string }) => {
@@ -67,14 +83,10 @@ vi.mock('../../../src/main/ipc/helpers/agent-spawn', () => ({
   autoSpawnForTask: (...args: unknown[]) => mockAutoSpawnForTask(...(args as [])),
 }));
 vi.mock('../../../src/main/ipc/handlers/session-reconcile', () => ({
-  // No live session for the task; the paused pointer is cleared, as the real
-  // reconcile does for a suspended row.
-  reconcileTaskSessionRef: () => {
-    if (storedTask.session_id === 'sess-resumed') {
-      return { task: storedTask, liveSession: { id: 'sess-resumed', taskId: TASK_ID, status: 'running' } };
-    }
-    return { task: { ...storedTask, session_id: null }, liveSession: null };
-  },
+  // Overridable per test: startTaskSession calls it for its own decision and
+  // the resume's Phase 1 calls it again, so a test can answer differently on
+  // each call. beforeEach restores defaultReconcile.
+  reconcileTaskSessionRef: (...args: unknown[]) => mockReconcileTaskSessionRef(...args),
 }));
 vi.mock('../../../src/main/transition-engine/column-strategy', () => ({
   applyProfileToLane: (lane: unknown) => lane,
@@ -133,6 +145,8 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
     engine.executeTransition.mockClear();
     mockAutoSpawnForTask.mockClear();
     mockEnsureTaskWorktree.mockClear();
+    mockReconcileTaskSessionRef.mockReset();
+    mockReconcileTaskSessionRef.mockImplementation(defaultReconcile);
   });
 
   afterEach(() => {
@@ -185,5 +199,78 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
     );
     expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+  });
+
+  it('answers starting on acceptance, while the git phase is still running', async () => {
+    // A deferred the test controls, not a promise that never settles: a hung
+    // resume would leave its controller registered and its label up for the
+    // next test.
+    let releaseGitPhase: () => void = () => {};
+    const gitPhase = new Promise<void>((resolve) => {
+      releaseGitPhase = resolve;
+    });
+    mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+      labelDuringGitPhase = getInFlightSpawnProgress()[TASK_ID];
+      await gitPhase;
+    });
+
+    let answered = false;
+    const responsePromise = handleStartSession(fakeRequest(), fakeContext()).then((response) => {
+      answered = true;
+      return response;
+    });
+
+    try {
+      // The resume reports acceptance before ensureTaskWorktree, so the phone
+      // is answered while the git phase is parked on the deferred. If the
+      // answer waited on the git phase, this would stay false.
+      await vi.waitFor(() => expect(answered).toBe(true));
+      const response = await responsePromise;
+      expect(response.ok).toBe(true);
+      expect(response.payload).toEqual({ ok: true, outcome: 'starting' });
+
+      // The git phase has started and is still pending: the engine's resume,
+      // which runs after it, has not been reached, and the card shows the label.
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      expect(getInFlightSpawnProgress()[TASK_ID]).toBe('Resuming session...');
+    } finally {
+      releaseGitPhase();
+    }
+
+    // Let the resume finish so nothing hangs into the next test.
+    await vi.waitFor(() => expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1));
+    expect(labelDuringGitPhase).toBe('Resuming session...');
+    await vi.waitFor(() => expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined());
+  });
+
+  it('answers live, spawning nothing, when a session went live between the decision and the resume\'s Phase 1', async () => {
+    // startTaskSession reconciles once for its own decision, then the resume's
+    // Phase 1 reconciles again. The first call must show NO live session (and
+    // the task a suspended one, so the decision picks the resume path); only
+    // the second call, inside the resume, finds the session that came up in
+    // the gap. A live session on the FIRST call would short-circuit to `live`
+    // in the decision and never reach the resume's own acceptance.
+    storedTask = { ...storedTask, session_id: null };
+    registryRows = [session({})];
+    mockReconcileTaskSessionRef
+      .mockImplementationOnce(() => ({ task: storedTask, liveSession: null }))
+      .mockImplementationOnce(() => ({
+        task: storedTask,
+        liveSession: { id: 'sess-went-live', taskId: TASK_ID, status: 'running' },
+      }));
+
+    const response = await handleStartSession(fakeRequest(), fakeContext());
+
+    expect(response.ok).toBe(true);
+    expect(response.payload).toEqual({ ok: true, outcome: 'live' });
+    // Both reconciles ran: the decision's and the resume's Phase 1.
+    expect(mockReconcileTaskSessionRef).toHaveBeenCalledTimes(2);
+    expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(engine.executeTransition).not.toHaveBeenCalled();
+    expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+    // Phase 1 found a live session, so no label was ever raised.
+    expect(getInFlightSpawnProgress()[TASK_ID]).toBeUndefined();
   });
 });

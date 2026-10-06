@@ -49,12 +49,16 @@ export type StartTaskSessionResult =
 
 /**
  * Whether the task's session is paused: a `suspended` row in the registry,
- * which is what the desktop's task view offers Resume for. A suspended row
+ * which is what the desktop's task view offers Resume for. It excludes a
+ * Command Terminal row the way read-board and read-stream do when they compute
+ * `resumable`, the flag that promises this path to the phone. A suspended row
  * survives `reconcileTaskSessionRef` (it clears only the task's pointer), so
  * this reads the registry by task, not the pointer.
  */
 function hasSuspendedSession(context: IpcContext, taskId: string): boolean {
-  return context.sessionManager.listSessions().some((session) => session.taskId === taskId && session.status === 'suspended');
+  return context.sessionManager.listSessions().some(
+    (session) => session.taskId === taskId && session.status === 'suspended' && session.transient !== true,
+  );
 }
 
 /**
@@ -106,21 +110,17 @@ export async function startTaskSession(
   // and runs the git phase and the engine resume behind the answer. Its Phase 1
   // re-reads under the lock, so a session that went live in the gap since the
   // decision above is reported as `live` and nothing spawns.
-  let acceptance: ResumeAcceptance | null = null;
-  let markAccepted!: () => void;
-  const accepted = new Promise<void>((resolve) => {
-    markAccepted = resolve;
+  //
+  // The executor runs synchronously, so `onAccepted` is the promise's own
+  // resolve by the time the resume receives it.
+  let onAccepted: (acceptance: ResumeAcceptance) => void = () => {};
+  const accepted = new Promise<ResumeAcceptance>((resolve) => {
+    onAccepted = resolve;
   });
-  const resumed = resumeTaskSession(context, taskId, {
-    projectId,
-    onAccepted: (outcome) => {
-      acceptance = outcome;
-      markAccepted();
-    },
-  });
+  const resumed = resumeTaskSession(context, taskId, { projectId, onAccepted });
   // A refusal in the resume's Phase 1 rejects before acceptance and reaches
   // the phone as ok:false, as the decision's own refusals do.
-  await Promise.race([accepted, resumed]);
+  const acceptance = await Promise.race([accepted, resumed.then(() => null)]);
   if (acceptance === 'live') return { outcome: 'live' };
   return { outcome: 'starting', settled: resumed.then(() => undefined) };
 }
