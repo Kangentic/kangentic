@@ -30,6 +30,7 @@
 import { withTaskLock } from '../task-lifecycle-lock';
 import { getProjectRepos } from '../helpers/project-repos';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
+import { notifySpawnBlocked } from '../helpers/task-git';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
 import { isPausedTaskSession, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
@@ -41,9 +42,11 @@ export type StartTaskSessionResult =
   /**
    * The start was accepted; the worktree, checkout, and spawn or resume run
    * behind this result. `settled` resolves when that work finishes. Both paths
-   * report their own failures desktop-side, so `settled` rejecting is
-   * possible (a resume's worktree failure rejects) but must not escape: a
-   * caller that does not await it must still attach a handler.
+   * report their own failures desktop-side with the spawn-blocked notice
+   * (`autoSpawnForTask` itself; the resume through its `onFailed` hook), so
+   * `settled` rejecting is possible (a resume's failure still rejects) but
+   * must not escape: a caller that does not await it must still attach a
+   * handler.
    */
   | { outcome: 'starting'; settled: Promise<void> };
 
@@ -54,7 +57,7 @@ export type StartTaskSessionResult =
  * `reconcileTaskSessionRef` (it clears only the task's pointer), so this reads
  * the registry by task, not the pointer.
  */
-function hasSuspendedSession(context: IpcContext, taskId: string): boolean {
+function hasPausedTaskSession(context: IpcContext, taskId: string): boolean {
   return context.sessionManager.listSessions().some((session) => session.taskId === taskId && isPausedTaskSession(session));
 }
 
@@ -71,8 +74,11 @@ function hasSuspendedSession(context: IpcContext, taskId: string): boolean {
  * without the reconcile a start would run the enter list and then spawn
  * nothing. The lock is released before either path runs, since each takes its
  * own (`withTaskLock` is not reentrant) and re-checks. A task moved to Done in
- * that gap passes this gate and then stops inside the chosen path after the
- * caller was already told `starting`; that is the drag path's outcome too.
+ * that gap reaches the two paths differently. A start passes this gate and
+ * then stops silently inside `spawnAgent`'s role check after the caller was
+ * already told `starting`, which is the drag path's outcome too. A resume
+ * re-gates in its own Phase 1 before it accepts, so the phone gets the
+ * desktop's Resume copy as ok:false instead.
  */
 export async function startTaskSession(
   context: IpcContext,
@@ -88,7 +94,7 @@ export async function startTaskSession(
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
 
-    if (hasSuspendedSession(context, taskId)) return { path: 'resume' as const };
+    if (hasPausedTaskSession(context, taskId)) return { path: 'resume' as const };
 
     if (!lane) throw new Error(`Column ${task.swimlane_id} not found for task ${taskId}`);
     return { path: 'start' as const, task: { id: task.id, title: task.title }, laneId: lane.id };
@@ -106,7 +112,14 @@ export async function startTaskSession(
   // re-reads under the lock, so a session that went live in the gap since the
   // decision above is reported as `live` and nothing spawns.
   const { promise: accepted, resolve: onAccepted } = Promise.withResolvers<ResumeAcceptance>();
-  const resumed = resumeTaskSession(context, taskId, { projectId, onAccepted });
+  const resumed = resumeTaskSession(context, taskId, {
+    projectId,
+    onAccepted,
+    // The phone was answered before this work ran, so no rejection reaches a
+    // toast. The desktop's spawn-blocked notice is how a failed phone Resume
+    // shows, as a failed phone Start does through autoSpawnForTask.
+    onFailed: (step, error, task) => notifySpawnBlocked(context, task, step, error, projectId),
+  });
   // A refusal in the resume's Phase 1 rejects before acceptance and reaches
   // the phone as ok:false, as the decision's own refusals do.
   const acceptance = await Promise.race([accepted, resumed.then(() => null)]);

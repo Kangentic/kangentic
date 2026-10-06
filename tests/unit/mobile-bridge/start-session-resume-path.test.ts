@@ -14,6 +14,12 @@
  * never does. The engine's `executeTransition` is the only door to enter
  * automations and column messages, and autoSpawnForTask is the only path that
  * opens it here, so both staying untouched is the pin.
+ *
+ * It also pins the resume's `onFailed` hook, the one place a phone Resume's
+ * failure reaches the desktop: the real notifySpawnBlocked runs against the
+ * fake window here, and resumeTaskSession is driven directly for the cases
+ * where the hook must stay silent (a refusal, an abort) or must not replace the
+ * rejection (a hook that throws).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Session, Task } from '../../../src/shared/types';
@@ -108,8 +114,10 @@ vi.mock('../../../src/main/ipc/helpers/task-profile', () => ({
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
 import { handleStartSession } from '../../../src/main/mobile-bridge/handlers/start-session';
 import { startTaskSession } from '../../../src/main/ipc/handlers/session-start';
+import { resumeTaskSession, type ResumeFailureStep } from '../../../src/main/ipc/handlers/session-resume';
 import { getInFlightSpawnProgress, onSpawnProgressChange, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
 import { resumeBlockMessage } from '../../../src/shared/session-resume-eligibility';
+import { IPC } from '../../../src/shared/ipc-channels';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 
 function fakeRequest(): CapabilityRequestMessage {
@@ -145,6 +153,16 @@ function fakeContext(): IpcContext {
       removeByTaskId: vi.fn(),
     },
   } as unknown as IpcContext;
+}
+
+/**
+ * The TASK_SPAWN_BLOCKED notices the context's window was sent. The spawn-progress
+ * label pushes go through the same `send`, so a count of every send is not a
+ * count of notices.
+ */
+function spawnBlockedNotices(context: IpcContext): unknown[][] {
+  const { send } = (context.mainWindow as unknown as { webContents: { send: { mock: { calls: unknown[][] } } } }).webContents;
+  return send.mock.calls.filter(([channel]) => channel === IPC.TASK_SPAWN_BLOCKED);
 }
 
 describe('start-session: a paused task resumes like the desktop Resume button', () => {
@@ -389,6 +407,188 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
       } finally {
         failGitPhase(new Error('fetch failed'));
         consoleErrorSpy.mockRestore();
+      }
+    });
+
+    it('sends exactly one spawn-blocked notice, worded once, stamped with the explicit project and not the ambient one', async () => {
+      const explicitProjectId = 'proj-explicit';
+      // The ambient project differs from the explicit one, so a notice that
+      // lost the project argument would fall back to it and show.
+      const context = Object.assign(fakeContext(), { currentProjectId: 'proj-ambient' });
+      const { failGitPhase } = armFailingGitPhase();
+
+      const result = await startTaskSession(context, explicitProjectId, TASK_ID);
+      if (result.outcome !== 'starting') throw new Error(`expected outcome starting, got ${result.outcome}`);
+      // The answer went out before the failure: there is no rejection to toast yet.
+      expect(spawnBlockedNotices(context)).toEqual([]);
+
+      failGitPhase(new Error('fetch failed'));
+      await expect(result.settled).rejects.toThrow('Worktree setup failed: fetch failed');
+
+      // The hook receives the git error itself. Handed the wrapped rejection,
+      // describeSpawnFailure would prefix it a second time.
+      expect(spawnBlockedNotices(context)).toEqual([
+        [IPC.TASK_SPAWN_BLOCKED, TASK_ID, 'Review the PR', 'Worktree setup failed: fetch failed', explicitProjectId],
+      ]);
+    });
+
+    it('sends exactly one spawn-blocked notice when the engine resume fails after the answer, still rejecting settled', async () => {
+      const context = fakeContext();
+      engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+        throw new Error('spawn exploded');
+      });
+
+      const result = await startTaskSession(context, PROJECT_ID, TASK_ID);
+      if (result.outcome !== 'starting') throw new Error(`expected outcome starting, got ${result.outcome}`);
+
+      await expect(result.settled).rejects.toThrow('spawn exploded');
+      expect(spawnBlockedNotices(context)).toEqual([
+        [IPC.TASK_SPAWN_BLOCKED, TASK_ID, 'Review the PR', 'Agent did not start: spawn exploded', PROJECT_ID],
+      ]);
+    });
+  });
+
+  describe('resumeTaskSession\'s onFailed hook', () => {
+    const onFailed = vi.fn<(step: ResumeFailureStep, error: unknown, task: Task) => void>();
+
+    beforeEach(() => {
+      onFailed.mockReset();
+    });
+
+    /** The real resume, as startTaskSession drives it, with the hook under test. */
+    function resume(context: IpcContext = fakeContext(), onAccepted?: () => void): Promise<Session | null> {
+      return resumeTaskSession(context, TASK_ID, { projectId: PROJECT_ID, onAccepted, onFailed });
+    }
+
+    it('reports the worktree step with the git error itself, while the rejection carries the wrapped copy', async () => {
+      const gitError = new Error('fetch failed');
+      mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+        throw gitError;
+      });
+
+      const rejection = await resume().catch((error: unknown) => error);
+
+      expect(rejection).toBeInstanceOf(Error);
+      expect((rejection as Error).message).toBe('Worktree setup failed: fetch failed');
+      expect((rejection as Error).cause).toBe(gitError);
+      expect(onFailed).toHaveBeenCalledTimes(1);
+      const [step, reportedError, reportedTask] = onFailed.mock.calls[0];
+      expect(step).toBe('worktree');
+      // The git error itself, not the "Worktree setup failed" wrapper.
+      expect(reportedError).toBe(gitError);
+      expect(reportedTask).toMatchObject({ id: TASK_ID, title: 'Review the PR' });
+    });
+
+    it('reports the agent step once, with the task, when the engine resume throws, and rejects with that same error', async () => {
+      const engineError = new Error('spawn exploded');
+      engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+        throw engineError;
+      });
+
+      await expect(resume()).rejects.toBe(engineError);
+
+      expect(onFailed).toHaveBeenCalledTimes(1);
+      const [step, reportedError, reportedTask] = onFailed.mock.calls[0];
+      expect(step).toBe('agent');
+      expect(reportedError).toBe(engineError);
+      expect(reportedTask).toMatchObject({ id: TASK_ID, title: 'Review the PR' });
+    });
+
+    it.each([
+      ['the task has no session_id after the engine returns', null, 'Session resume failed - no session_id on task'],
+      ['the session the engine recorded is not in the manager', 'sess-gone', 'Session resume failed - session not in manager'],
+    ])('reports the agent step once when %s', async (_label, sessionIdAfterEngine, expectedMessage) => {
+      engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+        storedTask = { ...storedTask, session_id: sessionIdAfterEngine };
+      });
+
+      await expect(resume()).rejects.toThrow(expectedMessage);
+
+      expect(onFailed).toHaveBeenCalledTimes(1);
+      const [step, reportedError, reportedTask] = onFailed.mock.calls[0];
+      expect(step).toBe('agent');
+      expect((reportedError as Error).message).toBe(expectedMessage);
+      expect(reportedTask).toMatchObject({ id: TASK_ID });
+    });
+
+    it('does not report the Phase 1 refusal: a task already in Done is turned away before the resume is accepted', async () => {
+      storedTask = { ...storedTask, swimlane_id: DONE_LANE.id };
+      const onAccepted = vi.fn();
+
+      await expect(resume(fakeContext(), onAccepted)).rejects.toThrow(resumeBlockMessage('done'));
+
+      expect(onAccepted).not.toHaveBeenCalled();
+      expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+      expect(onFailed).not.toHaveBeenCalled();
+    });
+
+    it('does not report the Phase 3 refusal: a task moved to Done during the git phase, after the resume was accepted', async () => {
+      const onAccepted = vi.fn();
+      // The move to Done lands during the unlocked git phase. The default
+      // reconcile hands Phase 3 the row as stored, so Phase 3 sees Done while
+      // Phase 1, which ran before this, saw the working column.
+      mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+        storedTask = { ...storedTask, swimlane_id: DONE_LANE.id };
+      });
+
+      await expect(resume(fakeContext(), onAccepted)).rejects.toThrow(resumeBlockMessage('done'));
+
+      // Accepted, so the refusal is Phase 3's own, and it stopped before the engine.
+      expect(onAccepted).toHaveBeenCalledWith('resuming');
+      expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      expect(onFailed).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the git phase', (): void => {
+        mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+          throw new DOMException('The operation was aborted', 'AbortError');
+        });
+      }],
+      ['the engine resume', (): void => {
+        engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+          throw new DOMException('The operation was aborted', 'AbortError');
+        });
+      }],
+    ])('does not report an abort during %s, which resolves null after cleaning up', async (_label, armAbort) => {
+      armAbort();
+      const context = fakeContext();
+
+      await expect(resume(context)).resolves.toBeNull();
+
+      // The abort branch ran: it removes the registry row and clears the pointer.
+      expect(context.sessionManager.removeByTaskId).toHaveBeenCalledWith(TASK_ID);
+      expect(onFailed).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['worktree', 'Worktree setup failed: fetch failed', (): void => {
+        mockEnsureTaskWorktree.mockImplementationOnce(async (): Promise<void> => {
+          throw new Error('fetch failed');
+        });
+      }],
+      ['agent', 'spawn exploded', (): void => {
+        engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+          throw new Error('spawn exploded');
+        });
+      }],
+    ])('a hook that throws on the %s step is logged and the original failure still rejects', async (expectedStep, expectedMessage, armFailure) => {
+      armFailure();
+      const hookError = new Error('hook blew up');
+      onFailed.mockImplementationOnce(() => {
+        throw hookError;
+      });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        await expect(resume()).rejects.toThrow(expectedMessage);
+
+        expect(onFailed).toHaveBeenCalledTimes(1);
+        expect(onFailed.mock.calls[0][0]).toBe(expectedStep);
+        expect(warnSpy).toHaveBeenCalledWith('[SESSION_RESUME] onFailed hook threw:', hookError);
+      } finally {
+        warnSpy.mockRestore();
       }
     });
   });

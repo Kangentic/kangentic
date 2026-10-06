@@ -133,6 +133,8 @@ export async function handleReadBoard(
   // has something to say. It keeps a resumable paused task for the same
   // reason: a desktop pause nulls session_id too (applySuspendDbWrites), and
   // without it the feed could show Paused only until the row dropped out.
+  const drawnOnAgentFeed = (task: BoardTaskWire): boolean =>
+    task.session_id !== null || typeof task.spawn_progress === 'string' || task.resumable === true;
   const view = payload.view;
   const sessionTasksOnly = view === 'sessions';
   const backlog = view === undefined ? new BacklogRepository(getProjectDb(projectId)).list().map(toBacklogItemWire) : undefined;
@@ -140,7 +142,7 @@ export async function handleReadBoard(
   const responsePayload: ReadBoardResponsePayload = {
     projectId,
     columns: swimlaneRows.map(toBoardColumnWire),
-    tasks: sessionTasksOnly ? allTasks.filter((task) => task.session_id !== null || typeof task.spawn_progress === 'string' || task.resumable === true) : allTasks,
+    tasks: sessionTasksOnly ? allTasks.filter(drawnOnAgentFeed) : allTasks,
     ...(backlog !== undefined ? { backlog } : {}),
     projectColor: deriveProjectAccentColor(projectId),
     // The Layout "Ticket Numbers" setting travels with the snapshot so the

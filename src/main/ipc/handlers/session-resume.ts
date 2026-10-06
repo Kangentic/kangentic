@@ -25,8 +25,12 @@ import { abortInFlightResume, registerResumeController, releaseResumeController 
 import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
-import type { Session } from '../../../shared/types';
+import type { Session, Task } from '../../../shared/types';
+import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
+
+/** The two steps an accepted resume can fail at. */
+export type ResumeFailureStep = Extract<SpawnFailureStep, 'worktree' | 'agent'>;
 
 /** What Phase 1 decided, reported through `onAccepted`. */
 export type ResumeAcceptance =
@@ -48,6 +52,16 @@ export interface ResumeTaskSessionOptions {
    * `handleTaskMove`'s `onCommitted`.
    */
   onAccepted?: (acceptance: ResumeAcceptance) => void;
+  /**
+   * Called once, just before the rejection, when an accepted resume fails:
+   * `'worktree'` with the git error itself (not the "Worktree setup failed"
+   * wrapper the rejection carries), `'agent'` when the engine resume or the
+   * session check after it fails. Not called for a refusal, in either phase,
+   * or for an abort. For a caller that answered before the work ran and has
+   * no rejection to show, the phone's `start-session`. The desktop Resume
+   * passes none: the renderer toasts the rejection itself.
+   */
+  onFailed?: (step: ResumeFailureStep, error: unknown, task: Task) => void;
 }
 
 /**
@@ -76,6 +90,15 @@ export function resumeTaskSession(
   const resumeController = new AbortController();
   registerResumeController(taskId, resumeController);
   const { signal } = resumeController;
+
+  // A throwing hook must not replace the failure it reports.
+  const reportFailure = (step: ResumeFailureStep, error: unknown, task: Task): void => {
+    try {
+      options.onFailed?.(step, error, task);
+    } catch (hookError) {
+      console.warn('[SESSION_RESUME] onFailed hook threw:', hookError);
+    }
+  };
 
   return (async (): Promise<Session | null> => {
     try {
@@ -146,6 +169,7 @@ export function resumeTaskSession(
             await ensureTaskWorktree(context, planTask, tasks, resolvedProjectPath, { signal, onProgress, projectId: resolvedProjectId });
           } catch (worktreeError) {
             if (isAbortError(worktreeError)) throw worktreeError;
+            reportFailure('worktree', worktreeError, planTask);
             const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
             throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
           }
@@ -185,13 +209,18 @@ export function resumeTaskSession(
 
             const project = context.projectRepo.getById(resolvedProjectId);
             const overrides = resolveSpawnOverrides(current, currentLane, project);
-            await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
+            try {
+              await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
 
-            const updated = tasks.getById(taskId);
-            if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
-            const newSession = context.sessionManager.getSession(updated.session_id);
-            if (!newSession) throw new Error('Session resume failed - session not in manager');
-            return newSession;
+              const updated = tasks.getById(taskId);
+              if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
+              const newSession = context.sessionManager.getSession(updated.session_id);
+              if (!newSession) throw new Error('Session resume failed - session not in manager');
+              return newSession;
+            } catch (resumeError) {
+              if (!isAbortError(resumeError)) reportFailure('agent', resumeError, current);
+              throw resumeError;
+            }
           });
         } finally {
           progress.release();

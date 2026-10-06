@@ -131,7 +131,7 @@ describe('SpawnProgressFeed', () => {
     expect(resolveProjectIdForTask).toHaveBeenCalledTimes(2);
   });
 
-  it('does not keep a project miss: a later emit for the same label asks again', () => {
+  it('does not keep a project miss: the next label change for the same task asks again', () => {
     resolveProjectIdForTask.mockReturnValueOnce(null);
     emitSpawnProgress(window, 'task-1', 'fetching');
     expect(emitted).toEqual([]);
@@ -140,6 +140,26 @@ describe('SpawnProgressFeed', () => {
     vi.advanceTimersByTime(1000);
     expect(emitted).toEqual([['proj-1', 'task-1']]);
     expect(resolveProjectIdForTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a project miss for an unchanged label: a re-push of the same text asks nothing and emits nothing', () => {
+    // The first ask misses; any later ask would resolve and emit, so a retry
+    // shows up in both the resolver's call count and the emitted list.
+    resolveProjectIdForTask.mockReturnValueOnce(null);
+    emitSpawnWaiting(window, 'task-1', 2);
+    expect(emitted).toEqual([]);
+    expect(resolveProjectIdForTask).toHaveBeenCalledTimes(1);
+
+    // The git queue's periodic refresh re-pushes the same text, once inside the
+    // miss's window and again after it closes. Neither counts as a change.
+    emitSpawnWaiting(window, 'task-1', 2);
+    vi.advanceTimersByTime(1000);
+    emitSpawnWaiting(window, 'task-1', 2);
+    // Several more windows: no timer keeps re-resolving a label it already delivered.
+    vi.advanceTimersByTime(5000);
+
+    expect(emitted).toEqual([]);
+    expect(resolveProjectIdForTask).toHaveBeenCalledTimes(1);
   });
 
   it('skips the project lookup entirely while nothing listens', () => {

@@ -36,11 +36,12 @@ export async function handleStartSession(
 
   if (result.outcome === 'starting') {
     // autoSpawnForTask reports its own failures (log, Sentry counter, desktop
-    // spawn-blocked notice); a resume rejects with its failure (a worktree
-    // that would not set up) as the desktop Resume's IPC call does. Either way
-    // this handler keeps the rejection out of the bridge's request loop and
-    // logs it. Attached in the SAME synchronous turn as the call, so a
-    // rejection that lands before the next tick is already handled.
+    // spawn-blocked notice). A resume shows the same desktop notice, then
+    // rejects with its failure (a worktree that would not set up) as the
+    // desktop Resume's IPC call does. Either way this handler keeps the
+    // rejection out of the bridge's request loop and logs it. Attached in the
+    // SAME synchronous turn as the call, so a rejection that lands before the
+    // next tick is already handled.
     result.settled.catch((error: unknown) => {
       console.error(`[mobile-bridge] start-session ${payload.taskId.slice(0, 8)} failed after accept:`, error);
     });

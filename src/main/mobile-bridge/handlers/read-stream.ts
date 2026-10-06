@@ -138,7 +138,9 @@ function isSessionResumable(context: IpcContext, session: Session): boolean {
     if (!task) return false;
     const lane = swimlanes.getById(task.swimlane_id);
     return isResumeOffered({ hasPausedSession: true, task, laneRole: lane?.role });
-  } catch {
+  } catch (error) {
+    // Logged because the false is silent on the phone: Resume just never shows.
+    console.warn(`[mobile-bridge] could not read task ${session.taskId.slice(0, 8)} for resumable:`, error);
     return false;
   }
 }

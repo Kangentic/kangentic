@@ -131,7 +131,10 @@ export class SpawnProgressFeed {
         console.warn('[mobile-bridge] could not resolve the project for a spawn-progress change:', error);
         return;
       }
-      // A miss is not kept: the next emit asks again.
+      // A miss is not cached: the next label change asks again. The label
+      // still counts as delivered, so a re-push of the same text does not
+      // retry. Retrying would re-arm the window every second for a task no
+      // project owns, and pruneStale never drops an entry with a window open.
       if (!projectId) return;
       state.projectId = projectId;
     }
