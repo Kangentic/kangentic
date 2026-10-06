@@ -508,6 +508,17 @@ describe('UtilityRestartPolicy', () => {
       expect(policy.lastCrashDescription).toBe('exited with code 3');
     });
 
+    it('says an exit with no code exited with code unknown, since that cause is the only one that claims a code', () => {
+      const { policy } = makePolicy({ maxCrashes: 10 });
+      policy.recordCrash(null, undefined, { cause: 'exit' });
+      expect(policy.lastCrashDescription).toBe('exited with code unknown');
+
+      const lines = warnSpy.mock.calls.map((call) => String(call[0]));
+      expect(lines).toEqual([
+        '[utility-process] kangentic-test-worker exited with code unknown (crash 1 of 10)',
+      ]);
+    });
+
     it('starts a fresh list after the window decays', () => {
       const { policy, clock } = makePolicy({ decayMs: 300_000 });
       for (let index = 0; index < 3; index++) {
