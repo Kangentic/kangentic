@@ -3551,12 +3551,23 @@
       // window.__mockGitFileImageCalls ({ filePath, knownFingerprints, result },
       // each result side reduced to its kind and fingerprint),
       // window.__mockGitFileImageDeferred = true holds the next call until
-      // window.__mockGitFileImageResolve() is called, and
-      // window.__mockGitFileImageReject = true makes the next call reject, as
-      // the IPC call does when main throws (a worktree removed under the panel).
+      // window.__mockGitFileImageResolve() is called, and every call for a
+      // path listed in window.__mockGitFileImageRejectPaths rejects, as the IPC
+      // call does when main throws (a worktree removed under the panel). The
+      // reject is keyed by path and lasts until the list is cleared, not one
+      // call: a selection can read a file twice, and with a one-shot reject
+      // whichever read landed last decided what showed. A rejected call is
+      // recorded too, with `rejected: true` and no sides.
       fileImage: async function (request) {
-        if (typeof window !== 'undefined' && window.__mockGitFileImageReject) {
-          window.__mockGitFileImageReject = false;
+        var rejectPaths = typeof window !== 'undefined' ? window.__mockGitFileImageRejectPaths : null;
+        if (Array.isArray(rejectPaths) && rejectPaths.indexOf(request && request.filePath) !== -1) {
+          window.__mockGitFileImageCalls = window.__mockGitFileImageCalls || [];
+          window.__mockGitFileImageCalls.push({
+            filePath: request.filePath,
+            knownFingerprints: request.knownFingerprints,
+            rejected: true,
+            result: { original: null, modified: null },
+          });
           throw new Error('Mock fileImage failure');
         }
         if (typeof window !== 'undefined' && window.__mockGitFileImageDeferred) {

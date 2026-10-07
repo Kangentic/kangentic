@@ -215,6 +215,13 @@ async function selectFile(filePath: string): Promise<void> {
   await row.locator('button').first().click();
 }
 
+/** Every git.fileImage read of these paths rejects until the list is cleared with []. */
+async function setRejectedImagePaths(paths: string[]): Promise<void> {
+  await page.evaluate((rejected) => {
+    (window as unknown as Record<string, unknown>).__mockGitFileImageRejectPaths = rejected;
+  }, paths);
+}
+
 async function closeChanges(): Promise<void> {
   await page.evaluate(() => {
     (window as unknown as Record<string, unknown>).__mockGitDiff = null;
@@ -437,15 +444,19 @@ test.describe('Changes panel image view', () => {
 
   test('an image whose read fails says so instead of spinning, and reads again when selected again', async () => {
     // The panel falls back to empty content when a fetch throws, and empty
-    // content has no image: the view used to wait on it forever.
-    await page.evaluate(() => {
-      (window as unknown as Record<string, unknown>).__mockGitFileImageReject = true;
-    });
-    await openChanges([pngFile('shots/gone.png'), pngFile('shots/other.png')], 'shots/gone.png');
+    // content has no image: the view used to wait on it forever. Every read of
+    // the file fails while the hook is set, however many reads a selection
+    // makes (a slower runner can make an extra one).
+    await setRejectedImagePaths(['shots/gone.png']);
+    try {
+      await openChanges([pngFile('shots/gone.png'), pngFile('shots/other.png')], 'shots/gone.png');
 
-    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
-    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toHaveText('Could not read this image');
-    await expect(page.locator('[data-testid="diff-editor-area"] .animate-spin')).toHaveCount(0);
+      await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('[data-testid="diff-image-load-failed"]')).toHaveText('Could not read this image');
+      await expect(page.locator('[data-testid="diff-editor-area"] .animate-spin')).toHaveCount(0);
+    } finally {
+      await setRejectedImagePaths([]);
+    }
 
     // The failure is not cached: coming back reads the image again.
     await selectFile('shots/other.png');
@@ -486,17 +497,19 @@ test.describe('Changes panel image view', () => {
   });
 
   test('an SVG whose image read fails keeps its text diff, and only its preview reports the failure', async () => {
-    await page.evaluate(() => {
-      (window as unknown as Record<string, unknown>).__mockGitFileImageReject = true;
-    });
-    await openChanges([{ path: 'icons/broken.svg', status: 'M', binary: false, original: SVG_BEFORE, modified: SVG_AFTER, language: 'xml' }], 'icons/broken.svg');
+    await setRejectedImagePaths(['icons/broken.svg']);
+    try {
+      await openChanges([{ path: 'icons/broken.svg', status: 'M', binary: false, original: SVG_BEFORE, modified: SVG_AFTER, language: 'xml' }], 'icons/broken.svg');
 
-    // The text diff is the SVG's own, not the empty diff a failed fetch leaves.
-    await expect(page.locator('[data-testid="diff-editor-area"] .monaco-diff-editor')).toBeVisible({ timeout: 8000 });
-    await expect(page.locator('[data-testid="diff-editor-area"]')).toContainText('circle', { timeout: 8000 });
+      // The text diff is the SVG's own, not the empty diff a failed fetch leaves.
+      await expect(page.locator('[data-testid="diff-editor-area"] .monaco-diff-editor')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('[data-testid="diff-editor-area"]')).toContainText('circle', { timeout: 8000 });
 
-    await page.locator('[data-testid="diff-svg-preview"]').click();
-    await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
+      await page.locator('[data-testid="diff-svg-preview"]').click();
+      await expect(page.locator('[data-testid="diff-image-load-failed"]')).toBeVisible({ timeout: 8000 });
+    } finally {
+      await setRejectedImagePaths([]);
+    }
 
     await closeChanges();
   });
