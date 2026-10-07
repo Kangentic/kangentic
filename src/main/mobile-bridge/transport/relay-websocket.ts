@@ -30,8 +30,11 @@ import type { RelayWebSocketConstructor, RelayWebSocketFallback } from './relay-
  *
  * So undici dials by default. It is the stack every dial used before October
  * 2026, it was never the worse one in the rig, and the isolated ~19 s dials
- * appeared only after the switch away from it. `net.WebSocket` is used when
- * the system needs it. That means outright while `session.resolveProxy()` reports a proxy
+ * appeared only after the switch away from it. The rig reproduced those
+ * during a relay rough patch (Oct 7, 22:49 to 23:01 UTC) on Chromium only:
+ * dials of 19.9 and 20.0 s and one 35 s dial timeout, while undici's worst in
+ * the same minutes was 10.7 s. `net.WebSocket` is used when the system needs
+ * it. That means outright while `session.resolveProxy()` reports a proxy
  * for the relay, and as the client's fallback after undici fails twice in a row
  * (a TLS-inspecting firewall whose root CA is in the OS store but not in Node's
  * bundled list). RelayClient owns that accounting.
