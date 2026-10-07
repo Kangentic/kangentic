@@ -859,7 +859,7 @@ Kangentic indexes every session's conversation into a per-project, on-device sea
 
 ### What Gets Indexed
 
-The structured transcript of each session: user turns, assistant replies, thinking blocks, and tool-call summaries. Raw terminal scrollback is never indexed (for TUI agents it is mostly cursor and redraw noise). A session is indexed when it finishes or suspends, an in-progress conversation is re-indexed at each turn boundary, and older history is backfilled in small sweeps when a project opens.
+The structured transcript of each session: user turns, assistant replies (including the narration lines Claude Code prints between tool calls), and tool-call summaries. Raw terminal scrollback is never indexed (for TUI agents it is mostly cursor and redraw noise). A session is indexed when it finishes or suspends, an in-progress conversation is re-indexed at each turn boundary, and older history is backfilled in small sweeps when a project opens.
 
 ### Keyword and Semantic Search
 

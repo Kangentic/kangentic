@@ -1028,7 +1028,7 @@ Inspect what the agent on another task (or another project) said - "check the re
 
 Structured output is shaped by three agent-agnostic levers, applied to the parsed `TranscriptEntry[]` (so no adapter branching):
 
-- `view`: `"full"` (default), `"responses"` (assistant text turns only, dropping tool calls/results/thinking), or `"result"` (just the final assistant text - the Agent SDK `ResultMessage.result`, rendered bare without the `## Assistant` heading).
+- `view`: `"full"` (default), `"responses"` (assistant text turns only, dropping tool calls/results/thinking; Claude's narration lines between tool calls count as text), or `"result"` (just the final assistant text - the Agent SDK `ResultMessage.result`, rendered bare without the `## Assistant` heading).
 - `tail`: return only the last N entries (the most recent messages). Ignored for `view="result"`.
 - `search`: case-insensitive substring; return only entries whose content (including a tool result inlined under its owning tool call) contains the term.
 - `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_search` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.

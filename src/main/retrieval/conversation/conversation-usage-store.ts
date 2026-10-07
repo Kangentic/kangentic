@@ -189,6 +189,14 @@ export function extractTurnSpawnLinks(
  * Deliberately has NO sessions-DELETE cascade (unlike memory_chunks): this is a
  * long-lived ledger, not a rebuildable index, so a turn's usage is not wiped when a
  * session row is deleted (see the migration comment for the shared-turn rationale).
+ *
+ * The key is the transcript LINE that claimed the message's usage, not the
+ * message id, and rows are never purged. So a parser change that moves the claim
+ * to a different line of the same message (a line that used to emit an entry now
+ * emits none, or the reverse) leaves the old row in place and adds a new one, and
+ * the next re-walk of that transcript counts the message twice. A parser that
+ * reclassifies blocks must keep the set of entry-emitting lines unchanged; the
+ * Claude parser's tests pin which line claims usage for that reason.
  */
 export class ConversationUsageStore {
   constructor(private readonly db: Database.Database) {}

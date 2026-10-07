@@ -189,9 +189,10 @@ describe('parseClaudeTranscript incremental append', () => {
   });
 
   it('attributes usage exactly once for a turn split across two SEPARATE parse calls (thinking-only line, then the text line in a later increment)', async () => {
-    // The thinking block is EMPTY (real Claude JSONL never persists plaintext
-    // thinking), so this line produces NO entry and must NOT claim message
-    // m1's usage - if it did, the text line's usage below would be dropped.
+    // The thinking block is EMPTY (real Claude JSONL persists thinking as an
+    // empty block; the only text-bearing ones are narration), so this line
+    // produces NO entry and must NOT claim message m1's usage - if it did, the
+    // text line's usage below would be dropped.
     fs.writeFileSync(
       file,
       line({
