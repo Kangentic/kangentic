@@ -1,10 +1,11 @@
 /**
- * Adapter contract for the task:setRuntimeOverride flow:
+ * Adapter contract behind the model/effort pickers:
  *   1. Adapters that implement `getInjectionSequence` return adapter-specific
  *      slash commands when the SettingsChangeSpec indicates a delta. Claude
  *      returns `/model X` and `/effort Y`; agents without a live-switch slash
- *      return an empty array (the IPC handler then falls back to the
- *      suspend+restart path).
+ *      return an empty array. Only the Command Terminal (session:injectSettings)
+ *      types these: a task session's pick (task:setRuntimeOverride) restarts
+ *      the session with launch flags and never consults the adapter.
  *   2. The renderer's popover-gating predicate hides the trigger when the
  *      adapter's `discoverCapabilities()` reported empty arrays - so users
  *      never see a clickable pill they can't make a meaningful choice from.
@@ -31,7 +32,7 @@ const SPEC_NOTHING_CHANGED: SettingsChangeSpec = {
   effortChanged: false,
 };
 
-describe('Adapter getInjectionSequence (drives task:setRuntimeOverride)', () => {
+describe('Adapter getInjectionSequence (drives the Command Terminal live swap)', () => {
   it('Claude emits /model and /effort writes for a both-changed spec, in that order', async () => {
     const { ClaudeAdapter } = await import('../../src/main/agent/adapters/claude/claude-adapter');
     const adapter = new ClaudeAdapter();
@@ -47,10 +48,10 @@ describe('Adapter getInjectionSequence (drives task:setRuntimeOverride)', () => 
   });
 
   // Adapters that don't have a live-switch slash today: their getInjectionSequence
-  // returns []. The handler reads that empty array as "fall back to suspend +
-  // respawn with the new override". If a regression makes one of these
-  // unexpectedly emit writes, the suspend+respawn would never fire and the
-  // override would only apply on the next manual resume.
+  // returns []. The Command Terminal then leaves the session as is rather than
+  // typing a slash its CLI may not accept. If a regression makes one of these
+  // unexpectedly emit writes, a Command Terminal pick would type text the CLI
+  // treats as a prompt.
   const ADAPTERS_WITHOUT_LIVE_SWITCH = [
     { name: 'codex',    importPath: '../../src/main/agent/adapters/codex/codex-adapter',       className: 'CodexAdapter' },
     { name: 'kimi',     importPath: '../../src/main/agent/adapters/kimi/kimi-adapter',         className: 'KimiAdapter' },
@@ -59,12 +60,12 @@ describe('Adapter getInjectionSequence (drives task:setRuntimeOverride)', () => 
     // Grok HAS /model + /effort slash commands, but declares
     // canVerifySlashSubmission false (slash input runs in the TUI palette and
     // never becomes a chat_history turn), so an injection could not be
-    // confirmed - the respawn fallback applies overrides deterministically.
+    // confirmed and an unconfirmed slash would pollute the prompt.
     { name: 'grok',     importPath: '../../src/main/agent/adapters/grok/grok-adapter',         className: 'GrokAdapter' },
   ] as const;
 
   it.each(ADAPTERS_WITHOUT_LIVE_SWITCH)(
-    '$name returns an empty injection sequence (-> handler falls back to restart)',
+    '$name returns an empty injection sequence (no live swap)',
     async ({ importPath, className }) => {
       const module = await import(importPath);
       const AdapterClass = module[className] as new () => { getInjectionSequence?: (spec: SettingsChangeSpec) => string[] };

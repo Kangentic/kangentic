@@ -40,7 +40,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveLiveEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -65,9 +65,8 @@ const taskMoveControllers = new Map<string, AbortController>();
  * caches are populated, mark the DB record suspended (or exited for queued
  * records that never started), suspend the PTY, and clear task.session_id.
  * Shared by all four same-column respawn triggers: a model change, an
- * effort delta to a concrete target on an adapter with no live `/effort`
- * swap, a session-track switch (isolated column entry/exit or
- * `always_spawn_new`), and a cross-agent handoff.
+ * effort change to a concrete value, a session-track switch (isolated
+ * column entry/exit or `always_spawn_new`), and a cross-agent handoff.
  *
  * `phase` is required, not optional: every caller must name what the user
  * is about to see instead of the suspended session's stale "Paused" state,
@@ -364,7 +363,7 @@ export async function handleTaskMove(
       const fromLane = swimlanes.getById(fromSwimlaneId);
       // Board Profiles: fold the task's profile over the destination column
       // ONCE, here, so every read below (agent resolution, the injection plan's
-      // model/effort delta, the effort restart check, auto_command) sees the
+      // model/effort restart decision, auto_command) sees the
       // same profile-resolved strategy the cold spawn path uses.
       //
       // This path is the warm one - the destination already has a live session -
@@ -851,17 +850,15 @@ export async function handleTaskMove(
 
       // --- Priority 3: TASK HAS ACTIVE SESSION ---
       // Five sub-cases (in evaluation order):
-      //   a) Agent change (handoff): suspend + fall through to spawnAgent
-      //   b) Same agent + permission-mode delta (destination's effective mode
-      //      differs from the session record's spawn-time mode): suspend and
-      //      respawn so --permission-mode / --model / --effort land as CLI
-      //      flags (no adapter can switch permission mode on a live session)
-      //   c) Same agent + adapter has live-swap plan: inject command(s)
-      //      directly into running session (model/effort/auto_command)
-      //   d) Same agent + no live-swap plan + model/effort delta: suspend
-      //      and respawn so the new flags land via command-line args
-      //   e) Same agent + no delta and no live-swap: keep session alive
-      //      (no-op; preserves auto_command-less moves between custom columns)
+      //   a) Session-track switch (isolated column entry/exit, or
+      //      always_spawn_new): suspend; Phase 3 resumes-or-spawns the target
+      //   b) Agent change (handoff): suspend + fall through to spawnAgent
+      //   c) Same agent + model or effort change to a concrete value: suspend
+      //      and respawn so --model / --effort land as launch flags (never a
+      //      typed `/model` or `/effort`)
+      //   d) Same agent + column message only: inject it into the running session
+      //   e) Same agent + permission-only or no delta: keep session alive
+      //      (no-op; a permission delta never restarts)
       if (task.session_id) {
         context.terminalSubmitScheduler.cancel(task.id);
 
@@ -982,13 +979,13 @@ export async function handleTaskMove(
           // Fall through to Phase 2/3 (handoff spawn) by not returning null.
         } else {
           // Same agent, live session. For this column transition:
-          //   1. MODEL change  -> the ONLY restart marker: suspend + `--resume`
+          //   1. MODEL or EFFORT change to a concrete value -> suspend + `--resume`
           //      so the resumed spawn re-applies model + effort + permission as
           //      launch flags and re-delivers the column auto_command / plan-exit
-          //      continuation. A live `/model` swap is deliberately NOT used: it
-          //      left the agent paused after a Planning -> Executing handoff.
-          //   2. EFFORT-only change (same model) -> live `/effort` injection (or a
-          //      respawn for adapters with no live effort swap and a concrete target).
+          //      continuation as its prompt. Neither is ever typed into the PTY:
+          //      a live `/model` left the agent paused after a Planning ->
+          //      Executing handoff, and a mid-turn `/effort` cannot be confirmed.
+          //   2. Column message only (no settings delta) -> inject it live.
           //   3. PERMISSION-only change, or no change -> keep the live session
           //      running untouched. A permission delta NEVER restarts: in the
           //      canonical Planning -> Executing flow the user already approved the
@@ -996,9 +993,9 @@ export async function handleTaskMove(
           //      recorded spawn-time permission mode is a stale signal that must
           //      not churn the PTY.
           //
-          // Translation of the model/effort/auto_command delta is delegated to
-          // prepareInjectionPlan so adapters own their slash syntax and the
-          // model-restart policy stays in one place (agent-agnostic here).
+          // The model/effort/auto_command delta is translated by
+          // prepareInjectionPlan, so the restart policy stays in one place
+          // (agent-agnostic here).
           const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
           // Resolve through the shared tier chain (task -> column) rather than
           // reading the lane directly. Reading `toLane.auto_command` alone
@@ -1041,10 +1038,6 @@ export async function handleTaskMove(
           // immediately on a warm move while the cold spawn honored the row's
           // own mode. A task-tier pin has no row and keeps the default.
           const injectionMode: AutoCommandMode = deliveredColumnMessage ? columnMessage.mode : 'immediate';
-          // Read ONCE and share with the 2b fallback below, so the plan and the
-          // respawn decision cannot straddle a status update and disagree about
-          // what the session is running at.
-          const liveEffort = resolveLiveEffort(context.sessionManager, task.session_id);
           const plan = prepareInjectionPlan({
             adapter,
             sessionRepo,
@@ -1052,13 +1045,14 @@ export async function handleTaskMove(
             toLane: toLane ?? null,
             project,
             autoCommand: interpolatedAuto,
-            liveEffort,
+            liveEffort: resolveLiveEffort(context.sessionManager, task.session_id),
           });
 
-          // 1. Model change -> suspend + respawn. Checked BEFORE live injection
-          // so a model change never live-swaps. Phase 3 re-applies the flags and
-          // delivers the auto_command / continuation via spawnAgent.
-          if (plan?.needsRestartForModel) {
+          // 1. Model or effort change -> suspend + respawn. Checked BEFORE live
+          // injection so a settings change is never typed into the PTY. Phase 3
+          // re-applies the flags and delivers the auto_command / continuation
+          // via spawnAgent.
+          if (plan?.restartReason) {
             await suspendLiveSessionForRespawn({
               context,
               tasks,
@@ -1070,11 +1064,11 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
-              phase: 'switching-model',
+              phase: restartPhaseFor(plan.restartReason),
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
-              + ` (model change requires respawn). Will respawn with destination column flags.`,
+              + ` (${plan.restartReason} change requires respawn). Will respawn with destination column flags.`,
             );
             return {
               task,
@@ -1090,9 +1084,9 @@ export async function handleTaskMove(
             };
           }
 
-          // 2a. Effort-only change (and/or auto_command) with a live-swap plan ->
-          // inject into the running PTY. With no model delta the sequence carries
-          // at most `/effort` + the auto_command.
+          // 2. No settings delta, but a column message (or the task's own
+          // auto_command) -> inject it into the running PTY. The sequence carries
+          // that one command and nothing else.
           if (plan) {
             const injectedSessionId = task.session_id;
             context.terminalSubmitScheduler.scheduleKeystrokes(task.id, injectedSessionId, plan.sequence, {
@@ -1121,11 +1115,6 @@ export async function handleTaskMove(
               },
               onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
             });
-            // Record what the burst applied so the NEXT move diffs against the
-            // session's new running value instead of re-injecting it.
-            if (plan.appliedSettings) {
-              sessionRepo.updateAppliedSettings(task.session_id, plan.appliedSettings);
-            }
             console.log(
               `[TASK_MOVE] Injecting ${plan.sequence.length} command(s) for task ${task.id.slice(0, 8)}`
               + ` into running session${plan.verifier ? ' (with command verification)' : ''}: `
@@ -1141,63 +1130,12 @@ export async function handleTaskMove(
             return null;
           }
 
-          // 2b. No live-swap plan, but an EFFORT delta to a concrete target on an
-          // adapter with no live `/effort` swap -> suspend + respawn to apply the
-          // new effort as a CLI flag. (Model deltas are handled in step 1 above; a
-          // null target is the "Default" column, which `--resume` preserves, so no
-          // respawn.) Source is the session's ACTUAL applied value (same ground
-          // truth prepareInjectionPlan uses), NOT the leaving column's config - a
-          // null/drifted `fromLane` would otherwise churn the PTY. Per-task
-          // overrides win (no respawn when the task pinned the field). The
-          // `!interpolatedAuto` guard is structurally redundant (an auto_command
-          // would have produced a non-null plan above) but kept for safety.
-          const sourceEffort = resolveSourceEffort({
-            taskEffortOverride: task.effort_override,
-            liveEffort,
-            appliedEffort: activeRecord?.applied_effort,
-          });
-          const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
-          const restartNeededForEffort = targetEffort !== sourceEffort && targetEffort !== null;
-
-          if (restartNeededForEffort && !interpolatedAuto) {
-            await suspendLiveSessionForRespawn({
-              context,
-              tasks,
-              sessionRepo,
-              usageHistoryRepo,
-              taskId: task.id,
-              liveSessionId: task.session_id,
-              record: activeRecord,
-              task,
-              projectPath: resolvedProjectPath,
-              defaultBaseBranch: effectiveDefaultBranch,
-              phase: 'applying-settings',
-            });
-            console.log(
-              `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
-              + ` (effort changed, adapter has no live swap). Will respawn with new settings.`,
-            );
-            // Fall through to Phase 2/3 (spawn with new settings)
-            return {
-              task,
-              fromSwimlaneId,
-              fromLane,
-              originalPosition,
-              toLane,
-              skipPromptTemplate,
-              resolvedProjectId,
-              resolvedProjectPath,
-              continuationPrompt: options?.continuationPrompt,
-              suppressAutoCommand,
-            };
-          }
-
           // 3. Permission-only delta, or no delta -> keep the live session alive.
           // A permission change never restarts (see header); there is no
-          // model/effort delta to apply.
+          // model/effort delta to apply and no column message to deliver.
           console.log(
             `[TASK_MOVE] Task ${task.id.slice(0, 8)} keeping active session alive`
-            + ` (no model change; permission-only or no delta, same agent).`,
+            + ` (no model/effort change; permission-only or no delta, same agent).`,
           );
           // Nothing was injected on this branch, so nothing is pre-delivered:
           // the whole enter group runs, message row included.
@@ -1276,8 +1214,8 @@ export async function handleTaskMove(
 
     // Shutdown started while Phase 1 ran. Skip Phase 2 git work and Phase 3
     // spawn so we don't write to a closed DB. autoSpawnTasks on next launch
-    // will spawn for the destination column. A respawn branch (model change,
-    // agent handoff, effort respawn, session switch) may have already emitted
+    // will spawn for the destination column. A respawn branch (model or effort
+    // change, agent handoff, session switch) may have already emitted
     // a spawn-progress label before this point (see suspendLiveSessionForRespawn);
     // this return sits outside every try/finally below, so it must retire that
     // label itself or it strands until the 120s TTL.

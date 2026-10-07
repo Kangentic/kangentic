@@ -100,7 +100,7 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: (...args: unknown[]) => mockResolveTargetAgent(...args),
 }));
 
-const mockPrepareInjectionPlan = vi.fn(() => null as { needsRestartForModel: boolean; sequence: unknown[]; verifier: null } | null);
+const mockPrepareInjectionPlan = vi.fn(() => null as { restartReason: 'model' | 'effort' | null; sequence: unknown[]; verifier: null } | null);
 vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: (...args: unknown[]) => mockPrepareInjectionPlan(...args),
@@ -311,7 +311,7 @@ describe('handleTaskMove respawn branches emit a spawn-progress label before sus
       list: vi.fn(() => [planningLane, execLane]),
     };
     setActiveRecord();
-    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, needsRestartForModel: true });
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'model' });
     const taskRepo = makeTaskRepo('lane-planning', EXEC_LANE_ID);
     const context = makeContext(taskRepo, swimlaneRepo);
 
@@ -321,17 +321,18 @@ describe('handleTaskMove respawn branches emit a spawn-progress label before sus
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
   });
 
-  it('effort-only respawn (no live swap): emits "applying-settings" before suspending', async () => {
+  it('effort-only restart: emits "applying-settings" before suspending', async () => {
     const fromLane = makeSwimlane('lane-from');
     const toLane = makeSwimlane(EXEC_LANE_ID, { effort_override: 'xhigh' });
     const swimlaneRepo = {
       getById: vi.fn((id: string) => (id === 'lane-from' ? fromLane : id === EXEC_LANE_ID ? toLane : null)),
       list: vi.fn(() => [fromLane, toLane]),
     };
-    // Session already running at 'low'; destination wants 'xhigh'. No adapter
-    // live-swap plan (mockPrepareInjectionPlan returns null), so this is the
-    // no-live-swap CLI-flag respawn (Priority 3d step 2b), not a live inject.
+    // Session already running at 'low'; destination wants 'xhigh'. The plan
+    // reports an effort restart, which reads as "Applying new settings...",
+    // never as "Switching model...".
     setActiveRecord({ applied_effort: 'low' });
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'effort' });
     const taskRepo = makeTaskRepo('lane-from', EXEC_LANE_ID);
     const context = makeContext(taskRepo, swimlaneRepo);
 
@@ -458,7 +459,7 @@ describe('handleTaskMove respawn branches emit a spawn-progress label before sus
       list: vi.fn(() => [planningLane, execLane]),
     };
     setActiveRecord();
-    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, needsRestartForModel: true });
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'model' });
     const taskRepo = makeTaskRepo('lane-planning', EXEC_LANE_ID);
     const context = makeContext(taskRepo, swimlaneRepo);
     context.sessionManager.suspend.mockRejectedValue(new Error('pty suspend failed'));
@@ -501,7 +502,7 @@ describe('handleTaskMove respawn branches during shutdown', () => {
       list: vi.fn(() => [planningLane, execLane]),
     };
     setActiveRecord();
-    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, needsRestartForModel: true });
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'model' });
     const taskRepo = makeTaskRepo('lane-planning', EXEC_LANE_ID);
     const context = makeContext(taskRepo, swimlaneRepo);
     return { swimlaneRepo, taskRepo, context };

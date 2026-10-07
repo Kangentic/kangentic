@@ -6,11 +6,11 @@
  * dependencies. The real `task-lifecycle-lock` is used so withTaskLock
  * semantics are observable.
  *
- * Covers the three apply paths plus the recovery contract:
- *   - `persisted`: task has no live session
- *   - `live`: adapter implements getInjectionSequence -> effort-only slash injection
- *   - `restart`: model change (always) or adapter has empty getInjectionSequence
- *     for a concrete-target effort -> shared restartSessionForSettingsChange helper
+ * Covers the two apply paths plus the recovery contract:
+ *   - `persisted`: task has no live session, or nothing changed to a concrete value
+ *   - `restart`: a model or effort change to a concrete value -> shared
+ *     restartSessionForSettingsChange helper. Nothing is ever typed into the
+ *     PTY, whatever the adapter's getInjectionSequence would offer.
  *   - `ok: false` (pre-persist): unknown agent on a task with a session
  *   - `ok: false` (post-persist): restartSessionForSettingsChange returns ok:false
  *     but the override IS persisted so the existing Resume UI affordance can retry
@@ -79,12 +79,6 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   },
 }));
 
-const mockBuildCommandInjectionVerifier = vi.fn(() => null);
-vi.mock('../../src/main/transition-engine/injection-plan', () => ({
-  buildCommandInjectionVerifier: (...args: unknown[]) =>
-    mockBuildCommandInjectionVerifier(...(args as [never, never, never])),
-}));
-
 const mockAgentRegistryGet = vi.fn();
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: {
@@ -107,6 +101,7 @@ import type { TaskSetRuntimeOverrideInput, TaskSetRuntimeOverrideResult } from '
 interface MockTask {
   id: string;
   agent: string | null;
+  agent_override?: string | null;
   swimlane_id: string;
   session_id: string | null;
   model_override: string | null;
@@ -237,7 +232,6 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     // Default-agent tasks never write the project default into `task.agent`.
     // The handler must fall back to the live session's registry agent name so
     // the override applies instead of being rejected with "unknown agent".
-    // Use an EFFORT change so this stays on the live path and asserts adapter resolution.
     task = createMockTask({ agent: null });
     taskRepo.getById.mockReturnValue(task);
     context.sessionManager.getSessionAgentName.mockReturnValue('claude');
@@ -246,15 +240,17 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
 
     const result = await callHandler({ taskId: 'task-1', effort: 'high' });
 
-    expect(result).toEqual({ ok: true, mode: 'live' });
+    expect(result).toEqual({ ok: true, mode: 'restart' });
     expect(context.sessionManager.getSessionAgentName).toHaveBeenCalledWith('session-1');
     expect(mockAgentRegistryGet).toHaveBeenCalledWith('claude');
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(),
+      'proj-1',
+      '/mock/project',
       'task-1',
-      'session-1',
-      [{ text: '/effort high', verify: 'command-match' }],
-      { verifier: null },
+      { phase: 'applying-settings' },
     );
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   it('returns unknown agent when task.agent is null and the live session has no tracked agent', async () => {
@@ -338,31 +334,79 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'task-1',
       { phase: 'switching-model' },
     );
-    // Live slash injection must NOT fire on a model restart.
+    // Live slash injection must NOT fire on a model restart, and the handler
+    // never asks the adapter for one.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
-    // getInjectionSequence is NOT the path that decides model vs restart here -
-    // the handler checks restartForModel BEFORE calling the adapter. The adapter
-    // mock is registered but the handler branches before calling scheduleKeystrokes.
+    expect(getInjectionSequence).not.toHaveBeenCalled();
   });
 
-  it('EFFORT-only change returns mode:"live" when the adapter emits a sequence', async () => {
-    // Effort changes via live injection when the adapter supports it.
+  it('EFFORT-only change restarts with applying-settings even when the adapter offers a live slash', async () => {
+    // The adapter would emit `/effort high` (Claude does), but a task session
+    // never types it: a mid-turn `/effort` writes nothing the verifier can
+    // confirm. The pick restarts the session with `--effort high` instead.
     const getInjectionSequence = vi.fn(() => ['/effort high']);
     mockAgentRegistryGet.mockReturnValue({ getInjectionSequence });
 
     const result = await callHandler({ taskId: 'task-1', effort: 'high' });
 
-    expect(result).toEqual({ ok: true, mode: 'live' });
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+    expect(result).toEqual({ ok: true, mode: 'restart' });
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(),
+      'proj-1',
+      '/mock/project',
       'task-1',
-      'session-1',
-      [{ text: '/effort high', verify: 'command-match' }],
-      { verifier: null },
+      { phase: 'applying-settings' },
     );
-    // Effort is persisted to the session record so the next column move diffs
-    // against the true running value and does not re-inject.
-    expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('session-1', { effort: 'high' });
+    expect(getInjectionSequence).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    // The respawn records `applied_effort` from its own flag.
+    expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
+  });
+
+  it('EFFORT cleared to "use column default" with nothing below it stays persisted (no restart)', async () => {
+    // Task pinned 'high'; the column and project set no effort. Clearing the pin
+    // makes the effective effort null: there is no `--effort` to apply, and
+    // `--resume` keeps whatever the session runs at, so restarting would churn
+    // the PTY for nothing.
+    task = createMockTask({ effort_override: 'high' });
+    taskRepo.getById.mockReturnValue(task);
+    mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+
+    const result = await callHandler({ taskId: 'task-1', effort: null });
+
+    expect(result).toEqual({ ok: true, mode: 'persisted' });
     expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
+      model_override: null,
+      effort_override: null,
+    });
+  });
+
+  it('EFFORT cleared to "use column default" restarts when the column sets a different effort', async () => {
+    // Task pinned 'high'; the column sets 'low'. Clearing the pin moves the
+    // effective effort high -> low, a concrete change.
+    task = createMockTask({ effort_override: 'high' });
+    taskRepo.getById.mockReturnValue(task);
+    swimlaneRepo.getById.mockReturnValue({
+      id: 'lane-1',
+      permission_mode: null,
+      model_override: null,
+      effort_override: 'low',
+    });
+    mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => ['/effort low']) });
+
+    const result = await callHandler({ taskId: 'task-1', effort: null });
+
+    expect(result).toEqual({ ok: true, mode: 'restart' });
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(),
+      'proj-1',
+      '/mock/project',
+      'task-1',
+      { phase: 'applying-settings' },
+    );
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   it('"Use column default" resolves through to the swimlane override and RESTARTS (concrete model target)', async () => {
@@ -431,6 +475,54 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     });
   });
 
+  describe('project default model tier', () => {
+    // The project's default model applies only to a task running the project's
+    // default agent, the same gate `resolveSpawnOverrides` applies at respawn.
+    function useProjectDefaultModel(): void {
+      context.projectRepo.getById.mockReturnValue({
+        id: 'proj-1',
+        default_agent: 'claude',
+        default_model: 'opus',
+        default_effort: null,
+      });
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+    }
+
+    it('clearing a pin on a task running a DIFFERENT agent than the project default stays persisted', async () => {
+      // Without the gate, 'gpt-5' -> null read as gpt-5 -> 'opus' (the project
+      // default) and restarted for a model the respawn never passes.
+      useProjectDefaultModel();
+      task = createMockTask({ agent_override: 'codex', model_override: 'gpt-5' });
+      taskRepo.getById.mockReturnValue(task);
+
+      const result = await callHandler({ taskId: 'task-1', model: null });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+      expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
+        model_override: null,
+        effort_override: null,
+      });
+    });
+
+    it('clearing a pin on a task running the project default agent restarts onto the project default', async () => {
+      useProjectDefaultModel();
+      task = createMockTask({ agent_override: null, model_override: 'gpt-5' });
+      taskRepo.getById.mockReturnValue(task);
+
+      const result = await callHandler({ taskId: 'task-1', model: null });
+
+      expect(result).toEqual({ ok: true, mode: 'restart' });
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(),
+        'proj-1',
+        '/mock/project',
+        'task-1',
+        { phase: 'switching-model' },
+      );
+    });
+  });
+
   it('clearing one field when the other needs restart does restart (model change)', async () => {
     // codex, model 'gpt-5', effort null: model is concrete so restart fires.
     task = createMockTask({ agent: 'codex', model_override: null, effort_override: 'high' });
@@ -456,7 +548,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('falls back to restart when the adapter has no live-switch slash for a model change', async () => {
+  it('restarts on a model change whatever the adapter offers', async () => {
     // Codex-style adapter: getInjectionSequence returns [] but model changed ->
     // restartSessionForSettingsChange is called. The detailed suspend/respawn
     // mechanics are tested in restart-session-for-settings-change.test.ts.
@@ -479,18 +571,16 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       'task-1',
       { phase: 'switching-model' },
     );
-    // No live-switch slash should fire on the restart path.
+    // Nothing is typed into the session on the restart path.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('EFFORT change with empty getInjectionSequence and concrete target takes the RESTART path', async () => {
-    // Gap: an EFFORT change where the adapter returns [] from getInjectionSequence
-    // (no live `/effort` slash) AND the resolved effective effort is a concrete
-    // non-null target must restart (suspend + respawn), not stay on the persisted path.
-    // The task starts with no effort override (null) and the swimlane also has no
-    // override, so newEffectiveEffort comes from the input (`'xhigh'`).
-    // The adapter signals it cannot live-swap effort (empty sequence), so
-    // `restartNeededForEffort` becomes true, and the restart path is taken.
+  it('EFFORT change to a concrete target on an adapter with no live slash takes the RESTART path', async () => {
+    // The adapter's capability does not matter any more (every effort change
+    // restarts), but an agent with no live `/effort` must still reach the
+    // restart rather than the persisted path. The task starts with no effort
+    // override (null) and the swimlane also has no override, so
+    // newEffectiveEffort comes from the input (`'xhigh'`).
     task = createMockTask({ model_override: null, effort_override: null });
     taskRepo.getById.mockReturnValue(task);
     swimlaneRepo.getById.mockReturnValue({
@@ -520,7 +610,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
       { phase: 'applying-settings' },
     );
 
-    // Live slash injection must NOT fire (adapter returned empty sequence).
+    // Live slash injection must NOT fire.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
 
     // The DB persist must have happened first (override captured before PTY action).

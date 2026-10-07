@@ -379,7 +379,7 @@ something is listening on.
 | `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
 | `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window). Hidden for adapters that do not report rate limits. |
 
-The model and effort pills are intentionally NOT toggleable. They double as in-place picker triggers (clicking them opens a popover that lets the user switch models/effort without restarting the session), so a "hide" toggle would silently disable that feature. They render whenever a session reports a model.
+The model and effort pills are intentionally NOT toggleable. They double as in-place picker triggers (clicking them opens a popover whose pick restarts the task's session with the new model or effort; a Command Terminal switches live), so a "hide" toggle would silently disable that feature. They render whenever a session reports a model.
 
 All context bar settings are global-only and cannot be overridden per-project.
 
@@ -600,8 +600,8 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `auto_command_mode` | `'immediate'` \| `'deferred'` | `'immediate'` | RETIRED with `auto_command`, and reset by the same migration. The delivery choice is the `send_message` automation's own `mode` field. |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
 | `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
-| `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`), stored exactly as written. Live-applied via `/model` slash on column transition when supported. |
-| `effort_override` | string \| null | null | Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude `--effort xhigh`). Live-applied via `/effort` slash on column transition when supported. |
+| `model_override` | string \| null | null | Adapter-specific model identifier passed at spawn time (e.g. Claude `--model opus`), stored exactly as written. A column transition into a different concrete model restarts a live session with the new flag. |
+| `effort_override` | string \| null | null | Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude `--effort xhigh`). A column transition into a different concrete effort restarts a live session with the new flag. |
 | `handoff_context` | boolean | false | When enabled, cross-agent transitions package prior session context for the target agent |
 | `session_target` | `'main'` \| `'isolated'` | `'main'` | Which session track a task runs on in this column. `main` = the task's shared main conversation; `isolated` = this column's own context-isolated session (keyed by the swimlane id). See `SessionTarget` in `src/shared/types.ts`. |
 | `session_spawn_strategy` | `'create_or_resume'` \| `'always_spawn_new'` | `'create_or_resume'` | What to do with that session track on column entry. `create_or_resume` resumes the track's session if one exists, else spawns; `always_spawn_new` always spawns fresh, retiring the prior session. The isolated-means-fresh pairing is applied by the WRITERS, not by `resolveForceFresh`: this column is NOT NULL with a literal default, so the resolver's context-aware fallback never fires for a stored column. In the Column Manager and over MCP, setting `sessionTarget` to `isolated` carries this to `always_spawn_new` (and back), via `snapSpawnStrategyToTarget`. **Editing this file by hand does not**: `apply-config.ts` applies each key as written, so name both keys or an isolated column resumes one long session instead of running a fresh pass per entry. See `SessionSpawnStrategy`. |

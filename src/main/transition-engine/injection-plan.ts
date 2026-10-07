@@ -4,14 +4,15 @@ import { projectModelDefaultsApply } from './spawn-preamble';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { CommandVerifier, InjectionCommand, InjectionVerifyMode } from './terminal-submit-scheduler';
+import type { SpawnPhase } from './spawn-progress';
 
 /**
  * The effort the AGENT itself reports it is running at, or null when it reports
  * none (a model with no effort levels, an agent with no live telemetry, or a
  * session that has not reported yet).
  *
- * `applied_effort` records what Kangentic ASKED for at spawn, resume, or a live
- * switch. An `/effort` the user types straight into the terminal never reaches
+ * `applied_effort` records what Kangentic ASKED for at spawn or resume. An
+ * `/effort` the user types straight into the terminal never reaches
  * it, so on its own it goes stale and a later column move diffs against a value
  * the session stopped running at. Claude Code documents its reported level as
  * the one in force "after any silent downgrade for the selected model", making
@@ -35,7 +36,7 @@ export function resolveLiveEffort(
  * side of a column-transition delta.
  *
  * Order: a per-task pin wins (the ContextBar contract - the session was spawned
- * or switched to the pin, so source = target = pin and no slash fires), then
+ * or restarted at the pin, so source = target = pin and nothing restarts), then
  * what the agent reports, then what we last asked for. Keeping the pin ahead of
  * live also preserves the protection a NULL `applied_effort` relies on for
  * records that predate applied-settings recording.
@@ -49,33 +50,35 @@ export function resolveSourceEffort(input: {
 }
 
 /**
- * Per-agent translation of a column-level model/effort change (and an
- * optional auto_command) into a chained sequence of writes plus an
- * appropriate verifier - i.e. the input TerminalSubmitScheduler needs to
- * actually push the writes onto the PTY.
+ * What a column transition or column-config edit must do to a task's LIVE
+ * session: restart it to apply a model/effort change, and/or deliver the
+ * column's auto_command as keystrokes with an appropriate verifier.
  *
  * Naming convention across the stack:
  * - "sequence" = pure data, agent-declared (adapter.getInjectionSequence,
  *   adapter.getExitSequence). The adapter names a sequence by the
  *   lifecycle event that drives it (injection / exit), not by the
  *   downstream consumer.
- * - "plan"     = the assembled artifact (sequence + verifier) handed to
- *   the executor. The plan is what gets injected.
+ * - "plan"     = the assembled artifact (restart decision + commands +
+ *   verifier) handed to the executor.
  * - "scheduler" / "burst" = execution layer (TerminalSubmitScheduler).
  *
- * Centralizes what `task-move.ts` and `board.ts` would otherwise both
- * build by hand:
+ * Centralizes what `task-move.ts` and `strategy-propagation.ts` would
+ * otherwise both build by hand:
  *
- * 1. Ask the destination adapter for the writes needed to apply settings
- *    deltas (`getInjectionSequence`).
- * 2. Append the column's auto_command (already interpolated) if any.
+ * 1. Diff the session's running model/effort against the destination and
+ *    decide whether a restart (suspend + `--resume` with launch flags) is
+ *    needed. Settings are never typed into a task session's PTY: see
+ *    `restartReason` below.
+ * 2. Carry the column's auto_command (already interpolated) if any.
  * 3. Ask the adapter for a per-command verifier
  *    (`getSubmissionVerifier('command-injection')`) bound to this task's
  *    session transcript via the captured `agentSessionId` and `cwd`.
  *
- * Returns null when there is nothing to inject (no settings delta, no
- * auto_command). Callers pass the result straight to
- * `terminalSubmitScheduler.scheduleKeystrokes(task.id, sessionId, plan.sequence, { verifier: plan.verifier })`.
+ * Returns null when there is nothing to do (no settings delta, no
+ * auto_command). A caller acts on `restartReason` first. Only a plan with no
+ * restart reaches `terminalSubmitScheduler.scheduleKeystrokes(task.id,
+ * sessionId, plan.sequence, { verifier: plan.verifier })`.
  */
 export interface InjectionPlanInput {
   adapter: AgentAdapter | undefined;
@@ -84,7 +87,7 @@ export interface InjectionPlanInput {
    * `model_override` and `effort_override` are read so that a task with an
    * explicit per-task override (set via the ContextBar popover) is treated as
    * a no-op for that field on column transitions - the user's choice wins
-   * over the column's setting.
+   * over the column's setting, and the field never forces a restart.
    */
   task: Pick<Task, 'id' | 'agent' | 'agent_override' | 'model_override' | 'effort_override'>;
   toLane: Swimlane | null;
@@ -122,23 +125,49 @@ export interface InjectionPlan {
   sequence: InjectionCommand[];
   verifier: CommandVerifier | null;
   /**
-   * Set when the destination has a CONCRETE model different from the session's
-   * running model. A model change is never applied as a live `/model` swap on an
-   * automated path (column transition or column-config edit); the caller must
-   * suspend + `--resume --model X` instead. See the rationale on
-   * `needsRestartForModel` below. When set, `sequence` may be empty (model-only
-   * change) and the caller must act on this flag BEFORE scheduling any writes.
+   * Why the caller must restart the session (suspend + `--resume` with the
+   * destination's launch flags) instead of keeping it, or null when no restart
+   * is needed. `'model'` when the destination has a CONCRETE model different
+   * from the session's; otherwise `'effort'` when it has a CONCRETE effort
+   * different from the session's. A model change that also changes effort
+   * reads `'model'`: the respawn applies every flag either way, and the reason
+   * only picks the progress label and log text.
+   *
+   * When set, the caller must act on it BEFORE scheduling any writes, and must
+   * not schedule `sequence`: the respawn delivers the auto_command (or the
+   * plan-exit continuation) as its resume prompt. See the rationale at the
+   * `restartReason` computation below.
    */
-  needsRestartForModel: boolean;
-  /**
-   * The effort the live session will be at once this burst applies - present
-   * only when effort changed to a concrete target (i.e. a `/effort` slash was
-   * emitted). The caller persists this via `sessionRepo.updateAppliedSettings`
-   * after scheduling so the next column transition diffs against the session's
-   * true running value. Model is never recorded here: a model change restarts,
-   * and the respawn records `applied_model` itself via its `--model` flag.
-   */
-  appliedSettings?: { effort?: string };
+  restartReason: InjectionRestartReason | null;
+}
+
+/** Which settings delta forced an `InjectionPlan` restart. */
+export type InjectionRestartReason = 'model' | 'effort';
+
+/**
+ * The one rule for whether a model/effort delta restarts a task session. Both
+ * `prepareInjectionPlan` and the ContextBar handler (`task-runtime-override.ts`)
+ * call it, so a move, a column edit, and a pick cannot disagree about it.
+ *
+ * Only a change to a CONCRETE value restarts. A null target means "use the
+ * default", and `--resume` keeps whatever the session was running at, so there
+ * is no flag to set. Model wins when both change, because the respawn applies
+ * every flag either way and the reason only picks the label and log text.
+ */
+export function resolveRestartReason(input: {
+  sourceModel: string | null;
+  targetModel: string | null;
+  sourceEffort: string | null;
+  targetEffort: string | null;
+}): InjectionRestartReason | null {
+  if (input.targetModel !== null && input.targetModel !== input.sourceModel) return 'model';
+  if (input.targetEffort !== null && input.targetEffort !== input.sourceEffort) return 'effort';
+  return null;
+}
+
+/** The progress label a settings restart shows between its suspend and resume. */
+export function restartPhaseFor(reason: InjectionRestartReason): SpawnPhase {
+  return reason === 'model' ? 'switching-model' : 'applying-settings';
 }
 
 export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan | null {
@@ -147,38 +176,37 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   // SOURCE is the model/effort the live session is ACTUALLY running at, NOT the
   // leaving column's config. The leaving column disagrees after an in-flight
   // ContextBar switch or a kangentic.json column-config edit, which is what
-  // produced the spurious `/effort` injection. A per-task override still wins:
-  // the session was spawned/switched to the pin, so source = target = pin and no
-  // slash fires for that field (preserving the ContextBar contract). When no
-  // record exists (unit stubs, a session predating this column) the applied
-  // value is null, i.e. "agent default".
+  // produced the spurious `/effort` injection this module used to emit. A
+  // per-task override still wins: the session was spawned/restarted at the pin,
+  // so source = target = pin and that field never forces a restart (preserving
+  // the ContextBar contract). When no record exists (unit stubs, a session
+  // predating this column) the applied value is null, i.e. "agent default".
   //
-  // For EFFORT the source now prefers what the agent reports over what we asked
-  // for (`resolveSourceEffort`). The record alone cannot see an `/effort` the
-  // user typed into the terminal, so it goes stale: with applied=high, a manual
+  // For EFFORT the source prefers what the agent reports over what we asked for
+  // (`resolveSourceEffort`). The record alone cannot see an `/effort` the user
+  // typed into the terminal, so it goes stale: with applied=high, a manual
   // switch to medium, and a destination column requiring high, source and target
-  // both read high, no slash fires, and the session silently keeps running at
-  // medium in a column that requires high.
+  // would both read high, nothing would restart, and the session would silently
+  // keep running at medium in a column that requires high.
   //
   // The project-default tier is read on BOTH sides: without it, a task moving
   // between two override-less columns on a project with a default_model set
   // would read source = the applied project default (recorded at the last
-  // spawn) vs target = null, and spuriously restart/re-inject even though
-  // nothing actually changed.
+  // spawn) vs target = null, and spuriously restart even though nothing
+  // actually changed.
   const record = sessionRepo?.getLatestForTask(task.id) ?? null;
   // MODEL is deliberately NOT sourced from live telemetry. The agent reports a
   // canonical id (`claude-opus-4-8`) while `applied_model` / `model_override` /
   // `default_model` hold whatever flag string the user configured (`opus`), so
   // comparing across those id spaces would read "changed" on almost every move,
-  // and `needsRestartForModel` below turns that into a suspend + `--resume` PTY
+  // and `restartReason` below turns that into a suspend + `--resume` PTY
   // restart per column transition. Effort has no such split: both sides draw
   // from the adapter's discovered `effortLevels` vocabulary.
   // The project-default tier is skipped when the destination runs a different
   // agent than the project default: those ids are adapter-specific, so
-  // inheriting them across agents would both mis-target the injection and
-  // spuriously read "changed". Mirrors the spawn path's resolution exactly
-  // (projectModelDefaultsApply); the two must agree or a move would inject a
-  // model the spawn never applied.
+  // inheriting them across agents would spuriously read "changed". Mirrors the
+  // spawn path's resolution exactly (projectModelDefaultsApply). The two must
+  // agree, or a move would restart for a model the respawn never applies.
   const targetAgent = task.agent_override ?? toLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
   const projectFallback = projectModelDefaultsApply(targetAgent, project?.default_agent);
 
@@ -193,39 +221,39 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   const targetEffort = task.effort_override ?? toLane?.effort_override
     ?? (projectFallback ? project?.default_effort : null) ?? null;
 
-  const modelChanged = targetModel !== sourceModel;
-  const effortChanged = targetEffort !== sourceEffort;
+  // A MODEL or EFFORT change on a task session is applied by a full exit +
+  // `--resume` with the destination's launch flags, NEVER a live `/model` or
+  // `/effort` typed into the PTY:
+  //
+  // - A live mid-session model switch left the agent paused after a
+  //   Planning -> Executing handoff (it stopped instead of continuing).
+  // - A live `/effort` cannot be confirmed in the case that uses it most. On a
+  //   plan-exit move the agent is mid-turn, a mid-turn `/effort` writes nothing
+  //   to Claude's transcript, so the `command-match` verifier never confirmed
+  //   it, and its retries pressed bare Enter into the running turn.
+  //
+  // The restart carries the column message or plan-exit continuation as its
+  // resume prompt instead of keystrokes. It cuts an in-flight turn, the same
+  // cost a model change already accepted. Measured from transcripts, a
+  // same-model `--resume` within about an hour of the previous request reads
+  // the conversation back from cache; a resume that also changes `--effort` is
+  // expected to behave the same but has not been sampled.
+  //
+  // Only a CONCRETE destination value restarts, and model wins when both
+  // change (see `resolveRestartReason`).
+  //
+  // A known cost, accepted deliberately: Claude reports the effort in force
+  // AFTER any silent downgrade for its model. A column asking for a level the
+  // model downgrades (say `max` on a model that tops out at `high`) reads as
+  // changed on every move into it, so each such move restarts. Bounded to moves,
+  // never a loop. A column edit that does not touch effort skips that restart
+  // (`propagateStrategyToLiveSessions`).
+  const restartReason = resolveRestartReason({ sourceModel, targetModel, sourceEffort, targetEffort });
 
-  // A MODEL change on an automated path (column transition or column-config
-  // edit) is applied by a full exit + `--resume --model`, NOT a live `/model`
-  // swap: a live mid-session model switch left the agent paused after a
-  // Planning -> Executing handoff (it stopped instead of continuing). Only a
-  // concrete destination model restarts; a null target is the "Default" column
-  // (`--resume` preserves the saved model and there is no `/model <agent-default>`
-  // slash), which is not a real change. The caller suspends + respawns when this
-  // is set.
-  const needsRestartForModel = modelChanged && targetModel !== null;
-
-  // Settings writes come from the adapter so the IPC layer never names a slash.
-  // An adapter without getInjectionSequence contributes none. We pass
-  // `modelChanged: false` so this helper NEVER emits `/model` (a model change is
-  // handled by the restart above, not a live write); `/effort` still flows
-  // through for a live swap.
-  const settingsSequence = adapter?.getInjectionSequence?.({
-    model: targetModel,
-    modelChanged: false,
-    effort: targetEffort,
-    effortChanged,
-  }) ?? [];
-
-  // Adapter-emitted settings writes are verified strictly: we know the exact
-  // invocation we asked for, so a combined-args entry must read as a miss and
-  // retry. The user's auto_command is verified as "exactly this text was
-  // submitted", which holds whether or not it is a registered slash command.
-  const sequence: InjectionCommand[] = settingsSequence.map((text) => ({
-    text,
-    verify: 'command-match' as const,
-  }));
+  // The only thing ever typed into a task session's PTY is the auto_command.
+  // Settings never are (see above); `adapter.getInjectionSequence` now serves
+  // only the Command Terminal, which has no `--resume` to fall back on.
+  const sequence: InjectionCommand[] = [];
 
   const trimmedAutoCommand = autoCommand?.trim() ?? '';
   if (trimmedAutoCommand) {
@@ -255,10 +283,10 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
     sequence.push(command);
   }
 
-  // Return null only when there is nothing to do at all: no live writes AND no
-  // restart needed. A model-only change has an empty sequence but must still
-  // return a plan so the caller can act on `needsRestartForModel`.
-  if (sequence.length === 0 && !needsRestartForModel) return null;
+  // Return null only when there is nothing to do at all: no auto_command AND no
+  // restart needed. A settings-only change has an empty sequence but must still
+  // return a plan so the caller can act on `restartReason`.
+  if (sequence.length === 0 && restartReason === null) return null;
 
   // Verifier is best-effort: needs adapter support + a captured agent_session_id.
   // null is a documented fallback to time-based settle in
@@ -268,20 +296,9 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
     ? buildCommandInjectionVerifier(adapter, sessionRepo, task.id, record)
     : null;
 
-  // What the session will be at after this burst: only effort, and only when it
-  // changed to a concrete value (i.e. a `/effort` slash was emitted). Model is
-  // never live-applied here (it restarts), and a change to a null target
-  // ("Default" column) emits no slash and leaves the session as-is.
-  const appliedSettings: { effort?: string } = {};
-  if (effortChanged && targetEffort !== null) appliedSettings.effort = targetEffort;
-  const hasApplied = appliedSettings.effort !== undefined;
-
-  return {
-    sequence,
-    verifier,
-    needsRestartForModel,
-    ...(hasApplied ? { appliedSettings } : {}),
-  };
+  // Nothing is recorded as applied here. A restart records `applied_model` /
+  // `applied_effort` itself, from the launch flags its respawn passes.
+  return { sequence, verifier, restartReason };
 }
 
 /**
@@ -294,11 +311,11 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
  * whose session ID hasn't been captured yet). In both cases callers should
  * fall back to the time-based settle path inside `TerminalSubmit`.
  *
- * Shared between `prepareInjectionPlan` (column-transition slash bursts) and
- * the `task:setRuntimeOverride` IPC handler (user-driven model/effort
- * picks). Without a shared helper both call sites would re-implement the
- * same record lookup + closure capture, and a fix in one would silently
- * miss the other.
+ * Shared between `prepareInjectionPlan` (a column message injected into a live
+ * session on a move) and the spawn path's deferred auto_command delivery
+ * (`agent-spawn.ts`). Without a shared helper both call sites would
+ * re-implement the same record lookup + closure capture, and a fix in one
+ * would silently miss the other.
  *
  * `prefetchedRecord` lets a caller that already read the latest session record
  * (e.g. `prepareInjectionPlan` reading it for the delta source) pass it through

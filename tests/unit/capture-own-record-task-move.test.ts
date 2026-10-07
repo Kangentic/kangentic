@@ -97,7 +97,7 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: (...args: unknown[]) => mockResolveTargetAgent(...args),
 }));
 
-const mockPrepareInjectionPlan = vi.fn(() => null as { needsRestartForModel: boolean } | null);
+const mockPrepareInjectionPlan = vi.fn(() => null as { restartReason: 'model' | 'effort' | null } | null);
 vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: (...args: unknown[]) => mockPrepareInjectionPlan(...args),

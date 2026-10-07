@@ -85,7 +85,7 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: (...args: unknown[]) => mockResolveTargetAgent(...args),
 }));
 
-const mockPrepareInjectionPlan = vi.fn(() => null as { needsRestartForModel: boolean } | null);
+const mockPrepareInjectionPlan = vi.fn(() => null as { restartReason: 'model' | 'effort' | null } | null);
 vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: (...args: unknown[]) => mockPrepareInjectionPlan(...args),
@@ -410,7 +410,7 @@ describe('handleTaskMove git-churn capture wiring', () => {
       started_at: '2026-01-01T00:00:00Z', session_type: 'claude_agent',
     };
     // Forces the suspendLiveSessionForRespawn branch (step 1: model change).
-    mockPrepareInjectionPlan.mockReturnValue({ needsRestartForModel: true });
+    mockPrepareInjectionPlan.mockReturnValue({ restartReason: 'model' });
 
     const taskRepo = {
       getById: vi.fn()

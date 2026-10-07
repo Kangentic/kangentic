@@ -99,7 +99,7 @@ Before the first spawn, the task detail dialog also shows a slim **pre-spawn con
 
 The Model popover on both bars leads with the same **Latest** group when the agent offers aliases, then a collapsed **Specific versions** section.
 
-When an agent is already running, the same Model / Effort pills appear in the live context bar below the terminal. Picking a value there delivers the change to the running session via the adapter's slash-command injection sequence when it supports live model changes (Claude's `/model`), or suspends and respawns when it does not.
+When an agent is already running, the same Model / Effort pills appear in the live context bar below the terminal. Picking a value there restarts the session: Kangentic suspends it and resumes it with the new `--model` or `--effort` launch flag, so the change interrupts the turn in progress. The Command Terminal's context bar is the exception and switches live.
 
 ### Spawn an Agent
 
@@ -133,7 +133,7 @@ conversation and sends the task once more.
 
 ### Move Between Active Columns
 
-Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (a permission-mode change, or a model/effort change the agent cannot swap live); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
+Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (the destination changes the model or effort); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
 
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 

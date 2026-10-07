@@ -477,7 +477,7 @@ The same mechanism generalizes to a **same-column respawn**: a live session forc
 restart in place, not because the task moved to Done and back but because the destination column
 needs new CLI flags on a resumed process. `suspendLiveSessionForRespawn`
 (`src/main/ipc/handlers/task-move.ts`) is the shared helper behind all four triggers - a model
-change, a cross-agent handoff, an effort delta with no live `/effort` swap, and a session-track
+change, a cross-agent handoff, an effort change to a concrete value, and a session-track
 switch (isolated-column entry/exit, or `always_spawn_new`) - and it emits its phase label
 (`switching-model` / `switching-agent` / `applying-settings` / `new-session`) as its first
 statement, before the record is even marked suspended. Without this, the suspend that begins the
@@ -486,9 +486,10 @@ whole unlocked worktree/branch-checkout window between the suspend and the event
 `starting-agent` label.
 
 The in-place restart, `restartSessionForSettingsChange` (`src/main/ipc/handlers/session-reconcile.ts`),
-follows the same contract with a required `phase`: the ContextBar model pick and a Board Profile
-propagation emit `switching-model` (or `applying-settings` for an effort-only restart), and the
-auto_command escalation emits `resending-command` ("Re-sending command..."). It emits before its
+follows the same contract with a required `phase`: the ContextBar model/effort pick and a column
+or Board Profile propagation emit `switching-model` (or `applying-settings` for an effort-only
+restart), and the auto_command escalation emits `resending-command` ("Re-sending command...").
+It emits before its
 suspend and clears the label in a `finally` once the resume has returned or failed, the ordering
 task-move's Phase 3 uses. The emit is what lets the mobile bridge tell this respawn from a park
 (see [Mobile Bridge](mobile-bridge.md)); until #682 this path emitted nothing, and the phone showed
@@ -524,9 +525,11 @@ When a suspended task moves to an active column:
 - New session DB record inserted, old record marked `exited`
 - The destination column's settings are re-applied as CLI flags on the resume
   command: `--permission-mode` (lane override, else global default), `--model`,
-  and `--effort`. A column move that changes the effective permission mode
-  forces this suspend + respawn cycle, because no adapter can switch
-  permission mode on a live session.
+  and `--effort`. A move into a column that changes the model or effort to a
+  concrete value forces this suspend + respawn cycle on a live session; neither
+  is ever typed into the PTY as `/model` or `/effort`. A permission-mode change
+  alone never restarts a live session: in the Planning -> Executing flow Claude
+  already left plan mode in-session, so the recorded spawn-time mode is stale.
 - A plan-exit auto-move (Planning -> Executing), triggered when the user
   approves the plan (the `ExitPlanMode` tool completes, not when the agent
   merely invokes it), passes a continuation prompt

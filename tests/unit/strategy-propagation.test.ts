@@ -13,6 +13,9 @@
  *      a task whose profile pins a different one there.
  *
  * Both are silent: the session keeps running, just on the wrong settings.
+ *
+ * A model or effort change reaches a live session as a RESTART (suspend +
+ * `--resume` with the new launch flags), never as a typed `/model` or `/effort`.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -22,6 +25,8 @@ const mockUpdateAppliedSettings = vi.fn();
 const mockGetSession = vi.fn();
 const mockSwimlaneList = vi.fn();
 const mockTaskList = vi.fn();
+/** The task row the handler re-reads inside the task lock before restarting. */
+const mockTaskGetById = vi.fn();
 /**
  * Live usage keyed by session id, read by `resolveLiveEffort`. Empty by default,
  * which means the agent reports no effort and the delta sources from the session
@@ -57,7 +62,10 @@ vi.mock('../../src/main/ipc/handlers/auto-spawn-reconcile', () => ({
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: vi.fn(() => ({
     swimlanes: { list: () => mockSwimlaneList() },
-    tasks: { list: () => mockTaskList() },
+    tasks: {
+      list: () => mockTaskList(),
+      getById: (taskId: string) => mockTaskGetById(taskId),
+    },
   })),
 }));
 
@@ -106,7 +114,9 @@ function makeContext() {
   return {
     currentProjectId: 'proj-1',
     currentProjectPath: '/mock/project',
-    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', default_model: null, default_effort: null })) },
+    // A path on the row, or every restart below is skipped as "no resolved
+    // project context".
+    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path: '/mock/project', default_model: null, default_effort: null })) },
     sessionManager: {
       getSession: (...args: unknown[]) => mockGetSession(...args),
       getUsageCache: () => mockUsageCache,
@@ -143,15 +153,24 @@ beforeEach(() => {
   mockUsageCache = {};
   mockGetSession.mockReturnValue({ status: 'running' });
   mockPrepareInjectionPlan.mockReturnValue({
-    sequence: [{ text: '/effort high', verify: 'command-match' }],
+    sequence: [],
     verifier: null,
-    needsRestartForModel: false,
-    appliedSettings: { effort: 'high' },
+    restartReason: 'effort',
   });
+  // By default the row re-read inside the lock is the row the plan was built
+  // from: nothing moved or restarted the task in between.
+  mockTaskGetById.mockImplementation((taskId: string) => mockPrepareInjectionPlan.mock.calls
+    .map((call) => (call[0] as { task: Task }).task)
+    .find((plannedTask) => plannedTask.id === taskId));
 });
 
+/** The task ids `restartSessionForSettingsChange` was called for, in order. */
+function restartedTaskIds(): string[] {
+  return vi.mocked(restartSessionForSettingsChange).mock.calls.map((call) => call[3]);
+}
+
 describe('propagateStrategyToLiveSessions', () => {
-  it('injects when the task\'s resolved effort changed', () => {
+  it('restarts with the applying-settings phase when the task\'s resolved effort changed', () => {
     propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
       task: makeTask(),
       before: makeLane({ effort_override: 'low' }),
@@ -159,8 +178,62 @@ describe('propagateStrategyToLiveSessions', () => {
       sourceName: 'Executing',
     }], 'proj-1');
 
-    expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(mockUpdateAppliedSettings).toHaveBeenCalledWith('sess-1', { effort: 'high' });
+    expect(restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(), 'proj-1', '/mock/project', 'task-1', { phase: 'applying-settings' },
+    );
+    // Never typed, and nothing recorded: the respawn records its own flags.
+    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+    expect(mockUpdateAppliedSettings).not.toHaveBeenCalled();
+  });
+
+  it('restarts with the switching-model phase for a model change', () => {
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'model' });
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'sonnet' }),
+      after: makeLane({ model_override: 'opus' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(), 'proj-1', '/mock/project', 'task-1', { phase: 'switching-model' },
+    );
+    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the plan finds no restart (the session already runs at the new value)', () => {
+    mockPrepareInjectionPlan.mockReturnValue(null);
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ effort_override: 'low' }),
+      after: makeLane({ effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('never types a plan\'s sequence when the plan has no restart reason', () => {
+    // A settings edit passes no auto_command, so this shape should not occur.
+    // If it ever does, typing it would be the live-settings path this replaced.
+    mockPrepareInjectionPlan.mockReturnValue({
+      sequence: [{ text: 'stray', verify: 'submitted' }],
+      verifier: null,
+      restartReason: null,
+    });
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ effort_override: 'low' }),
+      after: makeLane({ effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
   });
 
   it('injects nothing when the resolved values are unchanged', () => {
@@ -176,7 +249,7 @@ describe('propagateStrategyToLiveSessions', () => {
     }], 'proj-1');
 
     expect(mockPrepareInjectionPlan).not.toHaveBeenCalled();
-    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
   });
 
   it('skips a task with no live running session', () => {
@@ -189,6 +262,8 @@ describe('propagateStrategyToLiveSessions', () => {
       sourceName: 'Executing',
     }], 'proj-1');
 
+    // A suspended session picks the new value up at resume via prepare-spawn.
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
     expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
   });
 
@@ -240,21 +315,20 @@ describe('propagateBoardProfileChange', () => {
   it('reaches the live session of a task riding the retuned profile', () => {
     propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')], 'proj-1');
 
-    expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(mockScheduleKeystrokes.mock.calls[0][0]).toBe('task-riding');
+    expect(restartedTaskIds()).toEqual(['task-riding']);
+    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   it('leaves tasks on Default alone - a profile write cannot change their settings', () => {
     propagateBoardProfileChange(makeContext(), [profile('low')], [profile('high')], 'proj-1');
 
-    const touchedTaskIds = mockScheduleKeystrokes.mock.calls.map((call) => call[0]);
-    expect(touchedTaskIds).not.toContain('task-default');
+    expect(restartedTaskIds()).not.toContain('task-default');
   });
 
-  it('injects nothing when the rewrite leaves the task\'s column unchanged', () => {
+  it('restarts nothing when the rewrite leaves the task\'s column unchanged', () => {
     propagateBoardProfileChange(makeContext(), [profile('high')], [profile('high')], 'proj-1');
 
-    expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
   });
 
   it('treats a deleted profile as a change back to the column\'s own settings', () => {
@@ -262,8 +336,7 @@ describe('propagateBoardProfileChange', () => {
     // settings change for a running session and must propagate.
     propagateBoardProfileChange(makeContext(), [profile('high')], [], 'proj-1');
 
-    expect(mockScheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(mockScheduleKeystrokes.mock.calls[0][0]).toBe('task-riding');
+    expect(restartedTaskIds()).toEqual(['task-riding']);
   });
 });
 
@@ -389,19 +462,121 @@ describe('auto_spawn reconcile', () => {
 });
 
 /**
- * A MODEL-change restart resolves `projectPath` from the resolved project row
- * (`context.projectRepo.getById(projectId)?.path`), never from ambient
- * `context.currentProjectPath`. A mis-resolved path here targets the restart
- * at the wrong project's checkout, not just a cosmetic keystroke injection -
- * the same reasoning that makes `projectId` an explicit parameter rather than
- * a read of `context.currentProjectId`.
+ * The restart decision is made before the task lock, so the handler re-reads the
+ * task inside the lock and skips the restart when the session or column it
+ * planned against is gone (a move or another restart took the lock first).
  */
-describe('propagateStrategyToLiveSessions - model-restart project path resolution', () => {
+describe('propagateStrategyToLiveSessions - in-lock re-check', () => {
+  function propagateEffortEdit(): void {
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ effort_override: 'low' }),
+      after: makeLane({ effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+  }
+
+  it('restarts when the re-read row still matches the planned session and column', () => {
+    propagateEffortEdit();
+
+    expect(restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the restart when another path already replaced the task\'s session', () => {
+    mockTaskGetById.mockReturnValue(makeTask({ session_id: 'sess-restarted' }));
+
+    propagateEffortEdit();
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it('skips the restart when a move took the lock first and changed the task\'s column', () => {
+    mockTaskGetById.mockReturnValue(makeTask({ swimlane_id: 'lane-elsewhere' }));
+
+    propagateEffortEdit();
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it('skips the restart when the re-read finds no task row', () => {
+    mockTaskGetById.mockReturnValue(undefined);
+
+    propagateEffortEdit();
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * An edit restarts only for effort it changed. A session drifts from its
+ * column's effort with no edit (a manual `/effort`, a silent model downgrade),
+ * and a restart cuts the turn, so a model-only edit leaves that drift alone.
+ */
+describe('propagateStrategyToLiveSessions - effort drift on a model-only edit', () => {
+  it('does not restart when the plan reports an effort delta but the edit left effort unchanged', () => {
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'effort' });
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'sonnet', effort_override: 'high' }),
+      after: makeLane({ model_override: 'opus', effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it('still restarts a model-only edit when the plan reports a model delta', () => {
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'model' });
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'sonnet', effort_override: 'high' }),
+      after: makeLane({ model_override: 'opus', effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(restartSessionForSettingsChange).toHaveBeenCalledWith(
+      expect.anything(), 'proj-1', '/mock/project', 'task-1', { phase: 'switching-model' },
+    );
+  });
+});
+
+describe('propagateStrategyToLiveSessions - failed restart', () => {
+  it('still pushes the quiet session resync with the project id', async () => {
+    vi.mocked(restartSessionForSettingsChange).mockResolvedValueOnce({ ok: false, reason: 'respawn failed: x' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const context = makeContext();
+    const send = (context as unknown as { mainWindow: { webContents: { send: ReturnType<typeof vi.fn> } } })
+      .mainWindow.webContents.send;
+
+    propagateStrategyToLiveSessions(context, 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ effort_override: 'low' }),
+      after: makeLane({ effort_override: 'high' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    // The restart is awaited inside the backgrounded lock callback.
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('task:sessionResync', 'proj-1'));
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * A settings-change restart resolves `projectPath` from the resolved project
+ * row (`context.projectRepo.getById(projectId)?.path`), never from ambient
+ * `context.currentProjectPath`. A mis-resolved path here targets the restart
+ * at the wrong project's checkout - the same reasoning that makes `projectId`
+ * an explicit parameter rather than a read of `context.currentProjectId`.
+ */
+describe('propagateStrategyToLiveSessions - restart project path resolution', () => {
   it('skips the restart when the resolved project row carries no path', () => {
     mockPrepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -421,7 +596,7 @@ describe('propagateStrategyToLiveSessions - model-restart project path resolutio
     mockPrepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     propagateStrategyToLiveSessions(makeContextWithProjectRowPath('/mock/from-project-row'), 'TEST', [{

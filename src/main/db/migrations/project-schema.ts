@@ -399,12 +399,12 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE sessions ADD COLUMN isolated_swimlane_id TEXT DEFAULT NULL');
   }
 
-  // Migration: record the model/effort a session was actually spawned, resumed,
-  // or live-switched with (the `--model` / `--effort` flag value; NULL = agent
-  // default, no flag). This is the ground truth the column-transition injection
-  // delta compares against, so a move only injects `/model` / `/effort` when the
-  // session's real running value differs from the destination - never because
-  // the leaving column or a drifted kangentic.json column config disagrees.
+  // Migration: record the model/effort a session was spawned or resumed with
+  // (the `--model` / `--effort` flag value; NULL = agent default, no flag). This
+  // is the ground truth the column-transition delta compares against, so a move
+  // restarts the session only when its real running value differs from the
+  // destination, never because the leaving column or a drifted kangentic.json
+  // column config disagrees.
   // Distinct from `model_id` (agent-reported, captured at exit via metrics).
   const hasAppliedModel = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
     .some((col) => col.name === 'applied_model');
@@ -1318,8 +1318,8 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // Migration: add 'effort' column so the usage dashboard can break usage down
   // by reasoning effort. Stamped at capture time from the session record's
-  // applied_effort (the last spawn/resume/live-switch value - the same ground
-  // truth the injection delta uses); best-effort backfill from surviving
+  // applied_effort (the last spawn/resume value - the same ground truth the
+  // injection delta falls back to); best-effort backfill from surviving
   // session rows. NULL means agent default (no flag), rendered "(default)".
   const hasUsageHistoryEffort = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
     .some((col) => col.name === 'effort');
