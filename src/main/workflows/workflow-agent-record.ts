@@ -50,5 +50,6 @@ export function workflowAgentSessionRecord(input: {
     compaction_count: 0,
     last_pty_cols: null,
     last_pty_rows: null,
+    result_tokens_read_at: null,
   };
 }

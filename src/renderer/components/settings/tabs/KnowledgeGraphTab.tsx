@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Database, RotateCcw, Brain } from 'lucide-react';
 import { useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
+import { SettingsCard, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
