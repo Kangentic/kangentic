@@ -20,8 +20,9 @@ import type { RelayWebSocketConstructor, RelayWebSocketFallback } from './relay-
  * p99 647 and 656 ms on Chromium against 586 and 543 ms on undici, 18 and 16
  * echoes over 1 s against 14 and 14, worst cases 5.5 and 5.3 s against 2.0
  * and 4.2 s, and the same dial tail. Most of the tail landed on both stacks in
- * the same minutes, which puts it on the relay path. Chromium's own share is small. Its network log showed stalled bytes
- * arriving late at the socket and never held inside Electron. Connections that
+ * the same minutes, which puts it on the relay path. Chromium's own share is
+ * small. Its network log showed stalled bytes arriving late at the socket and
+ * never held inside Electron. Connections that
  * negotiated Encrypted ClientHello (the hosted relay's Cloudflare zone
  * publishes an ECH config in its DNS HTTPS record) had 0.94% of echoes over
  * 500 ms, against 0.50% in a rig with ECH turned off in the same hour; undici
@@ -86,6 +87,18 @@ interface ProxyDecision {
 const proxyDecisionsByOrigin = new Map<string, ProxyDecision>();
 
 /**
+ * Whether a `resolveProxy()` answer sends the first attempt through a proxy.
+ * The answer is a PAC-style list in order of preference ("DIRECT", or
+ * "PROXY host:port; DIRECT"), and Chromium tries the first entry first, so a
+ * list that leads with DIRECT goes out direct just as undici would. The
+ * client's two-failure fallback covers a direct path that turns out blocked.
+ */
+function proxyListLeadsWithProxy(proxyList: string): boolean {
+  const firstEntry = (proxyList.split(';')[0] ?? '').trim().toUpperCase();
+  return firstEntry !== '' && firstEntry !== 'DIRECT';
+}
+
+/**
  * Whether the default session routes the relay through a proxy. Answered from
  * a cache and refreshed in the background, because the dial that asks is
  * synchronous: the first dial before any answer arrives goes out on undici,
@@ -104,11 +117,20 @@ function isProxyConfiguredForRelay(relayUrl: string): boolean {
   const decision = proxyDecisionsByOrigin.get(lookupUrl) ?? { proxied: false, checkedAtMs: 0, inFlight: false };
   proxyDecisionsByOrigin.set(lookupUrl, decision);
   if (!decision.inFlight && Date.now() - decision.checkedAtMs >= PROXY_DECISION_TTL_MS) {
+    let pendingProxyList: Promise<string>;
+    try {
+      pendingProxyList = session.defaultSession.resolveProxy(lookupUrl);
+    } catch {
+      // This runs inside the client's dial, so a synchronous throw must not
+      // escape it. It reads as no proxy and is asked again after the TTL.
+      decision.proxied = false;
+      decision.checkedAtMs = Date.now();
+      return false;
+    }
     decision.inFlight = true;
-    session.defaultSession
-      .resolveProxy(lookupUrl)
+    pendingProxyList
       .then((proxyList) => {
-        decision.proxied = proxyList.trim().toUpperCase() !== 'DIRECT';
+        decision.proxied = proxyListLeadsWithProxy(proxyList);
       })
       .catch(() => {
         decision.proxied = false;

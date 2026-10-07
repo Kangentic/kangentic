@@ -29,6 +29,7 @@ import {
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
+  type SeedFrameResult,
 } from './protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 
@@ -451,7 +452,7 @@ export class PtyHostClient {
     return this.transport.request('getSerializedFrame', { sessionId, settle });
   }
 
-  getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
+  getSeedFrame(sessionId: string, settle: boolean): Promise<SeedFrameResult> {
     return this.transport.request('getSeedFrame', { sessionId, settle });
   }
 

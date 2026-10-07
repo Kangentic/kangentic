@@ -833,6 +833,13 @@ describe('PtyBufferManager', () => {
   describe('per-flush byte cap', () => {
     const MAX_BYTES_PER_FLUSH = 256 * 1024;
 
+    // Restore real timers even when an assertion throws before an inline
+    // vi.useRealTimers() runs: leaked fake timers hang the headless parser's
+    // macrotask flush in every later serialize test.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('ships at most the cap per flush and reschedules the remainder', () => {
       vi.useFakeTimers();
       const { manager, onFlush } = createManager();
@@ -891,6 +898,58 @@ describe('PtyBufferManager', () => {
       expect(secondChunk).toBe('\u{1F600}');
 
       vi.useRealTimers();
+    });
+
+    it('every slice of a multi-slice payload ends at the cumulative length delivered through that flush', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createManager();
+
+      // A small earlier flush first, so the offsets must carry what was
+      // delivered before the big payload and not restart from the payload.
+      const earlierOutput = 'abc';
+      manager.onData(SESSION, earlierOutput);
+      vi.advanceTimersByTime(20);
+
+      // Two full slices and a short tail: the first two flushes leave a
+      // backlog behind, which is exactly where a bare parser total (instead of
+      // the parser total minus the still-buffered remainder) over-reports.
+      const tailLength = 10_000;
+      manager.onData(SESSION, 'x'.repeat(2 * MAX_BYTES_PER_FLUSH + tailLength));
+      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(20);
+
+      expect(onFlush).toHaveBeenCalledTimes(4);
+      expect(onFlush.mock.calls.map((call) => (call[1] as string).length)).toEqual([
+        earlierOutput.length,
+        MAX_BYTES_PER_FLUSH,
+        MAX_BYTES_PER_FLUSH,
+        tailLength,
+      ]);
+      expect(onFlush.mock.calls.map((call) => call[2] as number)).toEqual([
+        earlierOutput.length,
+        earlierOutput.length + MAX_BYTES_PER_FLUSH,
+        earlierOutput.length + 2 * MAX_BYTES_PER_FLUSH,
+        earlierOutput.length + 2 * MAX_BYTES_PER_FLUSH + tailLength,
+      ]);
+    });
+
+    it('counts UTF-16 code units across a surrogate-safe flush split', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createManager();
+
+      // The cap would land between the surrogate halves, so the first flush
+      // backs off one unit and the pair rides the second. Offsets count code
+      // units (string length), the same unit the chunks are measured in.
+      manager.onData(SESSION, 'a'.repeat(MAX_BYTES_PER_FLUSH - 1) + '\u{1F600}');
+      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(20);
+
+      expect(onFlush).toHaveBeenCalledTimes(2);
+      expect(onFlush.mock.calls.map((call) => call[2] as number)).toEqual([
+        MAX_BYTES_PER_FLUSH - 1,
+        MAX_BYTES_PER_FLUSH + 1,
+      ]);
     });
   });
 
@@ -1643,6 +1702,18 @@ describe('PtyBufferManager', () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       expect(await manager.getSerializedFrame('nonexistent')).toBe('');
     });
+
+    it('getSeedFrame returns an empty frame at barrier zero for an unknown or removed session', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      expect(await manager.getSeedFrame('nonexistent')).toEqual({ frame: '', barrierOffset: 0 });
+
+      // A session that existed and was removed is unknown again: a stale
+      // caller must not read the old offset back.
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, 'written before the removal');
+      manager.removeSession(SESSION);
+      expect(await manager.getSeedFrame(SESSION)).toEqual({ frame: '', barrierOffset: 0 });
+    });
   });
 
   describe('getReplaySnapshot (desktop replay payload)', () => {
@@ -2141,6 +2212,57 @@ describe('PtyBufferManager', () => {
       const frame = await manager.getSerializedFrame(SESSION);
       expect(frame).toContain('post-clear line 1');
       expect(frame).not.toContain('PS C:');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('the injected ED3 counts toward every later flush offset and the seed barrier', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      const shellEcho = 'PS C:\\Users\\dev> node agent.js\r\n';
+      const takeoverChunk = '\x1b[2J\x1b[1;1HTUI FRAME ROW';
+      const injectedClear = '\x1b[3J';
+
+      // The echo flushes on its own first, so the takeover chunk's offset has
+      // to carry what was already delivered, not restart at the chunk.
+      manager.onData(SESSION, shellEcho);
+      await expect
+        .poll(() => onFlush.mock.calls.length, { timeout: 2000, interval: 10 })
+        .toBe(1);
+      manager.onData(SESSION, takeoverChunk);
+      await expect
+        .poll(() => onFlush.mock.calls.length, { timeout: 2000, interval: 10 })
+        .toBe(2);
+
+      // Control: the strip really fired, once. Without this the offsets below
+      // would prove nothing about the injection path.
+      const flushedChunks = onFlush.mock.calls.map((call) => call[1] as string);
+      expect(flushedChunks.join('').split(injectedClear).length - 1).toBe(1);
+
+      // The ED3 is delivered to the live terminal, so the parser offset must
+      // count it: each flush ends at the cumulative characters delivered
+      // through that call.
+      let deliveredLength = 0;
+      flushedChunks.forEach((chunk, index) => {
+        deliveredLength += chunk.length;
+        expect(onFlush.mock.calls[index][2]).toBe(deliveredLength);
+      });
+      const totalCharacters = shellEcho.length + takeoverChunk.length + injectedClear.length;
+      expect(deliveredLength).toBe(totalCharacters);
+
+      // The seed's barrier is the same count: the parser took the ED3 too.
+      const seed = await manager.getSeedFrame(SESSION);
+      expect(seed.barrierOffset).toBe(totalCharacters);
+
+      // And the counter stays right for output after the injection.
+      const laterOutput = ' and after';
+      manager.onData(SESSION, laterOutput);
+      await expect
+        .poll(() => onFlush.mock.calls.length, { timeout: 2000, interval: 10 })
+        .toBe(3);
+      expect(onFlush).toHaveBeenLastCalledWith(SESSION, laterOutput, totalCharacters + laterOutput.length);
 
       manager.removeSession(SESSION);
     });
@@ -2664,6 +2786,35 @@ describe('PtyBufferManager', () => {
       manager.onData(SESSION, ' and after');
       await expect.poll(() => onFlush.mock.calls.length, { timeout: 2000, interval: 10 }).toBe(2);
       expect(onFlush).toHaveBeenLastCalledWith(SESSION, ' and after', seed.barrierOffset + ' and after'.length);
+      manager.removeSession(SESSION);
+    });
+
+    it('a drain carrying the injected pre-TUI ED3 ends at the characters delivered, and the seed barrier agrees', async () => {
+      const onFlush = vi.fn();
+      const onDrain = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain });
+      manager.initSession(SESSION, '', 80, 24);
+
+      const shellEcho = 'PS C:\\Users\\dev> node agent.js\r\n';
+      const takeoverChunk = '\x1b[2J\x1b[1;1HTUI FRAME ROW';
+      const injectedClear = '\x1b[3J';
+      manager.onData(SESSION, shellEcho);
+      manager.onData(SESSION, takeoverChunk);
+      // Sample inside the 16ms flush window: both chunks, and the ED3 the live
+      // copy carries, leave the pending buffer through the drain.
+      manager.getScrollback(SESSION);
+
+      const totalCharacters = shellEcho.length + takeoverChunk.length + injectedClear.length;
+      expect(onDrain).toHaveBeenCalledTimes(1);
+      const [, drainedBytes, drainEndOffset] = onDrain.mock.calls[0] as [string, string, number];
+      // Control: the injection is in the drained bytes, exactly once.
+      expect(drainedBytes.split(injectedClear).length - 1).toBe(1);
+      expect(drainedBytes.length).toBe(totalCharacters);
+      expect(drainEndOffset).toBe(totalCharacters);
+
+      const seed = await manager.getSeedFrame(SESSION);
+      expect(seed.barrierOffset).toBe(totalCharacters);
+
       manager.removeSession(SESSION);
     });
 

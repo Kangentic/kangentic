@@ -815,7 +815,7 @@ phone needs and reads the rest by request.
   per-geometry, and Windows ConPTY re-emits even plain shell output the same way, so replaying
   bytes drawn at one grid into an xterm at another lands stale CUP writes mid-history and
   interleaves two frames' text on one row. `PtyBufferManager.getReplaySnapshot` therefore
-  serves the headless PARSED grid (the same serialized frame `getSerializedFrame` gives the
+  serves the headless PARSED grid (the same serialized frame `getSeedFrame` gives the
   mobile seed) when the session is in the alt screen or its ring is geometry-suspect, and the
   raw byte replay for stable-geometry non-alt sessions - a plain shell's scrollback IS the
   bytes, and truncation there only loses old history. The gate

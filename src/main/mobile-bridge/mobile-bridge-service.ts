@@ -661,10 +661,10 @@ export class MobileBridgeService extends EventEmitter {
       console.log(`[mobile-bridge] device ${label} handshake established`);
     });
     // Frames a rekey held for the phone's reply (BridgeSession.rekeyHeldFrames).
-    // 'established' and 'dispose' are routine; 'deadline', 'read-failed' and
-    // 'send-failed' sealed them under the old keys after the phone may already
-    // have switched, so they are the lines to look for next to a phone request
-    // that timed out.
+    // 'established' and 'dispose' are routine; 'deadline', 'overflow',
+    // 'read-failed' and 'send-failed' sealed them under the old keys after the
+    // phone may already have switched, so they are the lines to look for next
+    // to a phone request that timed out.
     session.on('rekeyHoldReleased', ({ frames, heldMs, reason }: { frames: number; heldMs: number; reason: RekeyHoldReleaseReason }) => {
       const line = `[mobile-bridge] device ${label} rekey held ${frames} frame(s) for ${heldMs} ms, released (${reason})`;
       if (reason === 'established' || reason === 'dispose') console.log(line);
@@ -703,12 +703,12 @@ export class MobileBridgeService extends EventEmitter {
    * desktop's share of the round trip reaches SLOW_REQUEST_WARN_MS.
    *
    * A response the protocol cannot encode (over its frame caps, which a big
-   * terminal seed can reach) is replaced with a short refusal, so the phone
-   * fails fast instead of waiting out its own timeout. Until this, that case
-   * was swallowed with no line at all. The encode runs before anything is
-   * sealed (MessageEncodeError), so the refusal goes out on the same stream
-   * without desyncing the phone's receive counter. Any other send failure is
-   * the session dropping mid-dispatch, which the transport's own lines cover.
+   * terminal seed can reach) is replaced with a short refusal and a `warn`
+   * line, so the phone fails fast instead of waiting out its own timeout. The
+   * encode runs before anything is sealed (MessageEncodeError), so the refusal
+   * goes out on the same stream without desyncing the phone's receive counter.
+   * Any other send failure is the session dropping mid-dispatch, which the
+   * transport's own lines cover.
    */
   private sendCapabilityResponse(
     session: BridgeSession,
@@ -740,7 +740,8 @@ export class MobileBridgeService extends EventEmitter {
     const parts = [`handler ${Math.round(handledAtMs - receivedAtMs)} ms`, ...spans, `send ${Math.round(sentAtMs - handledAtMs)} ms`];
     if (typeof frameBytes === 'number') parts.push(`${Math.round(frameBytes / 1024)} kB frame`);
     const bufferedBytes = session.transportBufferedBytes;
-    if (typeof bufferedBytes === 'number' && bufferedBytes > 0) parts.push(`${Math.round(bufferedBytes / 1024)} kB still buffered`);
+    // Rounded up, so a few stalled bytes never read as "0 kB still buffered".
+    if (typeof bufferedBytes === 'number' && bufferedBytes > 0) parts.push(`${Math.ceil(bufferedBytes / 1024)} kB still buffered`);
     parts.push(`longest main-loop block ${longestMainLoopBlockMs} ms`);
     console.warn(`[mobile-bridge] slow request ${describeRequest(session, request)}: ${parts.join(', ')}`);
   }

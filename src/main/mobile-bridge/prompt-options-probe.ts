@@ -1,7 +1,8 @@
 /**
  * Prompt-options probe: recovers a pending prompt's numbered option labels
  * from the serialized PTY frame the mobile bridge already snapshots
- * (SessionManager.getSerializedFrame, the read-stream mobile seed), so the
+ * (the read-stream mobile seed from SessionManager.getSeedFrame, or
+ * SessionManager.getSerializedFrame for a prompt raised later), so the
  * phone can render the ACTUAL choices ("1. Yes", "2. Yes, and don't ask
  * again...") instead of answering blind with approve='1\r' / deny=Esc.
  *

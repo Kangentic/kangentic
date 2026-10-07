@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostCommand, PtyHostEvent, PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
@@ -151,6 +152,81 @@ describe('PtyHostCore', () => {
     // No settle was asked for, so that phase is empty; the serialize is timed.
     expect(seed.settleMs).toBe(0);
     expect(seed.serializeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('getSeedFrame with settle waits for the resize repaint before it serializes, and times that wait', async () => {
+    // Real timers: the headless parser's write barrier and the settle timing
+    // both run on them.
+    vi.useRealTimers();
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.feed('before');
+
+    const bufferManager = (core as unknown as { bufferManager: PtyBufferManager }).bufferManager;
+    let releaseRepaint: () => void = () => {};
+    const repaintSettled = new Promise<void>((resolve) => {
+      releaseRepaint = resolve;
+    });
+    const waitSpy = vi.spyOn(bufferManager, 'waitForResizeRepaint').mockReturnValue(repaintSettled);
+
+    const pendingSeed = core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: true });
+    // The settle is still pending, so these bytes are the repaint it exists to
+    // wait for. A seed serialized before the settle would barrier at 6.
+    fake.feed(' repaint');
+    // Hold the settle open long enough for its timing to be measurable.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    releaseRepaint();
+    const seed = await pendingSeed;
+
+    expect(waitSpy).toHaveBeenCalledWith('session-1');
+    expect(seed.barrierOffset).toBe('before repaint'.length);
+    expect(seed.frame).toContain('before repaint');
+    // The settle phase is timed around the wait: ~30ms held, with slack for
+    // timer granularity. Both phases are non-negative numbers.
+    expect(seed.settleMs).toBeGreaterThanOrEqual(20);
+    expect(seed.serializeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('getSeedFrame without settle never waits on the resize repaint', async () => {
+    vi.useRealTimers();
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.feed('no settle');
+
+    const bufferManager = (core as unknown as { bufferManager: PtyBufferManager }).bufferManager;
+    const waitSpy = vi.spyOn(bufferManager, 'waitForResizeRepaint');
+
+    const seed = await core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: false });
+
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(seed.barrierOffset).toBe('no settle'.length);
+    expect(seed.settleMs).toBe(0);
+  });
+
+  it('getSeedFrame with settle holds the seed for a real post-resize repaint', async () => {
+    vi.useRealTimers();
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    // An alt-screen TUI, as the agents are: its clears are not the shell
+    // takeover clear, so the parser sees exactly the bytes fed here (no
+    // injected scrollback erase to account for).
+    const oldFrame = '\x1b[?1049h\x1b[2Jold frame at 120 cols';
+    fake.feed(oldFrame);
+    // The old frame must be measurably older than the resize: the settle
+    // counts same-millisecond bytes as post-resize.
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    core.handleCommand({ type: 'resizeBuffer', sessionId: 'session-1', cols: 190, rows: 30 });
+
+    const pendingSeed = core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: true });
+    // The TUI's SIGWINCH repaint lands while the seed waits. Settle ends on
+    // this full-frame clear, or at its bounded deadline at the latest, and the
+    // serialize then includes it.
+    const repaint = '\x1b[2Jrepaint at 190 cols';
+    fake.feed(repaint);
+    const seed = await pendingSeed;
+
+    expect(seed.frame).toContain('repaint at 190 cols');
+    expect(seed.barrierOffset).toBe(oldFrame.length + repaint.length);
   });
 
   it('merges outputSeen per window in the utility process, with a leading event', async () => {

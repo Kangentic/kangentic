@@ -47,6 +47,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 
 let tmpDir: string;
 
@@ -131,11 +132,37 @@ describe('SessionManager data-tap', () => {
     manager.on('data-tap', dataTapListener);
     manager.on('data', dataListener);
 
-    feedData('hello from a background session');
+    const output = 'hello from a background session';
+    feedData(output);
     await waitForFlush();
 
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'hello from a background session');
+    // The third argument is the parser offset just past the chunk (here the
+    // first and only output, so its length).
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
     expect(dataListener).not.toHaveBeenCalled();
+  });
+
+  it('forwards the host\'s parser end offset as the third "data-tap" argument', async () => {
+    const { session, feedData } = await spawnSession('task-data-tap-end-offset');
+
+    // Flush the first two feeds before the tap exists: the offset counts every
+    // character the parser received, tapped or not, so the tapped chunk below
+    // must report 9 + 7 + 6 = 22, not its own length. (Coalesced into one
+    // flush, the tap would deliver all three feeds as one chunk instead.)
+    feedData('unwatched');
+    await waitForFlush();
+    feedData('earlier');
+    await waitForFlush();
+
+    manager.subscribeDataTap(session.id);
+    const dataTapListener = vi.fn();
+    manager.on('data-tap', dataTapListener);
+
+    feedData('tapped');
+    await waitForFlush();
+
+    expect(dataTapListener).toHaveBeenCalledTimes(1);
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'tapped', 22);
   });
 
   it('sends no bytes for a session nobody subscribed to, and stops when the last subscription goes', async () => {
@@ -143,22 +170,34 @@ describe('SessionManager data-tap', () => {
     const dataTapListener = vi.fn();
     manager.on('data-tap', dataTapListener);
 
-    feedData('nobody is watching');
+    const unwatchedOutput = 'nobody is watching';
+    feedData(unwatchedOutput);
     await waitForFlush();
     expect(dataTapListener).not.toHaveBeenCalled();
 
-    // Two holders: the tap stays on until both release.
+    // Two holders: the tap stays on until both release. Offsets keep counting
+    // the unwatched feed above: the parser received those characters too.
     const releaseFirst = manager.subscribeDataTap(session.id);
     const releaseSecond = manager.subscribeDataTap(session.id);
-    feedData('two holders');
+    const twoHoldersOutput = 'two holders';
+    feedData(twoHoldersOutput);
     await waitForFlush();
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'two holders');
+    expect(dataTapListener).toHaveBeenCalledWith(
+      session.id,
+      twoHoldersOutput,
+      unwatchedOutput.length + twoHoldersOutput.length,
+    );
 
     releaseFirst();
     releaseFirst(); // a second call of the same release is a no-op
-    feedData('one holder left');
+    const oneHolderOutput = 'one holder left';
+    feedData(oneHolderOutput);
     await waitForFlush();
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'one holder left');
+    expect(dataTapListener).toHaveBeenCalledWith(
+      session.id,
+      oneHolderOutput,
+      unwatchedOutput.length + twoHoldersOutput.length + oneHolderOutput.length,
+    );
 
     releaseSecond();
     dataTapListener.mockClear();
@@ -201,11 +240,12 @@ describe('SessionManager data-tap', () => {
     manager.on('data-tap', dataTapListener);
     manager.on('data', dataListener);
 
-    feedData('hello from a focused session');
+    const output = 'hello from a focused session';
+    feedData(output);
     await waitForFlush();
 
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
-    expect(dataListener).toHaveBeenCalledWith(session.id, 'hello from a focused session');
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
+    expect(dataListener).toHaveBeenCalledWith(session.id, output);
   });
 
   it('default-closed: with no setFocusedSessions call, "data" never fires while a tap does', async () => {
@@ -221,10 +261,11 @@ describe('SessionManager data-tap', () => {
     manager.on('data-tap', dataTapListener);
     manager.on('data', dataListener);
 
-    feedData('output before any focus sync');
+    const output = 'output before any focus sync';
+    feedData(output);
     await waitForFlush();
 
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'output before any focus sync');
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
     expect(dataListener).not.toHaveBeenCalled();
   });
 
@@ -260,14 +301,16 @@ describe('SessionManager data-tap', () => {
     manager.on('data-tap', dataTapListener);
     manager.on('data', dataListener);
 
-    feedData('drained before flush');
+    const drainedOutput = 'drained before flush';
+    feedData(drainedOutput);
     // Sample inside the 16ms flush window: the replay's double-delivery guard
     // drains the pending bytes out of the buffer, so they never reach onFlush.
     // Before the onDrain seam existed, a phone streaming this session simply
     // lost them whenever a desktop terminal mounted the same session.
     await manager.getScrollback(session.id);
 
-    expect(dataTapListener).toHaveBeenCalledWith(session.id, 'drained before flush');
+    // The drain report carries its parser end offset like a flush does.
+    expect(dataTapListener).toHaveBeenCalledWith(session.id, drainedOutput, drainedOutput.length);
     // The renderer emit stays suppressed: the desktop gets these bytes inside
     // the replay payload it just requested, and a second 'data' delivery is
     // exactly the duplicate the drain exists to prevent.
@@ -310,6 +353,42 @@ describe('SessionManager data-tap', () => {
     await waitForFlush();
 
     expect(firstOutputListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('getSeedFrame asks the host to settle for a session with a live PTY and not for one without', async () => {
+    // The settle waits for a SIGWINCH repaint, which only a live PTY can
+    // deliver; for a suspended or unknown session it would burn its deadline
+    // against a repaint that cannot come.
+    const { session, feedData } = await spawnSession('task-seed-settle-flag');
+    const hostClient = (manager as unknown as { host: PtyHostClient }).host;
+    // Passthrough spy: the real host still answers, so the seed itself is checked too.
+    const getSeedFrameSpy = vi.spyOn(hostClient, 'getSeedFrame');
+
+    const output = 'seed me';
+    feedData(output);
+    const liveSeed = await manager.getSeedFrame(session.id);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, true);
+    expect(liveSeed.barrierOffset).toBe(output.length);
+    expect(liveSeed.frame).toContain(output);
+
+    // Suspend keeps the registry row but drops its PTY. Check that precondition
+    // directly, so a suspend that deleted the row cannot turn this into the
+    // unknown-id case below.
+    await manager.suspend(session.id);
+    spawnedSessionId = null;
+    const registry = (manager as unknown as {
+      registry: { get(sessionId: string): { pty?: unknown } | undefined };
+    }).registry;
+    const suspendedRow = registry.get(session.id);
+    expect(suspendedRow).toBeDefined();
+    expect(suspendedRow?.pty).toBeFalsy();
+
+    await manager.getSeedFrame(session.id);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, false);
+
+    // A session the registry has never heard of takes the same no-settle path.
+    await manager.getSeedFrame('no-such-session');
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith('no-such-session', false);
   });
 
   it('getPipelineStats reports focused: false by default and true only for the session passed to setFocusedSessions', async () => {

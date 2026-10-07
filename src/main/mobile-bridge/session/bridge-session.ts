@@ -90,11 +90,19 @@ const RECONNECT_GRACE_MS = 2 * 1000;
  * handleHandshakeFrame), so the frames go out under the keys the phone ended
  * on rather than being lost; past the budget the phone is reported absent,
  * and the frames go out under the keys the session still holds, which is what
- * every frame did before the hold existed. Measured relay stalls tonight ran
- * 1-5 s per direction, so a 5 s hold alone released into exactly the window
- * where the phone had already switched.
+ * every frame did before the hold existed. Relay stalls measured on the
+ * hosted relay on 2026-10-07 ran 1-5 s per direction, so a 5 s hold alone
+ * released into exactly the window where the phone had already switched.
  */
 const REKEY_HOLD_MAX_MS = PEER_PRESENCE_TIMEOUT_MS * PEER_PRESENCE_FAILURES_BEFORE_ABSENT;
+
+/**
+ * The most encoded bytes a rekey holds before it releases early under the
+ * keys the session still holds, as the deadline does. A busy terminal stream
+ * can push several MB a second, and the hold would otherwise keep all of it
+ * for up to REKEY_HOLD_MAX_MS and then seal it in one synchronous burst.
+ */
+const REKEY_HOLD_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * Initiations kept for a stalled reply. At this many, no further msg1 is sent
@@ -110,7 +118,7 @@ const MAX_OUTSTANDING_HANDSHAKES = 8;
  * 'established' seals under the new keys; every other reason seals under the
  * keys the session still holds, or discards on a dead transport.
  */
-export type RekeyHoldReleaseReason = 'established' | 'deadline' | 'read-failed' | 'send-failed' | 'dispose';
+export type RekeyHoldReleaseReason = 'established' | 'deadline' | 'overflow' | 'read-failed' | 'send-failed' | 'dispose';
 
 /**
  * Whether the phone is actually attached to this device's relay slot, which
@@ -228,6 +236,8 @@ export class BridgeSession extends EventEmitter {
    */
   private rekeyHeldFrames: Array<{ plaintext: Uint8Array; tag: FrameTag }> | null = null;
   private rekeyHoldStartedAtMs = 0;
+  /** Encoded bytes in rekeyHeldFrames, checked against REKEY_HOLD_MAX_BYTES. */
+  private rekeyHeldBytes = 0;
   private rekeyHoldTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: BridgeSessionOptions) {
@@ -411,13 +421,18 @@ export class BridgeSession extends EventEmitter {
     // unlock probe) stays open with its original deadline: the phone may have
     // switched on that msg1 already, so the held frames wait for the reply
     // that leaves both sides on the same keys.
-    if (this.streams) this.startRekeyHold();
+    const openedHold = this.streams ? this.startRekeyHold() : false;
     this.initiationsSent += 1;
     try {
       this.transport.send(wrapSessionFrame(SessionFrameKind.Handshake, message));
     } catch (error) {
-      // No msg1 left, so the phone never switched keys: release under the old ones.
-      this.releaseRekeyHold('send-failed');
+      // This msg1 never left. Forget it, so it neither counts toward the cap
+      // nor reads a later reply first and fails. A hold it opened releases
+      // under the old keys, since the phone never switched on it; a hold an
+      // earlier msg1 opened keeps waiting for that msg1's reply.
+      const unsentIndex = this.outstandingHandshakes.indexOf(handshake);
+      if (unsentIndex !== -1) this.outstandingHandshakes.splice(unsentIndex, 1);
+      if (openedHold) this.releaseRekeyHold('send-failed');
       throw error;
     }
     // Re-arm the rekey timer from this handshake (WireGuard REKEY_AFTER_TIME is
@@ -636,24 +651,35 @@ export class BridgeSession extends EventEmitter {
   /**
    * Opens a rekey hold, or leaves an open one alone: a re-initiation during a
    * hold never extends its deadline, so no frame waits longer than
-   * REKEY_HOLD_MAX_MS from the first msg1 of the episode.
+   * REKEY_HOLD_MAX_MS from the first msg1 of the episode. Returns whether
+   * this call opened it.
    */
-  private startRekeyHold(): void {
-    if (this.rekeyHeldFrames) return;
+  private startRekeyHold(): boolean {
+    if (this.rekeyHeldFrames) return false;
     this.rekeyHeldFrames = [];
+    this.rekeyHeldBytes = 0;
     this.rekeyHoldStartedAtMs = Date.now();
     this.rekeyHoldTimer = setTimeout(() => {
       this.rekeyHoldTimer = null;
       this.releaseRekeyHold('deadline');
     }, REKEY_HOLD_MAX_MS);
     this.rekeyHoldTimer.unref?.();
+    return true;
+  }
+
+  /** Adds one encoded frame to the open hold, releasing it early once it passes REKEY_HOLD_MAX_BYTES. */
+  private holdFrame(held: Array<{ plaintext: Uint8Array; tag: FrameTag }>, plaintext: Uint8Array, tag: FrameTag): void {
+    held.push({ plaintext, tag });
+    this.rekeyHeldBytes += plaintext.byteLength;
+    if (this.rekeyHeldBytes >= REKEY_HOLD_MAX_BYTES) this.releaseRekeyHold('overflow');
   }
 
   /**
    * Seals and sends every held frame under the CURRENT streams, then closes
    * the hold. Called with the new streams installed when the rekey completes,
-   * and with the old ones still installed when it does not (the deadline, a
-   * failed read, a msg1 that never left). In the second case the phone either
+   * and with the old ones still installed when it does not (the deadline, an
+   * overflow, a failed read, a msg1 that never left). In the second case the
+   * phone either
    * never switched (absent, or msg1 lost), so the old keys are the right ones,
    * or it switched and its msg2 is late, in which case these frames are lost
    * exactly as every frame in the window was before the hold existed.
@@ -662,6 +688,7 @@ export class BridgeSession extends EventEmitter {
     const held = this.rekeyHeldFrames;
     if (!held) return;
     this.rekeyHeldFrames = null;
+    this.rekeyHeldBytes = 0;
     if (this.rekeyHoldTimer) {
       clearTimeout(this.rekeyHoldTimer);
       this.rekeyHoldTimer = null;
@@ -686,6 +713,7 @@ export class BridgeSession extends EventEmitter {
       this.rekeyHoldTimer = null;
     }
     this.rekeyHeldFrames = null;
+    this.rekeyHeldBytes = 0;
   }
 
   private armRehandshakeTimer(): void {
@@ -776,8 +804,10 @@ export class BridgeSession extends EventEmitter {
     }
     if (!matched) {
       // Nothing this side sent can read the frame: garbled, injected, or a
-      // reply to an initiation already abandoned. Schedule a fresh initiation
-      // rather than leaving the session waiting on a reply that cannot come.
+      // reply to an initiation already abandoned. An unestablished session
+      // schedules a fresh initiation here. An established one does not
+      // (scheduleHandshakeRetry returns early): the presence window its msg1
+      // armed is still running, and its timeout re-initiates.
       this.releaseRekeyHold('read-failed');
       this.emit('handshakeFailed', lastError);
       this.scheduleHandshakeRetry();
@@ -787,7 +817,13 @@ export class BridgeSession extends EventEmitter {
     // The phone has been on these keys since it wrote this msg2. If a newer
     // msg1 is still outstanding it has switched again on that one too, so the
     // held frames wait for the reply that leaves the two sides on the same keys.
-    if (this.outstandingHandshakes.length === 0) this.releaseRekeyHold('established');
+    if (this.outstandingHandshakes.length === 0) {
+      this.releaseRekeyHold('established');
+      // The flush can cross the relay's per-socket byte cap, whose redial runs
+      // onTransportState('reconnecting') re-entrantly and drops these keys.
+      // The session is no longer established, so none of what follows applies.
+      if (!this.streams) return;
+    }
     this.clearHandshakeRetryTimer();
     // The peer answered: it is attached to this slot. Retire the probe budget
     // and drop any reconnect hold - if one was armed, the blip healed inside
@@ -892,7 +928,7 @@ export class BridgeSession extends EventEmitter {
       throw new MessageEncodeError(error);
     }
     if (this.rekeyHeldFrames) {
-      this.rekeyHeldFrames.push({ plaintext: encoded, tag: FrameTag.Message });
+      this.holdFrame(this.rekeyHeldFrames, encoded, FrameTag.Message);
       return encoded.byteLength;
     }
     const frame = wrapSessionFrame(SessionFrameKind.Application, this.streams.send.seal(encoded));
@@ -909,8 +945,7 @@ export class BridgeSession extends EventEmitter {
    * nonzero value next to a slow request means a stalled socket.
    */
   get transportBufferedBytes(): number | null {
-    const candidate = this.transport as Partial<{ bufferedAmount: number }>;
-    return typeof candidate.bufferedAmount === 'number' ? candidate.bufferedAmount : null;
+    return 'bufferedAmount' in this.transport && typeof this.transport.bufferedAmount === 'number' ? this.transport.bufferedAmount : null;
   }
 
   /**

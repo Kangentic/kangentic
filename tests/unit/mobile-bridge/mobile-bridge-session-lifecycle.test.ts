@@ -98,6 +98,8 @@ class FakeBridgeSession extends EventEmitter {
   connectionState: MobileDeviceConnectionState = 'idle';
   /** Mutable, same reasoning as connectionState above - read by the same listener for the "(transport <transportState>)" suffix. */
   transportState: TransportState = 'idle';
+  /** Mutable, same reasoning as above - read by the slow-request line, which names it only when the transport still holds bytes. */
+  transportBufferedBytes: number | null = null;
   start = vi.fn();
   dispose = vi.fn();
   sendMessage = vi.fn();
@@ -176,7 +178,7 @@ vi.mock('../../../src/main/mobile-bridge/handlers', async (importOriginal) => {
 
 const { MobileBridgeService, resetForcedRedialTelemetryForTests } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
 const { MessageEncodeError } = await import('../../../src/main/mobile-bridge/session/bridge-session');
-const { noteRequestSpan, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
+const { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
 const { trackEvent } = await import('../../../src/main/analytics/analytics');
 const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
 type MobileBridgeServiceInstance = InstanceType<typeof MobileBridgeService>;
@@ -271,16 +273,103 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     const slowLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('slow request'));
     expect(slowLines).toEqual(['[mobile-bridge] slow request read-board/subscribe slowreq-1234 from device-A: handler 900 ms, seed 800 ms, 120k chars, send 40 ms, 96 kB frame, longest main-loop block 920 ms']);
 
-    // Under the threshold: no line, and the span registry still let go of the request.
+    // Under the threshold: no line, and the span registry still let go of the
+    // request (the handler above noted a span for it too).
     warnSpy.mockClear();
     handlerCostMs = 100;
     session.emit('message', { type: 'capability-request', requestId: 'fastreq-1234', verb: 'read-board', payload: {} });
     await flushMicrotasks();
     expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('slow request'))).toBe(false);
+    expect(takeRequestSpans(session.deviceId, 'fastreq-1234')).toEqual([]);
 
     nowSpy.mockRestore();
     warnSpy.mockRestore();
     service.dispose();
+  });
+
+  it('lets go of a fast request: its spans are collected and its block probe stopped, so no interval is left ticking', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    resetRequestSpansForTests();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // Only the probe's interval and the clock are fake; promises still settle,
+    // so the microtask flush below behaves as in every other case.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    try {
+      const timersBeforeRequest = vi.getTimerCount();
+      let timersDuringHandler = -1;
+      service.capabilityRouter.register('read-board', (request) => {
+        noteRequestSpan(session.deviceId, request.requestId, 'seed 5 ms, 1k chars');
+        timersDuringHandler = vi.getTimerCount();
+        return { type: 'capability-response', requestId: request.requestId, ok: true };
+      });
+
+      session.emit('message', { type: 'capability-request', requestId: 'fastreq-1234', verb: 'read-board', payload: {} });
+      await flushMicrotasks();
+
+      expect(session.sendMessage).toHaveBeenCalledTimes(1);
+      // The probe was running while the handler worked, and is gone now.
+      expect(timersDuringHandler).toBe(timersBeforeRequest + 1);
+      expect(vi.getTimerCount()).toBe(timersBeforeRequest);
+      // The span the handler noted was collected although no line was written.
+      expect(takeRequestSpans(session.deviceId, 'fastreq-1234')).toEqual([]);
+      expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('slow request'))).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+      resetRequestSpansForTests();
+      vi.useRealTimers();
+      service.dispose();
+    }
+  });
+
+  it('names the bytes still buffered on the transport in the slow-request line, and only when there are any', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    resetRequestSpansForTests();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let clockMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+    try {
+      service.capabilityRouter.register('read-board', (request) => {
+        clockMs += 900;
+        return { type: 'capability-response', requestId: request.requestId, ok: true };
+      });
+      session.sendMessage.mockImplementation(() => {
+        clockMs += 40;
+        return 96 * 1024;
+      });
+      const slowLineFor = async (requestId: string): Promise<string> => {
+        warnSpy.mockClear();
+        session.emit('message', { type: 'capability-request', requestId, verb: 'read-board', payload: {} });
+        await flushMicrotasks();
+        const slowLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('slow request'));
+        expect(slowLines).toHaveLength(1);
+        return slowLines[0];
+      };
+
+      session.transportBufferedBytes = 300 * 1024;
+      expect(await slowLineFor('buffered-1')).toBe(
+        '[mobile-bridge] slow request read-board buffered-1 from device-A: handler 900 ms, send 40 ms, 96 kB frame, 300 kB still buffered, longest main-loop block 920 ms',
+      );
+
+      // A few stalled bytes round up, never down to a contradictory "0 kB".
+      session.transportBufferedBytes = 100;
+      expect(await slowLineFor('buffered-2')).toBe(
+        '[mobile-bridge] slow request read-board buffered-2 from device-A: handler 900 ms, send 40 ms, 96 kB frame, 1 kB still buffered, longest main-loop block 920 ms',
+      );
+
+      // An empty buffer, and a transport that cannot report one, add nothing.
+      const lineWithoutBuffer = '[mobile-bridge] slow request read-board unbuffered-1 from device-A: handler 900 ms, send 40 ms, 96 kB frame, longest main-loop block 920 ms';
+      session.transportBufferedBytes = 0;
+      expect(await slowLineFor('unbuffered-1')).toBe(lineWithoutBuffer);
+      session.transportBufferedBytes = null;
+      expect(await slowLineFor('unbuffered-1')).toBe(lineWithoutBuffer);
+    } finally {
+      nowSpy.mockRestore();
+      warnSpy.mockRestore();
+      resetRequestSpansForTests();
+      service.dispose();
+    }
   });
 
   it('answers a response too large to encode with a short refusal on the same stream, and says so in a warn line', async () => {
@@ -655,6 +744,36 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     warnSpy.mockRestore();
     logSpy.mockRestore();
     service.dispose();
+  });
+
+  // The routine releases (the phone replied, or the session is being torn down)
+  // are log lines. The four that sealed held frames under the old keys after the
+  // phone may already have switched are the ones to look for next to a phone
+  // request that timed out, so they are warn lines.
+  it.each([
+    { reason: 'established', level: 'log' },
+    { reason: 'dispose', level: 'log' },
+    { reason: 'deadline', level: 'warn' },
+    { reason: 'overflow', level: 'warn' },
+    { reason: 'read-failed', level: 'warn' },
+    { reason: 'send-failed', level: 'warn' },
+  ] as const)('writes a rekey hold released as "$reason" at $level level in the documented format', async ({ reason, level }) => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const rekeyLines = (spy: typeof warnSpy): string[] => spy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('rekey held'));
+    try {
+      session.emit('rekeyHoldReleased', { frames: 3, heldMs: 1250, reason });
+
+      const expectedLine = `[mobile-bridge] device ${session.deviceId.slice(0, 8)} rekey held 3 frame(s) for 1250 ms, released (${reason})`;
+      expect(rekeyLines(level === 'log' ? logSpy : warnSpy)).toEqual([expectedLine]);
+      expect(rekeyLines(level === 'log' ? warnSpy : logSpy)).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+      service.dispose();
+    }
   });
 
   it('connectionStateSince is null before a session opens, set at wiring time, bumped only on an actual state change, and cleared when the session is dropped', async () => {

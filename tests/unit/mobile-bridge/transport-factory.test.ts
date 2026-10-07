@@ -10,9 +10,24 @@
  * correctly. RelayClient itself is fully covered by relay-client.test.ts;
  * this file only needs to confirm the thin forwarding contract.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTransport } from '../../../src/main/mobile-bridge/transport/transport-factory';
 import { RelayClient } from '../../../src/main/mobile-bridge/transport/relay-client';
+import { resolveRelayChromiumFallback } from '../../../src/main/mobile-bridge/transport/relay-websocket';
+
+// The real resolver reads Electron's `net` and `session`, which a unit test has
+// no app for. Mocked, it answers undefined (no fallback) unless a test says
+// otherwise, which is also what it answers under plain Node, so the tests
+// below that do not care about the fallback behave as before.
+vi.mock('../../../src/main/mobile-bridge/transport/relay-websocket', () => ({
+  resolveRelayChromiumFallback: vi.fn(),
+}));
+
+// File-level so a preferred fallback set by one test can never leak into
+// another test's createTransport() call, whatever order the tests run in.
+beforeEach(() => {
+  vi.mocked(resolveRelayChromiumFallback).mockReset();
+});
 
 describe('createTransport()', () => {
   it('returns a RelayClient instance', () => {
@@ -155,6 +170,105 @@ describe('createTransport()', () => {
     } finally {
       warnSpy.mockRestore();
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+    }
+  });
+});
+
+describe('createTransport() Chromium fallback wiring', () => {
+  /**
+   * A WebSocket stand-in that records which constructor dialed (by label) and
+   * keeps every instance so a test can drive its handlers. It never opens or
+   * closes on its own.
+   */
+  interface RecordedSocket {
+    onclose: ((event: CloseEvent) => void) | null;
+  }
+  function createRecordingWebSocket(label: string, dialLog: string[], sockets: RecordedSocket[] = []): typeof WebSocket {
+    class RecordingWebSocket {
+      binaryType = 'blob';
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      constructor(_url: string) {
+        dialLog.push(label);
+        sockets.push(this);
+      }
+      close(): void {
+        // no-op: these tests only inspect which constructor dialed.
+      }
+    }
+    return RecordingWebSocket as unknown as typeof WebSocket;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('never resolves the Chromium fallback when a WebSocket constructor is injected, so the injected one is the only stack dialed', () => {
+    const dialLog: string[] = [];
+    vi.stubGlobal('WebSocket', createRecordingWebSocket('global', dialLog));
+    // A fallback that is preferred would take over the first dial if the
+    // factory ever handed it to the client.
+    vi.mocked(resolveRelayChromiumFallback).mockReturnValue({
+      webSocketConstructor: createRecordingWebSocket('fallback', dialLog),
+      stack: 'chromium',
+      isPreferred: () => true,
+    });
+
+    const transport = createTransport({
+      relayUrl: 'ws://relay.example.com',
+      slotId: 'my-slot-id',
+      webSocketConstructor: createRecordingWebSocket('injected', dialLog),
+    });
+    void transport.connect().catch(() => undefined);
+
+    expect(resolveRelayChromiumFallback).not.toHaveBeenCalled();
+    expect(dialLog).toEqual(['injected']);
+    transport.close();
+  });
+
+  it('resolves the Chromium fallback for the relay URL when no constructor is injected, and hands it to the client', () => {
+    const dialLog: string[] = [];
+    vi.stubGlobal('WebSocket', createRecordingWebSocket('global', dialLog));
+    vi.mocked(resolveRelayChromiumFallback).mockReturnValue({
+      webSocketConstructor: createRecordingWebSocket('fallback', dialLog),
+      stack: 'chromium',
+      isPreferred: () => true,
+    });
+
+    const transport = createTransport({ relayUrl: 'ws://relay.example.com', slotId: 'my-slot-id' });
+    void transport.connect().catch(() => undefined);
+
+    expect(resolveRelayChromiumFallback).toHaveBeenCalledTimes(1);
+    expect(resolveRelayChromiumFallback).toHaveBeenCalledWith('ws://relay.example.com');
+    // Preferred, so the very first dial is on the fallback rather than the global.
+    expect(dialLog).toEqual(['fallback']);
+    transport.close();
+  });
+
+  it('forwards webSocketStack, so the dial lines name the injected constructor\'s stack', () => {
+    const sockets: RecordedSocket[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const transport = createTransport({
+        relayUrl: 'ws://relay.example.com',
+        slotId: 'my-slot-id',
+        logLabel: 'stackfwd',
+        webSocketConstructor: createRecordingWebSocket('injected', [], sockets),
+        webSocketStack: 'chromium',
+      });
+      void transport.connect().catch(() => undefined);
+
+      // The dial closes before it opened, which is what writes the dial-failed line.
+      sockets[0].onclose?.({ code: 1006, reason: '', wasClean: false } as CloseEvent);
+
+      const dialFailedLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('[mobile-bridge/relay-client stackfwd] dial failed:'));
+      expect(dialFailedLines).toHaveLength(1);
+      expect(dialFailedLines[0].endsWith('(via chromium)')).toBe(true);
+      transport.close();
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });

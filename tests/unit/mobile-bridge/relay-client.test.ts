@@ -734,6 +734,29 @@ describe('RelayClient redial and dial watchdog', () => {
     ).toBe(true);
   });
 
+  // The stack label of an injected constructor defaults to 'injected', so a
+  // test double never reads as the real Node or Chromium stack in a log.
+  it('names an injected constructor with no webSocketStack as "injected" on its dial lines', () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    const client = new RelayClient({
+      relayUrl: 'ws://127.0.0.1:1',
+      slotId: 'test-slot',
+      logLabel: 'injdial',
+      webSocketConstructor: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+    expect(loggedLines(logSpy).some((line) => line.includes('[mobile-bridge/relay-client injdial] connected after') && line.endsWith('(via injected)'))).toBe(true);
+
+    // A forced redial abandons the open socket and dials afresh; that dial then
+    // dies before it opens, which writes the dial-failed line.
+    client.redialNow({ force: true, reason: 'injected stack label' });
+    FakeWebSocket.instances[1].fail(1006);
+    expect(loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client injdial] dial failed:') && line.endsWith('(via injected)'))).toBe(true);
+  });
+
   describe('fallback stack', () => {
     class FallbackWebSocket extends FakeWebSocket {}
     const fallbackOption = (isPreferred?: () => boolean) => ({
@@ -808,6 +831,30 @@ describe('RelayClient redial and dial watchdog', () => {
       vi.advanceTimersByTime(30_000);
       vi.advanceTimersByTime(1000);
       expect([stackOf(0), stackOf(1), stackOf(2)]).toEqual(['node', 'node', 'chromium']);
+    });
+
+    it('counts a primary constructor that throws as a failed dial, so the third dial uses the fallback', () => {
+      vi.useFakeTimers();
+      FakeWebSocket.instances = [];
+      let primaryConstructionAttempts = 0;
+      class ThrowingWebSocket {
+        constructor(_url: string) {
+          primaryConstructionAttempts += 1;
+          throw new Error('construction refused');
+        }
+      }
+      vi.stubGlobal('WebSocket', ThrowingWebSocket as unknown as typeof WebSocket);
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'throwing', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      vi.advanceTimersByTime(500);
+      vi.advanceTimersByTime(1000);
+
+      // Two dials threw on the primary; the third went to the fallback, which constructs fine.
+      expect(primaryConstructionAttempts).toBe(2);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(FakeWebSocket.instances[0]).toBeInstanceOf(FallbackWebSocket);
+      expect(loggedLines(warnSpy).filter((line) => line === '[mobile-bridge/relay-client throwing] dial failed: construction refused; redial in 500 ms (via node)')).toHaveLength(1);
     });
 
     it('dials with the fallback from the first dial while it is preferred (a configured proxy), and logs no hold', () => {
