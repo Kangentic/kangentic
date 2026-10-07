@@ -393,8 +393,8 @@ export interface BoardTaskWire {
    * Resume control; a client applies the same precedence. `start-session`
    * re-checks the column and refuses a To Do, Done or archived task with the
    * desktop's Resume copy, so a value overtaken by a move is safe to act on.
-   * From 0.17.0 `paused` carries the paused fact for a task that offers no
-   * Resume.
+   * A paused task that offers no Resume reads false here. From 0.17.0 `paused`
+   * tells it apart from a task with no paused session.
    *
    * Declared OPTIONAL (`?`) like `spawns_session`; `parseBoardTaskWire`
    * populates the key from every real wire response.
@@ -402,23 +402,24 @@ export interface BoardTaskWire {
   resumable?: boolean | null;
   /**
    * True when the task has a paused session (a `suspended` session that is not
-   * a Command Terminal) and no live one, whatever its column and whether or
-   * not it is archived. It is the fact the desktop card's "Paused" footer
-   * reads, so a paused task in Done or on the archived page reads true here
-   * while `resumable` reads false. Gate Resume on `resumable` only;
-   * `resumable: true` always comes with `paused: true`.
+   * a Command Terminal) and no live one. No column or archive gate applies. It
+   * is the fact the desktop card's "Paused" footer reads, so a paused task in
+   * Done or on the archived page reads true here while `resumable` reads
+   * false. A move into To Do removes the task's session rows, so a task there
+   * normally reads false. Gate Resume on `resumable` only; `resumable: true`
+   * always comes with `paused: true`.
    *
-   * A pause clears the task's `session_id`, so it is null while this is true.
-   * A respawn queued behind the desktop's concurrency limit leaves the task
-   * holding a paused session and a queued one; that task reads false, as the
-   * desktop card shows the queued session. While `spawn_progress` is non-null
-   * the desktop card shows that label instead of "Paused"; a client applies
-   * the same precedence.
+   * A desktop pause clears the task's `session_id`, so find a paused session
+   * from this field, not from `session_id`. A respawn queued behind the
+   * desktop's concurrency limit leaves the task holding a paused session and a
+   * queued one; that task reads false, as the desktop card shows the queued
+   * session. While `spawn_progress` is non-null the desktop card shows that
+   * label instead of "Paused"; a client applies the same precedence.
    *
    * Under `view: 'sessions'` a paused task that offers no Resume stays out of
-   * the snapshot: an agent feed has nothing to act on for it. Null or absent
-   * means a desktop that predates the field (pre-0.17.0); a client then reads
-   * a paused task from `resumable` alone, as before.
+   * the snapshot, because an agent feed has nothing to act on for it. Null or
+   * absent means a desktop that predates the field (pre-0.17.0); a client
+   * then reads a paused task from `resumable` alone, as before.
    *
    * Declared OPTIONAL (`?`) like `resumable`; `parseBoardTaskWire` populates
    * the key from every real wire response.

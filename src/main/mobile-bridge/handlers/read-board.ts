@@ -133,8 +133,8 @@ export async function handleReadBoard(
   // has something to say. It keeps a resumable paused task for the same
   // reason: a desktop pause nulls session_id too (applySuspendDbWrites), and
   // without it the feed could show Paused only until the row dropped out. A
-  // paused task that offers no Resume (Done, say) stays out on purpose: its
-  // row reads `paused: true`, but the feed has nothing to act on for it.
+  // paused task that offers no Resume (Done, say) stays out on purpose, though
+  // its row reads `paused: true` (see `BoardTaskWire.paused`).
   const drawnOnAgentFeed = (task: BoardTaskWire): boolean =>
     task.session_id !== null || typeof task.spawn_progress === 'string' || task.resumable === true;
   const view = payload.view;
