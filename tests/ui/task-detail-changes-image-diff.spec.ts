@@ -398,6 +398,43 @@ test.describe('Changes panel image view', () => {
     await closeChanges();
   });
 
+  test('a pair with only one side too large or unreadable keeps the pair view: a placeholder for that side, the other image, no comparison', async () => {
+    // The whole-pane "Too large to preview" stage is for a pair with NO side
+    // that can be shown (see the test above). One side withheld leaves the
+    // other side worth drawing, and its own placeholder says why.
+    await openChanges([
+      pngFile('shots/one-huge.png', { originalImageSize: OVER_PREVIEW_CAP }),
+      // No bytes and no text for the original: the mock answers 'unreadable',
+      // as main does when git cannot produce that side.
+      pngFile('shots/one-unread.png', { originalImageBase64: undefined }),
+    ], 'shots/one-huge.png');
+
+    const beforePlaceholder = page.locator('[data-testid="diff-image-before"] [data-testid="diff-image-placeholder"]');
+    await expect(beforePlaceholder).toHaveAttribute('data-reason', 'too-large', { timeout: 8000 });
+    await expect(beforePlaceholder).toContainText('Too large to preview');
+    await expect(page.locator('[data-testid="diff-image-too-large"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible();
+    await expect(page.locator('[data-testid="diff-image-info-before-size"]')).toHaveText('11 MB');
+    // The mode row stays, since one side can be shown, but only Side by side works.
+    await expect(page.locator('[data-testid="diff-image-modes"]')).toBeVisible();
+    for (const mode of ['slider', 'overlay', 'diff']) {
+      await expect(page.locator(`[data-testid="diff-image-mode-${mode}"]`)).toBeDisabled();
+    }
+
+    await selectFile('shots/one-unread.png');
+    await expect(beforePlaceholder).toHaveAttribute('data-reason', 'unreadable', { timeout: 8000 });
+    await expect(beforePlaceholder).toContainText('Could not read');
+    await expect(page.locator('[data-testid="diff-image-after"] img')).toBeVisible();
+    await expect(page.locator('[data-testid="diff-image-info-before-size"]')).toHaveText('Not readable');
+    // A size change needs both sizes, and a side that could not be read has none.
+    await expect(page.locator('[data-testid="diff-image-size-delta"]')).toHaveCount(0);
+    for (const mode of ['slider', 'overlay', 'diff']) {
+      await expect(page.locator(`[data-testid="diff-image-mode-${mode}"]`)).toBeDisabled();
+    }
+
+    await closeChanges();
+  });
+
   test('an image whose read fails says so instead of spinning, and reads again when selected again', async () => {
     // The panel falls back to empty content when a fetch throws, and empty
     // content has no image: the view used to wait on it forever.
