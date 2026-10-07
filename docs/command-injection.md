@@ -1,57 +1,80 @@
 # Command Injection
 
-Kangentic injects a column's message to its agent, and that column's model/effort settings, into a live agent session when a task moves between columns. The message comes from a **Send message to agent** automation on the column (see [Column automations](configuration.md#column-automations)); it used to be the `auto_command` field, and this document still uses that name for the delivery machinery, which did not change: the scheduler, the verifier contract, and the four `auto_command_*` outcome columns on `tasks` are all as they were. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
+Kangentic injects a column's message to its agent into a live agent session when a task moves between columns. The column's model and effort settings are never typed into a task session. A change to either restarts the session with the new launch flags (see the next section). Only the Command Terminal, which has no session to `--resume`, still switches model and effort live with a typed `/model` or `/effort`. The message comes from a **Send message to agent** automation on the column (see [Column automations](configuration.md#column-automations)); it used to be the `auto_command` field, and this document still uses that name for the delivery machinery, which did not change: the scheduler, the verifier contract, and the four `auto_command_*` outcome columns on `tasks` are all as they were. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
 
-## What gets injected (the settings delta)
+## What a move does to a live session (the settings delta)
 
-`prepareInjectionPlan` (`src/main/transition-engine/injection-plan.ts`) decides which `/model` / `/effort`
-slashes a column transition emits by diffing a **source** against a **target**:
+`prepareInjectionPlan` (`src/main/transition-engine/injection-plan.ts`) decides whether a column
+transition or a column/profile edit must restart the live session, by diffing a **source** against
+a **target** for model and effort. It returns `restartReason`: `'model'` when the target model is
+concrete and differs, else `'effort'` when the target effort is concrete and differs, else `null`.
+A caller with a reason suspends the session and resumes it with `--model` / `--effort` as launch
+flags (phase label `switching-model` or `applying-settings`), carrying the column message or
+plan-exit continuation as the resume prompt. A null target is the "Default" column and never
+restarts: `--resume` keeps whatever the session runs at.
+
+A column or Board Profile edit (`propagateStrategyToLiveSessions`) restarts every running session
+in that column it changes, each resuming idle. Each restart runs under its own task lock and first
+re-reads the task: if a move, a ContextBar pick, or an earlier edit already restarted or moved the
+session, it skips. An edit that did not change effort never restarts for effort, so drift it never
+touched (a manual `/effort`, a silent downgrade) leaves the turn alone; a move still realigns it.
+The ContextBar pick decides with the same rule, `resolveRestartReason`, over the task's effective
+values.
+
+Effort used to switch live with a typed `/effort`. That could not be confirmed where it mattered
+most: a plan-exit move always lands mid-turn, a mid-turn `/effort` writes no transcript entry, and
+the `command-match` retries pressed bare Enter into the running turn. A restart cuts the in-flight
+turn, the same cost a model change already accepts. Measured from transcripts, a same-model
+`--resume` within about an hour of the previous request reads the conversation back from the
+prompt cache; a resume that also changes `--effort` has not been sampled yet.
 
 - **Target** is the destination column's effective value: `task.<override> ?? toLane.<override> ?? project.default_<field> ?? null`.
   The project-default tier is read on both sides of the diff: without it, a task moving between
   two override-less columns on a project with a default model/effort set would read source = the
   applied project default (recorded at the last spawn) vs target = null, and spuriously
-  restart/re-inject even though nothing actually changed.
+  restart even though nothing actually changed.
   That project tier is **gated on the destination agent**: it applies only when the agent the
   destination resolves to (`task.agent_override ?? toLane.agent_override ?? project.default_agent`)
   equals `project.default_agent`. Model and effort ids are adapter-specific, so a default chosen
   for the project's agent is meaningless for a different one - a Codex column on a `claude` project
-  with `default_model: "haiku"` would otherwise target `haiku` and inject a model Codex rejects
-  outright. A task's or column's OWN override is never gated: it was chosen alongside that scope's
-  agent. The gate is the shared `projectModelDefaultsApply` predicate
+  with `default_model: "haiku"` would otherwise target `haiku` and restart into a model Codex
+  rejects outright. A task's or column's OWN override is never gated: it was chosen alongside that
+  scope's agent. The gate is the shared `projectModelDefaultsApply` predicate
   (`src/main/transition-engine/spawn-preamble.ts`), and the spawn path applies the identical rule -
-  they must agree, or a move would inject a model the spawn never applied.
+  they must agree, or a move would restart toward a model the spawn never applied.
 - **Source** is the value the live session is *actually running at*. It is NOT the leaving
   column's config. The leaving column disagrees with reality after an in-flight ContextBar switch
   or a `kangentic.json` column-config edit, and is null on a move with no resolvable
-  leaving-column - either case used to manufacture a redundant `/effort` injection even though the
+  leaving-column - either case used to manufacture a spurious change even though the
   spawn/resume `--model` / `--effort` flags had already applied the value.
   - **Effort:** `task.effort_override ?? <agent-reported effort> ?? record.applied_effort ?? null`
     (`resolveSourceEffort`). `applied_effort` records what Kangentic *asked for*; an `/effort` the
     user types straight into the terminal never reaches it. Preferring the agent's own reported
     level fixes the case where applied = `high`, the user switched to `medium` by hand, and the
-    destination column requires `high`: source and target both read `high`, no slash fires, and
-    the session silently keeps running at `medium`. Callers resolve the live value with
-    `resolveLiveEffort(usageCacheReader, sessionId)`, where the reader is anything exposing
-    `getUsageCache()` (the handlers pass `context.sessionManager`). It is null for agents with no
-    live telemetry and for models with no effort levels, where the behaviour is unchanged.
+    destination column requires `high`: source and target would both read `high`, nothing would
+    restart, and the session would silently keep running at `medium`. Callers resolve the live
+    value with `resolveLiveEffort(usageCacheReader, sessionId)`, where the reader is anything
+    exposing `getUsageCache()` (the handlers pass `context.sessionManager`). It is null for agents
+    with no live telemetry and for models with no effort levels, where the record decides.
+    One known cost follows from it: Claude reports the level in force after any silent downgrade
+    for its model, so a column asking for a level the model downgrades (say `max` on a model that
+    tops out at `high`) reads as changed on every move into it and restarts each time. That is
+    accepted and pinned in `injection-plan.test.ts`.
   - **Model:** `task.model_override ?? record.applied_model ?? null`. Deliberately *not* sourced
     from telemetry: the agent reports a canonical id (`claude-opus-4-8`) while the configured
     values are flag strings (`opus`), so comparing across those id spaces would read "changed" on
-    almost every move and `needsRestartForModel` would turn that into a PTY restart each time.
-  - A per-task override still wins for either field (source = target = pin, so no slash fires).
+    almost every move and `restartReason` would turn that into a PTY restart each time.
+  - A per-task override still wins for either field (source = target = pin, so that field never
+    restarts the session).
 
-When effort changes to a concrete target, the returned `InjectionPlan` carries an
-`appliedSettings: { effort? }`. Model is never recorded there: a model change restarts, and the
-respawn records `applied_model` itself via its `--model` flag. Each caller (the `task-move`
-Priority 3c path, the `SWIMLANE_UPDATE` propagation, and the `task:setRuntimeOverride` live path)
-persists it via `SessionRepository.updateAppliedSettings` after scheduling the burst, so the
-session's recorded running value stays current and the *next* transition diffs against the truth.
-The same `updateAppliedSettings` is written at spawn/resume with the resolved spawn overrides.
+Nothing is recorded as applied by the plan. A restart records `applied_model` / `applied_effort`
+itself: `restartSessionForSettingsChange` and a move's Phase 3 both end in a spawn or resume that
+writes `SessionRepository.updateAppliedSettings` with the resolved spawn overrides, so the *next*
+transition diffs against what the session was launched with.
 
 ## Why verification exists
 
-Column transitions can chain several commands in sequence: `/model X`, `/effort Y`, then a user-supplied `auto_command`. Without verification, an Enter key can be silently dropped by the TUI (autocomplete still showing, model picker overlay open, render frame skipped), causing the next command's text to concatenate into the previous prompt buffer. The result is a single combined entry like `<command-args>claude-opus-4-7\n/effort xhigh</command-args>` -- a "model not found" failure that quietly leaves the column's intended settings unapplied.
+A column transition used to chain several commands in sequence: `/model X`, `/effort Y`, then a user-supplied `auto_command`. Settings now restart instead of being typed, so a task session's burst carries the `auto_command` alone, but the hazard it was built for still applies to that command. Without verification, an Enter key can be silently dropped by the TUI (autocomplete still showing, model picker overlay open, render frame skipped), causing the next text to concatenate into the previous prompt buffer. The original failure was a single combined entry like `<command-args>claude-opus-4-7\n/effort xhigh</command-args>`, a "model not found" failure that quietly left the column's intended settings unapplied.
 
 Time-based settles cannot detect this because the writes did succeed; only the input semantics broke. We need an **authoritative signal** from the agent that the command was processed as the discrete invocation we intended.
 
@@ -115,7 +138,7 @@ A column's message reaches the agent by more than one mechanism, and they do not
 
 | Rung | Mechanism | When | Guarantee |
 |---|---|---|---|
-| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model change) | Guaranteed by the spawn |
+| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model or effort change) | Guaranteed by the spawn |
 | 2 | **keystrokes** | A live warm session | Verified in the transcript, or falls to rung 3 |
 | 3 | **restart + argv prompt** | Rung 2 exhausted its retries on a *verifiable* command | Guaranteed by the spawn |
 | 4 | **recorded failure + notice** | Rung 3 unavailable or itself failed | Observable |
@@ -217,7 +240,7 @@ Each command carries how its delivery may be confirmed:
 
 | Mode | Used for | Question answered |
 |---|---|---|
-| `command-match` | adapter-emitted settings writes (`/effort xhigh`) | did the transcript record a discrete invocation with exactly these args? |
+| `command-match` | adapter-emitted settings writes (`/effort xhigh`). No current caller sends one: task sessions restart for settings, and the Command Terminal's slashes go out as `none`. It stays the Claude verifier's default mode. | did the transcript record a discrete invocation with exactly these args? |
 | `submitted` | the user's `auto_command` | did exactly this text become a user turn? |
 | `none` | adapters with no verifier | nothing; the outcome is `unconfirmed` |
 
@@ -500,7 +523,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 
 ## Files
 
-- `src/main/transition-engine/injection-plan.ts` - builds the command sequence (each with its verify mode) + verifier from a column transition spec; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort` (`resolveLiveEffort` / `resolveSourceEffort`), the model delta from `applied_model` alone, and returns `appliedSettings` for the caller to persist.
+- `src/main/transition-engine/injection-plan.ts` - decides the `restartReason` (`'model'` / `'effort'` / null) for a column transition or column/profile edit, and builds the auto_command sequence (with its verify mode) + verifier; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort` (`resolveLiveEffort` / `resolveSourceEffort`) and the model delta from `applied_model` alone.
 - `src/main/transition-engine/terminal-submit-scheduler.ts` - task-keyed lifecycle: the burst FIFO, fresh-spawn wait, deferred wait, escalation, and outcome reporting.
 - `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate.
 - `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (handshake chain, prompt-state policy, per-command verification).

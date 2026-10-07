@@ -1773,8 +1773,9 @@
       setRuntimeOverride: async function (input) {
         // Test hook: spec can override the response (e.g. to assert error
         // handling) by setting window.__mockSetRuntimeOverrideResult before
-        // calling. Defaults to a successful 'live' apply when the task has a
-        // session_id, otherwise 'persisted'.
+        // calling. Defaults to a successful 'restart' when the task has a
+        // session_id (the real handler restarts a task session on any model or
+        // effort change, it never types a slash), otherwise 'persisted'.
         if (typeof window !== 'undefined') {
           if (!window.__mockSetRuntimeOverrideCalls) window.__mockSetRuntimeOverrideCalls = [];
           window.__mockSetRuntimeOverrideCalls.push(input);
@@ -1788,7 +1789,7 @@
         if (input.model !== undefined) patch.model_override = input.model;
         if (input.effort !== undefined) patch.effort_override = input.effort;
         tasks[idx] = Object.assign({}, tasks[idx], patch, { updated_at: now() });
-        var mode = tasks[idx].session_id ? 'live' : 'persisted';
+        var mode = tasks[idx].session_id ? 'restart' : 'persisted';
         return { ok: true, mode: mode };
       },
       resolvePr: async function (taskId, projectId) {

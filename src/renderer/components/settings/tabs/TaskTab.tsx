@@ -9,8 +9,8 @@ type ContextBarKey = keyof AppConfig['contextBar'];
 /**
  * The context bar's optional stats, in the order they sit in the bar. Model
  * and Effort are intentionally NOT toggleable: those pills double as the
- * in-place model/effort picker triggers (clicking them opens a popover that
- * switches models/effort live without restarting the session). Hiding them via
+ * in-place model/effort picker triggers (clicking them opens a popover whose
+ * pick restarts the task's session with the new value). Hiding them via
  * a toggle would silently disable that feature, not just declutter the chrome,
  * so they stay a permanent fixture of the context bar.
  */

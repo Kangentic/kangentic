@@ -1,30 +1,28 @@
 /**
  * Tests for prepareInjectionPlan - the central per-task helper that
- * task-move and SWIMLANE_UPDATE both use to translate column-level
- * model/effort/auto_command changes into a chained sequence (with the
- * right per-adapter verifier) for TerminalSubmitScheduler.scheduleKeystrokes to push onto the PTY.
+ * task-move and column/profile edits (strategy-propagation) both use to decide
+ * what a live session needs: a restart for a model/effort change, and/or the
+ * column auto_command typed in with the right per-adapter verifier.
  *
  * The whole point of this helper is to keep IPC handlers agent-agnostic.
  * These tests verify that:
- * - The delta SOURCE is the session's recorded applied_model / applied_effort
- *   (what it is actually running at), NOT the leaving column's config. A move
- *   into a column whose value the session already has injects nothing - this is
- *   the redundant-`/effort` bug the helper now avoids.
- * - Adapters without getInjectionSequence contribute no settings writes
- * - A MODEL change is never live-swapped here: prepareInjectionPlan passes
- *   `modelChanged: false` to the adapter (so no `/model` is emitted) and instead
- *   sets `needsRestartForModel` for the caller to suspend + respawn. A null
- *   ("Default") target is not a real change, so it never sets the flag.
- * - Adapters that DO implement getInjectionSequence own the EFFORT slash syntax
- *   (Claude returns `/effort Y`)
+ * - The delta SOURCE is what the session is actually running at (the agent's
+ *   reported effort, then the recorded applied_model / applied_effort), NOT the
+ *   leaving column's config. A move into a column whose value the session
+ *   already has does nothing.
+ * - A MODEL or EFFORT change to a concrete value is never typed into the PTY:
+ *   it sets `restartReason` ('model' wins when both change) for the caller to
+ *   suspend + respawn with launch flags. A null ("Default") target is not a
+ *   real change, so it never restarts.
+ * - The adapter's getInjectionSequence is never consulted (it serves only the
+ *   Command Terminal now), so the sequence carries the auto_command alone.
  * - The verifier is wired up only when the adapter declares one AND a
  *   captured agent_session_id is available
- * - auto_command is appended after settings writes and trimmed
- * - appliedSettings reports the new running effort for a concrete effort change
+ * - auto_command is trimmed and verified under the `submitted` mode
  */
 import { describe, it, expect, vi } from 'vitest';
-import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveLiveEffort, resolveSourceEffort } from '../../src/main/transition-engine/injection-plan';
-import type { AgentAdapter, SettingsChangeSpec } from '../../src/main/agent/agent-adapter';
+import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveLiveEffort, resolveRestartReason, resolveSourceEffort, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
+import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';
 import type { InjectionPlan } from '../../src/main/transition-engine/injection-plan';
@@ -74,6 +72,22 @@ function fakeAdapter(overrides: Partial<AgentAdapter>): AgentAdapter {
 }
 
 /**
+ * An adapter that WOULD emit `/model` and `/effort` the way Claude does, so a
+ * test proves the plan never types them rather than passing because the
+ * adapter had nothing to offer.
+ */
+function slashAdapter(): AgentAdapter {
+  return fakeAdapter({
+    getInjectionSequence: (spec) => {
+      const out: string[] = [];
+      if (spec.modelChanged && spec.model) out.push(`/model ${spec.model}`);
+      if (spec.effortChanged && spec.effort) out.push(`/effort ${spec.effort}`);
+      return out;
+    },
+  });
+}
+
+/**
  * A SessionRepository stub whose `getLatestForTask` returns the given record
  * (or null for "no session record"). Only the fields prepareInjectionPlan reads
  * (`applied_model`, `applied_effort`, and `agent_session_id` / `cwd` for the
@@ -102,50 +116,52 @@ describe('prepareInjectionPlan', () => {
     expect(plan).toBeNull();
   });
 
-  it('does not re-inject when the session already has the target value and there is no leaving-column reference', () => {
+  it('does nothing when the session already has the target value and there is no leaving-column reference', () => {
     // The reported bug: every column is xhigh, the session was spawned at xhigh
     // (applied_effort), and the move had a null leaving-column. The old code
-    // diffed null vs xhigh and injected `/effort xhigh` redundantly. Diffing
+    // diffed null vs xhigh and acted on a change that was not there. Diffing
     // against the recorded applied value yields no change.
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        const out: string[] = [];
-        if (spec.modelChanged && spec.model) out.push(`/model ${spec.model}`);
-        if (spec.effortChanged && spec.effort) out.push(`/effort ${spec.effort}`);
-        return out;
-      },
-    });
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'xhigh' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: 'opus', effort_override: 'xhigh' }),
     });
-    expect(capturedSpec).toMatchObject({ modelChanged: false, effortChanged: false });
     expect(plan).toBeNull();
   });
 
-  it('injects once when the session runs at the agent default and the column pins a concrete value', () => {
+  it('restarts for effort when the session runs at the agent default and the column pins a concrete value', () => {
     // applied_* null = the session was spawned with no --model/--effort flag
-    // (agent default). Entering a configured column must live-switch it. This is
-    // the legitimate case a naive "null source = no-op" guard would have wrongly
-    // dropped.
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => (spec.effortChanged && spec.effort ? [`/effort ${spec.effort}`] : []),
-    });
+    // (agent default). Entering a configured column must apply it. This is the
+    // legitimate case a naive "null source = no-op" guard would have wrongly
+    // dropped. It restarts rather than typing `/effort xhigh`.
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: null, effort_override: 'xhigh' }),
     });
-    expect(planTexts(plan)).toEqual(['/effort xhigh']);
-    expect(plan?.appliedSettings).toEqual({ effort: 'xhigh' });
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
   });
 
-  it('adapters without the hook contribute no live writes, but a model change still flags a restart', () => {
+  it('never asks the adapter for a settings slash, even for an adapter that offers one', () => {
+    // `getInjectionSequence` now serves only the Command Terminal. A task
+    // session's settings change is a restart, so the plan must not consult it:
+    // a live `/effort` mid-turn writes nothing the verifier can confirm.
+    const getInjectionSequence = vi.fn(() => ['/model opus', '/effort high']);
+    const plan = prepareInjectionPlan({
+      adapter: fakeAdapter({ getInjectionSequence }),
+      sessionRepo: sessionRepoWith({ applied_model: 'haiku', applied_effort: 'low' }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({ model_override: 'opus', effort_override: 'high' }),
+    });
+    expect(getInjectionSequence).not.toHaveBeenCalled();
+    expect(planTexts(plan)).toEqual([]);
+    expect(plan?.restartReason).toBe('model');
+  });
+
+  it('adapters without the hook still flag a restart for a model change', () => {
     const adapter = fakeAdapter({}); // no getInjectionSequence (e.g. Codex)
     const plan = prepareInjectionPlan({
       adapter,
@@ -153,12 +169,11 @@ describe('prepareInjectionPlan', () => {
       task: { id: 't1', agent: 'fake' },
       toLane: lane({ model_override: 'opus' }),
     });
-    // No live writes (the adapter has no slash), but the concrete model change
-    // (default -> opus) flags a restart for the caller. Plan is non-null so the
-    // caller can act on it.
+    // The concrete model change (default -> opus) flags a restart for the
+    // caller. Plan is non-null so the caller can act on it.
     expect(plan).not.toBeNull();
     expect(planTexts(plan)).toEqual([]);
-    expect(plan?.needsRestartForModel).toBe(true);
+    expect(plan?.restartReason).toBe('model');
   });
 
   it('adapters without the hook and no model delta return null', () => {
@@ -172,47 +187,10 @@ describe('prepareInjectionPlan', () => {
     expect(plan).toBeNull(); // no auto_command, no settings delta, no restart -> null
   });
 
-  it('passes modelChanged: false to the adapter (model never live-swapped) but flags needsRestartForModel', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        return ['/x'];
-      },
-    });
-    // Session running at haiku/low; destination column is opus/low.
-    const plan = prepareInjectionPlan({
-      adapter,
-      sessionRepo: sessionRepoWith({ applied_model: 'haiku', applied_effort: 'low' }),
-      task: { id: 't1', agent: 'fake' },
-      toLane: lane({ model_override: 'opus', effort_override: 'low' }),
-    });
-    // The model DID change (haiku -> opus), but the adapter is always told
-    // modelChanged: false so it never emits a live `/model`. The real change
-    // surfaces as needsRestartForModel for the caller to suspend + respawn.
-    expect(capturedSpec).toEqual({
-      model: 'opus',
-      modelChanged: false,
-      effort: 'low',
-      effortChanged: false,
-    });
-    expect(plan?.needsRestartForModel).toBe(true);
-  });
-
-  it('a model change emits no slash, sets needsRestartForModel, and records no appliedSettings', () => {
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        const out: string[] = [];
-        // Mirrors Claude: only effort is live-swappable. modelChanged is always
-        // false from prepareInjectionPlan, so this never pushes a `/model`.
-        if (spec.modelChanged && spec.model) out.push(`/model ${spec.model}`);
-        if (spec.effortChanged && spec.effort) out.push(`/effort ${spec.effort}`);
-        return out;
-      },
-    });
+  it('a model change sets restartReason "model" and types nothing', () => {
     // model changes haiku -> opus (restart); effort stays high (no change).
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'haiku', applied_effort: 'high' }),
       task: { id: 't1', agent: 'fake' },
       toLane: lane({ model_override: 'opus', effort_override: 'high' }),
@@ -220,60 +198,74 @@ describe('prepareInjectionPlan', () => {
     // Non-null plan even with an empty sequence, so the caller can restart.
     expect(plan).not.toBeNull();
     expect(planTexts(plan)).toEqual([]);
-    expect(plan?.needsRestartForModel).toBe(true);
-    // Model is applied by the respawn flag, not recorded here; effort unchanged.
-    expect(plan?.appliedSettings).toBeUndefined();
+    expect(plan?.restartReason).toBe('model');
+    // Nothing is recorded as applied: the respawn records its own flags.
+    expect(plan).not.toHaveProperty('appliedSettings');
   });
 
-  it('concrete->null target: model field is NOT recorded in appliedSettings when the destination is null (Default)', () => {
-    // Gap 5: when the session is running at 'opus' but the destination column has no
-    // model_override (null = "Default"), the adapter emits no `/model` slash (there is
-    // no `/model <agent-default>` slash command). Because no slash was emitted, the
-    // applied_model should NOT be overwritten with null in the DB - the session keeps
-    // running at opus until the user explicitly picks something. Concretely,
-    // plan.appliedSettings must not include a `model` key.
-    //
-    // The plan is still non-null because the effort field changes (low -> xhigh).
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        const out: string[] = [];
-        // model: no slash when target is null (no concrete value to set)
-        if (spec.modelChanged && spec.model) out.push(`/model ${spec.model}`);
-        if (spec.effortChanged && spec.effort) out.push(`/effort ${spec.effort}`);
-        return out;
-      },
-    });
+  it('a model AND effort change reads "model" (the respawn applies both flags)', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
+      sessionRepo: sessionRepoWith({ applied_model: 'haiku', applied_effort: 'low' }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({ model_override: 'opus', effort_override: 'high' }),
+    });
+    expect(plan?.restartReason).toBe('model');
+  });
+
+  it('concrete->null target: a model change to "Default" does not restart, but the concrete effort change does', () => {
+    // The session runs at 'opus' but the destination column has no
+    // model_override (null = "Default"). `--resume` keeps the model the
+    // session runs at, so that is not a real change. The effort field does
+    // change (low -> xhigh), and that alone restarts.
+    const plan = prepareInjectionPlan({
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'low' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       // model_override: null = "Default" column (no concrete model)
-      // effort_override: 'xhigh' = a real change that produces a slash
+      // effort_override: 'xhigh' = a real change
       toLane: lane({ model_override: null, effort_override: 'xhigh' }),
     });
-    // The plan is non-null because effort changed.
-    expect(plan).not.toBeNull();
-    expect(planTexts(plan)).toEqual(['/effort xhigh']);
-    // model changed (opus -> null) but a null ("Default") target is not a real
-    // change: no restart, and model is ABSENT from appliedSettings. Only the
-    // concrete effort change is recorded.
-    expect(plan?.needsRestartForModel).toBe(false);
-    expect(plan?.appliedSettings).toEqual({ effort: 'xhigh' });
-    expect(plan?.appliedSettings).not.toHaveProperty('model');
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
   });
 
-  it('appends a trimmed auto_command after the adapter-supplied settings commands', () => {
-    const adapter = fakeAdapter({
-      getInjectionSequence: () => ['/model opus'],
-    });
+  it('a null effort target ("Default" column) never restarts', () => {
+    // The session runs at xhigh; the destination column sets no effort.
+    // `--resume` keeps the running effort, so there is nothing to apply.
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
+      sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'xhigh' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: 'opus', effort_override: null }),
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('a null effort target with a column message types the message and does not restart', () => {
+    const plan = prepareInjectionPlan({
+      adapter: slashAdapter(),
+      sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'xhigh' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: 'opus', effort_override: null }),
+      autoCommand: 'review the diff',
+    });
+    expect(plan?.restartReason).toBeNull();
+    expect(planTexts(plan)).toEqual(['review the diff']);
+  });
+
+  it('carries a trimmed auto_command alongside a restart, for the respawn to deliver', () => {
+    // The caller restarts and hands the column message to the respawn as its
+    // prompt; the plan still reports it so the caller can see what it carries.
+    const plan = prepareInjectionPlan({
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'haiku' }),
       task: { id: 't1', agent: 'fake' },
       toLane: lane({ model_override: 'opus' }),
       autoCommand: '   review the diff   ',
     });
-    expect(planTexts(plan)).toEqual(['/model opus', 'review the diff']);
+    expect(planTexts(plan)).toEqual(['review the diff']);
+    expect(plan?.restartReason).toBe('model');
   });
 
   it('returns just the auto_command when there are no settings deltas', () => {
@@ -287,35 +279,27 @@ describe('prepareInjectionPlan', () => {
       toLane: lane(),
       autoCommand: 'do thing',
     });
-    // appliedSettings is absent: no settings field changed to a concrete value.
     expect(plan).toEqual({
       sequence: [{ text: 'do thing', verify: 'submitted' }],
       verifier: null,
-      needsRestartForModel: false,
+      restartReason: null,
     });
   });
 
   it('verifies the auto_command itself, under the weaker submitted mode', () => {
-    // This is the hole the rebuild closes. A single `verifiedPrefixLength`
-    // could express only ONE semantic for a whole burst, so the trailing user
-    // auto_command - the thing users actually care about - was excluded from
-    // verification entirely and settled on a fixed timer. Per-command modes
-    // let the settings writes keep strict command-matching while the user's
-    // command is checked for the weaker, always-answerable question: did
-    // exactly this text get submitted?
-    const adapter = fakeAdapter({
-      getInjectionSequence: () => ['/model opus', '/effort high'],
-    });
+    // A single `verifiedPrefixLength` once covered a whole burst, so the
+    // trailing user auto_command - the thing users actually care about - was
+    // excluded from verification and settled on a fixed timer. The command is
+    // now checked for the weaker, always-answerable question: did exactly this
+    // text get submitted? No settings write rides along with it any more.
     const plan = prepareInjectionPlan({
-      adapter,
-      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      adapter: slashAdapter(),
+      sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'high' }),
       task: { id: 't1', agent: 'fake' },
       toLane: lane({ model_override: 'opus', effort_override: 'high' }),
       autoCommand: '/review --strict',
     });
     expect(plan?.sequence).toEqual([
-      { text: '/model opus', verify: 'command-match' },
-      { text: '/effort high', verify: 'command-match' },
       { text: '/review --strict', verify: 'submitted' },
     ]);
   });
@@ -527,7 +511,7 @@ describe('prepareInjectionPlan', () => {
     expect(plan).toEqual({
       sequence: [{ text: 'fallback', verify: 'submitted' }],
       verifier: null,
-      needsRestartForModel: false,
+      restartReason: null,
     });
   });
 
@@ -609,7 +593,7 @@ describe('prepareInjectionPlan -- project-level default_model / default_effort t
     expect(plan).toBeNull();
   });
 
-  it('flags needsRestartForModel when the session has no applied_model but the project sets a default', () => {
+  it('flags a model restart when the session has no applied_model but the project sets a default', () => {
     const adapter = fakeAdapter({});
     const plan = prepareInjectionPlan({
       adapter,
@@ -619,15 +603,12 @@ describe('prepareInjectionPlan -- project-level default_model / default_effort t
       project: { default_model: 'opus', default_effort: null },
     });
     expect(plan).not.toBeNull();
-    expect(plan?.needsRestartForModel).toBe(true);
+    expect(plan?.restartReason).toBe('model');
   });
 
-  it('no spurious effort injection: session applied_effort already equals the project default, override-less lane', () => {
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => (spec.effortChanged && spec.effort ? [`/effort ${spec.effort}`] : []),
-    });
+  it('no spurious effort restart: session applied_effort already equals the project default, override-less lane', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: 'high' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: null, effort_override: null }),
@@ -637,19 +618,16 @@ describe('prepareInjectionPlan -- project-level default_model / default_effort t
     expect(plan).toBeNull();
   });
 
-  it('injects /effort when the session has no applied_effort but the project sets a default', () => {
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => (spec.effortChanged && spec.effort ? [`/effort ${spec.effort}`] : []),
-    });
+  it('restarts for effort when the session has no applied_effort but the project sets a default', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: null, effort_override: null }),
       project: { default_model: null, default_effort: 'high' },
     });
-    expect(planTexts(plan)).toEqual(['/effort high']);
-    expect(plan?.appliedSettings).toEqual({ effort: 'high' });
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
   });
 });
 
@@ -696,68 +674,45 @@ describe('prepareInjectionPlan -- project-level default gated by agent match (cr
     // project default, so the tier applies: target 'haiku' differs from the
     // null source, flagging a restart.
     expect(plan).not.toBeNull();
-    expect(plan?.needsRestartForModel).toBe(true);
+    expect(plan?.restartReason).toBe('model');
   });
 });
 
 describe('prepareInjectionPlan -- per-task override wins over column override', () => {
   // The ContextBar popover writes `tasks.model_override` / `tasks.effort_override`
   // and the user-confirmed semantic is "task override fully wins over column
-  // override". The injection plan must respect this: if the task carries its
-  // own override for a field, that field's source = target = task value, so the
-  // delta is zero and no slash command fires for that field on column move.
-  // Without this rule, every column transition would re-inject /model X /effort Y
+  // override". The plan must respect this: if the task carries its own override
+  // for a field, that field's source = target = task value, so the delta is
+  // zero and that field never restarts the session on a column move. Without
+  // this rule, every column transition would restart toward the column's value
   // and undo the user's pinned choice.
 
-  it('does not emit /model when the task pins a model override (even if the column differs)', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        return spec.modelChanged ? [`/model ${spec.model}`] : [];
-      },
-    });
+  it('does not restart when the task pins a model override (even if the column differs)', () => {
     const plan = prepareInjectionPlan({
-      adapter,
-      // The session was spawned at the pin (haiku applied is irrelevant: the pin
-      // wins for both source and target).
+      adapter: slashAdapter(),
+      // The session was spawned at the pin (the applied value is irrelevant: the
+      // pin wins for both source and target).
       sessionRepo: sessionRepoWith({ applied_model: 'opus' }),
       task: { id: 't1', agent: 'fake', model_override: 'opus', effort_override: null },
       toLane: lane({ model_override: 'sonnet' }),
     });
-    // Task pinned 'opus', so source=target='opus' -> modelChanged is false.
-    expect(capturedSpec).toMatchObject({ model: 'opus', modelChanged: false });
+    // Task pinned 'opus', so source=target='opus' -> no model change.
     expect(plan).toBeNull();
   });
 
-  it('does not emit /effort when the task pins an effort override (even if the column differs)', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        return spec.effortChanged ? [`/effort ${spec.effort}`] : [];
-      },
-    });
+  it('does not restart when the task pins an effort override (even if the column differs)', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_effort: 'xhigh' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: 'xhigh' },
       toLane: lane({ effort_override: 'high' }),
     });
-    expect(capturedSpec).toMatchObject({ effort: 'xhigh', effortChanged: false });
     expect(plan).toBeNull();
   });
 
-  it('does not emit /effort when a pinned effort differs from applied, column, and project defaults', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        return spec.effortChanged ? [`/effort ${spec.effort}`] : [];
-      },
-    });
+  it('does not restart when a pinned effort differs from applied, column, and project defaults', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       // Source (applied), destination column, and project default are all
       // different from the pin - none of them may leak into the delta.
       sessionRepo: sessionRepoWith({ applied_effort: 'low' }),
@@ -765,84 +720,50 @@ describe('prepareInjectionPlan -- per-task override wins over column override', 
       toLane: lane({ effort_override: 'high' }),
       project: { default_model: null, default_effort: 'medium' },
     });
-    expect(capturedSpec).toMatchObject({ effort: 'xhigh', effortChanged: false });
     expect(plan).toBeNull();
   });
 
-  it('restarts for a model change while a pinned effort fires no slash (mixed override)', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        const out: string[] = [];
-        if (spec.modelChanged && spec.model) out.push(`/model ${spec.model}`);
-        if (spec.effortChanged && spec.effort) out.push(`/effort ${spec.effort}`);
-        return out;
-      },
-    });
+  it('restarts for a model change while a pinned effort stays put (mixed override)', () => {
     // Session running at haiku/xhigh; effort pinned xhigh; column moves model to opus.
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'haiku', applied_effort: 'xhigh' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: 'xhigh' },
       toLane: lane({ model_override: 'opus', effort_override: 'high' }),
     });
-    // model: applied haiku -> column opus is a real change, but it restarts
-    // (modelChanged is forced false to the adapter, so no `/model` slash).
-    // effort: task-pinned xhigh wins, no slash fires.
-    expect(capturedSpec).toMatchObject({
-      model: 'opus',
-      modelChanged: false,
-      effort: 'xhigh',
-      effortChanged: false,
-    });
+    // model: applied haiku -> column opus is a real change, so it restarts.
+    // effort: task-pinned xhigh wins on both sides, so the respawn keeps it.
     expect(planTexts(plan)).toEqual([]);
-    expect(plan?.needsRestartForModel).toBe(true);
+    expect(plan?.restartReason).toBe('model');
   });
 
-  it('flags needsRestartForModel by diffing against the session applied value (no per-task override)', () => {
-    let capturedSpec: SettingsChangeSpec | null = null;
-    const adapter = fakeAdapter({
-      getInjectionSequence: (spec) => {
-        capturedSpec = spec;
-        return spec.modelChanged && spec.model ? [`/model ${spec.model}`] : [];
-      },
-    });
+  it('flags a model restart by diffing against the session applied value (no per-task override)', () => {
     const plan = prepareInjectionPlan({
-      adapter,
+      adapter: slashAdapter(),
       sessionRepo: sessionRepoWith({ applied_model: 'haiku' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ model_override: 'opus' }),
     });
-    // The adapter is told modelChanged: false, but the real haiku -> opus delta
-    // (against the session's applied value) drives the restart flag.
-    expect(capturedSpec).toMatchObject({ model: 'opus', modelChanged: false });
-    expect(plan?.needsRestartForModel).toBe(true);
+    // The real haiku -> opus delta (against the session's applied value)
+    // drives the restart.
+    expect(plan?.restartReason).toBe('model');
   });
 });
 
 /**
- * `applied_effort` records what Kangentic ASKED for at spawn/resume/live-switch.
- * An `/effort` the user types straight into the terminal never reaches it, so on
+ * `applied_effort` records what Kangentic ASKED for at spawn/resume. An
+ * `/effort` the user types straight into the terminal never reaches it, so on
  * its own it goes stale and the delta is computed against a value the session
  * stopped running at. The agent's own reported level is preferred as the source.
  */
 describe('prepareInjectionPlan - agent-reported effort is the delta source', () => {
-  const claudeLike = () => fakeAdapter({
-    // Mirrors ClaudeAdapter.getInjectionSequence.
-    getInjectionSequence: (spec: SettingsChangeSpec) => {
-      const sequence: string[] = [];
-      if (spec.modelChanged && spec.model) sequence.push(`/model ${spec.model}`);
-      if (spec.effortChanged && spec.effort) sequence.push(`/effort ${spec.effort}`);
-      return sequence;
-    },
-  });
+  const claudeLike = slashAdapter;
 
-  it('THE BUG: a manual /effort the record never saw no longer suppresses the injection', () => {
+  it('THE BUG: a manual /effort the record never saw no longer hides the change', () => {
     // applied=high (what we asked for at spawn), agent reports medium (the user
-    // typed `/effort medium`), destination column requires high. Before this,
-    // source and target both read high, effortChanged was false, nothing was
-    // injected, and the session silently kept running at medium.
+    // typed `/effort medium`), destination column requires high. Before the
+    // live tier, source and target both read high, effortChanged was false,
+    // nothing happened, and the session silently kept running at medium.
     const plan = prepareInjectionPlan({
       adapter: claudeLike(),
       sessionRepo: sessionRepoWith({ applied_effort: 'high' }),
@@ -850,8 +771,22 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       toLane: lane({ effort_override: 'high' }),
       liveEffort: 'medium',
     });
-    expect(planTexts(plan)).toEqual(['/effort high']);
-    expect(plan?.appliedSettings).toEqual({ effort: 'high' });
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
+  });
+
+  it('converges: once the restarted session reports the target, the next move does nothing', () => {
+    // After a restart with `--effort high`, the respawn records applied=high
+    // and the agent reports high. A second move into the same column must not
+    // restart again.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'high' }),
+      liveEffort: 'high',
+    });
+    expect(plan).toBeNull();
   });
 
   it('removes churn when the record is stale but the session already runs at the target', () => {
@@ -900,24 +835,22 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
     expect(plan).toBeNull();
   });
 
-  it('ACCEPTED TRADE: a silently downgraded level re-asserts the configured target on each move', () => {
+  it('ACCEPTED COST: a silently downgraded level restarts on every move into the column', () => {
     // Claude Code silently downgrades `max`/`xhigh` to `high` on a model that
     // does not support them, and its status schema documents the reported level
     // as the one in force "after any silent downgrade for the selected model".
     // So live can legitimately differ from what we asked for, and that is
     // indistinguishable from the user having typed `/effort high` by hand.
-    // We favour correctness: re-assert the target. Never a restart - but the
-    // cost is more than one idempotent slash. The live tier outranks
-    // `applied_effort`, and the agent's reported level never becomes the target,
-    // so the delta never clears: it re-fires on EVERY qualifying move rather
-    // than converging after the first. And a live-injection burst leads with
-    // Ctrl+C (`terminal-submit-scheduler.ts` passes `sendCtrlC: !freshlySpawned`,
-    // `terminal-submit.ts` writes `\x03` before the first command), so each
-    // re-assertion interrupts the agent's current turn.
+    // We favour correctness: re-apply the target, which is a restart. The live
+    // tier outranks `applied_effort` and the reported level never becomes the
+    // target, so the delta never clears: each move into such a column restarts
+    // rather than converging after the first. It is bounded to moves and
+    // edits, never a loop, and the effort pickers offer only the levels a model
+    // supports. Decided deliberately; this test pins it.
     // Do NOT "fix" this by dropping the live tier - that reintroduces the bug
-    // the sibling tests above pin. Converging needs an emit-side guard that can
-    // tell "we already asked this session for this target and its reported level
-    // has not moved since" apart from a genuine manual `/effort`.
+    // the sibling tests above pin. Converging needs a guard that can tell "we
+    // already asked this session for this target and its reported level has
+    // not moved since" apart from a genuine manual `/effort`.
     const plan = prepareInjectionPlan({
       adapter: claudeLike(),
       sessionRepo: sessionRepoWith({ applied_effort: 'max' }),
@@ -925,13 +858,15 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       toLane: lane({ effort_override: 'max' }),
       liveEffort: 'high',
     });
-    expect(planTexts(plan)).toEqual(['/effort max']);
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
   });
 
   it('never lets live effort disturb the model delta', () => {
     // Model is deliberately not live-sourced: the agent reports a canonical id
     // while the configured values are flag strings, and a false "changed" here
-    // would restart the PTY on every move.
+    // would restart the PTY on every move. The effort delta restarts on its own
+    // reason, and the model side stays unchanged.
     const plan = prepareInjectionPlan({
       adapter: claudeLike(),
       sessionRepo: sessionRepoWith({ applied_model: 'opus', applied_effort: 'high' }),
@@ -939,8 +874,8 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
       toLane: lane({ model_override: 'opus', effort_override: 'high' }),
       liveEffort: 'medium',
     });
-    expect(plan?.needsRestartForModel).toBe(false);
-    expect(planTexts(plan)).toEqual(['/effort high']);
+    expect(plan?.restartReason).toBe('effort');
+    expect(planTexts(plan)).toEqual([]);
   });
 });
 
@@ -951,6 +886,24 @@ describe('resolveSourceEffort', () => {
     expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: 'high' })).toBe('high');
     expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: null })).toBeNull();
     expect(resolveSourceEffort({ taskEffortOverride: undefined, liveEffort: undefined, appliedEffort: undefined })).toBeNull();
+  });
+});
+
+describe('resolveRestartReason and restartPhaseFor', () => {
+  it.each([
+    ['a model change to a concrete value', { sourceModel: 'sonnet', targetModel: 'opus', sourceEffort: 'high', targetEffort: 'high' }, 'model'],
+    ['a model and effort change together (model wins)', { sourceModel: 'sonnet', targetModel: 'opus', sourceEffort: 'low', targetEffort: 'high' }, 'model'],
+    ['an effort-only change to a concrete value', { sourceModel: 'opus', targetModel: 'opus', sourceEffort: 'low', targetEffort: 'high' }, 'effort'],
+    ['a null target model with a changed concrete effort', { sourceModel: 'opus', targetModel: null, sourceEffort: 'low', targetEffort: 'high' }, 'effort'],
+    ['null targets on both fields', { sourceModel: 'opus', targetModel: null, sourceEffort: 'high', targetEffort: null }, null],
+    ['equal model and effort', { sourceModel: 'opus', targetModel: 'opus', sourceEffort: 'high', targetEffort: 'high' }, null],
+  ] as const)('resolves %s', (_label, input, expected) => {
+    expect(resolveRestartReason(input)).toBe(expected);
+  });
+
+  it('labels a model restart switching-model and an effort restart applying-settings', () => {
+    expect(restartPhaseFor('model')).toBe('switching-model');
+    expect(restartPhaseFor('effort')).toBe('applying-settings');
   });
 });
 

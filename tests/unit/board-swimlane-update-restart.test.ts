@@ -1,16 +1,17 @@
 /**
  * Unit tests for the SWIMLANE_UPDATE and SWIMLANE_DELETE IPC handlers in board.ts.
  *
- * SWIMLANE_UPDATE focuses on the two branches introduced by the model-change
- * restart feature:
+ * SWIMLANE_UPDATE focuses on the settings-change restart:
  *
- *   1. MODEL change (prepareInjectionPlan returns needsRestartForModel: true)
+ *   1. MODEL change (prepareInjectionPlan returns restartReason: 'model')
  *      -> restartSessionForSettingsChange is called fire-and-forget inside
- *      withTaskLock; scheduleKeystrokes is NOT called.
+ *      withTaskLock with the 'switching-model' phase.
  *
- *   2. EFFORT-only change (prepareInjectionPlan returns a plan with a non-empty
- *      sequence and needsRestartForModel: false)
- *      -> scheduleKeystrokes IS called; restartSessionForSettingsChange is NOT.
+ *   2. EFFORT-only change (restartReason: 'effort') -> the same restart with
+ *      the 'applying-settings' phase.
+ *
+ * Neither ever calls scheduleKeystrokes: a settings edit types nothing into a
+ * task session.
  *
  * The handler is SYNCHRONOUS (returns the swimlane update result immediately).
  * The restart is FIRE-AND-FORGET via `void withTaskLock(taskId, async () => ...)`.
@@ -288,7 +289,7 @@ async function callSwimlaneUpdate(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject branches', () => {
+describe('SWIMLANE_UPDATE handler - restart on a model or effort change', () => {
   let context: MockContext;
 
   beforeEach(() => {
@@ -308,7 +309,7 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
   // =========================================================================
 
   it('MODEL change: calls restartSessionForSettingsChange and does NOT call scheduleKeystrokes', async () => {
-    // A running task in the swimlane. prepareInjectionPlan signals needsRestartForModel.
+    // A running task in the swimlane. prepareInjectionPlan signals a model restart.
     const task = createTaskInLane({ id: 'task-board-1', session_id: 'session-board-1' });
     const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
     const updatedSwimlane = { ...swimlaneBefore, model_override: 'opus', name: 'Executing' };
@@ -326,7 +327,7 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     // Handler is synchronous. Call it and let it return.
@@ -352,10 +353,10 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
   });
 
   // =========================================================================
-  // Test 2: EFFORT-only change -> scheduleKeystrokes called, no restart
+  // Test 2: EFFORT-only change -> restart with 'applying-settings', nothing typed
   // =========================================================================
 
-  it('EFFORT-only change: calls scheduleKeystrokes and does NOT call restartSessionForSettingsChange', async () => {
+  it('EFFORT-only change: restarts with the applying-settings phase and does NOT call scheduleKeystrokes', async () => {
     const task = createTaskInLane({ id: 'task-board-2', session_id: 'session-board-2' });
     const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
     const updatedSwimlane = { ...swimlaneBefore, effort_override: 'xhigh', name: 'Executing' };
@@ -366,27 +367,27 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     context.sessionManager.getSession.mockReturnValue({ status: 'running' });
     mockAgentRegistryGet.mockReturnValue({ name: 'claude' });
 
-    // prepareInjectionPlan returns a live-inject plan (no model restart needed).
     hoisted.prepareInjectionPlan.mockReturnValue({
-      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
+      sequence: [],
       verifier: null,
-      needsRestartForModel: false,
-      appliedSettings: { effort: 'xhigh' },
+      restartReason: 'effort',
     });
 
     await callSwimlaneUpdate({ id: 'lane-executing', effort_override: 'xhigh' }, context);
 
-    // scheduleKeystrokes fires synchronously in the handler body (not fire-and-forget).
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+    await vi.waitFor(() => {
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+      context,
+      'proj-board-1',
+      '/mock/board-project',
       'task-board-2',
-      'session-board-2',
-      [{ text: '/effort xhigh', verify: 'command-match' }],
-      { verifier: null },
+      { phase: 'applying-settings' },
     );
 
-    // No restart should have been triggered for an effort-only change.
-    expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    // A settings edit never types `/effort` into a task session.
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -499,17 +500,17 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
   // Test 6: effort-only change with non-null, unchanged model (OR right arm)
   // =========================================================================
 
-  it('effort-only change with non-null unchanged model: OR right arm fires, scheduleKeystrokes called, no restart', async () => {
+  it('effort-only change with non-null unchanged model: OR right arm fires, restarts, types nothing', async () => {
     // Scenario: a column already has model_override='opus' (non-null, unchanged).
     // Only effort_override changes (null -> 'xhigh'). The left arm of the OR is
     // `'opus' !== 'opus'` = false; the right arm is `null !== 'xhigh'` = true.
     // overridesChanged is true, the loop runs, and since prepareInjectionPlan
-    // returns needsRestartForModel: false, scheduleKeystrokes fires.
+    // returns restartReason: 'effort', the session restarts.
     //
     // Red-green rationale: this proves the OR's right arm independently triggers
     // the loop even when the left arm (model) is equal-but-non-null. Without the
     // right arm, an effort-only change on a column with a pre-existing model would
-    // silently skip injection. If the gate were changed to check model_override
+    // silently skip the restart. If the gate were changed to check model_override
     // only, this test would fail (loop skipped) because the model is unchanged.
     const task = createTaskInLane({
       id: 'task-board-6',
@@ -529,27 +530,29 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     context.sessionManager.getSession.mockReturnValue({ status: 'running' });
     mockAgentRegistryGet.mockReturnValue({ name: 'claude' });
 
-    // prepareInjectionPlan returns a live-inject plan (model unchanged, no restart needed).
+    // Model unchanged, effort changed: an effort restart.
     hoisted.prepareInjectionPlan.mockReturnValue({
-      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
+      sequence: [],
       verifier: null,
-      needsRestartForModel: false,
-      appliedSettings: { effort: 'xhigh' },
+      restartReason: 'effort',
     });
 
     await callSwimlaneUpdate({ id: 'lane-with-model', effort_override: 'xhigh' }, context);
 
-    // The OR's right arm (effort change) triggered the loop. scheduleKeystrokes must fire.
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+    // The OR's right arm (effort change) triggered the loop, and the plan's
+    // effort restart ran.
+    expect(hoisted.prepareInjectionPlan).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+      context,
+      'proj-board-1',
+      '/mock/board-project',
       'task-board-6',
-      'session-board-6',
-      [{ text: '/effort xhigh', verify: 'command-match' }],
-      { verifier: null },
+      { phase: 'applying-settings' },
     );
-
-    // Model is unchanged, so no restart should be triggered.
-    expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -574,7 +577,7 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
 
@@ -591,13 +594,14 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
   });
 
   // =========================================================================
-  // Test 8: MODEL change, restart fails -> TASK_SESSION_RESYNC is NOT pushed
+  // Test 8: MODEL change, restart fails -> TASK_SESSION_RESYNC is still pushed
   // =========================================================================
 
-  it('MODEL change, restart fails: does NOT push TASK_SESSION_RESYNC', async () => {
-    // If the restart could not resolve a new session, there is nothing for the
-    // renderer to re-sync to; pushing anyway would race the (now stale) id
-    // against whatever the failed restart left behind.
+  it('MODEL change, restart fails: still pushes TASK_SESSION_RESYNC', async () => {
+    // The restart clears task.session_id before its suspend, so a failed
+    // respawn leaves the board store holding a session id the DB no longer
+    // has. The re-sync reloads the board from the DB, so the card shows the
+    // suspended task with its Resume affordance instead of the stale session.
     const task = createTaskInLane({ id: 'task-board-8', session_id: 'session-board-8' });
     const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
     const updatedSwimlane = { ...swimlaneBefore, model_override: 'opus', name: 'Executing' };
@@ -611,19 +615,19 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
     hoisted.prepareInjectionPlan.mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: false, reason: 'no session found' });
 
     await callSwimlaneUpdate({ id: 'lane-executing', model_override: 'opus' }, context);
 
-    // Wait for the fire-and-forget restart to have run before asserting the
-    // negative (there is no positive condition to poll for here).
     await vi.waitFor(() => {
-      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+        IPC.TASK_SESSION_RESYNC,
+        'proj-board-1',
+      );
     }, { timeout: 2000 });
-
-    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
   });
 });
 

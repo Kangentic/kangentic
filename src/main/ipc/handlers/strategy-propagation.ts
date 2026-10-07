@@ -1,7 +1,7 @@
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan, resolveLiveEffort } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveLiveEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
 import { restartSessionForSettingsChange } from './session-reconcile';
 import { reconcileAutoSpawnChange } from './auto-spawn-reconcile';
@@ -45,17 +45,17 @@ export interface StrategyChange {
  * whose profile pins a different one for that column, and before this was
  * extracted the swimlane handler passed the raw lane and did exactly that.
  *
- * A MODEL change restarts the session (suspend + `--resume --model`) rather than
- * live-injecting `/model`, matching the column-transition and ContextBar paths.
- * An EFFORT change still swaps live.
+ * A MODEL or EFFORT change restarts the session (suspend + `--resume` with the
+ * new launch flags) rather than typing `/model` or `/effort` into it, matching
+ * the column-transition and ContextBar paths. Nothing is ever typed here.
  *
  * An `auto_spawn` change is reconciled here too, via `reconcileAutoSpawnChange`.
  * That one cannot ride the loop below: the loop bails on `!task.session_id`, so
- * it can only ever inject into or restart an EXISTING session, never create one.
+ * it can only ever restart an EXISTING session, never create one.
  *
  * `projectId` is a required parameter rather than a read of
- * `context.currentProjectId` because the reconcile spawns and suspends. A
- * mis-targeted keystroke injection is cosmetic; a mis-targeted spawn is not.
+ * `context.currentProjectId` because both the loop and the reconcile suspend and
+ * spawn, and a mis-targeted spawn lands in the wrong project's checkout.
  * Required, not optional, so a future caller cannot silently fall back to
  * ambient state.
  */
@@ -83,7 +83,7 @@ export function propagateStrategyToLiveSessions(
   const usageCacheReader = { getUsageCache: () => usageCacheSnapshot };
 
   for (const { task, before, after, sourceName } of changes) {
-    // Re-saving at a value the task already resolves to must inject nothing.
+    // Re-saving at a value the task already resolves to must restart nothing.
     // Gating here (not on each session's recorded `applied_*`) also protects
     // sessions whose `applied_*` is stale - e.g. NULL on a record predating
     // applied-settings recording - from a phantom delta and a needless restart.
@@ -99,11 +99,12 @@ export function propagateStrategyToLiveSessions(
 
     const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
     // No auto_command propagation on a settings edit - the intent is "change
-    // settings", not "re-run any auto trigger".
+    // settings", not "re-run any auto trigger". So the plan is either null or a
+    // restart: it carries no command to type.
     // Same source of truth as a column move, so the two paths cannot disagree
-    // about what the session is running at. Also drops a redundant injection:
+    // about what the session is running at. Also drops a redundant restart:
     // editing a column from low to high on a session the user already switched
-    // to high by hand currently re-injects `/effort high` for nothing.
+    // to high by hand changes nothing.
     const plan = prepareInjectionPlan({
       adapter,
       sessionRepo,
@@ -112,52 +113,58 @@ export function propagateStrategyToLiveSessions(
       project,
       liveEffort: resolveLiveEffort(usageCacheReader, task.session_id),
     });
-    if (!plan) continue;
+    const restartReason = plan?.restartReason;
+    if (!restartReason) continue;
+    // An edit restarts only for effort it changed. A session drifts from its
+    // column's effort with no edit at all: a manual `/effort`, or the model
+    // silently downgrading the level. A model-only edit used to realign that
+    // drift with a typed `/effort`; a restart cuts the turn, so an edit that
+    // left effort alone leaves the drift alone too. A move still realigns it.
+    if (restartReason === 'effort' && before?.effort_override === after?.effort_override) continue;
 
-    if (plan.needsRestartForModel) {
-      if (!projectId || !projectPath) {
-        console.warn(
-          `[${label}] Skipping model-change restart for task ${task.id.slice(0, 8)}`
-          + ` from "${sourceName}": no resolved project context.`,
-        );
-        continue;
-      }
-      // Backgrounded so the save stays responsive (the session updates the UI
-      // via session-changed events); per-task locked so it cannot race a drag.
-      const taskId = task.id;
-      void withTaskLock(taskId, async () => {
-        const restart = await restartSessionForSettingsChange(
-          context, projectId, projectPath, taskId, { phase: 'switching-model' },
-        );
-        if (!restart.ok) {
-          console.warn(
-            `[${label}] Could not restart session for task ${taskId.slice(0, 8)}`
-            + ` after model change from "${sourceName}": ${restart.reason}`,
-          );
-          return;
-        }
-        // The restart respawned the task with a new session_id; the board store
-        // still holds the pre-restart id until it reloads. Push a quiet
-        // (toast-free) re-sync, distinct from TASK_UPDATED_BY_AGENT, since this
-        // followed the user's own edit rather than an agent-driven change.
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, projectId);
-        }
-      });
+    if (!projectId || !projectPath) {
+      console.warn(
+        `[${label}] Skipping ${restartReason}-change restart for task ${task.id.slice(0, 8)}`
+        + ` from "${sourceName}": no resolved project context.`,
+      );
       continue;
     }
-
-    context.terminalSubmitScheduler.scheduleKeystrokes(task.id, task.session_id, plan.sequence, {
-      verifier: plan.verifier,
+    // Backgrounded so the save stays responsive (the session updates the UI
+    // via session-changed events); per-task locked so it cannot race a drag.
+    const taskId = task.id;
+    const plannedSessionId = task.session_id;
+    const plannedSwimlaneId = task.swimlane_id;
+    void withTaskLock(taskId, async () => {
+      // The decision above was made before the lock (task-lifecycle-lock rule 3:
+      // re-check after an unlocked gap). A move, a ContextBar pick, or an
+      // earlier edit's restart may have taken the lock first and already
+      // restarted or moved the session. Restarting again would cut the fresh
+      // session's turn and lose a column message a move just typed into it.
+      const current = getProjectRepos(context, projectId).tasks.getById(taskId);
+      if (current?.session_id !== plannedSessionId || current?.swimlane_id !== plannedSwimlaneId) {
+        console.log(
+          `[${label}] Skipping ${restartReason}-change restart for task ${taskId.slice(0, 8)}`
+          + ` from "${sourceName}": its session or column changed before the restart ran.`,
+        );
+        return;
+      }
+      const restart = await restartSessionForSettingsChange(
+        context, projectId, projectPath, taskId, { phase: restartPhaseFor(restartReason) },
+      );
+      // The restart cleared task.session_id before its suspend, so the board
+      // store holds a stale id whether or not the respawn succeeded. Push a
+      // quiet (toast-free) re-sync, distinct from TASK_UPDATED_BY_AGENT, since
+      // this followed the user's own edit rather than an agent-driven change.
+      if (!context.mainWindow.isDestroyed()) {
+        context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, projectId);
+      }
+      if (!restart.ok) {
+        console.warn(
+          `[${label}] Could not restart session for task ${taskId.slice(0, 8)}`
+          + ` after ${restartReason} change from "${sourceName}": ${restart.reason}`,
+        );
+      }
     });
-    // Record the new running value so a later column move does not re-inject.
-    if (plan.appliedSettings && sessionRepo) {
-      sessionRepo.updateAppliedSettings(task.session_id, plan.appliedSettings);
-    }
-    console.log(
-      `[${label}] Propagating ${plan.sequence.length} setting(s) to active session for task ${task.id.slice(0, 8)}`
-      + ` from "${sourceName}"${plan.verifier ? ' (with command verification)' : ''}: ${plan.sequence.join(' | ')}`,
-    );
   }
 }
 

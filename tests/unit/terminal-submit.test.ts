@@ -20,7 +20,7 @@
  * reacting to. Driving a TUI model that actually emits bytes tests the real
  * mechanism; the settle windows are small, so the suite stays fast.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { TerminalSubmit, type CommandVerifier } from '../../src/main/pty/terminal-submit';
 import type { PasteEngine, PasteOptions } from '../../src/main/pty/paste-engine';
 import type { SessionManager } from '../../src/main/pty/session-manager';
@@ -162,6 +162,72 @@ describe('TerminalSubmit', () => {
 
       expect(result.outcome).toBe('aborted');
       sessionManager.dispose();
+    });
+
+    it('logs an outcome line for an aborted burst, as it does for every other outcome', async () => {
+      // A cancelled burst used to return silently, so the log showed the burst
+      // starting and then nothing: no confirmed, no unconfirmed, no failed. The
+      // abort lands on the first settle, before any Enter, so 0 of 2 pressed.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const { submit, sessionManager } = makeSubmit();
+        const controller = new AbortController();
+        const promise = submit.submitKeystrokes(
+          SESSION_ID,
+          [{ text: '/effort high', verify: 'none' }, { text: 'carry on', verify: 'none' }],
+          { signal: controller.signal, source: 'task:abcd1234' },
+        );
+        controller.abort();
+        const result = await promise;
+
+        expect(result.outcome).toBe('aborted');
+        const abortedLines = logSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.includes('aborted'));
+        expect(abortedLines).toEqual([
+          `[terminal-submit] task:abcd1234: aborted - stopped after 0 of 2 command(s) to session ${SESSION_ID}: /effort high | carry on`,
+        ]);
+        sessionManager.dispose();
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('aborted burst log line', () => {
+    it('counts a command whose Enter already fired as pressed', async () => {
+      // The abort lands right after the first command's Enter and before the
+      // second command is typed, so exactly one delivery has a first-Enter stamp.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const { submit, sessionManager } = makeSubmit();
+        const controller = new AbortController();
+        const originalWrite = sessionManager.write.bind(sessionManager);
+        sessionManager.write = (writeSessionId: string, data: string): void => {
+          originalWrite(writeSessionId, data);
+          if (data === '\r') controller.abort();
+        };
+
+        const result = await submit.submitKeystrokes(
+          SESSION_ID,
+          [{ text: '/effort high', verify: 'none' }, { text: 'carry on', verify: 'none' }],
+          { signal: controller.signal, source: 'task:abcd1234' },
+        );
+
+        expect(result.outcome).toBe('aborted');
+        expect(result.deliveries).toHaveLength(1);
+        expect(result.deliveries[0].firstSentAt).not.toBeNull();
+        expect(sessionManager.writes).not.toContain('carry on');
+        const abortedLines = logSpy.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.includes('aborted'));
+        expect(abortedLines).toEqual([
+          `[terminal-submit] task:abcd1234: aborted - stopped after 1 of 2 command(s) to session ${SESSION_ID}: /effort high | carry on`,
+        ]);
+        sessionManager.dispose();
+      } finally {
+        logSpy.mockRestore();
+      }
     });
   });
 

@@ -404,12 +404,12 @@ export class SessionRepository {
   }
 
   /**
-   * Record the model/effort the session is now actually running at. Called at
-   * spawn/resume (with the resolved spawn overrides) and after every live
-   * settings switch (column-move injection, column-edit propagation, ContextBar
-   * pick). Only the provided field(s) are written, so a switch that changes just
-   * effort leaves the recorded model intact. `null` means agent default / no
-   * flag. This is the ground truth `prepareInjectionPlan` diffs against.
+   * Record the model/effort the session was asked to run at. Called at
+   * spawn/resume with the resolved spawn overrides; a model or effort change
+   * on a live task session restarts it, so the respawn is what records the new
+   * value. Only the provided field(s) are written. `null` means agent default /
+   * no flag. `prepareInjectionPlan` diffs against this (behind the agent's own
+   * reported effort, when it reports one).
    */
   updateAppliedSettings(id: string, applied: { model?: string | null; effort?: string | null }): void {
     const sets: string[] = [];

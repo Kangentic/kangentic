@@ -561,9 +561,9 @@ Task moved between active columns (e.g., Planning → Code Review)
   → Session stays alive; a send_message automation on the target is injected as
     keystrokes (timing per that automation's own mode: immediate or deferred)
   → The target's remaining enter automations run after the move lands
-  → Only a permission-mode change, or a model/effort change the agent cannot
-    swap live, forces suspend + respawn - and then the message rides along
-    as the resume prompt instead of being typed
+  → Only a model or effort change forces suspend + respawn (a permission-mode
+    change alone never does) - and then the message rides along as the
+    resume prompt instead of being typed
 
 Task moved to Done
   → Confirmation dialog ONLY when the worktree has uncommitted files or unpushed

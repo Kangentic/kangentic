@@ -461,6 +461,14 @@ export class TerminalSubmit {
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
       if (message.includes('abort')) {
+        // Every other outcome logs a line; without this one a cancelled burst
+        // (a suspend, a restart, or a newer burst for the same task) ended with
+        // no outcome in the log at all, which read as a burst that never ran.
+        const pressedCount = deliveries.filter((delivery) => delivery.firstSentAt !== null).length;
+        console.log(
+          `[terminal-submit] ${source}: aborted - stopped after ${pressedCount} of ${sanitized.length} command(s) to `
+            + `session ${sessionId.slice(0, 8)}: ${sanitized.map((entry) => entry.text).join(' | ')}`,
+        );
         return {
           outcome: 'aborted',
           unconfirmedCommands,

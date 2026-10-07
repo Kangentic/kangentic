@@ -87,6 +87,8 @@ Point at `src/main/activity-engine/engine/watchdog.ts` (the `buildWatchdogHolds`
 later completed turns.** A ContextBar model/effort switch (`task:setRuntimeOverride`), a column-config
 / board-profile propagation, or a Command Terminal settings inject schedules a slash-command burst,
 and `TerminalSubmit.submitKeystrokes` leads every injected command with a programmatic `\x03`.
+(Today only the Command Terminal inject still takes this path: a task session's model or effort
+change restarts the session instead, so it types nothing.)
 Fired while the agent is mid-turn, that Ctrl+C aborts the turn and kills any in-flight Task
 subagent. Claude then emits ONLY the subagent's empty-detail inner stop - correctly ignored by the
 #237 guard, bumping `ignoredInnerSubagentStop` - and never the NAMED `subagent_stop`, so

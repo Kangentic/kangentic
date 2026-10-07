@@ -1147,18 +1147,18 @@ export interface SessionRecord {
   model_id: string | null;
   model_display_name: string | null;
   /**
-   * Model the session was actually spawned, resumed, or live-switched with (the
-   * `--model` flag value; null = agent default / no flag). Ground truth for the
-   * column-transition injection delta in `prepareInjectionPlan`: a move only
-   * injects `/model` when this differs from the destination's effective model,
-   * so a drifted column config never ghost-injects. Distinct from `model_id`,
-   * which is the agent-reported model captured at exit via metrics.
+   * Model the session was spawned or resumed with (the `--model` flag value;
+   * null = agent default / no flag). Ground truth for the column-transition
+   * delta in `prepareInjectionPlan`: a move restarts the session only when this
+   * differs from the destination's effective model, so a drifted column config
+   * never forces a restart. Distinct from `model_id`, which is the
+   * agent-reported model captured at exit via metrics.
    */
   applied_model: string | null;
   /**
-   * Effort/reasoning level the session was actually spawned, resumed, or
-   * live-switched with (the `--effort` flag value; null = agent default).
-   * Sibling of `applied_model` for the effort field of the injection delta.
+   * Effort/reasoning level the session was spawned or resumed with (the
+   * `--effort` flag value; null = agent default). Sibling of `applied_model`
+   * for the effort field of the delta, behind the agent's own reported effort.
    */
   applied_effort: string | null;
   total_duration_ms: number | null;
@@ -4662,12 +4662,13 @@ export interface TaskSetRuntimeOverrideInput {
 
 /**
  * Result of `IPC.TASK_SET_RUNTIME_OVERRIDE`. `mode` describes how the change
- * was applied: `live` = slash-command injected into the running PTY,
- * `restart` = session suspended and respawned with `--resume`, `persisted` =
- * task has no live session so the override is saved for next spawn.
+ * was applied: `restart` = session suspended and respawned with `--resume` and
+ * the new launch flags, `persisted` = the override is saved for the next spawn
+ * (no live session, or nothing changed to a concrete value). A task session is
+ * never switched by typing `/model` or `/effort`.
  */
 export type TaskSetRuntimeOverrideResult =
-  | { ok: true; mode: 'live' | 'restart' | 'persisted' }
+  | { ok: true; mode: 'restart' | 'persisted' }
   | { ok: false; reason: string };
 
 /**

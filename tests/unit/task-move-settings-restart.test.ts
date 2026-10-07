@@ -5,29 +5,29 @@
  * These branches fire inside Priority 3 (task has a live session, same agent,
  * same track). The decision tree as of the current behavior:
  *
- *   1. MODEL change (`prepareInjectionPlan` returns `needsRestartForModel: true`)
+ *   1. MODEL or EFFORT change (`prepareInjectionPlan` returns a `restartReason`)
  *      -> suspend + respawn via Phase 3. The resumed spawn re-applies the new
- *      model + effort + any auto_command as CLI flags. A live `/model` swap is
- *      deliberately NOT used (it left the agent paused after a Planning ->
- *      Executing handoff).
+ *      model + effort as launch flags and delivers the auto_command or plan-exit
+ *      continuation as its prompt. Nothing is typed: a live `/model` left the
+ *      agent paused after a Planning -> Executing handoff, and a mid-turn
+ *      `/effort` writes nothing the verifier can confirm.
  *
- *   2. Effort-only change with a live-swap plan (`prepareInjectionPlan` returns a
- *      non-null plan with `needsRestartForModel: false`) -> live injection:
- *      `scheduleKeystrokes` fires, `updateAppliedSettings` persists the new value,
- *      and the session stays alive.
+ *   2. Column message only (a non-null plan with `restartReason: null`) -> live
+ *      injection: `scheduleKeystrokes` fires and the session stays alive.
+ *      Nothing is recorded as applied.
  *
  *   3. PERMISSION delta alone (or no delta at all) -> keep the live session alive.
  *      A permission change NEVER restarts: in the canonical Planning -> Executing
  *      flow the user already approved the plan in-session, so the spawn-time
  *      permission mode is a stale signal that must not churn the PTY.
  *
- *   4. No live-swap plan + effort delta to a concrete target (adapter has no slash)
- *      -> suspend + respawn so the new effort reaches the CLI as a spawn flag.
- *      The two regression-guard tests pin this path's source-vs-destination diff
- *      against `activeRecord.applied_effort` (NOT the leaving column's config).
+ * Which delta counts (applied vs live effort, pins, the project tier, a null
+ * "Default" target) is decided inside prepareInjectionPlan and pinned in
+ * injection-plan.test.ts; here the plan is stubbed and only the handler's
+ * reaction to it is tested.
  *
  * Also covers continuationPrompt and suppressAutoCommand threading through to
- * spawnAgent, which is exercised on the model-change restart path.
+ * spawnAgent, which is exercised on the restart path.
  *
  * Harness modeled on the former task-move-permission-respawn.test.ts; the
  * permission-mode columns (`permission_mode: 'plan'` / `'auto'`) remain in the
@@ -90,8 +90,9 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-// Only the plan builder is mocked. `resolveLiveEffort` / `resolveSourceEffort`
-// stay real: the 2b respawn assertions below depend on their actual precedence.
+// Only the plan builder is mocked. `resolveLiveEffort` stays real, so the
+// liveEffort the handler hands the plan comes from the usage cache as in
+// production.
 vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: vi.fn(() => null),
@@ -146,6 +147,7 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 import { prepareInjectionPlan } from '../../src/main/transition-engine/injection-plan';
+import { emitSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -421,11 +423,11 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     setActiveRecord('plan');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
-    // prepareInjectionPlan signals a model change via needsRestartForModel.
+    // prepareInjectionPlan signals a model change via restartReason.
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     await handleTaskMove(context as never, {
@@ -437,6 +439,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-aaa00001', session_id: null });
+    expect(emitSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-aaa00001', 'switching-model');
     // Phase 3 spawns into the executing lane.
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnAgent.mock.calls[0][0] as { toLane: Swimlane };
@@ -446,19 +449,18 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
   });
 
   // =========================================================================
-  // Effort-only live injection (needsRestartForModel: false, non-empty sequence)
+  // Effort-only change -> suspend + respawn, never a typed `/effort`
   // =========================================================================
 
-  it('effort-only live injection keeps the session alive', async () => {
+  it('effort-only change suspends and respawns, types nothing, and records nothing', async () => {
     const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
     const context = makeContext(taskRepo, swimlaneRepo);
     vi.mocked(prepareInjectionPlan).mockReturnValue({
-      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
+      sequence: [],
       verifier: null,
-      needsRestartForModel: false,
-      appliedSettings: { effort: 'xhigh' },
+      restartReason: 'effort',
     });
 
     await handleTaskMove(context as never, {
@@ -467,12 +469,71 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       targetPosition: 0,
     }, 'renderer');
 
-    // Live injection: slash fires, no suspend, no spawn.
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('active-session-1', { effort: 'xhigh' });
-    expect(markRecordSuspended).not.toHaveBeenCalled();
-    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
+    // The effort label, not "Switching model...".
+    expect(emitSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-aaa00001', 'applying-settings');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    // The respawn records `applied_effort` from its own `--effort` flag.
+    expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
+  });
+
+  it('plan-exit with an effort-only change restarts with the continuation prompt and types nothing', async () => {
+    // The case this restart exists for: Planning (xhigh) -> Executing (high) on
+    // the same model, auto-moved when the user approves the plan. The agent is
+    // mid-turn, so a typed `/effort high` could not be confirmed. The restart
+    // carries the continuation as the resumed spawn's prompt instead.
+    const { swimlaneRepo } = makeLanes({ effort_override: 'high' });
+    setActiveRecord('plan', null, 'xhigh');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    vi.mocked(prepareInjectionPlan).mockReturnValue({
+      sequence: [],
+      verifier: null,
+      restartReason: 'effort',
+    });
+
+    const continuation = 'Proceed with implementing the approved plan.';
+    await handleTaskMove(
+      context as never,
+      { taskId: 'task-aaa00001', targetSwimlaneId: EXECUTING_LANE_ID, targetPosition: 0 },
+      'renderer',
+      undefined,
+      undefined,
+      { continuationPrompt: continuation },
+    );
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnAgent.mock.calls[0][0] as { continuationPrompt?: string; toLane: Swimlane };
+    expect(spawnArg.continuationPrompt).toBe(continuation);
+    expect(spawnArg.toLane.id).toBe(EXECUTING_LANE_ID);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('a restart plan that also carries the column message still restarts rather than typing it', async () => {
+    // The respawn delivers the column message as its prompt; typing it into
+    // the session being suspended would lose it.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
+    setActiveRecord('acceptEdits');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    vi.mocked(prepareInjectionPlan).mockReturnValue({
+      sequence: [{ text: 'implement the task', verify: 'submitted' }],
+      verifier: null,
+      restartReason: 'effort',
+    });
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    }, 'renderer');
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
   // =========================================================================
@@ -496,7 +557,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     await handleTaskMove(context as never, {
@@ -527,7 +588,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     const continuation = 'Proceed with implementing the approved plan.';
@@ -553,7 +614,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     await handleTaskMove(context as never, {
@@ -596,7 +657,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [],
       verifier: null,
-      needsRestartForModel: true,
+      restartReason: 'model',
     });
 
     await handleTaskMove(context as never, {
@@ -611,37 +672,13 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
   });
 
   // =========================================================================
-  // Priority 3c persistence - updateAppliedSettings called after live injection
+  // Column message only -> live injection, nothing recorded
   // =========================================================================
 
-  it('live injection with appliedSettings calls updateAppliedSettings on the session repo', async () => {
-    // The plan mock returns appliedSettings so the handler must persist the new
-    // running value. Without this, the NEXT move diffs against the old applied
-    // value and injects again redundantly.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
-    setActiveRecord('acceptEdits');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    vi.mocked(prepareInjectionPlan).mockReturnValue({
-      sequence: [{ text: '/effort xhigh', verify: 'command-match' }],
-      verifier: null,
-      needsRestartForModel: false,
-      appliedSettings: { effort: 'xhigh' },
-    });
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
-    expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('active-session-1', { effort: 'xhigh' });
-  });
-
-  it('live injection with no appliedSettings (auto_command only) does NOT call updateAppliedSettings', async () => {
-    // A plan that only carries an auto_command has no appliedSettings (no model/effort
-    // field changed). The handler must NOT call updateAppliedSettings with undefined/empty.
+  it('a plan carrying only the column message injects it live and records nothing', async () => {
+    // No settings delta (restartReason null), so the session stays alive and
+    // the message is typed in. Nothing is recorded as applied: no model or
+    // effort changed.
     const { swimlaneRepo } = makeLanes({ permission_mode: null });
     setActiveRecord('acceptEdits');
     const taskRepo = makeTaskRepo();
@@ -649,8 +686,7 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     vi.mocked(prepareInjectionPlan).mockReturnValue({
       sequence: [{ text: 'implement the task', verify: 'submitted' }],
       verifier: null,
-      needsRestartForModel: false,
-      // appliedSettings absent - auto_command only
+      restartReason: null,
     });
 
     await handleTaskMove(context as never, {
@@ -661,42 +697,15 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
 
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledTimes(1);
     expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
-  });
-
-  // =========================================================================
-  // No-live-swap effort regression-guard (source uses activeRecord.applied_*)
-  // =========================================================================
-
-  it('no-live-swap: does NOT respawn when the session already runs at the destination effort (regression guard)', async () => {
-    // THE KEY REGRESSION: old code diffed fromLane vs toLane. When both columns
-    // had effort_override='xhigh' but the leaving column was null (e.g. a To Do
-    // lane with no override), the diff was null vs xhigh and a spurious respawn
-    // fired. New code diffs activeRecord.applied_effort vs toLane, so a session
-    // already at xhigh (recorded in applied_effort) entering another xhigh column
-    // produces no delta and no respawn.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
-    // Session is already running at xhigh - the fix reads this from the record.
-    setActiveRecord('acceptEdits', null, 'xhigh');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    // prepareInjectionPlan returns null (adapter has no live slash - codex-style).
-    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    // applied_effort='xhigh' == destination effort_override='xhigh' -> no delta -> no respawn.
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
-    expect(markRecordSuspended).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
-  it('no-live-swap: DOES respawn when the session runs at a different effort than the destination', async () => {
-    // session applied_effort='low', destination effort='xhigh'.
-    // The delta is real, so a no-live-swap respawn must fire.
+  it('a null plan keeps the session alive with no fallback respawn of its own', async () => {
+    // The handler used to run its own effort diff after a null plan and
+    // respawn for adapters with no live `/effort`. That second source of truth
+    // is gone: the plan decides every restart, so a null plan means "nothing
+    // to do" even when the record and the column disagree on effort.
     const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
     setActiveRecord('acceptEdits', null, 'low');
     const taskRepo = makeTaskRepo();
@@ -709,44 +718,17 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       targetPosition: 0,
     }, 'renderer');
 
-    // Delta exists: applied='low', target='xhigh' -> respawn.
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
-    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('no-live-swap: DOES respawn when the agent reports an effort the record never saw', async () => {
-    // The stale-record bug at the handler level. `applied_effort` says xhigh
-    // because that is what we spawned with, but the user typed `/effort medium`
-    // in the terminal, which nothing writes back. The destination column wants
-    // xhigh. Diffing against the record alone reads xhigh == xhigh, fires
-    // nothing, and leaves the session running at medium in a column that
-    // requires xhigh. Diffing against what the agent reports catches it.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
-    setActiveRecord('acceptEdits', null, 'xhigh');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    context.sessionManager.getUsageCache.mockReturnValue({
-      'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'medium' } },
-    });
-    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
-    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
-  });
-
-  it('passes the usage-cache-resolved liveEffort on the prepareInjectionPlan input (not just the 2b fallback)', async () => {
-    // The two tests above prove liveEffort reaches the 2b resolveSourceEffort
-    // fallback (task-move.ts reads it once and shares it with both). This one
-    // pins the OTHER consumer of that same value: the `liveEffort` property on
-    // the object handed to prepareInjectionPlan itself. Deleting `liveEffort,`
-    // from that call site would still pass every test above (prepareInjectionPlan
-    // is stubbed to return null regardless of its input) but must fail here.
+  it('passes the usage-cache-resolved liveEffort on the prepareInjectionPlan input', async () => {
+    // The plan is the only thing that decides an effort restart, and it needs
+    // what the agent reports to catch an `/effort` the user typed by hand.
+    // Dropping `liveEffort` from that call site would pass every handler test
+    // that stubs the plan's return value, but must fail here.
     const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
     setActiveRecord('acceptEdits', null, 'xhigh');
     const taskRepo = makeTaskRepo();
@@ -768,75 +750,6 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
     const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { liveEffort?: string | null };
     expect(planArg.liveEffort).toBe('medium');
-  });
-
-  it('no-live-swap: does NOT respawn when the agent reports it already runs at the destination effort', async () => {
-    // Mirror of the above, and the churn this also removes: the record is stale
-    // at low, but the agent reports it is already at the destination xhigh, so
-    // there is nothing to apply.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
-    setActiveRecord('acceptEdits', null, 'low');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    context.sessionManager.getUsageCache.mockReturnValue({
-      'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'xhigh' } },
-    });
-    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-  });
-
-  // =========================================================================
-  // No-live-swap effort regression-guard (project-level default_effort tier)
-  // =========================================================================
-
-  it('no-live-swap: DOES respawn when the session runs at a different effort than the project default (no lane override)', async () => {
-    // Lane carries no effort_override (null), so the target falls through to
-    // project.default_effort. Session applied_effort='low' differs from the
-    // project default 'xhigh' -> a real delta -> respawn must fire.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: null });
-    setActiveRecord('acceptEdits', null, 'low');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    context.projectRepo.getById = vi.fn(() => ({ id: 'proj-test', default_agent: 'claude', default_effort: 'xhigh' }));
-    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
-    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
-  });
-
-  it('no-live-swap: does NOT respawn when the session already runs at the project default_effort (no lane override)', async () => {
-    // Session is already at 'xhigh', which matches the project default; the
-    // lane has no override so target = project default = 'xhigh' -> no delta.
-    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: null });
-    setActiveRecord('acceptEdits', null, 'xhigh');
-    const taskRepo = makeTaskRepo();
-    const context = makeContext(taskRepo, swimlaneRepo);
-    context.projectRepo.getById = vi.fn(() => ({ id: 'proj-test', default_agent: 'claude', default_effort: 'xhigh' }));
-    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
-
-    await handleTaskMove(context as never, {
-      taskId: 'task-aaa00001',
-      targetSwimlaneId: EXECUTING_LANE_ID,
-      targetPosition: 0,
-    }, 'renderer');
-
-    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
-    expect(markRecordSuspended).not.toHaveBeenCalled();
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 });
 

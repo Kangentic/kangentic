@@ -844,19 +844,21 @@ export interface AgentAdapter {
   requiresAgentSessionIdForVerification?(): boolean;
 
   /**
-   * Optional: translate a column-level settings change (model / effort)
-   * into the sequence of writes the TerminalSubmitScheduler should push onto
-   * the live PTY to apply it. Pairs with
-   * `getSubmissionVerifier('command-injection')` for confirmation.
+   * Optional: translate a model / effort change into the sequence of writes
+   * the TerminalSubmitScheduler should push onto a live PTY to apply it.
+   *
+   * Only the Command Terminal (`SESSION_INJECT_SETTINGS`) uses this: a
+   * transient session has nothing to `--resume`, so a live slash is its only
+   * way to switch. A TASK session never types these; any concrete model or
+   * effort change restarts it with the new launch flags instead (see
+   * `prepareInjectionPlan`).
    *
    * Sibling of `getExitSequence` - both return `string[]` of writes the
    * PTY layer consumes, just for different lifecycle events.
    *
    * - Claude returns `['/model X', '/effort Y']` for changed fields.
    * - Adapters whose CLI has no live-swap slash command should return an
-   *   empty array; the caller will fall back to suspend+respawn (handled
-   *   elsewhere by the prepare-spawn flow which reads the swimlane
-   *   overrides directly).
+   *   empty array; the Command Terminal then leaves the session as is.
    * - Adapters that don't override settings at all should not implement
    *   this method.
    *

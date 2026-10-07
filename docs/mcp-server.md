@@ -295,8 +295,8 @@ a sweep like *"change every profile's Opus 4.8 to Opus 5"* safe to run column by
 board.
 
 On the ACTIVE project this reaches live sessions, exactly as the Board Manager's own profile save
-does: retuning `modelOverride` / `effortOverride` restarts or live-injects the sessions of tasks
-riding the profile, and retuning `autoSpawn` for a column spawns or suspends the tasks already
+does: retuning `modelOverride` / `effortOverride` restarts the sessions of tasks riding the
+profile with the new flags, and retuning `autoSpawn` for a column spawns or suspends the tasks already
 sitting in it. A profile edit targeting a background project (via `project`) only writes the file;
 see the blast-radius note under `kangentic_update_column`.
 
@@ -694,7 +694,7 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `autoCommandMode` | string | No | `immediate` (type it as soon as the agent is ready) or `deferred` (wait for the agent to finish its current turn). Defaults to the row's existing mode, then `immediate`. |
 | `agentOverride` | string \| null | No | Force a specific agent for this column. `null` uses project default. |
 | `modelOverride` | string \| null | No | Adapter-specific model identifier passed at spawn time (e.g. Claude `"opus"`, `"sonnet"`, `"claude-opus-4-7"`). Stored as given; a friendly Claude name (`"Opus"`, `"Opus 5.5"`) is converted to Claude's spelling only when the Claude adapter builds `--model`, and a single word only when Claude's `/model` picker listed it as a family. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: a model change restarts them in place with `--resume`. |
-| `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change is injected live, without a restart. |
+| `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change restarts them in place with `--resume` and the new `--effort`. |
 | `permissionMode` | string \| null | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto`. `null` uses project default. |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
 | `sessionTarget` | string | No | `main` or `isolated`. Which session a task runs on here: `main` continues the task's own conversation, `isolated` gives the column its own, keyed to the column. Not nullable, since the underlying column is NOT NULL: pass `"main"` to go back to the default. |

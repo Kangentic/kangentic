@@ -345,8 +345,9 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     }
 
     // Optimistically show spawn progress for auto-spawn columns, but only
-    // when the task doesn't already have a running session. Same-agent moves
-    // with auto_command inject directly without restarting the session.
+    // when the task doesn't already have a running session. A same-agent move
+    // that only carries an auto_command injects it without restarting; one
+    // that changes model or effort restarts, and main labels that itself.
     if (isColumnChange && targetLane?.auto_spawn && !prevSessionId) {
       useSessionStore.getState().setSpawnProgress(input.taskId, 'Initializing...');
     }

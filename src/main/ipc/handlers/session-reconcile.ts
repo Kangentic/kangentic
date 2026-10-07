@@ -70,14 +70,15 @@ export function applySuspendDbWrites(
 
 /**
  * Suspend a live session and re-spawn it in place to apply a settings change
- * (a model change) as CLI flags, WITHOUT re-running the destination column's
- * auto_command or transition actions and WITHOUT sending a continuation prompt.
- * The session resumes idle (the in-progress turn is interrupted; the full
- * conversation is preserved via `--resume`).
+ * (a model or effort change) as CLI flags, WITHOUT re-running the destination
+ * column's auto_command or transition actions and WITHOUT sending a
+ * continuation prompt. The session resumes idle (the in-progress turn is
+ * interrupted; the full conversation is preserved via `--resume`).
  *
  * This is the "settings change in place" restart shared by the user-driven
- * ContextBar model pick (`task:setRuntimeOverride`) and the column-config edit
- * (`SWIMLANE_UPDATE`). It is NOT the column-MOVE restart: a move respawns through
+ * ContextBar model/effort pick (`task:setRuntimeOverride`) and the column or
+ * Board Profile edit (`propagateStrategyToLiveSessions`). It is NOT the
+ * column-MOVE restart: a move respawns through
  * `spawnAgent` so it can deliver the column auto_command / plan-exit continuation.
  *
  * Recovery contract: `suspend` (not `kill`) keeps `--resume <id>` valid, so on a

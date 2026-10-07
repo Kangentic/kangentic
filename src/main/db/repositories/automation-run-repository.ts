@@ -91,10 +91,10 @@ export class AutomationRunRepository {
   /**
    * Record a row the MOVE delivered itself, so it is as visible as every other.
    *
-   * A column's first message rides the same keystroke burst as the move's own
-   * `/model` or `/effort` change, which is why the runner does not send it a
-   * second time. It used to record nothing at all on that path, reasoning that
-   * there was nothing to tell the user because it ran. That is exactly backwards
+   * A column's first message rides the move's own keystroke burst (or, when
+   * the move restarts the session, its resume prompt), which is why the runner
+   * does not send it a second time. It used to record nothing at all on that
+   * path, reasoning that there was nothing to tell the user because it ran. That is exactly backwards
    * for the most common automation anyone owns: the run log is where "did my
    * message fire" is answered, and the one row people actually have was the one
    * row with no entry, so `kangentic_get_automation_runs` returned nothing for it.
