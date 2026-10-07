@@ -6,14 +6,24 @@
  * the Write tool (tool input is billed as model output; a 200KB pack costs roughly
  * 100k output tokens if the driver writes it itself - see docs/code-review-fanout-audit.md).
  *
- * Usage: node scripts/build-review-pack.mjs [<baseRef>] [--body-cap <bytes>]
- *   baseRef     optional, e.g. "origin/main" or "main". Omitted or empty: working-tree
- *               changes only (uncommitted + untracked), matching the skill's no-base fallback.
- *   --body-cap  optional byte budget for the body tier (default PACK_BODY_CAP_BYTES). `0`
- *               renders every readable file at the hunk tier, the "light pack" shape that
- *               scripts/replay-review-pack-corpus.mjs measures; the review skill never passes it.
+ * Usage: node scripts/build-review-pack.mjs [<baseRef>] [--body-cap <bytes>] [--out-dir <path>]
+ *        [--shard-lines <lines>]
+ *   baseRef        optional, e.g. "origin/main" or "main". Omitted or empty: working-tree
+ *                  changes only (uncommitted + untracked), matching the skill's no-base fallback.
+ *   --body-cap     optional byte budget for the body tier (default PACK_BODY_CAP_BYTES). `0`
+ *                  renders every readable file at the hunk tier, the "light pack" shape that
+ *                  scripts/replay-review-pack-corpus.mjs measures; the review skill never passes it.
+ *   --out-dir      optional directory for both output files, resolved against the cwd and created
+ *                  if missing. Default: <repo root>/.kangentic/. The review skill passes its session
+ *                  scratchpad, because stopping an ephemeral worktree preview moves everything in the
+ *                  worktree's .kangentic/ to a trash folder (scripts/dev.js), and a pass that lost its
+ *                  dirty list mid-run could no longer tell which files it may commit.
+ *   --shard-lines  optional line budget per finder shard. Prints a `  shards:` line: the header range
+ *                  every shard reads first, then contiguous pack ranges that start on a section
+ *                  heading, never split a section, and stay within the budget unless a single
+ *                  section alone exceeds it (that section is then a shard of its own).
  *
- * Output files (both under .kangentic/, which is gitignored):
+ * Output files (under --out-dir, or .kangentic/, which is gitignored):
  *   REVIEW_PACK.tmp.md          "Total lines: N", a one-line format legend, a table of contents
  *                               with a start line for EVERY changed file, then one section per
  *                               changed file, largest churn first. There is no separate diff:
@@ -39,7 +49,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const PACK_BODY_CAP_BYTES = 200 * 1024;
 const SINGLE_FILE_CAP_BYTES = 1024 * 1024;
@@ -119,6 +129,8 @@ function gitDiff(...args) {
 const cliArguments = process.argv.slice(2);
 let baseRef = '';
 let bodyCapBytes = PACK_BODY_CAP_BYTES;
+let outDirArgument = null;
+let shardLineBudget = null;
 for (let argumentIndex = 0; argumentIndex < cliArguments.length; argumentIndex++) {
   const argument = cliArguments[argumentIndex];
   if (argument === '--body-cap') {
@@ -128,6 +140,23 @@ for (let argumentIndex = 0; argumentIndex < cliArguments.length; argumentIndex++
       process.exit(2);
     }
     bodyCapBytes = Number(value);
+    argumentIndex++;
+  } else if (argument === '--out-dir') {
+    // A value that is itself a flag means the path was left out, not a directory named "--x".
+    const value = cliArguments[argumentIndex + 1];
+    if (value === undefined || value.trim() === '' || value.startsWith('--')) {
+      console.error('--out-dir needs a directory path');
+      process.exit(2);
+    }
+    outDirArgument = value;
+    argumentIndex++;
+  } else if (argument === '--shard-lines') {
+    const value = cliArguments[argumentIndex + 1];
+    if (value === undefined || !/^[1-9]\d*$/.test(value)) {
+      console.error('--shard-lines needs a positive integer line count');
+      process.exit(2);
+    }
+    shardLineBudget = Number(value);
     argumentIndex++;
   } else if (!baseRef) {
     baseRef = argument.trim();
@@ -185,9 +214,10 @@ if (changedFiles.length === 0) {
 
 // 2. Pre-existing dirty list: tracked-dirty + untracked, NOT the committed-vs-base paths.
 const preexistingDirty = [...new Set([...uncommittedNames, ...untrackedNames])];
-const kangenticDir = join(repoRoot, '.kangentic');
-mkdirSync(kangenticDir, { recursive: true });
-writeFileSync(join(kangenticDir, 'REVIEW_PREEXISTING_DIRTY.tmp'), preexistingDirty.join('\n') + '\n');
+const outputDirectory = outDirArgument === null ? join(repoRoot, '.kangentic') : resolve(process.cwd(), outDirArgument);
+mkdirSync(outputDirectory, { recursive: true });
+const preexistingDirtyPath = join(outputDirectory, 'REVIEW_PREEXISTING_DIRTY.tmp');
+writeFileSync(preexistingDirtyPath, preexistingDirty.join('\n') + '\n');
 
 // 3. Working-tree bodies, memoized: a body is wanted by the churn ranking (untracked files rank
 // by line count), the admission key, and up to two renders, so it is read and split once.
@@ -669,11 +699,35 @@ function buildPack(packEntries, capBytes) {
     hunkSections: sections.filter((section) => section.tier === 'hunk' || section.tier === 'stub').length,
     stubbed: sections.filter((section) => section.tier === 'stub').length,
     notIncluded,
+    sectionStartLines: tocEntries.map((tocEntry) => tocEntry.startLine),
   };
 }
 
+// Finder shards for --shard-lines. Every shard reads the header (the two header lines, the TOC and
+// its trailing blank) and then one contiguous range. A range always starts on a section heading
+// and never splits a section: a finder handed half a file would judge a window with no context
+// and raise "missing a check" from a gap it cannot see. Sections are packed greedily in pack order
+// (largest churn first), so the ranges are a function of the pack alone. The trailing "Not
+// included" list rides with the last section's range, since every line of it belongs to someone.
+function shardRanges(sectionStartLines, totalLines, lineBudget) {
+  const sectionRanges = sectionStartLines.map((startLine, sectionIndex) => [
+    startLine,
+    sectionIndex + 1 < sectionStartLines.length ? sectionStartLines[sectionIndex + 1] - 1 : totalLines,
+  ]);
+  const shards = [];
+  for (const [sectionStart, sectionEnd] of sectionRanges) {
+    const currentShard = shards[shards.length - 1];
+    if (currentShard && sectionEnd - currentShard[0] + 1 <= lineBudget) {
+      currentShard[1] = sectionEnd;
+    } else {
+      shards.push([sectionStart, sectionEnd]);
+    }
+  }
+  return { headerEnd: sectionStartLines[0] - 1, shards };
+}
+
 const pack = buildPack(entries, bodyCapBytes);
-const packPath = join(kangenticDir, 'REVIEW_PACK.tmp.md');
+const packPath = join(outputDirectory, 'REVIEW_PACK.tmp.md');
 writeFileSync(packPath, pack.text);
 
 // 6. Summary only - never print the pack.
@@ -691,5 +745,9 @@ console.log(
   `bodies packed ${pack.bodiesPacked} (${pack.windowedCount} windowed, ${kilobytes(pack.packedBodyBytes)} written of ${kilobytes(pack.bodyBudgetUsed)} budgeted), ` +
   `omitted ${pack.notIncluded.length}; hunk sections ${pack.hunkSections} (${pack.stubbed} over per-file hunk cap)`,
 );
-console.log(`  preexisting dirty: ${preexistingDirty.length} paths -> REVIEW_PREEXISTING_DIRTY.tmp`);
+console.log(`  preexisting dirty: ${preexistingDirty.length} paths -> ${preexistingDirtyPath}`);
 if (pack.notIncluded.length > 0) console.log('  omitted: ' + pack.notIncluded.map((item) => item.relPath).join(', '));
+if (shardLineBudget !== null) {
+  const { headerEnd, shards } = shardRanges(pack.sectionStartLines, pack.totalLines, shardLineBudget);
+  console.log(`  shards: header 1-${headerEnd}; ${shards.map(([start, end]) => `${start}-${end}`).join(', ')}`);
+}

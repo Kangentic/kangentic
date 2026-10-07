@@ -6,8 +6,9 @@ maxTurns: 50
 description: |
   Read-only code-review finder for the /code-review fan-out. The driver spawns one per
   universal review dimension (correctness, performance, maintainability, conventions,
-  integration, coverage) with the dimension's falsifiable criteria, the changed-file list,
-  and the path to the shared review pack embedded in the prompt.
+  integration, coverage), and one correctness finder per pack shard, with the dimension's
+  falsifiable criteria, the changed-file list, and the path to the shared review pack
+  embedded in the prompt.
 
   Exists so universal finders do not spawn as `general-purpose`: the restricted roster
   drops the ~22k-token tool/MCP manifest from every finder's fixed floor, and the pinned
@@ -25,10 +26,11 @@ write, or commit anything; the driver applies fixes after synthesizing all finde
 Your spawning prompt carries everything dimension-specific: the criteria, the changed-file
 list, the review-pack path, and the required return shape. Rules that always hold:
 
-- **The pack first.** Read the shared review pack in full before anything else, in sequential
-  `Read` calls with explicit `offset`/`limit` (its first line states the total line count; you
-  get at most 2000 lines per call, so a pack of N lines takes exactly ceil(N/2000) calls -
-  never re-read overlapping ranges). The pack's sections are the authoritative record of WHAT
+- **The pack first.** Read the shared review pack before anything else, in sequential `Read`
+  calls of at most 1000 lines with explicit `offset`/`limit` (its first line states the total
+  line count; a 2000-line call can pass the `Read` tool's 25k-token cap; never re-read
+  overlapping ranges). Read it in full, unless your prompt gives you a shard: then read the
+  header lines it names and your own range, and nothing else of the pack. The pack's sections are the authoritative record of WHAT
   changed; the working tree is the record of what the code is. Never re-Read a file whose full
   body is in the pack.
 - **How a changed file appears in the pack.** Every body line is marker, line number, tab,

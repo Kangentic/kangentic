@@ -47,7 +47,9 @@ Report the mode, branch name, source branch, and working tree status before proc
 `/code-review` as a separate agent in the SAME worktree (`isolated` isolates the conversation, not
 the filesystem), and it auto-fixes findings, adds tests, and commits that pass itself. So a
 `fix(review):` / `refactor(review):` / `test(review):` commit on the branch is expected, not a
-mistake. Leave it alone: do not squash it, reword it, or fold it into your own message - its
+mistake. So is an EMPTY `chore(review): record refuted findings and decisions` commit: its body is the
+review ledger the next review pass reads back, and it lands empty when every fix went into a file
+that was already dirty. Leave it alone: do not squash it, reword it, or fold it into your own message - its
 separate authorship is the point.
 
 **And if the tree is dirty with changes you did not write**, that now means one of exactly two
@@ -250,11 +252,14 @@ Then re-run each, scoped to the file itself:
 
 - `npx vitest run tests/unit/<file>.test.ts`
 - `npx playwright test tests/ui/<file>.spec.ts`
+- `tests/e2e/` files: `npm run build` once, then `npx playwright test --project=electron tests/e2e/<file>.spec.ts`
+  for each, one at a time. `/code-review` now writes E2E coverage holes in the pass instead of flagging
+  them, so these exist.
 
-Only unit and UI files exist (`/code-review` flags E2E coverage holes rather than writing them), so
-this is cheap. **Keep it scoped** - a scoped run of an added test file is explicitly allowed, but
-`npm run test:unit` or a bare `npx vitest run` is a full-tier run this skill must not do. Fix a
-failure here rather than spending a Step 7 round on it.
+An empty `chore(review):` ledger commit lists no files, so it adds nothing to re-run. **Keep it
+scoped** - a scoped run of an added test file is explicitly allowed, but `npm run test:unit` or a
+bare `npx vitest run` is a full-tier run this skill must not do. Fix a failure here rather than
+spending a Step 7 round on it.
 
 ## Step 4 - Push the Branch
 

@@ -1,0 +1,404 @@
+{
+  "version": 1,
+  "pinned": "2026-10-06",
+  "states": [
+    {
+      "id": "S1",
+      "label": "task 736, pass 1 start",
+      "tag": "review-eval/S1",
+      "sha": "ec65a7aef",
+      "base": "822968ebd4cbb60d3e0630859027867fb0d452ec",
+      "reachableFrom": "refs/pull/499/head",
+      "groundTruth": [
+        {
+          "id": "S1-L1",
+          "class": "late",
+          "file": "src/main/pty/process-tag/wsl-reap.ts",
+          "symbol": "buildWslReapInvocation",
+          "mechanism": "Every task's id and directories go into a single wsl.exe argument list with no length cap, so a WSL project with about 210 worktree tasks fails with ENAMETOOLONG on every launch and never reaps inside the distro.",
+          "lineAtState": 41,
+          "lineText": "for (const task of valid) args.push(task.taskId, String(task.directories.length), ...task.directories);",
+          "source": "task 736 pass 5 finding 1",
+          "note": "Pass 5 cited wsl-reap.ts:173 on its own later state; the argument build is at line 41 here and the single exec call at line 112."
+        },
+        {
+          "id": "S1-L2",
+          "class": "late",
+          "file": "src/main/pty/process-tag/win32-reader.ts",
+          "symbol": "Win32TaggedProcessReader.scan",
+          "mechanism": "The return value of processIdToSessionId for the reader's own pid is ignored, so a failed lookup leaves ownSession at 0 and every process is compared against session 0, letting the reader open session-0 processes for memory reads.",
+          "lineAtState": 420,
+          "lineText": "api.processIdToSessionId(process.pid, ownSession);",
+          "source": "task 736 pass 6 finding 6",
+          "note": "ownSession is initialised to [0] at line 419."
+        },
+        {
+          "id": "S1-L3",
+          "class": "late",
+          "file": "src/main/pty/session-manager.ts",
+          "symbol": "SessionManager.reapTaskProcesses",
+          "mechanism": "The wsl.exe call is spawned with the whole of main's environment, so when Kangentic runs from a task terminal wsl.exe inherits that task's KANGENTIC_TASK_ID and the reap script's own subshells read as the task's processes.",
+          "lineAtState": 1870,
+          "lineText": "env: { ...process.env, ...options.env },",
+          "source": "task 736 pass 8 finding 3",
+          "note": ""
+        },
+        {
+          "id": "S1-L4",
+          "class": "late",
+          "file": "src/main/pty/process-tag/reap-plan.ts",
+          "symbol": "normalizeDirectory",
+          "mechanism": "normalizeDirectory strips the \\\\?\\ long-path prefix but not the \\\\.\\ device prefix, so a directory stored in the \\\\.\\ form does not compare equal to the same path in another form.",
+          "lineAtState": 95,
+          "lineText": ".replace(/^\\/\\/\\?\\//, '')",
+          "source": "task 736 pass 8 finding 1",
+          "note": "Function starts at line 91; lines 94-95 strip only the //?/UNC/ and //?/ forms. normalizeDirectory feeds isInsideDirectory (line 104, calls at 105 and 107). At S1 the share-root refusal lives in task-directories.ts:28 through its own comparable(), which strips neither prefix; the two normalizers were merged later."
+        },
+        {
+          "id": "S1-P1",
+          "class": "positive",
+          "file": "src/main/pty/process-tag/process-label.ts",
+          "symbol": "labelProcess",
+          "mechanism": "When the executable path cannot be read, the label falls back to raw argv[0], so a process that rewrote its own title can put its whole command line, token included, into the label.",
+          "lineAtState": 99,
+          "lineText": "const name = (argumentsUntouched ? argumentName : executableName) || argumentName || FALLBACK_LABEL;",
+          "source": "task 736 pass 1 finding 1",
+          "note": ""
+        },
+        {
+          "id": "S1-P2",
+          "class": "positive",
+          "file": "src/main/pty/task-reap-failure-report.ts",
+          "symbol": "reportTaskReapFailure",
+          "mechanism": "The reader_load error text sent to Sentry goes through a path stripper that stops at a space, so the rest of a profile path containing a space leaks.",
+          "lineAtState": 40,
+          "lineText": "? { task_reap: { loadError: sanitizeErrorMessage(loadError) } }",
+          "source": "task 736 pass 1 finding 2",
+          "note": "Pass 1 cited line 40; the fix ran redactPaths first."
+        },
+        {
+          "id": "S1-P3",
+          "class": "positive",
+          "file": "src/main/pty/process-tag/task-directories.ts",
+          "symbol": "resolveTaskDirectories",
+          "mechanism": "Each stored and real-path form is checked against the home directory on its own, so a home reached through a symlink is rejected in one form and kept as a reap root in the other.",
+          "lineAtState": 41,
+          "lineText": "return [...new Set([...stored, ...real])].filter((directory) => isUsableReapRoot(directory));",
+          "source": "task 736 pass 1 finding 3",
+          "note": ""
+        },
+        {
+          "id": "S1-P4",
+          "class": "positive",
+          "file": "src/main/pty/process-tag/wsl-reap.ts",
+          "symbol": "reapTaggedProcessesInWsl",
+          "mechanism": "The running-distro check applies only when the shell names a distro, so with a plain wsl shell the reap runs against the default distro and boots it whenever any other distro is running.",
+          "lineAtState": 110,
+          "lineText": "if (spec.distro && !running.some((name) => name.toLowerCase() === spec.distro!.toLowerCase())) return [];",
+          "source": "task 736 pass 1 finding 4",
+          "note": ""
+        },
+        {
+          "id": "S1-P5",
+          "class": "positive",
+          "file": "src/renderer/stores/leftover-processes-store.ts",
+          "symbol": "useLeftoverProcessesStore",
+          "mechanism": "The store is created fresh on every module evaluation instead of being pinned across HMR (Pattern E) and listed in PATTERN_E_STORES, so after a Fast Refresh the Review link on a surviving toast opens nothing.",
+          "lineAtState": 35,
+          "lineText": "export const useLeftoverProcessesStore = create<LeftoverProcessesStore>((set, get) => ({",
+          "source": "task 736 pass 1 finding 5",
+          "note": "PATTERN_E_STORES in tests/unit/hmr-resync.test.ts has no leftover-processes entry at S1."
+        },
+        {
+          "id": "S1-P6",
+          "class": "positive",
+          "file": ".github/workflows/task-reap-real-processes.yml",
+          "symbol": "real-process test run step",
+          "mechanism": "The tmux, visible-app and process-reader cases may skip on a runner that lacks them, and the job still reports a pass.",
+          "lineAtState": 99,
+          "lineText": "run: npx vitest run tests/unit/session-reap-real-processes.test.ts tests/unit/task-process-readers.test.ts",
+          "source": "task 736 pass 1 finding 6",
+          "note": "Coverage finding; the fix added a workflow flag that turns a skip into a failure. lineText is a prefix of the line, which continues with three more test files."
+        },
+        {
+          "id": "S1-P7",
+          "class": "positive",
+          "file": "src/main/pty/process-tag/win32-reader.ts",
+          "symbol": "Win32TaggedProcessReader.scan",
+          "mechanism": "No test exercises the Windows reader's safety gates (session check, SID check before PROCESS_VM_READ, kill identity check, handle closes).",
+          "lineAtState": 417,
+          "lineText": "async scan(): Promise<ProcessScan> {",
+          "source": "task 736 pass 1 finding 7",
+          "note": "Coverage finding; no file under tests/ references Win32TaggedProcessReader at S1. The gates also cover kill (line 469) and describe (line 486)."
+        },
+        {
+          "id": "S1-P8",
+          "class": "positive",
+          "file": "src/main/ipc/helpers/task-cleanup.ts",
+          "symbol": "cleanupTaskSession",
+          "mechanism": "A bulk delete runs a separate host reap for each task instead of one reap over all the deleted tasks.",
+          "lineAtState": 186,
+          "lineText": "await reapTaskLeftovers(context, resolvedProjectPath, [{ ...task, title: task.title ?? tasks.getById(task.id)?.title",
+          "source": "task 736 pass 1 finding 8",
+          "note": "The 8th pass-1 Medium: raised and skipped as a design task, not applied (the trace's 7 counts applied Mediums, S1-P1 to S1-P7). Drop it if positives must be applied fixes only. lineText is a prefix of the line."
+        },
+        {
+          "id": "S1-N1",
+          "class": "negative",
+          "file": "tests/unit/session-reap-real-processes.test.ts",
+          "symbol": "guiLaunch",
+          "mechanism": "Claim that the Windows CI case may get a Store version of Notepad that redirects to another process; refuted in passes 2 and 8 (speculative, a path change would not avoid it) and skipped in pass 5.",
+          "lineAtState": 364,
+          "lineText": "if (process.platform === 'win32') return { command: 'notepad.exe', args: () => [] };",
+          "source": "task 736 passes 2, 5 and 8 (refuted)",
+          "note": "Pass 5 cited line 418 on its own later state."
+        },
+        {
+          "id": "S1-N2",
+          "class": "negative",
+          "file": "tests/e2e/session-move-lifecycle.spec.ts",
+          "symbol": "test('Exited session preserved for resume through Done",
+          "mechanism": "Claim that every() over a possibly empty status list is vacuous; refuted in passes 2, 3 and 6 because eviction is legitimate there and the later resume assertion is the real pin.",
+          "lineAtState": 383,
+          "lineText": "expect(taskStatusesAfterKill.every((status: string) => status === 'exited')).toBe(true);",
+          "source": "task 736 passes 2, 3 and 6 (refuted)",
+          "note": "Inside the test declared at line 332; the symbol is a verbatim prefix of that line, cut before the title's non-ASCII arrow."
+        },
+        {
+          "id": "S1-N4",
+          "class": "negative",
+          "file": "scripts/package-smoke.mjs",
+          "symbol": "isRunning",
+          "mechanism": "Claim that process.kill(pid, 0) counts an unreaped zombie as running in a bare container; accepted in pass 2 and refuted in passes 3 and 8 because CI runners have an init process that reaps.",
+          "lineAtState": 327,
+          "lineText": "process.kill(pid, 0);",
+          "source": "task 736 passes 2, 3 and 8 (accepted then refuted)",
+          "note": "File confirmed from the pass 8 finder output (scripts/package-smoke.mjs:325-333, isRunning poll). isRunning starts at line 325; its polls are at lines 465 and 470."
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "label": "task 762, pass 2 start",
+      "tag": "review-eval/S2",
+      "sha": "89dbaff4d",
+      "base": "f36ea59150065999e4e6d77fe3801da70a5af10b",
+      "reachableFrom": "local-only",
+      "groundTruth": [
+        {
+          "id": "S2-L1",
+          "class": "late",
+          "file": "src/main/ipc/handlers/session-start.ts",
+          "symbol": "startTaskSession",
+          "mechanism": "On the phone Resume path start-session answers starting and returns the resume as settled, but a worktree or agent failure after that is reported on neither device, and the comment near line 43 falsely says both paths report their own failures.",
+          "lineAtState": 114,
+          "lineText": "const resumed = resumeTaskSession(context, taskId, {",
+          "source": "task 762 pass 4 finding 1",
+          "note": "The false comment is at lines 43-44 ('Both paths report their own failures desktop-side'); the settled promise is returned at line 125. Pass 4 cited session-start.ts:121 on its own later state."
+        },
+        {
+          "id": "S2-L2",
+          "class": "late",
+          "file": "src/main/ipc/handlers/session-resume.ts",
+          "symbol": "resumeTaskSession",
+          "mechanism": "When a newer resume cancels one in flight, the cancelled resume's abort cleanup calls removeByTaskId and deletes the task's paused row while the newer resume is still in its git phase, losing the phone's successor handoff.",
+          "lineAtState": 211,
+          "lineText": "context.sessionManager.removeByTaskId(taskId);",
+          "source": "task 762 pass 5 finding 1",
+          "note": "Pass 5 cited session-resume.ts:233 on its own later state; at S2 the abort catch is at lines 206-214."
+        },
+        {
+          "id": "S2-N1",
+          "class": "negative",
+          "file": "src/main/mobile-bridge/mobile-bridge-service.ts",
+          "symbol": "MobileBridgeService.findTaskOwner",
+          "mechanism": "Claim that findTaskOwner scans every project on each emit with no cache; refuted in passes 1 and 3 because getProjectDb caches connections and the scan only repeats for a task no project owns.",
+          "lineAtState": 312,
+          "lineText": "for (const project of context.projectRepo.list()) {",
+          "source": "task 762 passes 1, 2 and 3 (refuted, skipped, refuted)",
+          "note": "Method signature at line 311."
+        },
+        {
+          "id": "S2-N2",
+          "class": "negative",
+          "file": "src/main/mobile-bridge/spawn-progress-feed.ts",
+          "symbol": "STALE_ENTRY_MS",
+          "mechanism": "Claim that STALE_ENTRY_MS is a pointless alias of SPAWN_PROGRESS_TTL_MS; refuted in passes 3 and 4 because the alias has its own doc comment.",
+          "lineAtState": 35,
+          "lineText": "const STALE_ENTRY_MS = SPAWN_PROGRESS_TTL_MS;",
+          "source": "task 762 passes 3 and 4 (refuted)",
+          "note": ""
+        },
+        {
+          "id": "S2-N3",
+          "class": "negative",
+          "file": "packages/protocol/CHANGELOG.md",
+          "symbol": "protocol-v0.16.0 entry",
+          "mechanism": "Claim that the protocol package is bumped to 0.16.0 with no CHANGELOG entry; refuted in passes 1, 3 and 4 because protocol-release-parity.md lets the version run ahead of its entry until release.",
+          "lineAtState": 5,
+          "lineText": "## [protocol-v0.15.0] - 2026-09-18",
+          "source": "task 762 passes 1, 3 and 4 (refuted)",
+          "note": "packages/protocol/package.json:3 reads \"version\": \"0.16.0\" while the newest CHANGELOG heading is 0.15.0."
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "label": "task 749, pass 5 start",
+      "tag": "review-eval/S3",
+      "sha": "bc04af481",
+      "base": "04fca0b4a973e07bde8cf9cf6b9bd36b51348289",
+      "reachableFrom": "local-only",
+      "groundTruth": [
+        {
+          "id": "S3-L1",
+          "class": "late",
+          "file": "src/main/retrieval/summary/summary-scheduler.ts",
+          "symbol": "startCallBackoff",
+          "mechanism": "When the app-wide call back-off ends, its timer runs the failed project first instead of the queue head, so a project whose batch keeps failing re-arms the back-off every cycle and starves every other project.",
+          "lineAtState": 240,
+          "lineText": "timers.set(projectId, setTimer(() => {",
+          "source": "task 749 pass 5 finding 1",
+          "note": "The timer callback runs the failed project at lines 244-245 (pending.delete, then request(context, projectId))."
+        },
+        {
+          "id": "S3-L2",
+          "class": "late",
+          "file": "src/main/retrieval/retrieval-service.ts",
+          "symbol": "pushSummaryActivity",
+          "mechanism": "A summary state change pushes a snapshot re-read even for a project no map has read, because a never-read project defaults to the idle key, so the launch's ask of every project costs about two re-reads per project.",
+          "lineAtState": 653,
+          "lineText": "if ((shownSummaryActivity.get(projectId) ?? summaryActivityKey(NO_SUMMARY_ACTIVITY)) === key) return;",
+          "source": "task 749 pass 5 finding 2",
+          "note": "Pass 5 cited retrieval-service.ts:650, inside the same debounce callback (lines 648-656)."
+        },
+        {
+          "id": "S3-N1",
+          "class": "negative",
+          "file": "src/main/retrieval/worker/index-status.ts",
+          "symbol": "createIndexStatusReader",
+          "mechanism": "Claim that a project read that throws once drops the project's last read and vanishes from the Settings totals for that poll; refuted as deliberate in pass 4 and skipped again in pass 5, citing the test that pins it.",
+          "lineAtState": 138,
+          "lineText": "lastReads.delete(projectId);",
+          "source": "task 749 pass 4 (refuted) and pass 5 finding 8 (skipped)",
+          "note": "Pass 5 cited index-status.ts:134, the catch at the start of this block (lines 134-138)."
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "label": "task 765, pass 2 start",
+      "tag": "review-eval/S4",
+      "sha": "e1ce85c8e",
+      "base": "f36ea59150065999e4e6d77fe3801da70a5af10b",
+      "reachableFrom": "local-only",
+      "groundTruth": [
+        {
+          "id": "S4-P1",
+          "class": "positive",
+          "file": "src/main/utility-process/restart-policy.ts",
+          "symbol": "UtilityRestartPolicy.recordCrash",
+          "mechanism": "detail is optional and the crash cause is guessed when it is missing (null exit code means fork_failed, a number means exit), so a future exit with no code would be reported as a fork failure; only the retrieval client passes it.",
+          "lineAtState": 191,
+          "lineText": "const cause = detail?.cause ?? (exitCode == null ? 'fork_failed' : 'exit');",
+          "source": "task 765 pass 2 finding 1",
+          "note": "Skipped in pass 2 as a design call; fixed by 9ba4542c9."
+        },
+        {
+          "id": "S4-P2",
+          "class": "positive",
+          "file": "src/main/utility-process/restart-policy.ts",
+          "symbol": "UtilityRestartPolicy.trackCrashOnce",
+          "mechanism": "exitCode and cause are passed as separate parameters through trackCrashOnce and reportLatch although both are fields of the crash record.",
+          "lineAtState": 298,
+          "lineText": "private trackCrashOnce(phase: CrashPhase, exitCode: number | null | undefined, cause: UtilityCrashCause): void {",
+          "source": "task 765 pass 2 finding 2",
+          "note": "Also reportLatch at line 259 (parameters at lines 260-263); call sites at lines 205, 215 and 220."
+        },
+        {
+          "id": "S4-P3",
+          "class": "positive",
+          "file": "src/main/utility-process/restart-policy.ts",
+          "symbol": "UtilityRestartPolicy.reportLatch",
+          "mechanism": "The reportLatch doc still says it reports only the exit code, and the 'worker exited repeatedly' message is also sent for hangs with nothing saying it is kept fixed as the Sentry grouping key.",
+          "lineAtState": 256,
+          "lineText": "*  name, the exit code, and that the exit was unintentional. The SDK's own",
+          "source": "task 765 pass 2 finding 3",
+          "note": "The doc spans lines 254-258; the fixed message is at line 266."
+        }
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "id": "D1",
+      "label": "task 761 review follow-up",
+      "tag": "review-eval/D1",
+      "sha": "c0d62abc9",
+      "base": null,
+      "reachableFrom": "local-only",
+      "defect": {
+        "file": "src/main/git/diff-service.ts",
+        "symbol": "readSideAsImage",
+        "mechanism": "the recent-write fingerprint check runs at compare time, not at read time, so a write between the read and the compare is missed"
+      }
+    },
+    {
+      "id": "D2",
+      "label": "task 762 pass 4 follow-up",
+      "tag": "review-eval/D2",
+      "sha": "598d7d89c",
+      "base": null,
+      "reachableFrom": "local-only",
+      "defect": {
+        "file": "src/main/mobile-bridge/session-resume-eligibility.ts",
+        "symbol": "pausedTaskIdsOf",
+        "mechanism": "counts a task with a queued respawn as paused, and the commit's own test pins that wrong answer"
+      }
+    },
+    {
+      "id": "D3",
+      "label": "task 736 review commit R1",
+      "tag": "review-eval/D3",
+      "sha": "3a19e4863",
+      "base": null,
+      "reachableFrom": "refs/pull/499/head",
+      "defect": {
+        "file": "src/main/transition-engine/resource-cleanup.ts",
+        "symbol": "stoppingEnabled",
+        "mechanism": "the stoppingEnabled guard was hoisted above the try, so a throw it used to catch now escapes and an existing test fails"
+      }
+    },
+    {
+      "id": "D4",
+      "label": "task 765 pass 2 follow-up",
+      "tag": "review-eval/D4",
+      "sha": "9ba4542c9",
+      "base": null,
+      "reachableFrom": "local-only",
+      "defect": {
+        "file": "src/main/pty/host/utility-pty-host-transport.ts",
+        "symbol": "UtilityPtyHostTransport.ensureChild",
+        "mechanism": "gaps in the fork_failed guards that pass 3 fixed in f268df3f0"
+      }
+    },
+    {
+      "id": "D5",
+      "label": "task 761 fix round, reviewed in the task session",
+      "tag": "review-eval/D5",
+      "sha": "0b67a429f",
+      "base": "e3a54bee1",
+      "reachableFrom": "local-only",
+      "control": true,
+      "defect": null,
+      "reference": "a full 8-finder review-only pass kept 17 findings (1 Medium coverage gap, 16 Low) and no verified correctness defect; its one correctness concern, an orphaned git on Windows, was refuted by a probe"
+    }
+  ],
+  "dropped": [
+    {
+      "id": "S1-N3",
+      "file": "src/main/pty/lifecycle/deferred-kill.ts",
+      "why": "flushAll exists at S1 (line 189, given above) but the awaitingExit map and its expiry that the claim is about arrived after S1, in 717d6cd6a ('wait for a parked PTY of the task before reaping'). Pass 7 cited deferred-kill.ts:231 on its own later state. The trap cannot be raised at S1."
+    }
+  ]
+}

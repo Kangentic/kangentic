@@ -1447,3 +1447,181 @@ in hunk-tier files: `session-manager.ts` three times, `transition-engine.ts` twi
 reads went to the `resize()` stash branch, which ends about 20 lines above a one-line comment hunk,
 so a partial-tier window would have carried most of it. Both Medium findings came from that
 branch.
+
+## 15. Converging in one pass: measured before the finders changed (2026-10-06)
+
+Tasks bounced between Executing and Code Review 3 to 9 times, and traces of tasks 736, 749, 762,
+761 and 765 put the bounce on the process rather than on code that stayed unsafe: the old prose
+verdict said Needs revision whenever anything was skipped, and no verified Critical or High was
+ever left unfixed in tasks 736, 749 or 762. Phase 1 of task 767 replaced that verdict with
+`scripts/review-verdict.mjs` (Ready or Blocked, nothing skipped, decisions applied and recorded,
+a `Refuted:`/`Decisions:` ledger in the review commit). The finder changes were held back until
+the experiments below, each with a decision rule fixed before it ran
+(`scripts/review-eval/decide.mjs`, pinned by `tests/unit/review-eval-decide.test.ts`). The corpus,
+harness and runbook are in `scripts/review-eval/`.
+
+### 15.1 Corpus
+
+| State | Commit | Pack | Late defects | Positives | Negatives |
+|---|---|---|---|---|---|
+| S1, task 736 pass 1 | `ec65a7ae` | 14,017 lines, 146 files | 4 | 8 | 3 (1 dropped by the validity rule) |
+| S2, task 762 pass 2 | `89dbaff4d` | 4,881 lines, 39 files | 2 | 0 | 3 |
+| S3, task 749 pass 5 | `bc04af481` | 7,640 lines, 52 files | 2 | 0 | 1 |
+| S4, task 765 pass 2 | `e1ce85c8e` | 2,221 lines, 18 files | 0 | 3 | 0 |
+
+Every pack was rebuilt by the shipped `build-review-pack.mjs` with `--out-dir` and `--shard-lines
+1500`, and each matched the line count the historical pass recorded. Only S1 and D3 are reachable
+from a pushed ref (`refs/pull/499/head`); the rest are pinned by local tags.
+
+### 15.2 E4: verdict replay (no model calls)
+
+59 historical passes (20 item-level from the traced tasks, 39 verdict-line passes from the
+2026-09-27 to 2026-10-06 tally; 2 passes with no report excluded, 1 duplicate removed), each skip
+mapped by the pre-registered rule and run through the real verdict function
+(`scripts/review-eval/run-verdict-replay.mjs`).
+
+| Reading | Old Needs revision | New Ready (bounces avoided) | Still Blocked |
+|---|---|---|---|
+| As mapped | 41 | 35 | 6 |
+| macOS-only checks runnable on the CI macOS leg | 41 | 38 | 3 |
+
+No pass whose old report did not say Needs revision becomes Blocked. The six still Blocked: task 736 passes 1, 4 and 5
+(each needs a Mac to verify a reader change), and task 749 passes 1 and 2 and task 758 pass 1 (each
+needs a live CLI reply captured). The replay is counterfactual: fixing a skip can raise new
+findings. E3 (15.5) tested a delta round built to catch them, and it caught none.
+
+### 15.3 E1: correctness lane
+
+Two repetitions per state. Arm A replayed the historical driver's correctness prompt as one finder,
+and for S1 the six historical area shards. Arm B ran the same prompt over 1500-line shards from
+`--shard-lines`. Arm C ran arm A's shape on Opus at the agent's medium effort. Arm D, added at the
+E1 checkpoint, ran arm B's shard prompts at high effort. On S1 every arm got
+the correctness criteria only, plus the union of the area shards' change-specific checks, so only
+the shape and the model varied. A blind scorer, given anonymized reports, matched findings to the
+ground truth by file and mechanism.
+
+| Arm | Late hits per repetition (mean) | Late ids found | Negatives raised | Raised (all states, both reps) | Cost (both reps) | Wall time per pass |
+|---|---|---|---|---|---|---|
+| A, today's shape | 1.0 | S2-L2, S3-L1 | 0 | 44 | $13.92 | 1 to 6 min |
+| B, 1500-line shards | 0.5 | S2-L2 | 2 | 72 | $13.42 | 1 to 2 min |
+| C, one Opus finder | 1.0 | S2-L1, S3-L1 | 0 | 20 | $23.12 | 3 to 13 min |
+| D, shards at high effort | 1.0 | S2-L1 (both reps) | 4 | 110 | $37.09 | 3 to 6 min |
+
+Rule outcome: B, before and after arm D (`{"chosen":"B","eligible":["B","A","C","D"],"bestHits":1}`).
+The rule cannot separate the arms here. The best arm's whole recall is 1.0 late hit per repetition,
+so the one-hit tolerance admits every arm and the cheapest wins, by $0.50 of about $14, a tie. The
+user kept B at the checkpoint, since it also matches the earlier choice of sharded Sonnet.
+
+What the numbers say beyond the rule:
+
+- Recall is low for every correctness shape. Three of 8 late defects were found, and only arm D
+  found one in both repetitions, at 2.8 times B's cost. All four S1 late defects (WSL argument
+  length, the ignored `processIdToSessionId` return, environment inheritance, the `\\.\` prefix)
+  were never found by any shape. Run-to-run variance dominates shape and model at this sample size,
+  which matches the Snyk VulnBench result that extra findings are random across runs.
+- The correctness lane is not the whole review. S3-L2 (`pushSummaryActivity` pushing re-reads for
+  projects no map has read) was never raised by any correctness shape, and the E2 performance
+  finder raised it in all four of its runs (15.4). S4's three known findings, which every
+  correctness shape missed, came from the maintainability and coverage finders. Dropping a
+  dimension to save cost would cost recall.
+- B shards are blind to whatever lands in another shard. The pack is ordered by churn, so some
+  shards held only test files, and those finders reported the production-code checks as out of
+  scope.
+- B raised 1.6 times A's volume, much of it one stale-comment Low repeated by every S1 shard. Under
+  the fix-everything contract, volume is work, which is E2's question.
+- B rediscovered the most of what the historical pass found: on S1 it hit 5 of pass 1's 8
+  positives in one repetition, against 3 for A and 1 for C.
+
+### 15.4 E2: a precision bar on every finder
+
+Arm A was today's prompts for the whole fan-out: the correctness lane in B's shard shape, plus one
+performance, maintainability, conventions and coverage finder each. Arm B added the bar to every
+one of them: raise only a correctness or security defect with its triggering input, a stated
+requirement the change misses (a coverage hole counts), or a violation of a named rule, each with
+`file:line` evidence, and nothing subjective. S2 to S4, two repetitions. Arm A's correctness lane
+reuses E1 arm B's runs, whose prompt files are byte-identical. The integration finder was left out
+because its input is a driver-built signature delta, not the pack.
+
+| Arm | Late hits per repetition (mean) | Late ids found | S4 positives found | Negatives raised | Raised | New spend |
+|---|---|---|---|---|---|---|
+| A, today's prompts | 1, 2 (1.5) | S3-L2 (both), S2-L2 (rep 2) | P1, P2, P3 in both reps | S2-N1, S2-N2 | 117 | $12.18 |
+| B, the bar | 1, 1 (1.0) | S3-L2 (both) | P3 in both reps | S2-N1 | 47 | $18.92 |
+
+Rule outcome: not adopted (`{"adopt":false,"recallHeld":false,"volumeCut":0.5983}`). The bar cut
+volume by 60%, twice the 30% the rule asked for, but recall dropped. The gap is one late defect,
+S2-L2, and arm A's hit on it came from the reused E1 arm B rep 2 shard, so it rests on one run. The
+positives are the clearer signal: the bar kept S4-P3 and lost P1 (a real exit misread as a failed
+fork) and P2 (a parameter list that repeats the crash record), both raised by the maintainability
+finder in every arm A run. The four things bundled with the bar (the bar itself, a required `fix`
+field, "a real defect is never Low", and a JSON return shape) did not ship.
+
+### 15.5 E3: a delta round over the fix commit
+
+One correctness and one conventions finder read a pack of a single fix commit against its parent,
+with the commit's own message as context and the historical criteria. The criteria carried nothing
+shaped like a known defect, which would have leaked the ground truth. D1 to D4 each hold a defect a
+later pass found in that commit; D5 is task 761's fix round, the control. Two repetitions.
+
+| Case | Defect | Caught (of 2 reps) |
+|---|---|---|
+| D1 | `readSideAsImage` compares the recent-write fingerprint after reading, not at read time | 0 |
+| D2 | `pausedTaskIdsOf` counts a task with a queued respawn as paused, and the commit's test pins it | 0 |
+| D3 | `stoppingEnabled()` moved above the `try`, so a throw it caught now escapes and a test fails | 0 |
+| D4 | the `fork_failed` guards in `UtilityPtyHostTransport.ensureChild` still had gaps | 0 |
+
+Rule outcome: not adopted, 0 of 4 caught in both repetitions against a bar of 3. Three reports
+reached the defect site and cleared it: two on D1's stat and read, one on D3's guard outside the
+`try`. A narrow round costs little (about $0.57) and finds little. On the D5 control, one
+repetition raised a Low correctness finding (a missing `git` binary's ENOENT read as a quiet missing
+file) and the other raised none. So no delta loop shipped. What did ship is cheaper and aimed at
+D3's failure: Step 7 now also runs, scoped, each existing unit test file that imports a source file
+a fix touched.
+
+### 15.6 What shipped in Phase 2
+
+- **Correctness lane: B.** `--shard-lines 1500` on the Step 4 pack, one Sonnet-medium correctness
+  finder per `shards:` range, the other dimensions on the whole pack as before. A shard of tests may
+  read the production code it exercises, the one gap B's test-only shards showed. That is a change
+  from the measured prompt, which kept each shard to its own files. If the fan-out
+  would pass the harness's 20-agent limit, the driver merges adjacent ranges.
+- **A later pass reads a since-review pack.** When an earlier pass left `*(review)` commits, every
+  finder except the correctness lane gets a pack based on the parent of that pass's first commit,
+  so the earlier pass's own fixes are reviewed along with the task agent's work since. The run of
+  review commits is found by subject prefix, not `--grep`. This is not measured. The one check run
+  against it: S3-L2's code (`shownSummaryActivity`) did not exist at task 749's pass 4 review
+  commits, so the since-review pack would still have carried it to the performance finder. Track
+  it in the dogfood record.
+- **Step 7 runs the existing tests a fix could break,** scoped: the unit test files that import a
+  touched module, or only those named after it when more than five do. A file that also fails with
+  the fix reverted was already broken and becomes a follow-up, not a Blocked verdict.
+- **Read calls of at most 1000 lines.** Several Phase 0 finders hit the `Read` tool's 25k-token cap
+  on 2000-line calls over dense packs.
+- **Not shipped:** the precision bar and its bundle (15.4), and the delta loop (15.5).
+
+### 15.7 Cost and caveats
+
+Phase 0 cost $144.82 at the 2026-09-25 price table (Opus 5.5 $4/$20, Sonnet 5.5 $2/$10 per million
+input/output tokens), against a $300 stop line:
+
+| Item | USD |
+|---|---|
+| E1 finders, arms A to C | 50.46 |
+| E1 support (ground truth, E4 mapping, scorers, exploration) | 12.56 |
+| Arm D finders | 37.09 |
+| Arm D scorers | 3.28 |
+| E2 new finders | 31.10 |
+| E2 scorers | 3.44 |
+| E3 finders | 5.67 |
+| E3 scorer | 1.22 |
+
+Advisor calls and the driver session are billed outside these figures.
+
+Caveats:
+
+- The historical prompts include driver hints written after the driver had read the change, which
+  helps every arm the same way.
+- Late defects are few (8 over 3 states), so a one-hit difference is within run-to-run noise.
+- The scorer is one blind agent per case. It matched on mechanism, and its judgment calls are in
+  each scores file's `notes`.
+- Only S1 and D3 are reachable from a pushed ref, so a rerun elsewhere has two cases unless new
+  states are pinned.
