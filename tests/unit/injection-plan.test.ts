@@ -21,7 +21,7 @@
  * - auto_command is trimmed and verified under the `submitted` mode
  */
 import { describe, it, expect, vi } from 'vitest';
-import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveReportedEffort, resolveRestartReason, resolveSourceEffort, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
+import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveReportedEffort, resolveRestartReason, resolveSourceEffort, resolveTargetSettings, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';
@@ -984,6 +984,104 @@ describe('resolveSourceEffort', () => {
       appliedEffort: 'max',
       targetEffort: 'max',
     })).toBe('low');
+  });
+});
+
+describe('resolveTargetSettings', () => {
+  // The TARGET side of a settings delta, shared by prepareInjectionPlan and the
+  // ContextBar pick. Order: task pin, then lane, then the project default. The
+  // project tier applies only when the RESOLVED agent (task, then lane, then
+  // project, then the built-in default) is the project's default agent, since
+  // model and effort ids are adapter-specific. Model and effort resolve
+  // independently of each other.
+  const noTaskPins = { agent_override: null, model_override: null, effort_override: null };
+  const noLanePins = { agent_override: null, model_override: null, effort_override: null };
+
+  it('prefers the task pin over the lane and the project default, per field', () => {
+    expect(resolveTargetSettings({
+      task: { ...noTaskPins, model_override: 'task-model' },
+      lane: { ...noLanePins, model_override: 'lane-model', effort_override: 'lane-effort' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'task-model', targetEffort: 'lane-effort' });
+  });
+
+  it('prefers the lane over the project default when the task pins nothing', () => {
+    expect(resolveTargetSettings({
+      task: noTaskPins,
+      lane: { ...noLanePins, model_override: 'lane-model' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'lane-model', targetEffort: 'project-effort' });
+  });
+
+  it('falls back to the project default when neither task nor lane pins a value', () => {
+    expect(resolveTargetSettings({
+      task: noTaskPins,
+      lane: noLanePins,
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'project-model', targetEffort: 'project-effort' });
+  });
+
+  it('resolves to null when nothing is set anywhere, including a missing lane and project', () => {
+    expect(resolveTargetSettings({ task: noTaskPins, lane: null, project: null }))
+      .toEqual({ targetModel: null, targetEffort: null });
+    expect(resolveTargetSettings({ task: noTaskPins, lane: undefined, project: undefined }))
+      .toEqual({ targetModel: null, targetEffort: null });
+  });
+
+  it('applies a task or lane pin even when it names a different agent than the project default', () => {
+    expect(resolveTargetSettings({
+      task: { agent_override: 'codex', model_override: 'task-model', effort_override: null },
+      lane: { ...noLanePins, effort_override: 'lane-effort' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'task-model', targetEffort: 'lane-effort' });
+  });
+
+  it('drops the project defaults when the TASK overrides the agent to a different one', () => {
+    expect(resolveTargetSettings({
+      task: { ...noTaskPins, agent_override: 'codex' },
+      lane: noLanePins,
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: null, targetEffort: null });
+  });
+
+  it('drops the project defaults when the LANE overrides the agent to a different one', () => {
+    expect(resolveTargetSettings({
+      task: noTaskPins,
+      lane: { ...noLanePins, agent_override: 'codex' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: null, targetEffort: null });
+  });
+
+  it('lets the task agent override beat the lane agent override when deciding whether the project tier applies', () => {
+    // Task agent matches the project's, lane's does not: the task wins, so the
+    // project defaults apply.
+    expect(resolveTargetSettings({
+      task: { ...noTaskPins, agent_override: 'claude' },
+      lane: { ...noLanePins, agent_override: 'codex' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'project-model', targetEffort: 'project-effort' });
+    // And the reverse: task agent differs, lane's matches, so they are dropped.
+    expect(resolveTargetSettings({
+      task: { ...noTaskPins, agent_override: 'codex' },
+      lane: { ...noLanePins, agent_override: 'claude' },
+      project: { default_agent: 'claude', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: null, targetEffort: null });
+  });
+
+  it('keeps the project defaults when an override names the project default agent itself', () => {
+    expect(resolveTargetSettings({
+      task: noTaskPins,
+      lane: { ...noLanePins, agent_override: 'codex' },
+      project: { default_agent: 'codex', default_model: 'project-model', default_effort: 'project-effort' },
+    })).toEqual({ targetModel: 'project-model', targetEffort: 'project-effort' });
+  });
+
+  it('treats a project with no default agent as the built-in default agent (claude)', () => {
+    const project = { default_agent: null, default_model: 'project-model', default_effort: 'project-effort' };
+    expect(resolveTargetSettings({ task: noTaskPins, lane: noLanePins, project }))
+      .toEqual({ targetModel: 'project-model', targetEffort: 'project-effort' });
+    expect(resolveTargetSettings({ task: noTaskPins, lane: { ...noLanePins, agent_override: 'codex' }, project }))
+      .toEqual({ targetModel: null, targetEffort: null });
   });
 });
 
