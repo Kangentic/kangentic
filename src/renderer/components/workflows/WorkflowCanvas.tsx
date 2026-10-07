@@ -56,6 +56,13 @@ const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platfor
 const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 /** How long the arrow keys rest before the card's new place is saved: one save per run of presses. */
 const KEY_MOVE_SAVE_DELAY_MS = 400;
+/**
+ * How far a press moves before it is a drag. A press that moves less is a
+ * click, so every press is one or the other: React Flow's click distance
+ * defaults to 0, and a hand's click that drifted a pixel or two then neither
+ * selected the card nor moved it.
+ */
+const DRAG_THRESHOLD = 3;
 /** The empty-canvas hint's offset from the pointer, clear of the cursor (board 10). */
 const POINTER_HINT_OFFSET = { x: 22, y: 16 };
 
@@ -320,15 +327,19 @@ export function WorkflowCanvas({
   useEffect(() => saveKeyMoves, [saveKeyMoves]);
 
   const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => { dragging.current = true; }, []);
-  const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, _node, moved) => {
+  const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, draggedNode, moved) => {
     // A card that changed height during the drag is laid out now.
     dragging.current = false;
     setLayoutHeights(measuredHeights.current);
+    // The card just moved is the one selected, as a click would select it.
+    // Selection is ours, so React Flow's own select on drag never lands; this
+    // is that, at the drop, so the drag's start renders nothing.
+    onSelectTask(draggedNode.id);
     // One save: any arrow-key place still waiting, then the drag's own places over it.
     const positions = takeKeyMoves();
-    for (const node of moved) positions.set(node.id, { x: node.position.x, y: node.position.y });
+    for (const movedNode of moved) positions.set(movedNode.id, { x: movedNode.position.x, y: movedNode.position.y });
     onMoveCards([...positions].map(([key, position]) => ({ key, ...position })));
-  }, [onMoveCards, takeKeyMoves]);
+  }, [onMoveCards, onSelectTask, takeKeyMoves]);
   const handleConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
     setFreshLink({ blockerKey: connection.source, blockedKey: connection.target });
@@ -408,7 +419,9 @@ export function WorkflowCanvas({
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
         proOptions={PRO_OPTIONS}
-        nodeDragThreshold={3}
+        nodeDragThreshold={DRAG_THRESHOLD}
+        nodeClickDistance={DRAG_THRESHOLD}
+        paneClickDistance={DRAG_THRESHOLD}
       >
         {editable && <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--color-edge-input)" />}
         <Panel position="bottom-left">

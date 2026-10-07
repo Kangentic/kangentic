@@ -286,6 +286,36 @@ test.describe('Workflows canvas gestures', () => {
     }
   });
 
+  test('a click that drifts under the drag threshold still selects, and a drag selects the card it moved', async () => {
+    // A hand's click often moves a pixel or two between press and release.
+    // With React Flow's click distance at 0 that was neither a click nor a
+    // drag, and the card was not selected.
+    const { browser, page } = await launch('draft');
+    try {
+      const pressAndDrift = async (key: string, drift: number) => {
+        const box = await card(page, key).boundingBox();
+        if (!box || box.width === 0) throw new Error('card not laid out');
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + drift, y + 1, { steps: 2 });
+        await page.mouse.up();
+      };
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      await pressAndDrift('task-3', 2);
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      // A drift that small is a click, so nothing was placed by hand.
+      await expect(byTestId(page, 'workflow-auto-layout')).toBeDisabled();
+
+      await pressAndDrift('task-2', 8);
+      await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
+      await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a card focused from the keyboard wears the app\'s accent ring, never the browser\'s', async () => {
     // The browser's ring is the OS accent on Windows, which read as a second
     // selection, on a card that was not the selected one.
