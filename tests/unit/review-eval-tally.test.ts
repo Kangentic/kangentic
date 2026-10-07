@@ -349,6 +349,8 @@ describe('tally.mjs command line', () => {
       finders: 1,
       usd: 44.51,
       advisorCalls: 1,
+      requestsAboveTier: 0,
+      models: ['claude-haiku-fixture', 'claude-sonnet-5-5'],
     },
     {
       arm: 'B',
@@ -360,6 +362,8 @@ describe('tally.mjs command line', () => {
       finders: 2,
       usd: 89.02,
       advisorCalls: 2,
+      requestsAboveTier: 0,
+      models: ['claude-haiku-fixture', 'claude-sonnet-5-5'],
     },
   ];
 

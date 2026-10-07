@@ -6,12 +6,19 @@
  *
  * Usage: node scripts/review-eval/cost.mjs --prices <prices.json> <transcript.jsonl>...
  *   prices.json  { "<model id prefix>": { "input": usd, "cacheWrite5m": usd, "cacheWrite1h": usd,
- *                  "cacheRead": usd, "output": usd } } per million tokens, looked up from the
- *                  claude-api skill on the day of the run (record the date beside the results; never
- *                  hardcode prices here). Cache writes are split by TTL from `usage.cache_creation`;
- *                  a write with no split is priced at the 1-hour rate, the conservative reading.
+ *                  "cacheRead": usd, "output": usd, "above"?: { "promptTokens": n, "input": usd, ... } } }
+ *                  per million tokens, looked up from the claude-api skill on the day of the run
+ *                  (record the date beside the results; never hardcode prices here). Cache writes are
+ *                  split by TTL from `usage.cache_creation`; a write with no split is priced at the
+ *                  1-hour rate, the conservative reading.
+ *
+ *                  `above` is a second rate card for a model billed by request size (Haiku 5.5 bills
+ *                  five times its rate for a prompt over 100k tokens). A request's size is its own
+ *                  input plus cache read plus cache write tokens, and a request over `promptTokens`
+ *                  prices all five classes, output included, at the `above` rates. The tier is decided
+ *                  per request, never on a sum: summed tokens no longer know how big each request was.
  * Prints one JSON object: per transcript and in total, tokens by class and model, the USD cost,
- * the advisor call count, and tool calls by name.
+ * the requests above a model's tier, the advisor call count, and tool calls by name.
  *
  * Claude Code writes one JSONL line per content block and repeats the message's usage on each, so
  * usage is counted once per message id (the last line wins, since it carries the final count).
@@ -50,9 +57,8 @@ export function tallyTranscript(text) {
     }
   }
   const tokensByModel = {};
+  const requests = [];
   for (const { model, usage } of usageByMessage.values()) {
-    const tokens = tokensByModel[model] || (tokensByModel[model] = emptyTokens());
-    tokens.input += usage.input_tokens || 0;
     // The 1-hour share is read when the split names it, and otherwise taken as the rest of the
     // total, clamped so a split with no total can never subtract from the cost.
     const cacheWriteTotal = usage.cache_creation_input_tokens || 0;
@@ -61,27 +67,51 @@ export function tallyTranscript(text) {
     const oneHour = typeof split.ephemeral_1h_input_tokens === 'number'
       ? split.ephemeral_1h_input_tokens
       : Math.max(0, cacheWriteTotal - fiveMinute);
-    tokens.cacheWrite5m += fiveMinute;
-    tokens.cacheWrite1h += oneHour;
-    tokens.cacheRead += usage.cache_read_input_tokens || 0;
-    tokens.output += usage.output_tokens || 0;
+    const requestTokens = {
+      input: usage.input_tokens || 0,
+      cacheWrite5m: fiveMinute,
+      cacheWrite1h: oneHour,
+      cacheRead: usage.cache_read_input_tokens || 0,
+      output: usage.output_tokens || 0,
+    };
+    requests.push({ model, tokens: requestTokens });
+    const tokens = tokensByModel[model] || (tokensByModel[model] = emptyTokens());
+    for (const tokenClass of Object.keys(requestTokens)) tokens[tokenClass] += requestTokens[tokenClass];
   }
-  return { tokensByModel, advisorCalls, toolCalls, messages: usageByMessage.size };
+  return { tokensByModel, requests, advisorCalls, toolCalls, messages: usageByMessage.size };
 }
 
-/** USD for a tokens-by-model map; a model with no price entry is reported, never guessed. */
-export function costOf(tokensByModel, prices) {
+/** A request's size for a tiered rate card: everything it sent, cached or not, but not its output. */
+export function promptTokensOf(tokens) {
+  return tokens.input + tokens.cacheWrite5m + tokens.cacheWrite1h + tokens.cacheRead;
+}
+
+/**
+ * USD for a list of requests (`tallyTranscript(...).requests`), each priced on its own rate card. A
+ * model with no price entry is reported, never guessed. `aboveTier` counts, per model with an
+ * `above` card, how many requests were priced on it, out of how many.
+ */
+export function costOfRequests(requests, prices) {
   let usd = 0;
-  const unpriced = [];
-  for (const [model, tokens] of Object.entries(tokensByModel)) {
+  const unpriced = new Set();
+  const aboveTier = {};
+  for (const { model, tokens } of requests) {
     const priceKey = Object.keys(prices)
       .filter((prefix) => model.startsWith(prefix))
       .sort((left, right) => right.length - left.length)[0];
     if (!priceKey) {
-      unpriced.push(model);
+      unpriced.add(model);
       continue;
     }
-    const price = prices[priceKey];
+    let price = prices[priceKey];
+    if (price.above) {
+      const counts = aboveTier[model] || (aboveTier[model] = { above: 0, requests: 0 });
+      counts.requests++;
+      if (promptTokensOf(tokens) > price.above.promptTokens) {
+        counts.above++;
+        price = price.above;
+      }
+    }
     usd +=
       (tokens.input * price.input +
         tokens.cacheWrite5m * price.cacheWrite5m +
@@ -90,7 +120,7 @@ export function costOf(tokensByModel, prices) {
         tokens.output * price.output) /
       1_000_000;
   }
-  return { usd: Math.round(usd * 10000) / 10000, unpriced };
+  return { usd: Math.round(usd * 10000) / 10000, unpriced: [...unpriced], aboveTier };
 }
 
 function main(argv) {
@@ -101,15 +131,20 @@ function main(argv) {
   }
   const prices = JSON.parse(fs.readFileSync(argv[pricesIndex + 1], 'utf8'));
   const transcriptPaths = argv.filter((_, argumentIndex) => argumentIndex !== pricesIndex && argumentIndex !== pricesIndex + 1);
-  const total = { tokensByModel: {}, advisorCalls: 0, toolCalls: {}, usd: 0, unpriced: [] };
+  const total = { tokensByModel: {}, advisorCalls: 0, toolCalls: {}, usd: 0, unpriced: [], aboveTier: {} };
   const perTranscript = [];
   for (const transcriptPath of transcriptPaths) {
-    const tally = tallyTranscript(fs.readFileSync(transcriptPath, 'utf8'));
-    const cost = costOf(tally.tokensByModel, prices);
+    const { requests, ...tally } = tallyTranscript(fs.readFileSync(transcriptPath, 'utf8'));
+    const cost = costOfRequests(requests, prices);
     perTranscript.push({ transcript: path.basename(transcriptPath), ...tally, ...cost });
     for (const [model, tokens] of Object.entries(tally.tokensByModel)) {
       const totalTokens = total.tokensByModel[model] || (total.tokensByModel[model] = emptyTokens());
       for (const tokenClass of Object.keys(tokens)) totalTokens[tokenClass] += tokens[tokenClass];
+    }
+    for (const [model, counts] of Object.entries(cost.aboveTier)) {
+      const totalCounts = total.aboveTier[model] || (total.aboveTier[model] = { above: 0, requests: 0 });
+      totalCounts.above += counts.above;
+      totalCounts.requests += counts.requests;
     }
     for (const [toolName, count] of Object.entries(tally.toolCalls)) total.toolCalls[toolName] = (total.toolCalls[toolName] || 0) + count;
     total.advisorCalls += tally.advisorCalls;

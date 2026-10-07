@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tallyTranscript, costOf } from './cost.mjs';
+import { tallyTranscript, costOfRequests } from './cost.mjs';
 import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -71,14 +71,20 @@ function main(argv) {
   const rows = tallyCase(caseId, scores, key, corpus).map((row) => {
     let usd = 0;
     let advisorCalls = 0;
+    let requestsAboveTier = 0;
+    const models = new Set();
     for (const run of row.runs) {
       const transcriptPath = transcriptIndex === -1 ? run.transcript : path.join(argv[transcriptIndex + 1], `agent-${run.agentId}.jsonl`);
       const tally = tallyTranscript(fs.readFileSync(transcriptPath, 'utf8'));
-      usd += costOf(tally.tokensByModel, prices).usd;
+      const cost = costOfRequests(tally.requests, prices);
+      usd += cost.usd;
       advisorCalls += tally.advisorCalls;
+      for (const counts of Object.values(cost.aboveTier)) requestsAboveTier += counts.above;
+      for (const model of Object.keys(tally.tokensByModel)) models.add(model);
     }
     const { runs, ...rest } = row;
-    return { ...rest, finders: runs.length, usd: Math.round(usd * 100) / 100, advisorCalls };
+    // The models every run of the row answered from, so an arm whose override did not take shows.
+    return { ...rest, finders: runs.length, usd: Math.round(usd * 100) / 100, advisorCalls, requestsAboveTier, models: [...models].sort() };
   });
   console.log(JSON.stringify({ case: caseId, rows }, null, 2));
   return 0;
