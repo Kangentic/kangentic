@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Folder } from 'lucide-react';
-import type { AppConfig, Task, WorkflowViewTask } from '../../../shared/types';
+import type { Task, WorkflowViewTask } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
@@ -9,32 +9,13 @@ import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from '
 /**
  * A workflow task's card on the canvas: the board's own card content
  * (`task-card-view.tsx`, so the two cannot drift) under the workflow strip,
- * at a fixed height per density so the layout never jumps when a card's
- * content changes. A task in Done is the Done column's compact card.
+ * as tall as its content, as a board card is. The layout reads the height
+ * React Flow measures and re-spaces a column when a card grows
+ * (`canvas-card-heights.ts`). A task in Done is the Done column's compact card.
  */
-
-/**
- * Sized for the busiest card the board draws: a PR row, the agent's trail, one
- * row of labels and the context bar together, which measured 131, 234 and 268
- * in the real renderer, plus a few pixels for font differences across
- * platforms. More labels than fit one row are clipped above the footer, which
- * stays whole. `workflows-canvas-card-fit.spec.ts` holds it.
- */
-export const CANVAS_CARD_HEIGHT: Record<AppConfig['cardDensity'], number> = {
-  compact: 136,
-  default: 238,
-  comfortable: 272,
-};
-/** The strip over the Done column's compact card (title, a line, labels, when it finished), measured at 127. */
-export const CANVAS_DONE_CARD_HEIGHT = 132;
 
 /** A selected card's border, on every card: 2px inside the card, in the muted grey. */
 const SELECTED_BORDER_CLASS = '!border-2 !border-fg-muted/75';
-
-/** A card's height on the canvas: one per density, and the Done card's. Naming its project costs nothing, since the name sits in the strip. */
-export function canvasCardHeight(task: Pick<WorkflowViewTask, 'place'>, density: AppConfig['cardDensity']): number {
-  return task.place === 'done' ? CANVAS_DONE_CARD_HEIGHT : CANVAS_CARD_HEIGHT[density];
-}
 
 /**
  * The card's project, in the strip's left side (board 17, folded into the
@@ -156,7 +137,6 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   const task = liveTask ?? snapshotTask;
   const view = useTaskCardViewModel(task);
   const planned = viewTask.place === 'planned';
-  const height = canvasCardHeight(viewTask, view.cardDensity);
 
   // The column is the track's own marker, so the strip names no column; its
   // left side holds the task's project.
@@ -182,13 +162,13 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
     return (
       <div
         className={`flex flex-col overflow-hidden bg-surface-raised/60 rounded-md select-none transition-colors ${frameClass}`}
-        style={doneColor !== null ? { height, '--workflow-done-color': doneColor } as React.CSSProperties : { height }}
+        style={doneColor !== null ? { '--workflow-done-color': doneColor } as React.CSSProperties : undefined}
         data-workflow-task-key={viewTask.key}
         data-selected={selected}
         data-testid="workflow-canvas-card"
       >
         {strip}
-        <div className={`${bodyPadding} min-h-0 overflow-hidden`}>
+        <div className={bodyPadding}>
           <TaskCardCompactBody task={task} view={view} />
         </div>
       </div>
@@ -197,28 +177,31 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
 
   const idleFooter = waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : undefined;
 
-  // Selected: a 2px border inside the card (boards 1, 10, 17). The padding and
-  // the header's inset give back the extra pixel, so nothing inside the card
-  // moves. A planned card draws like any To Do card: what says it is not
-  // created yet is its missing #id (Final 3).
+  // Selected: a 2px border inside the card (boards 1, 10, 17). The board's
+  // highlight for the active session is a 2px border too. Either way the
+  // padding gives back the extra pixel. The header sits on the padding edge,
+  // inside the border, so it lands a pixel lower, and its bottom margin gives
+  // that pixel back: nothing under it moves, and the card keeps one height in
+  // every state, which the layout stacks the column from. A planned card draws
+  // like any To Do card: what says it is not created yet is its missing #id
+  // (Final 3).
   const comfortable = view.cardDensity === 'comfortable';
-  const borderClass = selected
-    ? `${SELECTED_BORDER_CLASS} ${comfortable ? '!p-[11px]' : '!p-[9px]'}`
-    : '';
-  const headerInset = selected
-    ? (comfortable ? '-mx-[11px] -mt-[11px]' : '-mx-[9px] -mt-[9px]')
-    : (comfortable ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5');
+  const thickBorder = selected || view.isHighlighted;
+  const thickBorderPadding = thickBorder ? (comfortable ? '!p-[11px]' : '!p-[9px]') : '';
+  const borderClass = selected ? `${SELECTED_BORDER_CLASS} ${thickBorderPadding}` : thickBorderPadding;
+  const headerInset = thickBorder
+    ? (comfortable ? '-mx-[11px] -mt-[11px] mb-[7px]' : '-mx-[9px] -mt-[9px] mb-[7px]')
+    : (comfortable ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2');
 
   return (
     <div
       className={`flex flex-col overflow-hidden ${taskCardFrameClass(view, view.cardDensity)} select-none transition-colors ${borderClass}`}
-      style={{ height }}
       data-workflow-task-key={viewTask.key}
       data-selected={selected}
       data-testid="workflow-canvas-card"
     >
-      <div className={`${headerInset} mb-2`}>{strip}</div>
-      <TaskCardBody task={task} view={view} density={view.cardDensity} hideDisplayId={planned} idleFooter={idleFooter} fill />
+      <div className={headerInset}>{strip}</div>
+      <TaskCardBody task={task} view={view} density={view.cardDensity} hideDisplayId={planned} idleFooter={idleFooter} />
     </div>
   );
 });

@@ -21,7 +21,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { isWorkflowTaskLocked } from '../../utils/board-workflow';
 import { layoutWorkflow } from './workflow-layout';
 import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
-import { canvasCardHeight } from './WorkflowCanvasCard';
+import { NO_MEASURED_HEIGHTS, estimatedCardHeight, withMeasuredHeights } from './canvas-card-heights';
 import { LINK_HINT_CLASS, WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
 import { WorkflowConnectionLine, WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
 import { WorkflowDetailContext } from './workflow-canvas-context';
@@ -155,10 +155,27 @@ export function WorkflowCanvas({
   // The blocker a link is being drawn from, or null. Changes at the two ends of the gesture only.
   const linkingFrom = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
 
+  // Each card's height as React Flow measured it: a card is as tall as its
+  // content, so the layout stacks a column from these and re-spaces it when a
+  // card grows (canvas-card-heights.ts). The ref holds what React Flow last
+  // reported; the state is what the layout uses. They differ only while a card
+  // is dragged: the layout waits for the drop, so a card that grows mid-drag
+  // never pulls the dragged card back to its slot. An entry from another
+  // workflow never misleads, since React Flow reports any card whose size
+  // differs from it.
+  const measuredHeights = useRef<ReadonlyMap<string, number>>(NO_MEASURED_HEIGHTS);
+  const dragging = useRef(false);
+  const [layoutHeights, setLayoutHeights] = useState<ReadonlyMap<string, number>>(NO_MEASURED_HEIGHTS);
+
   const layout = useMemo(() => layoutWorkflow(
-    detail.tasks.map((task) => ({ key: task.key, height: canvasCardHeight(task, density), canvasX: task.canvasX, canvasY: task.canvasY })),
+    detail.tasks.map((task) => ({
+      key: task.key,
+      height: layoutHeights.get(task.key) ?? estimatedCardHeight(task, density),
+      canvasX: task.canvasX,
+      canvasY: task.canvasY,
+    })),
     detail.links,
-  ), [detail.tasks, detail.links, density]);
+  ), [detail.tasks, detail.links, density, layoutHeights]);
 
   const derivedNodes = useMemo<WorkflowFlowNode[]>(() => detail.tasks.map((task) => ({
     id: task.key,
@@ -198,6 +215,13 @@ export function WorkflowCanvas({
     // change (position, dimensions) is React Flow's to apply.
     const applicable = changes.filter((change) => change.type !== 'select' && change.type !== 'remove');
     if (applicable.length > 0) setNodes((current) => applyNodeChanges(applicable, current));
+    // A height the layout has not seen yet lays the cards out again, once no
+    // card is being dragged. A drag's position changes leave the map as it
+    // was, so they never do.
+    const measured = withMeasuredHeights(measuredHeights.current, changes);
+    if (measured === measuredHeights.current) return;
+    measuredHeights.current = measured;
+    if (!dragging.current) setLayoutHeights(measured);
   }, []);
 
   // The link a drag just made stays in the accent until the selection moves
@@ -295,7 +319,11 @@ export function WorkflowCanvas({
   }, [workflowId, takeKeyMoves]);
   useEffect(() => saveKeyMoves, [saveKeyMoves]);
 
+  const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => { dragging.current = true; }, []);
   const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, _node, moved) => {
+    // A card that changed height during the drag is laid out now.
+    dragging.current = false;
+    setLayoutHeights(measuredHeights.current);
     // One save: any arrow-key place still waiting, then the drag's own places over it.
     const positions = takeKeyMoves();
     for (const node of moved) positions.set(node.id, { x: node.position.x, y: node.position.y });
@@ -358,6 +386,7 @@ export function WorkflowCanvas({
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeContextMenu={handleNodeContextMenu}
         onPaneClick={handlePaneClick}
+        onNodeDragStart={handleDragStart}
         onNodeDragStop={handleDragStop}
         onConnect={handleConnect}
         isValidConnection={isValidConnection}

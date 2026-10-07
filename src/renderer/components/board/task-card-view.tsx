@@ -229,27 +229,10 @@ interface TaskCardBodyProps {
    * ("Blocked by #413...", "Queued...").
    */
   idleFooter?: React.ReactNode;
-  /**
-   * The host gives the card a fixed height (the Workflows canvas, so its
-   * layout never jumps when a card's content changes): the content takes the
-   * space and clips, and the footer sits on the bottom edge. The host's root
-   * must be a flex column.
-   */
-  fill?: boolean;
 }
 
 /** The full card's content, inside whichever root the host draws. */
-export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter, fill }: TaskCardBodyProps) {
-  if (fill) {
-    return (
-      <>
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <TaskCardBodyContent task={task} view={view} density={density} hideDisplayId={hideDisplayId} idleFooter={idleFooter} />
-        </div>
-        {density !== 'compact' && <TaskCardFooter view={view} idleFooter={idleFooter} />}
-      </>
-    );
-  }
+export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
   return (
     <>
       <TaskCardBodyContent task={task} view={view} density={density} hideDisplayId={hideDisplayId} idleFooter={idleFooter} />
@@ -259,7 +242,7 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter, f
   );
 }
 
-function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: Omit<TaskCardBodyProps, 'fill'>) {
+function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
   const { displayState, isIdle, isThinking, activityReason, shownTrail, trailMode } = view;
   const isCompactDensity = density === 'compact';
   // The description slot's clamp per density. Compact used to print no excerpt

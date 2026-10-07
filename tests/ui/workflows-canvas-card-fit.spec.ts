@@ -1,14 +1,12 @@
 /**
- * A Workflows canvas card is laid out at a fixed height per density
- * (`CANVAS_CARD_HEIGHT`), so the layout knows every card's height before React
- * Flow measures it. That height has to hold the busiest card the board draws:
- * a PR row, the agent's trail, a row of labels and the context bar together.
- * When it did not, the labels lost their bottom edge at default density and
- * were cut in half at comfortable (the sign-off review's finding 1).
+ * A Workflows canvas card is as tall as its content, as a board card is (the
+ * user's call, 2026-10-07: one fixed height per density left a planned card
+ * half empty). The layout stacks each column from the heights React Flow
+ * measures, so a card that grows re-spaces its column instead of running
+ * into the card below it.
  *
- * The check is relative, never a pixel value: each card's content, laid out
- * with its height lifted, must fit the height the canvas gives it
- * (.claude/rules/cross-platform-parity.md).
+ * Every check is relative, never a pixel value: a card against its own
+ * content, two cards against each other (.claude/rules/cross-platform-parity.md).
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -31,6 +29,7 @@ interface SeedTask {
   session?: { activity: 'thinking' | 'idle'; trail: string[] };
 }
 
+// #413 and #416 both wait for #411, so the layout stacks them in one column.
 const TASKS: SeedTask[] = [
   { id: 411, title: 'Budget table and repository', description: 'Add a budgets table with per-task limits.', lane: 6, labels: [] },
   {
@@ -38,10 +37,10 @@ const TASKS: SeedTask[] = [
     session: { activity: 'thinking', trail: ['Reading the cost roll-up.', 'Summing each session into its task, and writing the migration test against a real database now.'] },
   },
   {
-    id: 416, title: 'MCP: budgets in board_summary', description: 'Add budget, spent and remaining to the summary.', lane: 3, labels: ['mcp'],
+    id: 416, title: 'MCP: budgets in board_summary', description: 'Add budget, spent and remaining to the summary.', lane: 3, labels: [],
     session: { activity: 'idle', trail: ['Reviewed the summary serializer.', 'Two findings need your call: show remaining as a percent or in dollars, and whether archived tasks count.'] },
   },
-  { id: 415, title: 'Card badge when a task passes its budget', description: 'Show spent against budget in the card footer: amber at 80 percent, red once the hard cap pauses the agent.', lane: 0, labels: ['ui', 'budgets'] },
+  { id: 415, title: 'Card badge when a task passes its budget', description: 'Show spent against budget in the card footer.', lane: 0, labels: [] },
 ];
 
 function seedScript(): string {
@@ -82,12 +81,18 @@ function seedScript(): string {
   `;
 }
 
-async function launch(): Promise<{ browser: Browser; page: Page }> {
+async function launch(density: 'compact' | 'default' | 'comfortable'): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seedScript());
+  // A ResizeObserver loop reaches the page as a window error event, not an exception.
+  await page.addInitScript(() => {
+    const win = window as unknown as { __windowErrors: string[] };
+    win.__windowErrors = [];
+    window.addEventListener('error', (event) => { win.__windowErrors.push(event.message); });
+  });
   await page.goto(VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.waitForFunction(() => typeof (window as unknown as { __mockFireUsage?: unknown }).__mockFireUsage === 'function');
@@ -102,43 +107,120 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
       }, projectId);
     }, { sessionId: `fit-sess-${task.id}`, projectId: PROJECT_ID });
   }
+  await page.evaluate((value) => {
+    const stores = (window as unknown as { __zustandStores: { config: { getState: () => { updateConfig: (partial: object) => Promise<unknown> } } } }).__zustandStores;
+    return stores.config.getState().updateConfig({ cardDensity: value });
+  }, density);
+  await page.locator('[data-testid="view-toggle-workflows"]').click();
+  await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(4);
+  // The busiest card is drawn whole before it is measured: its trail, and
+  // (above compact, which drops both) its PR row and context bar.
+  await expect(card(page, 't413').getByText('Summing each session', { exact: false })).toBeVisible();
+  if (density !== 'compact') {
+    await expect(card(page, 't413').locator('[data-testid="task-card-pr-link"]')).toBeVisible();
+    await expect(card(page, 't413')).toContainText('42%');
+  }
   return { browser, page };
 }
 
 const card = (page: Page, key: string) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`);
 
-/** Every canvas card's own height against the height its content needs with that height lifted. */
-async function fits(page: Page): Promise<Array<{ key: string; fixed: number; natural: number }>> {
+interface CardBox { key: string; top: number; bottom: number; left: number; height: number; natural: number }
+
+/** Every card's box on screen, and the height its content needs with any height lifted. */
+async function cardBoxes(page: Page): Promise<CardBox[]> {
   return page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workflow-canvas-card"]')).map((element) => {
-    const fixed = element.offsetHeight;
+    const box = element.getBoundingClientRect();
+    const height = element.offsetHeight;
     const previous = element.style.height;
     element.style.height = 'auto';
     const natural = element.offsetHeight;
     element.style.height = previous;
-    return { key: element.dataset.workflowTaskKey ?? '', fixed, natural };
+    return { key: element.dataset.workflowTaskKey ?? '', top: box.top, bottom: box.bottom, left: box.left, height, natural };
   }));
+}
+
+const windowErrors = (page: Page) => page.evaluate(() => (window as unknown as { __windowErrors: string[] }).__windowErrors);
+
+/** Every card's own height and its node's place on the canvas, by task key. */
+async function heightsAndPlaces(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node')).map((element) => {
+    const cardElement = element.querySelector<HTMLElement>('[data-testid="workflow-canvas-card"]');
+    return [element.dataset.id ?? '', `${cardElement?.offsetHeight} at ${element.style.transform}`];
+  })));
+}
+
+/** Pairs of cards in one column (same left edge) whose boxes overlap. */
+function overlaps(boxes: CardBox[]): string[] {
+  const found: string[] = [];
+  for (const upper of boxes) {
+    for (const lower of boxes) {
+      if (upper === lower || Math.abs(upper.left - lower.left) > 1 || upper.top > lower.top) continue;
+      if (upper.bottom > lower.top + 0.5) found.push(`${upper.key} over ${lower.key}`);
+    }
+  }
+  return found;
 }
 
 test.describe('Workflows canvas card height', () => {
   for (const density of ['compact', 'default', 'comfortable'] as const) {
-    test(`the busiest card fits its fixed height at ${density} density: PR, trail, labels and context bar`, async () => {
+    test(`a card is as tall as its content at ${density} density, and no two in a column overlap`, async () => {
       test.setTimeout(30000);
-      const { browser, page } = await launch();
+      const { browser, page } = await launch(density);
       try {
-        await page.evaluate((value) => {
-          const stores = (window as unknown as { __zustandStores: { config: { getState: () => { updateConfig: (partial: object) => Promise<unknown> } } } }).__zustandStores;
-          return stores.config.getState().updateConfig({ cardDensity: value });
-        }, density);
-        await page.locator('[data-testid="view-toggle-workflows"]').click();
-        await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(4);
-        // The busiest card is drawn whole before it is measured: its trail, and
-        // (above compact, which drops both) its PR row and context bar.
-        await expect(card(page, 't413').getByText('Summing each session', { exact: false })).toBeVisible();
-        if (density !== 'compact') {
-          await expect(card(page, 't413').locator('[data-testid="task-card-pr-link"]')).toBeVisible();
-          await expect(card(page, 't413')).toContainText('42%');
+        await expect.poll(async () => (await cardBoxes(page)).filter((box) => Math.abs(box.natural - box.height) > 1).map((box) => box.key)).toEqual([]);
+        const boxes = await cardBoxes(page);
+        const height = (key: string) => boxes.find((box) => box.key === key)!.height;
+        // A task waiting in To Do carries no agent message or context bar, so it
+        // is shorter than the busy one, as on the board.
+        expect(height('t415')).toBeLessThan(height('t413'));
+        expect(overlaps(boxes)).toEqual([]);
+        expect(await windowErrors(page)).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  test('a card that grows re-spaces its column instead of running into the card below', async () => {
+    test.setTimeout(30000);
+    const { browser, page } = await launch('default');
+    try {
+      await expect.poll(async () => overlaps(await cardBoxes(page))).toEqual([]);
+      const before = (await cardBoxes(page)).find((box) => box.key === 't416')!.height;
+      // Labels land on #416, which shares a column with #413: its card gains a row.
+      await page.evaluate(async (projectId) => {
+        await window.electronAPI.tasks.update({ id: 't416', labels: ['mcp', 'summary', 'budgets'] });
+        (window as unknown as { __mockFireTaskUpdatedByAgent: (taskId: string, title: string, project: string) => void })
+          .__mockFireTaskUpdatedByAgent('t416', 'MCP: budgets in board_summary', projectId);
+      }, PROJECT_ID);
+      await expect.poll(async () => (await cardBoxes(page)).find((box) => box.key === 't416')!.height).toBeGreaterThan(before);
+      await expect.poll(async () => overlaps(await cardBoxes(page))).toEqual([]);
+      expect(await windowErrors(page)).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  for (const density of ['default', 'comfortable'] as const) {
+    test(`selecting a card moves nothing at ${density} density: a 2px border takes no height`, async () => {
+      test.setTimeout(30000);
+      const { browser, page } = await launch(density);
+      try {
+        await expect.poll(async () => overlaps(await cardBoxes(page))).toEqual([]);
+        // #416's session is the active one, which the board marks with a 2px
+        // border of its own: the case a selected card's border is not the only one.
+        await expect(card(page, 't416')).toHaveAttribute('data-selected', 'false');
+        await expect(card(page, 't416')).toHaveCSS('border-top-width', '2px');
+        const settled = await heightsAndPlaces(page);
+        // Each click moves the selection to another card, the Done card among
+        // them, so a height that follows the selection shows up as a change.
+        for (const key of ['t415', 't416', 't411', 't413']) {
+          await card(page, key).click();
+          await expect(card(page, key)).toHaveAttribute('data-selected', 'true');
+          await expect.poll(() => heightsAndPlaces(page)).toEqual(settled);
         }
-        await expect.poll(async () => (await fits(page)).filter((row) => row.natural > row.fixed)).toEqual([]);
+        expect(await windowErrors(page)).toEqual([]);
       } finally {
         await browser.close();
       }
