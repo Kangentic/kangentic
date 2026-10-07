@@ -1100,15 +1100,15 @@ meaning, then the agent that answers: its **Agent** and **Model**, one choice fo
 Nothing picks them for you: until both are set, pressing Enter in the box opens Settings > Knowledge
 Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
 task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
-cheaper model is usually enough. Measured on Claude, Haiku 5.5 at `low` answered a counting
+cheaper model can be enough. Measured on Claude, Haiku 5.5 at `low` answered a counting
 question and a "most expensive" question right in every run, as Sonnet did. It was a second faster
 and cost about a twentieth as much. It also invents more in task summaries (below), and the one
 model does both jobs. Every agent that has a headless read-only mode can answer; Warp
 cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
-at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
-across many tasks. In one measurement Claude's `max` got right a count that `low` got wrong, at
-about ten times the wait. A later replay through the app's own Ask call got it right at every
-level. Effort is for answers only: summaries always write at the recommended level, where a higher
+at `low`, which answers fastest. A higher level is worth trying on a question that counts or
+compares across many tasks and comes back wrong. In one measurement Claude's `max` got right a
+count that `low` got wrong, at about ten times the wait. A later replay through the app's own Ask
+call got it right at every level, so `low` is the place to start. Effort is for answers only: summaries always write at the recommended level, where a higher
 one changed nothing.
 
 The **Index** card below it lists what the index searches, one line per source:
