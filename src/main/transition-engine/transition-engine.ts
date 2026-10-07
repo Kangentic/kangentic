@@ -581,8 +581,8 @@ export class TransitionEngine {
       // Record the model/effort this spawn/resume actually applied via the CLI
       // flags (the same `spawnOverrides` that fed `commandOptions`). This is the
       // ground truth a later column transition diffs against, so a move into a
-      // same-valued column never re-injects `/model` / `/effort`. null = agent
-      // default (no flag).
+      // same-valued column never restarts the session. null = agent default
+      // (no flag).
       this.sessionRepo.updateAppliedSettings(ptySessionId, {
         model: spawnOverrides?.model ?? null,
         effort: spawnOverrides?.effort ?? null,

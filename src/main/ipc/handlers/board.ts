@@ -93,17 +93,16 @@ export function registerBoardHandlers(context: IpcContext): void {
     // automatically. Without this propagation, in-flight sessions would
     // keep the prior model/effort until the user moved them out and back.
     //
-    // Per-task injection is delegated to prepareInjectionPlan so the
-    // slash syntax + verifier wiring lives on each adapter, not here. The
-    // delta source is each session's recorded `applied_model`/`applied_effort`
-    // (its true running value), so editing a column from e.g. Default to xhigh
-    // propagates to a session running at the default, but re-saving a column at
-    // a value the session already has injects nothing.
+    // The per-task restart decision is delegated to prepareInjectionPlan. The
+    // delta source is what each session runs at (its reported effort, then its
+    // recorded `applied_model`/`applied_effort`), so editing a column from e.g.
+    // Default to xhigh restarts a session running at the default, but
+    // re-saving a column at a value the session already has restarts nothing.
     //
     // The before/after are folded PER TASK so a task riding a Board Profile is
     // judged on its own rung: editing this column's model must not push that
     // model into a task whose profile pins a different one here. The shared
-    // helper owns the gate and the inject-vs-restart decision, so a profile edit
+    // helper owns the gate and the restart decision, so a profile edit
     // (below) behaves identically.
     //
     // An auto_spawn flip is reconciled through the same call: tasks already in
