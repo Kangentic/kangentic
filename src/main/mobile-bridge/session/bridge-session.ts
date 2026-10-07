@@ -93,6 +93,21 @@ const RECONNECT_GRACE_MS = 2 * 1000;
  */
 type PeerPresence = 'unknown' | 'present' | 'absent';
 
+/**
+ * A message that could not be encoded, which today means it was over the
+ * protocol's frame caps (MAX_DECODED_LENGTH before compression,
+ * MAX_FRAME_LENGTH after). Thrown BEFORE anything is sealed, so no send-counter
+ * slot is burned and the caller can still answer on the same stream: a
+ * capability response this big is replaced with a short refusal instead of
+ * leaving the phone to time out.
+ */
+export class MessageEncodeError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'MessageEncodeError';
+  }
+}
+
 export interface BridgeSessionOptions {
   identity: BridgeIdentity;
   deviceId: string;
@@ -718,10 +733,29 @@ export class BridgeSession extends EventEmitter {
     this.emit('unsupportedVerb', { requestId, verb });
   }
 
-  sendMessage(message: BridgeMessage): void {
+  /** Returns the size of the frame handed to the transport, for the service's slow-request line. */
+  sendMessage(message: BridgeMessage): number {
     if (!this.streams) throw new Error('BridgeSession is not established yet');
-    const frame = this.streams.send.seal(encodeMessage(message));
-    this.transport.send(wrapSessionFrame(SessionFrameKind.Application, frame));
+    let encoded: Uint8Array;
+    try {
+      encoded = encodeMessage(message);
+    } catch (error) {
+      throw new MessageEncodeError(error);
+    }
+    const frame = wrapSessionFrame(SessionFrameKind.Application, this.streams.send.seal(encoded));
+    this.transport.send(frame);
+    return frame.byteLength;
+  }
+
+  /**
+   * Bytes the transport has accepted but not yet handed to the network, or
+   * null when the transport cannot say (a test double, or a future transport
+   * with no such queue). A large value next to a slow request means the
+   * response sat in the socket, not in a handler.
+   */
+  get transportBufferedBytes(): number | null {
+    const candidate = this.transport as Partial<{ bufferedAmount: number }>;
+    return typeof candidate.bufferedAmount === 'number' ? candidate.bufferedAmount : null;
   }
 
   /**

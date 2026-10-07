@@ -239,6 +239,21 @@ describe('handleReadStream', () => {
     expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
   });
 
+  it('records the seed\'s own span against the request for the slow-request line, and none for a list-only subscribe', async () => {
+    const { takeRequestSpans, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
+    resetRequestSpansForTests();
+    const context = { sessionManager } as unknown as IpcContext;
+    sessionManager.getSerializedFrame.mockResolvedValue('x'.repeat(4096));
+
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+    const spans = takeRequestSpans('device-1', 'req-1');
+    expect(spans).toHaveLength(1);
+    expect(spans[0]).toMatch(/^seed \d+ ms, 4k chars$/);
+
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
+    expect(takeRequestSpans('device-1', 'req-1')).toEqual([]);
+  });
+
   it('registers the terminal marker BEFORE the awaited seed serialize, so the resize floor is armed inside the settle window', async () => {
     // The park fires, then the handler awaits the repaint settle (20-400ms).
     // A desktop fit landing inside that window consults the floor refusal,

@@ -19,6 +19,7 @@ import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
 import { extractPromptOptions } from '../prompt-options-probe';
+import { noteRequestSpan } from '../request-spans';
 import {
   toActivityReasonWire,
   toReadStreamSessionStatusWire,
@@ -667,12 +668,21 @@ export async function handleReadStream(
   }
   let scrollback = '';
   if (wantsTerminal) {
+    // The seed's own span (the pty host's repaint settle plus the serialize)
+    // rides the service's slow-request line, so a slow open says whether the
+    // time went here or on the wire.
+    const seedStartedAt = performance.now();
     try {
       scrollback = await context.sessionManager.getSerializedFrame(payload.sessionId);
     } catch (serializeError) {
       subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
       throw serializeError;
     }
+    noteRequestSpan(
+      session.deviceId,
+      request.requestId,
+      `seed ${Math.round(performance.now() - seedStartedAt)} ms, ${Math.round(scrollback.length / 1024)}k chars`,
+    );
   }
   // Re-read the row now rather than trusting `liveSession`. The session can
   // exit DURING the await above. Registering the subscription then would be

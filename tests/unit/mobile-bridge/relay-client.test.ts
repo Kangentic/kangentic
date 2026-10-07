@@ -635,6 +635,146 @@ describe('RelayClient redial and dial watchdog', () => {
     expect(FakeWebSocket.instances[0]).toBeInstanceOf(InjectedWebSocket);
   });
 
+  // The stack tag is what keeps a log comparable across a change of WebSocket
+  // implementation: the connect-latency series that found the Chromium
+  // regression had to be split by restart time because no line said which
+  // stack dialed.
+  it('names the dialing network stack on the connected, dial-failed and dial-timed-out lines', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const nodeClient = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'nodedial' });
+    activeClients.push(nodeClient);
+    void nodeClient.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+    expect(loggedLines(logSpy).some((line) => line.includes('[mobile-bridge/relay-client nodedial] connected after') && line.endsWith('(via node)'))).toBe(true);
+
+    const chromiumClient = new RelayClient({
+      relayUrl: 'ws://127.0.0.1:1',
+      slotId: 'test-slot',
+      logLabel: 'chromdial',
+      webSocketConstructor: FakeWebSocket as unknown as typeof WebSocket,
+      webSocketStack: 'chromium',
+    });
+    activeClients.push(chromiumClient);
+    void chromiumClient.connect().catch(() => undefined);
+    FakeWebSocket.instances[1].fail(1006);
+    expect(loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client chromdial] dial failed:') && line.endsWith('(via chromium)'))).toBe(true);
+
+    // The retry sits in the 500 ms backoff, then its dial never answers.
+    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(30_000);
+    expect(
+      loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client chromdial] dial timed out after 30 s') && line.endsWith('(via chromium)')),
+    ).toBe(true);
+  });
+
+  describe('fallback stack', () => {
+    class FallbackWebSocket extends FakeWebSocket {}
+    const fallbackOption = (isPreferred?: () => boolean) => ({
+      webSocketConstructor: FallbackWebSocket as unknown as typeof WebSocket,
+      stack: 'chromium',
+      isPreferred,
+    });
+    const stackOf = (index: number) => (FakeWebSocket.instances[index] instanceof FallbackWebSocket ? 'chromium' : 'node');
+
+    it('dials with the primary while it works and never touches the fallback', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      FakeWebSocket.instances[0].open();
+      FakeWebSocket.instances[0].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect([stackOf(0), stackOf(1)]).toEqual(['node', 'node']);
+    });
+
+    it('gives the fallback a turn after two failed primary dials, then holds it for 30 minutes once it opens', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'fallback', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+
+      FakeWebSocket.instances[0].fail(1006);
+      vi.advanceTimersByTime(500);
+      FakeWebSocket.instances[1].fail(1006);
+      vi.advanceTimersByTime(1000);
+      expect([stackOf(0), stackOf(1), stackOf(2)]).toEqual(['node', 'node', 'chromium']);
+
+      FakeWebSocket.instances[2].open();
+      expect(loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client fallback] node failed 2 dials in a row and chromium opened; dialing via chromium for the next 30 min'))).toBe(true);
+
+      // Inside the hold, every redial stays on the fallback.
+      FakeWebSocket.instances[2].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect(stackOf(3)).toBe('chromium');
+
+      // Past the hold, the primary gets its chance again.
+      FakeWebSocket.instances[3].open();
+      vi.advanceTimersByTime(30 * 60 * 1000);
+      FakeWebSocket.instances[3].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect(stackOf(4)).toBe('node');
+    });
+
+    it('alternates the two stacks while both keep failing, so a relay that is down is retried on each', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        FakeWebSocket.instances[attempt].fail(1006);
+        vi.advanceTimersByTime(30_000);
+      }
+      expect(FakeWebSocket.instances.slice(0, 6).map((_, index) => stackOf(index))).toEqual(['node', 'node', 'chromium', 'node', 'chromium', 'node']);
+    });
+
+    it('counts a dial-watchdog timeout as a failed primary dial', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      vi.advanceTimersByTime(30_000);
+      vi.advanceTimersByTime(500);
+      vi.advanceTimersByTime(30_000);
+      vi.advanceTimersByTime(1000);
+      expect([stackOf(0), stackOf(1), stackOf(2)]).toEqual(['node', 'node', 'chromium']);
+    });
+
+    it('dials with the fallback from the first dial while it is preferred (a configured proxy), and logs no hold', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      let proxied = true;
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption(() => proxied) });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+      expect(stackOf(0)).toBe('chromium');
+      FakeWebSocket.instances[0].open();
+      expect(loggedLines(warnSpy).some((line) => line.includes('dialing via chromium for the next'))).toBe(false);
+
+      // The proxy goes away: the next dial is back on the primary.
+      proxied = false;
+      FakeWebSocket.instances[0].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect(stackOf(1)).toBe('node');
+    });
+  });
+
+  it('reports the open socket\'s bufferedAmount, and 0 with no socket', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot' });
+    activeClients.push(client);
+    expect(client.bufferedAmount).toBe(0);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+    Object.assign(FakeWebSocket.instances[0], { bufferedAmount: 2048 });
+    expect(client.bufferedAmount).toBe(2048);
+  });
+
   it('scheduleReconnect() arms the reconnect timer before emitting "reconnecting", so a re-entrant kick clears the timer instead of racing one that was never armed', async () => {
     // Pins the ORDER inside scheduleReconnect(): the reconnect timer must be
     // armed before setState('reconnecting') emits, because a listener that

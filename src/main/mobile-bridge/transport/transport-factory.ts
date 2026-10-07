@@ -1,6 +1,6 @@
 import type { Transport } from '@kangentic/protocol';
 import { RelayClient, type RelayWebSocketConstructor } from './relay-client';
-import { resolveRelayWebSocket } from './relay-websocket';
+import { resolveRelayChromiumFallback } from './relay-websocket';
 
 /**
  * The swap point named in the research doc's Phase 1 scope: relay is the
@@ -15,11 +15,13 @@ export interface TransportFactoryOptions {
   /** Short tag for the transport's log lines (a truncated device id, or 'pairing'); never the slot id. */
   logLabel?: string;
   /**
-   * The WebSocket to dial with. Omitted, the app's Chromium-backed
-   * `net.WebSocket` is used when it is available (relay-websocket.ts), else
-   * Node's global.
+   * The WebSocket to dial with, for tests. Omitted, the client dials with
+   * Node's global and keeps Electron's `net.WebSocket` as its fallback
+   * (relay-websocket.ts says why in that order).
    */
   webSocketConstructor?: RelayWebSocketConstructor;
+  /** The network stack an injected `webSocketConstructor` runs on, for the dial log lines. */
+  webSocketStack?: string;
 }
 
 export function createTransport(options: TransportFactoryOptions): Transport {
@@ -27,6 +29,8 @@ export function createTransport(options: TransportFactoryOptions): Transport {
     relayUrl: options.relayUrl,
     slotId: options.slotId,
     logLabel: options.logLabel,
-    webSocketConstructor: options.webSocketConstructor ?? resolveRelayWebSocket(),
+    webSocketConstructor: options.webSocketConstructor,
+    webSocketStack: options.webSocketStack,
+    fallbackWebSocket: options.webSocketConstructor ? undefined : resolveRelayChromiumFallback(options.relayUrl),
   });
 }

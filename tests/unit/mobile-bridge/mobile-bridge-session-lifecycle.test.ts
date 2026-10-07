@@ -111,7 +111,10 @@ class FakeBridgeSession extends EventEmitter {
     createdSessions.push(this);
   }
 }
-vi.mock('../../../src/main/mobile-bridge/session/bridge-session', () => ({
+// The real module's other exports (MessageEncodeError, which the service
+// matches a too-large response against) stay real; only the session is faked.
+vi.mock('../../../src/main/mobile-bridge/session/bridge-session', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/main/mobile-bridge/session/bridge-session')>()),
   BridgeSession: FakeBridgeSession,
 }));
 
@@ -172,6 +175,8 @@ vi.mock('../../../src/main/mobile-bridge/handlers', async (importOriginal) => {
 });
 
 const { MobileBridgeService, resetForcedRedialTelemetryForTests } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
+const { MessageEncodeError } = await import('../../../src/main/mobile-bridge/session/bridge-session');
+const { noteRequestSpan, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
 const { trackEvent } = await import('../../../src/main/analytics/analytics');
 const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
 type MobileBridgeServiceInstance = InstanceType<typeof MobileBridgeService>;
@@ -237,6 +242,84 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
 
     expect(session.sendMessage).toHaveBeenCalledTimes(1);
     expect(session.sendMessage).toHaveBeenCalledWith(fakeResponse);
+
+    service.dispose();
+  });
+
+  it('writes one slow-request warn line naming the verb, action, ids and the spans, and stays quiet under the threshold', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    resetRequestSpansForTests();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // A controllable clock: the handler "takes" whatever the case sets.
+    let clockMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+    let handlerCostMs = 0;
+    service.capabilityRouter.register('read-board', (request) => {
+      noteRequestSpan(session.deviceId, request.requestId, 'seed 800 ms, 120k chars');
+      clockMs += handlerCostMs;
+      return { type: 'capability-response', requestId: request.requestId, ok: true };
+    });
+    session.sendMessage.mockImplementation(() => {
+      clockMs += 40;
+      return 96 * 1024;
+    });
+
+    handlerCostMs = 900;
+    session.emit('message', { type: 'capability-request', requestId: 'slowreq-1234', verb: 'read-board', payload: { action: 'subscribe' } });
+    await flushMicrotasks();
+    const slowLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('slow request'));
+    expect(slowLines).toEqual(['[mobile-bridge] slow request read-board/subscribe slowreq- from device-A: handler 900 ms, seed 800 ms, 120k chars, send 40 ms, 96 kB frame']);
+
+    // Under the threshold: no line, and the span registry still let go of the request.
+    warnSpy.mockClear();
+    handlerCostMs = 100;
+    session.emit('message', { type: 'capability-request', requestId: 'fastreq-1234', verb: 'read-board', payload: {} });
+    await flushMicrotasks();
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('slow request'))).toBe(false);
+
+    nowSpy.mockRestore();
+    warnSpy.mockRestore();
+    service.dispose();
+  });
+
+  it('answers a response too large to encode with a short refusal on the same stream, and says so in a warn line', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    service.capabilityRouter.register('read-board', (request) => ({ type: 'capability-response', requestId: request.requestId, ok: true, payload: { huge: true } }));
+    session.sendMessage.mockImplementationOnce(() => {
+      throw new MessageEncodeError(new Error('Encoded bridge message exceeds 1048576 bytes'));
+    });
+
+    session.emit('message', { type: 'capability-request', requestId: 'bigreq-1', verb: 'read-board', payload: {} });
+    await flushMicrotasks();
+
+    expect(session.sendMessage).toHaveBeenCalledTimes(2);
+    expect(session.sendMessage).toHaveBeenLastCalledWith({ type: 'capability-response', requestId: 'bigreq-1', ok: false, error: 'Response too large to send' });
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('response to read-board bigreq-1 from device-A not sent: Encoded bridge message exceeds 1048576 bytes; answered with a refusal'),
+      ),
+    ).toBe(true);
+
+    warnSpy.mockRestore();
+    service.dispose();
+  });
+
+  it('sends nothing more when a response fails for any reason other than encoding (the session dropped mid-dispatch)', async () => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    service.capabilityRouter.register('read-board', (request) => ({ type: 'capability-response', requestId: request.requestId, ok: true }));
+    session.sendMessage.mockImplementationOnce(() => {
+      throw new Error('BridgeSession is not established yet');
+    });
+
+    session.emit('message', { type: 'capability-request', requestId: 'dropreq-1', verb: 'read-board', payload: {} });
+    await flushMicrotasks();
+
+    // A retry would seal a second frame onto a stream whose transport is gone.
+    expect(session.sendMessage).toHaveBeenCalledTimes(1);
 
     service.dispose();
   });
