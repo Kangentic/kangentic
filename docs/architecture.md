@@ -508,7 +508,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 ### Leftover processes (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `leftoverProcesses:report` | push | What a burst of terminal transitions stopped, could not stop, and left running (`LeftoverProcessReport`), one report per burst so a bulk delete is one toast, stamped with when it was sent (`reportedAt`, UTC) for the toast's age. Main window only. Never sent when nothing was left running. See `src/main/ipc/helpers/leftover-process-reports.ts` |
+| `leftoverProcesses:report` | push | What a burst of terminal transitions stopped, could not stop, and left running (`LeftoverProcessReport`), one report per burst so a bulk delete is one toast, stamped with when it was sent (`reportedAt`, UTC) for the age the sticky toast and the list header show. Main window only. Never sent when nothing was left running. See `src/main/ipc/helpers/leftover-process-reports.ts` |
 | `leftoverProcesses:stop` | invoke | Stop one reported process, with everything under it, by the id its report minted (never a pid). Resolves `'stopped'`, `'ended'` or `'failed'`. Not project-scoped: the id carries its own identity |
 
 ### Host memory pressure (2 channels)
