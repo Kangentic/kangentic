@@ -188,6 +188,28 @@ test('while the agent works, Start and Add task wait with the reason, and the ca
     await expect(byTestId(page, 'workflow-add-task')).toBeDisabled();
     await expect(byTestId(page, 'workflow-add-task')).toHaveAttribute('title', 'Available when the workflow agent finishes');
 
+    // Where each sits: the label top left, clear of Add task at the bottom
+    // center, and the two view tools side by side at the bottom left.
+    const boxes = await page.evaluate(() => {
+      const rect = (testId: string) => {
+        const box = document.querySelector(`[data-testid="${testId}"]`)!.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, centerX: box.left + box.width / 2 };
+      };
+      return {
+        canvas: rect('workflow-canvas'),
+        label: rect('workflow-agent-working-label'),
+        addTask: rect('workflow-add-task'),
+        fitView: rect('workflow-fit-view'),
+        autoLayout: rect('workflow-auto-layout'),
+      };
+    });
+    expect(boxes.label.left - boxes.canvas.left).toBeLessThan(24);
+    expect(boxes.label.top - boxes.canvas.top).toBeLessThan(24);
+    expect(Math.abs(boxes.addTask.centerX - boxes.canvas.centerX)).toBeLessThan(4);
+    expect(boxes.canvas.bottom - boxes.addTask.bottom).toBeLessThan(40);
+    expect(boxes.autoLayout.left - boxes.fitView.right).toBeLessThan(12);
+    expect(boxes.autoLayout.right).toBeLessThan(boxes.addTask.left);
+
     await page.evaluate(([id, projectId, workflowId]) => {
       window.__mockFireActivity(id, 'idle', null, projectId, workflowId);
     }, [sessionId, PROJECT_ID, WORKFLOW_ID]);

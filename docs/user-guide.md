@@ -543,8 +543,8 @@ is doing ("Agent idle, last message 10:44"), or, with no agent running, how many
 for you. The bottom terminal panel is hidden in this view and comes back on the board.
 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
-(Ctrl or Cmd with the wheel zooms). The tools at the bottom left are Fit view, Add task, and Auto
-layout, which puts moved cards back in the automatic layout. Right-click a started task's card for
+(Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
+automatic layout, sit at the bottom left, and Add task at the bottom center. Right-click a started task's card for
 the board's own menu, with Open on board at the top.
 
 **Planning one.** Click New workflow, or right-click a To Do card on the board and pick New

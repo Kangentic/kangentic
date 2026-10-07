@@ -383,11 +383,9 @@ export function WorkflowCanvas({
       >
         {editable && <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--color-edge-input)" />}
         <Panel position="bottom-left">
-          <CanvasTools
+          <ViewTools
             moved={detail.tasks.some((task) => task.canvasX !== null || task.canvasY !== null)}
-            addTaskRefusal={addTaskRefusal}
             onFitView={() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }}
-            onAddTask={onAddTask}
             onAutoLayout={() => {
               // Auto layout puts every card back, so an arrow-key place still waiting must not land after it.
               takeKeyMoves();
@@ -396,6 +394,9 @@ export function WorkflowCanvas({
               requestAnimationFrame(() => requestAnimationFrame(() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }));
             }}
           />
+        </Panel>
+        <Panel position="bottom-center">
+          <AddTaskTool addTaskRefusal={addTaskRefusal} onAddTask={onAddTask} />
         </Panel>
       </ReactFlow>
       </WorkflowDetailContext.Provider>
@@ -441,35 +442,25 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
   );
 }
 
+const CANVAS_TOOL_CLASS = 'inline-flex items-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+
 /**
- * The canvas's own tools, bottom left, always drawn in the same places. Fit
- * view leads in every state: the canvas pans and zooms, and a workflow panned
- * out of sight needs one way back. Add task uses the To Do column's words and
- * opens the same New Task dialog. Auto layout puts hand-placed cards back, and
- * is disabled until a card sits where a hand put it.
+ * The canvas's view tools, bottom left, side by side: both arrange what is
+ * already on the canvas. Fit view leads in every state: the canvas pans and
+ * zooms, and a workflow panned out of sight needs one way back. Auto layout
+ * puts hand-placed cards back, and is disabled until a card sits where a hand
+ * put it.
  */
-function CanvasTools({ moved, addTaskRefusal, onFitView, onAddTask, onAutoLayout }: {
+function ViewTools({ moved, onFitView, onAutoLayout }: {
   moved: boolean;
-  addTaskRefusal: string | null;
   onFitView: () => void;
-  onAddTask: () => void;
   onAutoLayout: () => void;
 }) {
-  const tool = 'inline-flex items-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+  const tool = CANVAS_TOOL_CLASS;
   return (
     <div className="flex gap-2" data-testid="workflow-canvas-tools">
       <button type="button" onClick={onFitView} title="Fit every card in view" className={tool} data-testid="workflow-fit-view">
         <Scan size={14} className="text-fg-muted" />Fit view
-      </button>
-      <button
-        type="button"
-        onClick={onAddTask}
-        disabled={addTaskRefusal !== null}
-        title={addTaskRefusal ?? 'Add a task to this workflow'}
-        className={tool}
-        data-testid="workflow-add-task"
-      >
-        <Plus size={14} className="text-fg-muted" />Add task
       </button>
       <button
         type="button"
@@ -482,5 +473,26 @@ function CanvasTools({ moved, addTaskRefusal, onFitView, onAddTask, onAutoLayout
         <LayoutGrid size={14} className="text-fg-muted" />Auto layout
       </button>
     </div>
+  );
+}
+
+/**
+ * Add task, bottom center, apart from the view tools: it changes the plan
+ * where they only arrange it. It uses the To Do column's words and opens the
+ * same New Task dialog, and waits, with the reason, while the workflow agent
+ * works.
+ */
+function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | null; onAddTask: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onAddTask}
+      disabled={addTaskRefusal !== null}
+      title={addTaskRefusal ?? 'Add a task to this workflow'}
+      className={CANVAS_TOOL_CLASS}
+      data-testid="workflow-add-task"
+    >
+      <Plus size={14} className="text-fg-muted" />Add task
+    </button>
   );
 }

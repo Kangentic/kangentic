@@ -393,7 +393,9 @@ export function WorkflowsView() {
           {/* The workflow agent is working, said on the canvas as the Agent
               Browser says an agent is driving: an accent ring at the edge and a
               label, both breathing. No veil: cards stay movable, and only what
-              would change the plan waits. Always mounted, opacity-toggled. */}
+              would change the plan waits. Always mounted, opacity-toggled. The
+              label sits top left: Add task holds the bottom center, disabled
+              exactly while this shows. */}
           <div
             className={`pointer-events-none absolute inset-0 z-10 transition-opacity duration-200 ${planHeld ? 'opacity-100' : 'opacity-0'}`}
             data-testid="workflow-agent-working"
@@ -401,7 +403,7 @@ export function WorkflowsView() {
             aria-hidden={!planHeld}
           >
             <div className={`absolute inset-0 ring-2 ring-inset ring-accent/70 ${planHeld ? 'kng-drive-pulse' : ''}`} />
-            <span className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded bg-surface-raised/95 px-2.5 py-1 text-xs text-fg-secondary shadow">
+            <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded bg-surface-raised/95 px-2.5 py-1 text-xs text-fg-secondary shadow" data-testid="workflow-agent-working-label">
               <span className={`h-1.5 w-1.5 rounded-full bg-active ${planHeld ? 'kng-drive-pulse' : ''}`} />
               Workflow agent is working
             </span>
