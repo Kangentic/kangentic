@@ -15,7 +15,7 @@ ground truth taken from later passes. Results and the first run's outcome are in
 | `prepare.mjs` | Makes a detached replay worktree and builds its pack with `--out-dir` and `--shard-lines 1500` |
 | `extract-finder-prompts.mjs` | Pulls a historical driver's Agent prompts out of its session transcript |
 | `collect-reports.mjs` | Writes each finder's final report under a random id for the blind scorer, plus a key file beside the folder |
-| `cost.mjs` | Tokens, USD, advisor calls and tool calls from subagent transcripts, with prices passed in |
+| `cost.mjs` | Tokens, USD, advisor calls and tool calls from subagent transcripts, with prices passed in and each request priced on its own rate card |
 | `tally.mjs` | Joins a scorer's output with the key, the corpus and the transcripts into per-arm hits and USD for one case |
 | `verdict-replay.json` | E4's input: historical passes, each item mapped by the rule below |
 | `run-verdict-replay.mjs` | E4: turns each pass in `verdict-replay.json` into a findings report and counts the bounces avoided |
@@ -51,7 +51,11 @@ The validity rule: an entry whose line cannot be confirmed with `git show <sha>:
    each finder's final message under a random id, into a new folder. A blind scorer agent gets the
    anonymized files and the ground truth and returns, per finding, the matched entry id or none.
 5. `node scripts/review-eval/cost.mjs --prices <prices.json> <transcripts>` per arm, with prices
-   from the `claude-api` skill on the day of the run.
+   from the `claude-api` skill on the day of the run. A model billed by request size gets an
+   `above` card beside its base rates, `{ "promptTokens": 100000, "input": ..., "output": ... }`
+   with all five classes. Each request is priced on its own: input plus cache read plus cache write
+   tokens over `promptTokens` puts all five classes, output included, on the `above` card. The
+   output counts those requests per model (`aboveTier`).
 6. `node scripts/review-eval/tally.mjs <case id> <scores.json> <key.json> --prices <prices.json>`
    joins the scores, the key and the costs per arm. Feed its hits and costs to `decide.mjs`.
 
@@ -95,6 +99,30 @@ glob in another session once removed a temp folder that session had not created.
   reading that treats a Mac-only skip as runnable through the CI macOS leg.
   The replay is counterfactual: fixing a skip can itself raise new findings. E3 tested a delta round
   for exactly that and it was not adopted (audit section 15).
+
+## Pre-registered rules for the model round (fixed on 2026-10-07, before any run)
+
+Claude Haiku 5.5 shipped on 2026-10-07. These rules choose which model the finders and two gated
+auditors run on. They are `adoptFinderModel`, `pickFinderModel` and `adoptAuditorModel` in
+`decide.mjs`.
+
+- **E5, finder model:** the E2 shape (correctness in 1500-line shards plus the performance,
+  maintainability, conventions and coverage finders), two repetitions over S2 to S4. Two arms:
+  Haiku 5.5 at medium (`model: 'haiku'` on the `Agent` call; effort stays at the agent's medium)
+  and Haiku 5.5 at high (`model: 'haiku', effort: 'high'`). The baseline is E2 arm A as recorded
+  (`E2_ARM_A`). An arm is adopted only if all four hold: mean late hits at least 1.5 - 1; S4-P1,
+  P2 and P3 in both repetitions; at most 2 distinct negatives; at most 117 raised. The one-hit
+  tolerance alone admitted every E1 arm, so it would pick Haiku on price; the other three bars hold
+  the verification work the Opus driver does, which `cost.mjs` never sees. Of the passing arms the
+  cheapest wins, an exact tie goes to the lower effort, and none passing keeps Sonnet.
+  Every transcript's model is checked before scoring, and the scorer gets E5's two arms mixed blind
+  with E2 arm A's existing reports. Arm A's re-scored numbers are reported as a drift check only; the
+  rule compares against the recorded baseline.
+- **E6, gated auditor model:** `doc-auditor` (and `ipc-auditor` if the round is still under $50)
+  over a scratch worktree of HEAD with one planted missing item and one planted extra one. Sonnet
+  and Haiku, two runs each, only the model varied. Haiku is adopted only if it finds both plants in
+  both runs and raises no more false findings, in total, than Sonnet. A false finding is a reported
+  gap the planted tree does not have, checked by hand.
 
 ## How the first round ran (2026-10-06)
 

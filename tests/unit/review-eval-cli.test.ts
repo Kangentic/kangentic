@@ -5,7 +5,9 @@
  *
  * 1. cost.mjs sums tokens, advisor calls, tool calls and dollars across every transcript, lists a
  *    model with no price once, names each transcript by its file name, takes `--prices` in any
- *    position, and exits 2 with a usage line when the prices file is missing.
+ *    position, prices a tiered model request by request (100,000 prompt tokens at the base card,
+ *    100,001 on the upper one, output included) and counts the requests above the tier, and exits 2
+ *    with a usage line when the prices file is missing.
  * 2. extract-finder-prompts.mjs writes each Agent prompt exactly as sent into `<index>-<type>.md`,
  *    turns every character outside letters, digits and hyphens in the subagent type into an
  *    underscore (a plugin type such as `toolkit:code-reviewer` holds a colon, which a Windows file
@@ -129,6 +131,34 @@ describe('cost.mjs command line', () => {
     const output: CostOutput = JSON.parse(result.stdout);
     expect(output.perTranscript.map((entry) => entry.transcript)).toEqual(['first.jsonl', 'second.jsonl']);
     expect(output.total.usd).toBe(0.0854);
+  });
+
+  it('prices each request of a tiered model on its own card and counts the requests above the tier', () => {
+    const root = makeScratchDirectory();
+    // Two requests of one model: exactly 100,000 prompt tokens, then 100,001. Each has 1,000 output.
+    const line = (messageId: string, usage: Record<string, number>): string =>
+      JSON.stringify({ type: 'assistant', isSidechain: true, message: { id: messageId, model: 'claude-tiered-1', role: 'assistant', content: [], usage } });
+    const transcriptPath = path.join(root, 'tiered.jsonl');
+    fs.writeFileSync(transcriptPath, [
+      line('msg_at', { input_tokens: 10, cache_creation_input_tokens: 40_000, cache_read_input_tokens: 59_990, output_tokens: 1_000 }),
+      line('msg_over', { input_tokens: 11, cache_creation_input_tokens: 40_000, cache_read_input_tokens: 59_990, output_tokens: 1_000 }),
+    ].join('\n'));
+    const pricesPath = path.join(root, 'prices.json');
+    const flat = { input: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1, output: 1 };
+    fs.writeFileSync(pricesPath, JSON.stringify({
+      'claude-tiered': { ...flat, above: { promptTokens: 100_000, input: 5, cacheWrite5m: 5, cacheWrite1h: 5, cacheRead: 5, output: 5 } },
+    }));
+
+    const result = runScript(COST_SCRIPT_PATH, ['--prices', pricesPath, transcriptPath]);
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    // 101,000 at 1 per million plus 101,001 at 5: 0.101 + 0.505005, which a sum of 202,001 tokens
+    // priced once could never give (0.202 flat, 1.01 tiered).
+    expect(output.total.usd).toBe(0.606);
+    expect(output.total.aboveTier).toEqual({ 'claude-tiered-1': { above: 1, requests: 2 } });
+    expect(output.perTranscript[0].aboveTier).toEqual({ 'claude-tiered-1': { above: 1, requests: 2 } });
+    expect(output.perTranscript[0]).not.toHaveProperty('requests');
   });
 
   it('exits 2 with a usage line when --prices is missing or has no value', () => {

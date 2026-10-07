@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { tallyTranscript, costOf } from '../../scripts/review-eval/cost.mjs';
+import { tallyTranscript, costOfRequests } from '../../scripts/review-eval/cost.mjs';
 import { finalReportOf } from '../../scripts/review-eval/collect-reports.mjs';
 import { extractAgentCalls } from '../../scripts/review-eval/extract-finder-prompts.mjs';
 
@@ -176,19 +176,32 @@ describe('tallyTranscript targeted cases', () => {
   });
 });
 
-describe('costOf', () => {
+describe('costOfRequests', () => {
   // Synthetic round prices per million tokens, chosen so each prefix gives a different answer.
   const broadPrefixPrice = { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 };
   const narrowPrefixPrice = { input: 1, cacheWrite5m: 2, cacheWrite1h: 3, cacheRead: 4, output: 5 };
-  const tokensByModel = tallyTranscript(FIXTURE_TEXT).tokensByModel;
+  const { requests } = tallyTranscript(FIXTURE_TEXT);
+  const requestsOf = (model: string) => requests.filter((request: { model: string }) => request.model === model);
+
+  it('returns one request per message id, whose tokens sum to the per-model totals', () => {
+    const tally = tallyTranscript(FIXTURE_TEXT);
+
+    expect(tally.requests).toHaveLength(tally.messages);
+    const summed: Record<string, Tokens> = {};
+    for (const request of tally.requests as Array<{ model: string; tokens: Tokens }>) {
+      const tokens = summed[request.model] ?? (summed[request.model] = { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0 });
+      for (const tokenClass of Object.keys(tokens) as Array<keyof Tokens>) tokens[tokenClass] += request.tokens[tokenClass];
+    }
+    expect(summed).toEqual(tally.tokensByModel);
+  });
 
   it('prices a model by the longest matching prefix, whatever order the prefixes are listed in', () => {
-    const shortFirst = costOf(tokensByModel, {
+    const shortFirst = costOfRequests(requests, {
       'claude-sonnet': broadPrefixPrice,
       'claude-sonnet-5': narrowPrefixPrice,
       'claude-haiku': narrowPrefixPrice,
     });
-    const longFirst = costOf(tokensByModel, {
+    const longFirst = costOfRequests(requests, {
       'claude-sonnet-5': narrowPrefixPrice,
       'claude-sonnet': broadPrefixPrice,
       'claude-haiku': narrowPrefixPrice,
@@ -202,29 +215,71 @@ describe('costOf', () => {
   });
 
   it('would price sonnet far lower under the shorter prefix, so the longest-prefix result is not a tie', () => {
-    const broadOnly = costOf({ 'claude-sonnet-5-5': tokensByModel['claude-sonnet-5-5'] }, { 'claude-sonnet': broadPrefixPrice });
-    const narrowOnly = costOf({ 'claude-sonnet-5-5': tokensByModel['claude-sonnet-5-5'] }, { 'claude-sonnet-5': narrowPrefixPrice });
+    const broadOnly = costOfRequests(requestsOf('claude-sonnet-5-5'), { 'claude-sonnet': broadPrefixPrice });
+    const narrowOnly = costOfRequests(requestsOf('claude-sonnet-5-5'), { 'claude-sonnet-5': narrowPrefixPrice });
 
     expect(broadOnly.usd).toBe(0.009);
     expect(narrowOnly.usd).toBe(0.0427);
   });
 
-  it('reports a model with no matching prefix as unpriced and leaves it out of the total', () => {
-    const result = costOf(tokensByModel, { 'claude-sonnet-5': narrowPrefixPrice });
+  it('reports a model with no matching prefix as unpriced, once, and leaves it out of the total', () => {
+    const result = costOfRequests([...requests, ...requestsOf('claude-haiku-fixture')], { 'claude-sonnet-5': narrowPrefixPrice });
 
     expect(result.unpriced).toEqual(['claude-haiku-fixture']);
     expect(result.usd).toBe(0.0427);
   });
 
   it('does not let a clamped negative cache count lower the cost', () => {
-    const haikuOnly = costOf({ 'claude-haiku-fixture': tokensByModel['claude-haiku-fixture'] }, { 'claude-haiku': narrowPrefixPrice });
+    const haikuOnly = costOfRequests(requestsOf('claude-haiku-fixture'), { 'claude-haiku': narrowPrefixPrice });
 
     // 7*1 + 80*2 + 0*3 + 400*4 + 9*5 = 1812 per million, which rounds to 0.0018.
     expect(haikuOnly.usd).toBe(0.0018);
   });
 
-  it('returns zero and nothing unpriced for no models', () => {
-    expect(costOf({}, { 'claude-sonnet': broadPrefixPrice })).toEqual({ usd: 0, unpriced: [] });
+  it('returns zero, nothing unpriced and no tier counts for no requests', () => {
+    expect(costOfRequests([], { 'claude-sonnet': broadPrefixPrice })).toEqual({ usd: 0, unpriced: [], aboveTier: {} });
+  });
+
+  describe('a rate card with an upper tier', () => {
+    // Base rates of 1 per million on every class and 5 above, so a dollar figure reads as the tier.
+    const flat = { input: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1, output: 1 };
+    const tiered = { 'claude-tiered': { ...flat, above: { promptTokens: 100_000, input: 5, cacheWrite5m: 5, cacheWrite1h: 5, cacheRead: 5, output: 5 } } };
+    const request = (tokens: Partial<Tokens>) => ({
+      model: 'claude-tiered-1',
+      tokens: { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, ...tokens },
+    });
+
+    it('prices a request of exactly the threshold at the base rate', () => {
+      // 10 + 40,000 + 59,990 = 100,000 prompt tokens, plus 1,000 output: 101,000 at 1 per million.
+      const result = costOfRequests([request({ input: 10, cacheWrite5m: 40_000, cacheRead: 59_990, output: 1_000 })], tiered);
+
+      expect(result.usd).toBe(0.101);
+      expect(result.aboveTier).toEqual({ 'claude-tiered-1': { above: 0, requests: 1 } });
+    });
+
+    it('prices a request one token over at the upper rate, output included', () => {
+      // 100,001 prompt tokens plus 1,000 output, all at 5 per million: 505,005 per million.
+      const result = costOfRequests([request({ input: 11, cacheWrite1h: 40_000, cacheRead: 59_990, output: 1_000 })], tiered);
+
+      expect(result.usd).toBe(0.505);
+      expect(result.aboveTier).toEqual({ 'claude-tiered-1': { above: 1, requests: 1 } });
+    });
+
+    it('prices each request on its own card, which a per-model sum cannot', () => {
+      // A small request (50,000 + 100 output at 1) and a large one (150,000 + 100 output at 5):
+      // 50,100 + 750,500 = 800,600 per million. Summed first, 200,200 tokens would all price at 5.
+      const result = costOfRequests([request({ cacheRead: 50_000, output: 100 }), request({ cacheRead: 150_000, output: 100 })], tiered);
+
+      expect(result.usd).toBe(0.8006);
+      expect(result.aboveTier).toEqual({ 'claude-tiered-1': { above: 1, requests: 2 } });
+    });
+
+    it('counts no tier for a model priced on a flat card', () => {
+      const result = costOfRequests([{ model: 'claude-flat', tokens: request({ cacheRead: 500_000 }).tokens }], { 'claude-flat': flat });
+
+      expect(result.usd).toBe(0.5);
+      expect(result.aboveTier).toEqual({});
+    });
   });
 });
 
