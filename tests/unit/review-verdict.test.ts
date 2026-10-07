@@ -12,15 +12,16 @@
  * 3. A quick fix never changes the verdict, even when it could not be applied.
  * 4. Validation refuses `skipped`, a refuted or blocked finding with no reason, a blocked finding
  *    with no step, a decision with no alternative, and follow-ups with no filed task.
- * 5. The closing block's first line is exactly `Verdict: Ready` or `Verdict: Blocked`, its last
- *    line starts with `Next:`, and the default output ends with it.
+ * 5. The closing block's first line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
+ *    verdict lists one numbered step per blocker, no `Next:` line follows, and the default output
+ *    ends with the block.
  * 6. Ledger lines are keyed by file, symbol and mechanism and carry no line number.
  * 7. The Summary counts leave quick findings out of the status counts, count re-raises, list
  *    severities in critical, high, medium, low order, and name each check's value.
  * 8. Every validation branch refuses its malformed input with one exact problem string, and a
  *    quick finding may not carry a decision.
  * 9. A multi-line location, step or decision collapses to one line, so each closing block line
- *    starts with `Verdict:`, `<digits>.` or `Next:` and a Decisions made entry is one line.
+ *    starts with `Verdict:` or `<digits>.` and a Decisions made entry is one line.
  * 10. The command line exits 2 with a usage line for a wrong argument count and with
  *     `could not read` for text that is not JSON.
  */
@@ -204,7 +205,7 @@ describe('review-verdict.mjs: verdict rules', () => {
     expect(lines[1]).toBe('1. src/main/example-1.ts:11: log in to the vendor CLI and capture a reply');
     expect(lines[2]).toMatch(/^2\. HMR vitest: /);
     expect(lines[3]).toMatch(/^3\. Scoped runs of added tests: /);
-    expect(lines[4]).toBe('Next: move the card back to Executing and do the steps above.');
+    expect(lines).toHaveLength(4);
   });
 
   it('never lets a quick fix change the verdict, even one that could not be applied', () => {
@@ -227,13 +228,13 @@ describe('review-verdict.mjs: verdict rules', () => {
   it('is Ready with no findings at all', () => {
     const report = reportOf([], { checks: { typecheck: 'pass', hmrVitest: 'pass', scopedTests: 'none' } });
     expect(validateFindings(report)).toEqual([]);
-    expect(closingBlockLines(report)).toEqual(['Verdict: Ready', 'Next: move the card to Testing.']);
+    expect(closingBlockLines(report)).toEqual(['Verdict: Ready']);
   });
 
-  it('ends the default output with the closing block', () => {
+  it('ends the default output with the verdict line', () => {
     const report = reportOf([findingOf(1)]);
     const summaryLines = renderSummary(report).split('\n');
-    expect(summaryLines.slice(-2)).toEqual(['Verdict: Ready', 'Next: move the card to Testing.']);
+    expect(summaryLines.slice(-2)).toEqual(['', 'Verdict: Ready']);
   });
 });
 
@@ -445,8 +446,6 @@ describe('review-verdict.mjs: summary counts', () => {
 });
 
 describe('review-verdict.mjs: one-line collapsing', () => {
-  const NEXT_STEP_LINE = 'Next: move the card back to Executing and do the steps above.';
-
   it('keeps every closing block item on one line when location and step span lines', () => {
     const report = reportOf([
       findingOf(1, {
@@ -467,11 +466,10 @@ describe('review-verdict.mjs: one-line collapsing', () => {
       'Verdict: Blocked',
       '1. src/main/first.ts:10 (inside the reap loop): capture a reply from the CLI, then rerun',
       '2. src/main/second.ts:20: rebuild the fixture',
-      NEXT_STEP_LINE,
     ];
     const closingLines = closingBlockLines(report);
     expect(closingLines).toEqual(expectedLines);
-    for (const line of closingLines) expect(line).toMatch(/^(Verdict:|\d+\.|Next:)/);
+    for (const line of closingLines) expect(line).toMatch(/^(Verdict:|\d+\.)/);
     expect(renderSummary(report).split('\n').slice(-expectedLines.length)).toEqual(expectedLines);
   });
 
@@ -492,7 +490,6 @@ describe('review-verdict.mjs: one-line collapsing', () => {
       '1. src/main/a.ts:5 and src/main/b.ts:9: chose keep the old copy. The alternative was use the new copy.',
       '',
       'Verdict: Ready',
-      'Next: move the card to Testing.',
     ]);
   });
 });
@@ -522,15 +519,15 @@ describe('review-verdict.mjs: command line', () => {
     expect(blocked.exitCode).toBe(0);
     const outputLines = blocked.stdout.trimEnd().split('\n');
     expect(outputLines).toContain('Verdict: Blocked');
-    expect(outputLines[outputLines.length - 1]).toBe('Next: move the card back to Executing and do the steps above.');
+    expect(outputLines[outputLines.length - 1]).toBe('1. src/main/example-1.ts:11: run the packaged build on macOS');
   });
 
-  it('ends the default output of a Ready report with exactly the Testing next step and exits 0', () => {
+  it('ends the default output of a Ready report with the verdict line and exits 0', () => {
     const result = runScript(reportOf([findingOf(1)]));
     expect(result.exitCode).toBe(0);
     const outputLines = result.stdout.trimEnd().split('\n');
-    expect(outputLines).toContain('Verdict: Ready');
-    expect(outputLines[outputLines.length - 1]).toBe('Next: move the card to Testing.');
+    expect(outputLines[outputLines.length - 1]).toBe('Verdict: Ready');
+    expect(result.stdout).not.toContain('Next:');
   });
 
   it('exits 2 with a usage line when no findings file is given', () => {
