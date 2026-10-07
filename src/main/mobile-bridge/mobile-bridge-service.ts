@@ -658,9 +658,10 @@ export class MobileBridgeService extends EventEmitter {
       console.log(`[mobile-bridge] device ${label} handshake established`);
     });
     // Frames a rekey held for the phone's reply (BridgeSession.rekeyHeldFrames).
-    // 'established' and 'dispose' are routine; any other reason sealed them
-    // under the old keys after the phone may already have switched, so it is
-    // the line to look for next to a phone request that timed out.
+    // 'established' and 'dispose' are routine; 'deadline', 'read-failed' and
+    // 'send-failed' sealed them under the old keys after the phone may already
+    // have switched, so they are the lines to look for next to a phone request
+    // that timed out.
     session.on('rekeyHoldReleased', ({ frames, heldMs, reason }: { frames: number; heldMs: number; reason: RekeyHoldReleaseReason }) => {
       const line = `[mobile-bridge] device ${label} rekey held ${frames} frame(s) for ${heldMs} ms, released (${reason})`;
       if (reason === 'established' || reason === 'dispose') console.log(line);
