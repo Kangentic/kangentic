@@ -286,6 +286,25 @@ test.describe('Workflows canvas gestures', () => {
     }
   });
 
+  test('a card focused from the keyboard wears the app\'s accent ring, never the browser\'s', async () => {
+    // The browser's ring is the OS accent on Windows, which read as a second
+    // selection, on a card that was not the selected one.
+    const { browser, page } = await launch('draft');
+    try {
+      // A key press first, so the focus that follows counts as keyboard focus,
+      // as when a dialog closed with Escape hands focus back to the card.
+      await page.keyboard.press('Shift');
+      await node(page, 'task-3').evaluate((element) => (element as HTMLElement).focus());
+      await expect(node(page, 'task-3')).toBeFocused();
+      expect(await node(page, 'task-3').evaluate((element) => element.matches(':focus-visible'))).toBe(true);
+      await expect(node(page, 'task-3')).toHaveCSS('outline-style', 'none');
+      await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('outline-style', 'solid');
+      await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('outline-color', await tokenColor(page, '--color-accent'));
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a layout save main refuses puts the moved card back where the workflow says it is', async () => {
     const { browser, page } = await launch('draft');
     try {
