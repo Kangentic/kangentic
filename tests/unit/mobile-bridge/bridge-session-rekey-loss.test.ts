@@ -23,6 +23,7 @@ import {
   createKKHandshake,
   decodeMessage,
   deriveSecretstreamPair,
+  encodeMessage,
   FrameTag,
   generateEd25519KeyPair,
   generateX25519KeyPair,
@@ -82,13 +83,21 @@ function createDelayedPipe(): { desktop: Transport; device: Transport; deliverTo
 /** Mirrors kangentic-mobile's sessionManager: new streams as soon as msg2 is written, unopenable frames dropped silently. */
 class PhoneLikeResponder {
   streams: SecretstreamDirectionPair | null = null;
+  private readonly transport: Transport;
   /** Every opened frame in arrival order: a requestId, a message type, or 'goodbye'. */
   readonly received: string[] = [];
   droppedFrames = 0;
   /** A phone that is away: handshakes go unanswered and its keys stay where they were. */
   ignoreHandshakes = false;
 
+  /** Seals a heartbeat under the phone's current keys, the way the phone answers a desktop heartbeat. */
+  sendHeartbeat(): void {
+    if (!this.streams) throw new Error('sendHeartbeat(): not established');
+    this.transport.send(wrapSessionFrame(SessionFrameKind.Application, this.streams.send.seal(encodeMessage({ type: 'heartbeat' }))));
+  }
+
   constructor(deviceStatic: ReturnType<typeof generateX25519KeyPair>, desktopStaticPublicKey: Uint8Array, transport: Transport) {
+    this.transport = transport;
     transport.onFrame((rawFrame) => {
       const { kind, payload } = unwrapSessionFrame(rawFrame);
       if (kind === SessionFrameKind.Handshake) {
@@ -189,7 +198,11 @@ describe('BridgeSession rekey', () => {
     pipe.deliverToDevice();
     expect(phone.received).toEqual([]);
 
-    // The presence window and the hold deadline are the same 5 s.
+    // Still held through the first presence window (the re-probe's msg1 is
+    // also unanswered), released at the end of the presence budget.
+    vi.advanceTimersByTime(5_000);
+    pipe.deliverToDevice();
+    expect(phone.received).toEqual([]);
     vi.advanceTimersByTime(5_000);
     pipe.deliverToDevice();
     expect(phone.received).toEqual(['held-1']);
@@ -222,7 +235,41 @@ describe('BridgeSession rekey', () => {
     expect(phone.received).toEqual(['goodbye']);
   });
 
-  it('flushes an earlier hold ahead of a second msg1, so a re-probe never strands frames behind a key switch', () => {
+  // A reply stalled past the presence window: the re-probe sends a second
+  // msg1, the phone answers both in order and ends on the second keys. The
+  // desktop used to read reply 1 with handshake 2, destroying it, then find
+  // no handshake for reply 2, and stay on the old keys while the phone moved
+  // on: every frame both ways was lost until the next 2-minute rekey.
+  it('survives a reply that stalls past the presence window: both sides end on the same keys and nothing is lost', () => {
+    vi.useFakeTimers();
+    const { session, phone, pipe } = establishedSession();
+    const desktopReceived: string[] = [];
+    session.on('message', (message: BridgeMessage) => desktopReceived.push(message.type));
+
+    vi.advanceTimersByTime(REHANDSHAKE_INTERVAL_MS);
+    session.sendMessage(response('r1'));
+    // The phone answers msg1, but its reply is stuck in the relay.
+    pipe.deliverToDevice();
+    // The presence window expires and the re-probe sends a second msg1.
+    vi.advanceTimersByTime(5_000);
+    session.sendMessage(response('r2'));
+    pipe.deliverToDevice();
+    // Both replies arrive, in order.
+    pipe.deliverToDesktop();
+    pipe.deliverToDevice();
+
+    session.sendMessage(response('r3'));
+    pipe.deliverToDevice();
+    phone.sendHeartbeat();
+    pipe.deliverToDesktop();
+
+    expect(phone.droppedFrames).toBe(0);
+    expect(phone.received).toEqual(['r1', 'r2', 'r3']);
+    expect(desktopReceived).toEqual(['heartbeat']);
+    session.dispose();
+  });
+
+  it('keeps holding across a second msg1 and releases under the keys the phone ends on when the first msg1 never reached it', () => {
     vi.useFakeTimers();
     const { session, phone, pipe } = establishedSession();
     phone.ignoreHandshakes = true;

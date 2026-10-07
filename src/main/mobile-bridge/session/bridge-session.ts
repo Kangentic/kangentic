@@ -84,19 +84,27 @@ const PEER_PRESENCE_FAILURES_BEFORE_ABSENT = 2;
 const RECONNECT_GRACE_MS = 2 * 1000;
 
 /**
- * The longest a rekey holds application frames waiting for the phone's msg2.
- * One presence window: a reply that has not come by then is not coming on
- * this attempt, and the frames go out under the old keys, which is what every
- * frame did before the hold existed.
+ * The longest a rekey holds application frames waiting for the phone's msg2:
+ * the whole presence budget. A reply that stalls past one window still lands
+ * inside it (the re-probe's second msg1 is answered in order, see
+ * handleHandshakeFrame), so the frames go out under the keys the phone ended
+ * on rather than being lost; past the budget the phone is reported absent,
+ * and the frames go out under the keys the session still holds, which is what
+ * every frame did before the hold existed. Measured relay stalls tonight ran
+ * 1-5 s per direction, so a 5 s hold alone released into exactly the window
+ * where the phone had already switched.
  */
-const REKEY_HOLD_MAX_MS = PEER_PRESENCE_TIMEOUT_MS;
+const REKEY_HOLD_MAX_MS = PEER_PRESENCE_TIMEOUT_MS * PEER_PRESENCE_FAILURES_BEFORE_ABSENT;
+
+/** Initiations kept for a stalled reply; the oldest beyond this is dropped. */
+const MAX_OUTSTANDING_HANDSHAKES = 4;
 
 /**
  * Why a rekey hold ended, carried on the 'rekeyHoldReleased' event. Only
  * 'established' seals under the new keys; every other reason seals under the
  * keys the session still holds, or discards on a dead transport.
  */
-export type RekeyHoldReleaseReason = 'established' | 'deadline' | 'superseded' | 'read-failed' | 'send-failed' | 'dispose';
+export type RekeyHoldReleaseReason = 'established' | 'deadline' | 'read-failed' | 'send-failed' | 'dispose';
 
 /**
  * Whether the phone is actually attached to this device's relay slot, which
@@ -152,7 +160,13 @@ export class BridgeSession extends EventEmitter {
   capabilities: CapabilitySet;
   private readonly transport: Transport;
 
-  private handshake: HandshakeState | null = null;
+  /**
+   * Initiations sent and not yet answered, oldest first. Usually zero or one;
+   * a second appears when a reply stalls past the presence window and the
+   * re-probe sends another msg1 (see handleHandshakeFrame). Bounded by
+   * MAX_OUTSTANDING_HANDSHAKES, dropping the oldest.
+   */
+  private outstandingHandshakes: HandshakeState[] = [];
   private streams: SecretstreamDirectionPair | null = null;
   private rehandshakeTimer: ReturnType<typeof setInterval> | null = null;
   private handshakeRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -300,7 +314,7 @@ export class BridgeSession extends EventEmitter {
     // any half-finished handshake or pending retry. The next 'connected' edge
     // re-initiates.
     this.streams = null;
-    this.handshake = null;
+    this.outstandingHandshakes = [];
     this.dropRekeyHold();
     this.clearHandshakeRetryTimer();
     // No socket means no probe can be answered; the transport branch of
@@ -332,8 +346,10 @@ export class BridgeSession extends EventEmitter {
 
   /**
    * @param replaceOutstanding Send a fresh msg1 even while one is already
-   * outstanding and unanswered on this connection, overwriting `this.handshake`.
-   * Only the REHANDSHAKE_INTERVAL_MS tick passes this - see the guard below.
+   * outstanding and unanswered on this connection. Only the
+   * REHANDSHAKE_INTERVAL_MS tick passes this - see the guard below. The older
+   * initiation stays in outstandingHandshakes: if its reply does turn up, it
+   * is read and retired in order (see handleHandshakeFrame).
    */
   private beginHandshake(replaceOutstanding = false): void {
     if (this.disposed) return;
@@ -349,15 +365,17 @@ export class BridgeSession extends EventEmitter {
     // the outstanding attempt, or the peer has already proven the slot is
     // paired and forwarding live (a msg1 lost there is genuinely lost, and
     // re-sending costs nothing).
-    if (this.handshake && !replaceOutstanding && !this.peerSeenOnThisConnection) return;
+    if (this.outstandingHandshakes.length > 0 && !replaceOutstanding && !this.peerSeenOnThisConnection) return;
     // A fresh initiation supersedes any pending failure retry.
     this.clearHandshakeRetryTimer();
-    this.handshake = createKKHandshake({
+    const handshake = createKKHandshake({
       initiator: true,
       localStatic: this.identity.staticKeyPair,
       remoteStatic: this.remoteStaticPublicKey,
     });
-    const { message } = this.handshake.writeMessage(new Uint8Array(0));
+    const { message } = handshake.writeMessage(new Uint8Array(0));
+    this.outstandingHandshakes.push(handshake);
+    if (this.outstandingHandshakes.length > MAX_OUTSTANDING_HANDSHAKES) this.outstandingHandshakes.shift();
     // A probe episode OPENS here and only here: when no window is armed. The
     // under-budget re-arm in onPresenceProbeTimeout() arms its window BEFORE
     // calling back into this method, so on that call the timer is non-null
@@ -379,13 +397,11 @@ export class BridgeSession extends EventEmitter {
     // reply arrives (see rekeyHeldFrames). Started BEFORE the send for the same
     // reason the presence timer is armed before it: a transport that completes
     // the handshake synchronously inside send() releases the hold right there.
-    // A hold still open from an earlier msg1 (the presence re-probe, an unlock
-    // probe) is flushed first, so its frames reach the relay ahead of the msg1
-    // that could switch the phone's keys.
-    if (this.streams) {
-      this.releaseRekeyHold('superseded');
-      this.startRekeyHold();
-    }
+    // A hold already open from an earlier msg1 (the presence re-probe, an
+    // unlock probe) stays open with its original deadline: the phone may have
+    // switched on that msg1 already, so the held frames wait for the reply
+    // that leaves both sides on the same keys.
+    if (this.streams) this.startRekeyHold();
     this.initiationsSent += 1;
     try {
       this.transport.send(wrapSessionFrame(SessionFrameKind.Handshake, message));
@@ -545,9 +561,10 @@ export class BridgeSession extends EventEmitter {
    * tick covers a parked zombie within 125 s regardless. On a paired socket
    * it costs one rekey, which the phone handles routinely; if the socket is
    * dead the budget spends in ~10 s and redialIfSocketProvablyDead() acts.
-   * One accepted duplicate: a paired socket whose rekey msg1 is already
-   * outstanding lets this through (the phone had answered on it) and gets a
-   * second msg1 that goes nowhere; the budget already running resolves it.
+   * A paired socket whose rekey msg1 is already outstanding lets this through
+   * too (the phone had answered on it). The phone answers both msg1s in order,
+   * and handleHandshakeFrame reads the replies oldest first, so both sides end
+   * on the second keys.
    * Returns whether an initiation actually left, so the caller can log the
    * number that probed rather than the number it asked.
    */
@@ -607,9 +624,9 @@ export class BridgeSession extends EventEmitter {
   }
 
   /**
-   * Opens a rekey hold for the msg1 about to leave. beginHandshake() releases
-   * any earlier hold first, so each hold covers exactly one msg1 and no frame
-   * waits longer than REKEY_HOLD_MAX_MS.
+   * Opens a rekey hold, or leaves an open one alone: a re-initiation during a
+   * hold never extends its deadline, so no frame waits longer than
+   * REKEY_HOLD_MAX_MS from the first msg1 of the episode.
    */
   private startRekeyHold(): void {
     if (this.rekeyHeldFrames) return;
@@ -716,40 +733,51 @@ export class BridgeSession extends EventEmitter {
     }
   }
 
+  /**
+   * Reads a msg2 against the outstanding initiations, OLDEST FIRST. The phone
+   * answers every msg1 it receives, in order, and switches keys on each, so
+   * when a reply stalls past the presence window and the re-probe sends a
+   * second msg1, two replies come back in order. readMessage is NOT
+   * transactional: a failed read has already advanced the handshake's message
+   * index and mixed the bogus ephemeral in, so that object can never complete.
+   * Reading reply 1 with handshake 2 therefore destroyed handshake 2, reply 2
+   * then found no handshake at all, and the desktop stayed on the old keys
+   * while the phone moved on: every frame both ways was lost until the next
+   * rekey tick. Oldest first, a failed read only spends a superseded
+   * initiation, and the newer ones stay intact for the replies still coming.
+   */
   private handleHandshakeFrame(payload: Uint8Array): void {
-    if (!this.handshake) {
+    if (this.outstandingHandshakes.length === 0) {
       this.emit('handshakeFailed', new Error('Received a handshake frame with no handshake in progress'));
       return;
     }
-    let readResult: ReturnType<HandshakeState['readMessage']>;
-    try {
-      readResult = this.handshake.readMessage(payload);
-    } catch (error) {
-      // readMessage is NOT transactional: a failed read has already advanced the
-      // handshake's internal message index and mixed the bogus ephemeral in, so
-      // the object can never complete - even the legitimate reply would now fail.
-      // Drop it and schedule a fresh initiation rather than leaving a half-open
-      // handshake that wedges this device until the next rehandshake tick.
-      this.handshake = null;
+    let matched: HandshakeState | null = null;
+    let lastError: unknown = null;
+    while (this.outstandingHandshakes.length > 0 && !matched) {
+      const candidate = this.outstandingHandshakes.shift();
+      if (!candidate) break;
+      try {
+        // KK is exactly two messages; reading the responder's reply always completes it.
+        if (candidate.readMessage(payload).split) matched = candidate;
+        else lastError = new Error('KK handshake did not complete after the expected two messages');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!matched) {
+      // Nothing this side sent can read the frame: garbled, injected, or a
+      // reply to an initiation already abandoned. Schedule a fresh initiation
+      // rather than leaving the session waiting on a reply that cannot come.
       this.releaseRekeyHold('read-failed');
-      this.emit('handshakeFailed', error);
+      this.emit('handshakeFailed', lastError);
       this.scheduleHandshakeRetry();
       return;
     }
-    if (!readResult.split) {
-      // KK is exactly two messages; reading the responder's reply always completes it.
-      this.handshake = null;
-      this.releaseRekeyHold('read-failed');
-      this.emit('handshakeFailed', new Error('KK handshake did not complete after the expected two messages'));
-      this.scheduleHandshakeRetry();
-      return;
-    }
-    const chainingKey = this.handshake.getChainingKey();
-    this.streams = deriveSecretstreamPair(chainingKey, true);
-    this.handshake = null;
-    // The phone has been on these keys since it wrote msg2: send what the
-    // rekey held, first and in order, now that it can open them.
-    this.releaseRekeyHold('established');
+    this.streams = deriveSecretstreamPair(matched.getChainingKey(), true);
+    // The phone has been on these keys since it wrote this msg2. If a newer
+    // msg1 is still outstanding it has switched again on that one too, so the
+    // held frames wait for the reply that leaves the two sides on the same keys.
+    if (this.outstandingHandshakes.length === 0) this.releaseRekeyHold('established');
     this.clearHandshakeRetryTimer();
     // The peer answered: it is attached to this slot. Retire the probe budget
     // and drop any reconnect hold - if one was armed, the blip healed inside
@@ -924,7 +952,7 @@ export class BridgeSession extends EventEmitter {
     this.unsubscribeFrame = null;
     this.unsubscribeState?.();
     this.unsubscribeState = null;
-    this.handshake = null;
+    this.outstandingHandshakes = [];
     this.streams = null;
     // The session owns its per-device transport (created alongside it in
     // openSessionForDevice); closing it here stops RelayClient's reconnect
