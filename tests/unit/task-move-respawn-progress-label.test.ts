@@ -123,7 +123,9 @@ const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockSpawnAgent = vi.fn(async () => {});
-const mockCreateTransitionEngine = vi.fn(() => ({}));
+// Phase 1 runs the source column's exit automations on every move. An empty
+// summary keeps it quiet instead of logging a TypeError per test.
+const mockCreateTransitionEngine = vi.fn(() => ({ executeTransition: vi.fn(async () => ({ failures: [] })) }));
 
 vi.mock('../../src/main/ipc/helpers/index', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -210,9 +212,10 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     // on the respawn branches they exercise.
     getSession: vi.fn((id: string) => ({ id, taskId: TASK_ID, status: 'running' })),
     findLiveSessionByTaskId: vi.fn(() => null),
-    // Read by resolveLiveEffort; empty means the agent reports no effort, so
-    // the effort-delta test sources from the session record as intended.
+    // Read by resolveReportedEffort; empty means the agent reports no effort,
+    // so the effort-delta test sources from the session record as intended.
     getUsageCache: vi.fn((): Record<string, unknown> => ({})),
+    getFirstReportedEffort: vi.fn((): string | null => null),
   };
   const context = {
     currentProjectId: 'proj-test',

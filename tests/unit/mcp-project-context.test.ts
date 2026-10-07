@@ -67,6 +67,17 @@ vi.mock('../../src/main/ipc/handlers/strategy-propagation', () => ({
   buildColumnStrategyChanges: vi.fn(() => []),
 }));
 
+// The apply step is tested where it lives (task-runtime-override-handler.test.ts);
+// here only the host's wiring around it is: the lock, the fields, the resync.
+const applySettingsSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/handlers/task-runtime-override', () => ({
+  applyTaskSettingsToLiveSession: applySettingsSpy,
+}));
+const withTaskLockSpy = vi.hoisted(() => vi.fn((_taskId: string, work: () => Promise<unknown>) => work()));
+vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
+  withTaskLock: withTaskLockSpy,
+}));
+
 // The task reads' Knowledge Graph lookup is tested where it lives
 // (task-knowledge-store.test.ts, against a real database). Here only the
 // context's gate around it is: the index switch, the summaries switch, and a
@@ -831,6 +842,122 @@ describe('buildCommandContextForProject - onTasksReordered', () => {
     context.onTasksReordered(fakeSwimlane(), ['task-a']);
 
     expect(writeBackForProject).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onTaskSettingsChanged - an agent or phone pin reaches the live session
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onTaskSettingsChanged', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeSettingsContext() {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const send = vi.fn();
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send } },
+      boardEvents: { emitBoardChanged: vi.fn() },
+    } as unknown as IpcContext;
+    return { ipcContext, send, context: buildCommandContextForProject(ipcContext, DEFAULT_ID)! };
+  }
+
+  const liveTask = { id: 'task-1', title: 'T', session_id: 'session-1' } as never;
+  const effortOnly = { model: false, effort: true };
+
+  /** Lets the deferred apply and its `.then` / `.catch` settle. */
+  async function settleDeferredApply(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('applies the fields the write moved, under the task lock, for this project', async () => {
+    applySettingsSpy.mockResolvedValue({ ok: true, mode: 'persisted' });
+    const { ipcContext, context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+
+    await vi.waitFor(() => expect(applySettingsSpy).toHaveBeenCalledOnce());
+    expect(withTaskLockSpy).toHaveBeenCalledWith('task-1', expect.any(Function));
+    expect(applySettingsSpy).toHaveBeenCalledWith(
+      ipcContext, DEFAULT_ID, PROJECT_PATH, 'task-1', effortOnly,
+    );
+  });
+
+  // The restart writes the agent's exit sequence into its PTY. Run inside the
+  // tool call, that lands before the reply, so an agent updating its own task
+  // never learns its turn is ending.
+  it('starts the apply only after the call that triggered it has returned', async () => {
+    applySettingsSpy.mockResolvedValue({ ok: true, mode: 'persisted' });
+    const { context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+    await Promise.resolve();
+
+    expect(withTaskLockSpy).not.toHaveBeenCalled();
+    expect(applySettingsSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(applySettingsSpy).toHaveBeenCalledOnce());
+  });
+
+  it('re-syncs the board quietly after a restart, which cleared the task session id', async () => {
+    applySettingsSpy.mockResolvedValue({ ok: true, mode: 'restart' });
+    const { send, context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID));
+  });
+
+  it('sends no re-sync when nothing restarted', async () => {
+    applySettingsSpy.mockResolvedValue({ ok: true, mode: 'persisted' });
+    const { send, context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+
+    await vi.waitFor(() => expect(applySettingsSpy).toHaveBeenCalledOnce());
+    await settleDeferredApply();
+    expect(send).not.toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID);
+  });
+
+  it('re-syncs and warns when the restart failed after clearing the session id', async () => {
+    applySettingsSpy.mockResolvedValue({ ok: false, reason: 'respawn failed: boom' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('respawn failed: boom'));
+    warnSpy.mockRestore();
+  });
+
+  it('logs a thrown apply instead of leaving an unhandled rejection', async () => {
+    applySettingsSpy.mockRejectedValue(new Error('task vanished'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.(liveTask, effortOnly);
+
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Settings apply failed'), expect.objectContaining({ message: 'task vanished' }),
+    ));
+    expect(send).not.toHaveBeenCalledWith('TASK_SESSION_RESYNC', DEFAULT_ID);
+    errorSpy.mockRestore();
+  });
+
+  it('does nothing for a task with no live session', async () => {
+    const { context } = makeSettingsContext();
+
+    context.onTaskSettingsChanged?.({ id: 'task-1', title: 'T', session_id: null } as never, effortOnly);
+    await settleDeferredApply();
+
+    expect(withTaskLockSpy).not.toHaveBeenCalled();
+    expect(applySettingsSpy).not.toHaveBeenCalled();
   });
 });
 

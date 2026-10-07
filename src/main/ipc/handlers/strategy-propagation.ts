@@ -1,7 +1,7 @@
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan, resolveLiveEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
 import { restartSessionForSettingsChange } from './session-reconcile';
 import { reconcileAutoSpawnChange } from './auto-spawn-reconcile';
@@ -78,9 +78,13 @@ export function propagateStrategyToLiveSessions(
   // `getUsageCache()` rebuilds a plain object from the app-wide session map on
   // every call, so reading it per task would be O(tasks x live sessions across
   // ALL open projects). Nothing mutates it inside this synchronous loop, so one
-  // snapshot serves the whole pass.
+  // snapshot serves the whole pass. The first reported effort is a plain map
+  // lookup, so it is read live rather than snapshotted.
   const usageCacheSnapshot = context.sessionManager.getUsageCache();
-  const usageCacheReader = { getUsageCache: () => usageCacheSnapshot };
+  const reportedEffortReader = {
+    getUsageCache: () => usageCacheSnapshot,
+    getFirstReportedEffort: (sessionId: string) => context.sessionManager.getFirstReportedEffort(sessionId),
+  };
 
   for (const { task, before, after, sourceName } of changes) {
     // Re-saving at a value the task already resolves to must restart nothing.
@@ -111,15 +115,17 @@ export function propagateStrategyToLiveSessions(
       task,
       toLane: after,
       project,
-      liveEffort: resolveLiveEffort(usageCacheReader, task.session_id),
+      ...resolveReportedEffort(reportedEffortReader, task.session_id),
     });
     const restartReason = plan?.restartReason;
     if (!restartReason) continue;
     // An edit restarts only for effort it changed. A session drifts from its
-    // column's effort with no edit at all: a manual `/effort`, or the model
-    // silently downgrading the level. A model-only edit used to realign that
-    // drift with a typed `/effort`; a restart cuts the turn, so an edit that
-    // left effort alone leaves the drift alone too. A move still realigns it.
+    // column's effort with no edit at all, through a manual `/effort`. A silent
+    // downgrade of the level we asked for is not drift, since
+    // `resolveSourceEffort` treats it as applied. A model-only edit used to
+    // realign that drift with a typed `/effort`; a restart cuts the turn, so an
+    // edit that left effort alone leaves the drift alone too. A move still
+    // realigns it.
     if (restartReason === 'effort' && before?.effort_override === after?.effort_override) continue;
 
     if (!projectId || !projectPath) {

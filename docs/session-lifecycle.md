@@ -486,8 +486,8 @@ whole unlocked worktree/branch-checkout window between the suspend and the event
 `starting-agent` label.
 
 The in-place restart, `restartSessionForSettingsChange` (`src/main/ipc/handlers/session-reconcile.ts`),
-follows the same contract with a required `phase`: the ContextBar model/effort pick and a column
-or Board Profile propagation emit `switching-model` (or `applying-settings` for an effort-only
+follows the same contract with a required `phase`: the ContextBar model/effort pick, an MCP
+`kangentic_update_task` settings write, and a column or Board Profile propagation emit `switching-model` (or `applying-settings` for an effort-only
 restart), and the auto_command escalation emits `resending-command` ("Re-sending command...").
 It emits before its
 suspend and clears the label in a `finally` once the resume has returned or failed, the ordering

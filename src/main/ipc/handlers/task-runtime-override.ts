@@ -7,9 +7,16 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
-import { resolveRestartReason, restartPhaseFor } from '../../transition-engine/injection-plan';
-import { projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
-import { DEFAULT_AGENT } from '../../../shared/types';
+import {
+  resolveReportedEffort,
+  resolveRestartReason,
+  resolveSourceEffort,
+  resolveTargetSettings,
+  restartPhaseFor,
+} from '../../transition-engine/injection-plan';
+import { SessionRepository } from '../../db/repositories/session-repository';
+import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
+import { getProjectDb } from '../../db/database';
 import type {
   TaskSetRuntimeOverrideInput,
   TaskSetRuntimeOverrideResult,
@@ -17,12 +24,114 @@ import type {
 import type { IpcContext } from '../ipc-context';
 
 /**
+ * Which of a task's settings a write asked to apply. A field left false keeps
+ * the live session as it is even when the session drifted from the task's
+ * config, so a pick of one field never restarts for a manual change to the
+ * other.
+ */
+export interface SettingsFieldsChanged {
+  model: boolean;
+  effort: boolean;
+}
+
+/**
+ * Apply a task's ALREADY-PERSISTED model and effort to its live session:
+ * restart it when a changed field's target differs from what the session runs
+ * at, otherwise leave it alone.
+ *
+ * Shared by the ContextBar pick (`TASK_SET_RUNTIME_OVERRIDE` below) and the
+ * MCP `update_task` write (`onTaskSettingsChanged` in `mcp-project-context.ts`),
+ * so a pin set by a user and one set by an agent or the phone reach a running
+ * session the same way.
+ *
+ * Targets come from the task row as it stands now, folded through its Board
+ * Profile and the agent-gated project default, the same resolution the respawn
+ * applies (`resolveSpawnOverrides`). Reading the row after the write matters: a
+ * pin clears the task's profile, and a target read from the old profile would
+ * restart toward a model the respawn never passes.
+ *
+ * Sources come from the live session, never from the task's old config:
+ * - effort: `resolveSourceEffort` with no pin (the pin is what was written),
+ *   so an effort the user already set by hand with `/effort` restarts nothing,
+ *   and a level the model silently downgraded counts as applied.
+ * - model: the session's own `applied_model`. Not live telemetry, because the
+ *   agent reports a canonical id while the config holds the flag string.
+ * The record is the live session's own, since the task's newest can belong to
+ * an isolated track. NULL on it means the session launched at the agent
+ * default, so a concrete target restarts.
+ *
+ * Caller MUST hold `withTaskLock(taskId)`.
+ */
+export async function applyTaskSettingsToLiveSession(
+  context: IpcContext,
+  projectId: string,
+  projectPath: string,
+  taskId: string,
+  changed: SettingsFieldsChanged,
+): Promise<TaskSetRuntimeOverrideResult> {
+  // Reconciled against the registry, as SESSION_RESUME and the task move are.
+  // On the raw pointer, a task whose CLI had ended by itself still read as
+  // live: a model pick then suspended a dead session and respawned it. With
+  // the pointer cleared it lands on `persisted`, and the override is picked up
+  // at the next spawn.
+  const { task } = reconcileTaskSessionRef(context, projectId, taskId);
+  if (!task.session_id) return { ok: true, mode: 'persisted' };
+
+  const { swimlanes } = getProjectRepos(context, projectId);
+  const lane = applyProfileToLane(
+    swimlanes.getById(task.swimlane_id),
+    loadTaskProfile(context, task, projectPath),
+  );
+  const { targetModel, targetEffort } = resolveTargetSettings({
+    task,
+    lane,
+    project: context.projectRepo.getById(projectId),
+  });
+
+  const ownRecord = resolveOwnSessionRecord(
+    new SessionRepository(getProjectDb(projectId)),
+    task.session_id,
+    task.id,
+  );
+  const sourceModel = changed.model ? (ownRecord?.applied_model ?? null) : targetModel;
+  const sourceEffort = changed.effort
+    ? resolveSourceEffort({
+      taskEffortOverride: null,
+      ...resolveReportedEffort(context.sessionManager, task.session_id),
+      appliedEffort: ownRecord?.applied_effort,
+      targetEffort,
+    })
+    : targetEffort;
+
+  // Only a change to a CONCRETE value restarts. Clearing a field to "use
+  // default" with nothing below it (the effective value becomes null) has no
+  // `--model` / `--effort` to set, and `--resume` keeps whatever the session
+  // runs at, so restarting would churn for nothing. Same rule a column move
+  // applies (`resolveRestartReason`).
+  const restartReason = resolveRestartReason({ sourceModel, targetModel, sourceEffort, targetEffort });
+  if (!restartReason) return { ok: true, mode: 'persisted' };
+
+  // Suspend + respawn so the new model/effort reach the CLI as launch flags.
+  // The shared helper resumes idle (no auto_command, no continuation), so an
+  // in-flight turn stops, and it keeps `--resume` viable, so a respawn failure
+  // leaves the record `suspended` for the existing "Resume" UI to retry.
+  const result = await restartSessionForSettingsChange(
+    context, projectId, projectPath, taskId,
+    { phase: restartPhaseFor(restartReason) },
+  );
+  return result.ok
+    ? { ok: true, mode: 'restart' }
+    : { ok: false, reason: result.reason };
+}
+
+/**
  * Handler for `IPC.TASK_SET_RUNTIME_OVERRIDE`. Persists the per-task model
  * and/or effort override and applies the change to the live PTY session if
- * one exists.
+ * one exists (`applyTaskSettingsToLiveSession`).
  *
  * Two apply paths, picked by what changed:
- *   - `persisted`: no live session, or no change to a concrete value. The
+ *   - `persisted`: no live session, no change to a concrete value, or the
+ *     session already runs at the pick (say after a manual `/effort`). The
  *     override lands in the DB and the next manual spawn/resume picks it up via
  *     `prepare-spawn.ts`.
  *   - `restart`: a MODEL or EFFORT change to a concrete value. We `suspend`
@@ -56,16 +165,8 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
       }
 
       return withTaskLock(input.taskId, async () => {
-        const { tasks, swimlanes } = getProjectRepos(context, projectId);
+        const { tasks } = getProjectRepos(context, projectId);
         if (!tasks.getById(input.taskId)) return { ok: false, reason: 'task not found' };
-        // The pointer this handler acts on, reconciled against the registry
-        // as SESSION_RESUME and the task move are. On the raw pointer, a task
-        // whose CLI had ended by itself still read as live here: a model pick
-        // then suspended a dead session and respawned it, and an effort pick
-        // scheduled keystrokes into a PTY that was gone. With the pointer
-        // cleared both land on the `persisted` branch below, which is what a
-        // task with no live agent should get: the override is picked up at
-        // its next spawn.
         const { task } = reconcileTaskSessionRef(context, projectId, input.taskId);
 
         // Validate adapter resolution BEFORE persisting. If the task has no
@@ -88,91 +189,24 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
           return { ok: false, reason: `unknown agent "${resolvedAgentName ?? '(none)'}"` };
         }
 
-        // Resolve effective values. The user's intent is "what model/effort
-        // should this task USE", not "what's the raw override row" - so when
-        // they pick "Use column default" we must resolve through to the
-        // swimlane's override before deciding whether anything changed.
-        // Without this, clearing a per-task model on a column with
-        // `model_override='opus'` would read as a change to null (no restart)
-        // even though the session must now run opus.
-        // Folded through the task's Board Profile: "use column default" must
-        // resolve to the rung the task actually runs on for this column, not the
-        // column's base pin, or the restart applies a model the task was never
-        // going to use.
-        const lane = applyProfileToLane(
-          swimlanes.getById(task.swimlane_id),
-          loadTaskProfile(context, task, projectPath),
-        );
-        const swimlaneModel = lane?.model_override ?? null;
-        const swimlaneEffort = lane?.effort_override ?? null;
-        const project = context.projectRepo.getById(projectId);
-        // The project tier applies only when the task runs the project's default
-        // agent, the same gate the respawn's `resolveSpawnOverrides` applies.
-        // Without it, a task on another agent read the project default as its
-        // effective value and restarted for a model or effort the respawn
-        // never passes.
-        const projectDefaultsApply = projectModelDefaultsApply(
-          task.agent_override ?? lane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT,
-          project?.default_agent,
-        );
-        const projectDefaultModel = projectDefaultsApply ? project?.default_model ?? null : null;
-        const projectDefaultEffort = projectDefaultsApply ? project?.default_effort ?? null : null;
-
-        const oldOverrideModel = task.model_override ?? null;
-        const oldOverrideEffort = task.effort_override ?? null;
-        const newOverrideModel = input.model !== undefined ? input.model : oldOverrideModel;
-        const newOverrideEffort = input.effort !== undefined ? input.effort : oldOverrideEffort;
-
-        const oldEffectiveModel = oldOverrideModel ?? swimlaneModel ?? projectDefaultModel;
-        const newEffectiveModel = newOverrideModel ?? swimlaneModel ?? projectDefaultModel;
-        const oldEffectiveEffort = oldOverrideEffort ?? swimlaneEffort ?? projectDefaultEffort;
-        const newEffectiveEffort = newOverrideEffort ?? swimlaneEffort ?? projectDefaultEffort;
-
         // Persist before any PTY action. After this point, any downstream
-        // failure (a suspend or respawn error) still leaves the
-        // user's choice captured so the next manual resume picks it up via
-        // prepare-spawn. The renderer treats `ok: false` after this point as
-        // "saved but not yet live" rather than "discarded".
+        // failure (a suspend or respawn error) still leaves the user's choice
+        // captured so the next manual resume picks it up via prepare-spawn. The
+        // renderer treats `ok: false` after this point as "saved but not yet
+        // live" rather than "discarded".
         tasks.updateOverrides(input.taskId, {
-          model_override: newOverrideModel,
-          effort_override: newOverrideEffort,
+          model_override: input.model !== undefined ? input.model : task.model_override ?? null,
+          effort_override: input.effort !== undefined ? input.effort : task.effort_override ?? null,
         });
 
-        // No live PTY -> nothing to apply beyond the DB write. The earlier
-        // `unknown agent` guard already returned for a live session with no
-        // adapter.
-        if (!task.session_id) return { ok: true, mode: 'persisted' };
-
-        // Only a change to a CONCRETE value restarts. Clearing a field to "use
-        // default" with nothing below it (the effective value becomes null) has
-        // no `--model` / `--effort` to set, and `--resume` keeps whatever the
-        // session runs at, so restarting would churn for nothing. The next
-        // spawn naturally uses the agent default because prepare-spawn passes
-        // `undefined` when both task and swimlane are null. The same holds when
-        // the user picked a value identical to the one already active. Same rule
-        // a column move applies (`resolveRestartReason`).
-        const restartReason = resolveRestartReason({
-          sourceModel: oldEffectiveModel,
-          targetModel: newEffectiveModel,
-          sourceEffort: oldEffectiveEffort,
-          targetEffort: newEffectiveEffort,
+        // A concrete pin detaches the task from its Board Profile
+        // (`updateOverrides`), which can move the OTHER field's target too, so
+        // a detach counts as a change to both.
+        const profileDetached = task.profile_id != null && tasks.getById(input.taskId)?.profile_id == null;
+        return applyTaskSettingsToLiveSession(context, projectId, projectPath, input.taskId, {
+          model: input.model !== undefined || profileDetached,
+          effort: input.effort !== undefined || profileDetached,
         });
-        if (!restartReason) {
-          return { ok: true, mode: 'persisted' };
-        }
-
-        // Restart path: suspend + respawn so the new model/effort reach the CLI
-        // as launch flags. The shared helper resumes idle (no auto_command, no
-        // continuation), so an in-flight turn stops, and it keeps `--resume`
-        // viable, so a respawn failure leaves the record `suspended` for the
-        // existing "Resume" UI to retry.
-        const result = await restartSessionForSettingsChange(
-          context, projectId, projectPath, input.taskId,
-          { phase: restartPhaseFor(restartReason) },
-        );
-        return result.ok
-          ? { ok: true, mode: 'restart' }
-          : { ok: false, reason: result.reason };
       });
     },
   );

@@ -28,11 +28,13 @@ const mockTaskList = vi.fn();
 /** The task row the handler re-reads inside the task lock before restarting. */
 const mockTaskGetById = vi.fn();
 /**
- * Live usage keyed by session id, read by `resolveLiveEffort`. Empty by default,
- * which means the agent reports no effort and the delta sources from the session
- * record exactly as it did before live telemetry was consulted.
+ * Live usage keyed by session id, read by `resolveReportedEffort`. Empty by
+ * default, which means the agent reports no effort and the delta sources from
+ * the session record exactly as it did before live telemetry was consulted.
  */
 let mockUsageCache: Record<string, { model: { id: string; displayName: string; effort?: string } }> = {};
+/** The first effort each session reported, keyed by session id. Empty by default. */
+let mockFirstReportedEffort: Record<string, string> = {};
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -120,6 +122,7 @@ function makeContext() {
     sessionManager: {
       getSession: (...args: unknown[]) => mockGetSession(...args),
       getUsageCache: () => mockUsageCache,
+      getFirstReportedEffort: (sessionId: string) => mockFirstReportedEffort[sessionId] ?? null,
     },
     terminalSubmitScheduler: { scheduleKeystrokes: (...args: unknown[]) => mockScheduleKeystrokes(...args) },
     mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
@@ -141,6 +144,7 @@ function makeContextWithProjectRowPath(path: string | undefined) {
     sessionManager: {
       getSession: (...args: unknown[]) => mockGetSession(...args),
       getUsageCache: () => mockUsageCache,
+      getFirstReportedEffort: (sessionId: string) => mockFirstReportedEffort[sessionId] ?? null,
     },
     terminalSubmitScheduler: { scheduleKeystrokes: (...args: unknown[]) => mockScheduleKeystrokes(...args) },
     mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
@@ -151,6 +155,7 @@ function makeContextWithProjectRowPath(path: string | undefined) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUsageCache = {};
+  mockFirstReportedEffort = {};
   mockGetSession.mockReturnValue({ status: 'running' });
   mockPrepareInjectionPlan.mockReturnValue({
     sequence: [],
@@ -280,13 +285,14 @@ describe('propagateStrategyToLiveSessions', () => {
     expect(mockPrepareInjectionPlan.mock.calls[0][0]).toMatchObject({ toLane: after });
   });
 
-  it('hands prepareInjectionPlan the liveEffort resolved for the task\'s own session', () => {
+  it('hands prepareInjectionPlan the live and first reported effort of the task\'s own session', () => {
     // A decoy entry under a different session id proves the lookup keys off
     // the task's OWN session_id ('sess-1'), not just any populated entry.
     mockUsageCache = {
       'sess-other': { model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5', effort: 'low' } },
       'sess-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'medium' } },
     };
+    mockFirstReportedEffort = { 'sess-other': 'low', 'sess-1': 'high' };
 
     propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
       task: makeTask(),
@@ -295,7 +301,10 @@ describe('propagateStrategyToLiveSessions', () => {
       sourceName: 'Executing',
     }], 'proj-1');
 
-    expect(mockPrepareInjectionPlan.mock.calls[0][0]).toMatchObject({ liveEffort: 'medium' });
+    expect(mockPrepareInjectionPlan.mock.calls[0][0]).toMatchObject({
+      liveEffort: 'medium',
+      firstReportedEffort: 'high',
+    });
   });
 });
 

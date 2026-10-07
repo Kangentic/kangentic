@@ -2635,6 +2635,14 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * The first effort level a session's agent reported after it launched, or
+   * null. Read with the live level by `resolveReportedEffort`.
+   */
+  getFirstReportedEffort(sessionId: string): string | null {
+    return this.telemetry.getFirstReportedEffort(sessionId);
+  }
+
+  /**
    * Upsert a partial SessionUsage entry for a session. Thin wrapper
    * around SessionTelemetry.setSessionUsage for external callers.
    */
