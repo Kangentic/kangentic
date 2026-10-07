@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import type { TranscriptEntry } from '../../src/shared/types';
+import { parseClaudeTranscript, parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
 import {
   MESSAGE_PREVIEW_MAX_CHARS,
   assistantMessagePreviews,
   lastAssistantPreview,
 } from '../../src/main/agent/shared/message-preview';
+
+/** An Opus 5.5 turn with real signatures and made-up text: two narration lines between tool calls, then the final text. */
+const NARRATION_FIXTURE_PATH = path.resolve(__dirname, '..', 'fixtures', 'claude-narration-turn.jsonl');
 
 function assistant(text: string, uuid = 'a1', ts = 1): TranscriptEntry {
   return { kind: 'assistant', uuid, ts, blocks: [{ type: 'text', text }] };
@@ -116,5 +121,23 @@ describe('assistantMessagePreviews', () => {
     expect(lastAssistantPreview(entries)).toBe(
       assistantMessagePreviews(entries, { count: 1, maxChars: MESSAGE_PREVIEW_MAX_CHARS })[0]?.text,
     );
+  });
+
+  /**
+   * The trail fell behind the terminal on Opus 5.5 because the `●` lines it
+   * prints between tool calls are narration, stored as thinking blocks. Read
+   * through the real Claude parser, they must reach the trail in order.
+   */
+  it('carries Claude narration lines from a real parse, between the tool calls', async () => {
+    const expected = [
+      expect.objectContaining({ uuid: 'b-narration', text: 'The client sends each request once with no retry. Adding a wrapper with exponential backoff next.' }),
+      expect.objectContaining({ uuid: 'c-narration', text: 'Wrapper is in place. Running the client tests to check the retry path.' }),
+      expect.objectContaining({ uuid: 'd-text', text: 'Requests now retry up to three times with exponential backoff, and the client tests pass.' }),
+    ];
+    const parsed = await parseClaudeTranscript(NARRATION_FIXTURE_PATH);
+    expect(assistantMessagePreviews(parsed, { count: 5, maxChars: 200 })).toEqual(expected);
+    // The board trail reads through the stateless window parse, not the cached one.
+    const window = await parseClaudeTranscriptWindow(NARRATION_FIXTURE_PATH, 0, 1024 * 1024);
+    expect(assistantMessagePreviews(window.entries, { count: 5, maxChars: 200 })).toEqual(expected);
   });
 });

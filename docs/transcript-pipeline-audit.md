@@ -29,8 +29,14 @@ files on a dogfooding machine (`~/.claude/projects/<slug>/*.jsonl`, `~/.codex`, 
 - **Sidechain interleaving: refuted.** Real main-session JSONL contains zero `isSidechain:true`
   entries; subagent conversations live in separate `<sessionId>/subagents/agent-*.jsonl` files.
   No interleaving bug. #223 could later choose to expose subagent files explicitly.
-- **Thinking blocks: signature-only, confirmed.** The parser's skip-empty-thinking assumption
-  still holds on the current Claude CLI (30 sampled, 0 with plaintext).
+- **Thinking blocks: real thinking is signature-only; text-bearing blocks are narration.** The
+  first audit sampled 30 thinking blocks and found none with plaintext. Since 2026-10, Opus 5.5
+  and Sonnet 5.5 write text-bearing thinking blocks, and every one measured is narration: its
+  signature carries the block kind `narration`, and Claude Code prints it as an ordinary message.
+  The parser reads that kind the same way (`adapters/claude/thinking-signature.ts`) and emits
+  those blocks as `text`. Real thinking is still persisted empty, and the parser still skips it.
+  A conversation the retrieval index stored before this change keeps narration chunks under the
+  `Assistant (thinking):` label until its transcript grows and is re-indexed. The text is the same.
 - **Orphaned tool_results: none observed** (765/765 paired, including a post-compaction file).
   The markdown hardening is robustness, not a fix for an observed loss.
 

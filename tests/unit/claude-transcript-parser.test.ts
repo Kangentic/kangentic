@@ -1,8 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseClaudeTranscript, claudeProjectSlug } from '../../src/main/agent/adapters/claude/transcript-parser';
+import {
+  parseClaudeTranscript,
+  parseClaudeTranscriptWindow,
+  claudeProjectSlug,
+} from '../../src/main/agent/adapters/claude/transcript-parser';
+import { resetUnrecognizedTextThinkingReportForTests } from '../../src/main/agent/adapters/claude/thinking-signature';
 import { transcriptToMarkdown } from '../../src/shared/transcript-format';
 
 describe('claudeProjectSlug', () => {
@@ -48,6 +53,31 @@ describe('claudeProjectSlug', () => {
     expect(slug.startsWith(sanitized.slice(0, 200))).toBe(true);
   });
 });
+
+/** An Opus 5.5 turn with real signatures and made-up text: two narration lines between tool calls, then the final text. */
+const NARRATION_FIXTURE_PATH = path.resolve(__dirname, '..', 'fixtures', 'claude-narration-turn.jsonl');
+
+interface FixtureThinkingBlock {
+  type?: string;
+  thinking?: string;
+  signature?: string;
+}
+
+/** The real signature of the first thinking block in the narration fixture that `matches` accepts. */
+function narrationFixtureSignature(matches: (block: FixtureThinkingBlock) => boolean): string {
+  for (const line of fs.readFileSync(NARRATION_FIXTURE_PATH, 'utf-8').split('\n')) {
+    if (line.trim().length === 0) continue;
+    const content = (JSON.parse(line) as { message?: { content?: unknown } }).message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as FixtureThinkingBlock[]) {
+      if (block.type === 'thinking' && block.signature && matches(block)) return block.signature;
+    }
+  }
+  throw new Error('narration fixture has no matching thinking block');
+}
+
+const realNarrationSignature = (): string => narrationFixtureSignature((block) => (block.thinking ?? '').length > 0);
+const realThinkingSignature = (): string => narrationFixtureSignature((block) => (block.thinking ?? '').length === 0);
 
 function writeFixture(lines: object[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-test-'));
@@ -237,7 +267,7 @@ describe('parseClaudeTranscript', () => {
     });
   });
 
-  it('preserves non-empty thinking blocks but drops the empty signature-only blocks Claude actually persists', async () => {
+  it('keeps a text-bearing thinking block with no signature as thinking, and drops the empty signature-only ones', async () => {
     tmpFile = writeFixture([
       // Signature-only shape: the thinking text is absent and only an
       // encrypted `signature` is persisted. The empty-thinking assistant
@@ -251,11 +281,12 @@ describe('parseClaudeTranscript', () => {
           content: [{ type: 'thinking', thinking: '', signature: 'ErcCCmIIDB...' }],
         },
       },
-      // Text-bearing shape: Claude Code persists thinking text on some
-      // turns and only an encrypted `signature` on others, so both forms
-      // are live and this branch is load-bearing rather than speculative.
-      // DO NOT delete this case as "unrealistic" - it locks in the
-      // contract.
+      // Text-bearing shape with no signature: older transcripts, other
+      // writers, and any block whose signature does not decode as
+      // narration. It stays a `thinking` block. (Real text-bearing thinking
+      // on Opus 5.5 is narration and becomes text; see the narration cases
+      // below.) DO NOT delete this case as "unrealistic" - it locks in the
+      // fallback.
       {
         type: 'assistant',
         uuid: 'a2',
@@ -281,6 +312,136 @@ describe('parseClaudeTranscript', () => {
         { type: 'text', text: 'done' },
       ],
     });
+  });
+
+  /**
+   * Opus 5.5 writes the `●` lines it shows between tool calls as thinking
+   * blocks tagged `narration` in the signature. Claude Code prints them as
+   * messages, so the parser must hand them on as text, or the board trail and
+   * the viewer fall behind the terminal exactly when the agent is busiest.
+   */
+  it('turns narration thinking blocks into text, and drops the empty thinking-kind ones', async () => {
+    const entries = await parseClaudeTranscript(NARRATION_FIXTURE_PATH);
+    const assistantEntries = entries.filter((entry) => entry.kind === 'assistant');
+    expect(assistantEntries.map((entry) => entry.uuid)).toEqual([
+      'a-read', 'b-narration', 'b-edit', 'c-narration', 'c-bash', 'd-text',
+    ]);
+    expect(entries.find((entry) => entry.uuid === 'b-narration')).toMatchObject({
+      kind: 'assistant',
+      blocks: [{ type: 'text', text: 'The client sends each request once with no retry. Adding a wrapper with exponential backoff next.' }],
+    });
+    expect(entries.find((entry) => entry.uuid === 'c-narration')).toMatchObject({
+      kind: 'assistant',
+      blocks: [{ type: 'text', text: 'Wrapper is in place. Running the client tests to check the retry path.' }],
+    });
+    const blockTypes = assistantEntries.flatMap((entry) => (entry.kind === 'assistant' ? entry.blocks.map((block) => block.type) : []));
+    expect(blockTypes).not.toContain('thinking');
+  });
+
+  it('keeps each message\'s usage on the same line it claimed before narration was told apart', async () => {
+    // A narration line is the first line of its message id that carries
+    // anything, as it was when it parsed as `thinking`. Mapping it to text must
+    // not move usage to another line: the turn-usage ledger is keyed by line.
+    const entries = await parseClaudeTranscript(NARRATION_FIXTURE_PATH);
+    const usageBearing = entries.filter((entry) => entry.kind === 'assistant' && entry.usage !== undefined);
+    expect(usageBearing.map((entry) => entry.uuid)).toEqual(['a-read', 'b-narration', 'c-narration', 'd-text']);
+  });
+
+  it('keeps a text-bearing thinking block as thinking when its signature does not decode as narration', async () => {
+    tmpFile = writeFixture([
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        timestamp: '2026-10-05T00:00:01Z',
+        message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: 'weighing the edit', signature: 'sig' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a2',
+        timestamp: '2026-10-05T00:00:02Z',
+        message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: 'a real thinking signature', signature: realThinkingSignature() }] },
+      },
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    expect(entries.map((entry) => (entry.kind === 'assistant' ? entry.blocks[0]?.type : entry.kind))).toEqual(['thinking', 'thinking']);
+  });
+
+  it('logs a text-bearing thinking block that is not narration, and stays quiet on a real narration turn', async () => {
+    resetUnrecognizedTextThinkingReportForTests();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await parseClaudeTranscriptWindow(NARRATION_FIXTURE_PATH, 0, 1024 * 1024);
+      expect(warn).not.toHaveBeenCalled();
+
+      tmpFile = writeFixture([
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          timestamp: '2026-10-05T00:00:01Z',
+          message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: 'weighing the edit', signature: realThinkingSignature() }] },
+        },
+      ]);
+      await parseClaudeTranscript(tmpFile);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).not.toContain('weighing the edit');
+    } finally {
+      warn.mockRestore();
+      resetUnrecognizedTextThinkingReportForTests();
+    }
+  });
+
+  it('keeps a whitespace-only narration block as thinking, so the same lines still emit entries', async () => {
+    // Claude Code prints narration only when its text is non-blank. Dropping a
+    // blank one here would stop its line emitting an entry, and move the
+    // message's usage onto a different line.
+    tmpFile = writeFixture([
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        timestamp: '2026-10-05T00:00:01Z',
+        message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: '  \n', signature: realNarrationSignature() }] },
+      },
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: 'assistant', uuid: 'a1', blocks: [{ type: 'thinking', text: '  \n' }] });
+  });
+
+  it('keeps a whitespace-only block with a non-narration signature as thinking, emits its entry, and does not log', async () => {
+    // Blank text is not "text-bearing" for the report: only a non-blank,
+    // non-narration block means the signature format moved.
+    resetUnrecognizedTextThinkingReportForTests();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      tmpFile = writeFixture([
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          timestamp: '2026-10-05T00:00:01Z',
+          message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: '  \n', signature: realThinkingSignature() }] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'a2',
+          timestamp: '2026-10-05T00:00:02Z',
+          message: { model: 'claude-opus-5-5', content: [{ type: 'thinking', thinking: '  \n', signature: 'sig' }] },
+        },
+      ]);
+      const entries = await parseClaudeTranscript(tmpFile);
+      expect(entries).toHaveLength(2);
+      expect(entries[0]).toMatchObject({ kind: 'assistant', uuid: 'a1', blocks: [{ type: 'thinking', text: '  \n' }] });
+      expect(entries[1]).toMatchObject({ kind: 'assistant', uuid: 'a2', blocks: [{ type: 'thinking', text: '  \n' }] });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      resetUnrecognizedTextThinkingReportForTests();
+    }
+  });
+
+  it('keeps each message\'s usage on the same line in the stateless window parse the board trail and indexer use', async () => {
+    const window = await parseClaudeTranscriptWindow(NARRATION_FIXTURE_PATH, 0, 1024 * 1024);
+    const usageBearing = window.entries.filter((entry) => entry.kind === 'assistant' && entry.usage !== undefined);
+    expect(usageBearing.map((entry) => entry.uuid)).toEqual(['a-read', 'b-narration', 'c-narration', 'd-text']);
   });
 
   it('flattens tool_result content with text, image, and tool_reference blocks', async () => {

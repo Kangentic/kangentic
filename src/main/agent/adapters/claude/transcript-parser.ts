@@ -13,6 +13,7 @@ import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { touchBounded, heldBytes } from '../../shared/bounded-lru';
 import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { estimateToolResultTokens } from './tool-result-tokens';
+import { isNarrationSignature, reportUnrecognizedTextThinking } from './thinking-signature';
 import {
   parseWindowBytes,
   prependTruncationMarker,
@@ -196,17 +197,28 @@ function parseTranscriptLine(
         if (block.type === 'text' && typeof block.text === 'string') {
           blocks.push({ type: 'text', text: block.text });
         } else if (block.type === 'thinking') {
-          // Claude Code persists thinking text SOMETIMES, so both shapes are
-          // live and this branch is load-bearing rather than speculative.
-          // Measured across the transcripts on a dev machine: 1,979 thinking
-          // blocks carry text against 16,879 that hold only an encrypted
-          // `signature`, and both forms appear on the same day - so this is a
-          // per-turn difference, not a version cutover to wait out. An empty
-          // one would render as a useless empty disclosure, so it is skipped;
-          // a text-bearing one becomes a real block, which also makes it the
-          // line that claims the message's usage below.
-          if (typeof block.thinking === 'string' && block.thinking.length > 0) {
-            blocks.push({ type: 'thinking', text: block.thinking });
+          // Real thinking is persisted empty, with only an encrypted
+          // `signature`, and would render as a useless empty disclosure, so it
+          // is skipped. The thinking blocks that DO carry text are narration:
+          // the server's summaries of the prose between tool calls, tagged
+          // `narration` inside the signature. Claude Code decodes that tag and
+          // prints them as ordinary `●` messages, so they become `text` here,
+          // or the board trail and the viewer would miss lines the terminal
+          // shows (see `thinking-signature.ts`). A text-bearing block whose
+          // signature does not decode as narration stays `thinking`, and is
+          // logged once, since on current models that means the format moved.
+          // Whitespace-only text also stays `thinking` and is not logged:
+          // Claude Code prints narration only when its text is non-blank.
+          //
+          // Either way, exactly the lines that carry text emit a block, so a
+          // narration line still claims the message's usage below, the same
+          // line it claimed before narration was told apart.
+          const thinkingText = typeof block.thinking === 'string' ? block.thinking : '';
+          if (thinkingText.length > 0) {
+            const hasVisibleText = thinkingText.trim().length > 0;
+            const shownAsText = hasVisibleText && isNarrationSignature(block.signature);
+            if (hasVisibleText && !shownAsText) reportUnrecognizedTextThinking(block.signature);
+            blocks.push(shownAsText ? { type: 'text', text: thinkingText } : { type: 'thinking', text: thinkingText });
           }
         } else if (block.type === 'tool_use') {
           blocks.push({
@@ -227,8 +239,11 @@ function parseTranscriptLine(
     // "attributed" so the following text entry (same id) is deduped out of its
     // own usage, silently losing the whole turn's per-turn tokens. Claiming
     // usage only when an entry is actually emitted keeps it on the first
-    // VISIBLE line of each message id - which, when the thinking text IS
-    // persisted, is that thinking line itself.
+    // VISIBLE line of each message id - which, for a narration block, is that
+    // narration line itself. Which line that is must not change between
+    // versions: the turn-usage ledger is keyed by line and never purged, so
+    // moving the claim counts a message twice on the next re-walk (see
+    // `ConversationUsageStore`).
     if (blocks.length === 0) return;
 
     // Attribute this turn's usage to exactly one emitted entry per message id
