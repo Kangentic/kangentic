@@ -958,9 +958,20 @@ async function runCssExperiments(id, experiments) {
     const animations = await page.evaluate(() => document.getAnimations().filter((animation) => animation.playState === 'running').length);
     if (experiment.zoomShot) {
       // Zoom in over the canvas centre with the CSS already applied, so a layer
-      // that keeps its first raster scale shows up blurred in the shot.
+      // that keeps its first raster scale shows up blurred in the shot. With
+      // `zoomAt`, over the first element that selector names inside the canvas.
       const canvas = await page.locator('[data-testid="workflow-canvas"]').boundingBox();
-      const centre = { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
+      const target = experiment.zoomAt ? await page.evaluate(({ selector, box }) => {
+        for (const element of document.querySelectorAll(selector)) {
+          const rect = element.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          if (x > box.x + 40 && x < box.x + box.width - 40 && y > box.y + 40 && y < box.y + box.height - 40) return { x, y };
+        }
+        return null;
+      }, { selector: experiment.zoomAt, box: canvas }) : null;
+      if (experiment.zoomAt && !target) console.log(`[rig] zoom shot ${experiment.name}: nothing matches ${experiment.zoomAt} inside the canvas; zooming at the centre`);
+      const centre = target ?? { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
       await page.mouse.move(centre.x, centre.y);
       await page.keyboard.down('Control');
       for (let step = 0; step < 12; step++) { await page.mouse.wheel(0, -120); await sleep(40); }

@@ -586,9 +586,10 @@
 /* A dash offset is not a composited property, so each frame repaints the
    link. React Flow draws each edge in its own <svg>; giving a flowing one its
    own layer keeps that repaint off the viewport's layer (decision 54), whose
-   tiles hold the cards. Measured at 100 cards (decision 155): a pan missed 12
-   or more refreshes in 5 of 14 runs with the flow in the viewport's layer,
-   and in none of 9 with this layer. */
+   tiles hold the cards. A precaution, not a measured win (decision 155): at
+   100 cards, in runs that tried both, a pan missed 12 or more refreshes once
+   in 15 without it and never with it, and the layer cost nothing measurable
+   and stays sharp at 2x zoom. */
 .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
   will-change: transform;
 }

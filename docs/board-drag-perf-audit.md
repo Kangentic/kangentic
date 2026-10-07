@@ -314,18 +314,28 @@ because the sortable context changes) and the overlay drawing the taller card.
 The selected card's own links now flow, their dashes moving from blocker to dependent
 (`.workflow-link-flow`, a `stroke-dashoffset` animation). A dash offset is not a composited
 property, so every frame repaints the link, and inside the viewport's single layer that repaint
-lands on tiles full of cards. At `W100` the stylesheet A/B ran three arms in alternation: the flow
-as built, the flow switched off, and the flowing link's own `<svg>` (React Flow draws each edge in
-one) on a layer of its own with `will-change: transform`. Over four rig invocations, one of them
-with 16 busy threads loading the CPU, a pan missed 12 or more refreshes in 5 of 14 runs with the
-flow as built, three of them at a 13.9ms p95 (every other refresh). With the flow off it was 1 of
-13, a run with another animation going (14 against 11). With the layer it was none of 9, at most
-1 missed. Idle and card drag were flat in every arm. The layer shipped (`index.css`), and only a
-flowing link gets one, so a selection adds one layer per link it flows on.
+lands on tiles full of cards. At `W100` the stylesheet A/B compared the flow inside the viewport's
+layer, the flow switched off, and the flowing link's own `<svg>` (React Flow draws each edge in
+one) on a layer of its own with `will-change: transform`. Seven rig invocations, two of them with
+16 busy threads loading the CPU:
+
+| Invocations | Flow in the viewport's layer | Flow on its own layer | Flow off |
+|---|---|---|---|
+| The first two (no layer arm yet) | 4 of 5 pans missed 12 or more | not run | 1 of 4, with another animation running |
+| The last five (all three arms in each) | 1 of 15 | 0 of 15, at most 1 missed | 0 of 15 |
+
+The first two invocations caught the flow halving a pan's rate (a 13.9ms p95, every other
+refresh, three times). That never recurred in the last five, in any arm, so the comparison that
+matters, the last five, shows no clear win for the layer. It shows no cost either: Layerize stayed
+at 0.2 to 0.4ms a frame in every arm, idle and card drag were flat, and a 2x zoom on a flowing link
+(`zoomShot` with `zoomAt`) is as sharp with the layer as without. The layer shipped (`index.css`) as
+a precaution that confines the per-frame repaint to the link, and only a flowing link gets one, so
+a selection adds one layer per link it flows on.
 
 The `--experiments` table now leads with `anims`, the count of running animations under each
 stylesheet, so an arm that switches an animation off shows it did (13 with the flow, 11 without,
-for a selected card with two links).
+for a selected card with two links). A `zoomShot` experiment can name `zoomAt`, a selector, to
+zoom over the first element it matches inside the canvas instead of the canvas's centre.
 
 ## Reproducing
 
