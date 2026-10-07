@@ -1011,13 +1011,49 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
-  test('Fit view and Auto layout are one width', async () => {
-    const { browser, page } = await launch('draft');
+  test('Fit view, Auto layout and Add task are one width', async () => {
+    // Wide enough that the canvas keeps the tools' words (760px of canvas and up).
+    const { browser, page } = await launch('draft', { width: 2000 });
     try {
-      const fitView = await byTestId(page, 'workflow-fit-view').boundingBox();
-      const autoLayout = await byTestId(page, 'workflow-auto-layout').boundingBox();
-      if (!fitView || !autoLayout) throw new Error('tools not laid out');
-      expect(Math.abs(fitView.width - autoLayout.width)).toBeLessThanOrEqual(1);
+      await expect(byTestId(page, 'workflow-auto-layout')).toContainText('Auto layout');
+      const tools = await page.evaluate(() => ['workflow-fit-view', 'workflow-auto-layout', 'workflow-add-task'].map((testId) => {
+        const element = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+        return { testId, width: element?.getBoundingClientRect().width ?? 0, overflows: element ? element.scrollWidth > element.clientWidth : true };
+      }));
+      // The shared floor is wider than every label, so no platform's font makes one tool wider than the rest.
+      expect(tools.filter((tool) => tool.overflows)).toEqual([]);
+      const widths = tools.map((tool) => tool.width);
+      expect(Math.min(...widths)).toBeGreaterThan(0);
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('at every width the view tools stay clear of Add task, giving up their words below 760px of canvas', async () => {
+    const { browser, page } = await launch('draft', { width: 2000 });
+    try {
+      for (const width of [2000, 1700, 1500, 1340, 1200, 1000, 900]) {
+        await page.setViewportSize({ width, height: 950 });
+        const read = () => page.evaluate(() => {
+          const box = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.getBoundingClientRect();
+          const label = document.querySelector<HTMLElement>('[data-testid="workflow-auto-layout"] span');
+          return {
+            canvas: box('workflow-canvas').width,
+            autoLayoutRight: box('workflow-auto-layout').right,
+            addTaskLeft: box('workflow-add-task').left,
+            labelShown: label !== null && getComputedStyle(label).display !== 'none',
+          };
+        });
+        // Settled: the words show exactly when the canvas has the room.
+        await expect.poll(async () => { const state = await read(); return state.labelShown === state.canvas >= 760; }).toBe(true);
+        const state = await read();
+        expect(state.autoLayoutRight, `at a ${width}px window (canvas ${Math.round(state.canvas)}px)`).toBeLessThan(state.addTaskLeft);
+      }
+      // Without its words a tool keeps its name.
+      await expect(byTestId(page, 'workflow-fit-view')).toHaveAttribute('aria-label', 'Fit view');
+      await expect(byTestId(page, 'workflow-auto-layout')).toHaveAttribute('aria-label', 'Auto layout');
+      await expect(byTestId(page, 'workflow-add-task')).toContainText('Add task');
     } finally {
       await browser.close();
     }

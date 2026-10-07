@@ -430,7 +430,8 @@ export function WorkflowCanvas({
     // data-no-dismiss: the pane's grab cursor is an action, so a click on empty
     // canvas must not close a task window (light-dismiss-denylist.md).
     <div
-      className="relative h-full w-full workflow-canvas"
+      // The container the canvas tools' width ladder reads.
+      className="@container relative h-full w-full workflow-canvas"
       data-no-dismiss
       // While a link is drawn the cards' full-size targets take the pointer
       // and the ports hide (index.css). One attribute here, so no card
@@ -537,6 +538,20 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
   );
 }
 
+/**
+ * Every canvas tool is one width: Fit view and Auto layout side by side, and
+ * Add task on its own at the bottom center. The floor clears "Auto layout" in
+ * each platform's system font, the widest of the three labels.
+ *
+ * Add task sits centered, so on a canvas narrower than 760px it would run into
+ * the pair at the bottom left (the 900px window floor leaves the canvas about
+ * 480px). There the pair gives way first, as the header's ladder does: Fit view
+ * and Auto layout show their icons alone, named by their tooltips, and Add
+ * task, which changes the plan, keeps its word.
+ */
+const TOOL_WIDTH = 'min-w-[136px]';
+const VIEW_TOOL_WIDTH = 'min-w-0 @[760px]:min-w-[136px]';
+const VIEW_TOOL_LABEL = 'hidden @[760px]:inline';
 const CANVAS_TOOL_CLASS = 'inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
 
 /**
@@ -552,21 +567,22 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
   onFitView: () => void;
   onAutoLayout: () => void;
 }) {
-  const tool = CANVAS_TOOL_CLASS;
+  const tool = `${CANVAS_TOOL_CLASS} ${VIEW_TOOL_WIDTH}`;
   return (
     <div className="grid grid-cols-2 gap-2" data-testid="workflow-canvas-tools">
-      <button type="button" onClick={onFitView} title="Fit every card in view" className={tool} data-testid="workflow-fit-view">
-        <Scan size={14} className="text-fg-muted" />Fit view
+      <button type="button" onClick={onFitView} title="Fit every card in view" aria-label="Fit view" className={tool} data-testid="workflow-fit-view">
+        <Scan size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Fit view</span>
       </button>
       <button
         type="button"
         onClick={onAutoLayout}
         disabled={!moved}
         title={moved ? 'Put moved cards back in the automatic layout' : 'No card has been moved'}
+        aria-label="Auto layout"
         className={tool}
         data-testid="workflow-auto-layout"
       >
-        <LayoutGrid size={14} className="text-fg-muted" />Auto layout
+        <LayoutGrid size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Auto layout</span>
       </button>
     </div>
   );
@@ -585,7 +601,7 @@ function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | n
       onClick={onAddTask}
       disabled={addTaskRefusal !== null}
       title={addTaskRefusal ?? 'Add a task to this workflow'}
-      className={CANVAS_TOOL_CLASS}
+      className={`${CANVAS_TOOL_CLASS} ${TOOL_WIDTH}`}
       data-testid="workflow-add-task"
     >
       <Plus size={14} className="text-fg-muted" />Add task
