@@ -1719,6 +1719,9 @@ nowhere, which only the other Haiku run noticed. The gap it reported is real.
   `migration-safety`) were not measured and stay on Sonnet.
 - On Amazon Bedrock the `haiku` alias still resolves to Haiku 4.5, so there the two auditors run a
   model this round did not measure.
+- E6 measured a targeted audit of two changed files. `/release` runs `doc-auditor` over every
+  anchor, which reads far more and is the run most likely to cross Haiku's 100k tier. That run
+  was not measured.
 
 ### 16.5 Cost and caveats
 

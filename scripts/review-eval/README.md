@@ -145,3 +145,17 @@ auditors run on. They are `adoptFinderModel`, `pickFinderModel` and `adoptAudito
 - **E6 plants** went into a detached scratch worktree of HEAD. doc-auditor: a channel constant with
   no row in `docs/architecture.md`, and a row for a channel that does not exist. ipc-auditor: a
   preload method the mock no longer provides, and a mock method with no channel behind it.
+- **The Knowledge Graph half** ran through `scripts/eval-answer-models.mjs` over calls captured
+  from a `/preview` seeded with `dev.seedKnowledgeGraphReal`, its `agent.cliPaths.claude` pointed
+  at a scratch tee wrapper. `recommendAnswerLevel` returned `low` for Haiku 5.5, and
+  `adoptSummaryModel` returned `{"adopt":false,"nothingInvented":false,"coverageHeld":true}`. One
+  setting chooses the model for both jobs, and it has no default, so nothing in the code changed.
+- **The counting question is synthetic:** task 529's 300-row table question (its
+  `effort-thinking.mjs` prompt), sent through the captured Ask arguments, settings and MCP config.
+  Its answers were regraded strictly, a stated 14 and `#300`, because `eval-ask.mjs`'s `grade()`
+  is a substring match and reads the 14 inside `#147` as the count. That grader bug is still open.
+- **`tableRefsOf` was fixed after the runs.** It split the raw stdin, and the Ask path sends the
+  prompt as one stream-json line, so it found no table and every named ref read as invented. The
+  fixed reader brought every run's invented refs to zero; no pass or fail changed.
+- **The thin summary inputs are thinner than the real board's.** The preview seed mirrors tasks
+  from the conversation index, and some of them carry only a title and the seed's own note.

@@ -39,7 +39,8 @@ type KnowledgeGraphConfig = NonNullable<AppConfig['knowledgeGraph']>;
  * answers: a summary always runs at the adapter's recommended level. Measured on
  * this project's tasks, summaries at high effort read the same as at low and took
  * twice as long, while answers at the highest level got counts right that low
- * got wrong on CLI 2.1.283 (on 2.1.293 every level got that count right). So
+ * got wrong in a bare `--print` probe (a later replay through the app's own Ask
+ * call got that count right at every level). So
  * raising effort for a hard question neither slows the summaries nor marks every
  * one of them as written another way.
  */
