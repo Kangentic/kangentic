@@ -247,10 +247,22 @@ export class PtyHostCore {
     return this.bufferManager.getSerializedFrame(sessionId);
   }
 
-  /** The mobile seed with its parser barrier offset (PtyBufferManager.getSeedFrame), after the same settle. */
-  async getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number }> {
+  /**
+   * The mobile seed with its parser barrier offset (PtyBufferManager.getSeedFrame),
+   * after the same settle. The two phases are timed separately for the phone's
+   * slow-request line: a slow open caused by the repaint settle is not fixed by
+   * serializing fewer rows, and one caused by the serialize is.
+   */
+  async getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
+    const settleStartedAt = performance.now();
     if (settle) await this.bufferManager.waitForResizeRepaint(sessionId);
-    return this.bufferManager.getSeedFrame(sessionId);
+    const serializeStartedAt = performance.now();
+    const seed = await this.bufferManager.getSeedFrame(sessionId);
+    return {
+      ...seed,
+      settleMs: Math.round(serializeStartedAt - settleStartedAt),
+      serializeMs: Math.round(performance.now() - serializeStartedAt),
+    };
   }
 
   getRawScrollback(sessionId: string): string {

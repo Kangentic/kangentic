@@ -89,7 +89,7 @@ class FakeSessionManager extends EventEmitter {
   getSeedFrame = vi.fn(async (sessionId: string) => {
     const frame = await this.getSerializedFrame(sessionId);
     this.duringSeed?.();
-    return { frame, barrierOffset: this.seedBarrierOffset };
+    return { frame, barrierOffset: this.seedBarrierOffset, settleMs: 12, serializeMs: 3 };
   });
   getActivityCache = vi.fn(() => ({ 'sess-1': 'thinking' }));
   getActivityReason = vi.fn(() => ({ kind: 'turn-active' }));
@@ -311,7 +311,7 @@ describe('handleReadStream', () => {
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
     const spans = takeRequestSpans('device-1', 'req-1');
     expect(spans).toHaveLength(1);
-    expect(spans[0]).toMatch(/^seed \d+ ms, 4k chars$/);
+    expect(spans[0]).toMatch(/^seed \d+ ms \(settle 12 ms, serialize 3 ms\), 4k chars$/);
 
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, new SubscriptionRegistry());
     expect(takeRequestSpans('device-1', 'req-1')).toEqual([]);

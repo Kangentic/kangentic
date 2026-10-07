@@ -451,7 +451,7 @@ export class PtyHostClient {
     return this.transport.request('getSerializedFrame', { sessionId, settle });
   }
 
-  getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number }> {
+  getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
     return this.transport.request('getSeedFrame', { sessionId, settle });
   }
 
