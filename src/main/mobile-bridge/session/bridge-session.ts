@@ -891,10 +891,12 @@ export class BridgeSession extends EventEmitter {
   }
 
   /**
-   * Bytes the transport has accepted but not yet handed to the network, or
-   * null when the transport cannot say (a test double, or a future transport
-   * with no such queue). A large value next to a slow request means the
-   * response sat in the socket, not in a handler.
+   * Bytes the transport has accepted but the OS socket has not, or null when
+   * the transport cannot say (a test double, or a future transport with no
+   * such queue). Not the bytes still in flight: on undici a 4 MB burst through
+   * the hosted relay read 0 here within 30 ms while the receiver needed 2.5 s
+   * for it, because the OS takes the whole burst into its send buffer. A
+   * nonzero value next to a slow request means a stalled socket.
    */
   get transportBufferedBytes(): number | null {
     const candidate = this.transport as Partial<{ bufferedAmount: number }>;
