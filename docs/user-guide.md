@@ -1101,15 +1101,15 @@ Nothing picks them for you: until both are set, pressing Enter in the box opens 
 Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
 task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
 cheaper model is usually enough. Measured on Claude, Haiku 5.5 at `low` answered a counting
-question and a "most expensive" question right in every run, as Sonnet did, a second faster and at
-about a twentieth of the cost; it also invents more in task summaries (below), and the one model
-does both jobs. Every agent that has a headless read-only mode can answer; Warp
+question and a "most expensive" question right in every run, as Sonnet did. It was a second faster
+and cost about a twentieth as much. It also invents more in task summaries (below), and the one
+model does both jobs. Every agent that has a headless read-only mode can answer; Warp
 cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
 at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
-across many tasks: in one measurement Claude's `max` got right a count that `low` got wrong, at
-about ten times the wait, though a later replay through the app's own Ask call got it right at
-every level. Effort is for answers
-only: summaries always write at the recommended level, where a higher one changed nothing.
+across many tasks. In one measurement Claude's `max` got right a count that `low` got wrong, at
+about ten times the wait. A later replay through the app's own Ask call got it right at every
+level. Effort is for answers only: summaries always write at the recommended level, where a higher
+one changed nothing.
 
 The **Index** card below it lists what the index searches, one line per source:
 **Conversations**, **Tasks** and **Commits** are always indexed while the index is on, on switches

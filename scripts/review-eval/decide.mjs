@@ -170,7 +170,7 @@ export function adoptAuditorModel(incumbentRuns, candidateRuns) {
     if (runs.length !== E6_RUNS) throw new Error(`adoptAuditorModel: the ${label} needs exactly ${E6_RUNS} runs`);
     for (const run of runs) {
       if (typeof run.missingFound !== 'boolean' || typeof run.extraFound !== 'boolean' || typeof run.falseFindings !== 'number') {
-        throw new Error(`adoptAuditorModel: a ${label} run needs missingFound, extraFound and falseFindings`);
+        throw new Error(`adoptAuditorModel: every ${label} run needs missingFound, extraFound and falseFindings`);
       }
     }
   }

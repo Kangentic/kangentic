@@ -161,6 +161,35 @@ describe('cost.mjs command line', () => {
     expect(output.perTranscript[0]).not.toHaveProperty('requests');
   });
 
+  it('sums the requests above the tier across transcripts, and keeps each transcript\'s own counts', () => {
+    const root = makeScratchDirectory();
+    const line = (messageId: string, promptTokens: number): string =>
+      JSON.stringify({
+        type: 'assistant',
+        isSidechain: true,
+        message: { id: messageId, model: 'claude-tiered-1', role: 'assistant', content: [], usage: { input_tokens: promptTokens, output_tokens: 0 } },
+      });
+    // The first transcript has 1 request of 2 above the tier, the second 2 of 3, so a total that kept
+    // only the first transcript's counts, or overwrote instead of adding, could not give 3 of 5.
+    const firstPath = path.join(root, 'first.jsonl');
+    const secondPath = path.join(root, 'second.jsonl');
+    fs.writeFileSync(firstPath, [line('msg_a1', 100_000), line('msg_a2', 100_001)].join('\n'));
+    fs.writeFileSync(secondPath, [line('msg_b1', 99_999), line('msg_b2', 200_000), line('msg_b3', 100_001)].join('\n'));
+    const pricesPath = path.join(root, 'prices.json');
+    const flat = { input: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1, output: 1 };
+    fs.writeFileSync(pricesPath, JSON.stringify({
+      'claude-tiered': { ...flat, above: { promptTokens: 100_000, input: 5, cacheWrite5m: 5, cacheWrite1h: 5, cacheRead: 5, output: 5 } },
+    }));
+
+    const result = runScript(COST_SCRIPT_PATH, ['--prices', pricesPath, firstPath, secondPath]);
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.perTranscript[0].aboveTier).toEqual({ 'claude-tiered-1': { above: 1, requests: 2 } });
+    expect(output.perTranscript[1].aboveTier).toEqual({ 'claude-tiered-1': { above: 2, requests: 3 } });
+    expect(output.total.aboveTier).toEqual({ 'claude-tiered-1': { above: 3, requests: 5 } });
+  });
+
   it('exits 2 with a usage line when --prices is missing or has no value', () => {
     const fixture = makeCostFixture();
 

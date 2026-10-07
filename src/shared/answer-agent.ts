@@ -38,11 +38,10 @@ type KnowledgeGraphConfig = NonNullable<AppConfig['knowledgeGraph']>;
  * The agent, model and effort one job runs at. The chosen effort is for
  * answers: a summary always runs at the adapter's recommended level. Measured on
  * this project's tasks, summaries at high effort read the same as at low and took
- * twice as long, while answers at the highest level got counts right that low
- * got wrong in a bare `--print` probe (a later replay through the app's own Ask
- * call got that count right at every level). So
- * raising effort for a hard question neither slows the summaries nor marks every
- * one of them as written another way.
+ * twice as long. Answers at the highest level got counts right that low got
+ * wrong in a bare `--print` probe. A later replay through the app's own Ask call
+ * got that count right at every level. So raising effort for a hard question
+ * neither slows the summaries nor marks every one of them as written another way.
  */
 export function agentJobChoice(config: KnowledgeGraphConfig | undefined, job: AgentJob): AgentJobChoice {
   return {

@@ -26,7 +26,7 @@
  * the app runs answers in its own answer home. `MAX_THINKING_TOKENS=0` is set at low only, as the
  * Claude adapter's `answerEnv` does.
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,18 +38,25 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
 /** Past this, a replay counts as failed and its CLI is stopped. */
 const RUN_TIMEOUT_MS = 5 * 60_000;
-/** Lower effort first: on an exact tie between passing levels, the lower one is recommended. */
+/**
+ * Lower effort first: on an exact tie between passing levels, the lower one is recommended. Kept
+ * apart from the copy in `review-eval/decide.mjs` on purpose: each belongs to its own pre-registered
+ * rule, and a shared list would let an edit for one rule change the other.
+ */
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-/** The model id a CLI alias is expected to answer from. Checked against the stream, never assumed. */
+/**
+ * The model id a CLI alias is expected to answer from. Checked against the stream, never assumed.
+ * A new model generation needs its ids here, or every run of that alias throws in assertAnsweredBy.
+ */
 const EXPECTED_MODEL_PREFIX = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' };
 
 /**
  * A task ref as the answer prompt writes it: a ticket (`#561`), a cross-project ticket
  * (`mobile#88`), or a conversation (`C12`). The same pattern as `parseAnswerRefs` in
- * `src/main/retrieval/answer-prompt.ts`.
+ * `src/main/retrieval/answer-prompt.ts`, which a unit test compares character for character.
  */
-const REF_PATTERN = /(?<![\w#])((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?)?#\d{1,6}|C\d{1,4})\b/g;
+export const REF_PATTERN = /(?<![\w#])((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?)?#\d{1,6}|C\d{1,4})\b/g;
 
 function normalizeRef(ref) {
   const hash = ref.indexOf('#');
@@ -163,12 +170,18 @@ function median(values) {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-/** Throws when a run answered from a model other than the one its arm asked for. */
+/**
+ * Throws when a run answered from a model other than the one its arm asked for, or cannot be
+ * scored: a run with no result line has no time to put in a median, and an ungraded run (no
+ * `--expect`, or graded by hand but not filled in) has no right or wrong to count.
+ */
 function assertAnsweredBy(run, label) {
   const models = run.models ?? [];
   if (models.length === 0) throw new Error(`${label}: a run has no answering model recorded`);
   const stray = models.filter((model) => !model.startsWith(run.expectedModel));
   if (stray.length > 0) throw new Error(`${label}: a run asked for ${run.expectedModel} answered from ${stray.join(', ')}`);
+  if (!Number.isFinite(run.doneMs)) throw new Error(`${label}: a run has no result line, so no done time; rerun it`);
+  if (typeof run.right !== 'boolean') throw new Error(`${label}: a run is not graded right or wrong`);
 }
 
 /**
@@ -264,21 +277,73 @@ async function loadSummaryParser() {
     platform: 'node',
     write: false,
   });
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-')), 'summary-prompt.mjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-'));
+  const file = path.join(directory, 'summary-prompt.mjs');
   fs.writeFileSync(file, built.outputFiles[0].text);
-  return import(pathToFileURL(file).href);
+  try {
+    return await import(pathToFileURL(file).href);
+  } finally {
+    removeDirectory(directory);
+  }
 }
 
-function runOnce(cli, argv, stdinText, env) {
+/** A temp folder removal that never throws: on Windows a CLI's leftover child can still hold it. */
+function removeDirectory(directory) {
+  try {
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch {
+    // Left in the temp folder; the OS clears it.
+  }
+}
+
+/** Stop the CLI and the MCP servers it started. On Windows `child.kill()` ends only the CLI. */
+function stopTree(child) {
+  if (process.platform !== 'win32') {
+    child.kill();
+    return;
+  }
+  try {
+    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } catch {
+    // Already gone.
+  }
+}
+
+/** One replay from an empty temp folder. Never rejects: a CLI that cannot start resolves with code -1. */
+export function runOnce(cli, argv, stdinText, env) {
   return new Promise((resolve) => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-cwd-'));
     const started = performance.now();
-    const child = spawn(cli, argv, { cwd, env, shell: false, windowsHide: true });
+    let child;
+    try {
+      child = spawn(cli, argv, { cwd, env, shell: false, windowsHide: true });
+    } catch (error) {
+      // Node throws at once, rather than emitting `error`, for an argument it refuses outright.
+      removeDirectory(cwd);
+      resolve({ code: -1, timedLines: [], stdout: '', stderr: error instanceof Error ? error.message : String(error), wallMs: 0 });
+      return;
+    }
     const timedLines = [];
     let pending = '';
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill(), RUN_TIMEOUT_MS);
+    let settled = false;
+    // A spawn failure fires `error` and may also fire `close`, so the run settles once, on whichever comes first.
+    const settle = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (pending) timedLines.push({ atMs: performance.now() - started, line: pending.replace(/\r$/, '') });
+      removeDirectory(cwd);
+      resolve({ code, timedLines, stdout, stderr: stderr.slice(-2000), wallMs: performance.now() - started });
+    };
+    const timer = setTimeout(() => stopTree(child), RUN_TIMEOUT_MS);
+    child.on('error', (error) => {
+      stderr += `${error.message}\n`;
+      settle(-1);
+    });
+    // A CLI that exits before reading its prompt closes the pipe; the exit code reports that run.
+    child.stdin.on('error', () => {});
     child.stdout.on('data', (chunk) => {
       const atMs = performance.now() - started;
       const text = chunk.toString('utf8');
@@ -292,32 +357,32 @@ function runOnce(cli, argv, stdinText, env) {
       }
     });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (pending) timedLines.push({ atMs: performance.now() - started, line: pending });
-      fs.rmSync(cwd, { recursive: true, force: true });
-      resolve({ code, timedLines, stdout, stderr: stderr.slice(-2000), wallMs: performance.now() - started });
-    });
+    child.on('close', (code) => settle(code));
     child.stdin.end(stdinText);
   });
 }
 
-function parseArgs(argv) {
+/** The command line, refusing an arm or run count that would spend agent calls on nothing. */
+export function parseArgs(argv) {
   const value = (flag) => {
     const at = argv.indexOf(flag);
     return at === -1 ? null : argv[at + 1] ?? null;
   };
-  return {
-    mode: argv[0],
-    capture: value('--capture'),
-    expect: value('--expect'),
-    arms: (value('--arms') ?? '').split(',').filter(Boolean).map((arm) => {
-      const [model, effort] = arm.split(':');
-      return { model, effort };
-    }),
-    runs: Number(value('--runs') ?? 1),
-    out: value('--out'),
-  };
+  const arms = (value('--arms') ?? '').split(',').filter(Boolean).map((arm) => {
+    const [model, effort] = arm.split(':');
+    if (!model || !EFFORT_ORDER.includes(effort)) throw new Error(`--arms: ${arm} is not model:effort with effort one of ${EFFORT_ORDER.join(', ')}`);
+    return { model, effort };
+  });
+  const runs = Number(value('--runs') ?? 1);
+  if (!Number.isInteger(runs) || runs < 1) throw new Error(`--runs: ${value('--runs')} is not a positive whole number`);
+  return { mode: argv[0], capture: value('--capture'), expect: value('--expect'), arms, runs, out: value('--out') };
+}
+
+/** The tag each task in a summary prompt opens with, as `buildSummaryPrompt` writes it. */
+export function summaryTaskCountOf(stdinText) {
+  const count = (stdinText.match(/<task label="D\d+">/g) ?? []).length;
+  if (count === 0) throw new Error('The captured summary prompt has no <task label="D1"> tags; buildSummaryPrompt\'s format changed');
+  return count;
 }
 
 function refuseIfAutomated() {
@@ -333,6 +398,11 @@ async function main(argv) {
   }
   refuseIfAutomated();
   const call = JSON.parse(fs.readFileSync(path.join(options.capture, 'call.json'), 'utf8'));
+  // Node will not start a .cmd or .bat without a shell, and a shell drops the captured argv's empty
+  // values (`--tools ''`), so a shim has to be replaced by the executable it launches.
+  if (process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(call.cli)) {
+    throw new Error(`call.json names the shim ${call.cli}; set "cli" to the CLI's own executable`);
+  }
   const stdinText = fs.readFileSync(path.join(options.capture, 'stdin.txt'), 'utf8');
   const settingsPath = path.join(options.capture, 'settings.json');
   const mcpPath = path.join(options.capture, 'mcp.json');
@@ -342,7 +412,7 @@ async function main(argv) {
   const grade = expectation ? (await import('./eval-ask.mjs')).__testing.grade : null;
   const tableRefs = ask ? tableRefsOf(stdinText) : null;
   const parser = ask ? null : await loadSummaryParser();
-  const taskCount = ask ? 0 : (stdinText.match(/<task label="D\d+">/g) ?? []).length;
+  const taskCount = ask ? 0 : summaryTaskCountOf(stdinText);
 
   const records = [];
   for (const arm of options.arms) {

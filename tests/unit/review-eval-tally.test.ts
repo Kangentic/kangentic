@@ -379,6 +379,30 @@ describe('tally.mjs command line', () => {
     for (const row of printed.rows) expect(row).not.toHaveProperty('runs');
   });
 
+  it('counts the requests above a tiered model\'s threshold per row, summed over the row\'s runs, and prices them on the upper card', () => {
+    const fixture = makeCommandFixture();
+    // The fixture's sonnet requests carry 1,510 / 2,120 / 3,055 / 52 / 6 / 4,003 / 7 / 8 prompt tokens,
+    // so a 2,000 threshold puts exactly three of the eight over it (2,120, 3,055 and 4,003). Haiku has
+    // no upper card and is never counted. The upper card doubles every sonnet rate, so those three
+    // requests cost 8.37 + 12.205 + 16.303 = 36.878 more per run than the flat 44.512.
+    const doubled = Object.fromEntries(Object.entries(ROUND_PRICE).map(([tokenClass, rate]) => [tokenClass, rate * 2]));
+    fs.writeFileSync(fixture.pricesPath, JSON.stringify({
+      'claude-sonnet': { ...ROUND_PRICE, above: { promptTokens: 2_000, ...doubled } },
+      'claude-haiku': ROUND_PRICE,
+    }));
+
+    const result = runTally(['S1', fixture.scoresPath, fixture.keyPath, '--prices', fixture.pricesPath, '--transcript-dir', fixture.transcriptDirectory]);
+
+    expect(result.exitCode).toBe(0);
+    const [armA, armB] = JSON.parse(result.stdout).rows as Array<{ arm: string; finders: number; usd: number; requestsAboveTier: number }>;
+    expect([armA.arm, armA.finders, armA.requestsAboveTier]).toEqual(['A', 1, 3]);
+    // Arm B is two runs of the same transcript, so its count is the sum over both runs: twice arm A's.
+    expect([armB.arm, armB.finders, armB.requestsAboveTier]).toEqual(['B', 2, 6]);
+    // (42.7 + 36.878 + 1.812) dollars a run, doubled for arm B.
+    expect(armA.usd).toBe(81.39);
+    expect(armB.usd).toBe(162.78);
+  });
+
   it('accepts the flags before the positional arguments and reads each run\'s own transcript path without --transcript-dir', () => {
     const fixture = makeCommandFixture();
     // Only run three names its transcript in the key; give the other two the same, so the key alone
