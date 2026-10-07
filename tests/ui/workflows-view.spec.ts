@@ -848,18 +848,28 @@ test.describe('Workflows canvas tools and search', () => {
   });
 
   test('drawing a link says what a release does over each card, and links on release', async () => {
+    // Its own browser plus two drags, slow under a full gate's load.
+    test.setTimeout(30_000);
     const { browser, page } = await launch('draft');
+    // A press on a port and a first step, then the canvas's own word that a
+    // link is being drawn, so the moves after it cannot run ahead of the drag.
+    const pressPort = async (portBox: { x: number; y: number; width: number; height: number }): Promise<void> => {
+      const start = { x: portBox.x + portBox.width / 2, y: portBox.y + portBox.height / 2 };
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(start.x + 8, start.y + 8, { steps: 2 });
+      await expect(byTestId(page, 'workflow-canvas')).toHaveAttribute('data-linking', '', { timeout: 15_000 });
+    };
     try {
       const port = page.locator('.react-flow__node[data-id="task-1"] .react-flow__handle.source').first();
       const portBox = await port.boundingBox();
       const loopTarget = await card(page, 'task-1').boundingBox();
       const target = await card(page, 'task-3').boundingBox();
       if (!portBox || !target || !loopTarget) throw new Error('canvas not laid out');
-      await page.mouse.move(portBox.x + portBox.width / 2, portBox.y + portBox.height / 2);
-      await page.mouse.down();
+      await pressPort(portBox);
       await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 });
       const hint = byTestId(page, 'workflow-link-hint');
-      await expect(hint).toHaveText('Release to make "Token docs" wait for "Token table"');
+      await expect(hint).toHaveText('Release to make "Token docs" wait for "Token table"', { timeout: 15_000 });
       await page.mouse.up();
       // The task that now waits is selected, with both of its blockers.
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
@@ -868,10 +878,9 @@ test.describe('Workflows canvas tools and search', () => {
       // From the last task back onto the first closes a loop: refused, and said so.
       const lastPort = await page.locator('.react-flow__node[data-id="task-3"] .react-flow__handle.source').first().boundingBox();
       if (!lastPort) throw new Error('no port on the last task');
-      await page.mouse.move(lastPort.x + lastPort.width / 2, lastPort.y + lastPort.height / 2);
-      await page.mouse.down();
+      await pressPort(lastPort);
       await page.mouse.move(loopTarget.x + loopTarget.width / 2, loopTarget.y + loopTarget.height / 2, { steps: 12 });
-      await expect(byTestId(page, 'workflow-link-hint')).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.');
+      await expect(byTestId(page, 'workflow-link-hint')).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.', { timeout: 15_000 });
       await page.mouse.up();
       await expect(byTestId(page, 'workflow-link-hint')).toHaveCount(0);
     } finally {

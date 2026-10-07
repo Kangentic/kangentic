@@ -36,16 +36,35 @@ function readPid(pidFile: string): number | null {
   }
 }
 
-afterEach(() => {
+/**
+ * On Windows a killed process's handle on its cwd can outlive taskkill, and
+ * under a full test run's load by well over the second Node's own retry ladder
+ * gave it (seen failing with EPERM at the end of a passing test). So the
+ * retries are driven here against a clock, with `maxRetries: 0`: Node's ladder
+ * compounds per path and has no wall-clock bound. A holder still there after
+ * the deadline is a real leftover, and the cleanup throws.
+ */
+async function removeWithDeadline(directory: string, deadlineMs: number): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    try {
+      await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 0 });
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
+afterEach(async () => {
   for (const pid of startedPids.splice(0)) {
     try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
   }
   for (const directory of createdDirectories.splice(0)) {
-    // Retries: on Windows the killed processes' handles on their cwd can outlive
-    // taskkill by a few milliseconds.
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    await removeWithDeadline(directory, 15_000);
   }
-});
+}, 20_000);
 
 describe('runInitScript abort, real processes', () => {
   it('stops the process the script started, not only the shell', async () => {
@@ -69,5 +88,9 @@ describe('runInitScript abort, real processes', () => {
 
     expect(String(await settled)).toMatch(/external abort/);
     await expect.poll(() => isAlive(grandchildPid), { timeout: 10_000, interval: 100 }).toBe(false);
+    // Gone, so the cleanup must not kill its pid: Windows hands a freed pid to
+    // the next process soon, and under a full run's load that was a vitest
+    // worker, which the cleanup's SIGKILL then took down mid-file.
+    startedPids.splice(startedPids.indexOf(grandchildPid), 1);
   }, 30_000);
 });

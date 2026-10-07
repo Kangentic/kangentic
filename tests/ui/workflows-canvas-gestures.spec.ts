@@ -13,7 +13,8 @@ import { test, expect, chromium, type Browser, type Page } from '@playwright/tes
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
-test.describe.configure({ mode: 'parallel' });
+// Each test launches its own browser, which is slow under a full gate's load.
+test.describe.configure({ mode: 'parallel', timeout: 30_000 });
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -116,12 +117,22 @@ async function centerOf(page: Page, locator: ReturnType<Page['locator']>): Promi
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
-/** Press on a card's outgoing port, so the next moves draw a link from it. */
+/**
+ * Press on a card's outgoing port and take a first step, then wait until the
+ * canvas says a link is being drawn (`data-linking`), so the next moves draw
+ * it. Under a full gate's load (the unit, UI and E2E tiers at once) the moves
+ * that follow could otherwise run ahead of the drag's start and leave no hint.
+ */
 async function startLinkFrom(page: Page, key: string): Promise<void> {
   const start = await centerOf(page, outgoingPort(page, key));
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
+  await page.mouse.move(start.x + 8, start.y + 8, { steps: 2 });
+  await expect(byTestId(page, 'workflow-canvas')).toHaveAttribute('data-linking', '', { timeout: 15_000 });
 }
+
+/** The first hint after a drag, given room for a loaded machine. */
+const HINT_TIMEOUT = { timeout: 15_000 };
 
 test.describe('Workflows canvas gestures', () => {
   test('a link drag keeps only the ports that can take it and draws a dashed accent line, with a hint over empty canvas', async () => {
@@ -138,7 +149,7 @@ test.describe('Workflows canvas gestures', () => {
       await startLinkFrom(page, 'task-1');
       await page.mouse.move(below.x + below.width / 2, below.y + below.height + 80, { steps: 10 });
 
-      await expect(byTestId(page, 'workflow-link-canvas-hint')).toHaveText('Release on a task to make it wait for "Token table"');
+      await expect(byTestId(page, 'workflow-link-canvas-hint')).toHaveText('Release on a task to make it wait for "Token table"', HINT_TIMEOUT);
       await expect(byTestId(page, 'workflow-link-hint')).toHaveCount(0);
       const line = page.locator('[data-testid="workflow-connection-line"] path');
       await expect(line).toHaveAttribute('style', /stroke-dasharray:\s*6,?\s*5/);
@@ -171,7 +182,7 @@ test.describe('Workflows canvas gestures', () => {
       await page.mouse.move(target.x, target.y, { steps: 12 });
 
       const hint = node(page, 'task-3').locator('[data-testid="workflow-link-hint"]');
-      await expect(hint).toHaveText('Release to make "Token docs" wait for "Token table"');
+      await expect(hint).toHaveText('Release to make "Token docs" wait for "Token table"', HINT_TIMEOUT);
       await expect(hint).toHaveAttribute('data-link-verdict', 'valid');
       // A neutral menu box, left-aligned with the card and 44px above it.
       await expect(hint).toHaveCSS('top', '-44px');
@@ -214,7 +225,7 @@ test.describe('Workflows canvas gestures', () => {
       await page.mouse.move(target.x, target.y, { steps: 12 });
 
       const hint = node(page, 'task-1').locator('[data-testid="workflow-link-hint"]');
-      await expect(hint).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.');
+      await expect(hint).toHaveText('That link closes a loop. A workflow\'s links cannot go in a circle.', HINT_TIMEOUT);
       await expect(hint).toHaveAttribute('data-link-verdict', 'refused');
       // The same neutral box as an offer: no accent anywhere on a refusal.
       await expect(hint).toHaveCSS('border-top-color', await tokenColor(page, '--color-edge-input'));
