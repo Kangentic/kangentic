@@ -1248,4 +1248,60 @@ describe('SESSION_SUSPEND reconciles task.session_id before suspending', () => {
 
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
   });
+
+  it('resolves undefined for a task with no live session, without leaking the not-live outcome', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('exited'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+
+    const result = await handler(null, 'task-pause');
+
+    // The pause is a silent no-op for the desktop Pause button: the handler
+    // returns Promise<void>, so pauseTaskSession's 'not-live' outcome must not
+    // reach the renderer.
+    expect(result).toBeUndefined();
+  });
+
+  it('routes the repository lookups to an explicit projectId, not the current project', async () => {
+    context.sessionManager.getSession.mockImplementation(() => registryRow('running'));
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+    // project-scoped-ipc.md: the renderer stamps the project at interaction
+    // time, so it can differ from whatever project is current when the handler
+    // finally runs.
+    expect(context.currentProjectId).toBe('proj-1');
+
+    await handler(null, 'task-pause', 'proj-explicit');
+
+    // Both reconcileTaskSessionRef and applySuspendDbWrites look the repos up,
+    // so every recorded lookup must carry the explicit id. The positive
+    // assertions guard the negative one against passing vacuously.
+    expect(mockGetProjectRepos).toHaveBeenCalledWith(context, 'proj-explicit');
+    expect(mockGetProjectRepos).not.toHaveBeenCalledWith(context, 'proj-1');
+    const lookedUpProjectIds = mockGetProjectRepos.mock.calls.map((callArguments: unknown[]) => callArguments[1]);
+    expect(new Set(lookedUpProjectIds)).toEqual(new Set(['proj-explicit']));
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
+  });
+
+  it('rejects when no project is open and touches nothing', async () => {
+    // A live row is armed on purpose: were the no-project guard missing, the
+    // handler would reconcile it and suspend a real session.
+    context.sessionManager.getSession.mockImplementation(() => registryRow('running'));
+    (context as { currentProjectId: string | null }).currentProjectId = null;
+    const handler = capturedHandlers.get(IPC.SESSION_SUSPEND);
+    if (!handler) throw new Error('SESSION_SUSPEND handler not registered');
+    // Registration may have looked repos up; only the handler's own calls count.
+    mockGetProjectRepos.mockClear();
+
+    await expect(handler(null, 'task-pause')).rejects.toThrow(/No project is currently open/);
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    // No repository lookup means no tasks.update could have run either.
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+    expect(storedTask.session_id).toBe('sess-pointer');
+
+    // The throw happens inside withTaskLock; the lock must have been released
+    // so the next operation on the same task is not wedged behind it.
+    await expect(withTaskLock('task-pause', async () => 'ran')).resolves.toBe('ran');
+  });
 });

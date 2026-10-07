@@ -11,6 +11,7 @@ import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
+import { resolveKnownProject } from './known-project';
 import { sendEvent } from './send-event';
 import { toWireJson } from './wire-mappers';
 
@@ -46,11 +47,12 @@ export async function handleReadDiff(
     return { type: 'capability-response', requestId: request.requestId, ok: true };
   }
 
-  const project = context.projectRepo.getById(payload.projectId);
+  const project = resolveKnownProject(context, payload.projectId);
   if (!project) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such project: ${payload.projectId}` };
   }
-  const repos = getProjectRepos(context, payload.projectId);
+  const { projectId, projectPath } = project;
+  const repos = getProjectRepos(context, projectId);
   const task = repos.tasks.getById(payload.taskId);
   if (!task) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such task: ${payload.taskId}` };
@@ -58,13 +60,13 @@ export async function handleReadDiff(
 
   const worktreePath = task.worktree_path ?? undefined;
   const baseBranch = task.base_branch ?? 'main';
-  const gitDirectory = worktreePath ?? project.path;
+  const gitDirectory = worktreePath ?? projectPath;
   const service = getOrCreateService(gitDirectory);
 
   if (payload.filePath) {
     // The wire contract does not carry the file's diff status (added/modified/deleted/...),
     // which getFileContent requires - resolve it from the current file list first.
-    const fileList = await service.getDiffFiles({ worktreePath, projectPath: project.path, baseBranch, scope: payload.scope });
+    const fileList = await service.getDiffFiles({ worktreePath, projectPath, baseBranch, scope: payload.scope });
     const entry = fileList.files.find((file) => file.path === payload.filePath);
     if (!entry) {
       return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such file in the diff: ${payload.filePath}` };
@@ -78,7 +80,7 @@ export async function handleReadDiff(
     }
     const content = await service.getFileContent({
       worktreePath,
-      projectPath: project.path,
+      projectPath,
       baseBranch,
       filePath: payload.filePath,
       status: entry.status,
@@ -91,7 +93,7 @@ export async function handleReadDiff(
   }
 
   // GitDiffFilesResult is a structurally exact mirror of DiffFileListWire.
-  const fileList: DiffFileListWire = await service.getDiffFiles({ worktreePath, projectPath: project.path, baseBranch, scope: payload.scope });
+  const fileList: DiffFileListWire = await service.getDiffFiles({ worktreePath, projectPath, baseBranch, scope: payload.scope });
 
   const watchPath = gitDirectory;
   // Use the per-subscriber teardown DiffWatcher.subscribe returns, NOT
