@@ -263,8 +263,7 @@ function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPay
  *   nulled `session_id`) and a `resumable` paused task (a desktop pause
  *   nulls `session_id` too), so the feed can draw "Paused" with a Resume.
  *   A paused task that offers no Resume (in Done, say) stays out even though
- *   its row reads `paused: true` from 0.17.0: the feed has nothing to act on
- *   for it.
+ *   its row reads `paused: true` from 0.17.0 (see `BoardTaskWire.paused`).
  * - 'full': every non-archived task, for the one project whose board the user
  *   actually has open.
  *

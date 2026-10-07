@@ -328,8 +328,8 @@ describe('handleReadBoard', () => {
       const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
       // t-paused stays though its session_id is null; the paused tasks in To Do
       // and Done, the ended one, and the fresh one stay out as before. The two
-      // paused ones read `paused: true` (0.17.0) and still stay out: the feed
-      // has nothing to act on for a paused task that offers no Resume.
+      // paused ones read `paused: true` (0.17.0) and still stay out, because
+      // they offer no Resume.
       expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-paused', 't-running']);
       // Counts still describe the whole column, not the filtered list.
       expect(snapshot.taskCountsByColumnId['lane-review']).toBe(5);
@@ -392,7 +392,7 @@ describe('handleReadBoard', () => {
       ];
     });
 
-    it('is true for every paused task whatever its column, apart from resumable, and false otherwise', async () => {
+    it('follows the paused session row, not the Resume gate, and is false otherwise', async () => {
       const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; resumable: boolean | null }> }).tasks;
