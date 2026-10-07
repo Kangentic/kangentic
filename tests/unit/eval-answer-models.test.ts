@@ -167,7 +167,7 @@ describe('tableRefsOf and inventedRefs', () => {
   });
 
   it('reads the table out of the stdin line the Claude adapter\'s own formatTurn writes', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-test-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'answer-replay-test-'));
     try {
       sessionSpy.mockReturnValue({});
       new ClaudeAdapter().openAnswerSession({
