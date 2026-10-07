@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
-import type { Task, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
+import type { Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
@@ -105,11 +105,18 @@ function Rail({ above, below, aboveColor, belowColor, node }: { above: boolean; 
   );
 }
 
-function RouteRows({ task, held, onToggle, doneColumnColor }: {
+/**
+ * The task's journey as a rail, the same stops its card's track draws
+ * (sign-off T2, 2026-10-07): the board's To Do column, one row per route
+ * column (a skipped one struck through, with its switch off), the board's Done
+ * column. To Do and Done are locked on: every route starts and ends there.
+ */
+function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
   task: WorkflowViewTask;
   held: boolean;
   onToggle: (step: WorkflowRouteStep) => void;
   doneColumnColor: string;
+  ends: WorkflowBoardEnds | null;
 }) {
   const steps = task.steps;
   const firstOn = steps.findIndex((step) => step.state !== 'skipped');
@@ -118,8 +125,28 @@ function RouteRows({ task, held, onToggle, doneColumnColor }: {
   const reached = task.place === 'done'
     ? steps.length - 1
     : steps.findIndex((step) => step.state === 'current');
+  const atToDo = task.place === 'planned' || task.place === 'todo';
+  const todo = ends?.todo ?? null;
+  const todoColor = todo?.color ?? 'var(--color-fg-faint)';
+  const doneName = ends?.done?.name ?? 'Done';
+  // With a To Do row on top the rail runs through every row, the skipped ones
+  // before the first column on the route included.
+  const railFrom = todo ? 0 : firstOn;
   return (
     <div className="-mx-2">
+      {todo && (
+        <div
+          className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
+          style={atToDo ? { background: tint(todoColor, 10) } : undefined}
+          data-testid="workflow-route-todo"
+          data-step-state={atToDo ? 'current' : 'done'}
+        >
+          <Rail above={false} below aboveColor={RAIL_AHEAD} belowColor={atToDo ? RAIL_AHEAD : RAIL_DONE} node={<RailNode kind={atToDo ? 'current' : 'done'} color={todoColor} />} />
+          <ColumnGlyph column={{ icon: todo.icon, role: 'todo' }} size={14} color={todoColor} />
+          <span className="flex-1 min-w-0 truncate text-fg-secondary">{todo.name}</span>
+          <ToggleSwitch checked onChange={() => undefined} disabled title={`Every route starts in ${todo.name}`} ariaLabel={todo.name} />
+        </div>
+      )}
       {steps.map((step, index) => {
         const on = step.state !== 'skipped';
         const refusal = held ? WORKFLOW_REFUSALS.agentWorking : stepRefusal(task, index);
@@ -139,8 +166,8 @@ function RouteRows({ task, held, onToggle, doneColumnColor }: {
             data-step-state={step.state}
           >
             <Rail
-              above={index > firstOn && firstOn >= 0}
-              below={index >= firstOn && firstOn >= 0}
+              above={railFrom >= 0 && (index > railFrom || (todo !== null && index === 0))}
+              below={railFrom >= 0 && index >= railFrom}
               aboveColor={index <= reached ? RAIL_DONE : RAIL_AHEAD}
               belowColor={index < reached ? RAIL_DONE : RAIL_AHEAD}
               node={<RailNode kind={kind} color={color} />}
@@ -165,11 +192,16 @@ function RouteRows({ task, held, onToggle, doneColumnColor }: {
           </div>
         );
       })}
-      <div className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]" data-testid="workflow-route-done">
-        <Rail above below={false} aboveColor={task.place === 'done' ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind="end" color={doneColumnColor} />} />
-        <CircleCheckBig size={14} strokeWidth={1.75} style={{ color: doneColumnColor }} />
-        <span className="flex-1 text-fg-secondary">Done</span>
-        <ToggleSwitch checked onChange={() => undefined} disabled title="Every route ends in Done" ariaLabel="Done" />
+      <div
+        className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
+        style={task.place === 'done' ? { background: tint(doneColumnColor, 10) } : undefined}
+        data-testid="workflow-route-done"
+        data-step-state={task.place === 'done' ? 'current' : 'ahead'}
+      >
+        <Rail above below={false} aboveColor={task.place === 'done' ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind={task.place === 'done' ? 'current' : 'end'} color={doneColumnColor} />} />
+        <ColumnGlyph column={{ icon: ends?.done?.icon ?? null, role: 'done' }} size={14} color={doneColumnColor} />
+        <span className="flex-1 min-w-0 truncate text-fg-secondary">{doneName}</span>
+        <ToggleSwitch checked onChange={() => undefined} disabled title={`Every route ends in ${doneName}`} ariaLabel={doneName} />
       </div>
     </div>
   );
@@ -484,7 +516,7 @@ function TaskPanel({
           >
             Route
           </SectionHeading>
-          <RouteRows task={task} held={held} onToggle={toggleStep} doneColumnColor={otherBoardDoneColor(detail, task) ?? doneColumnColor} />
+          <RouteRows task={task} held={held} onToggle={toggleStep} doneColumnColor={otherBoardDoneColor(detail, task) ?? doneColumnColor} ends={detail.boardEnds[task.projectId] ?? null} />
         </section>
         <section className={`px-4 py-3.5 ${blocking.length > 0 ? 'border-b border-edge/60' : ''}`}>
           <SectionHeading count={blockedBy.length}>Blocked by</SectionHeading>

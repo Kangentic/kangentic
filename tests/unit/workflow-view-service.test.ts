@@ -160,20 +160,30 @@ describe('the Workflows view operations', () => {
     expect(() => view.updatePlannedTask(context, 'home', workflow.id, key, { title: '  ' })).toThrow(/needs a title/);
   });
 
-  it('carries each board\'s Done column color, planned and started, so a Done card on another board wears its own', async () => {
+  it('carries each board\'s To Do and Done columns, planned and started, so a card on another board draws its own ends', async () => {
     (harness.dbs.get('mobile') as Database.Database).prepare("UPDATE swimlanes SET color = ? WHERE role = 'done'").run('#a855f7');
     const homeDone = lanesOf('home').find((lane) => lane.role === 'done')!.color;
     expect(homeDone).not.toBe('#a855f7');
+    const doneColors = (projectIds: string[]) => {
+      const ends = view.readWorkflowDetail(context, 'home', workflow.id).boardEnds;
+      expect(Object.keys(ends).sort()).toEqual([...projectIds].sort());
+      // Each board names both ends, with its own columns.
+      for (const projectId of projectIds) {
+        expect(ends[projectId].todo?.swimlaneId).toBe(lanesOf(projectId).find((lane) => lane.role === 'todo')!.id);
+        expect(ends[projectId].done?.swimlaneId).toBe(lanesOf(projectId).find((lane) => lane.role === 'done')!.id);
+      }
+      return Object.fromEntries(projectIds.map((projectId) => [projectId, ends[projectId].done?.color ?? null]));
+    };
     const workflow = service.createWorkflow('home', {});
     // A workflow on one board carries that board's alone.
-    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone });
+    expect(doneColors(['home'])).toEqual({ home: homeDone });
     service.savePlan(context, 'home', workflow.id, {
       tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' }],
       links: [],
     });
-    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone, mobile: '#a855f7' });
+    expect(doneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
     await service.startWorkflow(context, 'home', workflow.id);
-    expect(view.readWorkflowDetail(context, 'home', workflow.id).doneColors).toEqual({ home: homeDone, mobile: '#a855f7' });
+    expect(doneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
   });
 
   it('removes a planned task with its links', () => {

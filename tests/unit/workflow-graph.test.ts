@@ -44,12 +44,13 @@ function detail(state: WorkflowDetail['workflow']['state'], tasks: WorkflowViewT
     tasks,
     links: links.map(([blockerKey, blockedKey]) => ({ blockerKey, blockedKey })),
     projectNames: { p: 'kangentic' },
-    doneColors: { p: '#10b981' },
+    boardEnds: { p: { todo: null, done: { swimlaneId: 'p-done', name: 'Done', color: '#10b981', icon: null } } },
   };
 }
 
 describe('otherBoardDoneColor', () => {
-  const home = { homeProjectId: 'p', doneColors: { p: '#10b981', mobile: '#a855f7', bare: null } };
+  const done = (color: string | null) => ({ todo: null, done: { swimlaneId: 'done', name: 'Done', color, icon: null } });
+  const home = { homeProjectId: 'p', boardEnds: { p: done('#10b981'), mobile: done('#a855f7'), bare: done(null) } };
 
   it('leaves a home-board card on the canvas\'s live color, and gives another board\'s card its own Done color', () => {
     expect(otherBoardDoneColor(home, { projectId: 'p' })).toBeNull();

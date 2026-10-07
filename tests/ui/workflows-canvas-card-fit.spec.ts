@@ -203,15 +203,16 @@ test.describe('Workflows canvas card height', () => {
   });
 
   for (const density of ['default', 'comfortable'] as const) {
-    test(`selecting a card moves nothing at ${density} density: a 2px border takes no height`, async () => {
+    test(`selecting a card moves nothing at ${density} density: every border is 1px`, async () => {
       test.setTimeout(30000);
       const { browser, page } = await launch(density);
       try {
         await expect.poll(async () => overlaps(await cardBoxes(page))).toEqual([]);
         // #416's session is the active one, which the board marks with a 2px
-        // border of its own: the case a selected card's border is not the only one.
+        // border; the canvas leaves that off (its terminal is the bottom
+        // panel, which Workflows hides), so the selection is the one mark.
         await expect(card(page, 't416')).toHaveAttribute('data-selected', 'false');
-        await expect(card(page, 't416')).toHaveCSS('border-top-width', '2px');
+        await expect(card(page, 't416')).toHaveCSS('border-top-width', '1px');
         const settled = await heightsAndPlaces(page);
         // Each click moves the selection to another card, the Done card among
         // them, so a height that follows the selection shows up as a change.

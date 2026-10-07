@@ -804,8 +804,8 @@ async function visibleTodoCardDrag() {
     const centre = { x: canvas.left + canvas.width / 2, y: canvas.top + canvas.height / 2 };
     for (const card of document.querySelectorAll('[data-testid="workflow-canvas-card"]')) {
       const box = card.getBoundingClientRect();
-      // A task in To Do: its strip's track is the To Do marker alone.
-      const toDoMarker = card.querySelector('[data-testid="workflow-card-strip"] [data-testid="workflow-step-marker"][data-outside-route="todo"]');
+      // A task in To Do: its track's marker, where the task is, is the To Do stop.
+      const toDoMarker = card.querySelector('[data-testid="workflow-card-strip"] [data-testid="workflow-step-marker"][data-step-end="todo"]');
       const inView = box.left > canvas.left + 20 && box.right < canvas.right - 20 && box.top > canvas.top + 20 && box.bottom < canvas.bottom - 20;
       if (!inView || !toDoMarker) continue;
       const from = { x: box.left + box.width / 2, y: box.top + 40 };
@@ -953,6 +953,9 @@ async function runCssExperiments(id, experiments) {
       document.head.appendChild(style);
     }, experiment.css ?? '');
     await sleep(1500);
+    // How many animations run under this stylesheet, so an experiment that
+    // switches one off shows it did.
+    const animations = await page.evaluate(() => document.getAnimations().filter((animation) => animation.playState === 'running').length);
     if (experiment.zoomShot) {
       // Zoom in over the canvas centre with the CSS already applied, so a layer
       // that keeps its first raster scale shows up blurred in the shot.
@@ -983,16 +986,16 @@ async function runCssExperiments(id, experiments) {
     const backFrom = await emptyCanvasPoint({ x: -panVector.x, y: -panVector.y });
     if (backFrom) await canvasDrag(backFrom, { x: backFrom.x - panVector.x, y: backFrom.y - panVector.y }, 300, {});
     rows.push({
-      name: experiment.name, css: experiment.css, idle: idle.summary, idleMissed: idleFrames.missedVsync,
+      name: experiment.name, css: experiment.css, animations, idle: idle.summary, idleMissed: idleFrames.missedVsync,
       drag: dragged?.summary, dragMissed: dragged?.result.missedVsync, dragEventMax: dragged?.result.eventStats.maxProcessing,
       pan: panned?.summary, panMissed: panned?.result.missedVsync, panP95: panned?.result.p95,
     });
   }
   await page.evaluate(() => document.getElementById('rig-experiment')?.remove());
-  console.log('\n  experiment              idle: layerize  frame  missed | drag: layerize  frame  missed  eventMax | pan: paint  frame  missed  p95');
+  console.log('\n  experiment              anims | idle: layerize  frame  missed | drag: layerize  frame  missed  eventMax | pan: paint  frame  missed  p95');
   for (const row of rows) {
     if (!row.idle) continue;
-    console.log(`  ${row.name.padEnd(22)} ${fmt(row.idle.layerizeMs).padStart(14)} ${fmt(row.idle.beginMainFrameMs).padStart(6)} ${fmt(row.idleMissed).padStart(7)} | ${fmt(row.drag?.layerizeMs).padStart(14)} ${fmt(row.drag?.beginMainFrameMs).padStart(6)} ${fmt(row.dragMissed).padStart(7)} ${fmt(row.dragEventMax).padStart(9)} | ${fmt(row.pan?.paintMs).padStart(10)} ${fmt(row.pan?.beginMainFrameMs).padStart(6)} ${fmt(row.panMissed).padStart(7)} ${fmt(row.panP95).padStart(5)}`);
+    console.log(`  ${row.name.padEnd(22)} ${String(row.animations).padStart(5)} | ${fmt(row.idle.layerizeMs).padStart(14)} ${fmt(row.idle.beginMainFrameMs).padStart(6)} ${fmt(row.idleMissed).padStart(7)} | ${fmt(row.drag?.layerizeMs).padStart(14)} ${fmt(row.drag?.beginMainFrameMs).padStart(6)} ${fmt(row.dragMissed).padStart(7)} ${fmt(row.dragEventMax).padStart(9)} | ${fmt(row.pan?.paintMs).padStart(10)} ${fmt(row.pan?.beginMainFrameMs).padStart(6)} ${fmt(row.panMissed).padStart(7)} ${fmt(row.panP95).padStart(5)}`);
   }
   record(`${id}-experiments`, rows);
 }

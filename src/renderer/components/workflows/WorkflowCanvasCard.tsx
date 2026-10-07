@@ -1,10 +1,10 @@
 import React, { useMemo } from 'react';
 import { Folder } from 'lucide-react';
-import type { Task, WorkflowViewTask } from '../../../shared/types';
+import type { Task, WorkflowBoardEnds, WorkflowViewTask } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
-import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from './WorkflowStrip';
+import { WorkflowCardStrip, WorkflowStripLabel } from './WorkflowStrip';
 
 /**
  * A workflow task's card on the canvas: the board's own card content
@@ -14,8 +14,13 @@ import { WorkflowCardStrip, WorkflowStripLabel, type OutsideRouteColumn } from '
  * (`canvas-card-heights.ts`). A task in Done is the Done column's compact card.
  */
 
-/** A selected card's border, on every card: 2px inside the card, in the muted grey. */
-const SELECTED_BORDER_CLASS = '!border-2 !border-fg-muted/75';
+/**
+ * A selected card's border, on every card: the theme's accent at the border's
+ * own 1px (sign-off S3, 2026-10-07), the one marked card on the canvas. The
+ * cards it is linked to wear no ring: its links' colors say which feeds it and
+ * which it feeds (WorkflowEdge.tsx).
+ */
+const SELECTED_BORDER_CLASS = '!border-accent';
 
 /**
  * The card's project, in the strip's left side (board 17, folded into the
@@ -92,16 +97,6 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
   };
 }
 
-/** Where a task off its route is: To Do until it starts, Done once it finishes. A task at work is on its route. */
-function outsideRouteOf(viewTask: WorkflowViewTask): OutsideRouteColumn | null {
-  if (viewTask.place === 'planned' || viewTask.place === 'todo') return TO_DO_COLUMN;
-  if (viewTask.place === 'done') return DONE_COLUMN;
-  return null;
-}
-
-const TO_DO_COLUMN: OutsideRouteColumn = { role: 'todo', name: 'To Do' };
-const DONE_COLUMN: OutsideRouteColumn = { role: 'done', name: 'Done' };
-
 interface WorkflowCanvasCardProps {
   viewTask: WorkflowViewTask;
   selected: boolean;
@@ -117,6 +112,8 @@ interface WorkflowCanvasCardProps {
    * `--workflow-done-color`.
    */
   doneColor: string | null;
+  /** The task's board's To Do and Done columns, the two ends of its track. */
+  ends: WorkflowBoardEnds | null;
 }
 
 /** Why a workflow task in To Do has not started. */
@@ -125,7 +122,7 @@ export interface WorkflowWaiting {
   paused: boolean;
 }
 
-export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName, doneColor }: WorkflowCanvasCardProps) {
+export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewTask, selected, locked, waiting, projectName, doneColor, ends }: WorkflowCanvasCardProps) {
   // The board's own live row when the board holds it (this project, not yet
   // archived): every writer keeps the board current, including the ones that
   // never announce a workflow change (an agent's rename, auto-naming, a PR
@@ -144,7 +141,8 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
     <WorkflowCardStrip
       leading={<ProjectLabel name={projectName} />}
       steps={viewTask.steps}
-      outsideRoute={outsideRouteOf(viewTask)}
+      ends={ends}
+      place={viewTask.place}
       lockedTitle={locked ? 'Moved by its workflow' : null}
     />
   );
@@ -154,11 +152,9 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
     // as `--workflow-done-color`, so finished work stands out and follows the
     // column (Final 1). A task on another board sets the variable to its own
     // board's color here, on the card, since that board's Done column is not
-    // the open one's. Selected, it takes every card's 2px border instead; the
-    // body's padding gives the extra pixel back, so its text does not move.
+    // the open one's. Selected, it wears the accent like every card.
     // The board's own Done cards are drawn elsewhere and keep their look.
-    const frameClass = selected ? SELECTED_BORDER_CLASS : 'border border-[color:var(--workflow-done-color)]';
-    const bodyPadding = selected ? 'px-[9px] py-[5px]' : 'px-2.5 py-1.5';
+    const frameClass = selected ? `border ${SELECTED_BORDER_CLASS}` : 'border border-[color:var(--workflow-done-color)]';
     return (
       <div
         className={`flex flex-col overflow-hidden bg-surface-raised/60 rounded-md select-none transition-colors ${frameClass}`}
@@ -168,7 +164,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
         data-testid="workflow-canvas-card"
       >
         {strip}
-        <div className={bodyPadding}>
+        <div className="px-2.5 py-1.5">
           <TaskCardCompactBody task={task} view={view} />
         </div>
       </div>
@@ -177,25 +173,20 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
 
   const idleFooter = waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : undefined;
 
-  // Selected: a 2px border inside the card (boards 1, 10, 17). The board's
-  // highlight for the active session is a 2px border too. Either way the
-  // padding gives back the extra pixel. The header sits on the padding edge,
-  // inside the border, so it lands a pixel lower, and its bottom margin gives
-  // that pixel back: nothing under it moves, and the card keeps one height in
-  // every state, which the layout stacks the column from. A planned card draws
+  // The selected card's border is the accent at the border's own 1px, so a
+  // card keeps one height selected or not, which the layout stacks the column
+  // from. The board's 2px highlight for the active session is left off here:
+  // that session's terminal is the bottom panel, which Workflows hides, and a
+  // heavier grey border would outweigh the selection. A planned card draws
   // like any To Do card: what says it is not created yet is its missing #id
   // (Final 3).
   const comfortable = view.cardDensity === 'comfortable';
-  const thickBorder = selected || view.isHighlighted;
-  const thickBorderPadding = thickBorder ? (comfortable ? '!p-[11px]' : '!p-[9px]') : '';
-  const borderClass = selected ? `${SELECTED_BORDER_CLASS} ${thickBorderPadding}` : thickBorderPadding;
-  const headerInset = thickBorder
-    ? (comfortable ? '-mx-[11px] -mt-[11px] mb-[7px]' : '-mx-[9px] -mt-[9px] mb-[7px]')
-    : (comfortable ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2');
+  const headerInset = comfortable ? '-mx-3 -mt-3 mb-2' : '-mx-2.5 -mt-2.5 mb-2';
+  const frameClass = taskCardFrameClass(view.isHighlighted ? { ...view, isHighlighted: false } : view, view.cardDensity);
 
   return (
     <div
-      className={`flex flex-col overflow-hidden ${taskCardFrameClass(view, view.cardDensity)} select-none transition-colors ${borderClass}`}
+      className={`flex flex-col overflow-hidden ${frameClass} select-none transition-colors ${selected ? SELECTED_BORDER_CLASS : ''}`}
       data-workflow-task-key={viewTask.key}
       data-selected={selected}
       data-testid="workflow-canvas-card"

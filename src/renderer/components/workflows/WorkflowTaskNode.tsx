@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
-import type { WorkflowViewTask } from '../../../shared/types';
+import type { WorkflowBoardEnds, WorkflowViewTask } from '../../../shared/types';
 import { PORT_OFFSET_Y } from './workflow-layout';
 import { WorkflowCanvasCard, type WorkflowWaiting } from './WorkflowCanvasCard';
 import { WorkflowDetailContext } from './workflow-canvas-context';
@@ -46,6 +46,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   projectName: string;
   /** A task on another board than the home: that board's Done color, which its Done card wears. Null on the home board. */
   doneColor: string | null;
+  /** The task's board's To Do and Done columns, the two ends of its card's track. */
+  ends: WorkflowBoardEnds | null;
 }
 
 export type WorkflowFlowNode = Node<WorkflowNodeData, 'workflowTask'>;
@@ -132,6 +134,7 @@ export const WorkflowTaskNode = React.memo(function WorkflowTaskNode({ id, data,
         waiting={data.waiting}
         projectName={data.projectName}
         doneColor={data.doneColor}
+        ends={data.ends}
       />
       <Handle
         type="source"

@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Pause, Workflow as WorkflowIcon } from 'lucide-react';
 import type { AppConfig, Task } from '../../../shared/types';
-import { routeSteps } from '../../../shared/workflow-route';
+import { boardEnds, routeSteps, taskPlace } from '../../../shared/workflow-route';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
@@ -50,6 +50,8 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
   // The board store keeps an unchanged task's object across reloads, so this
   // recomputes on a real change to the row or the board's columns only.
   const steps = useMemo(() => routeSteps(swimlanes, task), [swimlanes, task]);
+  const ends = useMemo(() => boardEnds(swimlanes), [swimlanes]);
+  const place = useMemo(() => taskPlace(swimlanes, task), [swimlanes, task]);
   if (!workflow) return null;
   return (
     <div
@@ -68,6 +70,8 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
           />
         )}
         steps={steps}
+        ends={ends}
+        place={place}
         // The lane the card sits in names its column, so the board keeps the bar.
         currentStep="bar"
         lockedTitle={isLockedOnBoard(workflow) ? 'Moved by its workflow' : null}

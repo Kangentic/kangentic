@@ -32,11 +32,11 @@ export const DONE_COLOR_FALLBACK = 'var(--color-active)';
  * color, so a recolored column repaints without a reload.
  */
 export function otherBoardDoneColor(
-  detail: Pick<WorkflowDetail, 'homeProjectId' | 'doneColors'>,
+  detail: Pick<WorkflowDetail, 'homeProjectId' | 'boardEnds'>,
   task: Pick<WorkflowViewTask, 'projectId'>,
 ): string | null {
   if (task.projectId === detail.homeProjectId) return null;
-  return detail.doneColors[task.projectId] ?? DONE_COLOR_FALLBACK;
+  return detail.boardEnds[task.projectId]?.done?.color ?? DONE_COLOR_FALLBACK;
 }
 
 export function taskLabel(task: Pick<WorkflowViewTask, 'displayId' | 'title'>): string {

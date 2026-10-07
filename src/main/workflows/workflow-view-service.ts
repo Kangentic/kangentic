@@ -2,6 +2,7 @@ import type {
   Swimlane,
   Task,
   Workflow,
+  WorkflowBoardEnds,
   WorkflowBoardTask,
   WorkflowCanvasPosition,
   WorkflowDetail,
@@ -15,7 +16,7 @@ import type {
   WorkflowViewLink,
   WorkflowViewTask,
 } from '../../shared/types';
-import { doneColumn, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
+import { boardEnds, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
 import { getProjectDb } from '../db/database';
@@ -84,18 +85,14 @@ function projectNameOf(context: IpcContext, projectId: string): string {
   return context.projectRepo.getById(projectId)?.name ?? 'Another project';
 }
 
-/** A board's Done column color, which a Done card of that board wears; null when it has no Done column. */
-function doneColorOf(projectId: string): string | null {
-  return doneColumn(safeLanes(projectId))?.color ?? null;
-}
-
 export function readWorkflowDetail(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowDetail {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   const projectNames: Record<string, string> = { [homeProjectId]: projectNameOf(context, homeProjectId) };
-  const doneColors: Record<string, string | null> = { [homeProjectId]: doneColorOf(homeProjectId) };
+  // Each board's To Do and Done columns: the ends of its cards' tracks, and a Done card's color.
+  const ends: Record<string, WorkflowBoardEnds> = { [homeProjectId]: boardEnds(safeLanes(homeProjectId)) };
   const noteProject = (projectId: string): void => {
     projectNames[projectId] ??= projectNameOf(context, projectId);
-    if (!(projectId in doneColors)) doneColors[projectId] = doneColorOf(projectId);
+    if (!(projectId in ends)) ends[projectId] = boardEnds(safeLanes(projectId));
   };
 
   if (workflow.state === 'draft') {
@@ -118,7 +115,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
-    return { workflow, homeProjectId, tasks, links, projectNames, doneColors };
+    return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
   }
 
   const created = workflowTasks(context, homeProjectId, workflowId);
@@ -146,7 +143,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId)
     .filter((link) => present.has(link.blocker_task_id) && present.has(link.blocked_task_id))
     .map((link): WorkflowViewLink => ({ blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }));
-  return { workflow, homeProjectId, tasks, links, projectNames, doneColors };
+  return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
 }
 
 /** The picker's rows: every workflow of the project that has not finished, newest first. */

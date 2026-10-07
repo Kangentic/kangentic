@@ -4987,6 +4987,23 @@ export interface WorkflowRouteStep {
   finishedAt: string | null;
 }
 
+/** A board's To Do or Done column: an end of every task's journey on that board. */
+export interface WorkflowColumnEnd {
+  swimlaneId: string;
+  name: string;
+  color: string | null;
+  icon: string | null;
+}
+
+/**
+ * A board's two journey ends, which a card's step track draws before and after
+ * the route (To Do first, Done last); null where the board has no such column.
+ */
+export interface WorkflowBoardEnds {
+  todo: WorkflowColumnEnd | null;
+  done: WorkflowColumnEnd | null;
+}
+
 /** Where a workflow task is: `planned` exists only in a workflow that has not started. */
 export type WorkflowTaskPlace = 'planned' | 'todo' | 'working' | 'done';
 
@@ -5027,11 +5044,11 @@ export interface WorkflowDetail {
   /** Each project a task is on, by id; more than one is a workflow across boards. */
   projectNames: Record<string, string>;
   /**
-   * The Done column color of each of those projects' boards, by id; null
-   * where the board has no Done column. A Done card on another board wears
-   * its own board's, not the open board's.
+   * Each of those projects' boards' To Do and Done columns, by id: the two
+   * ends a card's step track draws, and the Done color a Done card wears (its
+   * own board's, not the open board's).
    */
-  doneColors: Record<string, string | null>;
+  boardEnds: Record<string, WorkflowBoardEnds>;
 }
 
 /** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */

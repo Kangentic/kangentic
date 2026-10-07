@@ -167,11 +167,11 @@ describe('workflow layout', () => {
     expect(layout.edges.every((edge) => edge.blockedKey !== 'c' || edge.waypoints.length === 0)).toBe(true);
   });
 
-  it('fans several links out of one card in the order of their targets', () => {
+  it('draws every link from and to its cards\' port centers: no fan of offsets around a port', () => {
+    // An 8px fan around a 10px port left the outer lines starting in empty
+    // space (sign-off, 2026-10-07), so a link carries its lanes and nothing else.
     const layout = layoutWorkflow([task('a'), task('b'), task('c')], [link('a', 'b'), link('a', 'c')]);
-    const offsets = layout.edges.map((edge) => edge.sourceOffset);
-    expect(new Set(offsets).size).toBe(2);
-    expect(offsets.reduce((sum, value) => sum + value, 0)).toBe(0);
+    for (const edge of layout.edges) expect(Object.keys(edge).sort()).toEqual(['blockedKey', 'blockerKey', 'id', 'waypoints']);
   });
 
   it('is stable: the same input gives the same positions', () => {

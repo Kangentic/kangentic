@@ -9,7 +9,7 @@ import { arrangeChange, arrangeStart, edgeShape } from '../../src/renderer/compo
 import type { LaidOutEdge } from '../../src/renderer/components/workflows/workflow-layout';
 
 const edge = (blockerKey: string, blockedKey: string, waypoints: LaidOutEdge['waypoints'] = []): LaidOutEdge => ({
-  id: `${blockerKey}->${blockedKey}`, blockerKey, blockedKey, waypoints, sourceOffset: 0, targetOffset: 0,
+  id: `${blockerKey}->${blockedKey}`, blockerKey, blockedKey, waypoints,
 });
 const place = (id: string, x: number, y: number) => ({ id, position: { x, y } });
 
@@ -39,9 +39,8 @@ describe('arrangeChange', () => {
 });
 
 describe('edgeShape', () => {
-  it('differs when the lanes or the port offsets do, and only then', () => {
+  it('differs when the lanes do, and only then', () => {
     expect(edgeShape(edge('a', 'b'))).toBe(edgeShape(edge('x', 'y')));
     expect(edgeShape(edge('a', 'b', [{ x: 1, y: 2 }]))).not.toBe(edgeShape(edge('a', 'b')));
-    expect(edgeShape({ ...edge('a', 'b'), sourceOffset: 8 })).not.toBe(edgeShape(edge('a', 'b')));
   });
 });

@@ -4875,28 +4875,32 @@
         });
       }
 
-      // A board's Done column color, as main's readWorkflowDetail reads it: a
-      // lane tagged with that project wins over an untagged (every-project) one.
-      function doneColorOf(projectId) {
-        var tagged = swimlanes.find(function (lane) { return lane.role === 'done' && lane.projectId === projectId; });
-        var lane = tagged || swimlanes.find(function (candidate) { return candidate.role === 'done' && !candidate.projectId; });
-        return lane && lane.color ? lane.color : null;
+      // A board's To Do and Done columns, as main's readWorkflowDetail reads
+      // them (boardEnds): a lane tagged with that project wins over an
+      // untagged (every-project) one.
+      function boardEndsOf(projectId) {
+        function endOf(role) {
+          var tagged = swimlanes.find(function (lane) { return lane.role === role && lane.projectId === projectId; });
+          var lane = tagged || swimlanes.find(function (candidate) { return candidate.role === role && !candidate.projectId; });
+          return lane ? { swimlaneId: lane.id, name: lane.name, color: lane.color || null, icon: lane.icon || null } : null;
+        }
+        return { todo: endOf('todo'), done: endOf('done') };
       }
 
       function detail(entry) {
         var workflow = entry.workflow;
         var home = homeOf(entry);
         var names = {};
-        var doneColors = {};
+        var boardEnds = {};
         var project = projects.find(function (candidate) { return candidate.id === home; });
         names[home] = project ? project.name : 'Project';
-        doneColors[home] = doneColorOf(home);
+        boardEnds[home] = boardEndsOf(home);
         function noteProject(taskProjectId) {
           if (!names[taskProjectId]) {
             var other = projects.find(function (candidate) { return candidate.id === taskProjectId; });
             names[taskProjectId] = other ? other.name : 'Another project';
           }
-          if (!Object.prototype.hasOwnProperty.call(doneColors, taskProjectId)) doneColors[taskProjectId] = doneColorOf(taskProjectId);
+          if (!Object.prototype.hasOwnProperty.call(boardEnds, taskProjectId)) boardEnds[taskProjectId] = boardEndsOf(taskProjectId);
         }
         if (workflow.state === 'draft') {
           var draft = workflow.draft || { tasks: [], links: [] };
@@ -4904,7 +4908,7 @@
             workflow: JSON.parse(JSON.stringify(workflow)),
             homeProjectId: home,
             projectNames: names,
-            doneColors: doneColors,
+            boardEnds: boardEnds,
             tasks: draft.tasks.map(function (planned) {
               // A planned task names its board as main's read model does: its own
               // project_id, else the workflow's home.
@@ -4925,7 +4929,7 @@
           workflow: JSON.parse(JSON.stringify(workflow)),
           homeProjectId: home,
           projectNames: names,
-          doneColors: doneColors,
+          boardEnds: boardEnds,
           tasks: created.map(function (task) {
             var place = placeOf(task);
             // A task row tagged with a projectId is on that project's board, as

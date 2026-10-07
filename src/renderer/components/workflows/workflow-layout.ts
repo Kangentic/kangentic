@@ -37,8 +37,6 @@ export const LANE_CLEARANCE = 12;
  * names it in the strip.
  */
 export const PORT_OFFSET_Y = 49;
-/** How far apart two links leaving or arriving at one card start. */
-export const PORT_SPREAD = 8;
 
 export interface LayoutTask {
   key: string;
@@ -68,10 +66,6 @@ export interface LaidOutEdge {
    * adjacent columns or a hand-placed end.
    */
   waypoints: Point[];
-  /** Vertical offset of the line's start from the blocker's port, so several links fan out. */
-  sourceOffset: number;
-  /** Vertical offset of the line's end from the waiting task's port. */
-  targetOffset: number;
 }
 
 export interface WorkflowLayout {
@@ -273,27 +267,9 @@ export function layoutWorkflow(tasks: readonly LayoutTask[], links: readonly Lay
     }
   }
 
-  // Fan the links out at each card: outgoing in the order of their targets,
-  // incoming in the order of their sources, so no two share an end point.
-  const outgoing = new Map<string, LayoutLink[]>();
-  const incoming = new Map<string, LayoutLink[]>();
-  for (const link of drawn) {
-    (outgoing.get(link.blockerKey) ?? outgoing.set(link.blockerKey, []).get(link.blockerKey)!).push(link);
-    (incoming.get(link.blockedKey) ?? incoming.set(link.blockedKey, []).get(link.blockedKey)!).push(link);
-  }
-  const yOf = (key: string): number => positions.get(key)?.y ?? 0;
-  const spread = (index: number, count: number): number => (index - (count - 1) / 2) * PORT_SPREAD;
-  const sourceOffset = new Map<string, number>();
-  const targetOffset = new Map<string, number>();
-  for (const list of outgoing.values()) {
-    list.sort((left, right) => yOf(left.blockedKey) - yOf(right.blockedKey));
-    list.forEach((link, index) => sourceOffset.set(edgeId(link.blockerKey, link.blockedKey), spread(index, list.length)));
-  }
-  for (const list of incoming.values()) {
-    list.sort((left, right) => yOf(left.blockerKey) - yOf(right.blockerKey));
-    list.forEach((link, index) => targetOffset.set(edgeId(link.blockerKey, link.blockedKey), spread(index, list.length)));
-  }
-
+  // Every link leaves and arrives at its card's port center (sign-off,
+  // 2026-10-07): an 8px fan around a 10px port left the outer lines starting
+  // in empty space.
   const edges: LaidOutEdge[] = drawn.map((link) => {
     const id = edgeId(link.blockerKey, link.blockedKey);
     const straight = handPlaced.has(link.blockerKey) || handPlaced.has(link.blockedKey);
@@ -311,8 +287,6 @@ export function layoutWorkflow(tasks: readonly LayoutTask[], links: readonly Lay
       blockerKey: link.blockerKey,
       blockedKey: link.blockedKey,
       waypoints,
-      sourceOffset: sourceOffset.get(id) ?? 0,
-      targetOffset: targetOffset.get(id) ?? 0,
     };
   });
 

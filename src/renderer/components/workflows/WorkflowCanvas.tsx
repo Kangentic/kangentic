@@ -16,7 +16,7 @@ import {
   type NodeMouseHandler,
   type OnNodeDrag,
 } from '@xyflow/react';
-import type { WorkflowBoardTask, WorkflowDetail } from '../../../shared/types';
+import type { WorkflowBoardTask, WorkflowColumnEnd, WorkflowDetail } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { isWorkflowTaskLocked } from '../../utils/board-workflow';
 import { layoutWorkflow } from './workflow-layout';
@@ -80,6 +80,12 @@ function motionReduced(): boolean {
 /** The empty-canvas hint's offset from the pointer, clear of the cursor (board 10). */
 const POINTER_HINT_OFFSET = { x: 22, y: 16 };
 
+function sameColumnEnd(previous: WorkflowColumnEnd | null, next: WorkflowColumnEnd | null): boolean {
+  if (previous === next) return true;
+  if (previous === null || next === null) return false;
+  return previous.swimlaneId === next.swimlaneId && previous.name === next.name && previous.color === next.color && previous.icon === next.icon;
+}
+
 function sameNodeData(previous: WorkflowNodeData, next: WorkflowNodeData): boolean {
   return previous.viewTask === next.viewTask
     && previous.locked === next.locked
@@ -88,7 +94,10 @@ function sameNodeData(previous: WorkflowNodeData, next: WorkflowNodeData): boole
     && previous.editable === next.editable
     && previous.doneColor === next.doneColor
     && previous.waiting?.label === next.waiting?.label
-    && previous.waiting?.paused === next.waiting?.paused;
+    && previous.waiting?.paused === next.waiting?.paused
+    // A reload rebuilds the board ends; equal ones keep the card from re-rendering.
+    && sameColumnEnd(previous.ends?.todo ?? null, next.ends?.todo ?? null)
+    && sameColumnEnd(previous.ends?.done ?? null, next.ends?.done ?? null);
 }
 
 /**
@@ -218,6 +227,7 @@ export function WorkflowCanvas({
       // one shape whatever the workflow spans (sign-off 4b).
       projectName: detail.projectNames[task.projectId] ?? 'Another project',
       doneColor: otherBoardDoneColor(detail, task),
+      ends: detail.boardEnds[task.projectId] ?? null,
     },
   })), [detail, layout, selectedTaskKey, editable, planHeld, boardFacts, visibleKeys]);
 
@@ -280,10 +290,12 @@ export function WorkflowCanvas({
     className: arranged?.animate && arranged.hiddenEdgeIds.has(edge.id) ? 'workflow-edge-arranging' : undefined,
     data: {
       waypoints: edge.waypoints,
-      sourceOffset: edge.sourceOffset,
-      targetOffset: edge.targetOffset,
       satisfied: doneKeys.has(edge.blockerKey),
-      emphasized: selectedTaskKey !== null && (edge.blockerKey === selectedTaskKey || edge.blockedKey === selectedTaskKey),
+      // What feeds the selected task, what it feeds, and the rest faded back (WorkflowEdge.tsx).
+      relation: selectedTaskKey === null ? null
+        : edge.blockedKey === selectedTaskKey ? 'blocker'
+          : edge.blockerKey === selectedTaskKey ? 'dependent'
+            : 'muted',
       fresh: freshLink !== null && edge.blockerKey === freshLink.blockerKey && edge.blockedKey === freshLink.blockedKey,
     },
   })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys, freshLink, arranged]);

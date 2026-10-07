@@ -4,66 +4,101 @@ import { PORT_OFFSET_Y, smoothPath, type Point } from './workflow-layout';
 import type { WorkflowFlowNode } from './WorkflowTaskNode';
 
 /**
- * A link on the canvas: from the blocker's title row to the waiting task's,
+ * A link on the canvas: from the blocker's port to the waiting task's,
  * through the lanes of any column it crosses, leaving and arriving
- * horizontally. Green once the blocker is done (the link no longer holds
- * anything up), grey while it still does. A link of the selected task is
- * drawn heavier, so its blockers and dependents stand out. The link a drag
- * just made is drawn in the accent until the selection moves on (board 10b).
+ * horizontally. Every link of a card leaves and arrives at its port's center,
+ * and its arrow's tip lands on the port circle's edge.
+ *
+ * How it reads follows the selection (sign-off, 2026-10-07), in the board
+ * links overlay's colors (`WorkflowLinksOverlay.tsx`):
+ * - Nothing selected: green once its blocker is done (it no longer holds
+ *   anything up), grey while it still does.
+ * - The selected task's own links, drawn whole and flowing from blocker to
+ *   dependent (index.css), so the direction reads at a glance: a link from a
+ *   blocker is green once that blocker is done and a brighter grey while it
+ *   is not; a link to a task that waits on it is the accent.
+ * - Every other link fades back to 20%.
+ * The link a drag just made is the accent until the selection moves on
+ * (board 10b).
  *
  * Its SVG is a drawing computed from the layout, not an icon, as the commit
  * graph's is (`CommitGraphSvg.tsx`), so the Lucide-only icon rule
  * (`ui-conventions.md`) does not cover it.
  */
+
+/** A link's relation to the selected task: from one of its blockers, to a task that waits on it, neither, or nothing is selected. */
+export type WorkflowLinkRelation = 'blocker' | 'dependent' | 'muted' | null;
+
 export interface WorkflowEdgeData extends Record<string, unknown> {
   waypoints: Point[];
-  sourceOffset: number;
-  targetOffset: number;
   satisfied: boolean;
-  emphasized: boolean;
+  relation: WorkflowLinkRelation;
   /** Made by the drag that just ended. */
   fresh: boolean;
 }
 
 export type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflowLink'>;
 
+/** One arrowhead per color a link is drawn in; its tip (x 9) is the path's end. */
+const MARKER_COLORS = {
+  active: 'var(--color-active)',
+  faint: 'var(--color-fg-faint)',
+  muted: 'var(--color-fg-muted)',
+  accent: 'var(--color-accent-fg)',
+} as const;
+type MarkerColor = keyof typeof MARKER_COLORS;
+
 export const WORKFLOW_EDGE_MARKERS = (
   <svg width="0" height="0" className="absolute" aria-hidden="true">
     <defs>
-      <marker id="workflow-link-satisfied" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-        <path d="M0 1 L9 5 L0 9 z" fill="var(--color-active)" />
-      </marker>
-      <marker id="workflow-link-pending" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-        <path d="M0 1 L9 5 L0 9 z" fill="var(--color-fg-faint)" />
-      </marker>
-      <marker id="workflow-link-fresh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-        <path d="M0 1 L9 5 L0 9 z" fill="var(--color-accent-fg)" />
-      </marker>
+      {(Object.keys(MARKER_COLORS) as MarkerColor[]).map((name) => (
+        <marker key={name} id={`workflow-link-${name}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 1 L9 5 L0 9 z" fill={MARKER_COLORS[name]} />
+        </marker>
+      ))}
     </defs>
   </svg>
 );
 
+interface LinkLook {
+  color: MarkerColor;
+  width: number;
+  opacity: number;
+  flowing: boolean;
+}
+
+function lookOf(satisfied: boolean, relation: WorkflowLinkRelation, fresh: boolean): LinkLook {
+  if (fresh) return { color: 'accent', width: 2, opacity: 1, flowing: false };
+  if (relation === 'blocker') return { color: satisfied ? 'active' : 'muted', width: 2, opacity: 1, flowing: true };
+  if (relation === 'dependent') return { color: 'accent', width: 2, opacity: 1, flowing: true };
+  const color: MarkerColor = satisfied ? 'active' : 'faint';
+  if (relation === 'muted') return { color, width: 1.5, opacity: 0.2, flowing: false };
+  return { color, width: 1.5, opacity: satisfied ? 0.45 : 0.7, flowing: false };
+}
+
 export const WorkflowEdge = React.memo(function WorkflowEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps<WorkflowFlowEdge>) {
   const points: Point[] = [
-    { x: sourceX, y: sourceY + (data?.sourceOffset ?? 0) },
+    { x: sourceX, y: sourceY },
     ...(data?.waypoints ?? []),
-    { x: targetX, y: targetY + (data?.targetOffset ?? 0) },
+    { x: targetX, y: targetY },
   ];
   const satisfied = data?.satisfied ?? false;
-  const emphasized = data?.emphasized ?? false;
+  const relation = data?.relation ?? null;
   const fresh = data?.fresh ?? false;
-  const state = fresh ? 'fresh' : satisfied ? 'satisfied' : 'pending';
+  const look = lookOf(satisfied, relation, fresh);
   return (
     <BaseEdge
       id={id}
       path={smoothPath(points)}
-      markerEnd={`url(#workflow-link-${state})`}
-      data-link-state={state}
+      className={look.flowing ? 'workflow-link-flow' : undefined}
+      markerEnd={`url(#workflow-link-${look.color})`}
+      data-link-state={fresh ? 'fresh' : satisfied ? 'satisfied' : 'pending'}
+      data-link-relation={relation ?? 'none'}
       style={{
-        stroke: fresh ? 'var(--color-accent-fg)' : satisfied ? 'var(--color-active)' : 'var(--color-fg-faint)',
-        strokeWidth: fresh || emphasized ? 2 : 1.5,
+        stroke: MARKER_COLORS[look.color],
+        strokeWidth: look.width,
         strokeLinecap: 'round',
-        opacity: fresh ? 1 : emphasized ? 0.95 : satisfied ? 0.45 : 0.7,
+        opacity: look.opacity,
       }}
     />
   );

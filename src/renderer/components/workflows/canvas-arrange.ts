@@ -22,8 +22,8 @@ export interface ArrangeChange {
 }
 
 /** A link's drawing, as one comparable value. */
-export function edgeShape(edge: Pick<LaidOutEdge, 'waypoints' | 'sourceOffset' | 'targetOffset'>): string {
-  return JSON.stringify([edge.sourceOffset, edge.targetOffset, edge.waypoints]);
+export function edgeShape(edge: Pick<LaidOutEdge, 'waypoints'>): string {
+  return JSON.stringify(edge.waypoints);
 }
 
 export function arrangeStart(places: Iterable<{ id: string; position: Point }>, edges: readonly LaidOutEdge[]): ArrangeStart {

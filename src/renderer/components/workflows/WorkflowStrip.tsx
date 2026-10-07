@@ -1,7 +1,8 @@
 import React from 'react';
 import { Lock } from 'lucide-react';
-import type { Swimlane, WorkflowRouteStep } from '../../../shared/types';
+import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
+import { trackStops, type TrackStop } from './workflow-track';
 
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
@@ -15,50 +16,33 @@ import { ColumnGlyph } from '../../utils/swimlane-icons';
  * The phone app draws the canvas strip at the same sizes.
  */
 
-const AHEAD_COLOR = 'var(--color-edge)';
 const UNCOLORED = 'var(--color-fg-faint)';
-
-/**
- * Where a task is when it is not on its route: To Do before it starts, Done
- * after it finishes. Neither column is ever a step of the track, so the track
- * is that column's marker alone, uncolored.
- */
-export interface OutsideRouteColumn {
-  role: NonNullable<Swimlane['role']>;
-  name: string;
-  /** The column's own icon when the caller has it; its role's default otherwise. */
-  icon?: string | null;
-}
 
 /**
  * The column a task is in, drawn as one 18px rounded square: the column's
  * glyph at 12px (its icon, its To Do or Done default, or a dot in its color)
  * on its color at 18%, the strength the old current bar's ring had.
  */
-function StepMarker({ column, color, label, testState }: {
-  column: Pick<Swimlane, 'icon' | 'role'>;
-  color: string;
-  label: string;
-  testState: { stepState?: 'current'; outsideRoute?: OutsideRouteColumn['role'] };
-}) {
+function StepMarker({ stop, color }: { stop: TrackStop; color: string }) {
+  const label = `${stop.name}: now`;
   return (
     <span
       role="img"
       aria-label={label}
       title={label}
       data-testid="workflow-step-marker"
-      data-step-state={testState.stepState}
-      data-outside-route={testState.outsideRoute}
+      data-step-state="current"
+      data-step-end={stop.end ?? undefined}
       className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-[5px] shrink-0"
       style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
     >
-      <ColumnGlyph column={column} size={12} color={color} />
+      <ColumnGlyph column={{ icon: stop.icon, role: stop.end }} size={12} color={color} />
     </span>
   );
 }
 
 /**
- * How the track draws the step the task is on. `marker` is the column's own
+ * How the track draws the stop the task is at. `marker` is the column's own
  * marker, for a surface where nothing else names the column (the Workflows
  * canvas, the phone). `bar` is a wider, brighter bar, for the board, where the
  * lane the card sits in already names it.
@@ -66,64 +50,46 @@ function StepMarker({ column, color, label, testState }: {
 export type CurrentStepStyle = 'marker' | 'bar';
 
 /**
- * One mark per step the task visits: done, the current step, then the steps
- * ahead. Skipped columns are not drawn. With the `marker` style a task in To Do
- * or Done is not on its route, and its track is that column's marker alone.
+ * One mark per stop (`trackStops`). A stop the task has left is a grey bar: it
+ * no longer matters. The stop it is at is its column's marker, or the board's
+ * bar. A stop still ahead is a bar in its column's color, so a card says which
+ * columns it will visit, before it starts and on the way.
  */
-export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, outsideRoute = null, currentStep = 'marker' }: {
+export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, ends, place, currentStep = 'marker' }: {
   steps: readonly WorkflowRouteStep[];
-  outsideRoute?: OutsideRouteColumn | null;
+  ends: WorkflowBoardEnds | null;
+  place: WorkflowTaskPlace;
   currentStep?: CurrentStepStyle;
 }) {
-  if (outsideRoute && currentStep === 'marker') {
-    return (
-      <span className="inline-flex items-center gap-0.5 shrink-0" data-testid="workflow-step-track">
-        <StepMarker
-          column={{ icon: outsideRoute.icon ?? null, role: outsideRoute.role }}
-          color={UNCOLORED}
-          label={outsideRoute.name}
-          testState={{ outsideRoute: outsideRoute.role }}
-        />
-      </span>
-    );
-  }
-  const visited = steps.filter((step) => step.state !== 'skipped');
-  if (visited.length === 0) return null;
+  const stops = trackStops(steps, ends, place);
+  if (stops.length === 0) return null;
   return (
     <span className="inline-flex items-center gap-0.5 shrink-0" data-testid="workflow-step-track">
-      {visited.map((step) => {
-        const color = step.color ?? UNCOLORED;
-        if (step.state === 'current' && currentStep === 'bar') {
+      {stops.map((stop) => {
+        const color = stop.color ?? UNCOLORED;
+        if (stop.state === 'current' && currentStep === 'marker') return <StepMarker key={stop.swimlaneId} stop={stop} color={color} />;
+        if (stop.state === 'current') {
           return (
             <i
-              key={step.swimlaneId}
-              title={`${step.name}: now`}
+              key={stop.swimlaneId}
+              title={`${stop.name}: now`}
               data-step-state="current"
+              data-step-end={stop.end ?? undefined}
               className="block w-[15px] h-[6px] rounded-[3px]"
               style={{ background: color, boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 18%, transparent)` }}
             />
           );
         }
-        if (step.state === 'current') {
-          return (
-            <StepMarker
-              key={step.swimlaneId}
-              column={{ icon: step.icon, role: null }}
-              color={color}
-              label={`${step.name}: now`}
-              testState={{ stepState: 'current' }}
-            />
-          );
-        }
-        // A done step is neutral: the current step is the one color in the
-        // track, the one that says something (which column the task is in).
         return (
           <i
-            key={step.swimlaneId}
-            title={`${step.name}: ${step.state === 'done' ? 'done' : 'next'}`}
-            data-step-state={step.state}
+            key={stop.swimlaneId}
+            title={`${stop.name}: ${stop.state === 'done' ? 'done' : 'next'}`}
+            data-step-state={stop.state}
+            data-step-end={stop.end ?? undefined}
             className="block w-[11px] h-[4px] rounded-[2px]"
-            style={step.state === 'done' ? { background: UNCOLORED, opacity: 0.55 } : { background: AHEAD_COLOR }}
+            style={stop.state === 'done'
+              ? { background: UNCOLORED, opacity: 0.55 }
+              : { background: `color-mix(in srgb, ${color} 45%, transparent)` }}
           />
         );
       })}
@@ -154,15 +120,17 @@ interface WorkflowCardStripProps {
   /** The left side: the workflow on a board card, the project on a canvas card of a workflow across boards. */
   leading?: React.ReactNode;
   steps: readonly WorkflowRouteStep[];
-  /** Set for a task in To Do or Done, whose track is that column's marker alone (the `marker` style). */
-  outsideRoute?: OutsideRouteColumn | null;
-  /** How the step the task is on is drawn: the column's marker, or the board's bar. */
+  /** The task's board's To Do and Done columns, the track's two ends. */
+  ends: WorkflowBoardEnds | null;
+  /** Where the task is, which places it at To Do, on its route, or at Done. */
+  place: WorkflowTaskPlace;
+  /** How the stop the task is at is drawn: the column's marker, or the board's bar. */
   currentStep?: CurrentStepStyle;
   /** Set while the workflow runs: the card moves by its workflow, not by hand. */
   lockedTitle?: string | null;
 }
 
-export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, outsideRoute = null, currentStep = 'marker', lockedTitle }: WorkflowCardStripProps) {
+export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker', lockedTitle }: WorkflowCardStripProps) {
   return (
     <div
       className="h-[29px] px-2.5 flex items-center justify-between gap-2 border-b border-edge bg-surface/30 shrink-0"
@@ -170,7 +138,7 @@ export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading
     >
       {leading ?? <span aria-hidden="true" />}
       <span className="inline-flex items-center gap-[7px] shrink-0">
-        <WorkflowStepTrack steps={steps} outsideRoute={outsideRoute} currentStep={currentStep} />
+        <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />
         {lockedTitle && (
           <span className="inline-flex text-fg-faint" title={lockedTitle} data-testid="workflow-card-lock">
             <Lock size={12} aria-label={lockedTitle} />

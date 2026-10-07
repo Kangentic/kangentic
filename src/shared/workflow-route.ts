@@ -1,4 +1,4 @@
-import type { Swimlane, Task, WorkflowRouteStep, WorkflowTaskPlace } from './types';
+import type { Swimlane, Task, WorkflowBoardEnds, WorkflowColumnEnd, WorkflowRouteStep, WorkflowTaskPlace } from './types';
 
 /**
  * A workflow task's route: the columns it visits, from its start column to its
@@ -100,6 +100,14 @@ export type StepColumn = RouteColumn & Pick<Swimlane, 'name' | 'color' | 'icon'>
 
 function step(column: StepColumn, state: WorkflowRouteStep['state'], finishedAt: string | null): WorkflowRouteStep {
   return { swimlaneId: column.id, name: column.name, color: column.color ?? null, icon: column.icon ?? null, state, finishedAt };
+}
+
+/** A board's To Do and Done columns, the two ends a card's step track draws around the route. */
+export function boardEnds(columns: readonly StepColumn[]): WorkflowBoardEnds {
+  const end = (column: StepColumn | null): WorkflowColumnEnd | null => (column
+    ? { swimlaneId: column.id, name: column.name, color: column.color ?? null, icon: column.icon ?? null }
+    : null);
+  return { todo: end(todoColumn(columns)), done: end(doneColumn(columns)) };
 }
 
 /** Where a created task is in its workflow: not started (To Do), working, or done. */

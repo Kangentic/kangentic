@@ -545,7 +545,10 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
 automatic layout, sit at the bottom left, and Add task at the bottom center. Right-click a started task's card for
-the board's own menu, with Open on board at the top.
+the board's own menu, with Open on board at the top. The selected card wears the accent border, and
+its links stand out: what it waits for flows into it (green once that task is done, grey while it
+is not), what waits for it flows out in the accent, and every other link fades back. With reduced
+motion, or Animations off, the links hold still.
 
 **Planning one.** Click New workflow, or right-click a To Do card on the board and pick New
 workflow (its title and description become the brief). A workflow with no tasks yet shows the
@@ -583,9 +586,10 @@ launch read-only can be a workflow's agent; for any other, the pane says so and 
 canvas.
 
 **Shaping it.** Drag from a card's right-hand dot onto the card that should wait; the card under
-the pointer says what a release would do, or why it cannot. In the inspector, the route switches
-turn a column on or off for that task, the X on a link row removes the link, and Add blocker makes
-the task wait for another. A control that would break a rule stays in place, disabled, and its
+the pointer says what a release would do, or why it cannot. In the inspector, the route list
+starts at To Do and ends at Done, both locked on, and its switches turn each column between them on
+or off for that task; the X on a link row removes the link, and Add blocker makes the task wait for
+another. A control that would break a rule stays in place, disabled, and its
 tooltip says why (a task that has started, or has no task left to wait for, cannot get a new
 blocker; a step it has reached cannot change). Remove takes a task out of the workflow.
 
@@ -596,13 +600,15 @@ that finishes a plan moves on when you approve the plan. Without an Automation a
 column with no agent, you drag the card on yourself.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name, a step track
-(one bar per column it visits; done ones grey, the current one wider and in its column's color)
-and a lock while the workflow
-moves it (none while it waits in a column no agent works, for you to drag it on), and a card in To
-Do says what it waits for ("Blocked by #413..."). On the Workflows canvas the strip names no
-column: the current step is that column's icon on a tint of its color (a dot when the column has
-no icon), and hovering it names the column. A task in To Do or Done shows that column's icon
-alone, the strip's left side names the task's project, and the lock follows the board's rule. Its
+and a lock while the workflow moves it (none while it waits in a column no agent works, for you to
+drag it on), and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
+task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps
+one length for the task's whole life. The stops it has passed are grey, where it is now is wider
+and in its column's color, and the stops ahead are bars in their columns' colors, so even a task
+that has not started says which columns it will visit. On the Workflows canvas the strip names no
+column: where the task is shows as that column's icon on a tint of its color (a dot when the column
+has no icon), and hovering it names the column. The strip's left side names the task's project,
+and the lock follows the board's rule. Its
 right-click menu leads with Open workflow and Show
 workflow links, which draws lines from what the card waits for and to what waits for it; Escape or
 a click on empty board space clears them. Task detail has a Workflow panel (the linked-cards button

@@ -572,6 +572,41 @@
   }
 }
 
+/* The selected task's own links flow from blocker to dependent (sign-off,
+   2026-10-07; WorkflowEdge.tsx): the dashes travel toward the arrow, so which
+   way the work goes reads at a glance. They hold still under reduced motion
+   or with the Animations setting off. */
+@keyframes workflow-link-flow {
+  to { stroke-dashoffset: -22; }
+}
+.workflow-canvas .workflow-link-flow {
+  stroke-dasharray: 7 4;
+  animation: workflow-link-flow 0.9s linear infinite;
+}
+/* A dash offset is not a composited property, so each frame repaints the
+   link. React Flow draws each edge in its own <svg>; giving a flowing one its
+   own layer keeps that repaint off the viewport's layer (decision 54), whose
+   tiles hold the cards. Measured at 100 cards (decision 155): a pan missed 12
+   or more refreshes in 5 of 14 runs with the flow in the viewport's layer,
+   and in none of 9 with this layer. */
+.workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+  will-change: transform;
+}
+.no-motion .workflow-canvas .workflow-link-flow {
+  animation: none;
+}
+.no-motion .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+  will-change: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .workflow-link-flow {
+    animation: none;
+  }
+  .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
+    will-change: auto;
+  }
+}
+
 /* A card being moved lifts off the canvas (board 10b). */
 .workflow-canvas .react-flow__node.dragging .workflow-node {
   box-shadow:

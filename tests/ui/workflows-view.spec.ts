@@ -650,7 +650,33 @@ test.describe('Workflows inspector', () => {
     }
   });
 
-  test('a Done card wears the Done column\'s color, and every card\'s 2px border when selected', async () => {
+  test('the route list is the card\'s whole journey: To Do first and Done last, both locked on', async () => {
+    // Sign-off T2: the list and the card's track draw the same stops.
+    const { browser, page } = await launch('running');
+    try {
+      // #414 works in Executing: it has left To Do.
+      await card(page, 't414').click();
+      const todoRow = page.locator('[data-testid="workflow-route-todo"]');
+      await expect(todoRow).toContainText('To Do');
+      await expect(todoRow).toHaveAttribute('data-step-state', 'done');
+      await expect(todoRow.getByRole('switch')).toBeDisabled();
+      const doneRow = page.locator('[data-testid="workflow-route-done"]');
+      await expect(doneRow).toHaveAttribute('data-step-state', 'ahead');
+      await expect(doneRow.getByRole('switch')).toBeDisabled();
+      // To Do sits above the route's own rows, Done below them.
+      const rows = page.locator('[data-testid="workflow-route-todo"], [data-testid="workflow-route-row"], [data-testid="workflow-route-done"]');
+      await expect(rows.first()).toHaveAttribute('data-testid', 'workflow-route-todo');
+      await expect(rows.last()).toHaveAttribute('data-testid', 'workflow-route-done');
+
+      // #415 waits in To Do: there it is the current stop.
+      await card(page, 't415').click();
+      await expect(page.locator('[data-testid="workflow-route-todo"]')).toHaveAttribute('data-step-state', 'current');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Done card wears the Done column\'s color, and every card the accent border when selected', async () => {
     const { browser, page } = await launch('running');
     try {
       const doneLaneColor = await page.evaluate(async () => (
@@ -658,13 +684,13 @@ test.describe('Workflows inspector', () => {
       ));
       expect(doneLaneColor).not.toBe('');
       const doneColor = await computedColor(page, doneLaneColor);
-      // The selected border every card shares: 2px of the muted grey at 75%.
-      const selectedBorder = await computedColor(page, 'color-mix(in oklab, var(--color-fg-muted) 75%, transparent)');
+      // The selected border every card shares (sign-off S3): the theme's accent, at the border's own 1px.
+      const selectedBorder = await computedColor(page, 'var(--color-accent)');
 
-      // #411 is done and opens selected (the run order's first row): the 2px
-      // border inside the card, no ring outside it.
+      // #411 is done and opens selected (the run order's first row): the
+      // accent border, 1px as every card's, and no halo or ring outside it.
       await expect(card(page, 't411')).toHaveAttribute('data-selected', 'true');
-      await expect(card(page, 't411')).toHaveCSS('border-top-width', '2px');
+      await expect(card(page, 't411')).toHaveCSS('border-top-width', '1px');
       await expect(card(page, 't411')).toHaveCSS('border-top-color', selectedBorder);
       await expect(card(page, 't411')).toHaveCSS('box-shadow', 'none');
       // #412, done and not selected: 1px in the board's Done column color (Final 1).
@@ -677,6 +703,8 @@ test.describe('Workflows inspector', () => {
       await card(page, 't414').click();
       await expect(card(page, 't414')).toHaveAttribute('data-selected', 'true');
       await expect(card(page, 't414')).toHaveCSS('border-top-color', selectedBorder);
+      await expect(card(page, 't414')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 't414')).toHaveCSS('box-shadow', 'none');
       await expect(card(page, 't411')).toHaveCSS('border-top-width', '1px');
       await expect(card(page, 't411')).toHaveCSS('border-top-color', doneColor);
     } finally {
@@ -757,12 +785,18 @@ test.describe('Workflows inspector', () => {
     }
   });
 
-  // The phone's strip design, matched: the track's current step is the
-  // column's own marker, so the strip names no column, and a task off its
-  // route (To Do, Done) shows that column's marker alone, uncolored.
-  test('a canvas card names its column by the marker in its track, never in words', async () => {
+  // The track is the task's whole journey (sign-off R2 and T2): To Do, the
+  // route, Done, the same length for a task's whole life. Where it is, is its
+  // column's own marker, so the strip names no column; the stops it passed are
+  // grey and the ones ahead carry their columns' colors.
+  test('a canvas card draws its whole journey, To Do to Done, with its column as the marker', async () => {
     const { browser, page } = await launch('running');
     try {
+      const laneColor = (role: 'todo' | 'done') => page.evaluate(async (wanted) => (
+        (await window.electronAPI.swimlanes.list()).find((lane) => lane.role === wanted)?.color ?? ''
+      ), role);
+      const faint = await computedColor(page, 'var(--color-fg-faint)');
+
       // #414 works in Executing: no column name on the strip, the name on the marker.
       const strip = card(page, 't414').locator('[data-testid="workflow-card-strip"]');
       await expect(strip).not.toContainText('Executing');
@@ -771,24 +805,35 @@ test.describe('Workflows inspector', () => {
       await expect(marker).toHaveAttribute('aria-label', 'Executing: now');
       await expect(marker).toHaveCSS('background-color', await computedColor(page, 'color-mix(in srgb, #3b82f6 18%, transparent)'));
       await expect(marker.locator('svg')).toHaveCSS('color', await computedColor(page, '#3b82f6'));
-      // The marker is the one color in the track: Planning, done, is neutral.
-      const doneStep = strip.locator('[data-step-state="done"]');
-      await expect(doneStep).toHaveCSS('background-color', await computedColor(page, 'var(--color-fg-faint)'));
-      await expect(doneStep).toHaveCSS('opacity', '0.55');
+      // To Do and Planning are behind it, the faint grey; what is ahead keeps its color.
+      const passed = strip.locator('[data-step-state="done"]');
+      await expect(passed).toHaveCount(2);
+      await expect(passed.first()).toHaveAttribute('data-step-end', 'todo');
+      for (const stop of await passed.all()) {
+        await expect(stop).toHaveCSS('background-color', faint);
+        await expect(stop).toHaveCSS('opacity', '0.55');
+      }
+      const ahead = strip.locator('[data-step-state="ahead"]');
+      await expect(ahead.last()).toHaveAttribute('data-step-end', 'done');
+      await expect(ahead.last()).toHaveCSS('background-color', await computedColor(page, `color-mix(in srgb, ${await laneColor('done')} 45%, transparent)`));
 
-      // #415 waits in To Do: the To Do marker alone, in the faint grey, with no step marks.
+      // #415 waits in To Do: To Do's marker, in its column's color, then its route and Done ahead.
       const toDoTrack = card(page, 't415').locator('[data-testid="workflow-step-track"]');
       const toDoMarker = toDoTrack.locator('[data-testid="workflow-step-marker"]');
-      await expect(toDoMarker).toHaveAttribute('data-outside-route', 'todo');
-      await expect(toDoMarker).toHaveAttribute('aria-label', 'To Do');
-      await expect(toDoMarker.locator('svg')).toHaveCSS('color', await computedColor(page, 'var(--color-fg-faint)'));
-      await expect(toDoTrack.locator('[data-step-state]')).toHaveCount(0);
+      await expect(toDoMarker).toHaveAttribute('data-step-end', 'todo');
+      await expect(toDoMarker).toHaveAttribute('aria-label', 'To Do: now');
+      await expect(toDoMarker.locator('svg')).toHaveCSS('color', await computedColor(page, await laneColor('todo')));
+      await expect(toDoTrack.locator('[data-step-state="done"]')).toHaveCount(0);
+      await expect(toDoTrack.locator('[data-step-state]').last()).toHaveAttribute('data-step-end', 'done');
       await expect(card(page, 't415').locator('[data-testid="workflow-card-strip"]')).not.toContainText('To Do');
 
-      // #411 is done: the Done marker alone.
-      const doneMarker = card(page, 't411').locator('[data-testid="workflow-step-marker"]');
-      await expect(doneMarker).toHaveAttribute('data-outside-route', 'done');
-      await expect(doneMarker).toHaveAttribute('aria-label', 'Done');
+      // #411 is done: everything behind it, and Done's marker in Done's color.
+      const doneTrack = card(page, 't411').locator('[data-testid="workflow-step-track"]');
+      const doneMarker = doneTrack.locator('[data-testid="workflow-step-marker"]');
+      await expect(doneMarker).toHaveAttribute('data-step-end', 'done');
+      await expect(doneMarker).toHaveAttribute('aria-label', 'Done: now');
+      await expect(doneMarker.locator('svg')).toHaveCSS('color', await computedColor(page, await laneColor('done')));
+      await expect(doneTrack.locator('[data-step-state="ahead"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

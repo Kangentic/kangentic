@@ -228,6 +228,52 @@ test.describe('Workflows canvas', () => {
     }
   });
 
+  test('a selected task\'s links: what feeds it, what it feeds, flowing, and every other link faded', async () => {
+    // Sign-off B and 2: the board overlay's colors (a pending blocker's link a
+    // brighter grey, a dependent's the accent), dashes flowing from blocker to
+    // dependent, every other link at 20%.
+    const { browser, page } = await launch(true);
+    try {
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      const link = (blocker: string, blocked: string) => page.locator(`.react-flow__edge[data-id="${blocker}->${blocked}"] path.react-flow__edge-path`);
+      const look = (blocker: string, blocked: string) => link(blocker, blocked).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          relation: element.getAttribute('data-link-relation'),
+          stroke: style.stroke,
+          opacity: style.opacity,
+          flowing: element.classList.contains('workflow-link-flow') && style.strokeDasharray !== 'none',
+          animated: style.animationName !== 'none',
+          // A flowing link repaints every frame, so its own <svg> is its own layer.
+          layered: getComputedStyle(element.closest('svg')!).willChange === 'transform',
+        };
+      });
+
+      await card(page, 'task-2').click();
+      await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
+      await expect.poll(() => look('task-1', 'task-2')).toMatchObject({ relation: 'blocker', opacity: '1', flowing: true, animated: true, layered: true });
+      expect((await look('task-1', 'task-2')).stroke).toBe(await tokenColor(page, '--color-fg-muted'));
+      await expect.poll(() => look('task-2', 'task-3')).toMatchObject({ relation: 'dependent', opacity: '1', flowing: true });
+      expect((await look('task-2', 'task-3')).stroke).toBe(await tokenColor(page, '--color-accent-fg'));
+
+      // Another selection: the link it has no part in fades back and holds still.
+      await card(page, 'task-1').click();
+      await expect.poll(() => look('task-2', 'task-3')).toMatchObject({ relation: 'muted', opacity: '0.2', flowing: false, layered: false });
+      await expect.poll(() => look('task-1', 'task-2')).toMatchObject({ relation: 'dependent', flowing: true });
+
+      // Nothing selected: every link back to its state's own look.
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      await expect.poll(() => look('task-1', 'task-2')).toMatchObject({ relation: 'none', opacity: '0.7', flowing: false });
+
+      // With reduced motion the flow holds still.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await card(page, 'task-2').click();
+      await expect.poll(() => look('task-1', 'task-2')).toMatchObject({ relation: 'blocker', animated: false, layered: false });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a click selects a card, and a click on empty canvas or Escape clears it', async () => {
     const { browser, page } = await launch(true);
     try {
@@ -239,11 +285,12 @@ test.describe('Workflows canvas', () => {
       await card(page, 'task-2').click();
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
       await expect(card(page, 'task-1')).toHaveAttribute('data-selected', 'false');
-      // Selected: a 2px border inside the card, with no ring outside it. An
-      // unselected planned card draws like any To Do card: a solid 1px edge,
-      // no dash (Final 3).
+      // Selected (sign-off S3): the theme's accent at the border's own 1px,
+      // with no ring or halo outside it. An unselected planned card draws like
+      // any To Do card: a solid 1px edge, no dash (Final 3).
       const edge = await tokenColor(page, '--color-edge');
-      await expect(card(page, 'task-2')).toHaveCSS('border-top-width', '2px');
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-width', '1px');
+      await expect(card(page, 'task-2')).toHaveCSS('border-top-color', await tokenColor(page, '--color-accent'));
       await expect(card(page, 'task-2')).toHaveCSS('border-top-style', 'solid');
       await expect(card(page, 'task-2')).toHaveCSS('box-shadow', 'none');
       await expect(card(page, 'task-1')).toHaveCSS('border-top-width', '1px');

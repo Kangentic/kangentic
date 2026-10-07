@@ -44,7 +44,7 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
     ? state.swimlanes.find((lane) => lane.role === 'done')?.color
     : undefined));
   const doneColumnColor = openBoardDoneColor
-    ?? (homeProjectId ? detail?.doneColors[homeProjectId] : null)
+    ?? (homeProjectId ? detail?.boardEnds[homeProjectId]?.done?.color : null)
     ?? DONE_COLOR_FALLBACK;
   const [removing, setRemoving] = useState(false);
   const inPopOut = !!window.electronAPI.popOut?.descriptor;

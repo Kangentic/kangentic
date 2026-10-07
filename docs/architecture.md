@@ -219,7 +219,7 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 |---------|---------|---------|
 | `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
 | `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
-| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, and each board's name and Done column color |
+| `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, and each board's name and To Do and Done columns |
 | `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
 | `workflow:rename` | invoke | Rename a workflow |
 | `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
@@ -1102,7 +1102,8 @@ src/renderer/components/workflows/
   WorkflowPicker.tsx       # the header's picker, and the workflow state chip
   WorkflowDialogs.tsx      # Start, Delete, Remove and Rename confirms
   WorkflowStrip.tsx        # the strip on a card (canvas and board) and its step track
-  WorkflowEdge.tsx         # a link, routed through the lanes between columns
+  workflow-track.ts        # pure: the track's stops, the board's To Do, the route, the board's Done
+  WorkflowEdge.tsx         # a link through the lanes between columns; a selected task's links flow
   workflow-canvas-context.ts # the workflow a node reads for its link hint
   workflow-graph.ts        # pure: waiting, link and route guards, run order
   workflow-layout.ts       # pure: the layered auto layout

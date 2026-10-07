@@ -309,6 +309,24 @@ drag-start frame went from about 69ms to 42ms on the workflow board, the same as
 board. What is left is the board's own activation (four commits that each re-render every card,
 because the sortable context changes) and the overlay drawing the taller card.
 
+### The selected task's flowing links (2026-10-07, #732)
+
+The selected card's own links now flow, their dashes moving from blocker to dependent
+(`.workflow-link-flow`, a `stroke-dashoffset` animation). A dash offset is not a composited
+property, so every frame repaints the link, and inside the viewport's single layer that repaint
+lands on tiles full of cards. At `W100` the stylesheet A/B ran three arms in alternation: the flow
+as built, the flow switched off, and the flowing link's own `<svg>` (React Flow draws each edge in
+one) on a layer of its own with `will-change: transform`. Over four rig invocations, one of them
+with 16 busy threads loading the CPU, a pan missed 12 or more refreshes in 5 of 14 runs with the
+flow as built, three of them at a 13.9ms p95 (every other refresh). With the flow off it was 1 of
+13, a run with another animation going (14 against 11). With the layer it was none of 9, at most
+1 missed. Idle and card drag were flat in every arm. The layer shipped (`index.css`), and only a
+flowing link gets one, so a selection adds one layer per link it flows on.
+
+The `--experiments` table now leads with `anims`, the count of running animations under each
+stylesheet, so an arm that switches an animation off shows it did (13 with the flow, 11 without,
+for a selected card with two links).
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in
