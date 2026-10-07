@@ -180,9 +180,12 @@ task's OWN worktree (`isolated` isolates the conversation, not the filesystem - 
 [docs/session-lifecycle.md](docs/session-lifecycle.md)). Entering the column suspends the task
 agent's session and kills its PTY, so the two never overlap - but it leaves that agent's
 UNCOMMITTED work in the shared tree, which is why the review pass commits by set math over
-`git status` and never `git add -A`. It auto-fixes findings, adds tests, and commits that pass
-itself, so Testing can open on a branch carrying a `*(review)` commit no local agent authored. That is
-expected, not corruption. A finished pass normally leaves the tree clean; a fix on an already-dirty
+`git status` and never `git add -A`. It fixes every finding it verifies (Lows included), applies its
+recommended option on a decision and lists the alternative, adds tests, and commits that pass itself,
+so Testing can open on a branch carrying a `*(review)` commit no local agent authored. That is
+expected, not corruption. The pass ends with a verdict computed by `scripts/review-verdict.mjs`:
+**Ready** (move to Testing) or **Blocked** (move back to Executing and do the named steps). There is no
+"skipped" status, and the commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A finished pass normally leaves the tree clean; a fix on an already-dirty
 path stays uncommitted by design, so a dirty tree means the pass is either in flight or left those
 paths deliberately mixed.
 

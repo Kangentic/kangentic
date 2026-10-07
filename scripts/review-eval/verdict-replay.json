@@ -1,0 +1,714 @@
+{
+  "rule": "scripts/review-eval/README.md E4, 2026-10-06",
+  "notes": [
+    "oldVerdict is the verdict in each pass's first report. In-session follow-ups that later said Clean (task 762 passes 5 and 6, task 749 pass 4, task 736 pass 7) do not change it.",
+    "Each skip is mapped from its own pass's text. What a later pass concluded about the same code is not imported.",
+    "macOS treatment: a skip whose own text says it needs a Mac or macOS access to make or verify the change is blocked (a device the Windows session lacks). A macOS skip whose text also says no change is needed (task 736 pass 4 finding 10, pass 6 finding 4) is refuted. Task 736 pass 8 finding 12 is a decision: its text asks for a call, and keeping the current code needs no Mac.",
+    "Linux and WSL treatment: the task 736 host is Windows with a WSL distro (pass 3 says so), and the required CI Linux unit leg runs Linux-only tests, so 'needs WSL' and 'needs a POSIX machine' skips are fixed, not blocked.",
+    "Task 752 pass 1 'real image sample': docs/code-review-fanout-audit.md section 14.5 says a later follow-up in the same session produced a sanitized real image tool result, so the session could get it. Mapped fixed.",
+    "Verdict-line pass numbers are the order the passes appear in the verdict-tally file, counting excluded passes.",
+    "Task 765 session d42739e9 appears twice in the verdict-tally file with identical text; it is counted once.",
+    "checkFailed is false for every pass: no report states a failed typecheck or HMR vitest at the end of the pass."
+  ],
+  "excluded": [
+    { "task": "735", "session": "6b90bcf7", "why": "no final report" },
+    { "task": "743", "session": "406b038c", "why": "no final report" }
+  ],
+  "passes": [
+    {
+      "task": "736", "pass": 1, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 8", "severity": "Medium", "skipReason": "Bulk delete's reap must wait for every task's sessions to exit, and per-task cleanup doesn't expose that point. Next: design task", "mappedTo": "decision", "why": "decision: in-diff design choice on bulk-delete reap ordering" },
+        { "ref": "finding 22", "severity": "Low", "skipReason": "Fixing it changes suspend() for every caller, and no user action was traced that reaches this window", "mappedTo": "decision", "why": "decision: trade-off, changing suspend() for every caller against an untraced race" },
+        { "ref": "finding 23", "severity": "Low", "skipReason": "Needs the shell each session was spawned with recorded somewhere. Next: design task", "mappedTo": "decision", "why": "decision: design call on recording each session's spawn shell" },
+        { "ref": "finding 24: startup sweep outside withTaskLock", "severity": "Low", "skipReason": "Startup sweep runs outside withTaskLock (a held PTY is protected anyway)", "mappedTo": "refuted", "why": "refuted: skip says a held PTY is protected anyway, no defect" },
+        { "ref": "finding 24: macOS tag search reads argv", "severity": "Low", "skipReason": "The macOS tag search reads argv too (needs a Mac to verify)", "mappedTo": "blocked", "why": "blocked: skip says it needs a Mac to verify, a device the Windows session lacks" },
+        { "ref": "finding 24: macOS withheld survivor dropped", "severity": "Low", "skipReason": "A macOS withheld survivor is dropped from the report (needs a Mac to verify)", "mappedTo": "blocked", "why": "blocked: skip says it needs a Mac to verify, a device the Windows session lacks" },
+        { "ref": "finding 24: Toolhelp falls back to PowerShell for good", "severity": "Low", "skipReason": "Windows Toolhelp falls back to PowerShell permanently after one failure", "mappedTo": "fixed", "why": "fixed: names a concrete one-site change" },
+        { "ref": "finding 24: path comparison defaults case-insensitive", "severity": "Low", "skipReason": "A path comparison defaults to case-insensitive", "mappedTo": "fixed", "why": "fixed: names a concrete change" },
+        { "ref": "finding 24: case folding follows the OS", "severity": "Low", "skipReason": "Case folding follows the OS, not the filesystem", "mappedTo": "fixed", "why": "fixed: names a concrete change" },
+        { "ref": "finding 24: WSL in-distro check case-sensitive", "severity": "Low", "skipReason": "The WSL in-distro check is case-sensitive under /mnt/c (can only miss a process, never kill a wrong one)", "mappedTo": "fixed", "why": "fixed: a real miss in the safe direction, concrete change" },
+        { "ref": "finding 24: placeOf ignores stored path form", "severity": "Low", "skipReason": "placeOf ignores the worktree's stored path form (affects only the label)", "mappedTo": "fixed", "why": "fixed: small cosmetic change" },
+        { "ref": "finding 24: preview lockfile comparison", "severity": "Low", "skipReason": "The preview compares lockfiles against the root's current one", "mappedTo": "fixed", "why": "fixed: names a concrete change" },
+        { "ref": "finding 24: package smoke finds node through PATH", "severity": "Low", "skipReason": "The package smoke finds node through PATH on Linux (fails loudly if wrong)", "mappedTo": "refuted", "why": "refuted: skip says it fails loudly if wrong, no silent defect" },
+        { "ref": "finding 24: sticky toast outlives its report", "severity": "Low", "skipReason": "A sticky toast can outlive its report after 20 more reports", "mappedTo": "fixed", "why": "fixed: acknowledged defect, concrete change" },
+        { "ref": "finding 24: two cleanup gaps in the real-process test", "severity": "Low", "skipReason": "Two cleanup gaps in the real-process test", "mappedTo": "fixed", "why": "fixed: test hygiene change" },
+        { "ref": "finding 24: 300 ms sleep in a macOS-only test", "severity": "Low", "skipReason": "A 300 ms sleep in a macOS-only test", "mappedTo": "fixed", "why": "fixed: test change; this pass's text names no Mac dependency for this item" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "Count note: Summary says 17 skipped; 16 are listed (3 rows plus the 13-item finding 24 bundle)."
+    },
+    {
+      "task": "736", "pass": 2, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "accepted: macOS case-insensitive path compare", "severity": "Low", "skipReason": "macOS paths compared case-insensitively (tagged-reap.ts:189): the tag is still required, so this can't widen a kill", "mappedTo": "refuted", "why": "refuted: accepted, no change; the tag is still required" },
+        { "ref": "accepted: failed koffi load stays cached", "severity": "Low", "skipReason": "A load failure is a property of the install, and it is reported once as reader_load", "mappedTo": "refuted", "why": "refuted: accepted, no change" },
+        { "ref": "accepted: liveRootPids includes killed raw PTYs", "severity": "Low", "skipReason": "This over-protects, which is the safe direction", "mappedTo": "refuted", "why": "refuted: accepted, safe direction" },
+        { "ref": "accepted: package smoke counts a zombie as running", "severity": "Low", "skipReason": "Hosted runners reap orphans", "mappedTo": "refuted", "why": "refuted: accepted, no defect on hosted runners" },
+        { "ref": "deferred: win32-reader.ts:282 WOW64 tests", "severity": "Low", "skipReason": "WOW64 PEB walk, 8.3 expansion and size caps have no fake-API tests; needs a 32-bit memory layout in the fake. Next: /test write", "mappedTo": "fixed", "why": "fixed: coverage hole; a 32-bit fake layout is a fixture the session can generate" },
+        { "ref": "deferred: tagged-reap.ts:273 untagged survivor dropped", "severity": "Low", "skipReason": "An untagged survivor whose root is gone is dropped from the report. Next: design call", "mappedTo": "decision", "why": "decision: design call" },
+        { "ref": "deferred: tagged-reap.ts:166 host trusts main's filtering", "severity": "Low", "skipReason": "The host trusts main's directory filtering; repeating the home check there would be extra safety. Next: design call", "mappedTo": "decision", "why": "decision: design call" },
+        { "ref": "deferred: verify-unpacked-worker.js:222 asar koffi load", "severity": "Low", "skipReason": "The build-time probe never loads koffi through the asar, so only the package smoke covers that path. Next: follow-up", "mappedTo": "fixed", "why": "fixed: one-site change; a packaged build is runnable, so not blocked" },
+        { "ref": "deferred: wsl-reap.ts:49 case-sensitive WSL match", "severity": "Low", "skipReason": "The WSL path match is case-sensitive, and it forks once per process. Next: document, or match case-insensitively for /mnt", "mappedTo": "fixed", "why": "fixed: names a concrete change or a comment" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 3, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 20", "severity": "Low", "skipReason": "The fix is per-task locking inside a batched sweep, a design change. Race window about 1 to 2 s after a project opens", "mappedTo": "decision", "why": "decision: design review, per-task lock or a liveness re-check" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "No test in either file reaches the missing names. No change planned", "mappedTo": "refuted", "why": "refuted: no reachable defect, no change planned" },
+        { "ref": "finding 16", "severity": "Low", "skipReason": "Needs Windows with WSL; no CI leg has it. Next: manual check", "mappedTo": "fixed", "why": "fixed: the session host is Windows with WSL, so the pass can run it" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "The symlink fixtures don't run on Windows. Next: /test write on a POSIX machine", "mappedTo": "fixed", "why": "fixed: coverage hole the CI Linux leg or host WSL can run; no missing device" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "The tests deliberately run Windows-shaped fixtures on every OS, and the tag is still required. No change planned", "mappedTo": "refuted", "why": "refuted: deliberate, no change planned" },
+        { "ref": "finding 19", "severity": "Low", "skipReason": "The assertions run on the Linux and macOS CI legs. No change planned", "mappedTo": "refuted", "why": "refuted: already covered on CI, no change planned" },
+        { "ref": "finding 21", "severity": "Low", "skipReason": "Rare and cosmetic: both rows are accurate, and each Stop button works. No change planned", "mappedTo": "refuted", "why": "refuted: no defect, no change planned" },
+        { "ref": "finding 22", "severity": "Low", "skipReason": "The rule already names PATTERN_E_STORES as authoritative. No change planned", "mappedTo": "refuted", "why": "refuted: already documented" },
+        { "ref": "finding 23", "severity": "Low", "skipReason": "The copy check is already plural-tolerant. Revisit if the toast copy changes", "mappedTo": "refuted", "why": "refuted: no defect today" },
+        { "ref": "finding 24", "severity": "Low", "skipReason": "Any leak is bounded by the survivor's 300 s lifetime. No change planned", "mappedTo": "refuted", "why": "refuted: bounded harm, no change planned" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 4, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "Remaining ~1 s window during the script's own run; closing it needs a gate the design rejected. Question 1: accept or per-task lock", "mappedTo": "decision", "why": "decision: trade-off put to the owner as question 1" },
+        { "ref": "finding 4", "severity": "Medium", "skipReason": "Trade-off: a hung wsl.exe makes a bulk delete report a cleanup failure while removal finishes later. Question 2", "mappedTo": "decision", "why": "decision: trade-off put to the owner as question 2" },
+        { "ref": "finding 8 (partial: long-path case)", "severity": "Low", "skipReason": "An oversized long-path result is practically unreachable. Next: none", "mappedTo": "refuted", "why": "refuted: unreachable, no change" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "macOS-only, can't run on this host, and Node's spawn returns after exec. Revisit if it flakes on the macOS runners", "mappedTo": "refuted", "why": "refuted: skip says spawn returns after exec, so no change is needed now" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "Rewriting the parser can't be tested here, and nothing is retained. Next: follow-up with macOS access", "mappedTo": "blocked", "why": "blocked: skip needs macOS access to test the rewrite, a device the session lacks" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Needs per-case liveness tracking; the risk window is milliseconds. Next: /test write", "mappedTo": "fixed", "why": "fixed: concrete test change" },
+        { "ref": "finding 17 (partial: 'Has an open window.' line)", "severity": "Low", "skipReason": "'Has an open window.' after Stop is pinned as approved design. Next: owner call on the copy", "mappedTo": "decision", "why": "decision: UX copy" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "Needs 20 later reports while one sticky toast stays open. Revisit the retention bound if it's ever seen", "mappedTo": "fixed", "why": "fixed: acknowledged defect deferred for rarity, concrete change" },
+        { "ref": "finding 22", "severity": "Low", "skipReason": "Testing it needs an extraction from the script's main(). Next: /test write", "mappedTo": "fixed", "why": "fixed: coverage hole plus a small refactor" },
+        { "ref": "finding 27", "severity": "Low", "skipReason": "Failure-message attribution; no defect. Next: none", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 29", "severity": "Low", "skipReason": "A harmless weak gate; no defect. Next: none", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 30", "severity": "Low", "skipReason": "Design limit; the tag is still required. Next: none", "mappedTo": "refuted", "why": "refuted: documented design limit" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 5, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 7", "severity": "Low", "skipReason": "A test deliberately expects this copy. Your call: keep the text, or show the past-tense line once a row is stopped", "mappedTo": "decision", "why": "decision: UX copy" },
+        { "ref": "finding 8", "severity": "Low", "skipReason": "Needs a design for children that end up under a different parent; window is a few hundred ms. Design follow-up, or document", "mappedTo": "decision", "why": "decision: in-diff design choice, fix or document Stop's behavior" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "The cost is negligible over a few hundred processes. Next: none", "mappedTo": "refuted", "why": "refuted: no meaningful cost, no change" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "It's test plumbing, and changing it means rewriting the tests. Optional cleanup", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "The test is macOS-only and can't run on this machine. Next: replace the wait with a poll on a Mac", "mappedTo": "blocked", "why": "blocked: skip needs a Mac to make and run the change, a device the session lacks" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Unverified, and the workflow has passed before. Check the runner image if that job fails", "mappedTo": "refuted", "why": "refuted: no verified defect, no change unless the job fails" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 6, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1: failed-stop copy", "severity": "Medium", "skipReason": "The detail line truncates at about 55 characters, so the tmux warning can't be appended. Choose red reason text or a second line", "mappedTo": "decision", "why": "decision: UX copy" },
+        { "ref": "Done branch and removeByTaskId", "severity": "Low", "skipReason": "The Done branch reaps without calling it. Changing that alters which sessions Done ends", "mappedTo": "decision", "why": "decision: behavior choice listed under decisions" },
+        { "ref": "release Sentry upload relies on ambient CI=true", "severity": "Low", "skipReason": "Pinning KANGENTIC_SENTRY_UPLOAD=1 in release.yml is a release-workflow choice", "mappedTo": "decision", "why": "decision: release policy" },
+        { "ref": "evicted report", "severity": "Low", "skipReason": "Review on a sticky toast whose report fell out of the last 20 does nothing (listed under decisions)", "mappedTo": "decision", "why": "decision: listed under decisions for the owner" },
+        { "ref": "Linux role reads", "severity": "Low", "skipReason": "A refused exe or maps read drops the visible-app or tmux protection (listed under decisions)", "mappedTo": "decision", "why": "decision: listed under decisions; fail-the-scan versus keep-going trade-off" },
+        { "ref": "macOS parser argv tolerance", "severity": "Low", "skipReason": "Documented trade-off (darwin-reader.ts:127-131)", "mappedTo": "refuted", "why": "refuted: documented trade-off" },
+        { "ref": "macOS parser title tolerance", "severity": "Low", "skipReason": "Documented trade-off (darwin-reader.ts:155-157)", "mappedTo": "refuted", "why": "refuted: documented trade-off" },
+        { "ref": "finding 4: whole KERN_PROCARGS2 decode", "severity": "Medium", "skipReason": "Listed under 'documented trade-offs or no verified harm'; the findings table says 'needs a macOS run'", "mappedTo": "refuted", "why": "refuted: the Skipped list files it as no verified harm, so no change needed" },
+        { "ref": "Toolhelp falls back to PowerShell for good", "severity": "Low", "skipReason": "Documented trade-off or no verified harm", "mappedTo": "refuted", "why": "refuted: documented trade-off" },
+        { "ref": "E2E survivor afterEach file read", "severity": "Low", "skipReason": "A deliberate earlier fix", "mappedTo": "refuted", "why": "refuted: deliberate" },
+        { "ref": "Windows reader silent on unreadable own token", "severity": "Low", "skipReason": "Documented trade-off or no verified harm", "mappedTo": "refuted", "why": "refuted: documented trade-off" },
+        { "ref": "unpinned memory-read contract", "severity": "Low", "skipReason": "Documented trade-off or no verified harm", "mappedTo": "refuted", "why": "refuted: no verified harm" },
+        { "ref": "macOS case-sensitive volumes", "severity": "Low", "skipReason": "Documented trade-off or no verified harm", "mappedTo": "refuted", "why": "refuted: documented trade-off" },
+        { "ref": "planReap exported only for tests", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "reap-plan subtree-walk cost", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional change" },
+        { "ref": "duplicated BFS in Linux and macOS readers", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: small refactor of two in-diff readers" },
+        { "ref": "hard-coded red classes in the dialog", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional style change" },
+        { "ref": "WSL batching edge cases", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional change" },
+        { "ref": "pinning the WSL argument list", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional test" },
+        { "ref": "splitting two long doc paragraphs", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional style change" },
+        { "ref": "test-only analytics export", "severity": "Low", "skipReason": "Optional", "mappedTo": "fixed", "why": "fixed: optional cleanup" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "Count note: the report says 22 skipped; its grouped Skipped list names 21. None of the listed groups needs a person or a missing tool."
+    },
+    {
+      "task": "736", "pass": 7, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 3", "severity": "Low", "skipReason": "Staying silent was a deliberate sixth-pass choice that tests assert. Your call: throw, or count the skipped rows into unreadableCount", "mappedTo": "decision", "why": "decision: two valid designs, owner call" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "A refactor across two readers; both are tested on their own. Extract a shared helper in a follow-up", "mappedTo": "fixed", "why": "fixed: small refactor of two in-diff readers" },
+        { "ref": "finding 14", "severity": "Low", "skipReason": "The name already exists on main; the branch didn't introduce it. Rename it in a separate cleanup", "mappedTo": "fixed", "why": "fixed: one-site out-of-diff rename that typecheck verifies" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Needs a sticky toast still open after 20 newer reports. A UX call: dismiss toasts whose report was evicted", "mappedTo": "decision", "why": "decision: UX call" },
+        { "ref": "finding 16", "severity": "Low", "skipReason": "Changes what the test means; it needs a judgment call. Drop the /exit write or rename the test", "mappedTo": "decision", "why": "decision: two valid options, owner call" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "The liveness check runs right before the kill, so the window is tiny. Compare start times if it ever flakes", "mappedTo": "fixed", "why": "fixed: acknowledged defect with a concrete change" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "The two copies live in different module systems; a fix means a shared module or a parity test. Add a table test", "mappedTo": "fixed", "why": "fixed: concrete test change" },
+        { "ref": "finding 19", "severity": "Low", "skipReason": "Restructuring the doc is a judgment call. Split it into subsections at the next /sync-docs", "mappedTo": "fixed", "why": "fixed: doc style change" },
+        { "ref": "finding 20", "severity": "Low", "skipReason": "A deliberate heuristic: it keeps a real install when unsure", "mappedTo": "refuted", "why": "refuted: deliberate" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 8, "session": "", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Reading roles for ancestors could protect a desktop shell and disable the reap. You decide; measure on real Linux and macOS desktops first", "mappedTo": "decision", "why": "decision: 'You decide' trade-off; keeping the current code needs no Mac" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "A mapped drive can't be told from a local one by its path. You decide: time-bound the stat, or document the stall", "mappedTo": "decision", "why": "decision: two valid options, owner call" },
+        { "ref": "finding 14", "severity": "Low", "skipReason": "Can't happen today: main gives every report a fresh UUID. Next: none", "mappedTo": "refuted", "why": "refuted: unreachable" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Closing it needs per-platform start-time reads in the script, for a one-tick window on a throwaway runner. Accept the risk, or rework", "mappedTo": "decision", "why": "decision: accept-the-risk trade-off" },
+        { "ref": "finding 16", "severity": "Low", "skipReason": "Testing a one-line guard needs the script refactored. Optional", "mappedTo": "fixed", "why": "fixed: optional coverage hole" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "Harmless duplicate guard. Optional", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "A refactor of reviewed code, not a mechanical fix. Optional", "mappedTo": "fixed", "why": "fixed: optional refactor" },
+        { "ref": "finding 19", "severity": "Low", "skipReason": "Harmless defensive check. Optional", "mappedTo": "fixed", "why": "fixed: optional cleanup" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "736", "pass": 9, "session": "", "level": "item",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "finding 5", "severity": "Low", "skipReason": "A backslash in a Linux or macOS project path isn't a supported input. A process still needs the task's tag. None needed", "mappedTo": "refuted", "why": "refuted: unsupported input, no change needed" },
+        { "ref": "finding 6", "severity": "Low", "skipReason": "Optional cleanup; the remaining rows check things the older tests don't. None needed", "mappedTo": "refuted", "why": "refuted: skip says the rows add value, no change needed" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "749", "pass": 1, "session": "bc3e3153", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "Unmeasured, and the fix is a design choice. Next: time one cold project open; consider a time limit plus a per-project cache", "mappedTo": "decision", "why": "decision: design choice; the timing is a local measurement, so not blocked" },
+        { "ref": "finding 2", "severity": "Medium", "skipReason": "Needs real replies captured from an agent; making them up would defeat the point", "mappedTo": "blocked", "why": "blocked: needs a live agent CLI reply capture" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "Costs microseconds. Optional", "mappedTo": "fixed", "why": "fixed: optional change" },
+        { "ref": "finding 14", "severity": "Low", "skipReason": "Would change a shared type for one caller. Optional", "mappedTo": "fixed", "why": "fixed: optional change" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Small per poll or per snapshot, not measured. Measure on an install with many projects before changing", "mappedTo": "fixed", "why": "fixed: change gated on a local measurement the pass can run" },
+        { "ref": "finding 16", "severity": "Low", "skipReason": "Small per poll or per snapshot, not measured. Measure on an install with many projects before changing", "mappedTo": "fixed", "why": "fixed: change gated on a local measurement the pass can run" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "Small per poll or per snapshot, not measured. Measure on an install with many projects before changing", "mappedTo": "fixed", "why": "fixed: change gated on a local measurement the pass can run" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "749", "pass": 2, "session": "e8c79ad6", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 3", "severity": "Medium", "skipReason": "Design tradeoff between per-poll cost and accuracy; bounded by the 2 s budget. Your call", "mappedTo": "decision", "why": "decision: trade-off" },
+        { "ref": "finding 4", "severity": "Medium", "skipReason": "Cleanup across files outside the diff. Next: follow-up task", "mappedTo": "followUp", "why": "followUp: outside the diff and spans several files" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "Rare; changes the read-failure design. Follow-up if it shows up", "mappedTo": "decision", "why": "decision: read-failure design choice" },
+        { "ref": "finding 16", "severity": "Low", "skipReason": "Rare; changes the read-failure design. Follow-up if it shows up", "mappedTo": "decision", "why": "decision: read-failure design choice" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Product decision: how widely one failed call should hold back writing. Your call", "mappedTo": "decision", "why": "decision: product choice" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "A test would lock in the behavior finding 12 questions. Decide finding 12 first", "mappedTo": "fixed", "why": "fixed: coverage hole, written once the finding 12 decision is applied" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Low cost, measured or bounded. Next: none", "mappedTo": "refuted", "why": "refuted: measured or bounded, no change" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "Low cost, measured or bounded. Next: none", "mappedTo": "refuted", "why": "refuted: measured or bounded, no change" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "Low cost, measured or bounded. Next: none", "mappedTo": "refuted", "why": "refuted: measured or bounded, no change" },
+        { "ref": "finding 19", "severity": "Low", "skipReason": "Low cost, measured or bounded. Next: none", "mappedTo": "refuted", "why": "refuted: measured or bounded, no change" },
+        { "ref": "finding 20: repeated fallback literals", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 21: shared NO_SUMMARIES.writtenWith array", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 22: two status-key formats", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 23: drain rule in three places", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 24: implicit scheduler state machine", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 25: exports only tests use", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 26: SnapshotOptions with one field", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 27: getStatus gate expressions", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 28: registeredProjectIds repeated", "severity": "Low", "skipReason": "Optional readability and duplication cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 29", "severity": "Low", "skipReason": "The gates are re-armed on every read. Next: none", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 30", "severity": "Low", "skipReason": "Needs a real agent capture, which can't be invented. Capture one when it happens", "mappedTo": "blocked", "why": "blocked: needs a live agent CLI capture" },
+        { "ref": "finding 31", "severity": "Low", "skipReason": "Harmless: the missing field reads as false. Next: none", "mappedTo": "refuted", "why": "refuted: harmless, no change" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "Count note: the report says 21 skipped; its table names 22 (findings 20 to 28 matched to the 9 listed cleanups in order)."
+    },
+    {
+      "task": "749", "pass": 3, "session": "cbfe695f", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 4", "severity": "Low", "skipReason": "The fix adds a parameter to the graph.snapshot worker call across three files. Decide whether to pass semanticOn", "mappedTo": "decision", "why": "decision: in-diff interface design choice" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "Optional; two short call sites. None needed", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "Optional; the correctness finder found both maps correct. A comment on reportChanges if anyone touches it", "mappedTo": "fixed", "why": "fixed: names a comment as the change" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "The one place that uses it already makes a fresh array, and the new test pins that. None needed", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "A design choice, and no real reply has shown this case. A test to pin whichever behavior you want", "mappedTo": "decision", "why": "decision: design choice" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Repeated pushes give the same result anyway, so only the timer count differs. None needed", "mappedTo": "refuted", "why": "refuted: no observable defect" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "749", "pass": 4, "session": "8b6d1b02", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "Design tradeoff: the code reads this count live on purpose so progress keeps moving. Your call", "mappedTo": "decision", "why": "decision: trade-off" },
+        { "ref": "finding 8", "severity": "Low", "skipReason": "Code and new docstring disagree; the pass result can't separate a failed read or save from a failed call. Decide", "mappedTo": "decision", "why": "decision: behavior choice" },
+        { "ref": "finding 2", "severity": "Medium", "skipReason": "Needs type changes in shared types. A follow-up if wanted", "mappedTo": "fixed", "why": "fixed: in-diff type change that typecheck verifies" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "Needs type changes in shared types. A follow-up if wanted", "mappedTo": "fixed", "why": "fixed: in-diff type change that typecheck verifies" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "Accepted heuristics or small nits. Next: none", "mappedTo": "refuted", "why": "refuted: accepted heuristic" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "Accepted heuristics or small nits. Next: none", "mappedTo": "refuted", "why": "refuted: accepted heuristic" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "Accepted heuristics or small nits. Next: none", "mappedTo": "refuted", "why": "refuted: accepted, no change" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Tests call it with an options object, and tests aren't typechecked. A follow-up if wanted", "mappedTo": "fixed", "why": "fixed: small refactor" },
+        { "ref": "finding 14", "severity": "Low", "skipReason": "Changes behavior in rebuild code this diff didn't touch. A separate task", "mappedTo": "followUp", "why": "followUp: outside the diff, a behavior change across the rebuild paths" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "Refactors the scheduler's state handling. Design review", "mappedTo": "decision", "why": "decision: design review" },
+        { "ref": "finding 18", "severity": "Low", "skipReason": "Behavior unchanged from before the diff; the right empty-registry status is a product decision", "mappedTo": "decision", "why": "decision: product choice" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "749", "pass": 5, "session": "246b9f1d", "level": "item",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "finding 3", "severity": "Medium", "skipReason": "vi.mock factories are hoisted per file, so sharing them means restructuring both files. Separate test-refactor task", "mappedTo": "fixed", "why": "fixed: refactor of two in-diff test files" },
+        { "ref": "finding 8", "severity": "Low", "skipReason": "An existing test pins dropping the project as intended; a one-off throw is rare. Revisit if it shows up", "mappedTo": "refuted", "why": "refuted: intended and pinned" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "One short string per registered project. Next: none", "mappedTo": "refuted", "why": "refuted: no meaningful cost" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "The read was measured at 8.5 ms warm for 19 projects. Measure before caching", "mappedTo": "refuted", "why": "refuted: measured, no defect" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "Same pattern as the existing per-poll re-mark of the open project. Check that a wake with nothing to drain is a no-op", "mappedTo": "refuted", "why": "refuted: matches an existing pattern; next step is a check, not a change" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Outside the diff, and a Rebuild you start should surface a registry error. Next: none", "mappedTo": "refuted", "why": "refuted: current behavior is intended" },
+        { "ref": "finding 15", "severity": "Low", "skipReason": "The two paths still differ. Next: none", "mappedTo": "refuted", "why": "refuted: no duplication to remove" },
+        { "ref": "finding 17", "severity": "Low", "skipReason": "Readability only. Optional", "mappedTo": "fixed", "why": "fixed: optional cleanup" },
+        { "ref": "finding 20", "severity": "Low", "skipReason": "Matches activateAllProjects and runs once per launch. Next: none", "mappedTo": "refuted", "why": "refuted: bounded, no change" },
+        { "ref": "finding 21", "severity": "Low", "skipReason": "No real database or watcher holds the scratch folders. Next: none", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 22", "severity": "Low", "skipReason": "Filling in a default there would hide fixture drift. Next: none", "mappedTo": "refuted", "why": "refuted: deliberate" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 1, "session": "c335f636", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "Clearing only your own label needs an ownership token across every caller of spawn-progress.ts. Make a follow-up task", "mappedTo": "decision", "why": "decision: bug new in this diff whose fix is a design choice, so not followUp" },
+        { "ref": "finding 4", "severity": "Low", "skipReason": "It's a security policy choice, and the protocol's doc comment puts the cap on the phone. Decide who sanitizes", "mappedTo": "decision", "why": "decision: security policy" },
+        { "ref": "finding 5", "severity": "Low", "skipReason": "Low value, and it means deleting code that was just added. Your call whether to drop the option", "mappedTo": "decision", "why": "decision: deleting code the author just added" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 2, "session": "1073938d", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 7", "severity": "Low", "skipReason": "Security-policy call. The desktop card shows the same label unsanitized, so stripping only the phone's copy is half a fix", "mappedTo": "decision", "why": "decision: security policy" },
+        { "ref": "finding 8", "severity": "Low", "skipReason": "Rule-text judgment; the silent drain predates this branch. Name it as an exception, or emit session-removed", "mappedTo": "decision", "why": "decision: two valid options, owner call" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "Bounded at about one snapshot a second per spawning task per phone. Revisit if a phone-side profile shows it", "mappedTo": "refuted", "why": "refuted: bounded, no change now" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "Its docstring accepts the cost; a cache could go stale if a task moves project mid-spawn. None unless it profiles hot", "mappedTo": "refuted", "why": "refuted: documented cost" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "The explicit argument forces every call site to decide ownership. Next: none", "mappedTo": "refuted", "why": "refuted: deliberate" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 3, "session": "bb9d5ab9", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "The refactor touches four files in two subsystems with three column sources; a helper saves one Boolean() per site. Your call", "mappedTo": "decision", "why": "decision: in-diff refactor left as an owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 4, "session": "6040c120", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 7", "severity": "Low", "skipReason": "One site builds a lookup for the whole board, the other reads a single task. Manual design call", "mappedTo": "decision", "why": "decision: design call" },
+        { "ref": "finding 8", "severity": "Low", "skipReason": "No UI test checks for the 'Resuming session...' text. Add it when a test needs it", "mappedTo": "refuted", "why": "refuted: skip says no change is needed until a test needs it" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 5, "session": "af19a0b5", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1", "severity": "Medium", "skipReason": "The fix changes cancellation cleanup shared by suspend, reset and relocation, and tests pin the current call. Follow-up task", "mappedTo": "fixed", "why": "fixed: in-diff concrete change (drop the paused-row removal), so not followUp" },
+        { "ref": "finding 3", "severity": "Low", "skipReason": "Stripping the tag block also breaks regional flag emoji. Decide the policy, then add the characters and one test", "mappedTo": "decision", "why": "decision: sanitizer policy" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "762", "pass": 6, "session": "7518c375", "level": "item",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 6", "severity": "Low", "skipReason": "Moving the setup inside the try means splitting the column-refusal check out first. Follow-up task", "mappedTo": "fixed", "why": "fixed: in-diff concrete change" },
+        { "ref": "finding 12", "severity": "Low", "skipReason": "Cosmetic, and fixing it means reordering a heavily tested sanitizer. Your call", "mappedTo": "decision", "why": "decision: owner call on a sanitizer trade-off" },
+        { "ref": "finding 9", "severity": "Low", "skipReason": "Using one shared scan is deliberate, and that scan now also carries the live-row rule. Next: none", "mappedTo": "refuted", "why": "refuted: deliberate" },
+        { "ref": "finding 10", "severity": "Low", "skipReason": "It follows the sibling SessionLifecycleBoardFeed. Next: none", "mappedTo": "refuted", "why": "refuted: deliberate, matches its sibling" },
+        { "ref": "finding 11", "severity": "Low", "skipReason": "Wording only; not a defect. Next: none", "mappedTo": "refuted", "why": "refuted: no defect" },
+        { "ref": "finding 13", "severity": "Low", "skipReason": "It must use the same Date.now() clock as the desktop's TTL, or the prune and the TTL drift apart. Next: none", "mappedTo": "refuted", "why": "refuted: deliberate" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "733", "pass": 1, "session": "f6989094", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 8", "severity": "unknown", "skipReason": "One skipped item needs a human decision: the toast wording in finding 8", "mappedTo": "decision", "why": "decision: UX copy" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "734", "pass": 1, "session": "e70a9628", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1 (main-process half)", "severity": "Medium", "skipReason": "One medium issue in the main-process model handling needs a design decision", "mappedTo": "decision", "why": "decision: design choice" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "734", "pass": 2, "session": "0357b99a", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 4", "severity": "unknown", "skipReason": "Behavior this diff introduced, and it needs a design decision", "mappedTo": "decision", "why": "decision: design choice" },
+        { "ref": "finding 5", "severity": "unknown", "skipReason": "Behavior this diff introduced, and it needs a design decision", "mappedTo": "decision", "why": "decision: design choice" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "734", "pass": 3, "session": "e831c365", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "item 2", "severity": "unknown", "skipReason": "Items 2, 3, and 5 need your judgment", "mappedTo": "decision", "why": "decision: owner judgment call" },
+        { "ref": "item 3", "severity": "unknown", "skipReason": "Items 2, 3, and 5 need your judgment", "mappedTo": "decision", "why": "decision: owner judgment call" },
+        { "ref": "item 5", "severity": "unknown", "skipReason": "Items 2, 3, and 5 need your judgment", "mappedTo": "decision", "why": "decision: owner judgment call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "741", "pass": 1, "session": "f7c7b381", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 2", "severity": "Low", "skipReason": "The one skipped finding that needs a decision is finding 2. It is Low and doesn't block Testing", "mappedTo": "decision", "why": "decision: owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "741", "pass": 2, "session": "dc0f2c36", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "skips outside this change (incl. finding 2)", "severity": "unknown", "skipReason": "Every skip is either outside this change or a guard no test can reach. The one item worth a follow-up task is finding 2", "mappedTo": "followUp", "why": "followUp: outside the diff; site count unknown, either way not blocked" },
+        { "ref": "guard no test can reach", "severity": "unknown", "skipReason": "A guard no test can reach", "mappedTo": "refuted", "why": "refuted: unreachable, no change" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "742", "pass": 1, "session": "c3f19a45", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 3", "severity": "unknown", "skipReason": "Only finding 3 needs a human decision", "mappedTo": "decision", "why": "decision: owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "742", "pass": 2, "session": "34ff16f6", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "3 skipped Lows", "severity": "Low", "skipReason": "The 3 skipped Low findings need your judgment. Nothing blocks merging", "mappedTo": "decision", "why": "decision: owner judgment calls" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "742", "pass": 3, "session": "098dcb49", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "skipped items", "severity": "unknown", "skipReason": "The skipped items are optional cleanup, not blockers", "mappedTo": "fixed", "why": "fixed: optional cleanup" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "743", "pass": 2, "session": "75521b95", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "3 skipped rows", "severity": "unknown", "skipReason": "Nothing blocking is left. The skips are optional cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "744", "pass": 1, "session": "1e5c62e7", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 3 (throttle)", "severity": "Low", "skipReason": "Skipped judgment call: the throttle", "mappedTo": "decision", "why": "decision: trade-off call" },
+        { "ref": "two UI-tier holes", "severity": "Low", "skipReason": "Skipped judgment calls: the two UI-tier holes", "mappedTo": "fixed", "why": "fixed: coverage hole in the UI tier" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "744", "pass": 2, "session": "09099784", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "4 skipped findings", "severity": "Low", "skipReason": "The 4 skipped findings are optional Low items, not blockers", "mappedTo": "fixed", "why": "fixed: optional items" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "745", "pass": 1, "session": "0144b39a", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 11", "severity": "unknown", "skipReason": "Findings 11 and 12 need your call on which way redaction should fail", "mappedTo": "decision", "why": "decision: redaction policy" },
+        { "ref": "finding 12", "severity": "unknown", "skipReason": "Findings 11 and 12 need your call on which way redaction should fail", "mappedTo": "decision", "why": "decision: redaction policy" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "745", "pass": 2, "session": "d71bca92", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "4 skipped findings", "severity": "unknown", "skipReason": "4 skipped findings need a human call, all optional", "mappedTo": "decision", "why": "decision: owner calls on optional items" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "745", "pass": 3, "session": "de42d0c2", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 3", "severity": "unknown", "skipReason": "Findings 3 and 4 need your judgment", "mappedTo": "decision", "why": "decision: owner judgment call" },
+        { "ref": "finding 4", "severity": "unknown", "skipReason": "Findings 3 and 4 need your judgment", "mappedTo": "decision", "why": "decision: owner judgment call" },
+        { "ref": "6 unfilled coverage holes", "severity": "unknown", "skipReason": "Skipped: 6 groups, plus 6 unfilled coverage holes; everything else is fixed, tested, or optional", "mappedTo": "fixed", "why": "fixed: coverage holes in any tier" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "745", "pass": 4, "session": "9209cbb4", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "finding 12", "severity": "unknown", "skipReason": "Only finding 12 needs your decision", "mappedTo": "decision", "why": "decision: owner call" },
+        { "ref": "4 optional items", "severity": "unknown", "skipReason": "Skipped: 7 rows, plus 4 optional items", "mappedTo": "fixed", "why": "fixed: optional items" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "746", "pass": 1, "session": "5a3373e9", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [],
+      "checkFailed": false,
+      "uncertain": true, "uncertainWhy": "8 skips, and the verdict line gives no skip text to map"
+    },
+    {
+      "task": "748", "pass": 1, "session": "058fd460", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [],
+      "checkFailed": false,
+      "uncertain": true, "uncertainWhy": "3 skips, and the verdict line gives no skip text to map"
+    },
+    {
+      "task": "750", "pass": 1, "session": "192ba37d", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "No skips (Skipped: 0)."
+    },
+    {
+      "task": "751", "pass": 1, "session": "ad606223", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "1 stylistic skip", "severity": "Low", "skipReason": "Skipped: 4 (1 stylistic, 2 outside the diff, 1 informational)", "mappedTo": "fixed", "why": "fixed: style change" },
+        { "ref": "2 skips outside the diff", "severity": "unknown", "skipReason": "2 found while verifying, outside the diff", "mappedTo": "followUp", "why": "followUp: outside the diff; site count unknown, either way not blocked" },
+        { "ref": "1 informational skip", "severity": "unknown", "skipReason": "1 informational", "mappedTo": "refuted", "why": "refuted: informational" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "752", "pass": 1, "session": "49e96b37", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "skipped item 1", "severity": "unknown", "skipReason": "Skipped item 1 is a trade-off you need to decide", "mappedTo": "decision", "why": "decision: trade-off" },
+        { "ref": "real image sample", "severity": "unknown", "skipReason": "The real image sample ... are follow-ups", "mappedTo": "fixed", "why": "fixed: the same session later made a sanitized real image result (audit doc 14.5)" },
+        { "ref": "open-path test", "severity": "unknown", "skipReason": "The open-path test ... are follow-ups", "mappedTo": "fixed", "why": "fixed: coverage hole" },
+        { "ref": "popover height caps", "severity": "unknown", "skipReason": "The popover height caps are follow-ups", "mappedTo": "fixed", "why": "fixed: coverage for the caps; audit row says 4 of 7 caps untested" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "The 'real image sample' wording alone was ambiguous; docs/code-review-fanout-audit.md settles it as obtainable in-session."
+    },
+    {
+      "task": "752", "pass": 2, "session": "21dc42d9", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "finding 15 (ContextBarPopover at z-50)", "severity": "Low", "skipReason": "Everything skipped is Low, and only finding 15 (ContextBarPopover at z-50) is worth filing as a follow-up", "mappedTo": "fixed", "why": "fixed: one-site change in one component" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "754", "pass": 1, "session": "c4edc2bf", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 2 (crash scrub)", "severity": "unknown", "skipReason": "The two crash-scrub items need your decision before this ships", "mappedTo": "decision", "why": "decision: crash-scrub privacy policy" },
+        { "ref": "finding 3 (crash scrub)", "severity": "unknown", "skipReason": "The two crash-scrub items need your decision before this ships", "mappedTo": "decision", "why": "decision: crash-scrub privacy policy" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "755", "pass": 1, "session": "f8163dec", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 2", "severity": "unknown", "skipReason": "Finding 2 needs your design call. Nothing skipped makes CI fail", "mappedTo": "decision", "why": "decision: design call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "755", "pass": 2, "session": "0d0c919a", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "8 skipped findings", "severity": "unknown", "skipReason": "The 8 skipped findings need a human call, and none blocks merging", "mappedTo": "decision", "why": "decision: owner calls" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "755", "pass": 3, "session": "55eed11a", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "9 skips", "severity": "unknown", "skipReason": "The 9 skips are optional improvements, and none blocks the PR", "mappedTo": "fixed", "why": "fixed: optional improvements" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "756", "pass": 1, "session": "15fe8997", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 8", "severity": "Medium", "skipReason": "3 skipped Medium findings need your decision: findings 8, 9, 14", "mappedTo": "decision", "why": "decision: owner call" },
+        { "ref": "finding 9", "severity": "Medium", "skipReason": "3 skipped Medium findings need your decision: findings 8, 9, 14", "mappedTo": "decision", "why": "decision: owner call" },
+        { "ref": "finding 14", "severity": "Medium", "skipReason": "3 skipped Medium findings need your decision: findings 8, 9, 14", "mappedTo": "decision", "why": "decision: owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": "One of the three is the demo README model-version claim, a concrete doc fix; the line does not say which number. Either mapping is non-blocking."
+    },
+    {
+      "task": "756", "pass": 2, "session": "10f68e4b", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [],
+      "checkFailed": false,
+      "uncertain": true, "uncertainWhy": "The verdict line gives no skip count or skip text"
+    },
+    {
+      "task": "757", "pass": 1, "session": "94419005", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 2", "severity": "unknown", "skipReason": "One skipped finding (finding 2) needs your decision", "mappedTo": "decision", "why": "decision: owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "757", "pass": 2, "session": "81697076", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1 (dictation casing)", "severity": "Medium", "skipReason": "Skipped finding 1, a Medium correctness issue in how dictated text is cased, needs your decision", "mappedTo": "decision", "why": "decision: behavior choice" },
+        { "ref": "remaining skips", "severity": "unknown", "skipReason": "The rest are optional or dev-script cleanups", "mappedTo": "fixed", "why": "fixed: optional cleanup" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "757", "pass": 3, "session": "fdcf2516", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "6 skipped items", "severity": "unknown", "skipReason": "The 6 skipped items are optional refactors, and none blocks merging", "mappedTo": "fixed", "why": "fixed: optional refactors" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "758", "pass": 1, "session": "cad5c16e", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "live-CLI capture", "severity": "unknown", "skipReason": "Two skipped items need a person: the live-CLI capture and the welcome-box privacy call", "mappedTo": "blocked", "why": "blocked: needs a live CLI capture" },
+        { "ref": "welcome-box privacy call", "severity": "unknown", "skipReason": "Two skipped items need a person: the live-CLI capture and the welcome-box privacy call", "mappedTo": "decision", "why": "decision: privacy policy" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "758", "pass": 2, "session": "f4d5e3de", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [],
+      "checkFailed": false,
+      "uncertain": true, "uncertainWhy": "The verdict line gives no skip count or skip text"
+    },
+    {
+      "task": "759", "pass": 1, "session": "f291f42a", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "2 skipped items", "severity": "unknown", "skipReason": "The two skipped items are optional style calls, not defects", "mappedTo": "fixed", "why": "fixed: optional style change" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "761", "pass": 1, "session": "9d2f9562", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 2 (per-tick image re-read)", "severity": "Medium", "skipReason": "A Medium performance problem that needs a design decision: the per-tick image re-read", "mappedTo": "decision", "why": "decision: design choice" },
+        { "ref": "other 10 skipped findings", "severity": "unknown", "skipReason": "The 11 skipped findings need human judgment", "mappedTo": "decision", "why": "decision: owner judgment calls" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "764", "pass": 1, "session": "e3183397", "level": "verdict-line",
+      "oldVerdict": "Clean",
+      "items": [
+        { "ref": "3 skips", "severity": "Low", "skipReason": "The 3 skips are optional style and robustness items; none needs a decision before merging", "mappedTo": "fixed", "why": "fixed: optional items" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "765", "pass": 1, "session": "d42739e9", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 6", "severity": "unknown", "skipReason": "Two skipped findings (6 and 7) need a person to decide", "mappedTo": "decision", "why": "decision: owner call" },
+        { "ref": "finding 7", "severity": "unknown", "skipReason": "Two skipped findings (6 and 7) need a person to decide", "mappedTo": "decision", "why": "decision: owner call" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "765", "pass": 2, "session": "8a26f413", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 1 (recordCrash cause)", "severity": "unknown", "skipReason": "Whether recordCrash's cause should be required", "mappedTo": "decision", "why": "decision: API design choice" },
+        { "ref": "finding 4 (Knowledge Graph copy verb)", "severity": "unknown", "skipReason": "Which verb the Knowledge Graph copy should use", "mappedTo": "decision", "why": "decision: UX copy" },
+        { "ref": "2 skipped coverage holes", "severity": "unknown", "skipReason": "Coverage found 7 holes; 5 were filled as tests, and 2 are skipped", "mappedTo": "fixed", "why": "fixed: coverage holes in any tier" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    },
+    {
+      "task": "765", "pass": 3, "session": "cbe930dd", "level": "verdict-line",
+      "oldVerdict": "Needs revision",
+      "items": [
+        { "ref": "finding 7 (Knowledge Graph copy)", "severity": "unknown", "skipReason": "Two need you: the Knowledge Graph copy choice", "mappedTo": "decision", "why": "decision: UX copy" },
+        { "ref": "finding 2 (packaged-build check)", "severity": "unknown", "skipReason": "Two need you: the packaged-build check", "mappedTo": "fixed", "why": "fixed: a packaged build is runnable by the pass, so not blocked" },
+        { "ref": "other skips", "severity": "unknown", "skipReason": "Most skips are deliberate no-change calls", "mappedTo": "refuted", "why": "refuted: deliberate no-change calls" }
+      ],
+      "checkFailed": false,
+      "uncertain": false, "uncertainWhy": ""
+    }
+  ]
+}

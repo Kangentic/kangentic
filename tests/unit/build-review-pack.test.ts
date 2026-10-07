@@ -157,6 +157,19 @@
  *     takes a different branch of noteReasonFor (the `parsed` file record exists for a staged
  *     file; an untracked file never has one).
  *
+ * 22. `--out-dir <path>` puts BOTH output files in that directory, resolved against the cwd and
+ *     created if missing, and writes nothing to .kangentic/. The review skill points it at its
+ *     session scratchpad because stopping an ephemeral worktree preview empties the worktree's
+ *     .kangentic/, and Step 8 reads the dirty list back from whichever directory this names. The
+ *     NO CHANGES path still writes nothing anywhere, and a missing value (or a flag where the
+ *     path should be) exits 2 before git runs.
+ *
+ * 23. `--shard-lines <N>` prints a `  shards:` line whose ranges start on a section heading, never
+ *     split a section, run contiguously from the first section to the pack's last line, and stay
+ *     within N lines unless one section alone is bigger (that section is then a shard of its own).
+ *     Packing is greedy in pack order, so the next shard's first section never fits in the
+ *     previous shard. The header range ends on the line before the first section.
+ *
  * Not covered, and why: a C-quoted path (a quote, backslash, or control character in a file
  * name) lands its raw block under "## Union diff (unparsed)". NTFS forbids those characters,
  * so the fixture cannot be created on the Windows machines this suite also runs on.
@@ -1810,6 +1823,135 @@ describe('build-review-pack.mjs', () => {
 
       expect(packContent).toContain('## Not shown: untracked-empty.txt (new, untracked, empty)');
       assertTocLineAccuracyAndHeaderTotal(packContent);
+    },
+    20000,
+  );
+
+  it(
+    'writes both output files under a relative --out-dir and nothing to .kangentic/',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+      fs.writeFileSync(path.join(repoDirectory, 'new-file.txt'), 'brand new\n');
+
+      // Relative on purpose: the path resolves against the cwd, and the nested folder does not
+      // exist yet, so this also pins the recursive create.
+      const buildOutput = runBuildScript(repoDirectory, ['--out-dir', 'scratch/code-review']);
+      const outputDirectory = path.join(repoDirectory, 'scratch', 'code-review');
+
+      expect(fs.existsSync(path.join(repoDirectory, '.kangentic'))).toBe(false);
+      const packContent = fs.readFileSync(path.join(outputDirectory, 'REVIEW_PACK.tmp.md'), 'utf8');
+      expect(packContent).toContain('## Full file: tracked.txt');
+      assertTocLineAccuracyAndHeaderTotal(packContent);
+      const dirtyList = fs
+        .readFileSync(path.join(outputDirectory, 'REVIEW_PREEXISTING_DIRTY.tmp'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .sort();
+      expect(dirtyList).toEqual(['new-file.txt', 'tracked.txt']);
+      // The summary names where the dirty list landed, so a driver never has to guess.
+      expect(buildOutput).toContain(path.join(outputDirectory, 'REVIEW_PREEXISTING_DIRTY.tmp'));
+    },
+    20000,
+  );
+
+  it(
+    'writes nothing, not even the --out-dir folder, on the NO CHANGES path',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+
+      const outputDirectory = path.join(repoDirectory, 'scratch');
+      const buildOutput = runBuildScript(repoDirectory, ['--out-dir', outputDirectory]);
+
+      expect(buildOutput.startsWith('NO CHANGES:')).toBe(true);
+      expect(fs.existsSync(outputDirectory)).toBe(false);
+      expect(fs.existsSync(path.join(repoDirectory, '.kangentic'))).toBe(false);
+    },
+    20000,
+  );
+
+  it(
+    'rejects a missing --out-dir path and a missing, zero or non-numeric --shard-lines value with exit code 2',
+    () => {
+      // Real changes, so a rejection that failed to fire would reach mkdirSync and write a pack.
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+
+      for (const args of [['--out-dir'], ['--out-dir', '--shard-lines', '10']]) {
+        const result = runBuildScriptExpectingFailure(repoDirectory, args);
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('--out-dir needs a directory path');
+      }
+      for (const args of [['--shard-lines'], ['--shard-lines', '0'], ['--shard-lines', 'many']]) {
+        const result = runBuildScriptExpectingFailure(repoDirectory, args);
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('--shard-lines needs a positive integer line count');
+      }
+      expect(fs.existsSync(path.join(repoDirectory, '.kangentic'))).toBe(false);
+    },
+    20000,
+  );
+
+  it(
+    'prints --shard-lines ranges that start on section headings, never split a section, and pack greedily',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'base.txt'), 'base\n');
+      commitAll(repoDirectory, 'base commit');
+      const numberedLines = (prefix: string, count: number): string =>
+        Array.from({ length: count }, (_, lineIndex) => `${prefix} line ${lineIndex + 1}`).join('\n') + '\n';
+      // Untracked files rank by line count, so the pack order is big, mid, small, tiny.
+      fs.writeFileSync(path.join(repoDirectory, 'big.txt'), numberedLines('big', 80));
+      fs.writeFileSync(path.join(repoDirectory, 'mid.txt'), numberedLines('mid', 30));
+      fs.writeFileSync(path.join(repoDirectory, 'small.txt'), numberedLines('small', 10));
+      fs.writeFileSync(path.join(repoDirectory, 'tiny.txt'), numberedLines('tiny', 8));
+
+      const lineBudget = 50;
+      const buildOutput = runBuildScript(repoDirectory, ['--shard-lines', String(lineBudget)]);
+      const packContent = readPack(repoDirectory);
+      const packLines = packContent.split('\n');
+      const tocEntries = assertTocLineAccuracyAndHeaderTotal(packContent);
+      const sectionStarts = tocEntries.map((entry) => entry.lineNumber);
+
+      const shardsLine = buildOutput.split('\n').find((line) => line.startsWith('  shards: '));
+      expect(shardsLine).toBeDefined();
+      const shardsMatch = shardsLine!.match(/^ {2}shards: header 1-(\d+); (.+)$/);
+      expect(shardsMatch).not.toBeNull();
+      expect(Number(shardsMatch![1])).toBe(sectionStarts[0] - 1);
+      const shards = shardsMatch![2].split(', ').map((range) => range.split('-').map(Number));
+
+      // Contiguous from the first section to the last line, each starting on a heading.
+      expect(shards[0][0]).toBe(sectionStarts[0]);
+      expect(shards[shards.length - 1][1]).toBe(packLines.length);
+      for (let shardIndex = 0; shardIndex < shards.length; shardIndex++) {
+        const [start, end] = shards[shardIndex];
+        expect(sectionStarts).toContain(start);
+        expect(packLines[start - 1].startsWith('## ')).toBe(true);
+        if (shardIndex > 0) expect(start).toBe(shards[shardIndex - 1][1] + 1);
+        const sectionsInShard = sectionStarts.filter((sectionStart) => sectionStart >= start && sectionStart <= end);
+        // Over budget only when the shard is one section that is itself over budget.
+        if (end - start + 1 > lineBudget) expect(sectionsInShard).toHaveLength(1);
+        // Greedy: the next shard's first section would not have fit in this one.
+        if (shardIndex + 1 < shards.length) {
+          const nextStartIndex = sectionStarts.indexOf(shards[shardIndex + 1][0]);
+          const nextSectionEnd =
+            nextStartIndex + 1 < sectionStarts.length ? sectionStarts[nextStartIndex + 1] - 1 : packLines.length;
+          expect(nextSectionEnd - start + 1).toBeGreaterThan(lineBudget);
+        }
+      }
+
+      // The concrete shape for this fixture: big alone (over budget), then mid with small, then tiny.
+      const shardOf = (label: string): number => {
+        const sectionStart = tocEntries.find((entry) => entry.label === label)!.lineNumber;
+        return shards.findIndex(([start, end]) => sectionStart >= start && sectionStart <= end);
+      };
+      expect(shardOf('big.txt')).toBe(0);
+      expect(shards[0][1] - shards[0][0] + 1).toBeGreaterThan(lineBudget);
+      expect(shardOf('mid.txt')).toBe(1);
+      expect(shardOf('small.txt')).toBe(1);
+      expect(shardOf('tiny.txt')).toBe(2);
     },
     20000,
   );
