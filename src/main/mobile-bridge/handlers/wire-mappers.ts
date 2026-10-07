@@ -374,16 +374,17 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * index here) fails to compile.
  *
  * `pauseFlags` holds `paused`, whether the task has a paused session and no
- * live one (`pausedTaskIdsOf`), and `resumable`, `isResumeOffered` for that
- * same answer. The caller resolves both because they need the session
- * registry and the column; see `BoardTaskWire.paused` and
- * `BoardTaskWire.resumable`. One object rather than two positional booleans,
- * so a call site cannot swap them.
+ * live one (`taskSessionStatesOf`), `resumable`, `isResumeOffered` for that
+ * same answer, and `pausable`, `isPauseOffered` for the task's live session.
+ * The caller resolves all three because they need the session registry and
+ * the column; see `BoardTaskWire.paused`, `BoardTaskWire.resumable` and
+ * `BoardTaskWire.pausable`. One object rather than positional booleans, so a
+ * call site cannot swap them.
  */
 export function toBoardTaskWire(
   task: Task,
   spawnProgressLabel: string | null,
-  pauseFlags: { paused: boolean; resumable: boolean },
+  pauseFlags: { paused: boolean; resumable: boolean; pausable: boolean },
 ): BoardTaskWire {
   return {
     id: task.id,
@@ -410,6 +411,7 @@ export function toBoardTaskWire(
     spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
     resumable: pauseFlags.resumable,
     paused: pauseFlags.paused,
+    pausable: pauseFlags.pausable,
   };
 }
 

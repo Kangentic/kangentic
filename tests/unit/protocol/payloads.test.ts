@@ -132,6 +132,30 @@ describe('parseCapabilityRequestPayload', () => {
     expect(() => parseCapabilityRequestPayload('start-session', { taskId: 't-1' })).toThrow(/projectId/);
   });
 
+  it('pause-session: parses a valid payload to exactly the trusted fields', () => {
+    const parsed = parseCapabilityRequestPayload('pause-session', {
+      taskId: 't-1',
+      projectId: 'p-1',
+      // Keyed by task: a phone cannot name the session to suspend, which a
+      // stale view could get wrong, nor anything else.
+      sessionId: 'sess-9',
+      targetSwimlaneId: 'lane-9',
+    });
+    expect(parsed).toEqual({ taskId: 't-1', projectId: 'p-1' });
+  });
+
+  it('pause-session: rejects a missing taskId', () => {
+    expect(() => parseCapabilityRequestPayload('pause-session', { projectId: 'p-1' })).toThrow(/taskId/);
+  });
+
+  it('pause-session: rejects a missing projectId', () => {
+    expect(() => parseCapabilityRequestPayload('pause-session', { taskId: 't-1' })).toThrow(/projectId/);
+  });
+
+  it('pause-session: rejects a non-string taskId', () => {
+    expect(() => parseCapabilityRequestPayload('pause-session', { taskId: 7, projectId: 'p-1' })).toThrow(/taskId/);
+  });
+
   it('answer-permission-prompt: rejects a missing promptId', () => {
     expect(() =>
       parseCapabilityRequestPayload('answer-permission-prompt', { sessionId: 'sess-1', keystrokes: '1\r' }),

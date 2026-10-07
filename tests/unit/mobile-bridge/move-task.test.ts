@@ -76,6 +76,19 @@ describe('handleMoveTask', () => {
     expect(handleTaskMoveMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a project id the desktop does not know, before any repository is opened', async () => {
+    // A non-empty id used to pass straight through, and the project database
+    // named after it was created and migrated on first open: a phone still
+    // showing a deleted project recreated it, and a path segment reached a
+    // file outside the projects directory.
+    const context = fakeContext();
+    vi.mocked(context.projectRepo.getById).mockReturnValue(undefined);
+    const response = await handleMoveTask(fakeRequest({ ...MOVE_PAYLOAD, projectId: '../index' }), context);
+    expect(response).toMatchObject({ ok: false, error: 'No such project: ../index' });
+    expect(context.projectRepo.getById).toHaveBeenCalledWith('../index');
+    expect(handleTaskMoveMock).not.toHaveBeenCalled();
+  });
+
   it('routes through handleTaskMove with only the trusted move fields, never a continuationPrompt', async () => {
     const context = fakeContext();
     const response = await handleMoveTask(

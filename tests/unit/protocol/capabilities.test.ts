@@ -23,6 +23,13 @@ describe('capability verbs', () => {
     expect(isCapabilityVerb('start-session')).toBe(true);
   });
 
+  it('appends pause-session after start-session (the third lifecycle verb)', () => {
+    expect(isCapabilityVerb('pause-session')).toBe(true);
+    // Append-only: the desktop mirrors the tuple index for index.
+    expect(CAPABILITY_VERBS.indexOf('pause-session')).toBe(CAPABILITY_VERBS.indexOf('start-session') + 1);
+    expect(CAPABILITY_VERBS[CAPABILITY_VERBS.length - 1]).toBe('pause-session');
+  });
+
   it('capabilitySetFromArray drops unrecognized entries (deny-by-default for unknown verbs)', () => {
     const set = capabilitySetFromArray(['read-board', 'delete-everything', 'move-task']);
     expect(capabilitySetToArray(set).sort()).toEqual(['move-task', 'read-board']);

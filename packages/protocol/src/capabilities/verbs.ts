@@ -16,7 +16,13 @@
  * `start-session` is the second lifecycle verb beside `move-task`: it spawns
  * or resumes a task's session in the column the task is already in, so a
  * phone's "Session ended" state can bring the agent back without moving the
- * task. A live session is an idempotent no-op; nothing is ever stopped.
+ * task. A live session is an idempotent no-op; `start-session` never stops
+ * anything.
+ *
+ * `pause-session` is the third lifecycle verb: it suspends a task's live
+ * session exactly as the desktop's Pause button does, without moving the task,
+ * and keeps the conversation for a later `start-session` Resume. Gate it on
+ * `BoardTaskWire.pausable`.
  */
 export const CAPABILITY_VERBS = [
   'read-stream',
@@ -30,6 +36,7 @@ export const CAPABILITY_VERBS = [
   'board-tool-write',
   'register-push',
   'start-session',
+  'pause-session',
 ] as const;
 
 export type CapabilityVerb = (typeof CAPABILITY_VERBS)[number];

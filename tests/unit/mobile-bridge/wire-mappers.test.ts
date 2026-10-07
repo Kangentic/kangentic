@@ -51,8 +51,8 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe('toBoardTaskWire', () => {
-  /** A task with no paused session, for the tests that are not about pausing. */
-  const notPaused = { paused: false, resumable: false };
+  /** A task with no paused or live session, for the tests that are not about pausing. */
+  const notPaused = { paused: false, resumable: false, pausable: false };
 
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
@@ -75,16 +75,23 @@ describe('toBoardTaskWire', () => {
   });
 
   it('carries resumable as given, true and false, through the phone-side parse', () => {
-    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: true }) as unknown as JsonValue).resumable).toBe(true);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: true, pausable: false }) as unknown as JsonValue).resumable).toBe(true);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).resumable).toBe(false);
   });
 
   it('carries paused as given, apart from resumable, through the phone-side parse', () => {
     // A paused task in Done: paused, but no Resume on offer.
-    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: false }) as unknown as JsonValue);
+    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: false, pausable: false }) as unknown as JsonValue);
     expect(pausedInDone.paused).toBe(true);
     expect(pausedInDone.resumable).toBe(false);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).paused).toBe(false);
+  });
+
+  it('carries pausable as given, true and false, through the phone-side parse', () => {
+    const live = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: false, resumable: false, pausable: true }) as unknown as JsonValue);
+    expect(live.pausable).toBe(true);
+    expect(live.paused).toBe(false);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).pausable).toBe(false);
   });
 
   it('sanitizes the label it puts on the wire, so a raw git line never reaches the phone as-is', () => {

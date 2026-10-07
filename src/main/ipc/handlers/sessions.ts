@@ -24,6 +24,7 @@ import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconci
 import { persistPtyGrid } from './session-grid-persistence';
 import { abortInFlightResume } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
+import { pauseTaskSession } from './session-pause';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -104,31 +105,12 @@ export function registerSessionHandlers(context: IpcContext): void {
     projectId ? context.sessionManager.getEventsCacheForProject(projectId) : context.sessionManager.getEventsCache());
 
   // === Session Suspend / Resume ===
-  ipcMain.handle(IPC.SESSION_SUSPEND, (_, taskId: string, projectId?: string | null) => {
-    // Cancel any in-flight resume BEFORE queueing on the lock - otherwise
-    // we would deadlock waiting for a resume that is stuck in worktree I/O.
-    abortInFlightResume(taskId);
-
-    return withTaskLock(taskId, async () => {
-      const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!resolvedProjectId) throw new Error('No project is currently open');
-
-      // Reconciled against the registry, as SESSION_RESUME and the task move
-      // are: a pointer at an exited row is cleared and there is nothing to
-      // suspend, and a live PTY the pointer lost is re-linked and suspended.
-      // On the raw pointer, a pause on a task whose CLI had ended by itself
-      // marked its exited record `suspended` and suspended a row that was not
-      // live.
-      const { liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
-      if (!liveSession) return; // nothing to suspend
-
-      // DB writes first (capture metrics, mark record suspended, clear
-      // task.session_id) then async PTY shutdown. Capturing metrics before
-      // shutdown is required - caches are still populated; afterwards is
-      // also fine, but doing it first matches task-move's order.
-      applySuspendDbWrites(context, resolvedProjectId, taskId, 'user');
-      await context.sessionManager.suspend(liveSession.id);
-    });
+  // The Pause button. The whole path lives in pauseTaskSession
+  // (session-pause.ts), shared with the phone's pause-session verb, so a
+  // desktop and a phone Pause cannot drift. A task with no live session is a
+  // silent no-op here, as it always was.
+  ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string, projectId?: string | null): Promise<void> => {
+    await pauseTaskSession(context, taskId, { projectId });
   });
 
   // The Resume button. The whole path lives in resumeTaskSession

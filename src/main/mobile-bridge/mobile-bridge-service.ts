@@ -294,7 +294,7 @@ export class MobileBridgeService extends EventEmitter {
       onStall: (taskId) => this.pushNotifier?.notifyTaskStalled(taskId),
     });
     this.spawnStallWatcher.start();
-    // Loads the identity and runs the one-shot capability migration
+    // Loads the identity and runs this launch's capability migration
     // (migrateDevicesToFullCapabilityGrant) before any BridgeSession opens:
     // runSyncSessions() awaits the same warm-up before it opens one.
     void this.whenStorageReady();
@@ -350,8 +350,14 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   /**
-   * One-shot upgrade for devices paired before pairing granted the full
-   * verb set: capabilities live inside the Ed25519-signed roster payload
+   * Re-grants the full verb set to every paired device missing any verb:
+   * devices paired before pairing granted everything, and every device once a
+   * new verb ships. Runs once per launch (`capabilityMigrationDone` is not
+   * persisted), so a narrower grant set through setDeviceCapabilities does
+   * not survive a restart; a future narrower preset must change this to grant
+   * only newly added verbs.
+   *
+   * Capabilities live inside the Ed25519-signed roster payload
    * (roster-store.ts), so mutating them without re-signing would fail
    * verifyRosterEntry and silently drop the device from the roster on the
    * next load. Routing through the public setDeviceCapabilities (which

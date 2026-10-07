@@ -2,7 +2,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../helpers';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
-import { applySuspendDbWrites } from './session-reconcile';
+import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { IPC } from '../../../shared/ipc-channels';
 import type { StrategyChange } from './strategy-propagation';
@@ -181,27 +181,37 @@ export function reconcileAutoSpawnChange(
         // Cancel outside the lock: a queued injection for a session we are about
         // to suspend has nothing left to type into.
         context.terminalSubmitScheduler.cancel(entry.taskId);
-        await withTaskLock(entry.taskId, async () => {
+        const suspended = await withTaskLock(entry.taskId, async (): Promise<boolean> => {
           // Re-read inside the lock: a drag or an explicit pause may have landed
           // between planning and acquiring it. The plan is a synchronous
           // snapshot but each suspend awaits a PTY shutdown, so for a column of
           // several tasks the last entry can run many seconds after planning.
           const { tasks } = getProjectRepos(context, projectId);
           const currentTask = tasks.getById(entry.taskId);
-          const liveSessionId = currentTask?.session_id;
-          if (!liveSessionId) return;
+          if (!currentTask) return false;
           // The task must still be in the column this suspend was decided
           // about. Dragged into a column that wants an agent, it keeps (or
           // respawns) a session, and suspending that one would stop an agent
           // the board legitimately wants running. Mirrors task-move's own
           // "moved to a different column during Phase 2" re-check; the spawn
           // side inherits the equivalent guard from autoSpawnForTask.
-          if (currentTask.swimlane_id !== entry.swimlaneId) return;
+          if (currentTask.swimlane_id !== entry.swimlaneId) return false;
+          // Reconciled against the registry, as a manual pause is
+          // (pauseTaskSession): an agent that exited by itself leaves the
+          // pointer at its exited row, and suspending that marked the finished
+          // run `suspended` and showed Paused with a Resume on its card. A
+          // pointer at an ended row while a newer PTY for the task is live is
+          // re-linked to that PTY, which is then suspended. (A task whose
+          // pointer is null was never planned: see planAutoSpawnReconcile.)
+          const { liveSession } = reconcileTaskSessionRef(context, projectId, entry.taskId);
+          if (!liveSession) return false;
           // 'system', not 'user': this is a config change, not an explicit pause,
           // so it must not become sticky against a later spawn or move.
           applySuspendDbWrites(context, projectId, entry.taskId, 'system');
-          await context.sessionManager.suspend(liveSessionId);
+          await context.sessionManager.suspend(liveSession.id);
+          return true;
         });
+        if (!suspended) continue;
         console.log(
           `[${label}] Suspended session for task ${entry.taskId.slice(0, 8)}`
           + ` (auto-spawn turned off on "${entry.sourceName}")`,

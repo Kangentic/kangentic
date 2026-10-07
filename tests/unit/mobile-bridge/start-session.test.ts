@@ -111,6 +111,18 @@ describe('handleStartSession', () => {
     expect(startTaskSessionMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a project id the desktop does not know, before any repository is opened', async () => {
+    // A non-empty id used to pass straight through, and the project database
+    // named after it was created and migrated on first open: a phone still
+    // showing a deleted project recreated it, and a path segment reached a
+    // file outside the projects directory.
+    const context = fakeContext();
+    vi.mocked(context.projectRepo.getById).mockReturnValue(undefined);
+    const response = await handleStartSession(fakeRequest({ taskId: 't-1', projectId: 'proj-deleted' }), context);
+    expect(response).toMatchObject({ ok: false, error: 'No such project: proj-deleted' });
+    expect(startTaskSessionMock).not.toHaveBeenCalled();
+  });
+
   it('routes through startTaskSession with the task and project only', async () => {
     const context = fakeContext();
     const response = await handleStartSession(

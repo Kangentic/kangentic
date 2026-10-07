@@ -237,12 +237,15 @@ export async function restartSessionForSettingsChange(
  * future drift between the DB pointer and the live registry.
  *
  * Callers: `SESSION_RESUME` and `SESSION_RECONCILE` (the original two),
- * `SESSION_SUSPEND`, `task:setRuntimeOverride`, and `handleTaskMove`'s Phase 1
- * ahead of its Priority ladder. The last three were added together (#682):
+ * `pauseTaskSession` (the `SESSION_SUSPEND` body, which the phone's
+ * `pause-session` also runs), `task:setRuntimeOverride`, and `handleTaskMove`'s
+ * Phase 1 ahead of its Priority ladder. Those three were added together (#682):
  * a natural CLI exit marks the record `exited` but leaves `task.session_id`,
  * and each of them keyed a decision on the raw pointer, so a task whose agent
  * had ended by itself was "kept alive" on a move, "suspended" on a pause, and
- * restarted or typed into on a model or effort pick.
+ * restarted or typed into on a model or effort pick. `startTaskSession` (the
+ * phone's `start-session`) and `reconcileAutoSpawnChange`'s auto_spawn-off
+ * suspend joined later for the same reason.
  */
 export function reconcileTaskSessionRef(
   context: IpcContext,

@@ -708,6 +708,48 @@ export function parseStartSessionResponsePayload(payload: JsonValue): StartSessi
   return { ok: payload.ok, outcome: payload.outcome };
 }
 
+// === pause-session ===
+
+/**
+ * Keyed by task, like `start-session`: the desktop resolves the task's live
+ * session itself (a pause clears the task's `session_id`, and a stale phone
+ * view may name a session that already ended). It suspends that session the
+ * way the desktop's Pause button does, in the column the task is already in.
+ */
+export interface PauseSessionRequestPayload {
+  taskId: string;
+  projectId: string;
+}
+
+/**
+ * `ok` means the pause was ACCEPTED: the task had a live session, and the
+ * desktop has recorded it as paused by the user. The agent's own shutdown runs
+ * behind this response, because it can outlast the phone's per-verb budget,
+ * and its end reaches the phone as the board event that carries
+ * `paused: true`. A task with no live session is refused (`ok: false` on the
+ * capability response), so there is no idempotent shape to report here.
+ */
+export interface PauseSessionResponsePayload {
+  ok: boolean;
+}
+
+function parsePauseSessionRequestPayload(payload: JsonValue): PauseSessionRequestPayload {
+  if (!isRecord(payload)) throw new Error('pause-session payload must be an object');
+  if (typeof payload.taskId !== 'string') throw new Error('pause-session payload missing "taskId"');
+  if (typeof payload.projectId !== 'string') throw new Error('pause-session payload missing "projectId"');
+  return {
+    taskId: payload.taskId,
+    projectId: payload.projectId,
+  };
+}
+
+/** Phone-side guard: narrows a decoded pause-session response before the phone acts on it. */
+export function parsePauseSessionResponsePayload(payload: JsonValue): PauseSessionResponsePayload {
+  if (!isRecord(payload)) throw new Error('pause-session response must be an object');
+  if (typeof payload.ok !== 'boolean') throw new Error('pause-session response missing "ok"');
+  return { ok: payload.ok };
+}
+
 // === answer-permission-prompt ===
 
 export interface AnswerPermissionPromptRequestPayload {
@@ -890,6 +932,7 @@ export interface CapabilityRequestPayloadMap {
   'board-tool-write': BoardToolRequestPayload;
   'register-push': RegisterPushRequestPayload;
   'start-session': StartSessionRequestPayload;
+  'pause-session': PauseSessionRequestPayload;
 }
 
 export interface CapabilityResponsePayloadMap {
@@ -904,6 +947,7 @@ export interface CapabilityResponsePayloadMap {
   'board-tool-write': BoardToolResponsePayload;
   'register-push': RegisterPushResponsePayload;
   'start-session': StartSessionResponsePayload;
+  'pause-session': PauseSessionResponsePayload;
 }
 
 /**
@@ -937,6 +981,8 @@ export function parseCapabilityRequestPayload<Verb extends CapabilityVerb>(
       return parseRegisterPushRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
     case 'start-session':
       return parseStartSessionRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
+    case 'pause-session':
+      return parsePauseSessionRequestPayload(payload) as CapabilityRequestPayloadMap[Verb];
     default: {
       const exhaustiveCheck: never = verb;
       throw new Error(`Unknown capability verb: ${String(exhaustiveCheck)}`);

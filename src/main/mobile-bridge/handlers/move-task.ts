@@ -1,6 +1,6 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type MoveTaskResponsePayload } from '@kangentic/protocol';
 import { handleTaskMove } from '../../ipc/handlers/task-move';
-import { resolveProjectContext } from '../../ipc/helpers/project-repos';
+import { resolveKnownProject } from './known-project';
 import type { IpcContext } from '../../ipc/ipc-context';
 
 export async function handleMoveTask(
@@ -8,10 +8,11 @@ export async function handleMoveTask(
   context: IpcContext,
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('move-task', request.payload);
-  const { projectId, projectPath } = resolveProjectContext(context, payload.projectId);
-  if (!projectId) {
+  const project = resolveKnownProject(context, payload.projectId);
+  if (!project) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such project: ${payload.projectId}` };
   }
+  const { projectId, projectPath } = project;
 
   // handleTaskMove already wraps withTaskLock + the transition engine +
   // rollback (see task-lifecycle-lock.md). Never call
