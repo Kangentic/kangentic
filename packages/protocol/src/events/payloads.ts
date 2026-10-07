@@ -405,9 +405,14 @@ export interface BoardTaskWire {
    * a Command Terminal) and no live one. No column or archive gate applies. It
    * is the fact the desktop card's "Paused" footer reads, so a paused task in
    * Done or on the archived page reads true here while `resumable` reads
-   * false. A move into To Do removes the task's session rows, so a task there
-   * normally reads false. Gate Resume on `resumable` only; `resumable: true`
-   * always comes with `paused: true`.
+   * false. The desktop draws an archived task as a compact card with no
+   * footer, so a client that matches the desktop card draws "Paused" only
+   * when `archived_at` is null. A move from another column into Done
+   * archives the task in the same step, so only a task that sits in Done
+   * unarchived gets the full card and its footer. A move into To Do removes
+   * the task's session rows, so a task there normally reads false. Gate
+   * Resume on `resumable` only; `resumable: true` always comes with
+   * `paused: true`.
    *
    * A desktop pause clears the task's `session_id`, so find a paused session
    * from this field, not from `session_id`. A respawn queued behind the
