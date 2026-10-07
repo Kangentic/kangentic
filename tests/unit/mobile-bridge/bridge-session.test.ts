@@ -1545,7 +1545,7 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
 
       // No responder is ever attached: the connection stays parked,
       // unanswered, for the whole test - there is nothing to reply and clear
-      // this.handshake, so it is still outstanding when the rekey tick fires.
+      // outstandingHandshakes, so it is still outstanding when the rekey tick fires.
       session.start();
 
       vi.advanceTimersByTime(2 * 60 * 1000);
@@ -1565,7 +1565,7 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
   it('re-sends a lost rekey msg1 on every probe timeout once the peer has proven the slot is live, not just once', () => {
     // Pins the `!this.peerSeenOnThisConnection` term of beginHandshake()'s
     // guard, specifically for its UN-blocking direction: dropping that term
-    // (leaving only `this.handshake && !replaceOutstanding`) makes the guard
+    // (leaving only `outstandingHandshakes.length > 0 && !replaceOutstanding`) makes the guard
     // strictly MORE restrictive, and the existing "keeps reporting
     // 'connected' while a lost rekey drains the probe budget" test above
     // never notices, because it only asserts connectionState and a decoded-
@@ -1592,7 +1592,7 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
       expect(session.isEstablished).toBe(true);
 
       // From here the relay swallows our initiations, so the rekey below
-      // never gets a reply and this.handshake stays outstanding - but the
+      // never gets a reply and its initiation stays outstanding - but the
       // phone keeps serving on its original streams, so it can still prove
       // the slot is live.
       responder.dropHandshakes = true;
@@ -1655,8 +1655,8 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
       // A frame that fails unwrapSessionFrame outright - its first byte is
       // not a valid SessionFrameKind - unlike the "recovers from a garbled
       // handshake frame" test above, which wraps its garbage as a Handshake
-      // frame and so sets this.handshake = null and schedules its own retry.
-      // This one leaves this.handshake untouched while still proving, via
+      // frame and so spends the outstanding initiation and schedules its own
+      // retry. This one leaves outstandingHandshakes untouched while still proving, via
       // onFrame()'s unconditional peerSeenOnThisConnection = true, that the
       // slot is live.
       device.send(new Uint8Array([9, 9, 9, 9, 9]));

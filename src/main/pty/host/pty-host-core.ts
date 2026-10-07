@@ -50,6 +50,7 @@ import {
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
+  type SeedFrameResult,
 } from './protocol';
 
 /** Rolling window the session-id scan keeps: twice ConPTY's 4 KB flush. */
@@ -253,7 +254,7 @@ export class PtyHostCore {
    * slow-request line: a slow open caused by the repaint settle is not fixed by
    * serializing fewer rows, and one caused by the serialize is.
    */
-  async getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
+  async getSeedFrame(sessionId: string, settle: boolean): Promise<SeedFrameResult> {
     const settleStartedAt = performance.now();
     if (settle) await this.bufferManager.waitForResizeRepaint(sessionId);
     const serializeStartedAt = performance.now();

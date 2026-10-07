@@ -362,7 +362,7 @@ describe('PairingService ceremony', () => {
 
   /**
    * Transport.send() genuinely throws - RelayClient rejects a send while not
-   * connected, and on its per-session byte cap - and message 2 is now sent
+   * connected - and message 2 is now sent
    * after the phase has already flipped to sas-pending. Without a guard the
    * throw would escape into the transport callback and leave the ceremony
    * parked for the whole SAS timeout, waiting on a confirm frame the phone

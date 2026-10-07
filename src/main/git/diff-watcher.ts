@@ -22,8 +22,14 @@ const MAX_DEBOUNCE_WAIT_MS = 2000;
 
 const IGNORED_SEGMENTS = new Set(['.git', 'node_modules', '.kangentic']);
 
-/** True for a path (relative to the watched root) inside an ignored directory. */
-export function isIgnoredWatchPath(filename: string): boolean {
+/**
+ * True for a path inside an ignored directory. The path is relative to the
+ * watched root in both places it is called from: the watch callback's
+ * `filename`, and the `ignore` option, which Node's Linux recursive watcher
+ * calls with `path.relative(rootPath, entry)` (lib/internal/fs/recursive_watch.js),
+ * so a worktree that itself sits under `.kangentic/` is not ignored whole.
+ */
+function isIgnoredWatchPath(filename: string): boolean {
   return filename.split(path.sep).some((segment) => IGNORED_SEGMENTS.has(segment));
 }
 

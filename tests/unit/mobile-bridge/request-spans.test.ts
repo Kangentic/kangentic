@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests, startMainLoopBlockProbe } from '../../../src/main/mobile-bridge/request-spans';
 
 function spinFor(durationMs: number): void {
@@ -12,6 +12,7 @@ const wait = (durationMs: number) => new Promise<void>((resolve) => setTimeout(r
 
 describe('main-loop block probe', () => {
   afterEach(() => {
+    resetRequestSpansForTests();
     vi.useRealTimers();
   });
 
@@ -29,10 +30,13 @@ describe('main-loop block probe', () => {
     expect(stopProbe()).toBeGreaterThanOrEqual(250);
   });
 
-  it('stays near the timer floor while the loop is free', async () => {
+  // Fake timers fire every tick on time, so a free loop reads 0 here. On real
+  // timers a loaded CI runner can stall a single tick past any fixed bound.
+  it('stays at the timer floor while the loop is free', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
     const stopProbe = startMainLoopBlockProbe();
-    await wait(200);
-    expect(stopProbe()).toBeLessThan(150);
+    vi.advanceTimersByTime(200);
+    expect(stopProbe()).toBe(0);
   });
 
   it('stops ticking on its own when nobody stops it', () => {
@@ -40,6 +44,111 @@ describe('main-loop block probe', () => {
     startMainLoopBlockProbe();
     expect(vi.getTimerCount()).toBe(1);
     vi.advanceTimersByTime(120_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/**
+ * Every in-flight request reads the same event loop, so the probe keeps ONE
+ * interval for all of them. These cases count that interval through fake
+ * timers, and drive the clock by hand wherever a block has to be simulated:
+ * a fake clock cannot jump past a tick that was due, and a real spin would
+ * need an upper bound on a runner that can stall for any length of time.
+ */
+describe('shared main-loop block probe', () => {
+  let nowSpy: MockInstance<() => number> | null = null;
+
+  afterEach(() => {
+    nowSpy?.mockRestore();
+    nowSpy = null;
+    // Reset while the fake timers are still installed, so the interval it
+    // clears is the fake one.
+    resetRequestSpansForTests();
+    vi.useRealTimers();
+  });
+
+  it('runs every in-flight request on one interval, keeps it until the last one stops, and starts a fresh one afterwards', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const stopFirst = startMainLoopBlockProbe();
+    expect(vi.getTimerCount()).toBe(1);
+    const stopSecond = startMainLoopBlockProbe();
+    expect(vi.getTimerCount()).toBe(1);
+
+    stopFirst();
+    expect(vi.getTimerCount()).toBe(1);
+    stopSecond();
+    expect(vi.getTimerCount()).toBe(0);
+
+    const stopThird = startMainLoopBlockProbe();
+    expect(vi.getTimerCount()).toBe(1);
+    stopThird();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not charge a request for the part of a block that came before it arrived', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let clockMs = 0;
+    nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+
+    const stopEarlier = startMainLoopBlockProbe();
+    // Main is blocked for 300 ms with the earlier request in flight: the
+    // probe's tick, due at 20 ms, cannot run. The later request arrives the
+    // instant the block ends, before that late tick fires.
+    clockMs = 300;
+    const stopLater = startMainLoopBlockProbe();
+    clockMs = 301;
+    vi.advanceTimersByTime(20);
+
+    // The earlier request waited out the whole block, from the tick it was
+    // due at (20 ms) to now. The later one saw only the 1 ms since it arrived.
+    expect(stopEarlier()).toBe(281);
+    expect(stopLater()).toBe(1);
+  });
+
+  it('charges a request stopped before any tick only from its arrival, even while an earlier request is still in flight', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let clockMs = 0;
+    nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+
+    const stopEarlier = startMainLoopBlockProbe();
+    clockMs = 300;
+    const stopLater = startMainLoopBlockProbe();
+    // A synchronous handler answers inside the same turn: no tick ever ran,
+    // so the stop call itself is what measures the block.
+    clockMs = 305;
+    expect(stopLater()).toBe(5);
+    expect(stopEarlier()).toBe(285);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('drops a watcher that outlives the 120 s cap while a newer one keeps the shared interval alive', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const stopExpiring = startMainLoopBlockProbe();
+    vi.advanceTimersByTime(60_000);
+    const stopNewer = startMainLoopBlockProbe();
+    // The tick at 120 000 ms expires the first watcher and nothing else.
+    vi.advanceTimersByTime(60_000);
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The newer one is the only watcher left, so its stop clears the interval.
+    // The first watcher is deliberately never stopped here: an expired watcher
+    // that was not removed would keep the interval running past this point.
+    stopNewer();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(stopExpiring()).toBe(0);
+  });
+
+  it('lets an expired watcher be stopped later without touching the interval a newer one still needs', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const stopExpiring = startMainLoopBlockProbe();
+    vi.advanceTimersByTime(60_000);
+    const stopNewer = startMainLoopBlockProbe();
+    vi.advanceTimersByTime(60_000);
+
+    // A handler that finally answers after its probe gave up still calls stop.
+    expect(stopExpiring()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
+    stopNewer();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

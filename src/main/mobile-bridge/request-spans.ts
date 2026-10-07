@@ -52,6 +52,42 @@ const BLOCK_PROBE_INTERVAL_MS = 20;
 /** A handler that never answers stops its probe here rather than ticking forever. */
 const BLOCK_PROBE_MAX_MS = 120_000;
 
+/** One in-flight request's view of the shared probe. */
+interface BlockProbeWatcher {
+  startedAtMs: number;
+  longestBlockMs: number;
+}
+
+/**
+ * Every in-flight request reads the same event loop, so they share one
+ * interval: a cold start that opens twenty sessions at once ticks once per
+ * BLOCK_PROBE_INTERVAL_MS, not twenty times.
+ */
+const activeBlockWatchers = new Set<BlockProbeWatcher>();
+let sharedProbeTimer: ReturnType<typeof setInterval> | null = null;
+let expectedProbeTickAtMs = 0;
+
+/** The part of a block ending now that fell inside this watcher's request. */
+function blockSeenBy(watcher: BlockProbeWatcher, nowMs: number): number {
+  return Math.min(nowMs - expectedProbeTickAtMs, nowMs - watcher.startedAtMs);
+}
+
+function stopSharedProbeTimer(): void {
+  if (sharedProbeTimer === null) return;
+  clearInterval(sharedProbeTimer);
+  sharedProbeTimer = null;
+}
+
+function onSharedProbeTick(): void {
+  const nowMs = performance.now();
+  for (const watcher of activeBlockWatchers) {
+    watcher.longestBlockMs = Math.max(watcher.longestBlockMs, blockSeenBy(watcher, nowMs));
+    if (nowMs - watcher.startedAtMs >= BLOCK_PROBE_MAX_MS) activeBlockWatchers.delete(watcher);
+  }
+  expectedProbeTickAtMs = nowMs + BLOCK_PROBE_INTERVAL_MS;
+  if (activeBlockWatchers.size === 0) stopSharedProbeTimer();
+}
+
 /**
  * Starts measuring the longest stretch main's event loop was blocked while one
  * request is in flight. The returned function stops the probe and returns that
@@ -63,34 +99,30 @@ const BLOCK_PROBE_MAX_MS = 120_000;
  * waits for events outside libuv's poll, and the utilization read 0 for a
  * 900 ms spin as well as for an idle second (Electron 44.5.1, Node 24.21).
  * This probe read 396 ms for a 400 ms spin in the same process. It ticks only
- * while a request is in flight.
+ * while a request is in flight. A block that began before the request arrived
+ * counts only from the request's arrival.
  */
 export function startMainLoopBlockProbe(): () => number {
-  const startedAtMs = performance.now();
-  let longestBlockMs = 0;
-  let expectedTickAtMs = startedAtMs + BLOCK_PROBE_INTERVAL_MS;
-  let timer: ReturnType<typeof setInterval> | null = null;
-  const stopTimer = (): void => {
-    if (timer === null) return;
-    clearInterval(timer);
-    timer = null;
-  };
-  timer = setInterval(() => {
-    const nowMs = performance.now();
-    longestBlockMs = Math.max(longestBlockMs, nowMs - expectedTickAtMs);
-    expectedTickAtMs = nowMs + BLOCK_PROBE_INTERVAL_MS;
-    if (nowMs - startedAtMs >= BLOCK_PROBE_MAX_MS) stopTimer();
-  }, BLOCK_PROBE_INTERVAL_MS);
-  timer.unref?.();
+  const watcher: BlockProbeWatcher = { startedAtMs: performance.now(), longestBlockMs: 0 };
+  activeBlockWatchers.add(watcher);
+  if (sharedProbeTimer === null) {
+    expectedProbeTickAtMs = watcher.startedAtMs + BLOCK_PROBE_INTERVAL_MS;
+    sharedProbeTimer = setInterval(onSharedProbeTick, BLOCK_PROBE_INTERVAL_MS);
+    sharedProbeTimer.unref?.();
+  }
   return () => {
     // A block still running when the response goes out (a synchronous
     // handler) has kept the next tick from firing, so it is counted here.
-    if (timer !== null) longestBlockMs = Math.max(longestBlockMs, performance.now() - expectedTickAtMs);
-    stopTimer();
-    return Math.max(0, Math.round(longestBlockMs));
+    if (activeBlockWatchers.delete(watcher)) {
+      watcher.longestBlockMs = Math.max(watcher.longestBlockMs, blockSeenBy(watcher, performance.now()));
+      if (activeBlockWatchers.size === 0) stopSharedProbeTimer();
+    }
+    return Math.max(0, Math.round(watcher.longestBlockMs));
   };
 }
 
 export function resetRequestSpansForTests(): void {
   spansByRequest.clear();
+  activeBlockWatchers.clear();
+  stopSharedProbeTimer();
 }

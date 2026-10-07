@@ -2,6 +2,7 @@ import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
 import { collectPeekLines, PEEK_LINE_COUNT } from './output-peek';
 import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
+import type { SeedFrameResult } from '../host/protocol';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 /**
@@ -454,7 +455,7 @@ interface BufferState {
    *  Its serialized frame is a snapshot of the PARSED grid, served instead of
    *  the raw byte replay so write-once static TUI cells (whose drawing bytes
    *  have aged out of the 512KB window) survive a cold replay. Two consumers:
-   *  the mobile seed (getSerializedFrame) and the desktop replay
+   *  the mobile seed (getSeedFrame) and the desktop replay
    *  (getReplaySnapshot, for alt-screen and geometry-gated sessions); desktop
    *  non-alt sessions still read the raw `scrollback` while their ring holds
    *  a single geometry. Disposed in removeSession. */
@@ -1188,7 +1189,7 @@ export class PtyBufferManager {
     // A raw byte replay is not a frame snapshot. A fullscreen TUI does not redraw
     // every cell after every clear: write-once static cells keep their content
     // from earlier bytes, which is exactly why the mobile seed path uses the
-    // headless PARSED grid (`getSerializedFrame`) instead of this byte replay -
+    // headless PARSED grid (`getSeedFrame`) instead of this byte replay -
     // see the note on BufferState.headless. Slicing at the last clear discards
     // those cells, and when the sample lands at or just after a clear (likely on a
     // rapid reopen, where the settle rides its deadline mid-repaint) the replay is
@@ -1270,7 +1271,8 @@ export class PtyBufferManager {
 
   /**
    * Snapshot of the PARSED grid as a self-contained escape-sequence frame, for
-   * the mobile seed (getReplaySnapshot serves the desktop equivalent). Unlike
+   * the prompt-options probe; the mobile seed takes the same frame through
+   * getSeedFrame (getReplaySnapshot serves the desktop equivalent). Unlike
    * getScrollback (a raw 512KB byte replay), this reconstructs every
    * currently-visible cell whatever its draw age, so a fullscreen TUI's
    * write-once static regions are never dropped. The frame carries its own
@@ -1284,13 +1286,11 @@ export class PtyBufferManager {
    * need appears. Returns '' for an unknown session.
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
-    const state = this.buffers.get(sessionId);
-    if (!state) return '';
-    return state.headless.serialize();
+    return (await this.getSeedFrame(sessionId)).frame;
   }
 
   /**
-   * The mobile seed: getSerializedFrame plus the parser offset its snapshot
+   * The mobile seed: the getSerializedFrame frame plus the parser offset its snapshot
    * covers. serialize() is atomic with its parser barrier (see
    * HeadlessFrameBuffer.serialize), so the frame holds exactly the characters
    * written before this call, and `barrierOffset` is that count. A phone
@@ -1299,7 +1299,7 @@ export class PtyBufferManager {
    * exactly once. Unlike the desktop's replay sampling, this drains nothing:
    * a desktop terminal on the same session keeps every byte it was owed.
    */
-  async getSeedFrame(sessionId: string): Promise<{ frame: string; barrierOffset: number }> {
+  async getSeedFrame(sessionId: string): Promise<Pick<SeedFrameResult, 'frame' | 'barrierOffset'>> {
     const state = this.buffers.get(sessionId);
     if (!state) return { frame: '', barrierOffset: 0 };
     const barrierOffset = state.parserWrittenChars;

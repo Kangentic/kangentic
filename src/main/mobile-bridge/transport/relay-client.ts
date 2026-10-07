@@ -120,8 +120,8 @@ const FALLBACK_HOLD_MS = 30 * 60 * 1000;
  * (measured on Electron 44.5.1's Node 24.21 and undici 7.29.1: a 30 s cadence
  * through the hosted relay's Cloudflare edge). A line that names the ping age
  * tells a dead path (pings stopped too) from a silent phone on a live one
- * (pings still arriving), which the three paired-silent redials since Oct 4
- * could not. Diagnostic only: nothing decides on it. Chromium answers pings
+ * (pings still arriving), which a bare forced-redial line cannot. Diagnostic
+ * only: nothing decides on it. Chromium answers pings
  * inside its network service, so a `net.WebSocket` socket never appears here.
  */
 const lastRelayPingAtBySocket = new WeakMap<object, number>();
@@ -152,9 +152,10 @@ export interface RelayClientOptions {
    */
   logLabel?: string;
   /**
-   * The WebSocket to dial with. Omitted, the client reads Node's global
-   * `WebSocket` at each dial (see the module comment for why the app passes
-   * Electron's `net.WebSocket` instead).
+   * The primary WebSocket to dial with, injected by tests. Omitted, the client
+   * reads Node's global `WebSocket` at each dial, and the app passes
+   * Electron's `net.WebSocket` as `fallbackWebSocket` instead (see
+   * chooseWebSocket()).
    */
   webSocketConstructor?: RelayWebSocketConstructor;
   /**

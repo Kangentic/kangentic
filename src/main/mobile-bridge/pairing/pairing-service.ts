@@ -243,8 +243,9 @@ export class PairingService extends EventEmitter {
       this.activeTransport.send(writeResult.message);
     } catch {
       // Transport.send() genuinely throws - RelayClient rejects a send while
-      // not connected (the socket can drop mid-ceremony and be reconnecting)
-      // and on its per-session byte cap. Because the phase is already
+      // not connected (the socket can drop mid-ceremony and be reconnecting).
+      // Its per-socket byte cap redials instead of throwing, and a pairing
+      // socket carries far too little to reach it. Because the phase is already
       // sas-pending by this point, letting it escape would park the ceremony
       // for the full SAS timeout waiting on a confirm frame the phone cannot
       // send, since it never received message 2. Fail immediately instead.

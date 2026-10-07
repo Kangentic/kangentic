@@ -300,6 +300,237 @@ describe('handleReadStream', () => {
 
       expect(terminalDataSent(session)).toBe('BBCCCC');
     });
+
+    /** Lets the 16 ms coalesce timer a replayed raced chunk rides on fire. */
+    function settleCoalesceTimer(): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    it('output emitted after the snapshot was taken, before the seed returns, is replayed whole and only after the seed', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      // duringSeed runs once the snapshot (and its barrier) exist and the seed
+      // request is still in flight, which is when the host keeps forwarding.
+      sessionManager.duringSeed = () => {
+        sessionManager.emit('data-tap', 'sess-1', 'PRE', 98); // already in the snapshot
+        sessionManager.emit('data-tap', 'sess-1', 'POST', 104); // wholly past the barrier
+      };
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      // The seed response is sent after this handler returns: nothing may beat it.
+      expect(terminalDataSent(session)).toBe('');
+      await settleCoalesceTimer();
+
+      expect(terminalDataSent(session)).toBe('POST');
+    });
+
+    it('a straddling chunk delivers its tail and retires the filter, so a later chunk with lower offsets is delivered whole', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      // Offsets 98..102: the first two bytes are in the seed, the tail is new.
+      sessionManager.emit('data-tap', 'sess-1', 'AAAA', 102);
+      expect(terminalDataSent(session)).toBe('AA');
+      // Everything after the first chunk past the barrier is new. A filter that
+      // stayed armed would take this chunk (offset 5, below the barrier) for
+      // pre-seed bytes and silence it.
+      sessionManager.emit('data-tap', 'sess-1', 'BBB', 5);
+      expect(terminalDataSent(session)).toBe('AABBB');
+    });
+
+    it('a raced chunk that straddles the barrier retires the filter for the live chunks that follow', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      sessionManager.duringSeed = () => sessionManager.emit('data-tap', 'sess-1', 'AAAA', 102);
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      expect(terminalDataSent(session)).toBe('');
+      // The replay already crossed the barrier, so this lower offset is new output.
+      sessionManager.emit('data-tap', 'sess-1', 'BBB', 5);
+
+      expect(terminalDataSent(session)).toBe('AABBB');
+    });
+
+    it('a chunk with no endOffset passes through whole and does not retire the barrier for the chunks that follow', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      // A test double or an older host stamps no offset: the bytes cannot be
+      // placed against the barrier, so they pass whole...
+      sessionManager.emit('data-tap', 'sess-1', 'NOOFFSET');
+      expect(terminalDataSent(session)).toBe('NOOFFSET');
+      // ...and they prove nothing about where the stream is, so a stamped chunk
+      // the seed already holds is still dropped, and the first one past the
+      // barrier still gets through.
+      sessionManager.emit('data-tap', 'sess-1', 'OLD', 50);
+      sessionManager.emit('data-tap', 'sess-1', 'NEW', 103);
+      expect(terminalDataSent(session)).toBe('NOOFFSETNEW');
+    });
+
+    it('a raced chunk with no endOffset is replayed whole', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      sessionManager.duringSeed = () => sessionManager.emit('data-tap', 'sess-1', 'NOOFFSET');
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      await settleCoalesceTimer();
+
+      expect(terminalDataSent(session)).toBe('NOOFFSET');
+    });
+
+    it.each([
+      ['is not in flight, the chunk is replayed', false, 'RACED'],
+      ['is in flight, the chunk is dropped', true, ''],
+    ])('when the session teardown %s', async (_label, teardownInFlight, expectedData) => {
+      // The raced bytes of a session already tearing down are its own exit
+      // sequence, not agent output a live viewer should see. The first row is
+      // the control: the same chunk does arrive when no teardown is under way.
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      sessionManager.isSessionTeardownInFlight.mockReturnValue(teardownInFlight);
+      sessionManager.duringSeed = () => sessionManager.emit('data-tap', 'sess-1', 'RACED', 105);
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      // Intentional fixed wait: a replay that should NOT happen cannot be polled
+      // for, so give the 16 ms coalesce timer time to fire if it was wrongly armed.
+      await settleCoalesceTimer();
+
+      expect(terminalDataSent(session)).toBe(expectedData);
+    });
+
+    /**
+     * handleReadStream takes a seed tap and a capture listener, and sets the
+     * terminal marker, BEFORE it awaits the seed. Every exit must give those
+     * back, a throw included; only the marker of a subscribe that completed
+     * survives, because subscribeReadStream re-registers it as the live
+     * stream's own teardown.
+     */
+    describe('the seed capture is always released', () => {
+      /** What the seed capture takes on 'sess-1', and what a completed subscribe leaves registered. */
+      function captureSeedHolds(subscriptions: SubscriptionRegistry): {
+        dataTapListeners: number;
+        tapRefs: number;
+        terminalMarker: boolean;
+        streamSubscribed: boolean;
+      } {
+        return {
+          dataTapListeners: sessionManager.listenerCount('data-tap'),
+          tapRefs: sessionManager.tapSubscriptions.get('sess-1') ?? 0,
+          terminalMarker: subscriptions.has(terminalStreamKeyFor('sess-1')),
+          streamSubscribed: subscriptions.has('stream:sess-1'),
+        };
+      }
+
+      /** Someone else's tap listener and tap on the session: a failed subscribe must give back only its own. */
+      function holdBystanderTap(): void {
+        sessionManager.on('data-tap', () => undefined);
+        sessionManager.subscribeDataTap('sess-1');
+      }
+
+      it('a seed that rejects rejects the request and leaves no capture listener, seed tap, or marker behind', async () => {
+        const context = { sessionManager } as unknown as IpcContext;
+        const subscriptions = new SubscriptionRegistry();
+        holdBystanderTap();
+        const before = captureSeedHolds(subscriptions);
+        expect(before).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: false, streamSubscribed: false });
+        let heldDuringSeed: ReturnType<typeof captureSeedHolds> | null = null;
+        sessionManager.getSeedFrame.mockImplementationOnce(async () => {
+          heldDuringSeed = captureSeedHolds(subscriptions);
+          throw new Error('pty host gone');
+        });
+
+        await expect(
+          handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions),
+        ).rejects.toThrow('pty host gone');
+
+        // The capture really was up while the seed was in flight...
+        expect(heldDuringSeed).toEqual({ dataTapListeners: 2, tapRefs: 2, terminalMarker: true, streamSubscribed: false });
+        // ...and is fully given back, with the bystander's holds untouched.
+        expect(captureSeedHolds(subscriptions)).toEqual(before);
+        expect(sessionManager.listenerCount('exit')).toBe(0);
+      });
+
+      it.each([
+        ['getActivityReason', () => {
+          sessionManager.getActivityReason.mockImplementationOnce(() => {
+            throw new Error('activity reason unavailable');
+          });
+        }],
+        ['getDimensions', () => {
+          sessionManager.getDimensions.mockImplementationOnce(() => {
+            throw new Error('dimensions unavailable');
+          });
+        }],
+      ])('a %s that throws AFTER the seed rejects the request and releases the capture, tap, and marker', async (_label, armThrow) => {
+        const context = { sessionManager } as unknown as IpcContext;
+        const subscriptions = new SubscriptionRegistry();
+        holdBystanderTap();
+        const before = captureSeedHolds(subscriptions);
+        armThrow();
+
+        await expect(
+          handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions),
+        ).rejects.toThrow(/unavailable/);
+
+        // The seed was taken, so the capture had been up; the throw came after it.
+        expect(sessionManager.getSeedFrame).toHaveBeenCalledTimes(1);
+        expect(captureSeedHolds(subscriptions)).toEqual(before);
+        // The throw came before any stream listener was registered.
+        expect(sessionManager.listenerCount('exit')).toBe(0);
+      });
+
+      it('a failed terminal re-subscribe over a live terminal stream leaves that stream, its tap, and the marker in place', async () => {
+        const context = { sessionManager } as unknown as IpcContext;
+        const subscriptions = new SubscriptionRegistry();
+        const session = fakeSession();
+        await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+        const liveStream = captureSeedHolds(subscriptions);
+        expect(liveStream).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
+
+        // The phone asks again (a reconnect, a reopened terminal) and the seed fails.
+        sessionManager.getSeedFrame.mockRejectedValueOnce(new Error('pty host gone'));
+        await expect(
+          handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions),
+        ).rejects.toThrow('pty host gone');
+
+        // The failed call gave back only its own capture and seed tap. The first
+        // stream is still the live one, so the marker that says "a phone is
+        // watching this terminal" must still be up.
+        expect(captureSeedHolds(subscriptions)).toEqual(liveStream);
+        expect(sessionManager.listenerCount('exit')).toBe(1);
+        sessionManager.emit('data-tap', 'sess-1', 'still live');
+        expect(terminalDataSent(session)).toBe('still live');
+      });
+
+      it('a successful terminal subscribe keeps the terminal marker and the live stream, and live output still reaches the phone', async () => {
+        const context = { sessionManager } as unknown as IpcContext;
+        const subscriptions = new SubscriptionRegistry();
+        const session = fakeSession();
+
+        const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+        expect(response.ok).toBe(true);
+        // subscribeReadStream re-registered the marker as the live stream's own;
+        // the failure-path cleanup must not take it.
+        expect(captureSeedHolds(subscriptions)).toEqual({
+          // The seed capture is gone; this one is the stream's own listener and tap.
+          dataTapListeners: 1,
+          tapRefs: 1,
+          terminalMarker: true,
+          streamSubscribed: true,
+        });
+        sessionManager.emit('data-tap', 'sess-1', 'live output');
+        expect(terminalDataSent(session)).toBe('live output');
+      });
+    });
   });
 
   it('records the seed\'s own span against the request for the slow-request line, and none for a list-only subscribe', async () => {

@@ -39,7 +39,7 @@ import { createWriteQueue, type WriteQueue } from './write-queue';
 import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
-import type { HostExecRequest, HostExecResult, PtyHostEvent } from './host/protocol';
+import type { HostExecRequest, HostExecResult, PtyHostEvent, SeedFrameResult } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import type {
   PermissionMode,
@@ -2514,7 +2514,7 @@ export class SessionManager extends EventEmitter {
    * holds it) and slices the one that straddles it, so output racing the seed
    * reaches the phone exactly once.
    */
-  async getSeedFrame(sessionId: string): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
+  async getSeedFrame(sessionId: string): Promise<SeedFrameResult> {
     return this.host.getSeedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
   }
 

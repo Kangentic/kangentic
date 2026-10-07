@@ -336,10 +336,11 @@ function subscribeReadStream(
 
   // Exactly-once around the seed: a chunk ending at or before the barrier is
   // already in the seed, the one straddling it is sliced, and the first chunk
-  // past it retires the filter (every later chunk is new). Retiring it also
-  // keeps a re-initialized session, whose offsets restart at 0, from being
-  // silenced by a stale barrier. A chunk with no offset (a test double, an
-  // older host) passes through unfiltered.
+  // past it retires the filter (every later chunk is new). The offsets never
+  // restart under a held barrier: a session id is minted once per spawn, and
+  // the one id reused (a queued placeholder's, at promotion) has no host
+  // buffer when it is seeded, so its barrier is 0. A chunk with no offset (a
+  // test double, an older host) passes through unfiltered.
   let seedBarrierOffset: number | null = seedCoverage?.barrierOffset ?? null;
   const trimToSeed = (data: string, endOffset: number | undefined): string => {
     if (seedBarrierOffset === null || endOffset === undefined) return data;
@@ -697,6 +698,9 @@ export async function handleReadStream(
   // field in this response, and it was being sent once per live session on
   // every cold start.
   const wantsTerminal = payload.terminal !== false;
+  // A re-subscribe over a live terminal stream finds the marker already up,
+  // and a failed re-subscribe must leave it for that stream.
+  const terminalMarkerAlreadyHeld = subscriptions.has(terminalStreamKeyFor(payload.sessionId));
   // A terminal-wanting subscribe IS the mobile interest the resting park
   // exists for: park an unheld session NOW, before the frame below is
   // serialized, so the phone's one seed already carries the resting grid
@@ -716,91 +720,86 @@ export async function handleReadStream(
   let scrollback = '';
   let seedCoverage: SeedCoverage | null = null;
   // Tapped BEFORE the seed is asked for, and held until subscribeReadStream
-  // holds its own tap: output produced while the seed is taken used to be in
-  // neither the seed nor the stream (the host forwards a session's bytes only
-  // while a tap is held), and bytes still pending at the snapshot reached the
-  // phone twice. Every chunk carries its parser offset; subscribeReadStream
-  // drops what the seed's barrier already covers.
+  // holds its own tap. The host forwards a session's bytes only while a tap
+  // is held, so without this, output produced while the seed is taken would
+  // reach neither the seed nor the stream. Every chunk carries its parser
+  // offset, and subscribeReadStream drops what the seed's barrier already
+  // covers, so a byte still pending at the snapshot is not sent twice.
   const racedChunks: StampedTapChunk[] = [];
   const captureRacedChunk = (tappedSessionId: string, data: string, endOffset?: number): void => {
     if (tappedSessionId === payload.sessionId) racedChunks.push({ data, endOffset });
   };
   const releaseSeedTap = wantsTerminal ? context.sessionManager.subscribeDataTap(payload.sessionId) : null;
-  const endSeedCapture = (): void => {
-    context.sessionManager.off('data-tap', captureRacedChunk);
-    releaseSeedTap?.();
-  };
-  if (wantsTerminal) {
-    context.sessionManager.on('data-tap', captureRacedChunk);
-    // The seed's own span (the pty host's repaint settle plus the serialize)
-    // rides the service's slow-request line, so a slow open says whether the
-    // time went here or on the wire.
-    const seedStartedAt = performance.now();
-    let seedPhases: string;
-    try {
+  let subscribed = false;
+  try {
+    if (wantsTerminal) {
+      context.sessionManager.on('data-tap', captureRacedChunk);
+      // The seed's own span (the pty host's repaint settle plus the serialize)
+      // rides the service's slow-request line, so a slow open says whether the
+      // time went here or on the wire.
+      const seedStartedAt = performance.now();
       const seed = await context.sessionManager.getSeedFrame(payload.sessionId);
       scrollback = seed.frame;
       seedCoverage = { barrierOffset: seed.barrierOffset, racedChunks };
-      seedPhases = ` (settle ${seed.settleMs} ms, serialize ${seed.serializeMs} ms)`;
-    } catch (serializeError) {
-      endSeedCapture();
-      subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
-      throw serializeError;
+      noteRequestSpan(
+        session.deviceId,
+        request.requestId,
+        `seed ${Math.round(performance.now() - seedStartedAt)} ms (settle ${seed.settleMs} ms, serialize ${seed.serializeMs} ms), ${Math.round(scrollback.length / 1024)}k chars`,
+      );
     }
-    noteRequestSpan(
-      session.deviceId,
-      request.requestId,
-      `seed ${Math.round(performance.now() - seedStartedAt)} ms${seedPhases}, ${Math.round(scrollback.length / 1024)}k chars`,
-    );
+    // Re-read the row now rather than trusting `liveSession`. The session can
+    // exit DURING the await above. Registering the subscription then would be
+    // post-mortem: its own onExit teardown never fires (the exit already
+    // happened), so the listeners and the marker above would leak until the
+    // device disconnects - and the dead id would ride the terminal-streamed set
+    // into the renderer indefinitely. And a queue promotion inside that await
+    // replaces the registry row (session-spawn-flow.ts), so `liveSession` can
+    // still say 'queued' while the registry says 'running'. The snapshot's
+    // status, and the baseline the live `status` push dedupes against, both
+    // come from this read. A list-only subscribe has no await, so this reads
+    // the same row it already had.
+    const snapshotSession = context.sessionManager.getSession(payload.sessionId);
+    if (!snapshotSession) {
+      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
+    }
+    const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
+    const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
+    const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;
+    const awaitedPromptId = currentAwaitedPromptId(context, payload.sessionId);
+
+    const ptyDimensions = toTerminalDimensionsWire(context.sessionManager.getDimensions(payload.sessionId));
+    // The prompt was outstanding before this subscribe, so its dialog is
+    // already painted into the frame we just serialized - probe that frame
+    // directly instead of a second read. Null = no numbered dialog parsed;
+    // the phone falls back to its blind approve/deny keystrokes.
+    const awaitedPromptOptions = awaitedPromptId ? extractPromptOptions(scrollback, ptyDimensions) : null;
+    const resumable = isSessionResumable(context, snapshotSession);
+    const responsePayload: ReadStreamResponsePayload = {
+      scrollback,
+      activity: {
+        state: activityState,
+        reason: activityReason ? toActivityReasonWire(activityReason) : null,
+      },
+      usage: usage ? toSessionUsageWire(usage) : null,
+      awaitedPromptId,
+      ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
+      ...(ptyDimensions ? { ptyDimensions } : {}),
+      sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
+      resuming: snapshotSession.resuming,
+      resumable,
+    };
+
+    subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
+    subscribed = true;
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
+  } finally {
+    // Every exit, a throw included, lets go of the seed capture. On success
+    // this runs after subscribeReadStream took its own tap, so the host never
+    // sees the session untapped in between. Only a terminal subscribe that
+    // did not complete drops the marker, and only one it added: on success
+    // subscribeReadStream has re-registered that key for the live stream.
+    context.sessionManager.off('data-tap', captureRacedChunk);
+    releaseSeedTap?.();
+    if (wantsTerminal && !subscribed && !terminalMarkerAlreadyHeld) subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
   }
-  // Re-read the row now rather than trusting `liveSession`. The session can
-  // exit DURING the await above. Registering the subscription then would be
-  // post-mortem: its own onExit teardown never fires (the exit already
-  // happened), so the listeners and the marker above would leak until the
-  // device disconnects - and the dead id would ride the terminal-streamed set
-  // into the renderer indefinitely. And a queue promotion inside that await
-  // replaces the registry row (session-spawn-flow.ts), so `liveSession` can
-  // still say 'queued' while the registry says 'running'. The snapshot's
-  // status, and the baseline the live `status` push dedupes against, both
-  // come from this read. A list-only subscribe has no await, so this reads
-  // the same row it already had.
-  const snapshotSession = context.sessionManager.getSession(payload.sessionId);
-  if (!snapshotSession) {
-    endSeedCapture();
-    subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
-    return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
-  }
-  const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
-  const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
-  const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;
-  const awaitedPromptId = currentAwaitedPromptId(context, payload.sessionId);
-
-  const ptyDimensions = toTerminalDimensionsWire(context.sessionManager.getDimensions(payload.sessionId));
-  // The prompt was outstanding before this subscribe, so its dialog is
-  // already painted into the frame we just serialized - probe that frame
-  // directly instead of a second read. Null = no numbered dialog parsed;
-  // the phone falls back to its blind approve/deny keystrokes.
-  const awaitedPromptOptions = awaitedPromptId ? extractPromptOptions(scrollback, ptyDimensions) : null;
-  const resumable = isSessionResumable(context, snapshotSession);
-  const responsePayload: ReadStreamResponsePayload = {
-    scrollback,
-    activity: {
-      state: activityState,
-      reason: activityReason ? toActivityReasonWire(activityReason) : null,
-    },
-    usage: usage ? toSessionUsageWire(usage) : null,
-    awaitedPromptId,
-    ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
-    ...(ptyDimensions ? { ptyDimensions } : {}),
-    sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
-    resuming: snapshotSession.resuming,
-    resumable,
-  };
-
-  subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
-  // Released only now, after subscribeReadStream took its own tap, so the
-  // host never sees the session untapped in between.
-  endSeedCapture();
-
-  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }
