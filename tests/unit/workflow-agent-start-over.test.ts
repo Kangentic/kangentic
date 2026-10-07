@@ -123,6 +123,7 @@ class FakeSessionManager extends EventEmitter {
     return session;
   });
   getRawScrollback = vi.fn(async (_sessionId: string) => 'No conversation found with session ID: conv-gone');
+  markIdleAuthoritative = vi.fn((_sessionId: string) => undefined);
 
   listSessions(): FakeSession[] {
     return this.sessions;
@@ -230,6 +231,27 @@ describe('a workflow\'s own agent starting over', () => {
     await vi.waitFor(() => expect(manager.spawn).toHaveBeenCalledTimes(2));
     return resumedId;
   }
+
+  // Found in the preview: `--resume` reloads the conversation with no hooks
+  // while its token count grows, the status heartbeat forces that shape to
+  // thinking, and the canvas then held every plan edit for the 30 s the
+  // stale-thinking watchdog took to clear it ("Workflow agent is working" on an
+  // agent whose last turn had ended). A resume that sends no message is idle by
+  // contract, so it says so, as the settings-change restart does.
+  it('asserts idle on a resume that sends the agent nothing', async () => {
+    const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    expect(status.session?.resuming).toBe(true);
+    expect(manager.markIdleAuthoritative).toHaveBeenCalledWith(status.session!.id);
+  });
+
+  it('asserts nothing on a fresh start, whose first message starts a real turn', async () => {
+    await resumeThatFails();
+
+    // The start-over is a new conversation with its first message.
+    expect(manager.spawn.mock.calls[1][0].resuming).toBe(false);
+    expect(manager.markIdleAuthoritative).not.toHaveBeenCalledWith('pty-spawned-2');
+  });
 
   it('names the session it started over in on the summary, and pushes a change so the pane reads it', async () => {
     await resumeThatFails();

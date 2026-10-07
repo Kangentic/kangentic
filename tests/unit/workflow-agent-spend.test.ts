@@ -168,6 +168,7 @@ class FakeSessionManager extends EventEmitter {
     return 1;
   }
   getRawScrollback = vi.fn(async (_sessionId: string) => '');
+  markIdleAuthoritative = vi.fn((_sessionId: string) => undefined);
 
   private stop(sessionId: string, status: string): void {
     delete this.usageCache[sessionId];

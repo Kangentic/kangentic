@@ -530,6 +530,13 @@ async function startWorkflowAgent(
   // gains its checkout on its next resume.
   repository.setAgentConversation(workflow.id, { agentName, agentSessionId, cwd: projectRoot });
   recordWorkflowAgentEffort(session.id, commandOptions.effort ?? null);
+  // A resume that sends nothing is idle by contract, but `--resume` reloads the
+  // conversation with no hooks while its token count grows, and the status
+  // heartbeat forces that shape to thinking. Measured in the preview: 30 s of
+  // "Workflow agent is working", with every plan edit held, until the
+  // stale-thinking watchdog cleared it. Assert the idle, as the settings-change
+  // restart does (`session-reconcile.ts`). Not sticky: a real turn clears it.
+  if (resume && !prompt) context.sessionManager.markIdleAuthoritative(session.id);
   if (resume) {
     resumedSessions.set(session.id, { homeProjectId, workflowId: workflow.id, grid });
     // A resume ends what the pane said about an earlier start-over. One that
