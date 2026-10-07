@@ -14,9 +14,11 @@ export const ENCODE_SIZE_ERROR_PREFIX = 'Encoded bridge message exceeds';
 /**
  * Pushes one BridgeEvent to a device, silently dropping it if the session
  * is not established. `isEstablished` is only false before the first Noise
- * handshake completes or after the session is torn down; a routine ~2-minute
- * re-handshake (bridge-session.ts) keeps the existing secretstream until the
- * new one is derived, so it does NOT drop events. A dropped event is not
+ * handshake completes or after the session is torn down. During a routine
+ * ~2-minute re-handshake the session holds events and seals them under the
+ * new keys once the phone's reply arrives (BridgeSession.rekeyHeldFrames),
+ * because the phone switches keys the moment it replies and drops anything
+ * sealed under the old ones. A dropped event is not
  * recovered - there is no 'established' re-push, so the phone catches up by
  * re-issuing its read-* requests (each of which returns a fresh snapshot),
  * not by this side replaying missed deltas. `BridgeSession.sendMessage` also

@@ -31,7 +31,7 @@ import {
 } from './roster-store';
 import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
-import { BridgeSession, MessageEncodeError } from './session/bridge-session';
+import { BridgeSession, MessageEncodeError, type RekeyHoldReleaseReason } from './session/bridge-session';
 import { takeRequestSpans } from './request-spans';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
@@ -656,6 +656,15 @@ export class MobileBridgeService extends EventEmitter {
     });
     session.on('established', () => {
       console.log(`[mobile-bridge] device ${label} handshake established`);
+    });
+    // Frames a rekey held for the phone's reply (BridgeSession.rekeyHeldFrames).
+    // 'established' and 'dispose' are routine; any other reason sealed them
+    // under the old keys after the phone may already have switched, so it is
+    // the line to look for next to a phone request that timed out.
+    session.on('rekeyHoldReleased', ({ frames, heldMs, reason }: { frames: number; heldMs: number; reason: RekeyHoldReleaseReason }) => {
+      const line = `[mobile-bridge] device ${label} rekey held ${frames} frame(s) for ${heldMs} ms, released (${reason})`;
+      if (reason === 'established' || reason === 'dispose') console.log(line);
+      else console.warn(line);
     });
     session.on('handshakeFailed', (error: unknown) => {
       console.warn(`[mobile-bridge] device ${label} handshake failed: ${error instanceof Error ? error.message : String(error)}`);
