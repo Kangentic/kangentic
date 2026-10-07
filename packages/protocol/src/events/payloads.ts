@@ -430,6 +430,37 @@ export interface BoardTaskWire {
    * the key from every real wire response.
    */
   paused?: boolean | null;
+  /**
+   * True when the task has a live session (`running` or `queued`) and is not
+   * in To Do. It is the desktop's promise that `pause-session` for this task
+   * pauses that session exactly as its Pause button does: the conversation is
+   * kept for a later Resume, and the pause sticks, so a column with auto-spawn
+   * on does not start the task again by itself. Gate a phone's Pause control on
+   * THIS field.
+   *
+   * Done and archived do not clear it, matching the desktop, whose Pause stays
+   * available there because it is the only in-window stop for a live agent. A
+   * move into Done suspends the task's session in the same step, so a task
+   * there normally has no live session and reads false. It reads true only
+   * when that suspend failed and left the agent running.
+   *
+   * Never true while `paused` is true: a paused task has no live session. While
+   * `spawn_progress` is non-null and no session is live, the desktop card still
+   * shows a Pause control, but its click only cancels an in-flight resume or
+   * start, which `pause-session` does not promise. This field reads false
+   * then, and the verb refuses a task with no live session.
+   *
+   * A pause, a session's start and its end each reach the phone as a
+   * `task-updated` board event, after which the next snapshot carries the new
+   * value. Null or absent means a desktop that predates the field
+   * (pre-0.18.0), and a client offers no Pause then: a 0.15.0 to 0.17.0
+   * desktop refuses `pause-session` with the `unsupported-verb` code, and an
+   * older one does not answer it at all.
+   *
+   * Declared OPTIONAL (`?`) like `paused`; `parseBoardTaskWire` populates the
+   * key from every real wire response.
+   */
+  pausable?: boolean | null;
 }
 
 /** Phone-needed subset of the desktop's BacklogTask row. */
@@ -735,6 +766,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     spawn_progress: nullableString(value, 'spawn_progress'),
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
+    pausable: nullableBoolean(value, 'pausable'),
   };
 }
 

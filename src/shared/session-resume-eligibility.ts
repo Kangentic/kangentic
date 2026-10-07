@@ -76,24 +76,37 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
   return session.status === 'suspended' && session.transient !== true;
 }
 
+/** The two task sets one registry scan yields; see `taskSessionStatesOf`. */
+export interface TaskSessionStates {
+  /** Tasks with a live (`running` or `queued`) session. */
+  liveTaskIds: Set<string>;
+  /** Tasks with a paused session (`isPausedTaskSession`) and no live one. */
+  pausedTaskIds: Set<string>;
+}
+
 /**
- * The ids of the tasks that have a paused session (`isPausedTaskSession`)
- * and no live one among the given registry rows. The one registry scan behind
- * both ends of the phone's Resume promise: read-board's `resumable` for every
- * task on a board, and `startTaskSession` choosing the Resume path for one
- * task. read-board also sends the answer itself as `paused`, whatever the
- * task's column, because the desktop card shows "Paused" from the same row.
+ * The one registry scan behind the phone's Pause and Resume promises.
+ * read-board reads both sets for every task on a board: `pausable` from
+ * `liveTaskIds`, and `paused` and `resumable` from `pausedTaskIds`. One scan,
+ * so a task can never be in both: a paused task has no live session.
  * Reads the registry by task rather than by `task.session_id`, because a pause
  * clears that pointer while the suspended row stays.
+ *
+ * `liveTaskIds` uses the predicate `findLiveSessionByTaskId` uses, which is
+ * how `pauseTaskSession` finds the session it suspends, so a task listed there
+ * is one the phone's `pause-session` pauses. A Command Terminal's row carries
+ * a task id minted for it alone, so it never marks a board task live.
  *
  * A task with a live row as well is not paused. A respawn queued behind the
  * concurrency limit leaves the task holding `[suspended, queued]` until the
  * queued row is promoted. The desktop card shows the queued session there and
  * offers no Resume, and `startTaskSession` finds the queued row live and
- * answers `live`, so reporting the task here would promise a Resume that
+ * answers `live`, so reporting the task as paused would promise a Resume that
  * nothing performs.
  */
-export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>): Set<string> {
+export function taskSessionStatesOf(
+  sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>,
+): TaskSessionStates {
   const pausedTaskIds = new Set<string>();
   const liveTaskIds = new Set<string>();
   for (const session of sessions) {
@@ -102,7 +115,17 @@ export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' |
     else if (isLiveSessionStatus(session.status)) liveTaskIds.add(session.taskId);
   }
   for (const taskId of liveTaskIds) pausedTaskIds.delete(taskId);
-  return pausedTaskIds;
+  return { liveTaskIds, pausedTaskIds };
+}
+
+/**
+ * The ids of the tasks that have a paused session and no live one: the paused
+ * half of `taskSessionStatesOf`. `isTaskPaused` runs it over one task's rows,
+ * which is how `startTaskSession` chooses the Resume path. read-board reads
+ * `taskSessionStatesOf` directly, because it needs the live half as well.
+ */
+export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>): Set<string> {
+  return taskSessionStatesOf(sessions).pausedTaskIds;
 }
 
 /**
@@ -131,6 +154,26 @@ export function isResumeOffered(input: {
   laneRole: string | null | undefined;
 }): boolean {
   return input.hasPausedSession && resumeBlockReasonForTask(input) === null;
+}
+
+/**
+ * Whether the phone may offer Pause for a task: it has a live session
+ * (`taskSessionStatesOf`) and is not in To Do. This is the mobile bridge's
+ * `pausable`, the promise that `pause-session` pauses rather than refuses.
+ *
+ * It follows the pause direction of `canToggle` in the task detail
+ * (`useTaskSessionState.ts`): To Do hides Pause, and Done and archived do not,
+ * because Pause is the only in-window stop for a live agent. It differs in one
+ * state on purpose. The task view also shows Pause while a spawn label is up
+ * and no session is live, but that click only cancels an in-flight resume or
+ * start, and `pause-session` refuses a task with no live session, so the phone
+ * is offered nothing there.
+ */
+export function isPauseOffered(input: {
+  hasLiveSession: boolean;
+  laneRole: string | null | undefined;
+}): boolean {
+  return input.hasLiveSession && input.laneRole !== 'todo';
 }
 
 /**

@@ -1,6 +1,6 @@
 import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type StartSessionResponsePayload } from '@kangentic/protocol';
 import { startTaskSession } from '../../ipc/handlers/session-start';
-import { resolveProjectContext } from '../../ipc/helpers/project-repos';
+import { resolveKnownProject } from './known-project';
 import type { IpcContext } from '../../ipc/ipc-context';
 
 export async function handleStartSession(
@@ -8,10 +8,11 @@ export async function handleStartSession(
   context: IpcContext,
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('start-session', request.payload);
-  const { projectId } = resolveProjectContext(context, payload.projectId);
-  if (!projectId) {
+  const project = resolveKnownProject(context, payload.projectId);
+  if (!project) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such project: ${payload.projectId}` };
   }
+  const { projectId } = project;
 
   // startTaskSession owns the task lock, the stale-pointer reconcile, and the
   // To Do / Done / archived gate. A paused task takes the desktop Resume

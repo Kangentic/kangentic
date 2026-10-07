@@ -170,7 +170,7 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false }],
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -411,6 +411,86 @@ describe('handleReadBoard', () => {
       for (const task of tasks) {
         if (task.resumable === true) expect(task.paused).toBe(true);
       }
+    });
+  });
+
+  describe('pausable on the board row (protocol 0.18.0)', () => {
+    beforeEach(() => {
+      swimlanesList.mockReturnValue([
+        { id: 'lane-review', role: null, auto_spawn: false },
+        { id: 'lane-todo', role: 'todo', auto_spawn: false },
+        { id: 'lane-done', role: 'done', auto_spawn: false },
+      ]);
+      tasksList.mockReturnValue([
+        { id: 't-running', swimlane_id: 'lane-review', session_id: 'sess-run', archived_at: null },
+        { id: 't-queued', swimlane_id: 'lane-review', session_id: 'sess-queued', archived_at: null },
+        // A live PTY the task's pointer lost: the pause reconciles and re-links
+        // it, so it is pausable though session_id is null.
+        { id: 't-running-lost-pointer', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-paused', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-paused-queued-successor', swimlane_id: 'lane-review', session_id: 'sess-next', archived_at: null },
+        { id: 't-ended', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-fresh', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        // To Do hides Pause on the desktop. A move into To Do tears the session
+        // down, so this row pins the column gate, not a reachable state.
+        { id: 't-live-todo', swimlane_id: 'lane-todo', session_id: 'sess-todo', archived_at: null },
+        // Done and archived keep Pause, as the desktop does: a Done move whose
+        // suspend failed leaves exactly this, and Pause is the only stop for it.
+        { id: 't-live-done', swimlane_id: 'lane-done', session_id: 'sess-done', archived_at: null },
+        { id: 't-live-archived', swimlane_id: 'lane-done', session_id: 'sess-archived', archived_at: '2026-10-01T00:00:00.000Z' },
+      ]);
+      registryRows = [
+        { id: 'sess-run', taskId: 't-running', status: 'running' },
+        { id: 'sess-queued', taskId: 't-queued', status: 'queued' },
+        { id: 'sess-lost', taskId: 't-running-lost-pointer', status: 'running' },
+        { id: 'sess-1', taskId: 't-paused', status: 'suspended' },
+        { id: 'sess-2', taskId: 't-paused-queued-successor', status: 'suspended' },
+        { id: 'sess-next', taskId: 't-paused-queued-successor', status: 'queued' },
+        { id: 'sess-3', taskId: 't-ended', status: 'exited' },
+        { id: 'sess-todo', taskId: 't-live-todo', status: 'running' },
+        { id: 'sess-done', taskId: 't-live-done', status: 'running' },
+        { id: 'sess-archived', taskId: 't-live-archived', status: 'running' },
+      ];
+    });
+
+    it('is true for a live session outside To Do, Done and archived included, and false otherwise', async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; pausable: boolean | null }> }).tasks;
+      expect(Object.fromEntries(tasks.map((task) => [task.id, task.pausable]))).toEqual({
+        't-running': true,
+        't-queued': true,
+        't-running-lost-pointer': true,
+        't-paused': false,
+        // The queued successor is live, so the task offers Pause and is not paused.
+        't-paused-queued-successor': true,
+        't-ended': false,
+        't-fresh': false,
+        't-live-todo': false,
+        't-live-done': true,
+        't-live-archived': true,
+      });
+      // One registry scan: a paused task has no live session to pause.
+      for (const task of tasks) {
+        if (task.paused === true) expect(task.pausable).toBe(false);
+      }
+    });
+
+    it('stays false while a spawn label is up and no session is live', async () => {
+      // The desktop card shows Pause here, but its click only cancels an
+      // in-flight resume or start; pause-session refuses a task with no live
+      // session, so the row promises nothing.
+      emitSpawnWaiting(fakeWindow(), 't-fresh', 2);
+      emitSpawnWaiting(fakeWindow(), 't-paused', 1);
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; spawn_progress: string | null; pausable: boolean | null }> }).tasks;
+      const byId = Object.fromEntries(tasks.map((task) => [task.id, task]));
+      expect(byId['t-fresh'].spawn_progress).not.toBeNull();
+      expect(byId['t-fresh'].pausable).toBe(false);
+      expect(byId['t-paused'].spawn_progress).not.toBeNull();
+      expect(byId['t-paused'].pausable).toBe(false);
     });
   });
 

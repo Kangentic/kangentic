@@ -14,6 +14,7 @@ import { handleAnswerPermissionPrompt } from './answer-permission-prompt';
 import { handleBoardTool } from './board-tool';
 import { handleRegisterPush } from './register-push';
 import { handleStartSession } from './start-session';
+import { handlePauseSession } from './pause-session';
 
 export interface CapabilityHandlerDeps {
   context: IpcContext;
@@ -48,4 +49,5 @@ export function registerCapabilityHandlers(router: CapabilityRouter, deps: Capab
   router.register('board-tool-write', (request) => handleBoardTool(request, deps.context));
   router.register('register-push', (request, session) => handleRegisterPush(request, session, deps.pushRegistrations));
   router.register('start-session', (request) => handleStartSession(request, deps.context));
+  router.register('pause-session', (request) => handlePauseSession(request, deps.context));
 }

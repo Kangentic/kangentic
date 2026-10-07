@@ -4203,7 +4203,7 @@
       var FULL_CAPABILITY_SET = [
         'read-stream', 'read-board', 'read-diff', 'send-user-message', 'move-task',
         'answer-permission-prompt', 'interactive-terminal', 'board-tool-read',
-        'board-tool-write', 'register-push', 'start-session',
+        'board-tool-write', 'register-push', 'start-session', 'pause-session',
       ];
 
       if (typeof window !== 'undefined') {

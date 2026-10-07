@@ -13,7 +13,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
-import { isResumeOffered, pausedTaskIdsOf } from '../../../shared/session-resume-eligibility';
+import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -21,6 +21,7 @@ import type { SpawnProgressFeed } from '../spawn-progress-feed';
 import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
+import { resolveKnownProject } from './known-project';
 import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
 
 function subscriptionKeyFor(projectId: string): string {
@@ -71,7 +72,7 @@ export async function handleReadBoard(
     return { type: 'capability-response', requestId: request.requestId, ok: true };
   }
 
-  const project = context.projectRepo.getById(projectId);
+  const project = resolveKnownProject(context, projectId);
   if (!project) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such project: ${projectId}` };
   }
@@ -79,19 +80,24 @@ export async function handleReadBoard(
   const repos = getProjectRepos(context, projectId);
   // Read once per response: each call also sweeps TTL-expired labels.
   const spawnProgressByTaskId = getInFlightSpawnProgress();
-  // `paused` needs each task's paused session, and `resumable` needs that and
-  // the task's column. The registry is read once per response, not per task.
-  // A pause, a resume, a move and an archive each already fire a board event,
-  // so a phone re-reads both. `resumable` is derived from the same `paused`
-  // answer, so it can never be true while `paused` is false.
+  // `paused` needs each task's paused session, `resumable` needs that and the
+  // task's column, and `pausable` needs its live session and column. The
+  // registry is read once per response, not per task. A pause, a resume, a
+  // move, an archive and a session's start and end each already fire a board
+  // event, so a phone re-reads all three. `resumable` is derived from the same
+  // `paused` answer, so it can never be true while `paused` is false, and one
+  // scan yields both the paused and the live set, so `pausable` and `paused`
+  // are never both true.
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
-  const pausedTaskIds = pausedTaskIdsOf(context.sessionManager.listSessions());
+  const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(context.sessionManager.listSessions());
   const toTaskWire = (task: Task): BoardTaskWire => {
     const paused = pausedTaskIds.has(task.id);
+    const laneRole = laneRoleById.get(task.swimlane_id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
       paused,
-      resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole: laneRoleById.get(task.swimlane_id) }),
+      resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole }),
+      pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
     });
   };
 
@@ -149,7 +155,7 @@ export async function handleReadBoard(
     projectColor: deriveProjectAccentColor(projectId),
     // The Layout "Ticket Numbers" setting travels with the snapshot so the
     // phone's cards match the desktop's (protocol 0.6.0 additive field).
-    showTicketNumbers: context.configManager.getEffectiveConfig(project.path || undefined).showTaskNumbers ?? true,
+    showTicketNumbers: context.configManager.getEffectiveConfig(project.projectPath || undefined).showTaskNumbers ?? true,
     ...(view !== undefined ? { view } : {}),
     // Only the filtered projection needs these: a phone appending a card to a
     // column has to know the column's real length, which it cannot get from a

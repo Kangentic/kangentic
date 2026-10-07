@@ -535,8 +535,19 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
 
   it('SESSION_SUSPEND (the Pause toggle) never references reapTaskLeftovers / reapTaskProcesses', () => {
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_SUSPEND');
-    expect(handlerRegion).toContain('applySuspendDbWrites');
+    expect(handlerRegion).toContain('pauseTaskSession');
     expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+  });
+
+  it("pauseTaskSession (the desktop Pause's and the phone's pause-session's shared path) never references reapTaskLeftovers / reapTaskProcesses", () => {
+    const pauseSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/session-pause.ts'), 'utf8');
+    expect(pauseSource).toContain('applySuspendDbWrites');
+    expect(pauseSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+
+    // The phone's handler adds nothing to the shared path, a reap included.
+    const phoneSource = fs.readFileSync(path.join(__dirname, '../../src/main/mobile-bridge/handlers/pause-session.ts'), 'utf8');
+    expect(phoneSource).toContain('pauseTaskSession');
+    expect(phoneSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
   });
 });
 

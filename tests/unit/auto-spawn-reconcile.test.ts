@@ -30,6 +30,18 @@ const mockListSessions = vi.fn(
 );
 const mockTaskGetById = vi.fn();
 const mockWebContentsSend = vi.fn();
+/**
+ * Defaults to what the real reconcile reports for these fixtures: the task's
+ * pointer names its live session, or there is none. A test overrides it for a
+ * pointer the registry contradicts (an exited row, a lost live PTY). Reads the
+ * row the code under test just fetched rather than calling `mockTaskGetById`
+ * again, so a test's queued `mockReturnValueOnce` rows are not consumed here.
+ */
+function pointerIsLive() {
+  const task = mockTaskGetById.mock.results.at(-1)?.value as Task | undefined;
+  return { task, liveSession: task?.session_id ? { id: task.session_id } : null };
+}
+const mockReconcileTaskSessionRef = vi.fn((..._args: unknown[]) => pointerIsLive());
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -45,6 +57,7 @@ vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
 }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   applySuspendDbWrites: (...args: unknown[]) => mockApplySuspendDbWrites(...args),
+  reconcileTaskSessionRef: (...args: unknown[]) => mockReconcileTaskSessionRef(...args),
 }));
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: vi.fn(async (_id: string, fn: () => Promise<void>) => fn()),
@@ -287,6 +300,7 @@ describe('reconcileAutoSpawnChange', () => {
     mockHasSessionForTask.mockReturnValue(false);
     mockListSessions.mockReturnValue([]);
     mockTaskGetById.mockReturnValue(makeTask({ session_id: 'sess-1' }));
+    mockReconcileTaskSessionRef.mockImplementation(() => pointerIsLive());
   });
 
   it('spawns through autoSpawnForTask, the board-driven chokepoint', async () => {
@@ -520,6 +534,56 @@ describe('reconcileAutoSpawnChange', () => {
     await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
     expect(mockSuspend).not.toHaveBeenCalled();
     expect(mockApplySuspendDbWrites).not.toHaveBeenCalled();
+  });
+
+  it('does not suspend an agent that exited by itself, though the pointer still names its row', async () => {
+    // A natural exit leaves task.session_id at the exited registry row. On the
+    // raw pointer, the suspend marked the finished run `suspended` and the
+    // card showed Paused with a Resume for an agent that had already ended.
+    // The registry says there is no live session, so nothing is written.
+    mockReconcileTaskSessionRef.mockImplementation((_context, _projectId, taskId) => ({
+      task: makeTask({ id: taskId as string, session_id: null }),
+      liveSession: null,
+    }));
+
+    reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+      turnedOff(makeTask({ session_id: 'sess-exited' })),
+    ]);
+
+    await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+    expect(mockReconcileTaskSessionRef).toHaveBeenCalledWith(expect.anything(), 'proj-1', 'task-1');
+    expect(mockSuspend).not.toHaveBeenCalled();
+    expect(mockApplySuspendDbWrites).not.toHaveBeenCalled();
+  });
+
+  it('suspends the live session the registry names when the pointer is stale', async () => {
+    // The pointer names an ended row while a newer PTY for the task is live:
+    // the reconcile re-links it, and the suspend stops that session, not the
+    // stale id the plan was built from.
+    mockReconcileTaskSessionRef.mockImplementation((_context, _projectId, taskId) => ({
+      task: makeTask({ id: taskId as string, session_id: 'sess-relinked' }),
+      liveSession: { id: 'sess-relinked' },
+    }));
+
+    reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+      turnedOff(makeTask({ session_id: 'sess-stale' })),
+    ]);
+
+    await vi.waitFor(() => expect(mockSuspend).toHaveBeenCalledWith('sess-relinked'));
+    expect(mockSuspend).not.toHaveBeenCalledWith('sess-stale');
+    expect(mockApplySuspendDbWrites).toHaveBeenCalledWith(expect.anything(), 'proj-1', 'task-1', 'system');
+  });
+
+  it('skips a task deleted between planning and the lock without reconciling it', async () => {
+    mockTaskGetById.mockReturnValue(undefined);
+
+    reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+      turnedOff(makeTask({ session_id: 'sess-1' })),
+    ]);
+
+    await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+    expect(mockReconcileTaskSessionRef).not.toHaveBeenCalled();
+    expect(mockSuspend).not.toHaveBeenCalled();
   });
 
   it('does nothing at all without a resolved project', () => {

@@ -4485,6 +4485,7 @@ export const MOBILE_CAPABILITY_VERBS = [
   'board-tool-write',
   'register-push',
   'start-session',
+  'pause-session',
 ] as const;
 export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 

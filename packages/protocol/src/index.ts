@@ -56,6 +56,7 @@ export {
   parseTranscriptWindowResponsePayload,
   parseRegisterPushRequestPayload,
   parseStartSessionResponsePayload,
+  parsePauseSessionResponsePayload,
   isReadStreamSessionStatusWire,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
@@ -89,6 +90,8 @@ export {
   type StartSessionRequestPayload,
   type StartSessionResponsePayload,
   type StartSessionOutcome,
+  type PauseSessionRequestPayload,
+  type PauseSessionResponsePayload,
 } from './wire/payloads';
 
 export {

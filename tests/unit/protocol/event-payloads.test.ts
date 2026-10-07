@@ -27,6 +27,7 @@ import {
   parseReadBoardResponsePayload,
   parseReadDiffResponsePayload,
   parseReadStreamResponsePayload,
+  parsePauseSessionResponsePayload,
   parseStartSessionResponsePayload,
   parseTranscriptWindowResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
@@ -63,6 +64,7 @@ const boardTaskFixture: JsonValue = {
   spawn_progress: null,
   resumable: false,
   paused: false,
+  pausable: true,
 };
 
 describe('parseTranscriptEntriesWire', () => {
@@ -332,6 +334,17 @@ describe('board row guards', () => {
     delete withoutPaused.paused;
     expect(parseBoardTaskWire(withoutPaused).paused).toBeNull();
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused: 'yes' }).paused).toBeNull();
+  });
+
+  it('passes pausable through as true or false, and reads an absent or non-boolean one as null (pre-0.18.0 desktop)', () => {
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: true }).pausable).toBe(true);
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: false }).pausable).toBe(false);
+    // Null, not false: an older desktop refuses pause-session (or never
+    // answers it), so a client offers no Pause for an unknown answer either.
+    const withoutPausable = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutPausable.pausable;
+    expect(parseBoardTaskWire(withoutPausable).pausable).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), pausable: 1 }).pausable).toBeNull();
   });
 
   it('parses a column row', () => {
@@ -667,6 +680,16 @@ describe('read-* response parsers', () => {
     expect(() => parseStartSessionResponsePayload({ ok: true })).toThrow(/outcome/);
     expect(() => parseStartSessionResponsePayload({ ok: true, outcome: 'restarted' })).toThrow(/outcome/);
     expect(() => parseStartSessionResponsePayload('ok' as unknown as JsonValue)).toThrow(/object/);
+  });
+
+  it('parses a pause-session response to exactly its ok field', () => {
+    expect(parsePauseSessionResponsePayload({ ok: true, extra: 1 })).toEqual({ ok: true });
+  });
+
+  it('rejects a pause-session response with a missing or non-boolean ok', () => {
+    expect(() => parsePauseSessionResponsePayload({})).toThrow(/ok/);
+    expect(() => parsePauseSessionResponsePayload({ ok: 'yes' })).toThrow(/ok/);
+    expect(() => parsePauseSessionResponsePayload(null)).toThrow(/object/);
   });
 });
 

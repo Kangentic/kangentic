@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   RESUME_HIDDEN_ROLES,
+  isPauseOffered,
   isPausedTaskSession,
   isResumeOffered,
   isTaskPaused,
@@ -30,6 +31,7 @@ import {
   resumeBlockMessage,
   resumeBlockReason,
   resumeBlockReasonForTask,
+  taskSessionStatesOf,
 } from '../../src/shared/session-resume-eligibility';
 import type { Task } from '../../src/shared/types';
 
@@ -209,6 +211,36 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
     expect(isResumeOffered({ hasPausedSession: true, task: archivedTask, laneRole: null })).toBe(false);
   });
 
+  it('taskSessionStatesOf yields the live and the paused tasks from one scan, never the same task in both', () => {
+    const sessions = [
+      { taskId: 'task-running', status: 'running' as const },
+      { taskId: 'task-queued', status: 'queued' as const },
+      { taskId: 'task-paused', status: 'suspended' as const },
+      // A queued successor beside the paused row it will replace: live, not paused.
+      { taskId: 'task-paused-with-queued-successor', status: 'suspended' as const },
+      { taskId: 'task-paused-with-queued-successor', status: 'queued' as const },
+      { taskId: 'task-exited', status: 'exited' as const },
+      { taskId: 'task-command-terminal', status: 'suspended' as const, transient: true },
+      { taskId: '', status: 'running' as const },
+    ];
+    const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(sessions);
+    expect([...liveTaskIds].sort()).toEqual(['task-paused-with-queued-successor', 'task-queued', 'task-running']);
+    expect([...pausedTaskIds].sort()).toEqual(['task-paused']);
+    for (const taskId of liveTaskIds) expect(pausedTaskIds.has(taskId)).toBe(false);
+    // pausedTaskIdsOf is the same scan's paused half.
+    expect([...pausedTaskIdsOf(sessions)].sort()).toEqual([...pausedTaskIds].sort());
+  });
+
+  it('isPauseOffered needs a live session and a column other than To Do, and keeps Pause in Done', () => {
+    expect(isPauseOffered({ hasLiveSession: true, laneRole: null })).toBe(true);
+    // Done keeps Pause, as the task view does: it is the only stop for a live
+    // agent a failed Done-move suspend left behind.
+    expect(isPauseOffered({ hasLiveSession: true, laneRole: 'done' })).toBe(true);
+    expect(isPauseOffered({ hasLiveSession: true, laneRole: 'todo' })).toBe(false);
+    expect(isPauseOffered({ hasLiveSession: false, laneRole: null })).toBe(false);
+    expect(isPauseOffered({ hasLiveSession: false, laneRole: 'done' })).toBe(false);
+  });
+
   // The archive half of the check had four hand-written copies, each carrying
   // the same "truthiness, not `!== null`" warning. The predicates own that read
   // now; a site that derives `isArchived` again is the drift this pins.
@@ -227,12 +259,13 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
   // Resume on must agree on what "paused" means, or the flag promises a resume
   // the verb does not deliver. Each site wrote it out by hand before, and
   // start-session's copy missed the Command Terminal exclusion. All three run
-  // one scan: read-board over every task, start-session and read-stream over
+  // one scan: read-board over every task (taskSessionStatesOf, which also
+  // yields the live set behind `pausable`), start-session and read-stream over
   // one task through isTaskPaused, which wraps it. read-stream also checks the
   // one session it streams.
   it.each([
     ['src/main/ipc/handlers/session-start.ts', [/isTaskPaused\(/]],
-    ['src/main/mobile-bridge/handlers/read-board.ts', [/pausedTaskIdsOf\(/]],
+    ['src/main/mobile-bridge/handlers/read-board.ts', [/taskSessionStatesOf\(/, /isPauseOffered\(/]],
     ['src/main/mobile-bridge/handlers/read-stream.ts', [/isPausedTaskSession\(/, /isTaskPaused\(/]],
   ])('%s decides "paused" through the shared definition, with no hand-rolled suspended comparison', (relativePath, sharedCalls) => {
     const source = readSource(relativePath);

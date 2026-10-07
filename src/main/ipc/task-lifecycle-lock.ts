@@ -45,8 +45,9 @@ import PQueue from 'p-queue';
  *    `.abort()` on the existing controller BEFORE acquiring the lock. The
  *    in-flight holder must observe its abort and return so we can acquire.
  *    Aborting after the lock acquire deadlocks - we'd be waiting for a holder
- *    we just queued behind. See `SESSION_SUSPEND` / `SESSION_RESUME` in
- *    `handlers/sessions.ts` for the canonical pattern.
+ *    we just queued behind. See `pauseTaskSession` (`handlers/session-pause.ts`)
+ *    and `resumeTaskSession` (`handlers/session-resume.ts`), the
+ *    `SESSION_SUSPEND` and `SESSION_RESUME` bodies, for the canonical pattern.
  *
  * 2. **No re-entry for the same task.** Code running inside a `withTaskLock`
  *    block must not call another `withTaskLock` for the same `taskId` (even
