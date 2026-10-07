@@ -17,10 +17,10 @@ import type { RelayWebSocketConstructor, RelayWebSocketFallback } from './relay-
  * A standalone Electron 44.5.1 rig then dialed both stacks to the hosted relay
  * in the same 30 s cycles for two evening hours on Oct 7, about 5,100 small
  * echoes per stack in each of two rigs. There the stacks came out close: echo
- * p99 647 ms on Chromium against 586 ms on undici, 18 against 14 echoes over
- * 1 s, a 5.5 s worst case against 2.0 s, and the same dial tail. Most of the
- * tail landed on both stacks in the same minutes, which puts it on the relay
- * path. Chromium's own share is small. Its network log showed stalled bytes
+ * p99 647 and 656 ms on Chromium against 586 and 543 ms on undici, 18 and 16
+ * echoes over 1 s against 14 and 14, worst cases 5.5 and 5.3 s against 2.0
+ * and 4.2 s, and the same dial tail. Most of the tail landed on both stacks in
+ * the same minutes, which puts it on the relay path. Chromium's own share is small. Its network log showed stalled bytes
  * arriving late at the socket and never held inside Electron. Connections that
  * negotiated Encrypted ClientHello (the hosted relay's Cloudflare zone
  * publishes an ECH config in its DNS HTTPS record) had 0.94% of echoes over

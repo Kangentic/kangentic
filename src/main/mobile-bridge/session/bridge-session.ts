@@ -96,8 +96,14 @@ const RECONNECT_GRACE_MS = 2 * 1000;
  */
 const REKEY_HOLD_MAX_MS = PEER_PRESENCE_TIMEOUT_MS * PEER_PRESENCE_FAILURES_BEFORE_ABSENT;
 
-/** Initiations kept for a stalled reply; the oldest beyond this is dropped. */
-const MAX_OUTSTANDING_HANDSHAKES = 4;
+/**
+ * Initiations kept for a stalled reply. At this many, no further msg1 is sent
+ * (see beginHandshake), so every reply the phone can send belongs to one the
+ * desktop still holds. The cost lands only on a phone that never answers
+ * msg1s yet keeps serving: rekeys pause until the next reconnect, and the
+ * session keeps working on the keys it has.
+ */
+const MAX_OUTSTANDING_HANDSHAKES = 8;
 
 /**
  * Why a rekey hold ended, carried on the 'rekeyHoldReleased' event. Only
@@ -366,6 +372,11 @@ export class BridgeSession extends EventEmitter {
     // paired and forwarding live (a msg1 lost there is genuinely lost, and
     // re-sending costs nothing).
     if (this.outstandingHandshakes.length > 0 && !replaceOutstanding && !this.peerSeenOnThisConnection) return;
+    // At the cap, nothing more goes out until a reply or a reconnect clears
+    // the list. Forgetting the oldest instead would let ITS reply arrive later
+    // and be tried against every initiation still held, and a failed read
+    // destroys each one it touches.
+    if (this.outstandingHandshakes.length >= MAX_OUTSTANDING_HANDSHAKES) return;
     // A fresh initiation supersedes any pending failure retry.
     this.clearHandshakeRetryTimer();
     const handshake = createKKHandshake({
@@ -375,7 +386,6 @@ export class BridgeSession extends EventEmitter {
     });
     const { message } = handshake.writeMessage(new Uint8Array(0));
     this.outstandingHandshakes.push(handshake);
-    if (this.outstandingHandshakes.length > MAX_OUTSTANDING_HANDSHAKES) this.outstandingHandshakes.shift();
     // A probe episode OPENS here and only here: when no window is armed. The
     // under-budget re-arm in onPresenceProbeTimeout() arms its window BEFORE
     // calling back into this method, so on that call the timer is non-null
