@@ -7,25 +7,31 @@ import type { RelayWebSocketConstructor, RelayWebSocketFallback } from './relay-
  *
  * Why this order. Chromium's stack honours the system proxy, PAC/WPAD and the
  * OS certificate store, and Node's ignores all three, so f547a71c9 moved every
- * relay dial onto `net.WebSocket`. That cost the common case. Measured on one
+ * relay dial onto `net.WebSocket`. The logs say that cost the common case. On one
  * desktop's logs, weekday daytime dials on undici (Electron 41) had p90 208 ms,
  * p99 1.4 s and 1.3% over 1 s; on `net.WebSocket` (Electron 44.5.1) they had
  * p90 869 ms, p99 6.5 s and 9.2% over 1 s, plus isolated ~19.2 s dials on one
- * client while its neighbours connected normally.
+ * client while its neighbours connected normally. Those were different weeks,
+ * so load on the relay could account for part of the gap.
  *
- * A standalone Electron 44.5.1 rig dialed both stacks to the hosted relay in
- * the same 30 s cycles. Echoes on open Chromium sockets had p99 935 ms and max
- * 2.9 s; on undici, p99 379 ms and max 644 ms. Chromium's network log put the
- * stall on the wire: the bytes reached its socket late in both directions, and
- * Electron handed them to JavaScript in the same millisecond. The stalls
- * followed the connections that negotiated Encrypted ClientHello, which
- * Chromium does because the hosted relay's Cloudflare zone publishes an ECH
- * config in its DNS HTTPS record. undici never negotiates ECH. Chromium's
- * slow dials were the same shape: TCP and TLS done in under 100 ms, then
- * seconds waiting for the upgrade reply.
+ * A standalone Electron 44.5.1 rig then dialed both stacks to the hosted relay
+ * in the same 30 s cycles for two evening hours on Oct 7, about 5,100 small
+ * echoes per stack in each of two rigs. There the stacks came out close: echo
+ * p99 647 ms on Chromium against 586 ms on undici, 18 against 14 echoes over
+ * 1 s, a 5.5 s worst case against 2.0 s, and the same dial tail. Most of the
+ * tail landed on both stacks in the same minutes, which puts it on the relay
+ * path. Chromium's own share is small. Its network log showed stalled bytes
+ * arriving late at the socket and never held inside Electron. Connections that
+ * negotiated Encrypted ClientHello (the hosted relay's Cloudflare zone
+ * publishes an ECH config in its DNS HTTPS record) had 0.94% of echoes over
+ * 500 ms, against 0.50% in a rig with ECH turned off in the same hour; undici
+ * never negotiates ECH. Chromium's slow dials finished TCP and TLS in under
+ * 100 ms and then waited seconds for the upgrade reply.
  *
- * So undici dials by default, and `net.WebSocket` is used when the system
- * needs it. That means outright while `session.resolveProxy()` reports a proxy
+ * So undici dials by default. It is the stack every dial used before October
+ * 2026, it was never the worse one in the rig, and the isolated ~19 s dials
+ * appeared only after the switch away from it. `net.WebSocket` is used when
+ * the system needs it. That means outright while `session.resolveProxy()` reports a proxy
  * for the relay, and as the client's fallback after undici fails twice in a row
  * (a TLS-inspecting firewall whose root CA is in the OS store but not in Node's
  * bundled list). RelayClient owns that accounting.
