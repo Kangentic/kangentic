@@ -62,6 +62,7 @@ const boardTaskFixture: JsonValue = {
   updated_at: '2026-07-13T00:00:00.000Z',
   spawn_progress: null,
   resumable: false,
+  paused: false,
 };
 
 describe('parseTranscriptEntriesWire', () => {
@@ -320,6 +321,17 @@ describe('board row guards', () => {
     delete withoutResumable.resumable;
     expect(parseBoardTaskWire(withoutResumable).resumable).toBeNull();
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), resumable: 'yes' }).resumable).toBeNull();
+  });
+
+  it('passes paused through as true or false, and reads an absent or non-boolean one as null (pre-0.17.0 desktop)', () => {
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused: true }).paused).toBe(true);
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused: false }).paused).toBe(false);
+    // Null, not false: a client reads "unknown" and falls back to resumable
+    // alone, rather than taking an older desktop's silence as "not paused".
+    const withoutPaused = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutPaused.paused;
+    expect(parseBoardTaskWire(withoutPaused).paused).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused: 'yes' }).paused).toBeNull();
   });
 
   it('parses a column row', () => {

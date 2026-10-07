@@ -373,11 +373,18 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * decides, and so a bare `.map(toBoardTaskWire)` (which would pass the array
  * index here) fails to compile.
  *
- * `resumable` is `isResumeOffered` for the task, which the caller resolves
- * because it needs the session registry and the column; see
- * `BoardTaskWire.resumable`.
+ * `pauseFlags` holds `paused`, whether the task has a paused session and no
+ * live one (`pausedTaskIdsOf`), and `resumable`, `isResumeOffered` for that
+ * same answer. The caller resolves both because they need the session
+ * registry and the column; see `BoardTaskWire.paused` and
+ * `BoardTaskWire.resumable`. One object rather than two positional booleans,
+ * so a call site cannot swap them.
  */
-export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null, resumable: boolean): BoardTaskWire {
+export function toBoardTaskWire(
+  task: Task,
+  spawnProgressLabel: string | null,
+  pauseFlags: { paused: boolean; resumable: boolean },
+): BoardTaskWire {
   return {
     id: task.id,
     display_id: task.display_id,
@@ -401,7 +408,8 @@ export function toBoardTaskWire(task: Task, spawnProgressLabel: string | null, r
     created_at: task.created_at,
     updated_at: task.updated_at,
     spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
-    resumable,
+    resumable: pauseFlags.resumable,
+    paused: pauseFlags.paused,
   };
 }
 

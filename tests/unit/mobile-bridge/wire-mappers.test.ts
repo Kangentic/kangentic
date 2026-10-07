@@ -51,33 +51,44 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe('toBoardTaskWire', () => {
+  /** A task with no paused session, for the tests that are not about pausing. */
+  const notPaused = { paused: false, resumable: false };
+
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
-    expect(toBoardTaskWire(task, null, false).pr_merge_readiness).toBe('ready');
+    expect(toBoardTaskWire(task, null, notPaused).pr_merge_readiness).toBe('ready');
   });
 
   it('passes null through when the PR has no judged readiness', () => {
     const task = makeTask({ pr_merge_readiness: null });
-    expect(toBoardTaskWire(task, null, false).pr_merge_readiness).toBeNull();
+    expect(toBoardTaskWire(task, null, notPaused).pr_merge_readiness).toBeNull();
   });
 
   it('carries the spawn-progress label, and null when none is in flight', () => {
-    expect(toBoardTaskWire(makeTask(), 'Waiting (2 ahead)', false).spawn_progress).toBe('Waiting (2 ahead)');
-    expect(toBoardTaskWire(makeTask(), null, false).spawn_progress).toBeNull();
+    expect(toBoardTaskWire(makeTask(), 'Waiting (2 ahead)', notPaused).spawn_progress).toBe('Waiting (2 ahead)');
+    expect(toBoardTaskWire(makeTask(), null, notPaused).spawn_progress).toBeNull();
   });
 
   it('the label survives the phone-side parse', () => {
-    const wire = toBoardTaskWire(makeTask(), 'Switching model...', false);
+    const wire = toBoardTaskWire(makeTask(), 'Switching model...', notPaused);
     expect(parseBoardTaskWire(wire as unknown as JsonValue).spawn_progress).toBe('Switching model...');
   });
 
   it('carries resumable as given, true and false, through the phone-side parse', () => {
-    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, true) as unknown as JsonValue).resumable).toBe(true);
-    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, false) as unknown as JsonValue).resumable).toBe(false);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: true }) as unknown as JsonValue).resumable).toBe(true);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).resumable).toBe(false);
+  });
+
+  it('carries paused as given, apart from resumable, through the phone-side parse', () => {
+    // A paused task in Done: paused, but no Resume on offer.
+    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: false }) as unknown as JsonValue);
+    expect(pausedInDone.paused).toBe(true);
+    expect(pausedInDone.resumable).toBe(false);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).paused).toBe(false);
   });
 
   it('sanitizes the label it puts on the wire, so a raw git line never reaches the phone as-is', () => {
-    const wire = toBoardTaskWire(makeTask(), '\u001b[32mReceiving objects:\u001b[0m 45%\r', false);
+    const wire = toBoardTaskWire(makeTask(), '\u001b[32mReceiving objects:\u001b[0m 45%\r', notPaused);
     expect(wire.spawn_progress).toBe('Receiving objects: 45%');
   });
 });

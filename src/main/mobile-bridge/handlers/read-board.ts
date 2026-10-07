@@ -79,17 +79,21 @@ export async function handleReadBoard(
   const repos = getProjectRepos(context, projectId);
   // Read once per response: each call also sweeps TTL-expired labels.
   const spawnProgressByTaskId = getInFlightSpawnProgress();
-  // `resumable` needs each task's paused session and its column. The registry
-  // is read once per response, not per task. A pause, a resume, a move and an
-  // archive each already fire a board event, so a phone re-reads this.
+  // `paused` needs each task's paused session, and `resumable` needs that and
+  // the task's column. The registry is read once per response, not per task.
+  // A pause, a resume, a move and an archive each already fire a board event,
+  // so a phone re-reads both. `resumable` is derived from the same `paused`
+  // answer, so it can never be true while `paused` is false.
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
   const pausedTaskIds = pausedTaskIdsOf(context.sessionManager.listSessions());
-  const toTaskWire = (task: Task): BoardTaskWire => toBoardTaskWire(
-    task,
-    spawnProgressByTaskId[task.id] ?? null,
-    isResumeOffered({ hasPausedSession: pausedTaskIds.has(task.id), task, laneRole: laneRoleById.get(task.swimlane_id) }),
-  );
+  const toTaskWire = (task: Task): BoardTaskWire => {
+    const paused = pausedTaskIds.has(task.id);
+    return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
+      paused,
+      resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole: laneRoleById.get(task.swimlane_id) }),
+    });
+  };
 
   // One-shot page of completed work. Deliberately NOT part of the snapshot
   // and NOT subscribed: a board subscription re-snapshots on every board
@@ -128,7 +132,9 @@ export async function handleReadBoard(
   // the label describes, so the card would otherwise vanish exactly while it
   // has something to say. It keeps a resumable paused task for the same
   // reason: a desktop pause nulls session_id too (applySuspendDbWrites), and
-  // without it the feed could show Paused only until the row dropped out.
+  // without it the feed could show Paused only until the row dropped out. A
+  // paused task that offers no Resume (Done, say) stays out on purpose: its
+  // row reads `paused: true`, but the feed has nothing to act on for it.
   const drawnOnAgentFeed = (task: BoardTaskWire): boolean =>
     task.session_id !== null || typeof task.spawn_progress === 'string' || task.resumable === true;
   const view = payload.view;

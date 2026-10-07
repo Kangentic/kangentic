@@ -262,6 +262,9 @@ function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPay
  *   `spawn_progress` label in flight (a first start, or a respawn that has
  *   nulled `session_id`) and a `resumable` paused task (a desktop pause
  *   nulls `session_id` too), so the feed can draw "Paused" with a Resume.
+ *   A paused task that offers no Resume (in Done, say) stays out even though
+ *   its row reads `paused: true` from 0.17.0: the feed has nothing to act on
+ *   for it.
  * - 'full': every non-archived task, for the one project whose board the user
  *   actually has open.
  *
