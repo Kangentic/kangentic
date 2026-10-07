@@ -4,7 +4,7 @@ description: |
   Documentation completeness auditor. Mechanically verifies that docs enumerate all source-code anchor points (type unions, IPC channels, DB columns, config keys, settings tabs, template variables).
 
   Use this agent when running /sync-docs, /pull-request, /merge-pull-request, or /merge-back (if anchor source files changed), or /release (full verification).
-model: sonnet
+model: haiku
 tools: Read, Glob, Grep
 ---
 

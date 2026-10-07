@@ -563,8 +563,22 @@ export class ClaudeAdapter implements AgentAdapter {
    *   Haiku, thinking off                   1.5 to 1.8 s
    *   Haiku, level decides (any level)      12 to 19 s     Haiku ignores effort and thinks
    *
-   * So `low` keeps the pin for every model, and a user who wants more care on a
-   * hard question can buy it with a higher level.
+   * Remeasured on CLI 2.1.293 through the real Ask arguments (stream-json in and
+   * out, the search tool allowed), on that same table question and on "What is
+   * the most expensive task?" over a 717-task board, three runs each, median time
+   * to the result line over the six:
+   *
+   *   Sonnet 5.5 low, thinking off          5.0 s          right 6 of 6
+   *   Sonnet 5.5 max                        14.6 s         right 6 of 6
+   *   Haiku 5.5 low, thinking off           3.8 s          right 6 of 6
+   *   Haiku 5.5 high                        4.7 s          right 6 of 6
+   *   Haiku 5.5 max                         21.8 s         right 6 of 6
+   *
+   * Haiku 5.5 does follow the level, and at low it answered both as well as
+   * Sonnet, faster and at about a twentieth of the cost. The count `low` got
+   * wrong on 2.1.283 came out right at every level. So `low` keeps the pin for
+   * every model, and a user who wants more care on a hard question can buy it
+   * with a higher level.
    */
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 

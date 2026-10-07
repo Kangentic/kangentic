@@ -111,11 +111,29 @@ export function readJsonResult(stdout) {
   };
 }
 
-/** Every ref that opens a row of a table in the prompt: the task table and the related work. */
+/**
+ * The prompt text a captured stdin carries. The Ask path writes it as `--input-format stream-json`,
+ * one JSON user message per line, so its newlines arrive escaped; a summary call writes plain text.
+ */
+export function promptTextOf(stdinText) {
+  const texts = [];
+  for (const line of stdinText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const message = parseJsonLine(line);
+    if (!message || message.type !== 'user' || !Array.isArray(message.message?.content)) return stdinText;
+    for (const block of message.message.content) if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+  }
+  return texts.length > 0 ? texts.join('\n') : stdinText;
+}
+
+/**
+ * Every ref that opens a row of a table in the prompt: the task table and the related work, written
+ * `#529|...`, or a markdown row, written `| #529 | ...`.
+ */
 export function tableRefsOf(prompt) {
   const refs = new Set();
-  for (const line of prompt.split(/\r?\n/)) {
-    const match = line.match(/^\s*([^|\s]+)\|/);
+  for (const line of promptTextOf(prompt).split(/\r?\n/)) {
+    const match = line.match(/^\s*([^|\s]+)\|/) ?? line.match(/^\s*\|\s*([^|\s]+)\s*\|/);
     if (!match) continue;
     for (const ref of match[1].matchAll(REF_PATTERN)) if (ref[0] === match[1]) refs.add(normalizeRef(ref[0]));
   }
