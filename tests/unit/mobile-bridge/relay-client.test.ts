@@ -8,6 +8,7 @@
  * connection from the server side, which the double's pairing-rendezvous
  * shape doesn't model).
  */
+import diagnosticsChannel from 'node:diagnostics_channel';
 import { describe, it, expect, afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { RelayClient, isRedialableTransport } from '../../../src/main/mobile-bridge/transport/relay-client';
@@ -556,6 +557,69 @@ describe('RelayClient redial and dial watchdog', () => {
     FakeWebSocket.instances[3].open();
     client.redialNow({ force: true, reason: 'peer went silent' });
     expect(loggedLines(warnSpy).some((line) => line.includes('forced redial (peer went silent) from connected'))).toBe(true);
+  });
+
+  // undici publishes every received ping on this documented channel with the
+  // receiving socket; the test publishes the same message shape itself.
+  it('names the relay ping age on the forced-redial and close lines of a Node socket', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const relayPings = diagnosticsChannel.channel('undici:websocket:ping');
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'abcd1234' });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+
+    client.redialNow({ force: true, reason: 'unpinged' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (unpinged) from connected, no relay ping seen');
+
+    FakeWebSocket.instances[1].open();
+    relayPings.publish({ payload: undefined, websocket: FakeWebSocket.instances[1] });
+    vi.advanceTimersByTime(12_000);
+    client.redialNow({ force: true, reason: 'pinged' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (pinged) from connected, last relay ping 12 s ago');
+
+    // A ping on ANOTHER socket says nothing about this one.
+    FakeWebSocket.instances[2].open();
+    relayPings.publish({ payload: undefined, websocket: FakeWebSocket.instances[1] });
+    vi.advanceTimersByTime(3_000);
+    relayPings.publish({ payload: undefined, websocket: FakeWebSocket.instances[2] });
+    vi.advanceTimersByTime(40_000);
+    FakeWebSocket.instances[2].fail(1006);
+    expect(loggedLines(warnSpy)).toContain(
+      '[mobile-bridge/relay-client abcd1234] closed: code=1006 reason="" clean=false after 43 s connected, last relay ping 40 s ago; redial in 500 ms',
+    );
+  });
+
+  it('sees a real server ping through Node\'s own WebSocket', async () => {
+    const { url, wss } = await startEchoServer();
+    activeServers.push(wss);
+    const client = new RelayClient({ relayUrl: url, slotId: 'test-slot', logLabel: 'abcd1234' });
+    activeClients.push(client);
+    await client.connect();
+    const serverSocket = [...wss.clients][0];
+    const pongReceived = new Promise<void>((resolve) => serverSocket.once('pong', () => resolve()));
+    serverSocket.ping();
+    await pongReceived;
+    client.redialNow({ force: true, reason: 'after a real ping' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (after a real ping) from connected, last relay ping 0 s ago');
+  });
+
+  it('adds no relay ping clause for a stack whose pings JavaScript never sees', () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    const client = new RelayClient({
+      relayUrl: 'ws://127.0.0.1:1',
+      slotId: 'test-slot',
+      logLabel: 'abcd1234',
+      webSocketConstructor: FakeWebSocket as unknown as typeof WebSocket,
+      webSocketStack: 'chromium',
+    });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+    client.redialNow({ force: true, reason: 'silent' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (silent) from connected');
   });
 
   it('folds an onerror carrying only an Error, with no message, into the dial-failed warn line', () => {

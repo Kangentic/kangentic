@@ -1,3 +1,4 @@
+import diagnosticsChannel from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
 import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol';
 
@@ -110,6 +111,35 @@ const PRIMARY_FAILURES_BEFORE_FALLBACK = 2;
  */
 const FALLBACK_HOLD_MS = 30 * 60 * 1000;
 
+/**
+ * When the relay last pinged each undici socket, for the forced-redial and
+ * close lines. The relay pings every socket every 30 s (kangentic-relay's
+ * PING_INTERVAL_MS) and terminates one that missed the previous pong, and
+ * undici publishes each received ping on its documented
+ * 'undici:websocket:ping' diagnostics channel with the receiving `WebSocket`
+ * (measured on Electron 44.5.1's Node 24.21 and undici 7.29.1: a 30 s cadence
+ * through the hosted relay's Cloudflare edge). A line that names the ping age
+ * tells a dead path (pings stopped too) from a silent phone on a live one
+ * (pings still arriving), which the three paired-silent redials since Oct 4
+ * could not. Diagnostic only: nothing decides on it. Chromium answers pings
+ * inside its network service, so a `net.WebSocket` socket never appears here.
+ */
+const lastRelayPingAtBySocket = new WeakMap<object, number>();
+let relayPingTrackingStarted = false;
+
+function startRelayPingTracking(): void {
+  if (relayPingTrackingStarted) return;
+  relayPingTrackingStarted = true;
+  diagnosticsChannel.subscribe('undici:websocket:ping', (message) => {
+    if (typeof message !== 'object' || message === null || !('websocket' in message)) return;
+    const websocket = message.websocket;
+    if (typeof websocket === 'object' && websocket !== null) lastRelayPingAtBySocket.set(websocket, Date.now());
+  });
+}
+
+/** The stack name for Node's global `WebSocket`, the only one whose pings are visible. */
+const NODE_STACK = 'node';
+
 export interface RelayClientOptions {
   relayUrl: string;
   slotId: string;
@@ -211,7 +241,7 @@ export class RelayClient implements RedialableTransport {
     this.maxBytesPerSession = options.maxBytesPerSession ?? 256 * 1024 * 1024;
     this.logPrefix = `[mobile-bridge/relay-client ${options.logLabel ?? 'relay'}]`;
     this.webSocketConstructor = options.webSocketConstructor;
-    this.webSocketStack = options.webSocketConstructor ? (options.webSocketStack ?? 'injected') : 'node';
+    this.webSocketStack = options.webSocketConstructor ? (options.webSocketStack ?? 'injected') : NODE_STACK;
     this.fallbackWebSocket = options.fallbackWebSocket;
   }
 
@@ -252,7 +282,8 @@ export class RelayClient implements RedialableTransport {
         console.log(`${this.logPrefix} redial kick (${reason}) skipped: a dial is in flight or the socket is open`);
         return;
       }
-      console.warn(`${this.logPrefix} forced redial (${reason}) from ${this.currentState}`);
+      const relayPing = this.currentState === 'connected' && this.lastDialStack ? this.describeRelayPing(this.socket, this.lastDialStack) : '';
+      console.warn(`${this.logPrefix} forced redial (${reason}) from ${this.currentState}${relayPing}`);
       this.abandonSocket(new Error('Relay connection abandoned by a forced redial'));
     } else {
       console.log(`${this.logPrefix} redial kick (${reason}) from ${this.currentState}: dialing now`);
@@ -306,6 +337,7 @@ export class RelayClient implements RedialableTransport {
 
       const dialChoice = this.chooseWebSocket();
       this.lastDialStack = dialChoice.stack;
+      if (dialChoice.stack === NODE_STACK) startRelayPingTracking();
       let socket: WebSocket;
       try {
         socket = new dialChoice.webSocketConstructor(url.href);
@@ -363,7 +395,7 @@ export class RelayClient implements RedialableTransport {
         const wasConnected = this.currentState === 'connected';
         if (!wasConnected) this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
-        this.logClose(event, wasConnected, delayMs, dialChoice.stack);
+        this.logClose(event, wasConnected, delayMs, dialChoice.stack, this.describeRelayPing(socket, dialChoice.stack));
         // Only reject the in-flight connect() promise if we never reached 'open'.
         if (!wasConnected) rejectOnce(new Error('Relay connection closed before it opened'));
       };
@@ -378,7 +410,7 @@ export class RelayClient implements RedialableTransport {
    * third peer on the slot, 1001 the relay draining. A dial that never opened
    * folds the `onerror` text in, since its close code is always 1006.
    */
-  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number, dialStack: string): void {
+  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number, dialStack: string, relayPing: string): void {
     if (!wasConnected) {
       // The error's own text first (undici), then the close reason (Chromium
       // puts the net:: error there), then whatever is left. The slot is
@@ -396,8 +428,20 @@ export class RelayClient implements RedialableTransport {
       return;
     }
     console.warn(
-      `${this.logPrefix} closed: code=${event.code} reason="${event.reason}" clean=${event.wasClean} after ${connectedForSeconds} s connected; redial in ${delayMs} ms`,
+      `${this.logPrefix} closed: code=${event.code} reason="${event.reason}" clean=${event.wasClean} after ${connectedForSeconds} s connected${relayPing}; redial in ${delayMs} ms`,
     );
+  }
+
+  /**
+   * `, last relay ping N s ago` for an undici socket the relay has pinged,
+   * `, no relay ping seen` for one it has not, and empty for any other stack,
+   * whose pings JavaScript never sees (see lastRelayPingAtBySocket).
+   */
+  private describeRelayPing(socket: WebSocket, dialStack: string): string {
+    if (dialStack !== NODE_STACK) return '';
+    const lastPingAtMs = lastRelayPingAtBySocket.get(socket);
+    if (lastPingAtMs === undefined) return ', no relay ping seen';
+    return `, last relay ping ${Math.round((Date.now() - lastPingAtMs) / 1000)} s ago`;
   }
 
   /**
