@@ -807,7 +807,8 @@ export class BridgeSession extends EventEmitter {
       // reply to an initiation already abandoned. An unestablished session
       // schedules a fresh initiation here. An established one does not
       // (scheduleHandshakeRetry returns early): the presence window its msg1
-      // armed is still running, and its timeout re-initiates.
+      // armed re-initiates on timeout. If a reply to an older msg1 already
+      // matched, that window is cleared, and the next rekey tick re-initiates.
       this.releaseRekeyHold('read-failed');
       this.emit('handshakeFailed', lastError);
       this.scheduleHandshakeRetry();
