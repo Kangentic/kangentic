@@ -82,6 +82,15 @@ class FakeSessionManager extends EventEmitter {
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
   // The mobile seed uses the parsed-grid serialized frame, not the raw replay.
   getSerializedFrame = vi.fn(() => Promise.resolve('serialized-frame'));
+  /** Parser offset the seed snapshot covers (see getSeedFrame). */
+  seedBarrierOffset = 0;
+  /** Runs while the seed request is in flight, after the barrier, to emit racing tap bytes. */
+  duringSeed: (() => void) | null = null;
+  getSeedFrame = vi.fn(async (sessionId: string) => {
+    const frame = await this.getSerializedFrame(sessionId);
+    this.duringSeed?.();
+    return { frame, barrierOffset: this.seedBarrierOffset };
+  });
   getActivityCache = vi.fn(() => ({ 'sess-1': 'thinking' }));
   getActivityReason = vi.fn(() => ({ kind: 'turn-active' }));
   getUsageCache = vi.fn(() => ({ 'sess-1': usageFixture }));
@@ -237,6 +246,60 @@ describe('handleReadStream', () => {
     // The phone closed its terminal: the task screen re-subscribes list-only.
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, subscriptions);
     expect(subscriptions.has(terminalStreamKeyFor('sess-1'))).toBe(false);
+  });
+
+  /**
+   * Exactly-once terminal bytes around the seed. The pty host stamps every tap
+   * chunk with its cumulative parser offset (`endOffset`) and the seed with the
+   * offset its snapshot covers (`barrierOffset`). Bytes at or before the
+   * barrier are already in the seed; bytes after it are new. Before this, the
+   * tap was attached only after the seed, so output produced while the seed
+   * was taken was in neither, and pending bytes flushed after it were in both.
+   */
+  describe('terminal bytes around the seed', () => {
+    function terminalDataSent(session: BridgeSession): string {
+      const sendMessage = session.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      return sendMessage.mock.calls
+        .map(([message]) => message as { type: string; event?: { kind: string; payload: { data?: string } } })
+        .filter((message) => message.type === 'event' && message.event?.kind === 'terminal')
+        .map((message) => message.event?.payload.data ?? '')
+        .join('');
+    }
+
+    it('delivers output that raced the seed, after the seed, and drops what the seed already holds', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+      sessionManager.getSerializedFrame.mockImplementation(async () => {
+        // The host forwarded these while the snapshot was being taken.
+        sessionManager.emit('data-tap', 'sess-1', 'AAAA', 98);
+        sessionManager.emit('data-tap', 'sess-1', 'BBBB', 102);
+        return 'serialized-frame';
+      });
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      // Nothing may reach the phone ahead of the seed response the caller sends next.
+      expect(terminalDataSent(session)).toBe('');
+      sessionManager.emit('data-tap', 'sess-1', 'CCCC', 106);
+      await flushProbe();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(terminalDataSent(session)).toBe('BBCCCC');
+    });
+
+    it('drops pre-barrier bytes a late flush delivers after the seed', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      sessionManager.emit('data-tap', 'sess-1', 'AAAA', 98);
+      sessionManager.emit('data-tap', 'sess-1', 'BBBB', 102);
+      sessionManager.emit('data-tap', 'sess-1', 'CCCC', 106);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(terminalDataSent(session)).toBe('BBCCCC');
+    });
   });
 
   it('records the seed\'s own span against the request for the slow-request line, and none for a list-only subscribe', async () => {

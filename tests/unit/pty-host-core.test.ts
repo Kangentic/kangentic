@@ -132,8 +132,22 @@ describe('PtyHostCore', () => {
     core.handleCommand({ type: 'setTapped', sessionIds: ['session-1'] });
     fake.feed('tapped');
     await flush();
-    expect(events).toContainEqual({ type: 'tap', sessionId: 'session-1', data: 'tapped' });
+    // The offset counts every character the parser received, tapped or not:
+    // 'unwatched' + 'focused' + 'tapped' is 22.
+    expect(events).toContainEqual({ type: 'tap', sessionId: 'session-1', data: 'tapped', endOffset: 22 });
     expect(events).not.toContainEqual({ type: 'data', sessionId: 'session-1', data: 'tapped' });
+  });
+
+  it('answers getSeedFrame with the parsed frame and the parser offset its snapshot covers', async () => {
+    // The headless parser's write barrier runs on real timers.
+    vi.useRealTimers();
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.feed('hello ');
+    fake.feed('world');
+    const seed = await core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: false });
+    expect(seed.barrierOffset).toBe('hello world'.length);
+    expect(seed.frame).toContain('hello world');
   });
 
   it('merges outputSeen per window in the utility process, with a leading event', async () => {

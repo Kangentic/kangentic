@@ -205,8 +205,11 @@ export interface PtyHostRequestMap {
   /** The desktop replay. `settle` waits for a pending resize's repaint first,
    *  which only a live PTY can deliver. */
   getScrollback: { params: { sessionId: string; settle: boolean }; result: string };
-  /** The phone's seed frame, with the same settle. */
+  /** The parsed-grid frame, with the same settle (the prompt-options probe). */
   getSerializedFrame: { params: { sessionId: string; settle: boolean }; result: string };
+  /** The phone's seed frame with the parser offset its snapshot covers, so
+   *  tap chunks at or before `barrierOffset` can be dropped as already seeded. */
+  getSeedFrame: { params: { sessionId: string; settle: boolean }; result: { frame: string; barrierOffset: number } };
   getRawScrollback: { params: { sessionId: string }; result: string };
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };
@@ -248,8 +251,9 @@ export type PtyHostEvent =
   /** Output for a focused session, in flush-sized slices. */
   | { type: 'data'; sessionId: string; data: string }
   /** Output for a tapped session: every flushed slice, and the bytes a replay
-   *  sample drained before they could flush. */
-  | { type: 'tap'; sessionId: string; data: string }
+   *  sample drained before they could flush. `endOffset` is the cumulative
+   *  parser offset just past `data` (compare getSeedFrame's barrierOffset). */
+  | { type: 'tap'; sessionId: string; data: string; endOffset: number }
   /** The adapter's first-output marker. `inAltScreen` is the stream's state
    *  at that moment. */
   | { type: 'firstOutput'; sessionId: string; inAltScreen: boolean }

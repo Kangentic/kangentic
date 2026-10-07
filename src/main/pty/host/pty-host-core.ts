@@ -149,20 +149,20 @@ export class PtyHostCore {
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
     this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild);
     this.bufferManager = new PtyBufferManager({
-      onFlush: (sessionId, data) => {
+      onFlush: (sessionId, data, endOffset) => {
         this.consumeFirstOutput(sessionId, data);
-        if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data });
+        if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data, endOffset });
         if (this.focused.has(sessionId)) {
           this.deps.emit({ type: 'data', sessionId, data });
           this.backpressure.recordEmitted(sessionId, data.length);
         }
       },
-      onDrain: (sessionId, data) => {
+      onDrain: (sessionId, data, endOffset) => {
         // A replay sample took these bytes out of the pending buffer; the
         // renderer gets them inside the reply. Only the first-output latch and
         // a phone's tap still need them.
         this.consumeFirstOutput(sessionId, data);
-        if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data });
+        if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data, endOffset });
       },
       onAltScreenEnter: (sessionId) => {
         this.deps.emit({ type: 'altScreen', sessionId, inAltScreen: true });
@@ -247,6 +247,12 @@ export class PtyHostCore {
     return this.bufferManager.getSerializedFrame(sessionId);
   }
 
+  /** The mobile seed with its parser barrier offset (PtyBufferManager.getSeedFrame), after the same settle. */
+  async getSeedFrame(sessionId: string, settle: boolean): Promise<{ frame: string; barrierOffset: number }> {
+    if (settle) await this.bufferManager.waitForResizeRepaint(sessionId);
+    return this.bufferManager.getSeedFrame(sessionId);
+  }
+
   getRawScrollback(sessionId: string): string {
     return this.bufferManager.getRawScrollback(sessionId);
   }
@@ -298,6 +304,10 @@ export class PtyHostCore {
       case 'getSerializedFrame': {
         const { sessionId, settle } = params as PtyHostRequestMap['getSerializedFrame']['params'];
         return this.getSerializedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
+      }
+      case 'getSeedFrame': {
+        const { sessionId, settle } = params as PtyHostRequestMap['getSeedFrame']['params'];
+        return this.getSeedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
       }
       case 'getRawScrollback':
         return this.getRawScrollback((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
