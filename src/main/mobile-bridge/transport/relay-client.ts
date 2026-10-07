@@ -520,7 +520,14 @@ export class RelayClient implements RedialableTransport {
       throw new Error('RelayClient.send() called while not connected');
     }
     if (this.bytesSentThisSession + frame.byteLength > this.maxBytesPerSession) {
-      throw new Error('RelayClient per-session byte cap exceeded');
+      // A fresh socket, not a throw. Throwing left this socket open with every
+      // later frame over the cap too, and the session above had already sealed
+      // the refused frame, so the phone's receive counter could not line up
+      // again. The redial resets the budget, and the 'reconnecting' edge makes
+      // the session drop its keys and re-handshake on the new socket.
+      console.warn(`${this.logPrefix} per-socket byte cap (${this.maxBytesPerSession} bytes) reached; redialing`);
+      this.redialNow({ force: true, reason: 'per-socket byte cap reached' });
+      return;
     }
     this.bytesSentThisSession += frame.byteLength;
     // Send the underlying bytes as a plain ArrayBuffer rather than the

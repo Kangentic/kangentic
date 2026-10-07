@@ -221,14 +221,16 @@ describe('RelayClient', () => {
     expect(() => client.send(new Uint8Array([1, 2, 3]))).toThrow(/not connected/);
   });
 
-  it('send() throws once the per-session byte cap is exceeded', async () => {
-    const { url, wss } = await startEchoServer();
+  it('send() past the per-socket byte cap redials onto a fresh socket against a real server instead of throwing', async () => {
+    const { url, wss, connectionCount } = await startEchoServer();
     activeServers.push(wss);
     const client = new RelayClient({ relayUrl: url, slotId: 'test-slot', maxBytesPerSession: 4 });
     activeClients.push(client);
 
     await client.connect();
-    expect(() => client.send(new Uint8Array(5))).toThrow(/byte cap/);
+    expect(() => client.send(new Uint8Array(5))).not.toThrow();
+    await vi.waitFor(() => expect(connectionCount()).toBe(2));
+    await vi.waitFor(() => expect(client.state).toBe('connected'));
   });
 
   it('settles a still-pending connect() promise (rejects) when close() is called before the socket opens', async () => {
@@ -761,6 +763,30 @@ describe('RelayClient redial and dial watchdog', () => {
       vi.advanceTimersByTime(500);
       expect(stackOf(1)).toBe('node');
     });
+  });
+
+  // The cap is per socket and only resets on open. Throwing at it left the
+  // socket open with a sender whose every later frame also hit the cap, and
+  // the session above had already sealed the refused frame, so the phone's
+  // receive counter could no longer line up. A fresh socket resets both.
+  it('redials instead of throwing once the per-socket byte cap is reached', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'bytecap', maxBytesPerSession: 100 });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    FakeWebSocket.instances[0].open();
+
+    client.send(new Uint8Array(60));
+    expect(() => client.send(new Uint8Array(60))).not.toThrow();
+    expect(loggedLines(warnSpy).some((line) => line.includes('[mobile-bridge/relay-client bytecap] per-socket byte cap'))).toBe(true);
+    expect(FakeWebSocket.instances[0].closeCallCount).toBe(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    // The new socket starts with a fresh budget.
+    FakeWebSocket.instances[1].open();
+    expect(() => client.send(new Uint8Array(60))).not.toThrow();
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('reports the open socket\'s bufferedAmount, and 0 with no socket', () => {
