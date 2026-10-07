@@ -32,7 +32,7 @@ import {
 import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
 import { BridgeSession, MessageEncodeError, type RekeyHoldReleaseReason } from './session/bridge-session';
-import { takeRequestSpans } from './request-spans';
+import { startMainLoopBlockProbe, takeRequestSpans } from './request-spans';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
@@ -592,8 +592,9 @@ export class MobileBridgeService extends EventEmitter {
       // Taken here, right after the session decrypted and decoded the frame,
       // so the slow-request line starts at the desktop's first sight of it.
       const receivedAtMs = performance.now();
+      const stopBlockProbe = startMainLoopBlockProbe();
       void this.capabilityRouter.dispatch(message, session).then((response) => {
-        this.sendCapabilityResponse(session, message, response, receivedAtMs);
+        this.sendCapabilityResponse(session, message, response, receivedAtMs, stopBlockProbe);
       });
     });
     // The session already answered the phone (see BridgeSession's
@@ -714,6 +715,7 @@ export class MobileBridgeService extends EventEmitter {
     request: CapabilityRequestMessage,
     response: CapabilityResponseMessage,
     receivedAtMs: number,
+    stopBlockProbe: () => number,
   ): void {
     const handledAtMs = performance.now();
     let frameBytes: number | undefined;
@@ -731,13 +733,15 @@ export class MobileBridgeService extends EventEmitter {
     }
     const sentAtMs = performance.now();
     // Taken on every request, slow or not, so the registry never holds a
-    // finished request's spans.
+    // finished request's spans and no probe keeps ticking.
     const spans = takeRequestSpans(session.deviceId, request.requestId);
+    const longestMainLoopBlockMs = stopBlockProbe();
     if (sentAtMs - receivedAtMs < SLOW_REQUEST_WARN_MS) return;
     const parts = [`handler ${Math.round(handledAtMs - receivedAtMs)} ms`, ...spans, `send ${Math.round(sentAtMs - handledAtMs)} ms`];
     if (typeof frameBytes === 'number') parts.push(`${Math.round(frameBytes / 1024)} kB frame`);
     const bufferedBytes = session.transportBufferedBytes;
     if (typeof bufferedBytes === 'number' && bufferedBytes > 0) parts.push(`${Math.round(bufferedBytes / 1024)} kB still buffered`);
+    parts.push(`longest main-loop block ${longestMainLoopBlockMs} ms`);
     console.warn(`[mobile-bridge] slow request ${describeRequest(session, request)}: ${parts.join(', ')}`);
   }
 

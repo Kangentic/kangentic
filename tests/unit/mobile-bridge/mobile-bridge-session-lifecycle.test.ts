@@ -269,7 +269,7 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     session.emit('message', { type: 'capability-request', requestId: 'slowreq-1234', verb: 'read-board', payload: { action: 'subscribe' } });
     await flushMicrotasks();
     const slowLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('slow request'));
-    expect(slowLines).toEqual(['[mobile-bridge] slow request read-board/subscribe slowreq-1234 from device-A: handler 900 ms, seed 800 ms, 120k chars, send 40 ms, 96 kB frame']);
+    expect(slowLines).toEqual(['[mobile-bridge] slow request read-board/subscribe slowreq-1234 from device-A: handler 900 ms, seed 800 ms, 120k chars, send 40 ms, 96 kB frame, longest main-loop block 920 ms']);
 
     // Under the threshold: no line, and the span registry still let go of the request.
     warnSpy.mockClear();
