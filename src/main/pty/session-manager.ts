@@ -657,8 +657,9 @@ export class SessionManager extends EventEmitter {
       case 'tap':
         // Raw output for a session someone subscribed to (subscribeDataTap):
         // every flushed slice, plus bytes a replay drained before they could
-        // flush. Never the renderer's channel and never in backpressure.
-        this.emit('data-tap', event.sessionId, event.data);
+        // flush. Never the renderer's channel and never in backpressure. The
+        // end offset lets the phone's seed drop bytes it already holds.
+        this.emit('data-tap', event.sessionId, event.data, event.endOffset);
         return;
       case 'outputSeen':
         this.telemetry.activityEngine.markPtyChunk(event.sessionId);
@@ -2504,6 +2505,17 @@ export class SessionManager extends EventEmitter {
    */
   async getSerializedFrame(sessionId: string): Promise<string> {
     return this.host.getSerializedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
+  }
+
+  /**
+   * getSerializedFrame plus the parser offset the snapshot covers, for the
+   * read-stream seed. A subscriber that taps the session BEFORE asking drops
+   * every 'data-tap' chunk ending at or before `barrierOffset` (the seed
+   * holds it) and slices the one that straddles it, so output racing the seed
+   * reaches the phone exactly once.
+   */
+  async getSeedFrame(sessionId: string): Promise<{ frame: string; barrierOffset: number }> {
+    return this.host.getSeedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
   }
 
   /**

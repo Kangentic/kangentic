@@ -173,6 +173,22 @@ async function probePromptOptions(context: IpcContext, sessionId: string): Promi
   }
 }
 
+/** A tap chunk as the pty host stamped it: the bytes and the cumulative parser offset just past them. */
+interface StampedTapChunk {
+  data: string;
+  endOffset: number | undefined;
+}
+
+/**
+ * What the seed covers, for exactly-once delivery around it: the parser
+ * offset its snapshot holds (getSeedFrame's barrierOffset) and the tap chunks
+ * that arrived while it was being taken.
+ */
+interface SeedCoverage {
+  barrierOffset: number;
+  racedChunks: StampedTapChunk[];
+}
+
 function subscribeReadStream(
   sessionId: string,
   snapshotSession: Session,
@@ -182,6 +198,7 @@ function subscribeReadStream(
   context: IpcContext,
   subscriptions: SubscriptionRegistry,
   wantsTerminal: boolean,
+  seedCoverage: SeedCoverage | null = null,
 ): void {
   const taskId = snapshotSession.taskId;
   // A session with no owning project (a Command Terminal session carries
@@ -317,8 +334,26 @@ function subscribeReadStream(
     }
   };
 
-  const onDataTap = (tappedSessionId: string, data: string): void => {
+  // Exactly-once around the seed: a chunk ending at or before the barrier is
+  // already in the seed, the one straddling it is sliced, and the first chunk
+  // past it retires the filter (every later chunk is new). Retiring it also
+  // keeps a re-initialized session, whose offsets restart at 0, from being
+  // silenced by a stale barrier. A chunk with no offset (a test double, an
+  // older host) passes through unfiltered.
+  let seedBarrierOffset: number | null = seedCoverage?.barrierOffset ?? null;
+  const trimToSeed = (data: string, endOffset: number | undefined): string => {
+    if (seedBarrierOffset === null || endOffset === undefined) return data;
+    if (endOffset <= seedBarrierOffset) return '';
+    const startOffset = endOffset - data.length;
+    const fresh = startOffset < seedBarrierOffset ? data.slice(seedBarrierOffset - startOffset) : data;
+    seedBarrierOffset = null;
+    return fresh;
+  };
+
+  const onDataTap = (tappedSessionId: string, rawData: string, endOffset?: number): void => {
     if (tappedSessionId !== sessionId) return;
+    const data = trimToSeed(rawData, endOffset);
+    if (!data) return;
     // Once suspend()/kill() has begun tearing this session down, drop
     // further bytes instead of queuing them: they are the adapter's own
     // exit sequence (Ctrl+C, `/exit`) and the fullscreen TUI's repaint as it
@@ -535,6 +570,18 @@ function subscribeReadStream(
     context.sessionManager.on('data-tap', onDataTap);
     context.sessionManager.on('pty-resize', onPtyResize);
   }
+  // Output that raced the seed rides the coalesce timer, never an inline
+  // flush: the seed's response is sent after this handler returns, and no
+  // terminal byte may reach the phone ahead of it.
+  if (wantsTerminal && seedCoverage) {
+    for (const chunk of seedCoverage.racedChunks) {
+      const fresh = trimToSeed(chunk.data, chunk.endOffset);
+      if (!fresh || context.sessionManager.isSessionTeardownInFlight(sessionId)) continue;
+      pendingTerminalChunks.push(fresh);
+      pendingTerminalChars += fresh.length;
+    }
+    if (pendingTerminalChunks.length > 0 && !terminalFlushTimer) terminalFlushTimer = setTimeout(flushTerminal, TERMINAL_COALESCE_MS);
+  }
   context.sessionManager.on('activity', onActivity);
   context.sessionManager.on('usage', onUsage);
   context.sessionManager.on('event', onSessionEvent);
@@ -667,14 +714,34 @@ export async function handleReadStream(
     });
   }
   let scrollback = '';
+  let seedCoverage: SeedCoverage | null = null;
+  // Tapped BEFORE the seed is asked for, and held until subscribeReadStream
+  // holds its own tap: output produced while the seed is taken used to be in
+  // neither the seed nor the stream (the host forwards a session's bytes only
+  // while a tap is held), and bytes still pending at the snapshot reached the
+  // phone twice. Every chunk carries its parser offset; subscribeReadStream
+  // drops what the seed's barrier already covers.
+  const racedChunks: StampedTapChunk[] = [];
+  const captureRacedChunk = (tappedSessionId: string, data: string, endOffset?: number): void => {
+    if (tappedSessionId === payload.sessionId) racedChunks.push({ data, endOffset });
+  };
+  const releaseSeedTap = wantsTerminal ? context.sessionManager.subscribeDataTap(payload.sessionId) : null;
+  const endSeedCapture = (): void => {
+    context.sessionManager.off('data-tap', captureRacedChunk);
+    releaseSeedTap?.();
+  };
   if (wantsTerminal) {
+    context.sessionManager.on('data-tap', captureRacedChunk);
     // The seed's own span (the pty host's repaint settle plus the serialize)
     // rides the service's slow-request line, so a slow open says whether the
     // time went here or on the wire.
     const seedStartedAt = performance.now();
     try {
-      scrollback = await context.sessionManager.getSerializedFrame(payload.sessionId);
+      const seed = await context.sessionManager.getSeedFrame(payload.sessionId);
+      scrollback = seed.frame;
+      seedCoverage = { barrierOffset: seed.barrierOffset, racedChunks };
     } catch (serializeError) {
+      endSeedCapture();
       subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
       throw serializeError;
     }
@@ -697,6 +764,7 @@ export async function handleReadStream(
   // the same row it already had.
   const snapshotSession = context.sessionManager.getSession(payload.sessionId);
   if (!snapshotSession) {
+    endSeedCapture();
     subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
   }
@@ -727,7 +795,10 @@ export async function handleReadStream(
     resumable,
   };
 
-  subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal);
+  subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
+  // Released only now, after subscribeReadStream took its own tap, so the
+  // host never sees the session untapped in between.
+  endSeedCapture();
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }
