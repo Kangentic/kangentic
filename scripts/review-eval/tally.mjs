@@ -13,10 +13,15 @@ import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 
-/** Per arm and repetition: which ground-truth ids were hit, and how many findings were raised. */
+/**
+ * Per arm and repetition: which ground-truth ids were hit, and how many findings were raised. Takes
+ * a state id only. A D case has one defect, counted caught or not by the E3 rule in README.md.
+ */
 export function tallyCase(caseId, scores, key, corpus) {
   const state = corpus.states.find((entry) => entry.id === caseId);
-  const classOf = new Map((state ? state.groundTruth : []).map((entry) => [entry.id, entry.class]));
+  // An unknown id would tally every arm at zero recall and still feed decide.mjs.
+  if (!state) throw new Error(`no state ${caseId} in corpus.json; tally.mjs scores states only, not D cases`);
+  const classOf = new Map(state.groundTruth.map((entry) => [entry.id, entry.class]));
   const byArmRep = new Map();
   for (const run of key) {
     const scored = scores.reports[run.anonymousId];
