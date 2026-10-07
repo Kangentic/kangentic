@@ -9,15 +9,15 @@ import type { Transport, TransportState, Unsubscribe } from '@kangentic/protocol
  * it is already Noise-encrypted (or, during pairing, is itself a Noise
  * handshake message).
  *
- * It dials with whichever WHATWG WebSocket constructor it is given. In the app
- * that is Electron's `net.WebSocket` (relay-websocket.ts), which runs on
- * Chromium's network stack and so honours the system proxy, PAC/WPAD and the
- * OS certificate store; Node's global `WebSocket` (undici) ignores all three,
- * so behind a corporate proxy or a TLS-inspecting firewall it never reaches
- * the relay. With none given (unit tests, or before the app is ready) it falls
- * back to Node's global `WebSocket`, read at dial time. This file imports
- * nothing from Electron - `ws` is a devDependency used only by the in-repo
- * relay test double (tests/unit/mobile-bridge/).
+ * It dials with Node's global `WebSocket` (undici), read at dial time, or with
+ * a constructor a test injects. In the app it also carries a fallback stack,
+ * Electron's `net.WebSocket` (relay-websocket.ts), which honours the system
+ * proxy, PAC/WPAD and the OS certificate store where undici ignores all three.
+ * The fallback dials outright while a proxy is configured, and otherwise after
+ * undici has failed twice in a row (chooseWebSocket()). relay-websocket.ts has
+ * the measurements behind that order. This file imports nothing from Electron.
+ * `ws` is a devDependency used only by the in-repo relay test double
+ * (tests/unit/mobile-bridge/).
  *
  * Wire contract with the relay (the relay SERVER lives in a separate repo):
  * connect to `${relayUrl}?slot=<hex-encoded-slot-id>&role=desktop`, where the
@@ -80,6 +80,36 @@ const RELAY_CLOSE_CODE_PARK_TIMEOUT = 4408;
  */
 export type RelayWebSocketConstructor = new (url: string) => WebSocket;
 
+/**
+ * A second network stack the client can dial with: Electron's `net.WebSocket`
+ * in the app (relay-websocket.ts). Used outright while `isPreferred()` says so
+ * (a configured system proxy), and otherwise only after the primary stack has
+ * failed PRIMARY_FAILURES_BEFORE_FALLBACK dials in a row.
+ */
+export interface RelayWebSocketFallback {
+  webSocketConstructor: RelayWebSocketConstructor;
+  stack: string;
+  /** Read at each dial; true while the system needs this stack (a proxy is configured for the relay URL). */
+  isPreferred?: () => boolean;
+}
+
+/**
+ * Consecutive failed primary dials before the fallback stack gets a turn. Two,
+ * so a single refused dial during a relay restart never switches stacks, while
+ * a network that can only be crossed by the fallback (a TLS-inspecting
+ * firewall whose root is in the OS store but not in Node's bundled CAs) costs
+ * two short failures before the dial that works.
+ */
+const PRIMARY_FAILURES_BEFORE_FALLBACK = 2;
+
+/**
+ * How long the client keeps dialing with the fallback once it opened where
+ * the primary had just failed. Bounded rather than permanent, because a network
+ * that was down for both stacks and came back during the fallback's turn looks
+ * the same, and that case should return to the primary.
+ */
+const FALLBACK_HOLD_MS = 30 * 60 * 1000;
+
 export interface RelayClientOptions {
   relayUrl: string;
   slotId: string;
@@ -97,6 +127,15 @@ export interface RelayClientOptions {
    * Electron's `net.WebSocket` instead).
    */
   webSocketConstructor?: RelayWebSocketConstructor;
+  /**
+   * Which network stack `webSocketConstructor` runs on ('chromium' for
+   * Electron's `net.WebSocket`), named on every dial-outcome line so a log
+   * read across a stack change stays comparable. Without an injected
+   * constructor the dial uses Node's global and the line says 'node'.
+   */
+  webSocketStack?: string;
+  /** A second stack for networks the primary cannot cross; see RelayWebSocketFallback. */
+  fallbackWebSocket?: RelayWebSocketFallback;
 }
 
 export interface RedialOptions {
@@ -134,7 +173,15 @@ export class RelayClient implements RedialableTransport {
   private readonly maxBytesPerSession: number;
   private readonly logPrefix: string;
   private readonly webSocketConstructor: RelayWebSocketConstructor | undefined;
+  private readonly webSocketStack: string;
+  private readonly fallbackWebSocket: RelayWebSocketFallback | undefined;
   private readonly emitter = new EventEmitter();
+  /** Primary-stack dials that failed in a row since the last open on any stack. */
+  private consecutivePrimaryFailures = 0;
+  /** Until when dials keep using the fallback after it opened where the primary had failed. */
+  private fallbackHeldUntilMs = 0;
+  /** The stack the most recent dial used, so a failing pair alternates rather than repeating the fallback. */
+  private lastDialStack: string | null = null;
 
   private socket: WebSocket | null = null;
   private currentState: TransportState = 'idle';
@@ -164,10 +211,17 @@ export class RelayClient implements RedialableTransport {
     this.maxBytesPerSession = options.maxBytesPerSession ?? 256 * 1024 * 1024;
     this.logPrefix = `[mobile-bridge/relay-client ${options.logLabel ?? 'relay'}]`;
     this.webSocketConstructor = options.webSocketConstructor;
+    this.webSocketStack = options.webSocketConstructor ? (options.webSocketStack ?? 'injected') : 'node';
+    this.fallbackWebSocket = options.fallbackWebSocket;
   }
 
   get state(): TransportState {
     return this.currentState;
+  }
+
+  /** The open socket's queued-but-unsent bytes (WHATWG `bufferedAmount`), or 0 with no socket. */
+  get bufferedAmount(): number {
+    return this.socket?.bufferedAmount ?? 0;
   }
 
   async connect(): Promise<void> {
@@ -250,17 +304,19 @@ export class RelayClient implements RedialableTransport {
       };
       this.pendingDialReject = rejectOnce;
 
+      const dialChoice = this.chooseWebSocket();
+      this.lastDialStack = dialChoice.stack;
       let socket: WebSocket;
       try {
-        const WebSocketImplementation = this.webSocketConstructor ?? globalThis.WebSocket;
-        socket = new WebSocketImplementation(url.href);
+        socket = new dialChoice.webSocketConstructor(url.href);
       } catch (error) {
+        this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
         // A constructor error is the one message that can quote the dial URL,
         // slot and all (undici's never does; a browser-shaped one may), and
         // the slot must not gain a second home in the log.
         const detail = (error instanceof Error ? error.message : String(error)).split(this.slotId).join('<slot>');
-        console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms`);
+        console.warn(`${this.logPrefix} dial failed: ${detail}; redial in ${delayMs} ms (via ${dialChoice.stack})`);
         rejectOnce(error instanceof Error ? error : new Error(String(error)));
         return;
       }
@@ -268,14 +324,15 @@ export class RelayClient implements RedialableTransport {
       this.socket = socket;
       this.pendingError = null;
       const dialStartedAtMs = Date.now();
-      this.armDialWatchdog(socket);
+      this.armDialWatchdog(socket, dialChoice.stack);
 
       socket.onopen = () => {
         this.clearDialWatchdog();
         this.reconnectBackoffMs = INITIAL_BACKOFF_MS;
         this.bytesSentThisSession = 0;
         this.connectedAtMs = Date.now();
-        console.log(`${this.logPrefix} connected after ${this.connectedAtMs - dialStartedAtMs} ms`);
+        console.log(`${this.logPrefix} connected after ${this.connectedAtMs - dialStartedAtMs} ms (via ${dialChoice.stack})`);
+        this.noteDialOpened(dialChoice.stack);
         this.setState('connected');
         resolveOnce();
       };
@@ -304,8 +361,9 @@ export class RelayClient implements RedialableTransport {
           return;
         }
         const wasConnected = this.currentState === 'connected';
+        if (!wasConnected) this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
-        this.logClose(event, wasConnected, delayMs);
+        this.logClose(event, wasConnected, delayMs, dialChoice.stack);
         // Only reject the in-flight connect() promise if we never reached 'open'.
         if (!wasConnected) rejectOnce(new Error('Relay connection closed before it opened'));
       };
@@ -320,7 +378,7 @@ export class RelayClient implements RedialableTransport {
    * third peer on the slot, 1001 the relay draining. A dial that never opened
    * folds the `onerror` text in, since its close code is always 1006.
    */
-  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number): void {
+  private logClose(event: CloseEvent, wasConnected: boolean, delayMs: number, dialStack: string): void {
     if (!wasConnected) {
       // The error's own text first (undici), then the close reason (Chromium
       // puts the net:: error there), then whatever is left. The slot is
@@ -329,7 +387,7 @@ export class RelayClient implements RedialableTransport {
         this.pendingError?.message ??
         (event.reason || null) ??
         (this.pendingError ? `${this.pendingError.type} event with no message` : `close code ${event.code}`);
-      console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms`);
+      console.warn(`${this.logPrefix} dial failed: ${detail.split(this.slotId).join('<slot>')}; redial in ${delayMs} ms (via ${dialStack})`);
       return;
     }
     const connectedForSeconds = Math.round((Date.now() - this.connectedAtMs) / 1000);
@@ -370,16 +428,54 @@ export class RelayClient implements RedialableTransport {
    * the socket it was armed for, so a watchdog left over from a dial that was
    * abandoned or superseded can never tear down a healthy successor.
    */
-  private armDialWatchdog(socket: WebSocket): void {
+  private armDialWatchdog(socket: WebSocket, dialStack: string): void {
     this.clearDialWatchdog();
     this.dialWatchdog = setTimeout(() => {
       this.dialWatchdog = null;
       if (this.socket !== socket) return;
       this.abandonSocket(new Error(`Relay dial timed out after ${DIAL_TIMEOUT_MS} ms`));
+      this.noteDialFailed(dialStack);
       const delayMs = this.scheduleReconnect();
-      console.warn(`${this.logPrefix} dial timed out after ${DIAL_TIMEOUT_MS / 1000} s; redial in ${delayMs} ms`);
+      console.warn(`${this.logPrefix} dial timed out after ${DIAL_TIMEOUT_MS / 1000} s; redial in ${delayMs} ms (via ${dialStack})`);
     }, DIAL_TIMEOUT_MS);
     this.dialWatchdog.unref?.();
+  }
+
+  /**
+   * The stack for the next dial. The primary unless the fallback is preferred
+   * outright (a configured proxy), is being held after it opened where the
+   * primary failed, or has its turn because the primary failed
+   * PRIMARY_FAILURES_BEFORE_FALLBACK dials in a row. Past that point the two
+   * alternate, so a relay that is down for both is retried on each.
+   */
+  private chooseWebSocket(): { webSocketConstructor: RelayWebSocketConstructor; stack: string } {
+    const primary = { webSocketConstructor: this.webSocketConstructor ?? globalThis.WebSocket, stack: this.webSocketStack };
+    const fallback = this.fallbackWebSocket;
+    if (!fallback) return primary;
+    if (fallback.isPreferred?.()) return fallback;
+    if (Date.now() < this.fallbackHeldUntilMs) return fallback;
+    if (this.consecutivePrimaryFailures >= PRIMARY_FAILURES_BEFORE_FALLBACK && this.lastDialStack !== fallback.stack) return fallback;
+    return primary;
+  }
+
+  private noteDialFailed(dialStack: string): void {
+    if (dialStack === this.webSocketStack) this.consecutivePrimaryFailures += 1;
+  }
+
+  private noteDialOpened(dialStack: string): void {
+    const fallback = this.fallbackWebSocket;
+    if (
+      fallback &&
+      dialStack === fallback.stack &&
+      this.consecutivePrimaryFailures >= PRIMARY_FAILURES_BEFORE_FALLBACK &&
+      !fallback.isPreferred?.()
+    ) {
+      this.fallbackHeldUntilMs = Date.now() + FALLBACK_HOLD_MS;
+      console.warn(
+        `${this.logPrefix} ${this.webSocketStack} failed ${this.consecutivePrimaryFailures} dials in a row and ${dialStack} opened; dialing via ${dialStack} for the next ${FALLBACK_HOLD_MS / 60_000} min`,
+      );
+    }
+    this.consecutivePrimaryFailures = 0;
   }
 
   private clearDialWatchdog(): void {

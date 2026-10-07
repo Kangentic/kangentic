@@ -8,6 +8,8 @@ import {
   encodePairingQrPayload,
   PROTOCOL_VERSION,
   rosterDeviceCapabilitySet,
+  type CapabilityRequestMessage,
+  type CapabilityResponseMessage,
   type CapabilityVerb,
   type PairingQrPayload,
   type RosterDeviceEntry,
@@ -29,7 +31,8 @@ import {
 } from './roster-store';
 import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
-import { BridgeSession } from './session/bridge-session';
+import { BridgeSession, MessageEncodeError } from './session/bridge-session';
+import { takeRequestSpans } from './request-spans';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
 import { CapabilityRouter } from './capability-router';
@@ -69,6 +72,16 @@ const RELAY_STATE_EMIT_WINDOW_MS = 500;
  */
 const FRAME_REJECTED_LOG_WINDOW_MS = 10_000;
 
+/**
+ * A phone request whose desktop share (handler plus encode, seal and hand-off
+ * to the socket) reaches this logs one `warn` line naming where the time went.
+ * `warn` because log-mirror.ts persists it on every build, so the line is in a
+ * user's report without Persist Console Logs. The phone measures the whole
+ * round trip; this line is the desktop's part of it, so the gap between the two
+ * is time on the wire or in the relay.
+ */
+const SLOW_REQUEST_WARN_MS = 750;
+
 /** The transition lines that persist on every build (log-mirror.ts keeps `warn` unconditionally). */
 const CONNECTION_STATES_LOGGED_AT_WARN: ReadonlySet<MobileDeviceConnectionState> = new Set(['offline', 'reconnecting', 'closed']);
 
@@ -93,6 +106,17 @@ function trackForcedRedialOnce(reason: ForcedRedialReason): void {
 /** Test seam, mirroring `resetGpuHealthForTests`: the per-run gate is module state, so a suite that asserts the event must clear it between cases. */
 export function resetForcedRedialTelemetryForTests(): void {
   forcedRedialReasonsTracked.clear();
+}
+
+/**
+ * `read-stream/subscribe 3f2a9c1e from 441c40f8`: the verb, the payload's
+ * `action` when it has one, and short ids to match the phone's own log by.
+ */
+function describeRequest(session: BridgeSession, request: CapabilityRequestMessage): string {
+  const payload = request.payload;
+  const action =
+    payload !== null && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.action === 'string' ? `/${payload.action}` : '';
+  return `${request.verb}${action} ${request.requestId.slice(0, 8)} from ${session.deviceId.slice(0, 8)}`;
 }
 
 export interface PairedDeviceSummary {
@@ -563,12 +587,11 @@ export class MobileBridgeService extends EventEmitter {
     const deviceId = session.deviceId;
     session.on('message', (message) => {
       if (message.type !== 'capability-request') return;
+      // Taken here, right after the session decrypted and decoded the frame,
+      // so the slow-request line starts at the desktop's first sight of it.
+      const receivedAtMs = performance.now();
       void this.capabilityRouter.dispatch(message, session).then((response) => {
-        try {
-          session.sendMessage(response);
-        } catch {
-          // The session may have dropped mid-dispatch; nothing to recover here.
-        }
+        this.sendCapabilityResponse(session, message, response, receivedAtMs);
       });
     });
     // The session already answered the phone (see BridgeSession's
@@ -660,6 +683,50 @@ export class MobileBridgeService extends EventEmitter {
       frameRejectedSuppressed = 0;
       console.warn(`[mobile-bridge] device ${label} rejected a frame: ${error instanceof Error ? error.message : String(error)}${suffix}`);
     });
+  }
+
+  /**
+   * Sends one capability response and writes the slow-request line when the
+   * desktop's share of the round trip reaches SLOW_REQUEST_WARN_MS.
+   *
+   * A response the protocol cannot encode (over its frame caps, which a big
+   * terminal seed can reach) is replaced with a short refusal, so the phone
+   * fails fast instead of waiting out its own timeout. Until this, that case
+   * was swallowed with no line at all. The encode runs before anything is
+   * sealed (MessageEncodeError), so the refusal goes out on the same stream
+   * without desyncing the phone's receive counter. Any other send failure is
+   * the session dropping mid-dispatch, which the transport's own lines cover.
+   */
+  private sendCapabilityResponse(
+    session: BridgeSession,
+    request: CapabilityRequestMessage,
+    response: CapabilityResponseMessage,
+    receivedAtMs: number,
+  ): void {
+    const handledAtMs = performance.now();
+    let frameBytes: number | undefined;
+    try {
+      frameBytes = session.sendMessage(response);
+    } catch (error) {
+      if (error instanceof MessageEncodeError) {
+        console.warn(`[mobile-bridge] response to ${describeRequest(session, request)} not sent: ${error.message}; answered with a refusal`);
+        try {
+          session.sendMessage({ type: 'capability-response', requestId: request.requestId, ok: false, error: 'Response too large to send' });
+        } catch {
+          // The session dropped between the two sends; the phone's own timeout covers it.
+        }
+      }
+    }
+    const sentAtMs = performance.now();
+    // Taken on every request, slow or not, so the registry never holds a
+    // finished request's spans.
+    const spans = takeRequestSpans(session.deviceId, request.requestId);
+    if (sentAtMs - receivedAtMs < SLOW_REQUEST_WARN_MS) return;
+    const parts = [`handler ${Math.round(handledAtMs - receivedAtMs)} ms`, ...spans, `send ${Math.round(sentAtMs - handledAtMs)} ms`];
+    if (typeof frameBytes === 'number') parts.push(`${Math.round(frameBytes / 1024)} kB frame`);
+    const bufferedBytes = session.transportBufferedBytes;
+    if (typeof bufferedBytes === 'number' && bufferedBytes > 0) parts.push(`${Math.round(bufferedBytes / 1024)} kB still buffered`);
+    console.warn(`[mobile-bridge] slow request ${describeRequest(session, request)}: ${parts.join(', ')}`);
   }
 
   /**
