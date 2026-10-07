@@ -2,6 +2,39 @@
 
 <!-- releases -->
 
+## [protocol-v0.18.0] - 2026-10-07
+
+Lets a phone pause a running session the way the desktop Pause button does.
+Additive; `PROTOCOL_VERSION` stays '3'.
+
+`CAPABILITY_VERBS` appends `pause-session` after `start-session` (append only:
+the desktop mirrors the tuple index for index). The request is
+`PauseSessionRequestPayload` (`taskId` + `projectId`, keyed by task, never by
+session id), the response is `PauseSessionResponsePayload` (`{ ok }`), and
+`parsePauseSessionResponsePayload` narrows it phone-side. The desktop answers
+once the pause is recorded, while the agent's shutdown is still running, and the
+paused state reaches the phone as a `task-updated` board event whose snapshot
+reads `paused: true`. A task with no live session is refused with `ok: false`. A
+0.15.0 to 0.17.0 desktop refuses the verb with the `unsupported-verb` code, and
+an older one never answers it.
+
+`BoardTaskWire` gains `pausable`: true when the task has a `running` or `queued`
+session and is not in To Do. Done and archived do not clear it, matching the
+desktop. It is never true while `paused` is true, and it reads false while
+`spawn_progress` is up with no live session, where the verb would refuse. Gate a
+phone's Pause on it. Null or absent means a desktop older than 0.18.0, and a
+client offers no Pause then.
+
+The desktop build that ships this version also refuses a `projectId` it does not
+know on `move-task`, `start-session` and `pause-session`, with
+"No such project: <id>", as `read-board` and `read-diff` already did.
+
+### Features
+- Add a pause-session verb so the phone can pause a running session (5a448a6a)
+
+### Other
+- Say the desktop draws no Paused footer on archived cards (3ec860ce)
+
 ## [protocol-v0.17.0] - 2026-10-07
 
 Sends a task's paused state to the phone apart from the Resume gate. Additive;
