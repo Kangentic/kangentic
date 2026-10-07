@@ -1,6 +1,6 @@
 ---
 name: ipc-auditor
-model: sonnet
+model: haiku
 effort: medium
 skills:
   - ipc-bridge

@@ -5,7 +5,8 @@
  *    time, and the result line's time, cost, model usage and text. The init line names the model
  *    asked for, not the one that answered, so it is never read.
  * 2. tableRefsOf collects only refs that open a table row, so the example refs in the rules
- *    (`#561`) are not taken as real tasks; inventedRefs is every other ref an answer names.
+ *    (`#561`) are not taken as real tasks; inventedRefs is every other ref an answer names. It reads
+ *    the prompt out of a stream-json stdin first, since the Ask path sends one.
  * 3. replayArgv changes only the model, the effort and the two captured file paths; replayEnv drops
  *    Claude session markers the app did not pass and pins thinking off at low only.
  * 4. recommendAnswerLevel (fixed 2026-10-07, before any run): a Haiku level passes only when it is
@@ -91,6 +92,16 @@ describe('tableRefsOf and inventedRefs', () => {
 
   it('collects the refs that open a row, and not the example ref in the rules', () => {
     expect([...refs].sort()).toEqual(['#12', 'C3', 'mobile#88']);
+  });
+
+  it('reads the table out of a stream-json stdin, where the Ask path escapes every newline', () => {
+    const stdin = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } }) + '\n';
+    expect([...tableRefsOf(stdin)].sort()).toEqual(['#12', 'C3', 'mobile#88']);
+  });
+
+  it('reads a markdown row that opens with a pipe', () => {
+    const markdown = ['| ref | task |', '| --- | --- |', '| #1 | Task 1 |', '| #300 | Task 300 |'].join('\n');
+    expect([...tableRefsOf(markdown)].sort()).toEqual(['#1', '#300']);
   });
 
   it('flags every ref the tables do not hold, once, and matches a project prefix case-blind', () => {

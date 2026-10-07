@@ -4,7 +4,7 @@ A rerunnable benchmark for changes to `.claude/skills/code-review/SKILL.md` and
 `.claude/agents/review-finder.md`. It replays historical review states, runs finder arms over the
 pack the shipped `scripts/build-review-pack.mjs` builds, and scores what each arm raises against
 ground truth taken from later passes. Results and the first run's outcome are in
-`docs/code-review-fanout-audit.md` section 15.
+`docs/code-review-fanout-audit.md` section 15; the model round's are in section 16.
 
 ## Files
 
@@ -136,3 +136,12 @@ auditors run on. They are `adoptFinderModel`, `pickFinderModel` and `adoptAudito
 - **D3's defect path** was corrected after the round to
   `src/main/transition-engine/resource-cleanup.ts`. The scorer matched on symbol and mechanism, so
   the result did not change.
+
+## How the model round ran (2026-10-07)
+
+- **E5's arm A is E2 arm A's own transcripts,** read through explicit `transcript` paths in the
+  scoring ledger and scored blind beside the two Haiku arms. It re-scored to exactly the recorded
+  baseline (1.5 late hits, S2-N1 and S2-N2, 117 raised), so the scorer did not drift.
+- **E6 plants** went into a detached scratch worktree of HEAD. doc-auditor: a channel constant with
+  no row in `docs/architecture.md`, and a row for a channel that does not exist. ipc-auditor: a
+  preload method the mock no longer provides, and a mock method with no channel behind it.

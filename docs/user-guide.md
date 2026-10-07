@@ -1100,12 +1100,15 @@ meaning, then the agent that answers: its **Agent** and **Model**, one choice fo
 Nothing picks them for you: until both are set, pressing Enter in the box opens Settings > Knowledge
 Graph at that row and keeps your question typed, so you can come back and press Enter again. The same agent and model write the
 task summaries, so it is chosen once. Reading the index is lighter work than writing code, so a
-cheaper model is usually enough. Every agent that has a headless read-only mode can answer; Warp
+cheaper model is usually enough. Measured on Claude, Haiku 5.5 at `low` answered a counting
+question and a "most expensive" question right in every run, as Sonnet did, a second faster and at
+about a twentieth of the cost; it also invents more in task summaries (below), and the one model
+does both jobs. Every agent that has a headless read-only mode can answer; Warp
 cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
 at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
-across many tasks: at Claude's `max`, a count that `low` got wrong came out right, at about ten
-times the wait. Effort is for answers only: summaries always write at the recommended level, where
-a higher one changed nothing.
+across many tasks: on an earlier Claude release, `max` got right a count that `low` got wrong, at
+about ten times the wait; on the current release every level got it right. Effort is for answers
+only: summaries always write at the recommended level, where a higher one changed nothing.
 
 The **Index** card below it lists what the index searches, one line per source:
 **Conversations**, **Tasks** and **Commits** are always indexed while the index is on, on switches
@@ -1144,7 +1147,9 @@ rewritten over a track while those rewrites are being written; Rebuild asks firs
 will rewrite summaries, and says how many and about how many calls. Measured on this project's own
 tasks, a mid-size model at low effort (Sonnet) wrote as well as a larger one and higher effort
 changed nothing; the larger models (Opus, Fable) add a little detail at two to seven times the
-cost, and the smallest (Haiku) invented details.
+cost, and the smallest (Haiku) invented details. Remeasured with Haiku 5.5 on 50 tasks, 22 of
+them with no files or commits to go on: Haiku invented 13 details and Sonnet 8, almost all on
+those thin tasks, where both wrote that a proposal had shipped. Neither passed a task over.
 
 **Source code** starts once the Knowledge Graph has an agent. It reads the project's default branch as committed:
 `origin/main` (or whatever the project's base branch is), else the local branch of that name, else

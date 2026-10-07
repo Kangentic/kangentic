@@ -1626,3 +1626,123 @@ Caveats:
   each scores file's `notes`.
 - Only S1 and D3 are reachable from a pushed ref, so a rerun elsewhere has two cases unless new
   states are pinned.
+
+## 16. Haiku 5.5 for the finders and the gated auditors (2026-10-07)
+
+Claude Haiku 5.5 shipped on 2026-10-07. A request of up to 100,000 prompt tokens costs a twentieth
+of Sonnet 5.5's price per token, and one above that costs five times Haiku's own base rate. Every finder and gated
+auditor ran Sonnet, so the question was which of them Haiku could replace. The rules were written
+as code and committed before any model call (`adoptFinderModel`, `pickFinderModel` and
+`adoptAuditorModel` in `scripts/review-eval/decide.mjs`, the block in `scripts/review-eval/README.md`).
+
+### 16.1 Pricing by request size
+
+`cost.mjs` used to sum tokens per model and price the sum, which cannot see a per-request tier. It
+now prices each request on its own: input plus cache read plus cache write over the card's
+`promptTokens` puts all five token classes, output included, on the `above` rates. `tally.mjs`
+prices the same way and counts the requests over the tier. At 767's price table the new pricer
+reproduces E2 arm A's cost: $7.39 for the reused correctness lane and $12.17 for the other four
+finders (section 15 printed $12.18, a sum of rounded rows).
+
+E2 arm A's own transcripts, repriced at today's rates, cost $16.54. The same per-request token
+stream priced as Haiku would cost $2.79, with 107 of its 363 requests over 100k: 91 of 189 for the
+whole-pack finders (their largest prompt is about 270k) and 16 of 174 for the correctness shards
+(about 114k). That figure is a floor, since Haiku does not send Sonnet's token stream.
+
+### 16.2 E5: Haiku as every universal finder
+
+E2's shape (1500-line correctness shards plus one performance, maintainability, conventions and
+coverage finder each), S2 to S4, two repetitions per arm. Arm M was Haiku at the agent's medium
+effort, arm H Haiku at high, both on the `Agent` call. Every transcript answered from
+`claude-haiku-5-5`. One blind scorer per case scored M, H and E2 arm A's existing reports mixed
+together. Arm A re-scored to exactly its recorded numbers, so the scorer did not drift.
+
+| Arm | Late hits per repetition | Late ids found | S4 positives found | Negatives raised | Raised | Cost | Requests over 100k |
+|---|---|---|---|---|---|---|---|
+| A, Sonnet medium (E2) | 1, 2 (1.5) | S3-L2 (both), S2-L2 (rep 2) | P1, P2, P3 in both reps | S2-N1, S2-N2 | 117 (58, 59) | $16.54 | none priced (no tier) |
+| M, Haiku medium | 2, 2 (2.0) | S2-L2, S3-L2 (both) | P1, P3 in both reps | S2-N1 | 168 (87, 81) | $6.77 | 308 of 552 |
+| H, Haiku high | 2, 3 (2.5) | S2-L2, S3-L2 (both), S3-L1 (rep 2) | P1, P2, P3 in rep 1; P2, P3 in rep 2 | S2-N1 | 201 (100, 101) | $12.59 | 616 of 838 |
+
+Rule outcome: no arm adopted, so the finders stay on Sonnet:
+
+```json
+{"chosen":null,"passing":[],"verdicts":{"H":{"adopt":false,"lateHits":2.5,"recallHeld":true,"positivesHeld":false,"negatives":1,"negativesHeld":true,"totalRaised":201,"volumeHeld":false},"M":{"adopt":false,"lateHits":2,"recallHeld":true,"positivesHeld":false,"negatives":1,"negativesHeld":true,"totalRaised":168,"volumeHeld":false}}}
+```
+
+What the numbers say beyond the rule:
+
+- Haiku found more late defects than Sonnet: S2-L2 in all four Haiku repetitions against one of
+  Sonnet's two, and arm H found S3-L1, which E1's one-finder arms had found and E2's had not. With
+  4 late defects over 3 states that is within run-to-run noise, but it is not a recall loss.
+- It failed on the two bars that hold the driver's work. M lost S4-P2 (a parameter list that
+  repeats the crash record) in both repetitions, and H lost S4-P1 (a real exit misread as a failed
+  fork) in one. M raised 1.4 times arm A's findings and H 1.7 times, and under the fix-everything
+  contract every one of them is an Opus verification the cost column does not show.
+- Haiku is not twenty times cheaper here. It read more: its correctness shards reached prompts of
+  333k (M) and 383k (H) against Sonnet's 114k, so 44% (M) and 74% (H) of their requests crossed
+  the 100k tier. M cost 41% of arm A and H 76%.
+- The Haiku runs made 32 advisor calls (9 for M, 23 for H), billed outside these figures. Arm A
+  made none.
+
+### 16.3 E6: Haiku as a gated auditor
+
+A detached scratch worktree of HEAD per auditor, each with one planted missing item and one
+planted extra one. `doc-auditor` got a new channel constant with no row in `docs/architecture.md`,
+and a row for a channel that does not exist; its prompt was the one `/pull-request` gives it.
+`ipc-auditor` got a preload method the mock no longer provides, and a mock method with no channel,
+type, preload or handler behind it. Sonnet and Haiku ran twice each with only the model varied.
+Every extra item a report raised was checked against the planted tree by hand.
+
+| Auditor | Model | Plants found (both runs) | False findings | Cost per run |
+|---|---|---|---|---|
+| doc-auditor | Sonnet | 4 of 4 | 0 | $0.52, $0.46 |
+| doc-auditor | Haiku | 4 of 4 | 0 | $0.05, $0.08 |
+| ipc-auditor | Sonnet, medium | 4 of 4 | 0 | $0.13, $0.13 |
+| ipc-auditor | Haiku, medium | 4 of 4 | 0 | $0.01, $0.01 |
+
+Rule outcome for both: adopted
+(`{"adopt":true,"candidateFound":4,"incumbentFound":4,"of":4,"candidateFalse":0,"incumbentFalse":0}`).
+The extras every run raised were true of the tree: an existing prose gap in `task:sessionResync`'s
+row, a `handle` pattern where other rows say `invoke`, a Dev-only header that has no count by
+design. One Sonnet doc-auditor run printed totals of 355 and 354 channels where the tree has 322 and
+322, which is a wrong count rather than a reported gap. One Haiku ipc-auditor run said the missing
+mock throws "whenever any task-detail view mounts"; the component that calls it is imported
+nowhere, which only the other Haiku run noticed. The gap it reported is real.
+
+### 16.4 What changed
+
+- `.claude/agents/doc-auditor.md` and `.claude/agents/ipc-auditor.md`: `model: haiku`.
+  `ipc-auditor` keeps `effort: medium`.
+- `review-finder` stays on Sonnet at medium. The integration finder, which uses the same agent, was
+  never measured, since its input is a driver-built signature delta (section 15.4).
+- The other gated auditors (`platform-guard`, `hmr-parity`, `session-debugger`,
+  `migration-safety`) were not measured and stay on Sonnet.
+- On Amazon Bedrock the `haiku` alias still resolves to Haiku 4.5, so there the two auditors run a
+  model this round did not measure.
+
+### 16.5 Cost and caveats
+
+The round cost about $30 at the 2026-10-07 price table, against a $75 stop line. Sonnet 5.5 is $2
+input, $10 output and $0.10 cache read per million tokens. Haiku 5.5 is $0.10 and $0.50 up to
+100,000 prompt tokens per request and $0.50 and $2.50 above. Haiku's 1-hour cache-write rate is
+not published, so it is priced at twice input ($0.20, and $1.00 above the tier).
+
+| Item | USD |
+|---|---|
+| E5 Haiku finders | 19.35 |
+| E5 scorers (Opus) | 5.64 |
+| E6 auditors | 1.38 |
+| Knowledge Graph model round (Ask and summary replays, captures, scorer) | 3.64 |
+
+The Knowledge Graph round's 12 summary capture calls printed plain text with no cost line, so
+$0.35 of that row is estimated from the replays of the same batches. Advisor calls and the driver
+session are billed outside these figures.
+
+Caveats:
+
+- The scorer is one blind agent per case, as in section 15, and its judgment calls are in each
+  scores file's `notes`.
+- The S4 positives bar decided E5, and it rests on one finding missed per arm.
+- E6's plants are single mechanical gaps in a small diff; an auditor in a real review sees more.
+  Two runs per model.
+- The ipc-auditor prompt named the two edited namespaces, as a review pack's hunks would.

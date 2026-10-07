@@ -39,8 +39,9 @@ type KnowledgeGraphConfig = NonNullable<AppConfig['knowledgeGraph']>;
  * answers: a summary always runs at the adapter's recommended level. Measured on
  * this project's tasks, summaries at high effort read the same as at low and took
  * twice as long, while answers at the highest level got counts right that low
- * got wrong. So raising effort for a hard question neither slows the summaries
- * nor marks every one of them as written another way.
+ * got wrong on CLI 2.1.283 (on 2.1.293 every level got that count right). So
+ * raising effort for a hard question neither slows the summaries nor marks every
+ * one of them as written another way.
  */
 export function agentJobChoice(config: KnowledgeGraphConfig | undefined, job: AgentJob): AgentJobChoice {
   return {
