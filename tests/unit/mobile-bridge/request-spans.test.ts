@@ -1,5 +1,48 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests } from '../../../src/main/mobile-bridge/request-spans';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests, startMainLoopBlockProbe } from '../../../src/main/mobile-bridge/request-spans';
+
+function spinFor(durationMs: number): void {
+  const until = performance.now() + durationMs;
+  while (performance.now() < until) {
+    // Holds the event loop, the way a slow synchronous handler would.
+  }
+}
+
+const wait = (durationMs: number) => new Promise<void>((resolve) => setTimeout(resolve, durationMs));
+
+describe('main-loop block probe', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads a block in the middle of the window close to its length', async () => {
+    const stopProbe = startMainLoopBlockProbe();
+    await wait(60);
+    spinFor(300);
+    await wait(60);
+    expect(stopProbe()).toBeGreaterThanOrEqual(250);
+  });
+
+  it('counts a block still running when the probe stops', () => {
+    const stopProbe = startMainLoopBlockProbe();
+    spinFor(300);
+    expect(stopProbe()).toBeGreaterThanOrEqual(250);
+  });
+
+  it('stays near the timer floor while the loop is free', async () => {
+    const stopProbe = startMainLoopBlockProbe();
+    await wait(200);
+    expect(stopProbe()).toBeLessThan(150);
+  });
+
+  it('stops ticking on its own when nobody stops it', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    startMainLoopBlockProbe();
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(120_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe('request spans', () => {
   beforeEach(() => {
