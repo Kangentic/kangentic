@@ -142,7 +142,7 @@ test.describe('Workflows canvas', () => {
       await expect(page.locator('[data-testid="workflows-empty-line"]')).toHaveText('Linked tasks that run through your board on their own.');
       await expect(page.locator('[data-testid="workflows-create-first"]')).toHaveText('Create your first workflow');
       await expect(page.locator('[data-testid="workflows-empty-hint"]')).toHaveText('Or right-click a task and choose New workflow.');
-      // The Workflows segment carries no count with nothing unfinished.
+      // The Workflows segment carries no mark with nothing running.
       await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows');
 
       // The drawing (Final 7): four linked cards, the first done, two running,
@@ -170,7 +170,8 @@ test.describe('Workflows canvas', () => {
   test('draws a workflow\'s cards and the links between them', async () => {
     const { browser, page } = await launch(true);
     try {
-      await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 unfinished');
+      // Not started, so nothing runs: no mark on the Workflows segment.
+      await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows');
       await page.locator('[data-testid="view-toggle-workflows"]').click();
       await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
       await expect(card(page, 'task-2')).toContainText('Budget checks on spawn');

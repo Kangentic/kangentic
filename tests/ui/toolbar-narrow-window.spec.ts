@@ -61,13 +61,13 @@ const WIDE = { width: 1600, height: 900 };
 /**
  * A project long enough in the name to exercise the title bar, a full set of
  * swimlanes, labelled tasks so the Labels filter has content, backlog items so
- * the Backlog segment carries its count badge, and an unfinished workflow so the
- * Workflows segment carries one too. Both badges widen the switcher, so the row
- * is measured at its widest.
+ * the Backlog segment carries its count badge, and a running workflow so the
+ * Workflows segment carries its working mark. Both widen the switcher, so the
+ * row is measured at its widest.
  */
 function seedScript(): string {
   return `
-    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'draft', draft: { tasks: [], links: [] } } }];
+    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'running', draft: null } }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -321,9 +321,10 @@ async function expectRowSurvivesTheFloor(
   for (const label of wideLabels) {
     expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
   }
-  // Both count badges are what makes this the widest switcher; without them the
-  // floor case below is not the one the ladder was sized for.
-  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 unfinished');
+  // The Backlog count and the Workflows mark are what make this the widest
+  // switcher; without them the floor case below is not the one the ladder was
+  // sized for.
+  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, running');
   await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
 
   const wideHeight = await settledHeight(page);

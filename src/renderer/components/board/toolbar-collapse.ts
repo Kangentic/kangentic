@@ -55,15 +55,18 @@
  *   after step 2         411       444         280
  *   after step 3         298       342           -
  *
- * Add 140, plus 26 for the Workflows count badge a project with a workflow
- * shows, and round up, and you get the thresholds below. Workflows has no step
+ * Add 140, plus 26 for the count badge the Workflows segment carried when these
+ * were measured, and round up, and you get the thresholds below. The badge is
+ * now the 16px working mark a project with a running workflow shows, 22px with
+ * its gap, so the thresholds keep 4px of slack. Workflows has no step
  * 3: its dividers are the last thing to give, and they hold down to the floor.
  * Sharing one set would mean using the backlog's, which collapses the board's
  * filter labels about 120px of window earlier than it needs to.
  *
  * At the absolute floor (495px, a 400px sidebar at a 900px window, 463px of
- * content) the backlog search is at its narrowest with both count badges
- * showing; `toolbar-narrow-window.spec.ts` seeds both and holds it to its floor.
+ * content) the backlog search is at its narrowest with the Backlog count and the
+ * Workflows mark showing; `toolbar-narrow-window.spec.ts` seeds both and holds
+ * it to its floor.
  * There is nothing left to give there; that is the width the dividers turn into
  * gaps, and the switcher's options tighten, to claw back for.
  *
@@ -116,10 +119,10 @@ export interface ToolbarCollapseClasses {
   /**
    * The switcher's option padding and gap, on the same query as its label:
    * 12px a side around a word, 4px around an icon alone (the control's own
-   * `tight` value), with 2px before a count badge instead of 6. The three
-   * icon-only options and their two badges give back 44px, which at the floor,
-   * with both counts showing, is the difference between a backlog search field
-   * and a slot.
+   * `tight` value), with 2px before a count badge or mark instead of 6. The
+   * three icon-only options, the Backlog count and the Workflows mark gave back
+   * 44px when measured with two counts, which at the floor is the difference
+   * between a backlog search field and a slot.
    */
   viewSwitcherSpacing: string;
   /** Add column, or New Task. Last to give: a primary action's word is worth most. */

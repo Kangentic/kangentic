@@ -153,6 +153,41 @@ async function computedColor(page: Page, cssColor: string): Promise<string> {
 }
 
 test.describe('Workflows header', () => {
+  test('the Workflows segment shows the working mark while a workflow runs, and no count', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      const segment = byTestId(page, 'view-toggle-workflows');
+      const mark = byTestId(page, 'view-toggle-workflows-running');
+      await expect(mark).toBeVisible();
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows, running');
+      // The segment says whether work moves on its own, not how many workflows exist.
+      await expect(segment).toHaveText('Workflows');
+      expect(await mark.evaluate((element) => getComputedStyle(element).color))
+        .toBe(await computedColor(page, 'var(--color-active)'));
+
+      // Paused, nothing runs: the mark goes, and comes back on Resume.
+      await byTestId(page, 'workflow-pause').click();
+      await expect(byTestId(page, 'workflow-resume')).toBeVisible();
+      await expect(mark).toHaveCount(0);
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows');
+      await byTestId(page, 'workflow-resume').click();
+      await expect(mark).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a workflow not started yet puts no mark on the Workflows segment', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await expect(byTestId(page, 'workflow-start')).toBeVisible();
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
+      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a running workflow shows Running, its progress, and pauses and resumes in place', async () => {
     const { browser, page } = await launch('running');
     try {

@@ -536,8 +536,9 @@ Running, which pauses it, or Resume), Delete, the progress, and New workflow. Th
 middle draws each task as its card with the links between them, and the inspector on the right
 shows the run order, or the selected task's route, what it waits for, and what waits for it, with
 Open task (Open on its board, for a task on another project's board) at the bottom. The board's
-search and filter apply to the canvas too. The Workflows segment's badge counts the project's
-unfinished workflows. In the picker's list, a line under each name says what that workflow's agent
+search and filter apply to the canvas too. While one of the project's workflows runs, the
+Workflows segment carries the working mark; a paused or not-started workflow shows none. In the
+picker's list, a line under each name says what that workflow's agent
 is doing ("Agent idle, last message 10:44"), or, with no agent running, how many of its tasks wait
 for you. The bottom terminal panel is hidden in this view and comes back on the board.
 

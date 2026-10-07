@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Columns3, ListTodo, Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { ActivityMark } from '../ActivityMark';
 import { CountBadge } from '../CountBadge';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
@@ -49,10 +50,14 @@ export const ViewToggle = React.memo(function ViewToggle() {
   const priorities = useConfigStore((state) => state.config.backlog.priorities);
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
 
-  // The project's unfinished workflows: the count on the Workflows segment.
+  // Whether one of the project's workflows is running: the working mark on the
+  // Workflows segment. A count of workflows said how many exist, which the
+  // picker already lists; the mark says whether work is moving on its own.
   // Loaded per project here, since this row is mounted whenever a project is.
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const workflowCount = useWorkflowStore((state) => (state.projectId === currentProjectId ? state.summaries.length : 0));
+  const workflowRunning = useWorkflowStore((state) => (
+    state.projectId === currentProjectId && state.summaries.some((summary) => summary.workflow.state === 'running')
+  ));
   useEffect(() => {
     if (currentProjectId) void useWorkflowStore.getState().loadWorkflows();
   }, [currentProjectId]);
@@ -179,11 +184,16 @@ export const ViewToggle = React.memo(function ViewToggle() {
             label: 'Workflows',
             testId: 'view-toggle-workflows',
             title: 'Workflows',
-            ariaLabel: workflowCount > 0 ? `Workflows, ${workflowCount} unfinished` : 'Workflows',
+            ariaLabel: workflowRunning ? 'Workflows, running' : 'Workflows',
             icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
-            // Unfinished workflows only: a finished one leaves the picker.
-            trailing: workflowCount > 0
-              ? <CountBadge count={workflowCount} variant={activeView === 'workflows' ? 'accent' : 'muted'} />
+            // The picker's Running ring, at the sidebar's 16px. A paused, a
+            // not-started or a finished workflow shows nothing here.
+            trailing: workflowRunning
+              ? (
+                <span className="inline-flex shrink-0 text-active" data-testid="view-toggle-workflows-running" title="A workflow is running">
+                  <ActivityMark mark="agent-working" size={16} />
+                </span>
+              )
               : undefined,
           },
         ]}
