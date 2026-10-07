@@ -22,6 +22,7 @@ import { isWorkflowTaskLocked } from '../../utils/board-workflow';
 import { layoutWorkflow } from './workflow-layout';
 import { canBlock, canWait, findTask, linkRefusal, otherBoardDoneColor, taskLabel, waitingOf } from './workflow-graph';
 import { NO_MEASURED_HEIGHTS, estimatedCardHeight, withMeasuredHeights } from './canvas-card-heights';
+import { arrangeChange, arrangeStart, type ArrangeChange, type ArrangeStart } from './canvas-arrange';
 import { LINK_HINT_CLASS, WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
 import { WorkflowConnectionLine, WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
 import { WorkflowDetailContext } from './workflow-canvas-context';
@@ -63,6 +64,19 @@ const KEY_MOVE_SAVE_DELAY_MS = 400;
  * selected the card nor moved it.
  */
 const DRAG_THRESHOLD = 3;
+/**
+ * How long Fit view's glide and Auto layout's slide take. index.css's
+ * `[data-arranging]` transition uses the same 300ms.
+ */
+const CANVAS_MOTION_MS = 300;
+/** How long Auto layout waits for its new places before giving up: a refused save lands none. */
+const ARRANGE_WAIT_MS = 3000;
+
+/** The app's Animations setting is off, or the OS asks for less motion: the canvas jumps instead of gliding. */
+function motionReduced(): boolean {
+  return document.documentElement.classList.contains('no-motion')
+    || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 /** The empty-canvas hint's offset from the pointer, clear of the cursor (board 10). */
 const POINTER_HINT_OFFSET = { x: 22, y: 16 };
 
@@ -213,9 +227,19 @@ export function WorkflowCanvas({
   // derived from props), so no frame commits with the old nodes.
   const [nodes, setNodes] = useState<WorkflowFlowNode[]>(derivedNodes);
   const [seededFrom, setSeededFrom] = useState(derivedNodes);
+  // Auto layout's slide (canvas-arrange.ts): the canvas as it stood when Auto
+  // layout was pressed, until the new places land; then what they changed,
+  // for as long as the cards slide.
+  const [arrangeFrom, setArrangeFrom] = useState<{ start: ArrangeStart; animate: boolean } | null>(null);
+  const [arranged, setArranged] = useState<(ArrangeChange & { animate: boolean }) | null>(null);
   if (seededFrom !== derivedNodes) {
     setSeededFrom(derivedNodes);
     setNodes((current) => reseedNodes(current, derivedNodes));
+    const change = arrangeFrom === null ? null : arrangeChange(arrangeFrom.start, derivedNodes, layout.edges);
+    if (arrangeFrom !== null && change !== null) {
+      setArrangeFrom(null);
+      setArranged({ ...change, animate: arrangeFrom.animate });
+    }
   }
   const onNodesChange = useCallback((changes: NodeChange<WorkflowFlowNode>[]) => {
     // Selection is ours (one task, mirrored into `selected` above); every other
@@ -252,6 +276,8 @@ export function WorkflowCanvas({
     hidden: visibleKeys !== null && (!visibleKeys.has(edge.blockerKey) || !visibleKeys.has(edge.blockedKey)),
     selectable: false,
     focusable: false,
+    // Hidden while Auto layout slides the cards it runs between (index.css).
+    className: arranged?.animate && arranged.hiddenEdgeIds.has(edge.id) ? 'workflow-edge-arranging' : undefined,
     data: {
       waypoints: edge.waypoints,
       sourceOffset: edge.sourceOffset,
@@ -260,7 +286,7 @@ export function WorkflowCanvas({
       emphasized: selectedTaskKey !== null && (edge.blockerKey === selectedTaskKey || edge.blockedKey === selectedTaskKey),
       fresh: freshLink !== null && edge.blockerKey === freshLink.blockerKey && edge.blockedKey === freshLink.blockedKey,
     },
-  })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys, freshLink]);
+  })), [layout.edges, doneKeys, selectedTaskKey, visibleKeys, freshLink, arranged]);
 
   // While a link is drawn, only the tasks that can take it keep their
   // incoming port (board 10b). index.css hides every port during the drag;
@@ -287,6 +313,26 @@ export function WorkflowCanvas({
     fittedFor.current = fitSignature;
     void reactFlow.fitView(FIT_VIEW_OPTIONS);
   }, [nodesInitialized, fitSignature, reactFlow]);
+
+  // Fit view and Auto layout glide; a workflow opening, and the fit after a
+  // card count change, paint flat (restore-no-animation-replay.md).
+  const handleFitView = useCallback(() => {
+    void reactFlow.fitView({ ...FIT_VIEW_OPTIONS, duration: motionReduced() ? 0 : CANVAS_MOTION_MS });
+  }, [reactFlow]);
+  // A refused save lands no new places: stop waiting for them.
+  useEffect(() => {
+    if (arrangeFrom === null) return;
+    const timer = window.setTimeout(() => setArrangeFrom(null), ARRANGE_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [arrangeFrom]);
+  // The new places landed: fit them, gliding with the cards, and end the
+  // slide once they arrive.
+  useEffect(() => {
+    if (arranged === null) return;
+    void reactFlow.fitView({ ...FIT_VIEW_OPTIONS, duration: arranged.animate ? CANVAS_MOTION_MS : 0 });
+    const timer = window.setTimeout(() => setArranged(null), arranged.animate ? CANVAS_MOTION_MS + 40 : 0);
+    return () => window.clearTimeout(timer);
+  }, [arranged, reactFlow]);
 
   const handleNodeClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>((_event, node) => onSelectTask(node.id), [onSelectTask]);
   // A double-click's first click already selects; selecting here as well keeps
@@ -326,7 +372,11 @@ export function WorkflowCanvas({
   }, [workflowId, takeKeyMoves]);
   useEffect(() => saveKeyMoves, [saveKeyMoves]);
 
-  const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => { dragging.current = true; }, []);
+  const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => {
+    dragging.current = true;
+    // A card slides only for Auto layout: one dragged mid-slide would trail the pointer.
+    setArranged((current) => (current?.animate ? null : current));
+  }, []);
   const handleDragStop = useCallback<OnNodeDrag<WorkflowFlowNode>>((_event, draggedNode, moved) => {
     // A card that changed height during the drag is laid out now.
     dragging.current = false;
@@ -340,6 +390,13 @@ export function WorkflowCanvas({
     for (const movedNode of moved) positions.set(movedNode.id, { x: movedNode.position.x, y: movedNode.position.y });
     onMoveCards([...positions].map(([key, position]) => ({ key, ...position })));
   }, [onMoveCards, onSelectTask, takeKeyMoves]);
+  const handleAutoLayout = useCallback(() => {
+    // Auto layout puts every card back, so an arrow-key place still waiting must not land after it.
+    takeKeyMoves();
+    // The cards slide once the new places land, and the fit waits for them too.
+    setArrangeFrom({ start: arrangeStart(reactFlow.getNodes(), layout.edges), animate: !motionReduced() });
+    onAutoLayout();
+  }, [takeKeyMoves, reactFlow, layout.edges, onAutoLayout]);
   const handleConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
     setFreshLink({ blockerKey: connection.source, blockedKey: connection.target });
@@ -379,6 +436,8 @@ export function WorkflowCanvas({
       // and the ports hide (index.css). One attribute here, so no card
       // re-renders at either end.
       data-linking={linkingFrom !== null ? '' : undefined}
+      // While Auto layout's cards slide (index.css).
+      data-arranging={arranged?.animate ? '' : undefined}
       onKeyDown={handleKeyDown}
       style={{ '--workflow-done-color': doneColumnColor } as React.CSSProperties}
       data-testid="workflow-canvas"
@@ -427,14 +486,8 @@ export function WorkflowCanvas({
         <Panel position="bottom-left">
           <ViewTools
             moved={detail.tasks.some((task) => task.canvasX !== null || task.canvasY !== null)}
-            onFitView={() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }}
-            onAutoLayout={() => {
-              // Auto layout puts every card back, so an arrow-key place still waiting must not land after it.
-              takeKeyMoves();
-              onAutoLayout();
-              // The cards move on the next render; fit them once they have.
-              requestAnimationFrame(() => requestAnimationFrame(() => { void reactFlow.fitView(FIT_VIEW_OPTIONS); }));
-            }}
+            onFitView={handleFitView}
+            onAutoLayout={handleAutoLayout}
           />
         </Panel>
         <Panel position="bottom-center">
@@ -484,10 +537,11 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
   );
 }
 
-const CANVAS_TOOL_CLASS = 'inline-flex items-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+const CANVAS_TOOL_CLASS = 'inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
 
 /**
- * The canvas's view tools, bottom left, side by side: both arrange what is
+ * The canvas's view tools, bottom left, side by side at one width (a grid's
+ * two equal columns, so neither label decides it alone): both arrange what is
  * already on the canvas. Fit view leads in every state: the canvas pans and
  * zooms, and a workflow panned out of sight needs one way back. Auto layout
  * puts hand-placed cards back, and is disabled until a card sits where a hand
@@ -500,7 +554,7 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
 }) {
   const tool = CANVAS_TOOL_CLASS;
   return (
-    <div className="flex gap-2" data-testid="workflow-canvas-tools">
+    <div className="grid grid-cols-2 gap-2" data-testid="workflow-canvas-tools">
       <button type="button" onClick={onFitView} title="Fit every card in view" className={tool} data-testid="workflow-fit-view">
         <Scan size={14} className="text-fg-muted" />Fit view
       </button>

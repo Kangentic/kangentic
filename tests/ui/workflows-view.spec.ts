@@ -962,6 +962,67 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
+  /** Moves #3 by hand, then records whether the canvas raised `data-arranging` from then on. */
+  async function moveByHandAndWatchTheSlide(page: Page): Promise<string> {
+    const flowNode = page.locator('.react-flow__node[data-id="task-3"]');
+    const home = await flowNode.evaluate((element) => (element as HTMLElement).style.transform);
+    const box = await card(page, 'task-3').boundingBox();
+    if (!box || box.width === 0) throw new Error('card not laid out');
+    await page.mouse.move(box.x + box.width / 2, box.y + 40);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + 120, { steps: 8 });
+    await page.mouse.up();
+    await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
+    await byTestId(page, 'workflow-canvas').evaluate((element) => {
+      const win = window as unknown as { __arranging: boolean };
+      win.__arranging = false;
+      new MutationObserver(() => { if (element.hasAttribute('data-arranging')) win.__arranging = true; })
+        .observe(element, { attributes: true, attributeFilter: ['data-arranging'] });
+    });
+    return home;
+  }
+
+  test('Auto layout slides a moved card home, then the slide ends', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      const home = await moveByHandAndWatchTheSlide(page);
+      await byTestId(page, 'workflow-auto-layout').click();
+      const flowNode = page.locator('.react-flow__node[data-id="task-3"]');
+      await expect.poll(() => flowNode.evaluate((element) => (element as HTMLElement).style.transform)).toBe(home);
+      // The card slid: the canvas held the slide while it moved, and let go after.
+      expect(await page.evaluate(() => (window as unknown as { __arranging: boolean }).__arranging)).toBe(true);
+      await expect(byTestId(page, 'workflow-canvas')).not.toHaveAttribute('data-arranging');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with reduced motion, Auto layout puts the card home without a slide', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const home = await moveByHandAndWatchTheSlide(page);
+      await byTestId(page, 'workflow-auto-layout').click();
+      const flowNode = page.locator('.react-flow__node[data-id="task-3"]');
+      await expect.poll(() => flowNode.evaluate((element) => (element as HTMLElement).style.transform)).toBe(home);
+      expect(await page.evaluate(() => (window as unknown as { __arranging: boolean }).__arranging)).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Fit view and Auto layout are one width', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      const fitView = await byTestId(page, 'workflow-fit-view').boundingBox();
+      const autoLayout = await byTestId(page, 'workflow-auto-layout').boundingBox();
+      if (!fitView || !autoLayout) throw new Error('tools not laid out');
+      expect(Math.abs(fitView.width - autoLayout.width)).toBeLessThanOrEqual(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the board search hides the cards that do not match, and the run order lists the rest', async () => {
     const { browser, page } = await launch('running');
     try {

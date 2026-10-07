@@ -547,6 +547,31 @@
   outline-offset: 2px;
 }
 
+/* Auto layout's slide (canvas-arrange.ts): the cards it moves glide to their
+   new places, in the 300ms CANVAS_MOTION_MS names. The links they carry are
+   drawn for the final places, so they hide at once and fade back in once the
+   cards arrive. The slide is on only for that gesture, so a dragged card never
+   trails the pointer. The canvas starts no slide while motion is off; the
+   guards below keep the fade quiet too. */
+.workflow-canvas[data-arranging] .react-flow__node {
+  transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+.workflow-canvas .react-flow__edge {
+  transition: opacity 160ms ease-out;
+}
+.workflow-canvas[data-arranging] .react-flow__edge.workflow-edge-arranging {
+  opacity: 0;
+  transition: none;
+}
+.no-motion .workflow-canvas .react-flow__edge {
+  transition-duration: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .react-flow__edge {
+    transition-duration: 0s;
+  }
+}
+
 /* A card being moved lifts off the canvas (board 10b). */
 .workflow-canvas .react-flow__node.dragging .workflow-node {
   box-shadow:
