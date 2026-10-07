@@ -9,6 +9,8 @@ import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
+import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
+import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { WorktreeManager } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
@@ -134,6 +136,38 @@ export function buildCommandContextForProject(
     onTaskPrLinkChanged: (task) => {
       sendToRenderer(ipcContext.mainWindow, IPC.TASK_PR_LINK_CHANGED, projectId);
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [task.id] });
+    },
+
+    // The same apply step the ContextBar pick runs, so a pin an agent or the
+    // phone sets reaches the running session instead of waiting for the next
+    // spawn. Only the fields the write moved count, as on a pick. Per-task
+    // locked so it cannot race a drag. Not limited to the active project the
+    // way a column edit is: this restarts an existing session in place and
+    // spawns nothing new, which is what the pick already does for any project.
+    //
+    // Deferred a macrotask, not just backgrounded: the lock starts its body
+    // synchronously, and the restart writes the agent's exit sequence into the
+    // PTY. Run inline, that lands before the tool reply is sent, so an agent
+    // updating its own task loses the reply that tells it its turn is ending.
+    onTaskSettingsChanged: (task, changed) => {
+      if (!task.session_id) return;
+      const taskId = task.id;
+      setImmediate(() => {
+        void withTaskLock(taskId, () => applyTaskSettingsToLiveSession(
+          ipcContext, projectId, projectPath, taskId, changed,
+        )).then((result) => {
+          // A restart (or a failed one) cleared task.session_id, so the board
+          // holds a stale id. Quiet re-sync, as a column edit's restart sends.
+          if (!result.ok || result.mode === 'restart') {
+            sendToRenderer(ipcContext.mainWindow, IPC.TASK_SESSION_RESYNC, projectId);
+          }
+          if (!result.ok) {
+            console.warn(`[mcp-http update_task] Could not apply settings to task ${taskId.slice(0, 8)}: ${result.reason}`);
+          }
+        }).catch((error) => {
+          console.error(`[mcp-http update_task] Settings apply failed for task ${taskId.slice(0, 8)}:`, error);
+        });
+      });
     },
 
     onTaskDeleted: (task) => {

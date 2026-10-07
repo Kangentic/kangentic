@@ -456,6 +456,74 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
   });
 });
 
+/**
+ * The first effort level a session's agent reports is the level its launch
+ * landed on, after any silent downgrade. `resolveSourceEffort` compares the live
+ * level with it, so it must hold still while later reports move the live level.
+ */
+describe('UsageAccumulator - first reported effort', () => {
+  let usage: UsageAccumulator;
+
+  function statusWithEffort(effort: string | undefined): SessionUsage {
+    return {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 0,
+        cacheTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort },
+    };
+  }
+
+  beforeEach(() => {
+    usage = new UsageAccumulator();
+  });
+
+  it('is null before the agent reports an effort', () => {
+    expect(usage.getFirstReportedEffort('s1')).toBeNull();
+  });
+
+  it('captures the first report from a status.json replace and holds it while the live level moves', () => {
+    usage.replaceSessionUsage('s1', statusWithEffort('high'));
+    usage.replaceSessionUsage('s1', statusWithEffort('medium'));
+    expect(usage.getFirstReportedEffort('s1')).toBe('high');
+    expect(usage.getSessionUsage('s1')?.model.effort).toBe('medium');
+  });
+
+  it('captures the first report from a merged partial, skipping the spawn-time model seed', () => {
+    // The spawn seed names the model only, with no effort.
+    usage.setSessionUsage('s1', { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' } } as Partial<SessionUsage>);
+    expect(usage.getFirstReportedEffort('s1')).toBeNull();
+    usage.setSessionUsage('s1', { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'xhigh' } } as Partial<SessionUsage>);
+    usage.setSessionUsage('s1', { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'low' } } as Partial<SessionUsage>);
+    expect(usage.getFirstReportedEffort('s1')).toBe('xhigh');
+  });
+
+  it('ignores a report with no effort (a model with no effort levels)', () => {
+    usage.replaceSessionUsage('s1', statusWithEffort(undefined));
+    expect(usage.getFirstReportedEffort('s1')).toBeNull();
+    usage.replaceSessionUsage('s1', statusWithEffort('high'));
+    expect(usage.getFirstReportedEffort('s1')).toBe('high');
+  });
+
+  it('survives a sparse usage with no model block', () => {
+    usage.replaceSessionUsage('s1', { contextWindow: statusWithEffort(undefined).contextWindow } as unknown as SessionUsage);
+    expect(usage.getFirstReportedEffort('s1')).toBeNull();
+  });
+
+  it('keeps sessions apart and is cleared by removeSession', () => {
+    usage.replaceSessionUsage('s1', statusWithEffort('high'));
+    usage.replaceSessionUsage('s2', statusWithEffort('low'));
+    usage.removeSession('s1');
+    expect(usage.getFirstReportedEffort('s1')).toBeNull();
+    expect(usage.getFirstReportedEffort('s2')).toBe('low');
+  });
+});
+
 describe('UsageAccumulator - per-tool aggregation', () => {
   let usage: UsageAccumulator;
 

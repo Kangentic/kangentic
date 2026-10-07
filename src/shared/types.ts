@@ -4664,7 +4664,8 @@ export interface TaskSetRuntimeOverrideInput {
  * Result of `IPC.TASK_SET_RUNTIME_OVERRIDE`. `mode` describes how the change
  * was applied: `restart` = session suspended and respawned with `--resume` and
  * the new launch flags, `persisted` = the override is saved for the next spawn
- * (no live session, or nothing changed to a concrete value). A task session is
+ * (no live session, nothing changed to a concrete value, or the session already
+ * runs at the picked effort, say after a manual `/effort`). A task session is
  * never switched by typing `/model` or `/effort`.
  */
 export type TaskSetRuntimeOverrideResult =

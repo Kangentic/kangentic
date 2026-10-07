@@ -90,9 +90,9 @@ vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-// Only the plan builder is mocked. `resolveLiveEffort` stays real, so the
-// liveEffort the handler hands the plan comes from the usage cache as in
-// production.
+// Only the plan builder is mocked. `resolveReportedEffort` stays real, so the
+// live and first reported effort the handler hands the plan come from the
+// session manager as in production.
 vi.mock('../../src/main/transition-engine/injection-plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/transition-engine/injection-plan')>()),
   prepareInjectionPlan: vi.fn(() => null),
@@ -128,7 +128,9 @@ const mockGetProjectRepos = vi.fn();
 const mockEnsureTaskWorktree = vi.fn(async () => null);
 const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockSpawnAgent = vi.fn(async () => {});
-const mockCreateTransitionEngine = vi.fn(() => ({}));
+// Phase 1 runs the source column's exit automations on every move. An empty
+// summary keeps it quiet instead of logging a TypeError per test.
+const mockCreateTransitionEngine = vi.fn(() => ({ executeTransition: vi.fn(async () => ({ failures: [] })) }));
 
 vi.mock('../../src/main/ipc/helpers/index', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -211,9 +213,10 @@ function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
     // on the live-session branches they exercise.
     getSession: vi.fn((id: string) => ({ id, status: 'running' })),
     findLiveSessionByTaskId: vi.fn(() => null),
-    // Read by resolveLiveEffort. Empty = the agent reports no effort, so the
-    // effort delta sources from the session record, as these cases assume.
+    // Read by resolveReportedEffort. Empty = the agent reports no effort, so
+    // the effort delta sources from the session record, as these cases assume.
     getUsageCache: vi.fn((): Record<string, unknown> => ({})),
+    getFirstReportedEffort: vi.fn((_sessionId: string): string | null => null),
   };
   const context = {
     currentProjectId: 'proj-test',
@@ -724,11 +727,12 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
   });
 
-  it('passes the usage-cache-resolved liveEffort on the prepareInjectionPlan input', async () => {
+  it('passes the live and first reported effort on the prepareInjectionPlan input', async () => {
     // The plan is the only thing that decides an effort restart, and it needs
-    // what the agent reports to catch an `/effort` the user typed by hand.
-    // Dropping `liveEffort` from that call site would pass every handler test
-    // that stubs the plan's return value, but must fail here.
+    // what the agent reports to catch an `/effort` the user typed by hand, and
+    // its first report to read a silent downgrade as already applied.
+    // Dropping either from that call site would pass every handler test that
+    // stubs the plan's return value, but must fail here.
     const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: 'xhigh' });
     setActiveRecord('acceptEdits', null, 'xhigh');
     const taskRepo = makeTaskRepo();
@@ -739,6 +743,9 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       'other-session': { model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5', effort: 'low' } },
       'active-session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: 'medium' } },
     });
+    context.sessionManager.getFirstReportedEffort.mockImplementation(
+      (sessionId: string) => (sessionId === 'active-session-1' ? 'high' : 'low'),
+    );
     vi.mocked(prepareInjectionPlan).mockReturnValue(null);
 
     await handleTaskMove(context as never, {
@@ -748,8 +755,12 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     }, 'renderer');
 
     expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
-    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { liveEffort?: string | null };
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as {
+      liveEffort?: string | null;
+      firstReportedEffort?: string | null;
+    };
     expect(planArg.liveEffort).toBe('medium');
+    expect(planArg.firstReportedEffort).toBe('high');
   });
 });
 

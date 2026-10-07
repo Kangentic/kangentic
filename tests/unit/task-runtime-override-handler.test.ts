@@ -29,6 +29,18 @@ const hoisted = vi.hoisted(() => ({
   restartSessionForSettingsChange: vi.fn(async () => ({ ok: true })),
   /** When set, the reconcile mock treats the task's pointer as a dead session. */
   stalePointer: { value: false },
+  /**
+   * The live session's own record, read for `applied_effort`. Null by default:
+   * no record, so the pick's effort source is the agent's report or nothing.
+   */
+  sessionRecord: { value: null as { id: string; applied_model?: string | null; applied_effort: string | null } | null },
+  /**
+   * The task's newest record, which `getLatestForTask` serves. Null by default,
+   * in which case it serves `sessionRecord` too (one record, one track). Set it
+   * to model a task whose newest record belongs to ANOTHER track (an isolated
+   * swimlane's), so a read that skips the live session's own record goes wrong.
+   */
+  latestRecord: { value: null as { id: string; applied_model?: string | null; applied_effort: string | null } | null },
 }));
 
 vi.mock('electron', () => ({
@@ -43,6 +55,8 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     updateAppliedSettings = hoisted.updateAppliedSettings;
+    findByAnyId = vi.fn((id: string) => (hoisted.sessionRecord.value?.id === id ? hoisted.sessionRecord.value : undefined));
+    getLatestForTask = vi.fn(() => hoisted.latestRecord.value ?? hoisted.sessionRecord.value ?? undefined);
   },
 }));
 
@@ -106,6 +120,7 @@ interface MockTask {
   session_id: string | null;
   model_override: string | null;
   effort_override: string | null;
+  profile_id?: string | null;
 }
 
 interface MockContext {
@@ -114,6 +129,8 @@ interface MockContext {
   sessionManager: {
     suspend: ReturnType<typeof vi.fn>;
     getSessionAgentName: ReturnType<typeof vi.fn>;
+    getUsageCache: ReturnType<typeof vi.fn>;
+    getFirstReportedEffort: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
   projectRepo: { getById: ReturnType<typeof vi.fn> };
@@ -139,6 +156,10 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     sessionManager: {
       suspend: vi.fn(async () => {}),
       getSessionAgentName: vi.fn(() => undefined),
+      // Empty by default: the agent reports no effort, so the pick's effort
+      // source falls back to the session record.
+      getUsageCache: vi.fn((): Record<string, unknown> => ({})),
+      getFirstReportedEffort: vi.fn((): string | null => null),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', default_agent: 'claude', default_model: null, default_effort: null })) },
@@ -168,12 +189,18 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     hoisted.updateAppliedSettings.mockReset();
     hoisted.restartSessionForSettingsChange.mockReset();
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
+    hoisted.sessionRecord.value = null;
+    hoisted.latestRecord.value = null;
     capturedHandlers.clear();
 
     task = createMockTask();
     taskRepo = {
       getById: vi.fn((_id: string) => task),
-      updateOverrides: vi.fn(),
+      // Writes through to the fixture: the apply step re-reads the task after
+      // the persist, so its targets come from the written pins.
+      updateOverrides: vi.fn((_id: string, patch: Partial<MockTask>) => {
+        Object.assign(task, patch);
+      }),
       // Written by the reconcile mock when it clears a stale pointer.
       update: vi.fn(),
     };
@@ -304,9 +331,11 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
   });
 
   it('returns mode:"persisted" without further work when the spec is a no-op delta', async () => {
-    // Task already has model_override='sonnet'; user picks 'sonnet' again.
+    // Task already has model_override='sonnet' and its session launched with
+    // it; user picks 'sonnet' again.
     task = createMockTask({ model_override: 'sonnet' });
     taskRepo.getById.mockReturnValue(task);
+    hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'sonnet', applied_effort: null };
     mockAgentRegistryGet.mockReturnValue({
       getInjectionSequence: vi.fn(() => ['/model sonnet']),
     });
@@ -617,6 +646,284 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
       model_override: null,
       effort_override: 'xhigh',
+    });
+  });
+
+  // =========================================================================
+  // Effort source: what the session runs at, not the task's old config
+  // =========================================================================
+
+  describe('effort source', () => {
+    /** The agent reports `live` now and reported `first` right after launch. */
+    function reportEffort(live: string, first: string): void {
+      context.sessionManager.getUsageCache.mockReturnValue({
+        'session-1': { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort: live } },
+      });
+      context.sessionManager.getFirstReportedEffort.mockImplementation(
+        (sessionId: string) => (sessionId === 'session-1' ? first : null),
+      );
+    }
+
+    function useLaneEffort(effort: string | null): void {
+      swimlaneRepo.getById.mockReturnValue({
+        id: 'lane-1',
+        permission_mode: null,
+        model_override: null,
+        effort_override: effort,
+      });
+    }
+
+    beforeEach(() => {
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+    });
+
+    it('a pick equal to an effort the user set by hand with /effort persists without a restart', async () => {
+      // Launched at the column's `high`, then the user typed `/effort medium`.
+      // The old diff read high -> medium off the config and restarted a
+      // session already running at medium.
+      useLaneEffort('high');
+      hoisted.sessionRecord.value = { id: 'session-1', applied_effort: 'high' };
+      reportEffort('medium', 'high');
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'medium' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+      expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
+        model_override: null,
+        effort_override: 'medium',
+      });
+    });
+
+    it('re-picking a level the model silently downgrades persists without a restart', async () => {
+      // Launched at the column's `max` on a model that tops out at `high`, so
+      // the agent reports `high` from its first status write. The user pinned
+      // `high` (no restart: the session already ran at it) and now picks `max`
+      // again. A restart would pass `--effort max` and land on `high` again.
+      useLaneEffort('max');
+      task = createMockTask({ effort_override: 'high' });
+      taskRepo.getById.mockReturnValue(task);
+      hoisted.sessionRecord.value = { id: 'session-1', applied_effort: 'max' };
+      reportEffort('high', 'high');
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'max' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+
+    it('re-picking the pin restarts when the session drifted off it with /effort', async () => {
+      // Pinned and launched at `medium`, then the user typed `/effort high`.
+      // The old diff read medium -> medium and left the session at high.
+      task = createMockTask({ effort_override: 'medium' });
+      taskRepo.getById.mockReturnValue(task);
+      hoisted.sessionRecord.value = { id: 'session-1', applied_effort: 'medium' };
+      reportEffort('high', 'medium');
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'medium' });
+
+      expect(result).toEqual({ ok: true, mode: 'restart' });
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(),
+        'proj-1',
+        '/mock/project',
+        'task-1',
+        { phase: 'applying-settings' },
+      );
+    });
+
+    it('a model-only pick does not restart for an effort the user changed by hand with /effort', async () => {
+      // Launched at the column's `high` on `opus`, then the user typed
+      // `/effort medium`. A pick of `opus` (what the session runs) touches no
+      // effort, so the effort drift must not restart it. Sourcing the effort
+      // from the live report on every pick would read medium -> high and
+      // restart.
+      useLaneEffort('high');
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: 'high' };
+      reportEffort('medium', 'high');
+
+      const result = await callHandler({ taskId: 'task-1', model: 'opus' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+      expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', {
+        model_override: 'opus',
+        effort_override: null,
+      });
+    });
+
+    it('with no live report, a pick equal to the launch effort persists without a restart', async () => {
+      // The session launched at `high` and then moved into a Default column,
+      // where `--resume` kept it at high. Its effective config reads null, so
+      // the old diff read null -> high and restarted. The record says high.
+      useLaneEffort(null);
+      hoisted.sessionRecord.value = { id: 'session-1', applied_effort: 'high' };
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'high' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+
+    it('with no live report, a pick different from the launch effort restarts', async () => {
+      useLaneEffort(null);
+      hoisted.sessionRecord.value = { id: 'session-1', applied_effort: 'high' };
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'low' });
+
+      expect(result).toEqual({ ok: true, mode: 'restart' });
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(),
+        'proj-1',
+        '/mock/project',
+        'task-1',
+        { phase: 'applying-settings' },
+      );
+    });
+  });
+
+  // =========================================================================
+  // Model source: the model the session launched with, not the old config
+  // =========================================================================
+
+  describe('model source', () => {
+    beforeEach(() => {
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+    });
+
+    it('a model pick equal to the model the session launched with persists without a restart', async () => {
+      // Launched with `--model opus`, then moved into a Default column, where
+      // `--resume` kept it on opus. Its effective config reads null, so the old
+      // diff read null -> opus and restarted a session already on opus.
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: null };
+
+      const result = await callHandler({ taskId: 'task-1', model: 'opus' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+
+    it('a model pick different from the launch model restarts with switching-model', async () => {
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: null };
+
+      const result = await callHandler({ taskId: 'task-1', model: 'sonnet' });
+
+      expect(result).toEqual({ ok: true, mode: 'restart' });
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(), 'proj-1', '/mock/project', 'task-1', { phase: 'switching-model' },
+      );
+    });
+
+    it('an effort-only pick does not restart for a model the pick never touched', async () => {
+      // The column says sonnet but the session runs opus. An effort pick the
+      // session already runs at must not restart to realign the model.
+      swimlaneRepo.getById.mockReturnValue({
+        id: 'lane-1',
+        permission_mode: null,
+        model_override: 'sonnet',
+        effort_override: null,
+      });
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: 'high' };
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'high' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // Profile detach and the live session's own record
+  // =========================================================================
+
+  describe('profile detach and own session record', () => {
+    beforeEach(() => {
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+      // The real repository returns a fresh object per read. Sharing one
+      // reference would let the persist below mutate the handler's pre-write
+      // copy of the task, hiding the profile detach from it.
+      taskRepo.getById.mockImplementation(() => ({ ...task }));
+    });
+
+    /**
+     * Mirrors `TaskRepository.updateOverrides`: a concrete (non-null) pin
+     * detaches the task from its Board Profile.
+     */
+    function persistLikeRealRepository(): void {
+      taskRepo.updateOverrides.mockImplementation((_id: string, patch: Partial<MockTask>) => {
+        Object.assign(task, patch);
+        if (patch.model_override != null || patch.effort_override != null) {
+          task.profile_id = null;
+        }
+      });
+    }
+
+    it('an effort-only pick on a profile task restarts with switching-model when the detach moves the model target', async () => {
+      // The task rides a profile that sets `opus` for this column, and its
+      // session launched on `opus`. The column's own model is `sonnet`. Pinning
+      // an effort detaches the profile, so the model the respawn passes becomes
+      // `sonnet`: the model field changed too, even though the pick never named
+      // it. Passing only `model: input.model !== undefined` would read the
+      // session as already on its model target and leave it on `opus`.
+      task = createMockTask({ profile_id: 'profile-1' });
+      persistLikeRealRepository();
+      context.boardConfigManager.getBoardProfiles.mockReturnValue([
+        { id: 'profile-1', name: 'Planning ladder', columns: { 'lane-1': { modelOverride: 'opus' } } },
+      ]);
+      swimlaneRepo.getById.mockReturnValue({
+        id: 'lane-1',
+        permission_mode: null,
+        model_override: 'sonnet',
+        effort_override: null,
+      });
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: 'high' };
+
+      const result = await callHandler({ taskId: 'task-1', effort: 'high' });
+
+      expect(result).toEqual({ ok: true, mode: 'restart' });
+      expect(task.profile_id).toBeNull();
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledWith(
+        expect.anything(), 'proj-1', '/mock/project', 'task-1', { phase: 'switching-model' },
+      );
+    });
+
+    it('a pick that clears a field (no concrete pin) keeps the profile and does not count as a detach', async () => {
+      // `updateOverrides` only detaches on a non-null pin, so clearing one
+      // field leaves the profile in place and the other field untouched.
+      task = createMockTask({ profile_id: 'profile-1', effort_override: null });
+      persistLikeRealRepository();
+      context.boardConfigManager.getBoardProfiles.mockReturnValue([
+        { id: 'profile-1', name: 'Planning ladder', columns: { 'lane-1': { modelOverride: 'opus' } } },
+      ]);
+      swimlaneRepo.getById.mockReturnValue({
+        id: 'lane-1',
+        permission_mode: null,
+        model_override: 'sonnet',
+        effort_override: null,
+      });
+      // The session drifted off the profile's `opus` (say a manual `/model`).
+      // A pick that touched only effort must not restart to realign it.
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'sonnet', applied_effort: null };
+
+      const result = await callHandler({ taskId: 'task-1', effort: null });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(task.profile_id).toBe('profile-1');
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+
+    it('reads the live session\'s own record, not the task\'s newest record from another track', async () => {
+      // The live session launched on `opus` at `high`. The task's newest
+      // record belongs to an isolated swimlane's track (`sonnet` at `low`).
+      // Re-picking what the live session runs at must persist. Reading
+      // `getLatestForTask` directly would see sonnet/low and restart.
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'opus', applied_effort: 'high' };
+      hoisted.latestRecord.value = { id: 'isolated-track-1', applied_model: 'sonnet', applied_effort: 'low' };
+
+      const result = await callHandler({ taskId: 'task-1', model: 'opus', effort: 'high' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
     });
   });
 

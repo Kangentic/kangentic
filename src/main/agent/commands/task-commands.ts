@@ -554,6 +554,21 @@ export const handleUpdateTask: CommandHandler = (
 
   context.onTaskUpdated(updated);
 
+  // A write that moves the task's model or effort target reaches a running
+  // session, as a ContextBar pick does. Compared on the stored row, so a write
+  // that re-sends a value the task already holds restarts nothing: the apply
+  // reads a changed field's source from the live session, and a manual
+  // `/effort` would read as drift to undo. A profile or run-mode switch counts
+  // for both fields, since each changes the column values the targets fold
+  // through, and a pin clears the profile.
+  const profileOrRunModeMoved = updated.profile_id !== task.profile_id || updated.run_mode !== task.run_mode;
+  const settingsMoved = {
+    model: updated.model_override !== task.model_override || profileOrRunModeMoved,
+    effort: updated.effort_override !== task.effort_override || profileOrRunModeMoved,
+  };
+  const settingsChanged = settingsMoved.model || settingsMoved.effort;
+  if (settingsChanged) context.onTaskSettingsChanged?.(updated, settingsMoved);
+
   // Gated on what THIS call wrote, not on the post-write row: `updated` falls
   // back to the untouched task when nothing scalar changed, so reading its
   // fields would make a title-only edit on an already-linked task re-resolve.
@@ -588,7 +603,12 @@ export const handleUpdateTask: CommandHandler = (
 
   return {
     success: true,
-    message: `Updated ${changedFields.join(', ')} for "${updated.title}".`,
+    // The restart cuts the session's turn, which is the caller's own turn when
+    // an agent updates its own task, so say so rather than leave it a surprise.
+    message: `Updated ${changedFields.join(', ')} for "${updated.title}".`
+      + (settingsChanged && updated.session_id
+        ? ' Its running session restarts if it is not already on these settings, which ends its current turn.'
+        : ''),
     data: {
       id: updated.id,
       displayId: updated.display_id,

@@ -21,7 +21,7 @@
  * - auto_command is trimmed and verified under the `submitted` mode
  */
 import { describe, it, expect, vi } from 'vitest';
-import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveLiveEffort, resolveRestartReason, resolveSourceEffort, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
+import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveReportedEffort, resolveRestartReason, resolveSourceEffort, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';
@@ -835,31 +835,88 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
     expect(plan).toBeNull();
   });
 
-  it('ACCEPTED COST: a silently downgraded level restarts on every move into the column', () => {
+  it('converges on a silently downgraded level: a session launched at the target and unmoved since does not restart', () => {
     // Claude Code silently downgrades `max`/`xhigh` to `high` on a model that
     // does not support them, and its status schema documents the reported level
     // as the one in force "after any silent downgrade for the selected model".
-    // So live can legitimately differ from what we asked for, and that is
-    // indistinguishable from the user having typed `/effort high` by hand.
-    // We favour correctness: re-apply the target, which is a restart. The live
-    // tier outranks `applied_effort` and the reported level never becomes the
-    // target, so the delta never clears: each move into such a column restarts
-    // rather than converging after the first. It is bounded to moves and
-    // edits, never a loop, and the effort pickers offer only the levels a model
-    // supports. Decided deliberately; this test pins it.
-    // Do NOT "fix" this by dropping the live tier - that reintroduces the bug
-    // the sibling tests above pin. Converging needs a guard that can tell "we
-    // already asked this session for this target and its reported level has
-    // not moved since" apart from a genuine manual `/effort`.
+    // This session was launched with `--effort max` (applied) and reported
+    // `high` from its first status write on. A restart would pass the same flag
+    // and land on `high` again, so every move into a `max` column used to
+    // restart for nothing. The first report is what tells this apart from a
+    // manual `/effort high`, which moves the live level off it (next test).
     const plan = prepareInjectionPlan({
       adapter: claudeLike(),
       sessionRepo: sessionRepoWith({ applied_effort: 'max' }),
       task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
       toLane: lane({ effort_override: 'max' }),
       liveEffort: 'high',
+      firstReportedEffort: 'high',
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('still restarts a downgraded session the user moved by hand with /effort', () => {
+    // Launched at `max`, first reported `high`, then the user typed
+    // `/effort medium`. The live level moved off its first report, so the
+    // guard does not apply and the `max` column realigns it.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'max' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'max' }),
+      liveEffort: 'medium',
+      firstReportedEffort: 'high',
     });
     expect(plan?.restartReason).toBe('effort');
-    expect(planTexts(plan)).toEqual([]);
+  });
+
+  it('restarts once into a downgraded target the session was never launched at', () => {
+    // The remaining cost: a session at `high` moved into a `max` column was
+    // never asked for `max`, so nothing says the model would downgrade it. It
+    // restarts once; the test above covers every move after that.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'max' }),
+      liveEffort: 'high',
+      firstReportedEffort: 'high',
+    });
+    expect(plan?.restartReason).toBe('effort');
+  });
+
+  it('reads applied_effort from the live session\'s own record, not the task\'s newest', () => {
+    // The first report belongs to the task's live session, so the applied
+    // level it is compared with must too. The task's newest record can be an
+    // isolated track's, launched at something else.
+    const sessionRepo = {
+      getLatestForTask: () => ({ id: 'sess-isolated', applied_effort: 'low' }),
+      findByAnyId: (id: string) => (id === 'sess-live' ? { id: 'sess-live', applied_effort: 'max' } : undefined),
+    } as unknown as SessionRepository;
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo,
+      task: { id: 't1', session_id: 'sess-live', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'max' }),
+      liveEffort: 'high',
+      firstReportedEffort: 'high',
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('does not restart a downgraded session moved into a column asking for the level it runs at', () => {
+    // Launched at `max`, running at `high`, moved into a `high` column. The
+    // guard must not swap the live level for the applied one, or this would
+    // read as max -> high and restart a session already at the target.
+    const plan = prepareInjectionPlan({
+      adapter: claudeLike(),
+      sessionRepo: sessionRepoWith({ applied_effort: 'max' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ effort_override: 'high' }),
+      liveEffort: 'high',
+      firstReportedEffort: 'high',
+    });
+    expect(plan).toBeNull();
   });
 
   it('never lets live effort disturb the model delta', () => {
@@ -881,11 +938,52 @@ describe('prepareInjectionPlan - agent-reported effort is the delta source', () 
 
 describe('resolveSourceEffort', () => {
   it('prefers a per-task pin, then live telemetry, then the record', () => {
-    expect(resolveSourceEffort({ taskEffortOverride: 'xhigh', liveEffort: 'low', appliedEffort: 'high' })).toBe('xhigh');
-    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: 'low', appliedEffort: 'high' })).toBe('low');
-    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: 'high' })).toBe('high');
-    expect(resolveSourceEffort({ taskEffortOverride: null, liveEffort: null, appliedEffort: null })).toBeNull();
-    expect(resolveSourceEffort({ taskEffortOverride: undefined, liveEffort: undefined, appliedEffort: undefined })).toBeNull();
+    // The target differs from applied in every row, so the downgrade guard
+    // stays out of the way and only the tier order is under test.
+    const levels = { firstReportedEffort: null, targetEffort: 'max' };
+    expect(resolveSourceEffort({ ...levels, taskEffortOverride: 'xhigh', liveEffort: 'low', appliedEffort: 'high' })).toBe('xhigh');
+    expect(resolveSourceEffort({ ...levels, taskEffortOverride: null, liveEffort: 'low', appliedEffort: 'high' })).toBe('low');
+    expect(resolveSourceEffort({ ...levels, taskEffortOverride: null, liveEffort: null, appliedEffort: 'high' })).toBe('high');
+    expect(resolveSourceEffort({ ...levels, taskEffortOverride: null, liveEffort: null, appliedEffort: null })).toBeNull();
+    expect(resolveSourceEffort({ ...levels, taskEffortOverride: undefined, liveEffort: null, appliedEffort: undefined })).toBeNull();
+  });
+
+  // applied = what the launch asked for, first = the agent's first report,
+  // live = its report now, target = what the move or pick wants.
+  it.each([
+    ['a downgrade of the target, unmoved since launch', { applied: 'max', first: 'high', live: 'high', target: 'max' }, 'max', null],
+    ['a downgraded session moved to the level it runs at', { applied: 'max', first: 'high', live: 'high', target: 'high' }, 'high', null],
+    ['a manual /effort off the launch level', { applied: 'high', first: 'high', live: 'medium', target: 'high' }, 'medium', 'effort'],
+    ['a manual /effort on a downgraded session', { applied: 'max', first: 'high', live: 'medium', target: 'max' }, 'medium', 'effort'],
+    ['a target the session was never launched at', { applied: 'high', first: 'high', live: 'high', target: 'max' }, 'high', 'effort'],
+    ['no live report, so the record decides', { applied: 'high', first: null, live: null, target: 'high' }, 'high', null],
+    ['no live report and a different target', { applied: 'high', first: null, live: null, target: 'max' }, 'high', 'effort'],
+    ['a null target (Default) never takes the guard', { applied: 'max', first: 'high', live: 'high', target: null }, 'high', null],
+  ] as const)('resolves %s', (_label, levels, expectedSource, expectedRestart) => {
+    const sourceEffort = resolveSourceEffort({
+      taskEffortOverride: null,
+      liveEffort: levels.live,
+      firstReportedEffort: levels.first,
+      appliedEffort: levels.applied,
+      targetEffort: levels.target,
+    });
+    expect(sourceEffort).toBe(expectedSource);
+    expect(resolveRestartReason({
+      sourceModel: 'opus',
+      targetModel: 'opus',
+      sourceEffort,
+      targetEffort: levels.target,
+    })).toBe(expectedRestart);
+  });
+
+  it('keeps a per-task pin ahead of the downgrade guard', () => {
+    expect(resolveSourceEffort({
+      taskEffortOverride: 'low',
+      liveEffort: 'high',
+      firstReportedEffort: 'high',
+      appliedEffort: 'max',
+      targetEffort: 'max',
+    })).toBe('low');
   });
 });
 
@@ -907,24 +1005,32 @@ describe('resolveRestartReason and restartPhaseFor', () => {
   });
 });
 
-describe('resolveLiveEffort', () => {
-  const cacheWith = (entries: Record<string, string | undefined>) => ({
+describe('resolveReportedEffort', () => {
+  const readerWith = (
+    entries: Record<string, string | undefined>,
+    firstReported: Record<string, string> = {},
+  ) => ({
     getUsageCache: () => Object.fromEntries(
       Object.entries(entries).map(([id, effort]) => [
         id,
         { model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8', effort } },
       ]),
     ) as never,
+    getFirstReportedEffort: (sessionId: string) => firstReported[sessionId] ?? null,
   });
 
-  it('reads the reported effort for the session', () => {
-    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), 's1')).toBe('medium');
+  it('reads the live and the first reported effort for the session', () => {
+    expect(resolveReportedEffort(readerWith({ 's1': 'medium' }, { 's1': 'high' }), 's1'))
+      .toEqual({ liveEffort: 'medium', firstReportedEffort: 'high' });
   });
 
-  it('returns null for a session with no id, no cache entry, or no reported effort', () => {
-    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), null)).toBeNull();
-    expect(resolveLiveEffort(cacheWith({ 's1': 'medium' }), 'other')).toBeNull();
-    expect(resolveLiveEffort(cacheWith({ 's1': undefined }), 's1')).toBeNull();
+  it('returns nulls for a session with no id, no cache entry, or no reported effort', () => {
+    expect(resolveReportedEffort(readerWith({ 's1': 'medium' }, { 's1': 'medium' }), null))
+      .toEqual({ liveEffort: null, firstReportedEffort: null });
+    expect(resolveReportedEffort(readerWith({ 's1': 'medium' }), 'other'))
+      .toEqual({ liveEffort: null, firstReportedEffort: null });
+    expect(resolveReportedEffort(readerWith({ 's1': undefined }), 's1'))
+      .toEqual({ liveEffort: null, firstReportedEffort: null });
   });
 });
 

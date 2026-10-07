@@ -128,6 +128,21 @@ export class UsageAccumulator {
    * still shows a correct percentage on the board without being opened.
    */
   private knownWindowByModel = new Map<string, number>();
+  /**
+   * The first effort level each session's agent reported, kept apart from the
+   * usage itself because a status write replaces that object whole. Every
+   * spawn or resume mints a new session id, so this is the level the agent
+   * settled on for the `applied_effort` its launch asked for, after any silent
+   * downgrade. `resolveSourceEffort` compares the live level against it to
+   * tell a downgrade a restart cannot undo from a manual `/effort`. Claude
+   * writes status.json when its statusline first paints, which normally comes
+   * before anyone can type `/effort`. The exception is a PTY whose statusline
+   * has not painted yet (a never-opened background session) and gets an
+   * `/effort` typed into it first: that level is recorded as the first report,
+   * and a later move into a column at the launch level does not realign it.
+   * Telling the two apart would need per-model effort levels.
+   */
+  private firstReportedEffort = new Map<string, string>();
 
   /** Latest cached usage for a session, or undefined if none recorded yet. */
   getSessionUsage(sessionId: string): SessionUsage | undefined {
@@ -242,6 +257,7 @@ export class UsageAccumulator {
       mergedContext.usedPercentage = (mergedContext.usedTokens / mergedContext.contextWindowSize) * 100;
     }
     this.usageCache.set(sessionId, next);
+    this.noteFirstReportedEffort(sessionId, next);
     return next;
   }
 
@@ -273,6 +289,24 @@ export class UsageAccumulator {
     // sibling background sessions it back-fills) is done by the caller
     // (SessionTelemetry.processStatusUpdate) so it can push the re-emits.
     this.usageCache.set(sessionId, usage);
+    this.noteFirstReportedEffort(sessionId, usage);
+  }
+
+  /**
+   * The first effort level the session's agent reported, or null before it has
+   * reported one (or when it never does: a model with no effort levels, an
+   * agent with no live telemetry). See `firstReportedEffort`.
+   */
+  getFirstReportedEffort(sessionId: string): string | null {
+    return this.firstReportedEffort.get(sessionId) ?? null;
+  }
+
+  private noteFirstReportedEffort(sessionId: string, usage: SessionUsage): void {
+    if (this.firstReportedEffort.has(sessionId)) return;
+    // `model` is required on the type, but several adapters build sparse usage
+    // through an `as unknown as SessionUsage` cast.
+    const effort = usage.model?.effort;
+    if (effort) this.firstReportedEffort.set(sessionId, effort);
   }
 
   /**
@@ -499,5 +533,6 @@ export class UsageAccumulator {
     this.usageCache.delete(sessionId);
     this.toolStats.delete(sessionId);
     this.compactionCounts.delete(sessionId);
+    this.firstReportedEffort.delete(sessionId);
   }
 }

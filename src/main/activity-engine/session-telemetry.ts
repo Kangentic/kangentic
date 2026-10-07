@@ -1013,6 +1013,11 @@ export class SessionTelemetry {
     return this.usage.getUsageCache();
   }
 
+  /** See `UsageAccumulator.getFirstReportedEffort`. */
+  getFirstReportedEffort(sessionId: string): string | null {
+    return this.usage.getFirstReportedEffort(sessionId);
+  }
+
   getActivityCache(): Record<string, ActivityState> {
     return this.activityEngine.getActivityCache();
   }

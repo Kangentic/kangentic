@@ -589,6 +589,14 @@ counterparts (see [Call-time override validation](#kangentic_create_task)). Only
 on the call are checked - a task's stored pins are never re-validated, so a labels-only follow-up
 still succeeds on a task carrying a since-deprecated model.
 
+A write that changes `model`, `effort`, `profile`, or `runMode` on a task with a running session
+is applied to that session the way a ContextBar pick is: when the session runs at something other
+than the new settings, it restarts with them as launch flags, in the background after the call
+returns. A session already on the new settings is left alone, and so is one whose stored settings
+the write did not change, such as a run mode sent again at its current value. The restart ends the session's
+current turn, which is the caller's own turn when an agent updates its own task, and the reply says
+so. See [Command Injection](command-injection.md).
+
 Setting `prUrl` or `prNumber` also clears the task's stored PR state and merge readiness, so the four PR columns never disagree; a forced resolve fires immediately after the write and fills both back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR Integration](pr-integration.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:

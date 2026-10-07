@@ -17,9 +17,25 @@ A column or Board Profile edit (`propagateStrategyToLiveSessions`) restarts ever
 in that column it changes, each resuming idle. Each restart runs under its own task lock and first
 re-reads the task: if a move, a ContextBar pick, or an earlier edit already restarted or moved the
 session, it skips. An edit that did not change effort never restarts for effort, so drift it never
-touched (a manual `/effort`, a silent downgrade) leaves the turn alone; a move still realigns it.
-The ContextBar pick decides with the same rule, `resolveRestartReason`, over the task's effective
-values.
+touched (a manual `/effort`) leaves the turn alone; a move still realigns it.
+The ContextBar pick decides with the same rule, `resolveRestartReason`, in
+`applyTaskSettingsToLiveSession` (`task-runtime-override.ts`). The target is the task's effective
+value after the write. The source is what the session runs at: for effort, the same
+`resolveSourceEffort` a move uses, with the task's pin left out because the pin is what the pick
+changes; for model, the session's `applied_model`. So picking an effort the user already set by
+hand with `/effort`, or the model a Default column kept the session on, saves the pin without a
+restart. Only the fields the pick touched count, so an effort pick never restarts to realign a
+model the session drifted from. The record it reads is the live session's own
+(`resolveOwnSessionRecord`), not the task's newest, which can belong to an isolated track.
+
+An agent or the phone setting a model or effort pin, a profile, or a run mode through
+`kangentic_update_task` reaches the running session the same way: the MCP host calls
+`applyTaskSettingsToLiveSession` under the task lock, after the tool reply is sent. A field counts
+as changed only when the write moved its stored value; a profile or run-mode change counts for
+both. So an agent re-sending the run mode the task already has leaves a manual `/effort` alone.
+Until now that write only took effect at the next spawn, and a move still reads the pin first, so
+nothing realigned the session. The restart ends the session's current turn, which is the
+calling agent's own turn when it updates its own task; the tool's reply says so.
 
 Effort used to switch live with a typed `/effort`. That could not be confirmed where it mattered
 most: a plan-exit move always lands mid-turn, a mid-turn `/effort` writes no transcript entry, and
@@ -46,20 +62,32 @@ prompt cache; a resume that also changes `--effort` has not been sampled yet.
   column's config. The leaving column disagrees with reality after an in-flight ContextBar switch
   or a `kangentic.json` column-config edit, and is null on a move with no resolvable
   leaving-column - either case used to manufacture a spurious change even though the
-  spawn/resume `--model` / `--effort` flags had already applied the value.
+  spawn/resume `--model` / `--effort` flags had already applied the value. `record` is the live
+  session's own record (`resolveOwnSessionRecord`), not the task's newest, which can belong to an
+  isolated track.
   - **Effort:** `task.effort_override ?? <agent-reported effort> ?? record.applied_effort ?? null`
-    (`resolveSourceEffort`). `applied_effort` records what Kangentic *asked for*; an `/effort` the
+    (`resolveSourceEffort`, subject to the silent-downgrade rule below). `applied_effort` records what Kangentic *asked for*; an `/effort` the
     user types straight into the terminal never reaches it. Preferring the agent's own reported
     level fixes the case where applied = `high`, the user switched to `medium` by hand, and the
     destination column requires `high`: source and target would both read `high`, nothing would
     restart, and the session would silently keep running at `medium`. Callers resolve the live
-    value with `resolveLiveEffort(usageCacheReader, sessionId)`, where the reader is anything
-    exposing `getUsageCache()` (the handlers pass `context.sessionManager`). It is null for agents
-    with no live telemetry and for models with no effort levels, where the record decides.
-    One known cost follows from it: Claude reports the level in force after any silent downgrade
-    for its model, so a column asking for a level the model downgrades (say `max` on a model that
-    tops out at `high`) reads as changed on every move into it and restarts each time. That is
-    accepted and pinned in `injection-plan.test.ts`.
+    value with `resolveReportedEffort(reader, sessionId)`, where the reader exposes
+    `getUsageCache()` and `getFirstReportedEffort(sessionId)` (the handlers pass
+    `context.sessionManager`). It is null for agents with no live telemetry and for models with no
+    effort levels, where the record decides.
+  - **A silent downgrade counts as applied.** Claude reports the level in force after any silent
+    downgrade for its model, so a column asking for `max` on a model that tops out at `high` sees
+    `high` reported back. Read plainly, every move into that column would restart, and each
+    restart would land on `high` again. So the source is the target itself when two things hold:
+    the target equals `applied_effort` (this session was launched at it), and the live level still
+    equals the first level the agent reported after that launch (nobody has typed `/effort`
+    since). `UsageAccumulator` keeps that first report per session id; every spawn or resume mints
+    a new id, so it pairs with exactly one `applied_effort`. Both conditions are needed: a session
+    launched at `max` and running at `high` must still read `high` when it moves into a `high`
+    column, or it would restart for nothing. One cost remains. A session never launched at the
+    target cannot know the model will downgrade it, so a session at `high` moved into a `max`
+    column restarts once, and the moves after that converge. Removing that one restart needs
+    per-model effort levels, and adapters discover `effortLevels` per agent from `--help`.
   - **Model:** `task.model_override ?? record.applied_model ?? null`. Deliberately *not* sourced
     from telemetry: the agent reports a canonical id (`claude-opus-4-8`) while the configured
     values are flag strings (`opus`), so comparing across those id spaces would read "changed" on
@@ -523,7 +551,7 @@ Every "before" failure in the picker sweep fell in the 100-200ms band - exactly 
 
 ## Files
 
-- `src/main/transition-engine/injection-plan.ts` - decides the `restartReason` (`'model'` / `'effort'` / null) for a column transition or column/profile edit, and builds the auto_command sequence (with its verify mode) + verifier; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort` (`resolveLiveEffort` / `resolveSourceEffort`) and the model delta from `applied_model` alone.
+- `src/main/transition-engine/injection-plan.ts` - decides the `restartReason` (`'model'` / `'effort'` / null) for a column transition or column/profile edit, and builds the auto_command sequence (with its verify mode) + verifier; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort`, counting a silent downgrade of the launch level as applied (`resolveReportedEffort` / `resolveSourceEffort`), and the model delta from `applied_model` alone. `resolveTargetSettings` resolves the target side for a move and a ContextBar pick alike.
 - `src/main/transition-engine/terminal-submit-scheduler.ts` - task-keyed lifecycle: the burst FIFO, fresh-spawn wait, deferred wait, escalation, and outcome reporting.
 - `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate.
 - `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (handshake chain, prompt-state policy, per-command verification).

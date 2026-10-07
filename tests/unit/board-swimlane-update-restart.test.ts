@@ -144,6 +144,7 @@ interface MockContext {
   sessionManager: {
     getSession: ReturnType<typeof vi.fn>;
     getUsageCache: ReturnType<typeof vi.fn>;
+    getFirstReportedEffort: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
   boardConfigManager: {
@@ -179,9 +180,10 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     currentProjectPath: '/mock/board-project',
     sessionManager: {
       getSession: vi.fn(() => ({ status: 'running' })),
-      // Read by resolveLiveEffort; empty = the agent reports no effort, so the
-      // delta source falls back to the session record as it did before.
+      // Read by resolveReportedEffort; empty = the agent reports no effort, so
+      // the delta source falls back to the session record as it did before.
       getUsageCache: vi.fn(() => ({})),
+      getFirstReportedEffort: vi.fn(() => null),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     boardConfigManager: {

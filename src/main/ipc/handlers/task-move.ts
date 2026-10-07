@@ -40,7 +40,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan, resolveLiveEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
+import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -1045,7 +1045,7 @@ export async function handleTaskMove(
             toLane: toLane ?? null,
             project,
             autoCommand: interpolatedAuto,
-            liveEffort: resolveLiveEffort(context.sessionManager, task.session_id),
+            ...resolveReportedEffort(context.sessionManager, task.session_id),
           });
 
           // 1. Model or effort change -> suspend + respawn. Checked BEFORE live

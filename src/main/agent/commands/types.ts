@@ -75,6 +75,20 @@ export interface CommandContext {
    * caller's `?.`.
    */
   onTaskPrLinkChanged?: (task: Task) => void;
+  /**
+   * A write changed what model or effort the task should run at (a model or
+   * effort pin, a profile, or the run mode). The host applies it to the task's
+   * live session the way the ContextBar pick does, restarting it when it runs
+   * at something else; without this an agent or phone write only took effect
+   * at the next spawn. Called after `onTaskUpdated`, with the written row and
+   * which targets the stored values moved, and only when one did: a write that
+   * re-sends a value the task already holds must not restart a session the
+   * user tuned by hand.
+   *
+   * Optional for the same reason as `onTaskPrLinkChanged`: test suites
+   * hand-build a context. The production builder implements it.
+   */
+  onTaskSettingsChanged?: (task: Task, changed: { model: boolean; effort: boolean }) => void;
   onTaskDeleted: (task: Task) => void;
   onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
   /**
