@@ -49,7 +49,7 @@ All DB status transitions flow through `src/main/transition-engine/session-lifec
 2. **Priority 1 - Target is To Do** (role=`todo`) -- Cancel pending commands, kill session, full cleanup (remove worktree + delete branch). Return.
 3. **Priority 2 - Target is Done** (role=`done`) -- Cancel pending commands, suspend session (resumable), auto-archive, delete the worktree directory while preserving `branch_name` + session records. Accepts both `running` AND `exited` sessions. Return.
 4. **Priority 2.5 - Target has `auto_spawn=false`** -- Cancel pending commands, suspend if a session exists, do NOT respawn. Return.
-5. **Priority 3 - Task has active session** -- Agent change → suspend + handoff; same-agent live-swap → inject commands; model/effort delta with no live-swap → suspend + respawn; otherwise keep the session alive.
+5. **Priority 3 - Task has active session** -- Agent change → suspend + handoff; model or effort change to a concrete value → suspend + respawn with the new launch flags (never a typed `/model` or `/effort`); a column message alone → inject it into the running session; otherwise keep the session alive.
 6. **Priority 4 - No active session** -- Return a plan; Phase 2 (re)creates the worktree, Phase 3 spawns/resumes.
 
 **Critical invariant:** state-changing branches call `terminalSubmitScheduler.cancel(taskId)` BEFORE the change, so a pending auto-command can't fire after the session is killed/suspended.
