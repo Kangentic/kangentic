@@ -14,8 +14,11 @@ ground truth taken from later passes. Results and the first run's outcome are in
 | `decide.mjs` | The pre-registered decision rules as code (`tests/unit/review-eval-decide.test.ts`) |
 | `prepare.mjs` | Makes a detached replay worktree and builds its pack with `--out-dir` and `--shard-lines 1500` |
 | `extract-finder-prompts.mjs` | Pulls a historical driver's Agent prompts out of its session transcript |
+| `collect-reports.mjs` | Writes each finder's final report under a random id for the blind scorer, plus a key file beside the folder |
 | `cost.mjs` | Tokens, USD, advisor calls and tool calls from subagent transcripts, with prices passed in |
+| `tally.mjs` | Joins a scorer's output with the key, the corpus and the transcripts into per-arm hits and USD for one case |
 | `verdict-replay.json` | E4's input: historical passes, each item mapped by the rule below |
+| `run-verdict-replay.mjs` | E4: turns each pass in `verdict-replay.json` into a findings report and counts the bounces avoided |
 
 ## Reachability
 
@@ -44,11 +47,13 @@ The validity rule: an entry whose line cannot be confirmed with `git show <sha>:
 3. Arms: A is today's shape (one finder when the pack fits; the historical area shards for S1),
    B reads the header plus one `shards:` range per finder, C is arm A's shape with `model: opus`
    (effort stays at the agent's medium), D (only if A to C leave a gap) is Sonnet at high effort.
-4. Save each finder's final message to a file named by a random id. A blind scorer agent gets the
+4. `node scripts/review-eval/collect-reports.mjs <runs.json> <experiment> <case id> <out dir>` saves
+   each finder's final message under a random id, into a new folder. A blind scorer agent gets the
    anonymized files and the ground truth and returns, per finding, the matched entry id or none.
 5. `node scripts/review-eval/cost.mjs --prices <prices.json> <transcripts>` per arm, with prices
    from the `claude-api` skill on the day of the run.
-6. Feed the hits and costs to `decide.mjs`.
+6. `node scripts/review-eval/tally.mjs <case id> <scores.json> <key.json> --prices <prices.json>`
+   joins the scores, the key and the costs per arm. Feed its hits and costs to `decide.mjs`.
 
 Clean up worktrees with `git worktree remove --force <exact path>`. Never delete by glob: a cleanup
 glob in another session once removed a temp folder that session had not created.
@@ -86,6 +91,8 @@ glob in another session once removed a temp folder that session had not created.
     comment, a coverage hole in any tier, a one-site out-of-diff fix).
 
   A pass whose old verdict was Needs revision and whose new verdict is Ready is one bounce avoided.
+  Run it with `node scripts/review-eval/run-verdict-replay.mjs`, and add `--macos-runnable` for the
+  reading that treats a Mac-only skip as runnable through the CI macOS leg.
   The replay is counterfactual: fixing a skip can itself raise new findings. E3 tested a delta round
   for exactly that and it was not adopted (audit section 15).
 

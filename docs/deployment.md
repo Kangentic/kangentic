@@ -92,7 +92,7 @@ To roll back to a previous version, run `npx kangentic@X.Y.Z` with the desired v
 
 ### Commit Conventions
 
-All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. A husky commit-msg hook runs commitlint to enforce this. The commit skills (`/commit`, `/pull-request`, `/merge-pull-request`, `/merge-back`) auto-generate conventional commit messages from diffs.
+All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. A husky commit-msg hook runs commitlint to enforce this. The config in `package.json` extends `@commitlint/config-conventional` with one change: footer lines have no length cap, because a `/code-review` commit carries its `Refuted:` and `Decisions:` ledger as one trailer-shaped line per item, and a later pass reads each item back from that one line (`tests/unit/review-ledger-commitlint.test.ts`). The commit skills (`/commit`, `/pull-request`, `/merge-pull-request`, `/merge-back`) auto-generate conventional commit messages from diffs.
 
 Common prefixes: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `perf:`, `ci:`, `build:`. Add `!` after the type for breaking changes (e.g., `feat!:`).
 

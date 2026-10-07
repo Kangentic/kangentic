@@ -6,6 +6,8 @@
  * 2. E2 adopts the precision bar only when recall holds AND the volume cut is at least 30%,
  *    with exactly 30% adopting.
  * 3. E3 adopts delta verify at 3 of 4 caught and refuses at 2, and D5 is never counted.
+ * 4. Malformed input throws instead of deciding: no arms for E1, and a missing or non-boolean
+ *    result for any counted E3 case.
  */
 import { describe, it, expect } from 'vitest';
 import { pickCorrectnessArm, adoptPrecisionBar, adoptDeltaVerify } from '../../scripts/review-eval/decide.mjs';
@@ -46,6 +48,10 @@ describe('E1 pickCorrectnessArm', () => {
     ]);
     expect(result.chosen).toBe('C');
   });
+
+  it('throws on an empty arm list instead of picking from nothing', () => {
+    expect(() => pickCorrectnessArm([])).toThrow('needs at least one arm');
+  });
 });
 
 describe('E2 adoptPrecisionBar', () => {
@@ -79,5 +85,18 @@ describe('E3 adoptDeltaVerify', () => {
 
   it('throws when a counted case has no result', () => {
     expect(() => adoptDeltaVerify({ D1: true, D2: true, D3: true })).toThrow('D4');
+  });
+
+  it('throws when the FIRST counted case is the one missing', () => {
+    expect(() => adoptDeltaVerify({ D2: true, D3: true, D4: true })).toThrow('D1');
+  });
+
+  it('throws on a counted case whose result is not a boolean', () => {
+    expect(() => adoptDeltaVerify({ D1: true, D2: 'yes', D3: true, D4: true } as unknown as Record<string, boolean>)).toThrow('D2');
+    expect(() => adoptDeltaVerify({ D1: true, D2: true, D3: 1, D4: true } as unknown as Record<string, boolean>)).toThrow('D3');
+  });
+
+  it('does not throw when only the D5 control is missing', () => {
+    expect(() => adoptDeltaVerify({ D1: true, D2: true, D3: true, D4: true })).not.toThrow();
   });
 });
