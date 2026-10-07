@@ -11,10 +11,10 @@
  * Usage: node scripts/review-verdict.mjs <findings.json> [--ledger]
  *   default   prints the Summary block, the Decisions made list, and the closing verdict block.
  *             The skill pastes that output verbatim and makes the closing block the LAST thing in
- *             the pass's final message, so a person and an agent read the same two signals: the
- *             first line `Verdict: Ready` or `Verdict: Blocked`, the last line `Next: ...`. The
- *             old prose verdicts above included a "Clean"; the new one is "Ready" so it names the
- *             next step (Testing) and cannot be read as the report's "no uncommitted files" line.
+ *             the pass's final message, so a person and an agent read the same signal: the line
+ *             `Verdict: Ready`, or `Verdict: Blocked` followed by one numbered step per blocker.
+ *             The old prose verdicts above included a "Clean"; the new one is "Ready" so it
+ *             cannot be read as the report's "no uncommitted files" line.
  *   --ledger  prints only the `Refuted:` and `Decisions:` lines for the review commit body. A later
  *             pass reads them back with `git log --grep="(review)" --format=%B <base>..HEAD`. Keyed
  *             by file, symbol and mechanism, never by line number, because line numbers drift
@@ -219,16 +219,11 @@ export function renderSummary(report) {
   return lines.join('\n');
 }
 
-/** The last block of the pass's final message: verdict first, next step last. */
+/** The last block of the pass's final message: the verdict, then any blocking steps. */
 export function renderClosingBlock(report) {
   const { verdict, blockers } = computeVerdict(report);
   const lines = [`Verdict: ${verdict}`];
   blockers.forEach((blocker, blockerIndex) => lines.push(`${blockerIndex + 1}. ${blocker.location}: ${blocker.step}`));
-  lines.push(
-    verdict === 'Ready'
-      ? 'Next: move the card to Testing.'
-      : 'Next: move the card back to Executing and do the steps above.',
-  );
   return lines.join('\n');
 }
 
