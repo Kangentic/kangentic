@@ -16,9 +16,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  isPtyEchoDeferredToReplaySettle,
   resolvePtyEchoReassert,
   type PtyEchoReassertAttempts,
   type PtyEchoReassertInput,
+  type PtyEchoSkipReason,
 } from '../../src/renderer/hooks/useTerminal';
 
 const NOW = 1_000_000;
@@ -99,7 +101,7 @@ describe('resolvePtyEchoReassert', () => {
     });
   });
 
-  it('skips while a replay is in flight (the replay own fit and resize settle the dims)', () => {
+  it('skips while a replay is in flight (deferred to that replay settle, see isPtyEchoDeferredToReplaySettle)', () => {
     expect(resolvePtyEchoReassert(makeInput({ replayPending: true }))).toMatchObject({ action: 'skip', reason: 'replay-in-flight' });
   });
 
@@ -197,5 +199,28 @@ describe('resolvePtyEchoReassert', () => {
       }
       expect(rounds).toEqual(['reassert', 'reassert', 'attempt-cap', 'attempt-cap']);
     });
+  });
+});
+
+describe('isPtyEchoDeferredToReplaySettle', () => {
+  // The E2E incident: a rogue resize landed while the window's opening replay
+  // was in flight, was skipped as replay-in-flight, and the replay settled
+  // without sending a resize (its fit changed nothing on this side), so the PTY
+  // stayed at the rogue grid. A replay-in-flight skip is only safe if the
+  // settle judges it again. Every other skip either needs no heal (in-sync),
+  // must not heal (the holds, parked, the cap), or heals by itself (the pending
+  // own resize carries this terminal's dims).
+  const expectedDeferral: Record<PtyEchoSkipReason, boolean> = {
+    'in-sync': false,
+    'foreign-hold': false,
+    'refused-hold': false,
+    parked: false,
+    'replay-in-flight': true,
+    'own-resize-pending': false,
+    'attempt-cap': false,
+  };
+
+  it.each(Object.entries(expectedDeferral))('%s deferred to the replay settle: %s', (reason, deferred) => {
+    expect(isPtyEchoDeferredToReplaySettle(reason as PtyEchoSkipReason)).toBe(deferred);
   });
 });

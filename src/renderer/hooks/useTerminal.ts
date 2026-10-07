@@ -406,8 +406,10 @@ export interface PtyEchoReassertInput {
  *   until the hold window lapses, whatever dims later echoes carry.
  * - `parked`: this terminal is off-view; it must not reshape a grid it is not
  *   showing (the reveal reload re-fits when it comes back).
- * - `replay-in-flight`: the replay's own fit + resize settle the dims; its
- *   resize's echo then self-filters as in-sync.
+ * - `replay-in-flight`: deferred, not dropped. A replay sends a resize only
+ *   when its fit changes the grid, and a divergence it did not cause changes
+ *   nothing on this side, so the replay's settle judges the last echo again
+ *   (see isPtyEchoDeferredToReplaySettle).
  * - `own-resize-pending`: our debounced onResize send is about to assert these
  *   dims anyway.
  * - `attempt-cap`: the time-windowed budget (see
@@ -441,6 +443,21 @@ export function resolvePtyEchoReassert(input: PtyEchoReassertInput): PtyEchoReas
     signature,
     nextAttempts: { signature, count: attemptsForSignature + 1, lastScheduledAt: input.now },
   };
+}
+
+/**
+ * Whether a skipped echo is judged again when the replay in flight settles.
+ *
+ * Only `replay-in-flight`. That skip used to assume the replay's own fit and
+ * resize would settle the dims, but xterm reports a resize only when its own
+ * grid changes, and a PTY reshaped under the terminal changes nothing on this
+ * side. The replay then settled without sending anything, no later echo came to
+ * retry, and the PTY stayed at the rogue grid for good. `own-resize-pending` is
+ * not deferred: the pending send carries this terminal's own dims, so it heals
+ * the PTY by itself. Pure and exported for unit tests.
+ */
+export function isPtyEchoDeferredToReplaySettle(reason: PtyEchoSkipReason): boolean {
+  return reason === 'replay-in-flight';
 }
 
 /** Options for `reloadScrollback` (and the ref the watchdog re-issues through).
@@ -627,6 +644,16 @@ export function useTerminal(options: UseTerminalOptions) {
   /** When main last refused a re-assert (the mobile sub-floor guard); arms the
    *  refused-hold guard in resolvePtyEchoReassert. */
   const echoRefusedAtRef = useRef<number | null>(null);
+  /** The last PTY grid main announced for this session. Echoes arrive in order
+   *  and only on a real change, so this is the PTY's grid as far as this
+   *  terminal knows. */
+  const lastPtyEchoRef = useRef<{ cols: number; rows: number; origin: PtyResizeOrigin } | null>(null);
+  /** A divergence was deferred to the replay in flight, so that replay's settle
+   *  owes it a second judgment (see isPtyEchoDeferredToReplaySettle). */
+  const ptyEchoRecheckOwedRef = useRef(false);
+  /** Pays that debt. Set by the echo listener effect, which is declared below
+   *  settleScrollback, the one place every replay exit passes through. */
+  const recheckPtyEchoRef = useRef<(() => void) | null>(null);
   /** Coalesces xterm onData bursts (paste, key-repeat, clipboard callback)
    *  into one IPC write per microtask. */
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
@@ -973,6 +1000,9 @@ export function useTerminal(options: UseTerminalOptions) {
     scrollbackPendingRef.current = false;
     if (shouldKickIncomingQueue) incomingResumeRef.current?.();
     onScrollbackSettledRef.current?.();
+    // Last, once the replay no longer counts as in flight: judge any divergence
+    // that was deferred to this replay.
+    recheckPtyEchoRef.current?.();
   }, []);
 
   /** Discharge this terminal's arrival-focus obligation, at most once per arrival.
@@ -1640,10 +1670,14 @@ export function useTerminal(options: UseTerminalOptions) {
     echoReassertTimerRef.current = null;
     const terminal = xtermRef.current;
     if (!terminal || !fitAddonRef.current) return;
-    // Re-checked at fire time (the debounce is 150ms of drift): a replay that
-    // started meanwhile owns settling the dims via its own fit + resize, and a
-    // parked terminal must not reshape a grid it is not showing.
-    if (scrollbackPendingRef.current || isTerminalParked(sessionId)) return;
+    // Re-checked at fire time (the debounce is 150ms of drift): a parked
+    // terminal must not reshape a grid it is not showing, and a replay that
+    // started meanwhile must not be raced. That replay sends a resize only if
+    // its fit changes the grid, so the divergence is deferred to its settle.
+    if (scrollbackPendingRef.current || isTerminalParked(sessionId)) {
+      if (scrollbackPendingRef.current) ptyEchoRecheckOwedRef.current = true;
+      return;
+    }
     // Re-fit first: the container may have moved during the debounce, and our
     // OWN fitted grid is the thing being re-asserted. A hold is dropped for it:
     // the PTY's grid moved under us, so main is asked afresh, and a `held`
@@ -1708,18 +1742,23 @@ export function useTerminal(options: UseTerminalOptions) {
   useEffect(() => {
     const sessionId = options.sessionId;
     if (!sessionId) return;
-    const cleanup = window.electronAPI.sessions.onPtyResized((resizedSessionId, cols, rows, origin) => {
-      if (resizedSessionId !== sessionId) return;
+    /** Judge one echoed grid against this terminal's own and schedule the
+     *  re-assert when they disagree. Shared by the echo and by the second
+     *  judgment a settling replay owes, so both spend the same budget. */
+    const judgePtyEcho = (
+      echo: { cols: number; rows: number; origin: PtyResizeOrigin },
+      trigger: 'echo' | 'replay-settle',
+    ): void => {
       const terminal = xtermRef.current;
       // Not initialized yet: the mount replay fits and resizes at the settled
       // geometry on its own.
       if (!terminal) return;
       const decision = resolvePtyEchoReassert({
-        echoedCols: cols,
-        echoedRows: rows,
+        echoedCols: echo.cols,
+        echoedRows: echo.rows,
         ownCols: terminal.cols,
         ownRows: terminal.rows,
-        origin,
+        origin: echo.origin,
         replayPending: scrollbackPendingRef.current,
         parked: isTerminalParked(sessionId),
         ownResizePending: resizeTimerRef.current !== null,
@@ -1728,15 +1767,19 @@ export function useTerminal(options: UseTerminalOptions) {
         now: Date.now(),
       });
       traceTerminalRenderer(sessionId, 'pty-resize-echo', {
-        cols,
-        rows,
-        origin,
+        cols: echo.cols,
+        rows: echo.rows,
+        origin: echo.origin,
         ownCols: terminal.cols,
         ownRows: terminal.rows,
+        trigger,
         action: decision.action,
         reason: decision.action === 'skip' ? decision.reason : undefined,
       });
-      if (decision.action === 'skip') return;
+      if (decision.action === 'skip') {
+        if (isPtyEchoDeferredToReplaySettle(decision.reason)) ptyEchoRecheckOwedRef.current = true;
+        return;
+      }
       // The budget is spent at SCHEDULE time: an echo burst coalesces into one
       // debounced pass, but every occurrence counts, so no echo pattern can
       // queue unbounded corrective work.
@@ -1745,9 +1788,24 @@ export function useTerminal(options: UseTerminalOptions) {
       echoReassertTimerRef.current = setTimeout(() => {
         void reassertOwnGrid(sessionId);
       }, ECHO_REASSERT_DEBOUNCE_MS);
+    };
+    const cleanup = window.electronAPI.sessions.onPtyResized((resizedSessionId, cols, rows, origin) => {
+      if (resizedSessionId !== sessionId) return;
+      const echo = { cols, rows, origin };
+      lastPtyEchoRef.current = echo;
+      // A newer echo is judged on its own, so it replaces any earlier deferral.
+      ptyEchoRecheckOwedRef.current = false;
+      judgePtyEcho(echo, 'echo');
     });
+    recheckPtyEchoRef.current = () => {
+      if (!ptyEchoRecheckOwedRef.current) return;
+      ptyEchoRecheckOwedRef.current = false;
+      const lastEcho = lastPtyEchoRef.current;
+      if (lastEcho) judgePtyEcho(lastEcho, 'replay-settle');
+    };
     return () => {
       cleanup();
+      recheckPtyEchoRef.current = null;
       if (echoReassertTimerRef.current) {
         clearTimeout(echoReassertTimerRef.current);
         echoReassertTimerRef.current = null;
@@ -1758,6 +1816,8 @@ export function useTerminal(options: UseTerminalOptions) {
       // real divergence inside the window and suppress its heal.
       echoReassertAttemptsRef.current = null;
       echoRefusedAtRef.current = null;
+      lastPtyEchoRef.current = null;
+      ptyEchoRecheckOwedRef.current = false;
     };
   }, [options.sessionId, reassertOwnGrid]);
 

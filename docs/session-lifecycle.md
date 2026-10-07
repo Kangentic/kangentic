@@ -1138,8 +1138,13 @@ phone needs and reads the rest by request.
   pure `resolvePtyEchoReassert` (exported from `useTerminal.ts`): in-sync self-filter first,
   then foreign-hold (`mobile`/`park` origins - a phone or the park legitimately holds the grid;
   `spawn` is healable), refused-hold (see below), parked, replay-in-flight, own-resize-pending,
-  and last a TIME-WINDOWED budget (2 re-asserts per divergence signature per 10s) - deliberately
-  not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
+  and last a TIME-WINDOWED budget. A replay-in-flight skip is deferred, not dropped
+  (`isPtyEchoDeferredToReplaySettle`): a replay sends a resize only when its fit changes the
+  grid, and a PTY reshaped under the terminal changes nothing on its side, so `settleScrollback`
+  judges the last echo again once the replay ends. The same holds for a re-assert whose debounce
+  fires while a replay is in flight. Before this, a rogue resize landing during a slow replay was
+  never healed. The budget allows 2 re-asserts per divergence signature per 10s and is
+  deliberately not reset by an in-sync echo, because in a two-surface fight each side's successful re-assert
   lands an in-sync echo at the other side, so a reset-on-heal budget never binds in exactly the
   livelock it exists to bound. `resize()` also reports `refused: true` from the mobile sub-floor
   branch (the one path where main deliberately holds the grid against the caller), which arms a
