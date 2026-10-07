@@ -2,6 +2,37 @@
 
 <!-- releases -->
 
+## [protocol-v0.17.0] - 2026-10-07
+
+Sends a task's paused state to the phone apart from the Resume gate. Additive;
+`PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains `paused`. It is true when the task has a paused session (a
+`suspended` session that is not a Command Terminal) and no live one, whatever its
+column and whether or not it is archived. It is the fact the desktop card's
+"Paused" footer reads, so a paused task in Done or on the archived page now sends
+`paused: true, resumable: false`. Before, `resumable` was the only paused signal on
+the board row, and a pause clears `session_id`, so the phone had no way to know a
+suspended session existed there. `resumable` stays the Resume gate, and
+`resumable: true` always comes with `paused: true`. A respawn queued behind the
+desktop's concurrency limit reads `paused: false`, as the desktop card shows the
+queued session. A `spawn_progress` label still overrides it, as on the card.
+
+Null or absent means a desktop older than 0.17.0, and a client then reads a paused
+task from `resumable` alone, as before. `view: 'sessions'` is unchanged on
+purpose: it keeps a resumable paused task and leaves out one that offers no
+Resume, even though that row now reads `paused: true`, because an agent feed has
+nothing to act on for it.
+
+A move into To Do removes the task's session rows on the desktop, so a task paused
+before that move sends `paused: false`, which matches the desktop card.
+
+### Features
+- Send a task's paused state apart from `resumable` on the board row (7e512cc5)
+
+### Other
+- State the paused rule once and tighten its doc comments (baa3fa39)
+
 ## [protocol-v0.16.0] - 2026-10-06
 
 Sends the desktop card's in-between states to the phone, and lets a phone
