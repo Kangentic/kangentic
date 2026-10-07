@@ -109,14 +109,16 @@ export function resetForcedRedialTelemetryForTests(): void {
 }
 
 /**
- * `read-stream/subscribe 3f2a9c1e from 441c40f8`: the verb, the payload's
- * `action` when it has one, and short ids to match the phone's own log by.
+ * `read-stream/subscribe <requestId> from 441c40f8`: the verb, the payload's
+ * `action` when it has one, the FULL requestId (the phone logs it whole, and a
+ * truncated one cannot be matched against the phone's own timing of the same
+ * request), and the short device id the bridge's other lines use.
  */
 function describeRequest(session: BridgeSession, request: CapabilityRequestMessage): string {
   const payload = request.payload;
   const action =
     payload !== null && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.action === 'string' ? `/${payload.action}` : '';
-  return `${request.verb}${action} ${request.requestId.slice(0, 8)} from ${session.deviceId.slice(0, 8)}`;
+  return `${request.verb}${action} ${request.requestId} from ${session.deviceId.slice(0, 8)}`;
 }
 
 export interface PairedDeviceSummary {

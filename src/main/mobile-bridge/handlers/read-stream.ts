@@ -736,10 +736,12 @@ export async function handleReadStream(
     // rides the service's slow-request line, so a slow open says whether the
     // time went here or on the wire.
     const seedStartedAt = performance.now();
+    let seedPhases = '';
     try {
       const seed = await context.sessionManager.getSeedFrame(payload.sessionId);
       scrollback = seed.frame;
       seedCoverage = { barrierOffset: seed.barrierOffset, racedChunks };
+      seedPhases = ` (settle ${seed.settleMs} ms, serialize ${seed.serializeMs} ms)`;
     } catch (serializeError) {
       endSeedCapture();
       subscriptions.remove(terminalStreamKeyFor(payload.sessionId));
@@ -748,7 +750,7 @@ export async function handleReadStream(
     noteRequestSpan(
       session.deviceId,
       request.requestId,
-      `seed ${Math.round(performance.now() - seedStartedAt)} ms, ${Math.round(scrollback.length / 1024)}k chars`,
+      `seed ${Math.round(performance.now() - seedStartedAt)} ms${seedPhases}, ${Math.round(scrollback.length / 1024)}k chars`,
     );
   }
   // Re-read the row now rather than trusting `liveSession`. The session can

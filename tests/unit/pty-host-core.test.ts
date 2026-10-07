@@ -148,6 +148,9 @@ describe('PtyHostCore', () => {
     const seed = await core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: false });
     expect(seed.barrierOffset).toBe('hello world'.length);
     expect(seed.frame).toContain('hello world');
+    // No settle was asked for, so that phase is empty; the serialize is timed.
+    expect(seed.settleMs).toBe(0);
+    expect(seed.serializeMs).toBeGreaterThanOrEqual(0);
   });
 
   it('merges outputSeen per window in the utility process, with a leading event', async () => {

@@ -2514,7 +2514,7 @@ export class SessionManager extends EventEmitter {
    * holds it) and slices the one that straddles it, so output racing the seed
    * reaches the phone exactly once.
    */
-  async getSeedFrame(sessionId: string): Promise<{ frame: string; barrierOffset: number }> {
+  async getSeedFrame(sessionId: string): Promise<{ frame: string; barrierOffset: number; settleMs: number; serializeMs: number }> {
     return this.host.getSeedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
   }
 
