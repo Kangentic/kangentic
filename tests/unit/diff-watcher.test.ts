@@ -86,6 +86,22 @@ describe('DiffWatcher', () => {
     vi.useRealTimers();
   });
 
+  // On Linux Node walks a recursive watch synchronously, one inotify watch per
+  // entry; `ignore` keeps node_modules, .git and .kangentic out of that walk
+  // (measured 16,447 watches and a 123-161 ms arm before, 482 and 9-12 ms after).
+  it('passes fs.watch an ignore that skips node_modules, .git and .kangentic and keeps source paths', async () => {
+    const fs = (await import('node:fs')).default;
+    watcher.subscribe('/project', vi.fn());
+    const treeWatchCall = vi.mocked(fs.watch).mock.calls.find(([watchPath]) => watchPath === '/project');
+    const options = treeWatchCall?.[1] as { recursive?: boolean; ignore?: (filename: string) => boolean } | undefined;
+    expect(options?.recursive).toBe(true);
+    expect(options?.ignore?.('node_modules/react/index.js')).toBe(true);
+    expect(options?.ignore?.('.git/objects/ab/cdef')).toBe(true);
+    expect(options?.ignore?.('.kangentic/worktrees/12/src/a.ts')).toBe(true);
+    expect(options?.ignore?.('packages/app/node_modules/x.js')).toBe(true);
+    expect(options?.ignore?.('src/main/index.ts')).toBe(false);
+  });
+
   it('subscribes and creates a file watcher', () => {
     const callback = vi.fn();
     watcher.subscribe('/project', callback);
