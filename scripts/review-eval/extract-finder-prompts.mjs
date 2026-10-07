@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 /** Every Agent (or legacy Task) tool call in a transcript, in order, deduped by tool-use id. */
 export function extractAgentCalls(text) {
@@ -71,15 +71,6 @@ function main(argv) {
   return 0;
 }
 
-function isEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
-  } catch {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  }
-}
-
-if (isEntrypoint()) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tallyTranscript, costOf } from './cost.mjs';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +79,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]))) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

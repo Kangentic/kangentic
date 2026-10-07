@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 /** The final report a subagent handed back, from its transcript text. */
 export function finalReportOf(text) {
@@ -58,6 +58,12 @@ function main(argv) {
     console.error('runs.json needs "transcriptDir" or a "transcript" path on every run');
     return 2;
   }
+  // A rerun into a used folder would leave the earlier reports beside the new ones, with no key
+  // entry to map them back, and the blind scorer would score both.
+  if (fs.existsSync(outDirectory) && fs.readdirSync(outDirectory).length > 0) {
+    console.error(`${outDirectory} is not empty; collect into a new folder`);
+    return 2;
+  }
   fs.mkdirSync(outDirectory, { recursive: true });
   const key = [];
   for (const run of runs) {
@@ -71,7 +77,8 @@ function main(argv) {
       console.error(`no final report in ${transcriptPath}`);
       return 1;
     }
-    const anonymousId = crypto.randomBytes(3).toString('hex');
+    let anonymousId = crypto.randomBytes(3).toString('hex');
+    while (key.some((collected) => collected.anonymousId === anonymousId)) anonymousId = crypto.randomBytes(3).toString('hex');
     fs.writeFileSync(path.join(outDirectory, `${anonymousId}.md`), report);
     key.push({ anonymousId, ...run, transcript: transcriptPath });
   }
@@ -80,15 +87,6 @@ function main(argv) {
   return 0;
 }
 
-function isEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
-  } catch {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  }
-}
-
-if (isEntrypoint()) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

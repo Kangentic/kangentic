@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Builds the /code-review shared review pack (.kangentic/REVIEW_PACK.tmp.md) and the
- * pre-existing-dirty list (.kangentic/REVIEW_PREEXISTING_DIRTY.tmp) in one invocation,
+ * Builds the /code-review shared review pack (REVIEW_PACK.tmp.md) and the pre-existing-dirty
+ * list (REVIEW_PREEXISTING_DIRTY.tmp) under --out-dir (default .kangentic/) in one invocation,
  * so the review driver pays one Bash call instead of generating a ~200KB pack through
  * the Write tool (tool input is billed as model output; a 200KB pack costs roughly
  * 100k output tokens if the driver writes it itself - see docs/code-review-fanout-audit.md).
@@ -687,7 +687,7 @@ function buildPack(packEntries, capBytes) {
     `${kindSentence} Line format: <marker><line number, 5 wide><tab><text>; marker "+" added, ` +
     `"-" removed (no line number, shown in place before the line that follows), " " unchanged.`;
   const text =
-    `Total lines: ${totalLines}. Read sequentially with offset/limit; at most 2000 lines return per Read call.\n` +
+    `Total lines: ${totalLines}. Read sequentially with offset/limit, at most 1000 lines per Read call (a longer read can pass the Read tool's token cap).\n` +
     `${legend}\n${tailText}`;
   return {
     text,

@@ -16,9 +16,11 @@ export const E1_RECALL_TOLERANCE_HITS = 1;
 /** E2 adopts the precision bar only if it cuts total raised findings by at least this share. */
 export const E2_MIN_VOLUME_CUT = 0.3;
 
-/** E3 adopts delta verify only if it catches at least this many of the delta cases D1 to D4. */
+/** E3 adopts delta verify only if it catches at least this many of the counted delta cases. */
 export const E3_MIN_CAUGHT = 3;
-export const E3_CASES = 4;
+/** The delta cases E3 counts. D5 (task 761) is a reported control, not one of them. */
+export const E3_COUNTED_CASES = ['D1', 'D2', 'D3', 'D4'];
+export const E3_CASES = E3_COUNTED_CASES.length;
 
 /**
  * E1: the cheapest arm within E1_RECALL_TOLERANCE_HITS of the best recall. B wins a tie with C:
@@ -55,15 +57,13 @@ export function adoptPrecisionBar(armA, armB) {
 }
 
 /**
- * E3: adopt delta verify when it catches at least E3_MIN_CAUGHT of the E3_CASES delta cases.
- * D5 (task 761) is a reported control, not one of the counted cases.
- * @param {Record<string, boolean>} caughtByCase keyed D1 to D4
+ * E3: adopt delta verify when it catches at least E3_MIN_CAUGHT of the E3_COUNTED_CASES.
+ * @param {Record<string, boolean>} caughtByCase keyed by every id in E3_COUNTED_CASES
  */
 export function adoptDeltaVerify(caughtByCase) {
-  const counted = ['D1', 'D2', 'D3', 'D4'];
-  for (const caseId of counted) {
+  for (const caseId of E3_COUNTED_CASES) {
     if (typeof caughtByCase[caseId] !== 'boolean') throw new Error(`adoptDeltaVerify needs a result for ${caseId}`);
   }
-  const caught = counted.filter((caseId) => caughtByCase[caseId]).length;
+  const caught = E3_COUNTED_CASES.filter((caseId) => caughtByCase[caseId]).length;
   return { adopt: caught >= E3_MIN_CAUGHT, caught, of: E3_CASES };
 }

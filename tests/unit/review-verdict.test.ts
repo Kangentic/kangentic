@@ -15,6 +15,14 @@
  * 5. The closing block's first line is exactly `Verdict: Ready` or `Verdict: Blocked`, its last
  *    line starts with `Next:`, and the default output ends with it.
  * 6. Ledger lines are keyed by file, symbol and mechanism and carry no line number.
+ * 7. The Summary counts leave quick findings out of the status counts, count re-raises, list
+ *    severities in critical, high, medium, low order, and name each check's value.
+ * 8. Every validation branch refuses its malformed input with one exact problem string, and a
+ *    quick finding may not carry a decision.
+ * 9. A multi-line location, step or decision collapses to one line, so each closing block line
+ *    starts with `Verdict:`, `<digits>.` or `Next:` and a Decisions made entry is one line.
+ * 10. The command line exits 2 with a usage line for a wrong argument count and with
+ *     `could not read` for text that is not JSON.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -78,24 +86,44 @@ function closingBlockLines(report: Report): string[] {
   return renderClosingBlock(report).split('\n');
 }
 
-let scratchDirectory: string | null = null;
+// Every run gets its own folder, and all of them are removed, so a test that runs the CLI twice
+// leaks nothing.
+const scratchDirectories: string[] = [];
 
 afterEach(() => {
-  if (scratchDirectory !== null) fs.rmSync(scratchDirectory, { recursive: true, force: true });
-  scratchDirectory = null;
+  for (const scratchDirectory of scratchDirectories.splice(0)) {
+    fs.rmSync(scratchDirectory, { recursive: true, force: true });
+  }
 });
 
-function runScript(report: unknown, extraArguments: string[] = []): { exitCode: number; stdout: string; stderr: string } {
-  scratchDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-review-verdict-'));
-  const findingsPath = path.join(scratchDirectory, 'findings.json');
-  fs.writeFileSync(findingsPath, JSON.stringify(report));
+interface ScriptResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Runs the CLI with exactly these arguments and no file of its own. */
+function runScriptWithArguments(scriptArguments: string[]): ScriptResult {
   try {
-    const stdout = execFileSync('node', [SCRIPT_PATH, findingsPath, ...extraArguments], { encoding: 'utf8', stdio: 'pipe' });
+    const stdout = execFileSync('node', [SCRIPT_PATH, ...scriptArguments], { encoding: 'utf8', stdio: 'pipe' });
     return { exitCode: 0, stdout, stderr: '' };
   } catch (error) {
     const execError = error as { status?: number | null; stdout?: string; stderr?: string };
     return { exitCode: execError.status ?? -1, stdout: execError.stdout ?? '', stderr: execError.stderr ?? '' };
   }
+}
+
+/** Writes the text verbatim (no JSON.stringify) to a findings file, then runs the CLI on it. */
+function runScriptWithRawFile(fileContent: string, extraArguments: string[] = []): ScriptResult {
+  const scratchDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-review-verdict-'));
+  scratchDirectories.push(scratchDirectory);
+  const findingsPath = path.join(scratchDirectory, 'findings.json');
+  fs.writeFileSync(findingsPath, fileContent);
+  return runScriptWithArguments([findingsPath, ...extraArguments]);
+}
+
+function runScript(report: unknown, extraArguments: string[] = []): ScriptResult {
+  return runScriptWithRawFile(JSON.stringify(report), extraArguments);
 }
 
 describe('review-verdict.mjs: real report shapes', () => {
@@ -256,6 +284,219 @@ describe('review-verdict.mjs: validation', () => {
   });
 });
 
+describe('review-verdict.mjs: validation of a quick finding', () => {
+  it('refuses a decision on a quick finding because a choice between valid answers is not mechanical', () => {
+    const problems = validateFindings(
+      reportOf([findingOf(1, { quick: true, status: 'fixed', decision: { chosen: 'option A', alternative: 'option B' } })]),
+    );
+    expect(problems).toEqual([
+      'findings[0].decision is not valid on a quick finding: a choice between valid answers is not mechanical',
+    ]);
+  });
+
+  it('still accepts a quick fixed finding that carries no decision', () => {
+    expect(validateFindings(reportOf([findingOf(1, { quick: true, status: 'fixed' })]))).toEqual([]);
+  });
+});
+
+interface ValidationCase {
+  name: string;
+  report: unknown;
+  expectedProblem: string;
+}
+
+function reportWithRawFinding(finding: unknown): unknown {
+  return { checks: { ...PASSING_CHECKS }, findings: [finding] };
+}
+
+const CHECKS_PROBLEM = 'checks must be an object with typecheck, hmrVitest and scopedTests';
+const FINDINGS_PROBLEM = 'findings must be an array (empty when nothing was raised)';
+const SEVERITY_PROBLEM = 'findings[0].severity must be one of critical, high, medium, low';
+const VALID_FOLLOW_UP = { title: 'Split it', location: 'src/a.ts', why: 'own design' };
+
+function reportWithRawFollowUp(followUp: unknown): unknown {
+  return { checks: { ...PASSING_CHECKS }, findings: [], followUps: [followUp], followUpTask: 'task 812' };
+}
+
+const VALIDATION_CASES: ValidationCase[] = [
+  { name: 'a null report', report: null, expectedProblem: 'the findings file must hold a JSON object' },
+  { name: 'an array report', report: [], expectedProblem: 'the findings file must hold a JSON object' },
+  { name: 'a string report', report: 'findings', expectedProblem: 'the findings file must hold a JSON object' },
+  { name: 'missing checks', report: { findings: [] }, expectedProblem: CHECKS_PROBLEM },
+  { name: 'null checks', report: { checks: null, findings: [] }, expectedProblem: CHECKS_PROBLEM },
+  { name: 'array checks', report: { checks: [], findings: [] }, expectedProblem: CHECKS_PROBLEM },
+  { name: 'string checks', report: { checks: 'pass', findings: [] }, expectedProblem: CHECKS_PROBLEM },
+  { name: 'missing findings', report: { checks: { ...PASSING_CHECKS } }, expectedProblem: FINDINGS_PROBLEM },
+  { name: 'findings that is an object', report: { checks: { ...PASSING_CHECKS }, findings: {} }, expectedProblem: FINDINGS_PROBLEM },
+  { name: 'a null finding', report: reportWithRawFinding(null), expectedProblem: 'findings[0] must be an object' },
+  { name: 'a string finding', report: reportWithRawFinding('finding'), expectedProblem: 'findings[0] must be an object' },
+  { name: 'a finding with no id', report: reportWithRawFinding({ ...findingOf(1), id: undefined }), expectedProblem: 'findings[0].id is required' },
+  { name: 'an unknown severity', report: reportWithRawFinding({ ...findingOf(1), severity: 'urgent' }), expectedProblem: SEVERITY_PROBLEM },
+  { name: 'a missing severity', report: reportWithRawFinding({ ...findingOf(1), severity: undefined }), expectedProblem: SEVERITY_PROBLEM },
+  { name: 'an empty category', report: reportWithRawFinding({ ...findingOf(1), category: '' }), expectedProblem: 'findings[0].category is required' },
+  { name: 'an empty location', report: reportWithRawFinding({ ...findingOf(1), location: '' }), expectedProblem: 'findings[0].location is required' },
+  { name: 'an empty file', report: reportWithRawFinding({ ...findingOf(1), file: '' }), expectedProblem: 'findings[0].file is required' },
+  { name: 'an empty mechanism', report: reportWithRawFinding({ ...findingOf(1), mechanism: '' }), expectedProblem: 'findings[0].mechanism is required' },
+  { name: 'a whitespace-only mechanism', report: reportWithRawFinding({ ...findingOf(1), mechanism: '   ' }), expectedProblem: 'findings[0].mechanism is required' },
+  {
+    name: 'followUps that is a string',
+    report: { checks: { ...PASSING_CHECKS }, findings: [], followUps: 'later' },
+    expectedProblem: 'followUps must be an array when present',
+  },
+  {
+    name: 'a follow-up with no title',
+    report: reportWithRawFollowUp({ location: VALID_FOLLOW_UP.location, why: VALID_FOLLOW_UP.why }),
+    expectedProblem: 'followUps[0].title is required',
+  },
+  {
+    name: 'a follow-up with no location',
+    report: reportWithRawFollowUp({ title: VALID_FOLLOW_UP.title, why: VALID_FOLLOW_UP.why }),
+    expectedProblem: 'followUps[0].location is required',
+  },
+  {
+    name: 'a follow-up with no why',
+    report: reportWithRawFollowUp({ title: VALID_FOLLOW_UP.title, location: VALID_FOLLOW_UP.location }),
+    expectedProblem: 'followUps[0].why is required',
+  },
+];
+
+describe('review-verdict.mjs: validation of malformed input', () => {
+  it.each(VALIDATION_CASES)('refuses $name with exactly one problem', ({ report, expectedProblem }) => {
+    expect(validateFindings(report)).toEqual([expectedProblem]);
+  });
+
+  it('accepts the control report the table rows are mutated from', () => {
+    expect(validateFindings(reportWithRawFinding(findingOf(1)))).toEqual([]);
+    expect(validateFindings(reportWithRawFollowUp(VALID_FOLLOW_UP))).toEqual([]);
+  });
+
+  it('accepts a severity in any letter case, the way the Summary counts it', () => {
+    expect(validateFindings(reportWithRawFinding({ ...findingOf(1), severity: 'HIGH' }))).toEqual([]);
+  });
+
+  it('names title, location and why for a follow-up that is not an object', () => {
+    expect(validateFindings(reportWithRawFollowUp(null))).toEqual([
+      'followUps[0].title is required',
+      'followUps[0].location is required',
+      'followUps[0].why is required',
+    ]);
+  });
+});
+
+describe('review-verdict.mjs: summary counts', () => {
+  it('leaves a quick blocked finding out of the status counts but lists it under Quick fixes', () => {
+    const report = reportOf([findingOf(1), findingOf(2, { quick: true, status: 'blocked', reason: 'reverted after a type error' })]);
+    expect(validateFindings(report)).toEqual([]);
+    const summaryLines = renderSummary(report).split('\n');
+    expect(summaryLines).toContain('- Fixed: 1 (0 by decision). Refuted: 0. Blocked: 0.');
+    expect(summaryLines).toContain('- Quick fixes: 1');
+  });
+
+  it('leaves quick fixed and quick refuted findings out of the status counts too', () => {
+    const report = reportOf([
+      findingOf(1),
+      findingOf(2, { quick: true, status: 'fixed' }),
+      findingOf(3, { quick: true, status: 'refuted', reason: 'not reachable' }),
+      findingOf(4, { status: 'refuted', reason: 'pinned by a test' }),
+    ]);
+    expect(validateFindings(report)).toEqual([]);
+    const summaryLines = renderSummary(report).split('\n');
+    expect(summaryLines).toContain('- Fixed: 1 (0 by decision). Refuted: 1. Blocked: 0.');
+    expect(summaryLines).toContain('- Quick fixes: 2');
+  });
+
+  it('counts a finding that carries reRaise under Re-raised with new evidence', () => {
+    const reRaised = findingOf(2, {
+      reRaise: {
+        of: 'Refuted: src/main/example-2.ts exampleFunction2: example mechanism 2 - not reachable',
+        newEvidence: 'a captured CLI reply reaches the branch',
+      },
+    });
+    const report = reportOf([findingOf(1), reRaised]);
+    expect(validateFindings(report)).toEqual([]);
+    expect(renderSummary(report).split('\n')).toContain('- Re-raised with new evidence: 1');
+    expect(renderSummary(reportOf([findingOf(1)])).split('\n')).toContain('- Re-raised with new evidence: 0');
+  });
+
+  it('lists severity counts in critical, high, medium, low order, whatever the letter case', () => {
+    const severities = ['low', 'medium', 'High', 'low', 'critical', 'medium', 'low', 'high', 'medium', 'low'];
+    const report = reportOf(severities.map((severity, severityIndex) => findingOf(severityIndex + 1, { severity })));
+    expect(validateFindings(report)).toEqual([]);
+    expect(renderSummary(report).split('\n')).toContain('- Findings: 1 critical, 2 high, 3 medium, 4 low');
+  });
+
+  it('names each check by its lowercased label and its own value', () => {
+    const report = reportOf([], { checks: { typecheck: 'fail', hmrVitest: 'pass', scopedTests: 'none' } });
+    expect(validateFindings(report)).toEqual([]);
+    expect(renderSummary(report).split('\n')).toContain(
+      '- Checks: typecheck fail, hmr vitest pass, scoped runs of added tests none',
+    );
+  });
+
+  it('renders the follow-up item count, plural for two and absent for none', () => {
+    const twoFollowUps = reportOf([findingOf(1)], {
+      followUps: [VALID_FOLLOW_UP, { title: 'Rename the helper', location: 'src/b.ts', why: 'touches every caller' }],
+      followUpTask: 'task 812',
+    });
+    expect(validateFindings(twoFollowUps)).toEqual([]);
+    expect(renderSummary(twoFollowUps).split('\n')).toContain('- Follow-up task: task 812 (2 items)');
+    expect(renderSummary(reportOf([findingOf(1)])).split('\n')).toContain('- Follow-up task: none');
+  });
+});
+
+describe('review-verdict.mjs: one-line collapsing', () => {
+  const NEXT_STEP_LINE = 'Next: move the card back to Executing and do the steps above.';
+
+  it('keeps every closing block item on one line when location and step span lines', () => {
+    const report = reportOf([
+      findingOf(1, {
+        status: 'blocked',
+        reason: 'needs a person',
+        location: 'src/main/first.ts:10\n   (inside   the\nreap loop)',
+        step: 'capture a reply\n\n   from the CLI,\r\nthen   rerun',
+      }),
+      findingOf(2, {
+        status: 'blocked',
+        reason: 'needs a person',
+        location: 'src/main/second.ts:20',
+        step: 'rebuild\nthe   fixture',
+      }),
+    ]);
+    expect(validateFindings(report)).toEqual([]);
+    const expectedLines = [
+      'Verdict: Blocked',
+      '1. src/main/first.ts:10 (inside the reap loop): capture a reply from the CLI, then rerun',
+      '2. src/main/second.ts:20: rebuild the fixture',
+      NEXT_STEP_LINE,
+    ];
+    const closingLines = closingBlockLines(report);
+    expect(closingLines).toEqual(expectedLines);
+    for (const line of closingLines) expect(line).toMatch(/^(Verdict:|\d+\.|Next:)/);
+    expect(renderSummary(report).split('\n').slice(-expectedLines.length)).toEqual(expectedLines);
+  });
+
+  it('renders a decision with multi-line fields as one Decisions made entry', () => {
+    const report = reportOf([
+      findingOf(1, {
+        location: 'src/main/a.ts:5\n  and src/main/b.ts:9',
+        decision: { chosen: 'keep the\n   old   copy', alternative: 'use\nthe new\n\n copy' },
+      }),
+    ]);
+    expect(validateFindings(report)).toEqual([]);
+    const summaryLines = renderSummary(report).split('\n');
+    const headingIndex = summaryLines.indexOf('### Decisions made (1)');
+    expect(headingIndex).toBeGreaterThan(-1);
+    expect(summaryLines.slice(headingIndex)).toEqual([
+      '### Decisions made (1)',
+      '',
+      '1. src/main/a.ts:5 and src/main/b.ts:9: chose keep the old copy. The alternative was use the new copy.',
+      '',
+      'Verdict: Ready',
+      'Next: move the card to Testing.',
+    ]);
+  });
+});
+
 describe('review-verdict.mjs: ledger', () => {
   it('keys refuted items and decisions by file, symbol and mechanism, with no line number', () => {
     const report = reportOf([
@@ -282,6 +523,42 @@ describe('review-verdict.mjs: command line', () => {
     const outputLines = blocked.stdout.trimEnd().split('\n');
     expect(outputLines).toContain('Verdict: Blocked');
     expect(outputLines[outputLines.length - 1]).toBe('Next: move the card back to Executing and do the steps above.');
+  });
+
+  it('ends the default output of a Ready report with exactly the Testing next step and exits 0', () => {
+    const result = runScript(reportOf([findingOf(1)]));
+    expect(result.exitCode).toBe(0);
+    const outputLines = result.stdout.trimEnd().split('\n');
+    expect(outputLines).toContain('Verdict: Ready');
+    expect(outputLines[outputLines.length - 1]).toBe('Next: move the card to Testing.');
+  });
+
+  it('exits 2 with a usage line when no findings file is given', () => {
+    const result = runScriptWithArguments([]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('usage:');
+  });
+
+  it('exits 2 with a usage line when only the --ledger flag is given', () => {
+    const result = runScriptWithArguments(['--ledger']);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('usage:');
+  });
+
+  it('exits 2 with a usage line for two findings files even when the first is valid', () => {
+    const result = runScript(reportOf([findingOf(1)]), ['second-findings.json']);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('usage:');
+  });
+
+  it('exits 2 and says it could not read a findings file that is not JSON', () => {
+    const result = runScriptWithRawFile('{not json');
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('could not read');
   });
 
   it('prints only the ledger with --ledger', () => {

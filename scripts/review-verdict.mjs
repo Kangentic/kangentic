@@ -32,8 +32,8 @@
  *       "mechanism": "short phrase naming the defect", "status": "fixed|refuted|blocked",
  *       "reason": "required for refuted and blocked",
  *       "step": "required for a blocked finding: what a person or the task agent must do",
- *       "decision": { "chosen": "...", "alternative": "..." } (optional, fixed only),
- *       "quick": true (optional; a quick fix never affects the verdict),
+ *       "decision": { "chosen": "...", "alternative": "..." } (optional, fixed and not quick only),
+ *       "quick": true (optional; a quick fix never affects the verdict and carries no decision),
  *       "reRaise": { "of": "the ledger line", "newEvidence": "..." } (optional)
  *     }],
  *     "followUps": [{ "title": "...", "location": "...", "why": "..." }],
@@ -41,8 +41,7 @@
  *   }
  */
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isEntrypoint } from './lib/is-entrypoint.mjs';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 export const STATUSES = ['fixed', 'refuted', 'blocked'];
@@ -126,6 +125,9 @@ export function validateFindings(report) {
           problems.push(`${label}.decision needs both chosen and alternative`);
         }
         if (finding.status !== 'fixed') problems.push(`${label}.decision is only valid on a fixed finding`);
+        // A quick fix is mechanical by definition; one with a decision would also be counted
+        // under "Decisions made" while the Fixed count leaves it out.
+        if (finding.quick === true) problems.push(`${label}.decision is not valid on a quick finding: a choice between valid answers is not mechanical`);
       }
       if (finding.reRaise !== undefined) {
         const reRaise = finding.reRaise;
@@ -270,17 +272,6 @@ function main(argv) {
   return 0;
 }
 
-/** Whether this module is the script node was asked to run, compared by real path (see
- *  scripts/package-smoke.mjs for why a URL comparison misses a checkout under a link). */
-function isEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
-  } catch {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  }
-}
-
-if (isEntrypoint()) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

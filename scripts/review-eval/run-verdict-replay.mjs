@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateFindings, computeVerdict, SEVERITIES } from '../review-verdict.mjs';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 const MACOS_PATTERN = /\bmac(os)?\b|\bdarwin\b/i;
 
@@ -77,11 +78,7 @@ export function replay(passes, options = {}) {
   };
 }
 
-function isEntrypoint() {
-  return process.argv[1] && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
-}
-
-if (isEntrypoint()) {
+if (isEntrypoint(import.meta.url)) {
   const argumentsList = process.argv.slice(2);
   const macosRunnable = argumentsList.includes('--macos-runnable');
   const inputPath = argumentsList.find((argument) => !argument.startsWith('--'))

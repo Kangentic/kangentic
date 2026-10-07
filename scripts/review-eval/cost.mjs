@@ -18,7 +18,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 function emptyTokens() {
   return { input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0 };
@@ -53,10 +53,16 @@ export function tallyTranscript(text) {
   for (const { model, usage } of usageByMessage.values()) {
     const tokens = tokensByModel[model] || (tokensByModel[model] = emptyTokens());
     tokens.input += usage.input_tokens || 0;
+    // The 1-hour share is read when the split names it, and otherwise taken as the rest of the
+    // total, clamped so a split with no total can never subtract from the cost.
     const cacheWriteTotal = usage.cache_creation_input_tokens || 0;
-    const fiveMinute = (usage.cache_creation && usage.cache_creation.ephemeral_5m_input_tokens) || 0;
+    const split = usage.cache_creation || {};
+    const fiveMinute = split.ephemeral_5m_input_tokens || 0;
+    const oneHour = typeof split.ephemeral_1h_input_tokens === 'number'
+      ? split.ephemeral_1h_input_tokens
+      : Math.max(0, cacheWriteTotal - fiveMinute);
     tokens.cacheWrite5m += fiveMinute;
-    tokens.cacheWrite1h += cacheWriteTotal - fiveMinute;
+    tokens.cacheWrite1h += oneHour;
     tokens.cacheRead += usage.cache_read_input_tokens || 0;
     tokens.output += usage.output_tokens || 0;
   }
@@ -116,15 +122,6 @@ function main(argv) {
   return 0;
 }
 
-function isEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
-  } catch {
-    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-  }
-}
-
-if (isEntrypoint()) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

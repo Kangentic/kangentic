@@ -1850,8 +1850,11 @@ describe('build-review-pack.mjs', () => {
         .filter(Boolean)
         .sort();
       expect(dirtyList).toEqual(['new-file.txt', 'tracked.txt']);
-      // The summary names where the dirty list landed, so a driver never has to guess.
-      expect(buildOutput).toContain(path.join(outputDirectory, 'REVIEW_PREEXISTING_DIRTY.tmp'));
+      // The summary names where the dirty list landed, so a driver never has to guess. Compared by
+      // real path: on macOS os.tmpdir() is under /var, which the child's cwd reports as /private/var.
+      const printedPath = buildOutput.match(/preexisting dirty: \d+ paths -> (.+)$/m)?.[1];
+      expect(printedPath).toBeDefined();
+      expect(fs.realpathSync(printedPath!)).toBe(fs.realpathSync(path.join(outputDirectory, 'REVIEW_PREEXISTING_DIRTY.tmp')));
     },
     20000,
   );
@@ -1880,13 +1883,13 @@ describe('build-review-pack.mjs', () => {
       commitAll(repoDirectory, 'base commit');
       fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
 
-      for (const args of [['--out-dir'], ['--out-dir', '--shard-lines', '10']]) {
-        const result = runBuildScriptExpectingFailure(repoDirectory, args);
+      for (const invocationArguments of [['--out-dir'], ['--out-dir', '--shard-lines', '10']]) {
+        const result = runBuildScriptExpectingFailure(repoDirectory, invocationArguments);
         expect(result.exitCode).toBe(2);
         expect(result.stderr).toContain('--out-dir needs a directory path');
       }
-      for (const args of [['--shard-lines'], ['--shard-lines', '0'], ['--shard-lines', 'many']]) {
-        const result = runBuildScriptExpectingFailure(repoDirectory, args);
+      for (const invocationArguments of [['--shard-lines'], ['--shard-lines', '0'], ['--shard-lines', 'many']]) {
+        const result = runBuildScriptExpectingFailure(repoDirectory, invocationArguments);
         expect(result.exitCode).toBe(2);
         expect(result.stderr).toContain('--shard-lines needs a positive integer line count');
       }

@@ -21,8 +21,8 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDirectory, '..', '..');
 const corpus = JSON.parse(fs.readFileSync(path.join(scriptDirectory, 'corpus.json'), 'utf8'));
 
-function git(args, cwd = repoRoot) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+function git(gitArguments, cwd = repoRoot) {
+  return execFileSync('git', gitArguments, { cwd, encoding: 'utf8' }).trim();
 }
 
 const cliArguments = process.argv.slice(2);
