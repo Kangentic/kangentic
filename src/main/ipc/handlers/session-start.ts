@@ -83,10 +83,10 @@ export async function startTaskSession(
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
     if (blocked) throw new Error(resumeBlockMessage(blocked));
 
-    // The rule read-board's `resumable` applies (`pausedTaskIdsOf`), so the
-    // flag that promises the phone this path and the choice of it cannot
-    // disagree. A suspended row survives reconcileTaskSessionRef, which clears
-    // only the task's pointer.
+    // The rule read-board's `resumable` applies (the paused half of
+    // `taskSessionStatesOf`), so the flag that promises the phone this path
+    // and the choice of it cannot disagree. A suspended row survives
+    // reconcileTaskSessionRef, which clears only the task's pointer.
     if (isTaskPaused(context.sessionManager.listSessions(), taskId)) return { path: 'resume' as const };
 
     if (!lane) throw new Error(`Column ${task.swimlane_id} not found for task ${taskId}`);
