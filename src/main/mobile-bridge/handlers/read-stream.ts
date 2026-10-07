@@ -736,7 +736,7 @@ export async function handleReadStream(
     // rides the service's slow-request line, so a slow open says whether the
     // time went here or on the wire.
     const seedStartedAt = performance.now();
-    let seedPhases = '';
+    let seedPhases: string;
     try {
       const seed = await context.sessionManager.getSeedFrame(payload.sessionId);
       scrollback = seed.frame;
