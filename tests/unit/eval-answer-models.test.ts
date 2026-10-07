@@ -14,9 +14,29 @@
  *    Ties go to more right, then the shorter median, then the lower effort. A run answered from a
  *    model other than its arm's throws.
  * 5. adoptSummaryModel (fixed 2026-10-07): zero invented details AND no more tasks passed over.
+ * 6. The parsers replay real, sanitized CLI output (tests/fixtures/claude-ask-stream.jsonl and
+ *    claude-print-result-success.json), and the Ask stdin comes from the Claude adapter's own
+ *    `formatTurn`, so a change to either side of the wire shape fails here.
+ * 7. REF_PATTERN is character for character the one `parseAnswerRefs` uses, and rejects lookalikes.
+ * 8. parseArgs refuses an arm or run count that would spend agent calls on nothing, summaryTaskCountOf
+ *    reads the tags the real `buildSummaryPrompt` writes, and runOnce never rejects.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { StdinJsonSessionOptions } from '../../src/main/agent/shared/answer-session/stdin-json-session';
+import { buildSummaryPrompt } from '../../src/main/retrieval/summary/summary-prompt';
+
+const { sessionSpy } = vi.hoisted(() => ({ sessionSpy: vi.fn() }));
+vi.mock('../../src/main/agent/shared/answer-session/stdin-json-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/answer-session/stdin-json-session')>();
+  return { ...actual, openStdinJsonSession: sessionSpy };
+});
+
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import {
+  REF_PATTERN,
   readAnswerStream,
   readJsonResult,
   tableRefsOf,
@@ -26,7 +46,12 @@ import {
   replayEnv,
   recommendAnswerLevel,
   adoptSummaryModel,
+  parseArgs,
+  summaryTaskCountOf,
+  runOnce,
 } from '../../scripts/eval-answer-models.mjs';
+
+const FIXTURE_DIRECTORY = path.resolve(__dirname, '../fixtures');
 
 const streamEvent = (event: Record<string, unknown>): string => JSON.stringify({ type: 'stream_event', event });
 
@@ -63,9 +88,51 @@ describe('readAnswerStream', () => {
     expect(result.doneMs).toBeNull();
     expect(result.answer).toBeNull();
   });
+
+  it('reads an error result, and takes a cost that is not a number as unknown', () => {
+    const result = readAnswerStream([
+      { atMs: 10, line: JSON.stringify({ type: 'result', is_error: true, result: 'boom', total_cost_usd: '0.5' }) },
+    ]);
+    expect(result.isError).toBe(true);
+    expect(result.costUsd).toBeNull();
+    expect(result.doneMs).toBe(10);
+  });
+
+  it('replays a real Claude CLI 2.1.293 Ask run (sanitized fixture)', () => {
+    const timedLines = fs.readFileSync(path.join(FIXTURE_DIRECTORY, 'claude-ask-stream.jsonl'), 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '')
+      .map((line, lineIndex) => ({ atMs: lineIndex * 10, line }));
+
+    const result = readAnswerStream(timedLines);
+
+    // The init line (index 0) also names claude-sonnet-5-5; reading it would list the model twice.
+    expect(result.models).toEqual(['claude-sonnet-5-5']);
+    // Index 4 is the first non-empty text_delta ("By"); index 3 is the empty content_block_start.
+    expect(result.firstTextMs).toBe(40);
+    // Index 27 is the `result` line, after the assistant, content_block_stop and message_stop lines.
+    expect(result.doneMs).toBe(270);
+    expect(result.costUsd).toBe(0.297064);
+    expect(result.usageModels).toEqual(['claude-sonnet-5-5']);
+    expect(result.isError).toBe(false);
+    expect(result.toolCalls).toBe(0);
+    expect(result.answer?.endsWith('SELECTED: #529')).toBe(true);
+    expect(selectedRefs(result.answer)).toEqual(['#529']);
+  });
 });
 
 describe('readJsonResult', () => {
+  it('replays a real --print --output-format json result (sanitized fixture)', () => {
+    const stdout = fs.readFileSync(path.join(FIXTURE_DIRECTORY, 'claude-print-result-success.json'), 'utf8');
+    expect(readJsonResult(stdout)).toEqual({
+      answer: 'ok',
+      costUsd: 0.020622,
+      usageModels: ['claude-haiku-4-5-20251001'],
+      durationMs: 2918,
+      isError: false,
+    });
+  });
+
   it('reads a json-output run and treats unparseable output as an error', () => {
     expect(readJsonResult(JSON.stringify({ result: 'D1: x', total_cost_usd: 0.002, duration_ms: 6600, modelUsage: { 'claude-sonnet-5-5': {} } }))).toEqual({
       answer: 'D1: x',
@@ -99,6 +166,33 @@ describe('tableRefsOf and inventedRefs', () => {
     expect([...tableRefsOf(stdin)].sort()).toEqual(['#12', 'C3', 'mobile#88']);
   });
 
+  it('reads the table out of the stdin line the Claude adapter\'s own formatTurn writes', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-test-'));
+    try {
+      sessionSpy.mockReturnValue({});
+      new ClaudeAdapter().openAnswerSession({
+        cliPath: '/bin/claude',
+        cwd: '/answer-home',
+        runDirectory: directory,
+        model: 'sonnet',
+        effort: 'low',
+        retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+      });
+      const options = sessionSpy.mock.calls[sessionSpy.mock.calls.length - 1][0] as StdinJsonSessionOptions;
+      const stdin = `${options.formatTurn(prompt)}\n`;
+      // The prompt's newlines are escaped on the wire, so a reader that skipped the stream-json
+      // unwrap would see one line and find no row.
+      expect(stdin.trimEnd().split('\n')).toHaveLength(1);
+      expect([...tableRefsOf(stdin)].sort()).toEqual(['#12', 'C3', 'mobile#88']);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a first cell that only starts like a ref', () => {
+    expect([...tableRefsOf('#12abc|x\nC3x|y\n#1234567|z')]).toEqual([]);
+  });
+
   it('reads a markdown row that opens with a pipe', () => {
     const markdown = ['| ref | task |', '| --- | --- |', '| #1 | Task 1 |', '| #300 | Task 300 |'].join('\n');
     expect([...tableRefsOf(markdown)].sort()).toEqual(['#1', '#300']);
@@ -112,6 +206,27 @@ describe('tableRefsOf and inventedRefs', () => {
   it('reads the SELECTED line refs', () => {
     expect(selectedRefs('#12 is the one.\nSELECTED: #12, mobile#88')).toEqual(['#12', 'mobile#88']);
     expect(selectedRefs('no line')).toEqual([]);
+  });
+
+  it('reads a SELECTED line in any case, anywhere after the first line', () => {
+    expect(selectedRefs('x\nselected: #5')).toEqual(['#5']);
+  });
+});
+
+describe('REF_PATTERN', () => {
+  it('is the pattern parseAnswerRefs uses, character for character', () => {
+    const promptSource = fs.readFileSync(path.resolve(__dirname, '../../src/main/retrieval/answer-prompt.ts'), 'utf8');
+    const literal = promptSource.match(/const refPattern = (\/.+\/[a-z]*);/);
+    expect(literal).not.toBeNull();
+    const text = (literal as RegExpMatchArray)[1];
+    const lastSlash = text.lastIndexOf('/');
+    const shipped = new RegExp(text.slice(1, lastSlash), text.slice(lastSlash + 1));
+    expect(REF_PATTERN.source).toBe(shipped.source);
+    expect(REF_PATTERN.flags).toBe(shipped.flags);
+  });
+
+  it('names no ref in a lookalike: a word ending in C and digits, a doubled hash, a seven-digit number', () => {
+    expect(inventedRefs('ABC12 and ##12 and #1234567', new Set())).toEqual([]);
   });
 });
 
@@ -128,6 +243,18 @@ describe('replayArgv and replayEnv', () => {
     expect(replayArgv(['--print'], { model: 'haiku', effort: 'low', settingsPath: null, mcpPath: null, jsonOutput: true })).toEqual([
       '--print', '--model', 'haiku', '--effort', 'low', '--output-format', 'json',
     ]);
+  });
+
+  it('adds neither file flag when the captured call had none, even if a path is supplied', () => {
+    expect(replayArgv(['--print'], { model: 'haiku', effort: 'low', settingsPath: '/c/settings.json', mcpPath: '/c/mcp.json', jsonOutput: false })).toEqual([
+      '--print', '--model', 'haiku', '--effort', 'low',
+    ]);
+  });
+
+  it('does not append a second output format when the captured call already sets one', () => {
+    const argv = replayArgv(['--print', '--output-format', 'stream-json'], { model: 'haiku', effort: 'low', settingsPath: null, mcpPath: null, jsonOutput: true });
+    expect(argv.filter((argument) => argument === '--output-format')).toHaveLength(1);
+    expect(argv[argv.indexOf('--output-format') + 1]).toBe('stream-json');
   });
 
   it('pins thinking off at low only, and drops Claude session markers the app did not pass', () => {
@@ -180,6 +307,79 @@ describe('recommendAnswerLevel', () => {
     expect(() => recommendAnswerLevel(baseline, { low: [haikuRun(true, 100)] })).toThrow('1 runs');
     expect(() => recommendAnswerLevel(baseline, { low: [...baseline].map(() => ({ ...haikuRun(true, 1), models: [] })) })).toThrow('no answering model');
   });
+
+  it('throws on a run with no result line, or one that is not graded', () => {
+    const candidateWith = (override: Record<string, unknown>) => [
+      ...Array.from({ length: 5 }, () => haikuRun(true, 100)),
+      { ...haikuRun(true, 100), ...override } as unknown as AnswerRun,
+    ];
+    expect(() => recommendAnswerLevel(baseline, { low: candidateWith({ doneMs: null }) })).toThrow(/no result line/);
+    expect(() => recommendAnswerLevel(baseline, { low: candidateWith({ right: null }) })).toThrow(/not graded/);
+  });
+
+  it('applies the same checks to a baseline run, and needs one', () => {
+    expect(() => recommendAnswerLevel([], {})).toThrow('needs baseline runs');
+    const strayBaseline = [sonnetRun(true, 100), { ...sonnetRun(true, 100), models: ['claude-haiku-5-5'] }];
+    expect(() => recommendAnswerLevel(strayBaseline, {})).toThrow(/baseline: .*answered from/);
+  });
+
+  it('throws on an effort that is not a known level', () => {
+    expect(() => recommendAnswerLevel(baseline, { turbo: baseline.map(() => haikuRun(true, 100)) })).toThrow(/unknown effort/);
+  });
+
+  it('takes the middle value as the median of an odd run count, whatever order the runs came in', () => {
+    const oddBaseline = [sonnetRun(true, 3000), sonnetRun(true, 1000), sonnetRun(true, 2000)];
+    const result = recommendAnswerLevel(oddBaseline, { low: [haikuRun(true, 9000), haikuRun(true, 500), haikuRun(true, 1500)] });
+    expect(result.baseline.medianDoneMs).toBe(2000);
+    expect(result.stats.low.medianDoneMs).toBe(1500);
+    expect(result.recommended).toBe('low');
+  });
+});
+
+describe('parseArgs', () => {
+  it('refuses an arm with no effort or an unknown one', () => {
+    expect(() => parseArgs(['ask', '--arms', 'sonnet'])).toThrow(/--arms/);
+    expect(() => parseArgs(['ask', '--arms', 'sonnet:turbo'])).toThrow(/--arms/);
+  });
+
+  it('refuses a run count that is not a positive whole number', () => {
+    expect(() => parseArgs(['ask', '--arms', 'haiku:low', '--runs', 'abc'])).toThrow(/--runs/);
+    expect(() => parseArgs(['ask', '--arms', 'haiku:low', '--runs', '0'])).toThrow(/--runs/);
+    expect(() => parseArgs(['ask', '--arms', 'haiku:low', '--runs', '1.5'])).toThrow(/--runs/);
+  });
+
+  it('reads a valid command line', () => {
+    expect(parseArgs(['ask', '--capture', 'cap', '--arms', 'haiku:low', '--runs', '3', '--out', 'out'])).toEqual({
+      mode: 'ask',
+      capture: 'cap',
+      expect: null,
+      arms: [{ model: 'haiku', effort: 'low' }],
+      runs: 3,
+      out: 'out',
+    });
+  });
+});
+
+describe('summaryTaskCountOf', () => {
+  const inputOf = (taskId: string) => ({ taskId, title: `Task ${taskId}`, description: 'Does a thing.', changedFiles: ['src/a.ts'], commits: [], closingMessages: [] });
+
+  it('counts the tasks the real buildSummaryPrompt writes', () => {
+    expect(summaryTaskCountOf(buildSummaryPrompt([inputOf('one'), inputOf('two'), inputOf('three')]))).toBe(3);
+    expect(summaryTaskCountOf(buildSummaryPrompt([inputOf('one')]))).toBe(1);
+  });
+
+  it('throws, saying the format changed, for a prompt with no task tags', () => {
+    expect(() => summaryTaskCountOf('just some text')).toThrow(/format changed/);
+  });
+});
+
+describe('runOnce', () => {
+  it('resolves with code -1 and a message, instead of rejecting, for a CLI that does not exist', async () => {
+    const outcome = await runOnce('kangentic-no-such-cli-for-test', [], '', process.env);
+    expect(outcome.code).toBe(-1);
+    expect(outcome.stderr.length).toBeGreaterThan(0);
+    expect(outcome.timedLines).toEqual([]);
+  }, 15_000);
 });
 
 describe('adoptSummaryModel', () => {

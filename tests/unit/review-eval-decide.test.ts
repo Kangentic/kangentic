@@ -180,6 +180,12 @@ describe('E5 adoptFinderModel', () => {
     expect(() => adoptFinderModel(E2_ARM_A, boundaryArm({ negativesRaised: undefined }))).toThrow('negativesRaised');
     expect(() => adoptFinderModel(E2_ARM_A, boundaryArm({ totalRaised: undefined }))).toThrow('totalRaised');
   });
+
+  it('throws, naming the field, when the baseline lacks a numeric one', () => {
+    expect(() => adoptFinderModel({ ...E2_ARM_A, lateHits: undefined } as unknown as typeof E2_ARM_A, boundaryArm())).toThrow(/baseline has no lateHits/);
+    expect(() => adoptFinderModel({ ...E2_ARM_A, negativesRaised: '2' } as unknown as typeof E2_ARM_A, boundaryArm())).toThrow(/baseline has no negativesRaised/);
+    expect(() => adoptFinderModel({ ...E2_ARM_A, totalRaised: null } as unknown as typeof E2_ARM_A, boundaryArm())).toThrow(/baseline has no totalRaised/);
+  });
 });
 
 describe('E5 pickFinderModel', () => {
@@ -249,5 +255,12 @@ describe('E6 adoptAuditorModel', () => {
   it('throws on a run count other than two or a malformed run', () => {
     expect(() => adoptAuditorModel([found], [found, found])).toThrow('exactly 2 runs');
     expect(() => adoptAuditorModel([found, found], [found, { missingFound: true, extraFound: 'yes', falseFindings: 0 } as unknown as typeof found])).toThrow('candidate');
+  });
+
+  it('throws on a malformed INCUMBENT run, naming the incumbent', () => {
+    const malformed = { missingFound: 1, extraFound: true, falseFindings: 0 } as unknown as typeof found;
+    const missingCount = { missingFound: true, extraFound: true } as unknown as typeof found;
+    expect(() => adoptAuditorModel([found, malformed], [found, found])).toThrow(/incumbent run needs/);
+    expect(() => adoptAuditorModel([missingCount, found], [found, found])).toThrow(/incumbent run needs/);
   });
 });
