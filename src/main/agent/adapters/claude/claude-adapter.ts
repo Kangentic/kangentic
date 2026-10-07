@@ -575,10 +575,12 @@ export class ClaudeAdapter implements AgentAdapter {
    *   Haiku 5.5 max                         21.8 s         right 6 of 6
    *
    * Haiku 5.5 does follow the level, and at low it answered both as well as
-   * Sonnet, faster and at about a twentieth of the cost. The count `low` got
-   * wrong on 2.1.283 came out right at every level. So `low` keeps the pin for
-   * every model, and a user who wants more care on a hard question can buy it
-   * with a higher level.
+   * Sonnet, faster and at about a twentieth of the cost. The count Sonnet low
+   * got wrong in the first table came out right at every level here. The two
+   * setups differ (a bare `--print` with JSON out there, the app's own Ask call
+   * here), so this does not say which change made the difference. So `low`
+   * keeps the pin for every model, and a user who wants more care on a hard
+   * question can buy it with a higher level.
    */
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
 

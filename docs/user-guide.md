@@ -1106,8 +1106,9 @@ about a twentieth of the cost; it also invents more in task summaries (below), a
 does both jobs. Every agent that has a headless read-only mode can answer; Warp
 cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
 at `low`, which answers fastest. Pick a higher level for questions that need counting or comparing
-across many tasks: on an earlier Claude release, `max` got right a count that `low` got wrong, at
-about ten times the wait; on the current release every level got it right. Effort is for answers
+across many tasks: in one measurement Claude's `max` got right a count that `low` got wrong, at
+about ten times the wait, though a later replay through the app's own Ask call got it right at
+every level. Effort is for answers
 only: summaries always write at the recommended level, where a higher one changed nothing.
 
 The **Index** card below it lists what the index searches, one line per source:
