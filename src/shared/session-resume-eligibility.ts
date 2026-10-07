@@ -67,9 +67,10 @@ export function resumeBlockReasonForTask(input: {
  * Whether a session registry row is a task's PAUSED session: `suspended`, and
  * not a Command Terminal (which belongs to no task and is never resumed). The
  * one definition behind the mobile bridge's Resume promise: `startTaskSession`
- * takes the Resume button's path for such a row, and the board row and the
- * read-stream feed report `resumable` from it. Three call sites wrote it out by
- * hand before, and one of them missed the Command Terminal exclusion.
+ * takes the Resume button's path for such a row, the board row reports
+ * `paused` and `resumable` from it, and the read-stream feed reports
+ * `resumable`. Three call sites wrote it out by hand before, and one of them
+ * missed the Command Terminal exclusion.
  */
 export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient'>): boolean {
   return session.status === 'suspended' && session.transient !== true;
@@ -80,8 +81,10 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
  * and no live one among the given registry rows. The one registry scan behind
  * both ends of the phone's Resume promise: read-board's `resumable` for every
  * task on a board, and `startTaskSession` choosing the Resume path for one
- * task. Reads the registry by task rather than by `task.session_id`, because a
- * pause clears that pointer while the suspended row stays.
+ * task. read-board also sends the answer itself as `paused`, whatever the
+ * task's column, because the desktop card shows "Paused" from the same row.
+ * Reads the registry by task rather than by `task.session_id`, because a pause
+ * clears that pointer while the suspended row stays.
  *
  * A task with a live row as well is not paused. A respawn queued behind the
  * concurrency limit leaves the task holding `[suspended, queued]` until the

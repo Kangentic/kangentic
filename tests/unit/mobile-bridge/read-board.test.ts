@@ -170,7 +170,7 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1', role: null, spawns_session: true }],
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false }],
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -327,22 +327,90 @@ describe('handleReadBoard', () => {
 
       const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
       // t-paused stays though its session_id is null; the paused tasks in To Do
-      // and Done, the ended one, and the fresh one stay out as before.
+      // and Done, the ended one, and the fresh one stay out as before. The two
+      // paused ones read `paused: true` (0.17.0) and still stay out: the feed
+      // has nothing to act on for a paused task that offers no Resume.
       expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-paused', 't-running']);
       // Counts still describe the whole column, not the filtered list.
       expect(snapshot.taskCountsByColumnId['lane-review']).toBe(5);
     });
 
-    it('the archived page never offers Resume', async () => {
+    it('the archived page never offers Resume, and still reports a paused task as paused', async () => {
       tasksListArchivedPage.mockReturnValue({
-        tasks: [{ id: 't-paused-archived', swimlane_id: 'lane-done', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' }],
-        totalCount: 1,
+        tasks: [
+          { id: 't-paused-archived', swimlane_id: 'lane-done', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' },
+          { id: 't-ended', swimlane_id: 'lane-done', session_id: null, archived_at: '2026-10-01T00:00:00.000Z' },
+        ],
+        totalCount: 2,
       });
 
       const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
 
-      const archived = (response.payload as { archivedTasks: Array<{ resumable: boolean | null }> }).archivedTasks;
-      expect(archived[0].resumable).toBe(false);
+      // tasks.list() leaves archived rows out, so this page is the only way a
+      // completed task's paused session reaches the phone.
+      const archived = (response.payload as { archivedTasks: Array<{ id: string; paused: boolean | null; resumable: boolean | null }> }).archivedTasks;
+      expect(archived.map((task) => ({ id: task.id, paused: task.paused, resumable: task.resumable }))).toEqual([
+        { id: 't-paused-archived', paused: true, resumable: false },
+        { id: 't-ended', paused: false, resumable: false },
+      ]);
+    });
+  });
+
+  describe('paused on the board row (protocol 0.17.0)', () => {
+    beforeEach(() => {
+      swimlanesList.mockReturnValue([
+        { id: 'lane-review', role: null, auto_spawn: false },
+        { id: 'lane-todo', role: 'todo', auto_spawn: false },
+        { id: 'lane-done', role: 'done', auto_spawn: false },
+      ]);
+      tasksList.mockReturnValue([
+        { id: 't-paused', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-paused-done', swimlane_id: 'lane-done', session_id: null, archived_at: null },
+        // A move into To Do removes the task's rows, so this is a leftover row:
+        // it pins that `paused` follows the row, not the column.
+        { id: 't-paused-todo', swimlane_id: 'lane-todo', session_id: null, archived_at: null },
+        { id: 't-paused-queued-successor', swimlane_id: 'lane-review', session_id: 'sess-next', archived_at: null },
+        { id: 't-queued', swimlane_id: 'lane-review', session_id: 'sess-queued', archived_at: null },
+        { id: 't-running', swimlane_id: 'lane-review', session_id: 'sess-run', archived_at: null },
+        { id: 't-ended', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-fresh', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+        { id: 't-terminal', swimlane_id: 'lane-review', session_id: null, archived_at: null },
+      ]);
+      registryRows = [
+        { id: 'sess-1', taskId: 't-paused', status: 'suspended' },
+        { id: 'sess-2', taskId: 't-paused-done', status: 'suspended' },
+        { id: 'sess-3', taskId: 't-paused-todo', status: 'suspended' },
+        // A respawn queued behind the concurrency limit: the desktop card shows
+        // the queued session, not Paused.
+        { id: 'sess-4', taskId: 't-paused-queued-successor', status: 'suspended' },
+        { id: 'sess-next', taskId: 't-paused-queued-successor', status: 'queued' },
+        { id: 'sess-queued', taskId: 't-queued', status: 'queued' },
+        { id: 'sess-run', taskId: 't-running', status: 'running' },
+        { id: 'sess-5', taskId: 't-ended', status: 'exited' },
+        // A Command Terminal session is never a task's paused session.
+        { id: 'sess-terminal', taskId: 't-terminal', status: 'suspended', transient: true },
+      ];
+    });
+
+    it('is true for every paused task whatever its column, apart from resumable, and false otherwise', async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; resumable: boolean | null }> }).tasks;
+      expect(Object.fromEntries(tasks.map((task) => [task.id, { paused: task.paused, resumable: task.resumable }]))).toEqual({
+        't-paused': { paused: true, resumable: true },
+        't-paused-done': { paused: true, resumable: false },
+        't-paused-todo': { paused: true, resumable: false },
+        't-paused-queued-successor': { paused: false, resumable: false },
+        't-queued': { paused: false, resumable: false },
+        't-running': { paused: false, resumable: false },
+        't-ended': { paused: false, resumable: false },
+        't-fresh': { paused: false, resumable: false },
+        't-terminal': { paused: false, resumable: false },
+      });
+      // The Resume gate never opens on a row that is not paused.
+      for (const task of tasks) {
+        if (task.resumable === true) expect(task.paused).toBe(true);
+      }
     });
   });
 
