@@ -269,6 +269,35 @@ describe('BridgeSession rekey', () => {
     session.dispose();
   });
 
+  // Every msg1 the phone receives gets an answer, in order. If the desktop
+  // forgot an initiation while its msg1 was still on the way, that msg1's
+  // reply would be tried against every initiation it still holds, and a
+  // failed read destroys each one it touches.
+  it('stays in step when more initiations go unanswered than it keeps', () => {
+    vi.useFakeTimers();
+    const { session, phone, pipe } = establishedSession();
+    const desktopReceived: string[] = [];
+    session.on('message', (message: BridgeMessage) => desktopReceived.push(message.type));
+
+    // The rekey tick, the presence re-probe, then unlock probes, all while
+    // the phone's replies are stuck.
+    vi.advanceTimersByTime(REHANDSHAKE_INTERVAL_MS);
+    vi.advanceTimersByTime(5_000);
+    for (let probe = 0; probe < 8; probe++) session.probePresenceNow();
+    pipe.deliverToDevice();
+    pipe.deliverToDesktop();
+
+    session.sendMessage(response('after-the-stall'));
+    pipe.deliverToDevice();
+    phone.sendHeartbeat();
+    pipe.deliverToDesktop();
+
+    expect(phone.droppedFrames).toBe(0);
+    expect(phone.received).toEqual(['after-the-stall']);
+    expect(desktopReceived).toEqual(['heartbeat']);
+    session.dispose();
+  });
+
   it('keeps holding across a second msg1 and releases under the keys the phone ends on when the first msg1 never reached it', () => {
     vi.useFakeTimers();
     const { session, phone, pipe } = establishedSession();
