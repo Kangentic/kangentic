@@ -539,7 +539,9 @@ function TaskPanel({
           onClick={() => (variant === 'taskDetail' ? onOpenWorkflow?.() : onOpenTask(task.key))}
           disabled={openRefusal !== null}
           title={openRefusal ?? openLabel}
-          className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded bg-accent-emphasis enabled:hover:bg-accent text-accent-on text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+          // The panel's main action wears the accent tint (as Add task does on
+          // the canvas), not a fill: the view's one filled button is Start or Resume.
+          className="inline-flex items-center justify-center gap-1.5 min-w-0 py-2 rounded border border-accent/40 bg-accent/20 enabled:hover:bg-accent/30 text-accent-fg text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-open-task"
         >
           {variant === 'taskDetail' ? <WorkflowIcon size={14} className="shrink-0" /> : <SquareTerminal size={14} className="shrink-0" />}

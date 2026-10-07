@@ -1030,6 +1030,43 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
+  test('Start is the one filled button; Add task and Open task wear the accent tint, and New workflow stays plain', async () => {
+    // Each region's main action is tinted (the canvas's, the inspector's); the
+    // header's is Start, the view's one fill. New workflow, tinted, would be the
+    // only blue in a running workflow's header.
+    const { browser, page } = await launch('draft', { width: 2000 });
+    try {
+      await expect(byTestId(page, 'workflow-open-task')).toBeVisible();
+      const accentFg = await computedColor(page, 'var(--color-accent-fg)');
+      const accentEmphasis = await computedColor(page, 'var(--color-accent-emphasis)');
+      const look = (testId: string) => byTestId(page, testId).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { color: style.color, background: style.backgroundColor };
+      });
+      const raised = await page.evaluate(() => {
+        const probe = document.createElement('span');
+        probe.style.backgroundColor = 'var(--color-surface-raised)';
+        document.body.appendChild(probe);
+        const value = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return value;
+      });
+      expect((await look('workflow-start')).background).toBe(accentEmphasis);
+      for (const testId of ['workflow-add-task', 'workflow-open-task']) {
+        const tinted = await look(testId);
+        expect(tinted.color, testId).toBe(accentFg);
+        // A tint, really drawn: not the fill, not the plain raised surface, and
+        // not transparent (an arbitrary class that failed to generate).
+        expect(tinted.background, testId).not.toBe(accentEmphasis);
+        expect(tinted.background, testId).not.toBe(raised);
+        expect(tinted.background, testId).not.toBe('rgba(0, 0, 0, 0)');
+      }
+      expect((await look('workflow-new')).color).not.toBe(accentFg);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('at every width the view tools stay clear of Add task, giving up their words below 760px of canvas', async () => {
     const { browser, page } = await launch('draft', { width: 2000 });
     try {

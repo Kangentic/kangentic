@@ -552,7 +552,15 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
 const TOOL_WIDTH = 'min-w-[136px]';
 const VIEW_TOOL_WIDTH = 'min-w-0 @[760px]:min-w-[136px]';
 const VIEW_TOOL_LABEL = 'hidden @[760px]:inline';
-const CANVAS_TOOL_CLASS = 'inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-edge-input bg-surface-raised shadow-xl text-[13px] text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+const CANVAS_TOOL_SHAPE = 'inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border shadow-xl text-[13px] disabled:opacity-45 disabled:cursor-not-allowed transition-colors';
+const CANVAS_TOOL_CLASS = `${CANVAS_TOOL_SHAPE} border-edge-input bg-surface-raised text-fg-secondary enabled:hover:text-fg enabled:hover:bg-surface-hover`;
+/**
+ * Add task leads the canvas, so it wears the accent tint that marks each
+ * region's main action (Open task leads the inspector), the one task detail's
+ * Resume session wears. Start or Resume stays the view's one filled button.
+ * The tint is mixed over the raised fill, so the canvas never shows through.
+ */
+const ADD_TASK_CLASS = `${CANVAS_TOOL_SHAPE} border-accent/40 bg-[color-mix(in_srgb,var(--color-accent)_20%,var(--color-surface-raised))] text-accent-fg enabled:hover:bg-[color-mix(in_srgb,var(--color-accent)_30%,var(--color-surface-raised))]`;
 
 /**
  * The canvas's view tools, bottom left, side by side at one width (a grid's
@@ -601,10 +609,10 @@ function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | n
       onClick={onAddTask}
       disabled={addTaskRefusal !== null}
       title={addTaskRefusal ?? 'Add a task to this workflow'}
-      className={`${CANVAS_TOOL_CLASS} ${TOOL_WIDTH}`}
+      className={`${ADD_TASK_CLASS} ${TOOL_WIDTH}`}
       data-testid="workflow-add-task"
     >
-      <Plus size={14} className="text-fg-muted" />Add task
+      <Plus size={14} />Add task
     </button>
   );
 }
