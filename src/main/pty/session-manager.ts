@@ -152,6 +152,16 @@ export interface TurnEndedPayload {
   workSerial: number;
 }
 
+/**
+ * The `'session-resumed'` event's payload: a task session spawned to resume a
+ * conversation (a Resume, a workflow's Resume, or recovery at launch or after
+ * a pty host crash) is running. It comes back idle with no turn end, so a
+ * listener that acts on turn ends learns of it here. `workSerial` is the
+ * session's work serial as it came back: a turn the user starts after the
+ * resume moves it (`SessionManager.isLatestTurn`).
+ */
+export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt'>;
+
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
 export interface SessionPipelineStats {
   sessionId: string;
@@ -1522,12 +1532,37 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
+      if (session.status === 'running' && input.resuming && !input.transient) this.announceResumed(id, input.agentSessionId ?? null);
       return session;
     } finally {
       // An abandoned spawn settles once the PTY the host started has exited;
       // until then it is still in flight for a teardown waiting on it.
       if (inFlight.abandonedPtyExit) void inFlight.abandonedPtyExit.then(settle);
       else settle();
+    }
+  }
+
+  /**
+   * Say that a task session resumed a conversation. Guarded as the turn end's
+   * emit is: a listener that throws must not fail the spawn that already ran.
+   * The conversation's id is the one the resume named until the session
+   * reports its own.
+   */
+  private announceResumed(sessionId: string, resumedAgentSessionId: string | null): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    const payload: SessionResumedPayload = {
+      sessionId,
+      taskId: session.taskId,
+      projectId: session.projectId,
+      agentSessionId: session.agentSessionId ?? resumedAgentSessionId,
+      isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+      workSerial: this.telemetry.getWorkSerial(sessionId) ?? 0,
+    };
+    try {
+      this.emit('session-resumed', payload);
+    } catch (error) {
+      console.error(`[SESSION] session-resumed listener threw for ${sessionId.slice(0, 8)}:`, error);
     }
   }
 

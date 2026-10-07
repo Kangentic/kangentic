@@ -300,6 +300,32 @@ describe('AutomationRunRepository', () => {
     expect(row.finished_at).not.toBeNull();
   });
 
+  it('says a workflow step check answered after a reply, in that column only', () => {
+    // A resumed task's catch-up asks this to tell a judged reply from one a
+    // Pause or a quit left unjudged (turn-end-runner.ts).
+    const { database, runs, columnId, taskId } = setup();
+    const otherColumnId = new SwimlaneRepository(database).list()[1].id;
+    const before = new Date(Date.now() - 60_000).toISOString();
+    const after = new Date(Date.now() + 60_000).toISOString();
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(false);
+
+    // A "not done" answer is a check that answered.
+    runs.recordWorkflowStep({ taskId, swimlaneId: columnId, workflowId: 'workflow-1', met: false, reason: 'It asked a question.', detail: 'Not done yet: it asked a question.' });
+
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(true);
+    expect(runs.hasWorkflowStepSince(taskId, columnId, after)).toBe(false);
+    expect(runs.hasWorkflowStepSince(taskId, otherColumnId, before)).toBe(false);
+  });
+
+  it('does not count a column automation\'s run as a workflow step check', () => {
+    const { runs, columnId, taskId } = setup();
+    const before = new Date(Date.now() - 60_000).toISOString();
+    runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId });
+    runs.finish('run-1', 'succeeded', 'HTTP 204');
+
+    expect(runs.hasWorkflowStepSince(taskId, columnId, before)).toBe(false);
+  });
+
   it('records a skip with its reason', () => {
     const { runs, columnId, taskId } = setup();
     runs.recordSkipped({ id: 'run-1', automation: automation('a1', columnId), taskId }, 'Start an agent here is off.');

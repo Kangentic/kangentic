@@ -1,7 +1,8 @@
 import { canColumnRun } from '../../../shared/automation-manifest';
 import type { ColumnAutomation, Swimlane, Task } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { TurnEndedPayload } from '../../pty/session-manager';
+import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
+import type { AgentReply } from '../../agent/shared/agent-reply';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -54,11 +55,22 @@ import { trackTurnEndGroup } from './turn-end-passes';
  *   A newer turn abandons the pass and writes nothing.
  * - **Cheap when there is nothing to do.** Every hook agent's every turn ends
  *   here; a column with no turn-end rows costs one indexed query.
+ * - **A resume catches up the workflow step, never the rows.** A session that
+ *   comes back from a Pause, a restart or a crash comes back idle with no turn
+ *   end, so a reply whose step check a Pause abandoned, or a quit cut short,
+ *   would sit unjudged until the user typed. The resume judges that reply once
+ *   (`catchUpAfterResume`). The rows stay with real turn ends.
  */
 
+interface PassRequest {
+  payload: TurnEndedPayload;
+  /** A resume's catch-up: the workflow step alone, on the reply no check judged. */
+  catchUp: boolean;
+}
+
 interface TaskPassState {
-  /** A turn end that arrived while a pass was running, run once more after it. */
-  pending: TurnEndedPayload | null;
+  /** A request that arrived while a pass was running, run once more after it. */
+  pending: PassRequest | null;
 }
 
 const passes = new Map<string, TaskPassState>();
@@ -71,32 +83,46 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // Off the engine's commit stack: this fires inside `commitTransition`, and
     // even a DB read belongs after it has unwound.
     setImmediate(() => {
-      void schedulePass(context, payload);
+      void schedulePass(context, { payload, catchUp: false });
+    });
+  });
+  // Off the spawn's stack too: the resume writes the task's session id after
+  // the spawn returns.
+  context.sessionManager.on('session-resumed', (resumed: SessionResumedPayload) => {
+    setImmediate(() => {
+      void catchUpAfterResume(context, resumed);
     });
   });
 }
 
-async function schedulePass(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
-  const existing = passes.get(payload.taskId);
+/** Judge the reply a resumed session's step check never judged. Exported for its test. */
+export function catchUpAfterResume(context: IpcContext, resumed: SessionResumedPayload): Promise<void> {
+  return schedulePass(context, { payload: { ...resumed, turnStartedAt: null }, catchUp: true });
+}
+
+async function schedulePass(context: IpcContext, request: PassRequest): Promise<void> {
+  const existing = passes.get(request.payload.taskId);
   if (existing) {
-    existing.pending = payload;
+    // A turn end outranks a pending catch-up: it judges a newer turn, and a
+    // catch-up behind one would find that turn's reply already judged.
+    if (!request.catchUp || existing.pending === null) existing.pending = request;
     return;
   }
   const state: TaskPassState = { pending: null };
-  passes.set(payload.taskId, state);
+  passes.set(request.payload.taskId, state);
   try {
-    let next: TurnEndedPayload | null = payload;
+    let next: PassRequest | null = request;
     while (next) {
       state.pending = null;
       try {
-        await runPass(context, next);
+        await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next.payload));
       } catch (error) {
-        console.error(`[turn-end] Pass failed for task ${next.taskId.slice(0, 8)}:`, error);
+        console.error(`[turn-end] Pass failed for task ${next.payload.taskId.slice(0, 8)}:`, error);
       }
       next = state.pending;
     }
   } finally {
-    passes.delete(payload.taskId);
+    passes.delete(request.payload.taskId);
   }
 }
 
@@ -166,7 +192,7 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
     const sessionRepo = new SessionRepository(getProjectDb(payload.projectId));
     let replyRead: Promise<string | null> | null = null;
     const readReply = (): Promise<string | null> => {
-      replyRead ??= readAgentReply(context, payload, sessionRepo);
+      replyRead ??= readAgentReply(payload, sessionRepo);
       return replyRead;
     };
 
@@ -184,6 +210,49 @@ async function runPass(context: IpcContext, payload: TurnEndedPayload): Promise<
   } finally {
     releaseGroup();
     clearSpawnProgress(context.mainWindow, task.id);
+  }
+}
+
+/**
+ * A resume's catch-up: the workflow step on the reply no step check judged. A
+ * check that answered wrote its row after the reply, so the reply is unjudged
+ * when it is from this visit and no step row follows it. Never the column's
+ * rows: they answer a turn end, and a resume ends no turn.
+ */
+async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
+  // The cheap gate first: most resumed tasks are in no workflow.
+  let repos: ReturnType<typeof getProjectRepos>;
+  try {
+    repos = getProjectRepos(context, payload.projectId);
+  } catch {
+    return;
+  }
+  const resumedTask = repos.tasks.getById(payload.taskId);
+  if (!resumedTask || resumedTask.archived_at || !workflowStepApplies(resumedTask, payload.projectId)) return;
+
+  const controller = new AbortController();
+  const releaseGroup = trackTurnEndGroup(payload.taskId, controller);
+  try {
+    // The resume repaints the conversation: wait for it to settle idle.
+    const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
+    if (settled !== 'completed') return;
+    // Work begun since the resume is a turn of its own, which its turn end judges.
+    if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return;
+    // Read only now: the resume writes the task's session id after its spawn.
+    const subject = resolveSubject(context, payload);
+    if (!subject) return;
+    const { task, column } = subject;
+
+    const reply = await readFinalReply(payload, new SessionRepository(getProjectDb(payload.projectId)));
+    if (!reply || controller.signal.aborted) return;
+    // A reply from before the task entered this column was the last column's.
+    const visitStartedAt = subject.repos.taskMoves.visitStartedAt(task.id, column.id);
+    if (visitStartedAt && reply.ts < Date.parse(visitStartedAt)) return;
+    if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) return;
+
+    await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: async () => reply.text });
+  } finally {
+    releaseGroup();
   }
 }
 
@@ -283,11 +352,12 @@ function mentionsAgentReply(row: ColumnAutomation): boolean {
 }
 
 /** The session's final reply, read in the retrieval worker. Empty on any failure. */
-async function readAgentReply(
-  context: IpcContext,
-  payload: TurnEndedPayload,
-  sessionRepo: SessionRepository,
-): Promise<string | null> {
+async function readAgentReply(payload: TurnEndedPayload, sessionRepo: SessionRepository): Promise<string | null> {
+  return (await readFinalReply(payload, sessionRepo))?.text ?? null;
+}
+
+/** The session's final reply with when it was written, or null on any failure. */
+async function readFinalReply(payload: TurnEndedPayload, sessionRepo: SessionRepository): Promise<AgentReply | null> {
   try {
     const record = sessionRepo.findByAnyId(payload.sessionId);
     const agentSessionId = record?.agent_session_id ?? payload.agentSessionId;
@@ -300,7 +370,7 @@ async function readAgentReply(
       },
       { timeoutMs: AGENT_REPLY_TIMEOUT_MS },
     );
-    return reply?.text ?? null;
+    return reply ?? null;
   } catch (error) {
     console.warn(`[turn-end] Could not read the agent's reply for ${payload.sessionId.slice(0, 8)}:`, error);
     return null;

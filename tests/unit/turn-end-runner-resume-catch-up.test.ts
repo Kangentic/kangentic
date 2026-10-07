@@ -1,0 +1,252 @@
+/**
+ * A resumed workflow task gets the step check its last turn never got
+ * (src/main/automations/turn-end/turn-end-runner.ts).
+ *
+ * The step check runs at a turn end, and a resumed session comes back idle with
+ * no turn end. Found in the preview (#732): an agent finished its work, its
+ * turn ended, and the user pressed Pause while the check was out. The pause
+ * abandoned the check, which wrote nothing, and Resume brought the agent back
+ * idle, so its finished reply was never judged and the task sat in its column
+ * until someone typed to it. A quit or crash between a turn end and its check
+ * leaves the same reply behind at the next launch.
+ *
+ * So a session that comes back from a resume (`'session-resumed'`) judges the
+ * reply no step check has judged: one in this visit, with no step row written
+ * after it. A check that answered writes its row after the reply, so a "not
+ * done" is never asked twice. The column's rows never run here: they answer a
+ * turn end, and a resume ends no turn.
+ *
+ * Driven through `registerTurnEndAutomations` and the session manager's events,
+ * as the app drives it, with `catchUpAfterResume` awaited directly where a test
+ * needs the pass to have finished before it asserts that nothing ran.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import type { SessionResumedPayload } from '../../src/main/pty/session-manager';
+
+const hoisted = vi.hoisted(() => ({
+  runWorkflowStep: vi.fn(),
+  workflowStepApplies: vi.fn(),
+  executeTransition: vi.fn(),
+  waitForTurnCompletion: vi.fn(),
+  retrievalCall: vi.fn(),
+  hasWorkflowStepSince: vi.fn(),
+  visitStartedAt: vi.fn(),
+  task: {} as Record<string, unknown>,
+  column: {} as Record<string, unknown>,
+}));
+
+vi.mock('../../src/main/db/repositories/session-repository', () => ({
+  SessionRepository: class {
+    findByAnyId = vi.fn(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+  },
+}));
+vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
+vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
+  getProjectRepos: vi.fn(() => ({
+    tasks: { getById: () => hoisted.task, list: () => [] },
+    swimlanes: { getById: () => hoisted.column, list: () => [] },
+    automations: { getForTrigger: () => [{ id: 'row-keep-going', type: 'send_message', config: {}, condition: null, max_runs: null }] },
+    automationRuns: {
+      hasRunSince: () => false,
+      hasSkipSince: () => false,
+      countRuns: () => 0,
+      hasWorkflowStepSince: hoisted.hasWorkflowStepSince,
+    },
+    taskMoves: { visitStartedAt: hoisted.visitStartedAt },
+    attachments: {},
+  })),
+}));
+vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
+  createTransitionEngine: vi.fn(() => ({
+    executeTransition: hoisted.executeTransition,
+    resolveGroupTemplateVars: vi.fn(() => ({})),
+    conditionCheckInput: vi.fn(() => ({})),
+    checkConditions: vi.fn(),
+  })),
+  resolveInjectionVerifier: vi.fn(() => undefined),
+}));
+vi.mock('../../src/main/ipc/helpers/automation-failures', () => ({ reportAutomationFailures: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/system', () => ({ showDesktopNotification: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
+vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
+  createProgressCallback: vi.fn(() => vi.fn()),
+  clearSpawnProgress: vi.fn(),
+}));
+vi.mock('../../src/main/transition-engine/turn-completion', () => ({
+  waitForTurnCompletion: hoisted.waitForTurnCompletion,
+}));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.retrievalCall } }));
+vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
+vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi.fn(), list: vi.fn(() => []) } }));
+vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
+vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(), routeOf: vi.fn() }));
+vi.mock('../../src/main/workflows/workflow-step', () => ({
+  runWorkflowStep: hoisted.runWorkflowStep,
+  workflowStepApplies: hoisted.workflowStepApplies,
+}));
+vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
+  deliverMessageToSession: vi.fn(),
+  deliverMessageAfterMove: vi.fn(),
+}));
+
+const { registerTurnEndAutomations, catchUpAfterResume } = await import('../../src/main/automations/turn-end/turn-end-runner');
+
+const SESSION_ID = 'session-resumed-1';
+const PROJECT_ID = 'project-1';
+/** The resumed session's work serial: no work reported since it came back. */
+const RESUMED_WORK_SERIAL = 0;
+/** When the task entered Executing. */
+const VISIT_STARTED_AT = '2026-10-07T15:57:41.017Z';
+/** The agent's finished reply, after the visit began and before the Pause. */
+const REPLY = { text: 'Created docs/livec.md with "Hello from C" content.', uuid: 'reply-1', ts: Date.parse('2026-10-07T15:57:53.382Z') };
+
+interface FakeSessionManager extends EventEmitter {
+  getActivityCache: () => Record<string, string>;
+  isLatestTurn: (sessionId: string, workSerial: number) => boolean;
+}
+
+describe('a resumed workflow task and its unjudged reply', () => {
+  let sessionManager: FakeSessionManager;
+  let context: IpcContext;
+  let currentWorkSerial: number;
+  let taskCounter = 0;
+  let taskId: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.runWorkflowStep.mockImplementation(async () => undefined);
+    hoisted.workflowStepApplies.mockImplementation(() => true);
+    hoisted.executeTransition.mockImplementation(async () => ({ results: [] }));
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'completed');
+    hoisted.retrievalCall.mockImplementation(async () => REPLY);
+    hoisted.hasWorkflowStepSince.mockImplementation(() => false);
+    hoisted.visitStartedAt.mockImplementation(() => VISIT_STARTED_AT);
+
+    // The runner keeps one pass per task in a module-level map, so each test
+    // owns its task.
+    taskCounter += 1;
+    taskId = `task-${taskCounter}`;
+    hoisted.task = {
+      id: taskId,
+      archived_at: null,
+      session_id: SESSION_ID,
+      swimlane_id: 'lane-executing',
+      agent: 'claude',
+      workflow_id: 'workflow-1',
+      workflow_project_id: null,
+    };
+    hoisted.column = { id: 'lane-executing', name: 'Executing', role: null, auto_spawn: true };
+
+    currentWorkSerial = RESUMED_WORK_SERIAL;
+    sessionManager = Object.assign(new EventEmitter(), {
+      getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
+      isLatestTurn: (sessionId: string, workSerial: number) =>
+        sessionId === SESSION_ID && workSerial === currentWorkSerial,
+    });
+    context = {
+      sessionManager,
+      mainWindow: { isDestroyed: () => false },
+      projectRepo: { getById: () => ({ path: '/mock/project' }) },
+    } as unknown as IpcContext;
+    registerTurnEndAutomations(context);
+  });
+
+  function resumed(): SessionResumedPayload {
+    return {
+      sessionId: SESSION_ID,
+      taskId,
+      projectId: PROJECT_ID,
+      agentSessionId: 'agent-session-1',
+      isolatedSwimlaneId: null,
+      workSerial: RESUMED_WORK_SERIAL,
+    };
+  }
+
+  it('judges the reply a Pause left unjudged, once the resumed session comes back', async () => {
+    sessionManager.emit('session-resumed', resumed());
+
+    await vi.waitFor(() => expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1));
+    const [, input] = hoisted.runWorkflowStep.mock.calls[0] as [unknown, {
+      columnId: string;
+      payload: { sessionId: string; taskId: string; workSerial: number; turnStartedAt: number | null };
+      readAgentReply: () => Promise<string | null>;
+    }];
+    expect(input.columnId).toBe('lane-executing');
+    expect(input.payload).toMatchObject({ sessionId: SESSION_ID, taskId, workSerial: RESUMED_WORK_SERIAL, turnStartedAt: null });
+    await expect(input.readAgentReply()).resolves.toBe(REPLY.text);
+    // Judged against the reply's own time: a step row written after it means judged.
+    expect(hoisted.hasWorkflowStepSince).toHaveBeenCalledWith(taskId, 'lane-executing', new Date(REPLY.ts).toISOString());
+  });
+
+  it('runs none of the column\'s turn-end rows: a resume ends no turn', async () => {
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+    expect(hoisted.executeTransition).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing when a step check already judged the reply', async () => {
+    // A "not done" answer wrote its row after the reply: the agent asked something.
+    hoisted.hasWorkflowStepSince.mockImplementation(() => true);
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing about a reply from before the task entered its column', async () => {
+    hoisted.retrievalCall.mockImplementation(async () => ({ ...REPLY, ts: Date.parse(VISIT_STARTED_AT) - 60_000 }));
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing when the conversation has no reply to judge', async () => {
+    hoisted.retrievalCall.mockImplementation(async () => null);
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('leaves it to the next turn end when the user started work after the resume', async () => {
+    // The user typed "continue" into the resumed agent: that turn ends with a
+    // turn end of its own, which judges it.
+    currentWorkSerial = RESUMED_WORK_SERIAL + 1;
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing when the resumed agent never settled idle', async () => {
+    hoisted.waitForTurnCompletion.mockImplementation(async () => 'timeout');
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing for a task outside a running workflow', async () => {
+    hoisted.workflowStepApplies.mockImplementation(() => false);
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+    expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing for a session that is no longer the task\'s live one', async () => {
+    // The task moved on, or another session took it over, while the resume settled.
+    hoisted.task = { ...hoisted.task, session_id: 'session-other' };
+
+    await catchUpAfterResume(context, resumed());
+
+    expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+});

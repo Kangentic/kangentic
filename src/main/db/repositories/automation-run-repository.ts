@@ -165,6 +165,18 @@ export class AutomationRunRepository {
   }
 
   /**
+   * Has a workflow step check answered for this task in this column since
+   * `since`? A check writes its row once it has answered, after the reply it
+   * judged, so a reply older than the newest row has been judged.
+   */
+  hasWorkflowStepSince(taskId: string, swimlaneId: string, since: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM automation_runs WHERE type = 'workflow_step' AND task_id = ? AND swimlane_id = ? AND started_at >= ? LIMIT 1`)
+      .get(taskId, swimlaneId, since);
+    return row !== undefined;
+  }
+
+  /**
    * Has this automation run on this task since `since` (the task's entry into
    * the column)? Null `since` means no visit boundary is known (a task that
    * entered before moves were recorded), so every run counts.
