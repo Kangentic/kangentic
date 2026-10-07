@@ -15,7 +15,7 @@
  * than the engine (spawn-entry-point-parity), and it must never spawn a task the
  * user explicitly paused.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 const mockAutoSpawnForTask = vi.fn(async () => {});
 const mockApplySuspendDbWrites = vi.fn();
@@ -584,6 +584,91 @@ describe('reconcileAutoSpawnChange', () => {
     await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
     expect(mockReconcileTaskSessionRef).not.toHaveBeenCalled();
     expect(mockSuspend).not.toHaveBeenCalled();
+  });
+
+  describe('the "Suspended session" log line', () => {
+    // The line is the only record that a config change stopped an agent, so it
+    // must be written when a suspend happened and never when an early return in
+    // the locked block skipped one. The resync push (`mockWebContentsSend`) runs
+    // after the whole suspend loop, so waiting for it is a deterministic barrier:
+    // by then the log either happened or it never will. A negative assertion
+    // cannot be polled for, which is why every test here waits on that push first.
+    let consoleLogSpy: MockInstance<typeof console.log>;
+
+    beforeEach(() => {
+      consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      // mockRestore on this one spy, not vi.restoreAllMocks(): the latter can
+      // also reset the module-level vi.fn(async () => {}) implementations
+      // above, which the outer beforeEach does not re-arm.
+      consoleLogSpy.mockRestore();
+    });
+
+    function suspendedLogLines(): string[] {
+      return consoleLogSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => /Suspended session/.test(message));
+    }
+
+    it('logs once, naming the task and the column, when the suspend happened', async () => {
+      reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+        turnedOff(makeTask({ session_id: 'sess-1' })),
+      ]);
+
+      await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+
+      expect(mockSuspend).toHaveBeenCalledWith('sess-1');
+      const lines = suspendedLogLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('Suspended session for task task-1');
+      expect(lines[0]).toContain('"Planning"');
+    });
+
+    it('does not log when the task was deleted between planning and the lock', async () => {
+      mockTaskGetById.mockReturnValue(undefined);
+
+      reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+        turnedOff(makeTask({ session_id: 'sess-1' })),
+      ]);
+
+      await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+
+      expect(mockSuspend).not.toHaveBeenCalled();
+      expect(suspendedLogLines()).toEqual([]);
+    });
+
+    it('does not log when the task was dragged into another column first', async () => {
+      mockTaskGetById.mockReturnValue(
+        makeTask({ session_id: 'sess-1', swimlane_id: 'lane-somewhere-else' }),
+      );
+
+      reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+        turnedOff(makeTask({ session_id: 'sess-1' })),
+      ]);
+
+      await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+
+      expect(mockSuspend).not.toHaveBeenCalled();
+      expect(suspendedLogLines()).toEqual([]);
+    });
+
+    it('does not log when the registry has no live session for the task', async () => {
+      mockReconcileTaskSessionRef.mockImplementation((_context, _projectId, taskId) => ({
+        task: makeTask({ id: taskId as string, session_id: null }),
+        liveSession: null,
+      }));
+
+      reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [
+        turnedOff(makeTask({ session_id: 'sess-exited' })),
+      ]);
+
+      await vi.waitFor(() => expect(mockWebContentsSend).toHaveBeenCalled());
+
+      expect(mockSuspend).not.toHaveBeenCalled();
+      expect(suspendedLogLines()).toEqual([]);
+    });
   });
 
   it('does nothing at all without a resolved project', () => {
