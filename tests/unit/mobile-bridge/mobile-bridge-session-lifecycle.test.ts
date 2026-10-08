@@ -372,6 +372,49 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     }
   });
 
+  // The payload is whatever JSON the phone sent (JsonValue), and the line that
+  // names the request is built AFTER the response left, inside the promise
+  // callback nothing awaits: a describe step that threw on a null payload would
+  // surface as an unhandled rejection in the main process and drop the line.
+  it.each([
+    ['null', null],
+    ['an array', [1, 2]],
+    ['a string', 'subscribe'],
+    ['a number', 5],
+    ['an object whose action is not a string', { action: 42 }],
+    ['an object with no action', { sessionId: 'sess-1' }],
+  ])('names a slow request whose payload is %s by verb alone, with no action and no throw', async (_label, payload) => {
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const session = await openSession(service);
+    resetRequestSpansForTests();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let clockMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+    try {
+      service.capabilityRouter.register('read-board', (request) => {
+        clockMs += 900;
+        return { type: 'capability-response', requestId: request.requestId, ok: true };
+      });
+      session.sendMessage.mockImplementation(() => {
+        clockMs += 40;
+        return 96 * 1024;
+      });
+
+      session.emit('message', { type: 'capability-request', requestId: 'oddpayload-1', verb: 'read-board', payload });
+      await flushMicrotasks();
+
+      const slowLines = warnSpy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('slow request'));
+      expect(slowLines).toEqual([
+        '[mobile-bridge] slow request read-board oddpayload-1 from device-A: handler 900 ms, send 40 ms, 96 kB frame, longest main-loop block 920 ms',
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+      warnSpy.mockRestore();
+      resetRequestSpansForTests();
+      service.dispose();
+    }
+  });
+
   it('answers a response too large to encode with a short refusal on the same stream, and says so in a warn line', async () => {
     const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
     const session = await openSession(service);

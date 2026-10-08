@@ -622,6 +622,28 @@ describe('RelayClient redial and dial watchdog', () => {
     expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (silent) from connected');
   });
 
+  // "no relay ping seen" is a statement about an OPEN socket (the relay pings
+  // every 30 s and this one never got one). A socket still mid-dial has not been
+  // pinged yet by definition, so the clause would read as a dead relay path.
+  it('adds no relay ping clause to a forced redial that abandons a dial still in flight', () => {
+    vi.useFakeTimers();
+    stubFakeWebSocket();
+    const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'abcd1234' });
+    activeClients.push(client);
+    void client.connect().catch(() => undefined);
+    expect(client.state).toBe('connecting');
+
+    client.redialNow({ force: true, reason: 'mid-dial' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (mid-dial) from connecting');
+
+    // The same holds for the retry after a failed dial: 'reconnecting', socket installed, not open.
+    FakeWebSocket.instances[1].fail(1006);
+    vi.advanceTimersByTime(500);
+    expect(client.state).toBe('reconnecting');
+    client.redialNow({ force: true, reason: 'mid-retry' });
+    expect(loggedLines(warnSpy)).toContain('[mobile-bridge/relay-client abcd1234] forced redial (mid-retry) from reconnecting');
+  });
+
   it('folds an onerror carrying only an Error, with no message, into the dial-failed warn line', () => {
     vi.useFakeTimers();
     stubFakeWebSocket();
@@ -802,6 +824,99 @@ describe('RelayClient redial and dial watchdog', () => {
       // Past the hold, the primary gets its chance again.
       FakeWebSocket.instances[3].open();
       vi.advanceTimersByTime(30 * 60 * 1000);
+      FakeWebSocket.instances[3].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect(stackOf(4)).toBe('node');
+    });
+
+    // "Two failed dials in a row" means in a row: a refused dial during a relay
+    // restart followed by a dial that opened must not leave a count behind that
+    // the next lone failure tips over into a stack switch.
+    it('does not count failed primary dials that a successful open separates', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'separated', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+
+      // One refused dial, then the retry opens: the count is back to zero.
+      FakeWebSocket.instances[0].fail(1006);
+      vi.advanceTimersByTime(500);
+      FakeWebSocket.instances[1].open();
+      // The relay parks and closes the socket; an open socket's close is not a failed dial.
+      FakeWebSocket.instances[1].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+
+      // A second lone refusal, two failures overall but not two in a row.
+      // (The ladder doubled on that close, so this retry waits 1000 ms.)
+      FakeWebSocket.instances[2].fail(1006);
+      vi.advanceTimersByTime(1000);
+
+      expect([0, 1, 2, 3].map(stackOf)).toEqual(['node', 'node', 'node', 'node']);
+      expect(FakeWebSocket.instances).toHaveLength(4);
+    });
+
+    // The count is of PRIMARY dials. A proxy that is configured but down fails
+    // dials on the preferred fallback; once the proxy answer flips to DIRECT the
+    // primary has not failed at all and gets the same two-dial grace as any
+    // other first-time dial, not an immediate hand-back to the fallback.
+    it('does not charge failed fallback dials to the primary', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      let proxied = true;
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', fallbackWebSocket: fallbackOption(() => proxied) });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+
+      // The proxied dials die on the fallback, twice.
+      FakeWebSocket.instances[0].fail(1006);
+      vi.advanceTimersByTime(500);
+      FakeWebSocket.instances[1].fail(1006);
+      // The proxy answer flips: the next dial goes out on the primary...
+      proxied = false;
+      vi.advanceTimersByTime(1000);
+      FakeWebSocket.instances[2].fail(1006);
+      vi.advanceTimersByTime(2000);
+
+      // ...and its single failure is not two in a row, so the retry stays on it.
+      expect([0, 1, 2, 3].map(stackOf)).toEqual(['chromium', 'chromium', 'node', 'node']);
+    });
+
+    // The hold runs 30 minutes from the open where the primary had just failed.
+    // A later fallback open inside it is routine (a park timeout redials on the
+    // fallback) and must not push the end of the hold out, or a network that
+    // came back would stay on the fallback for as long as the phone keeps a
+    // session parked.
+    it('does not extend the hold when the fallback opens again inside it', () => {
+      vi.useFakeTimers();
+      stubFakeWebSocket();
+      const client = new RelayClient({ relayUrl: 'ws://127.0.0.1:1', slotId: 'test-slot', logLabel: 'noextend', fallbackWebSocket: fallbackOption() });
+      activeClients.push(client);
+      void client.connect().catch(() => undefined);
+
+      FakeWebSocket.instances[0].fail(1006);
+      vi.advanceTimersByTime(500);
+      FakeWebSocket.instances[1].fail(1006);
+      vi.advanceTimersByTime(1000);
+      // The fallback opens where the primary failed twice: the hold starts here.
+      expect(stackOf(2)).toBe('chromium');
+      FakeWebSocket.instances[2].open();
+      const holdsLogged = () => loggedLines(warnSpy).filter((line) => line.includes('dialing via chromium for the next 30 min')).length;
+      expect(holdsLogged()).toBe(1);
+
+      // 20 minutes into the hold the fallback's socket is parked and closed, and
+      // the redial opens on the fallback again.
+      vi.advanceTimersByTime(20 * 60 * 1000);
+      FakeWebSocket.instances[2].fail(4408, 'park_timeout');
+      vi.advanceTimersByTime(500);
+      expect(stackOf(3)).toBe('chromium');
+      FakeWebSocket.instances[3].open();
+      // Not a second hold: only an open that followed primary failures starts one.
+      expect(holdsLogged()).toBe(1);
+
+      // 10 minutes later is past 30 minutes from the FIRST open but only 10
+      // from the second. The original deadline governs, so the primary is back.
+      vi.advanceTimersByTime(10 * 60 * 1000);
       FakeWebSocket.instances[3].fail(4408, 'park_timeout');
       vi.advanceTimersByTime(500);
       expect(stackOf(4)).toBe('node');
