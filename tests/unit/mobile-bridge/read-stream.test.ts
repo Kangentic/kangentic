@@ -624,6 +624,36 @@ describe('handleReadStream', () => {
           ]);
         });
 
+        it('notes a "seed shrink" span for the slow-request line when a shrink ran, after the seed\'s own span', async () => {
+          const { takeRequestSpans, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
+          resetRequestSpansForTests();
+          const context = { sessionManager } as unknown as IpcContext;
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? overCapSeed : historyLinesFor(scrollbackLines));
+
+          await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+          const spans = takeRequestSpans('device-1', 'req-1');
+          expect(spans).toHaveLength(2);
+          expect(spans[0]).toMatch(/^seed \d+ ms \(settle 12 ms, serialize 3 ms\), 4608k chars$/);
+          expect(spans[1]).toMatch(/^seed shrink \d+ ms$/);
+        });
+
+        it('a list-only subscribe never takes a seed, so it never shrinks or warns', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          const subscriptions = new SubscriptionRegistry();
+          // Would be over the caps if anything asked for it.
+          sessionManager.getSerializedFrame.mockResolvedValue(overCapSeed);
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), context, subscriptions);
+
+          expect(response.ok).toBe(true);
+          expect((response.payload as { scrollback: string }).scrollback).toBe('');
+          expect(sessionManager.getSeedFrame).not.toHaveBeenCalled();
+          expect(subscriptions.has('stream:sess-1')).toBe(true);
+          expect(warnLines()).toEqual([]);
+        });
+
         it('sends the grid alone when the scaled history still does not fit', async () => {
           const context = { sessionManager } as unknown as IpcContext;
           const subscriptions = new SubscriptionRegistry();
