@@ -151,10 +151,11 @@ export class MessageEncodeError extends Error {
 export const RESPONSE_TOO_LARGE_ERROR = 'Response too large to send';
 
 /**
- * The refusal sent in place of a response over the frame caps. It carries
- * the `response-too-large` code so a phone can tell it from a refusal that
- * means the target is gone: a phone that reads every refused `read-stream`
- * subscribe as a dead session shows a live one as ended.
+ * The refusal the service sends in place of a response over the frame caps,
+ * for a verb that has no way to send less. It carries the `response-too-large`
+ * code so a phone can tell it from a refusal that means the target is gone.
+ * `read-stream` never reaches it: that handler shrinks its terminal seed to
+ * fit before it answers.
  */
 export function responseTooLargeRefusal(requestId: string): CapabilityResponseMessage {
   return { type: 'capability-response', requestId, ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: RESPONSE_TOO_LARGE_ERROR_CODE };
