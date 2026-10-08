@@ -27,7 +27,7 @@ at the Windows timer floor.
   are unchanged.
 - **Main keeps mirrors, not the data.** What main reads synchronously (alt-screen state, buffer
   width) is mirrored from host events. Everything else is an async request: scrollback, the serialized
-  frame, raw scrollback, the output peek, diagnostics. Do not add a synchronous read of host state
+  frame, the phone's seed frame (`getSeedFrame`), raw scrollback, the output peek, diagnostics. Do not add a synchronous read of host state
   to main.
 - **Output reaches main only where something consumes it.** The host sends `data` for the focused
   union (`setFocused`), `tap` for sessions a phone streams (`subscribeDataTap`, ref-counted), and a

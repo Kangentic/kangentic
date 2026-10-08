@@ -172,8 +172,10 @@ export interface RelayClientOptions {
 export interface RedialOptions {
   /**
    * Abandon a socket that exists, open or mid-dial, and dial afresh. For a
-   * caller that has PROVEN the socket dead: BridgeSession's spent presence
-   * budget, which wrote two initiations into it and got nothing back. A
+   * caller that has PROVEN the socket dead or spent: BridgeSession's spent
+   * presence budget, which wrote two initiations into it and got nothing back,
+   * a system resume with no phone attached, and this client's own per-socket
+   * byte cap. A
    * socket can read open and carry nothing indefinitely (a network stall the
    * OS never reports), and only the application layer can tell.
    */
@@ -268,7 +270,8 @@ export class RelayClient implements RedialableTransport {
    * socket is open", and a second dial on top of it is the two-live-sockets
    * hazard (the loser's onclose nulls the winner). Every production caller
    * today passes `force` (BridgeSession has proven its socket dead before it
-   * gets here); the non-forced branch is the kick a caller with only a hint
+   * gets here, and send() has spent the socket's byte budget); the non-forced
+   * branch is the kick a caller with only a hint
    * would use, and the unit test pins it. With `force` the existing socket is
    * abandoned first, handlers detached, so its late close can neither null
    * the socket this dial installs nor arm a reconnect on top of it. Either
