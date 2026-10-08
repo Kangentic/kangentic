@@ -629,10 +629,12 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
 
 - **What main keeps.** The session registry, the activity engine and every push to the renderer.
   It mirrors the alt-screen state and buffer width from host events, and reads scrollback, the
-  serialized frame, raw scrollback, the output peek and diagnostics by request.
+  serialized frame, the phone's seed frame (`getSeedFrame`: that frame plus the parser offset it
+  covers), raw scrollback, the output peek and diagnostics by request.
 - **Which output reaches main.** `data` for the focused union (`setFocused`), `tap` for the
   sessions a phone streams (`subscribeDataTap`, reference counted, so a reader that needs raw output
-  briefly subscribes for that long), and otherwise only a coalesced `outputSeen` with no bytes.
+  briefly subscribes for that long; each `tap` chunk carries its cumulative parser offset,
+  `endOffset`), and otherwise only a coalesced `outputSeen` with no bytes.
 - **A host crash.** Main first stops the process tree each PTY left behind, by pid
   (`stopLostPtyTree`): a closed pseudo console or a hangup usually ends the agent, but nothing
   guarantees it, and one still running would edit its worktree beside the session that resumes. Each

@@ -178,7 +178,7 @@ export class BridgeSession extends EventEmitter {
    * Initiations sent and not yet answered, oldest first. Usually zero or one;
    * a second appears when a reply stalls past the presence window and the
    * re-probe sends another msg1 (see handleHandshakeFrame). Bounded by
-   * MAX_OUTSTANDING_HANDSHAKES, dropping the oldest.
+   * MAX_OUTSTANDING_HANDSHAKES: at the cap no further msg1 is sent.
    */
   private outstandingHandshakes: HandshakeState[] = [];
   private streams: SecretstreamDirectionPair | null = null;
