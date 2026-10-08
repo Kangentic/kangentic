@@ -27,7 +27,7 @@ import {
   type Transport,
   type TransportState,
 } from '@kangentic/protocol';
-import { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
+import { BridgeSession, responseTooLargeRefusal } from '../../../src/main/mobile-bridge/session/bridge-session';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 import type { RedialOptions } from '../../../src/main/mobile-bridge/transport/relay-client';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from '../../../src/main/mobile-bridge/session/forced-redial-reason';
@@ -1679,6 +1679,25 @@ describe('BridgeSession park-buffer behavior (#635)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('responseTooLargeRefusal', () => {
+  it('is a failed capability-response for the request, carrying the stable response-too-large code', () => {
+    // The wire text and code are the contract a phone branches on, so they
+    // are pinned as literals rather than through the exported constants.
+    expect(responseTooLargeRefusal('req-42')).toEqual({
+      type: 'capability-response',
+      requestId: 'req-42',
+      ok: false,
+      error: 'Response too large to send',
+      code: 'response-too-large',
+    });
+  });
+
+  it('survives an encode and decode round trip, so the phone receives the code', () => {
+    const refusal = responseTooLargeRefusal('req-42');
+    expect(decodeMessage(encodeMessage(refusal))).toEqual(refusal);
   });
 });
 
