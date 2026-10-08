@@ -3,8 +3,10 @@ import {
   COMPRESSION_THRESHOLD,
   decodeMessage,
   encodeMessage,
+  encodeMessageFailure,
   isUnsupportedVerbError,
   MAX_DECODED_LENGTH,
+  MAX_FRAME_LENGTH,
   RESPONSE_TOO_LARGE_ERROR_CODE,
   UNSUPPORTED_VERB_ERROR_CODE,
   UnsupportedVerbError,
@@ -19,7 +21,34 @@ import type { BridgeMessage } from '../../../packages/protocol/src/wire/messages
 // such consumer, so nothing catches it dropping out of
 // packages/protocol/src/index.ts's barrel re-export. Confirmed by removing
 // it from that export list: every other unit suite stayed green.
-import { UnsupportedVerbError as UnsupportedVerbErrorFromEntry } from '@kangentic/protocol';
+import { UnsupportedVerbError as UnsupportedVerbErrorFromEntry, encodeMessageFailure as encodeMessageFailureFromEntry } from '@kangentic/protocol';
+
+/** Pseudo-random hex from a fixed seed: barely compressible, and the same bytes on every run. */
+function seededHexText(length: number): string {
+  let seed = 0x12345678;
+  const randomHexChunk = (): string => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed.toString(16).padStart(8, '0');
+  };
+  return Array.from({ length: Math.ceil(length / 8) }, randomHexChunk).join('').slice(0, length);
+}
+
+/**
+ * Pseudo-random CJK ideographs (U+4E00 to U+9FFF) from a fixed seed: each is one
+ * UTF-16 code unit but three UTF-8 bytes, no surrogates, nothing JSON escapes,
+ * and barely compressible. The same text on every run.
+ */
+function seededCjkText(length: number): string {
+  const firstCodePoint = 0x4e00;
+  const codePointCount = 0x9fff - firstCodePoint + 1;
+  let seed = 0x9e3779b9;
+  const codeUnits = new Uint16Array(length);
+  for (let index = 0; index < length; index++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    codeUnits[index] = firstCodePoint + ((seed >>> 8) % codePointCount);
+  }
+  return new TextDecoder('utf-16le').decode(codeUnits);
+}
 
 /** The thrown value of a decode that is expected to fail. */
 function decodeFailure(bytes: Uint8Array): unknown {
@@ -299,12 +328,7 @@ describe('wire message framing', () => {
   it('rejects an incompressible frame above the wire cap', () => {
     // Pseudo-random hex compresses barely at all, so the deflated frame
     // still exceeds MAX_FRAME_LENGTH and the encode must throw.
-    let seed = 0x12345678;
-    const randomHexChunk = (): string => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed.toString(16).padStart(8, '0');
-    };
-    const incompressible = Array.from({ length: (2 * 1024 * 1024) / 8 }, randomHexChunk).join('');
+    const incompressible = seededHexText(2 * 1024 * 1024);
     const huge: BridgeMessage = {
       type: 'capability-request',
       requestId: 'r',
@@ -344,5 +368,63 @@ describe('wire message framing', () => {
   it('rejects an unknown frame format byte and an empty frame', () => {
     expect(() => decodeMessage(new Uint8Array([0x7f, 1, 2, 3]))).toThrow(/Unknown bridge message frame format/);
     expect(() => decodeMessage(new Uint8Array(0))).toThrow(/empty/);
+  });
+});
+
+/**
+ * A sender that checks a message before committing side effects (read-stream
+ * refuses an over-cap seed before it subscribes) must reach the same verdict
+ * encodeMessage would, or it either refuses a message that would have gone
+ * out or commits for one that will not.
+ */
+describe('encodeMessageFailure', () => {
+  function responseCarrying(text: string): BridgeMessage {
+    return { type: 'capability-response', requestId: 'req-1', ok: true, payload: { scrollback: text } };
+  }
+
+  /** What encodeMessage itself throws for this message, or null when it encodes. */
+  function encodeMessageVerdict(message: BridgeMessage): string | null {
+    try {
+      encodeMessage(message);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  it.each([
+    ['a message under 1 MiB of raw JSON fits', () => responseCarrying('x'.repeat(512 * 1024)), false],
+    ['a compressible 2 MiB message fits through deflate', () => responseCarrying('x'.repeat(2 * 1024 * 1024)), false],
+    ['an incompressible 2 MiB message fails the 1 MiB compressed cap', () => responseCarrying(seededHexText(2 * 1024 * 1024)), true],
+    ['a message over 4 MiB fails the decoded cap', () => responseCarrying('x'.repeat(4.5 * 1024 * 1024)), true],
+  ])('%s, matching encodeMessage', (_label, makeMessage, shouldFail) => {
+    const message = makeMessage();
+    const failure = encodeMessageFailure(message);
+
+    expect(failure).toBe(encodeMessageVerdict(message));
+    expect(failure !== null).toBe(shouldFail);
+  });
+
+  it('measures UTF-8 bytes, not UTF-16 characters, when deciding a message cannot fit', () => {
+    // 800k CJK characters: JSON text under 1 MiB in JS string length, but
+    // about 2.4 MB of UTF-8 (3 bytes each), under the 4 MiB decoded cap. Random
+    // BMP characters hold about 14 bits of entropy each, so deflate leaves it
+    // near 1.7 MB and encodeMessage must throw the compressed-cap error. A
+    // fast path that compared the string length would call this message fine.
+    const message = responseCarrying(seededCjkText(800_000));
+    const characterLength = JSON.stringify(message).length;
+    const byteLength = new TextEncoder().encode(JSON.stringify(message)).length;
+    expect(characterLength).toBeLessThanOrEqual(MAX_FRAME_LENGTH);
+    expect(byteLength).toBeGreaterThan(MAX_FRAME_LENGTH);
+    expect(byteLength).toBeLessThan(MAX_DECODED_LENGTH);
+
+    const failure = encodeMessageFailure(message);
+
+    expect(failure).toBe(`Encoded bridge message exceeds ${MAX_FRAME_LENGTH} bytes`);
+    expect(failure).toBe(encodeMessageVerdict(message));
+  });
+
+  it('is reachable through the public @kangentic/protocol entry point', () => {
+    expect(encodeMessageFailureFromEntry).toBe(encodeMessageFailure);
   });
 });

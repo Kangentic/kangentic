@@ -104,6 +104,28 @@ export function encodeMessage(message: BridgeMessage): Uint8Array {
   return frame;
 }
 
+/**
+ * Why `encodeMessage` would throw for `message`, or null when it would not,
+ * without keeping the frame. A sender with side effects asks this BEFORE
+ * committing them, so a message it cannot send is refused with nothing left
+ * behind.
+ *
+ * Exact, not an estimate. Raw UTF-8 JSON at or under MAX_FRAME_LENGTH always
+ * fits, because `encodeMessage` only switches to deflate when deflate is
+ * smaller, so that common case costs one stringify. A larger message runs the
+ * real encode, deflate included, and a sender that then sends it pays that
+ * encode a second time. Measured terminal seeds are far under the threshold.
+ */
+export function encodeMessageFailure(message: BridgeMessage): string | null {
+  try {
+    if (new TextEncoder().encode(JSON.stringify(message)).length <= MAX_FRAME_LENGTH) return null;
+    encodeMessage(message);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 export function decodeMessage(bytes: Uint8Array): BridgeMessage {
   if (bytes.length > MAX_FRAME_LENGTH) {
     throw new Error(`Bridge message frame exceeds ${MAX_FRAME_LENGTH} bytes`);

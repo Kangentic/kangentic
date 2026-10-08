@@ -1,4 +1,5 @@
 import {
+  encodeMessageFailure,
   parseCapabilityRequestPayload,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
@@ -14,7 +15,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { IpcContext } from '../../ipc/ipc-context';
-import { messageEncodeFailure, responseTooLargeRefusal, type BridgeSession } from '../session/bridge-session';
+import { responseTooLargeRefusal, type BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
@@ -797,7 +798,7 @@ export async function handleReadStream(
     // list-only feed for this session down with the failed terminal upgrade.
     // Returning here leaves the stream key untouched, and the finally below
     // gives back the seed capture, the seed tap and any marker this call added.
-    const encodeFailure = messageEncodeFailure(response);
+    const encodeFailure = encodeMessageFailure(response);
     if (encodeFailure !== null) {
       console.warn(
         `[mobile-bridge] read-stream/subscribe ${request.requestId} from ${session.deviceId.slice(0, 8)} refused before subscribing: ${encodeFailure} (seed ${Math.round(scrollback.length / 1024)}k chars)`,
