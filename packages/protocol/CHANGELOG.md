@@ -2,6 +2,40 @@
 
 <!-- releases -->
 
+## [protocol-v0.19.0] - 2026-10-08
+
+Adds the code a desktop puts on a refusal for a response that would not fit the
+frame caps, and the check that decides it. Additive; `PROTOCOL_VERSION` stays '3'.
+
+`CapabilityErrorCode` gains `response-too-large`, with
+`RESPONSE_TOO_LARGE_ERROR_CODE` beside `UNSUPPORTED_VERB_ERROR_CODE`. It means the
+request was valid and its target still exists, so a client must not read it as the
+target being gone (a session ending, a project removed). A phone should keep the
+`code` on the error it raises for a refused request and branch on it, because a
+client that reads every refusal as "session gone" shows a live session as ended.
+An older peer's decoder drops the unknown `code` and keeps the `error` text.
+
+`encodeMessageFailure(message)` returns why `encodeMessage` would throw for a
+message, or null when it would not, without keeping the frame. Raw UTF-8 JSON at or
+under `MAX_FRAME_LENGTH` returns null after one stringify, and a larger message
+runs the real encode, so the verdict is exact.
+
+The desktop build that ships this version never refuses a terminal `read-stream`
+subscribe for size. When the seed would push the response over the caps (4 MiB of
+JSON before compression, 1 MiB after), it re-takes the seed with less history,
+then the grid alone, then an empty seed, and answers ok. A verb that cannot send
+less is refused with `{ ok: false, error: 'Response too large to send', code:
+'response-too-large' }`. A desktop older than this build sends nothing for an
+oversize response, so the request times out.
+
+### Fixes
+- Shrink an over-cap terminal seed instead of refusing it (871fa89e)
+- Refuse an over-cap read-stream subscribe before subscribing (5233c173)
+- Probe a prompt that rises mid-shrink on the re-take frame (cd102e65)
+
+### Other
+- Move the encode verdict into the protocol beside encodeMessage (5031c257)
+
 ## [protocol-v0.18.0] - 2026-10-07
 
 Lets a phone pause a running session the way the desktop Pause button does.
