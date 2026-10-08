@@ -13,7 +13,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, dismissOnboardingChecklist } from './helpers';
+import { waitForViteReady, dismissOnboardingChecklist, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -25,7 +25,7 @@ async function launchFreshPage(): Promise<{ browser: Browser; page: Page }> {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };

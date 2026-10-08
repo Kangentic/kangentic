@@ -28,7 +28,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, dismissOnboardingChecklist } from './helpers';
+import { waitForViteReady, dismissOnboardingChecklist, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -78,7 +78,7 @@ async function launchWithAgentAsDefault(
   // 2. Inject the full mock (reads __mockAgentListOverrides above).
   await page.addInitScript({ path: MOCK_SCRIPT });
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 

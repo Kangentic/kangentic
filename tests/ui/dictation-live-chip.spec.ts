@@ -16,7 +16,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each test launches its own browser: the dictation store is a Fast-Refresh-pinned
 // singleton (module scope), so a shared page would carry `status` across tests.
@@ -56,7 +56,7 @@ async function launch(autoSubmit: boolean): Promise<{ browser: Browser; page: Pa
     (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = config;
   }, { dictation: { enabled: true, autoSubmit } });
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };

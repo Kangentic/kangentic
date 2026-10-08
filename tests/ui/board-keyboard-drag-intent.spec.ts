@@ -27,7 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { collectPageErrors, settleDndKitKeyboardSensor, waitForViteReady } from './helpers';
+import { collectPageErrors, settleDndKitKeyboardSensor, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -159,7 +159,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.locator(LANE_CARD).waitFor({ state: 'visible', timeout: 15000 });
 

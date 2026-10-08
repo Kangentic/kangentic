@@ -31,7 +31,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 import { FREE_MOVE_RADIUS_PX } from '../../src/renderer/window-manager/dnd/drop-zone';
 import { SCREEN_DOCK_EDGE_PX } from '../../src/renderer/window-manager/dnd/snap';
 
@@ -134,7 +134,7 @@ async function launchWithTwoTasks(): Promise<{ browser: Browser; page: Page }> {
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 10000 });

@@ -66,7 +66,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForBoard, waitForViteReady } from './helpers';
+import { waitForBoard, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -149,7 +149,7 @@ async function launchWithBacklogItem(): Promise<{ browser: Browser; page: Page }
     }, 10);
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -326,7 +326,7 @@ async function launchWithArchivedTaskForRestore(): Promise<{ browser: Browser; p
     }, 10);
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -470,7 +470,7 @@ async function launchInShortcutsTab(): Promise<{ browser: Browser; page: Page }>
     }, 10);
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 

@@ -17,7 +17,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { settleFrames, waitForViteReady } from './helpers';
+import { settleFrames, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -307,7 +307,7 @@ async function launchWithState(preConfigScript: string, options: { useClock?: bo
   if (options.useClock) await page.clock.install();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };
@@ -395,7 +395,7 @@ test.describe('knowledge graph', () => {
       const page = await context.newPage();
       await page.addInitScript({ path: MOCK_SCRIPT });
       await page.addInitScript(snapshotScript({ projection: projectionLiteral(12) }));
-      await page.goto(VITE_URL);
+      await gotoVite(page, VITE_URL);
       await page.waitForSelector('text=Kangentic', { timeout: 50_000 });
       await page.locator('[data-testid="knowledge-graph-button"]').click();
       await page.locator('[data-testid="knowledge-graph-search-input"]').waitFor({ state: 'visible', timeout: 50_000 });
@@ -1550,7 +1550,7 @@ test.describe('knowledge graph', () => {
     await page.addInitScript({ path: MOCK_SCRIPT });
     await page.addInitScript(`${preConfigScript}
       window.electronAPI.popOut.descriptor = { kind: 'knowledge-graph', params: {} };`);
-    await page.goto(VITE_URL);
+    await gotoVite(page, VITE_URL);
     // No title bar in a detached window, so wait for the graph itself.
     await page.locator('[data-testid="knowledge-graph-search-input"]').waitFor({ state: 'visible', timeout: 15000 });
     return { browser, page };

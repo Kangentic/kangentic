@@ -14,7 +14,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -63,7 +63,7 @@ test.beforeAll(async () => {
   page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(MOVE_PRECONFIG);
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 30_000 });
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 30_000 });
@@ -235,7 +235,7 @@ test.describe('Project Move - no active sessions', () => {
     noSessionPage = await noSessionContext.newPage();
     await noSessionPage.addInitScript({ path: MOCK_SCRIPT });
     await noSessionPage.addInitScript(NO_SESSION_PRECONFIG);
-    await noSessionPage.goto(VITE_URL);
+    await gotoVite(noSessionPage, VITE_URL);
     await noSessionPage.waitForLoadState('load');
     await noSessionPage.waitForSelector('text=Kangentic', { timeout: 30_000 });
     await noSessionPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 30_000 });

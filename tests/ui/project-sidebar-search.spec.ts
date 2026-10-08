@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { chromium } from '@playwright/test';
 import path from 'node:path';
-import { launchPage, createProject, waitForViteReady } from './helpers';
+import { launchPage, createProject, waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -76,7 +76,7 @@ async function launchWithGroupSearch(preConfigScript: string): Promise<{ browser
   await newPage.addInitScript({ path: MOCK_SCRIPT });
   await newPage.addInitScript(preConfigScript);
 
-  await newPage.goto(VITE_URL);
+  await gotoVite(newPage, VITE_URL);
   await newPage.waitForLoadState('load');
   await newPage.waitForSelector('text=Kangentic', { timeout: 15000 });
 

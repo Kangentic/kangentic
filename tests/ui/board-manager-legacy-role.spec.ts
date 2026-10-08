@@ -19,7 +19,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors } from './helpers';
+import { waitForViteReady, collectPageErrors, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -87,7 +87,7 @@ async function launchSeededPage(): Promise<{
   const getPageErrors = collectPageErrors(page);
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig);
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 15000 });

@@ -28,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -188,7 +188,7 @@ async function launchSharedBrowser(preConfigScript: string): Promise<{
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -209,7 +209,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -754,7 +754,7 @@ test.describe('Command Terminal', () => {
       const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
       const page = await context.newPage();
       await page.addInitScript({ path: MOCK_SCRIPT });
-      await page.goto(VITE_URL);
+      await gotoVite(page, VITE_URL);
       await page.waitForLoadState('load');
       await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -789,7 +789,7 @@ test.describe('Command Terminal', () => {
     });
 
     test.beforeEach(async () => {
-      await sharedPage.goto(VITE_URL);
+      await gotoVite(sharedPage, VITE_URL);
       await sharedPage.waitForLoadState('load');
       await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
       await sharedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -996,7 +996,7 @@ test.describe('Command Terminal', () => {
     });
 
     test.beforeEach(async () => {
-      await crossProjectPage.goto(VITE_URL);
+      await gotoVite(crossProjectPage, VITE_URL);
       await crossProjectPage.waitForLoadState('load');
       await crossProjectPage.waitForSelector('text=Kangentic', { timeout: 15000 });
       await crossProjectPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1462,7 +1462,7 @@ test.describe('Command Terminal', () => {
     });
 
     test.beforeEach(async () => {
-      await reconcilePage.goto(VITE_URL);
+      await gotoVite(reconcilePage, VITE_URL);
       await reconcilePage.waitForLoadState('load');
       await reconcilePage.waitForSelector('text=Kangentic', { timeout: 15000 });
       await reconcilePage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -2896,7 +2896,7 @@ test.describe('Command Terminal', () => {
     });
 
     test.beforeEach(async () => {
-      await focusedPage.goto(VITE_URL);
+      await gotoVite(focusedPage, VITE_URL);
       await focusedPage.waitForLoadState('load');
       await focusedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
       await focusedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });

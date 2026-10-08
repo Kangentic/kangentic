@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -51,7 +51,7 @@ test.beforeAll(async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(`${VITE_URL}#stats`);
+  await gotoVite(page, `${VITE_URL}#stats`);
   await page.waitForLoadState('load');
   // Mount probe: PopOutWindowFrame's document.title effect ran, proving the
   // frame (and its bubble-phase Escape listener registered alongside it)

@@ -22,7 +22,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, toastCountRightNow } from './helpers';
+import { waitForViteReady, toastCountRightNow, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -118,7 +118,7 @@ async function launchWithState(
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 

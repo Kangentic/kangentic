@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -115,7 +115,7 @@ test.afterAll(async () => {
 // Each test owns its setup from a known state rather than inheriting the
 // previous one's open dialog: a single flaky interaction must not cascade.
 test.beforeEach(async () => {
-  await sharedPage.goto(VITE_URL);
+  await gotoVite(sharedPage, VITE_URL);
   await sharedPage.waitForLoadState('load');
   await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
   await sharedPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

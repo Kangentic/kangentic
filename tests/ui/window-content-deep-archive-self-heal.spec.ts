@@ -29,7 +29,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors } from './helpers';
+import { waitForViteReady, collectPageErrors, gotoVite } from './helpers';
 import type { Task } from '../../src/shared/types';
 
 // Each test launches its own browser/page, so the file's tests can fan out
@@ -127,7 +127,7 @@ async function launchWithFixture(): Promise<{ browser: Browser; page: Page }> {
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 15000 });

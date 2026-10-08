@@ -32,7 +32,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // ONE browser for the file, a fresh CONTEXT and page per test. The isolation
 // that matters is the page: the dictation store is a module singleton, so a
@@ -165,7 +165,7 @@ async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q', mode }: LaunchOption
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

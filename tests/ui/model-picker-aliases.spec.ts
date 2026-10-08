@@ -33,7 +33,7 @@
  */
 import { test, expect, chromium } from '@playwright/test';
 import path from 'node:path';
-import { launchPage, createProject, waitForBoard, waitForViteReady } from './helpers';
+import { launchPage, createProject, waitForBoard, waitForViteReady, gotoVite } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Most cases launch their own browser, so a busy parallel shard can spend most
@@ -573,7 +573,7 @@ async function launchRunningTask(extraInitScript = ''): Promise<{ browser: Brows
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(RUNNING_TASK_PRECONFIG);
   if (extraInitScript) await page.addInitScript(extraInitScript);
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -854,7 +854,7 @@ test.describe('Column Manager overview newer-version mark from discovered models
       // Before the mock: it reads __mockConfigOverrides once, while it initializes.
       await page.addInitScript(INIT_SCRIPT);
       await page.addInitScript({ path: MOCK_SCRIPT });
-      await page.goto(VITE_URL);
+      await gotoVite(page, VITE_URL);
       await page.waitForLoadState('load');
       await page.waitForSelector('text=Kangentic', { timeout: 15000 });
       await createProject(page, `DiscoveredNewer ${Date.now()}`);

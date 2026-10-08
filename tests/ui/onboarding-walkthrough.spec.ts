@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, waitForBoard } from './helpers';
+import { waitForViteReady, waitForBoard, gotoVite } from './helpers';
 
 /** Mirrors STEP_COUNT. Not imported: pulling a renderer module into the Playwright
  *  node context drags in zustand and the whole store graph, which does not transpile here.
@@ -24,7 +24,7 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   // projects, so App.tsx's backfill writes `[]` - an empty list, which is what lets the
   // checklist auto-open for the first project created here.
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };

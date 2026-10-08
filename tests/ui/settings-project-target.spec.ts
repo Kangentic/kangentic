@@ -21,7 +21,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -101,7 +101,7 @@ async function launchTwoProjects(options: { boardProjectId?: string | null } = {
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   if (boardProjectId === null) {
     // No board project means no To Do lane to wait on. The sidebar row and the title

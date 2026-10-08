@@ -13,7 +13,7 @@
  */
 import { test, expect, chromium } from '@playwright/test';
 import path from 'node:path';
-import { launchPage, createProject, waitForViteReady } from './helpers';
+import { launchPage, createProject, waitForViteReady, gotoVite } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 import type { AppConfig } from '../../src/shared/types';
 import type { Announcement } from '../../src/shared/announcements';
@@ -613,7 +613,7 @@ test.describe('Announcements megaphone and history', () => {
       const isolatedPage = await context.newPage();
 
       await isolatedPage.addInitScript({ path: MOCK_SCRIPT });
-      await isolatedPage.goto(VITE_URL);
+      await gotoVite(isolatedPage, VITE_URL);
       await isolatedPage.waitForLoadState('load');
       await isolatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -690,7 +690,7 @@ test.describe('Announcements mount-time pull', () => {
         (window as unknown as { __mockActiveAnnouncements: unknown[] }).__mockActiveAnnouncements = [seeded];
       }, announcement as unknown as Record<string, unknown>);
 
-      await isolatedPage.goto(VITE_URL);
+      await gotoVite(isolatedPage, VITE_URL);
       await isolatedPage.waitForLoadState('load');
       await isolatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
 
@@ -731,7 +731,7 @@ test.describe('Announcements mount-time pull', () => {
         (window as unknown as { __mockAnnouncementHistory: unknown[] }).__mockAnnouncementHistory = seeded;
       }, seededHistory as unknown as Record<string, unknown>[]);
 
-      await isolatedPage.goto(VITE_URL);
+      await gotoVite(isolatedPage, VITE_URL);
       await isolatedPage.waitForLoadState('load');
       await isolatedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
 

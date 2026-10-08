@@ -26,7 +26,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -125,7 +125,7 @@ async function launch(startProjectId: string): Promise<{ browser: Browser; page:
   await page.addInitScript(`window.__mockConfigOverrides = ${CONFIG_OVERRIDES};`);
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript(startProjectId));
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });

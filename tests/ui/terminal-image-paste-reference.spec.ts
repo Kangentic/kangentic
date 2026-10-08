@@ -22,7 +22,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { TERMINAL_TEXT_LAUNCH_ARGS, enableBracketedPaste, waitForViteReady } from './helpers';
+import { TERMINAL_TEXT_LAUNCH_ARGS, enableBracketedPaste, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -114,7 +114,7 @@ async function launchWithState(extraScript = ''): Promise<{ browser: Browser; pa
   await page.addInitScript(preConfig);
   if (extraScript) await page.addInitScript(extraScript);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 

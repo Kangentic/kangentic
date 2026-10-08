@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each test launches its own page so __mockAgentListOverrides never leaks
 // across tests (mirrors agent-auth-warning.spec.ts's launchWithAgentOverride).
@@ -51,7 +51,7 @@ async function launchWithOverrides(
     });
   }
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };

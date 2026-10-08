@@ -39,7 +39,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -130,7 +130,7 @@ test.beforeAll(async () => {
   await sharedPage.addInitScript({ path: MOCK_SCRIPT });
   await sharedPage.addInitScript(makePreConfig());
 
-  await sharedPage.goto(VITE_URL);
+  await gotoVite(sharedPage, VITE_URL);
   await sharedPage.waitForLoadState('load');
   await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
   await sharedPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -144,7 +144,7 @@ test.beforeEach(async () => {
   // Full page navigation resets both mock API state (init scripts re-run) and
   // React component state (app re-mounts, error boundaries cleared). This is
   // faster than a new browser launch while providing the same isolation guarantee.
-  await sharedPage.goto(VITE_URL);
+  await gotoVite(sharedPage, VITE_URL);
   await sharedPage.waitForLoadState('load');
   await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
   await sharedPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

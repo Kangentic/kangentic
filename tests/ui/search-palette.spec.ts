@@ -7,7 +7,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors, toastCountRightNow } from './helpers';
+import { waitForViteReady, collectPageErrors, toastCountRightNow, gotoVite } from './helpers';
 import { PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -270,7 +270,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   return { browser, page };

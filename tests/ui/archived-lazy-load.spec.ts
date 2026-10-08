@@ -19,7 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each test launches its own page (separate context / goto reset), so the file
 // can fan out across the UI workers safely.
@@ -95,7 +95,7 @@ async function launchWithArchivedTasks(): Promise<{ browser: Browser; page: Page
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   // The Done column is always visible once the board hydrates.

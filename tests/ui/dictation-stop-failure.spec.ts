@@ -25,7 +25,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, createProject } from './helpers';
+import { waitForViteReady, createProject, gotoVite } from './helpers';
 
 // Each test launches its own browser/context: the dictation store is a
 // Fast-Refresh-pinned singleton (module scope) and each test drives a full
@@ -65,7 +65,7 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
     hotkeyOverrides: { 'dictation.pushToTalk': 'Alt+Shift+Q' },
   });
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await createProject(page, `Dictation Stop Failure Test ${Date.now()}`);

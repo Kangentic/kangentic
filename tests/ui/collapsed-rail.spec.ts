@@ -22,7 +22,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from '@playwri
 // describes, so CI's 4-worker pool can run all four groups concurrently.
 test.describe.configure({ mode: 'parallel' });
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -159,7 +159,7 @@ function twoCollidingProjectsScript(): string {
  * test starts from a known state regardless of mutations from the prior test.
  */
 async function resetAndCollapse(page: Page): Promise<void> {
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await collapseSidebar(page);

@@ -26,7 +26,7 @@
 
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -123,7 +123,7 @@ test.afterAll(async () => {
 test.beforeEach(async () => {
   // page.goto() re-runs all addInitScript scripts, restoring the mock to a
   // clean state with all TASK_COUNT archived tasks present and no hooks armed.
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 });

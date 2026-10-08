@@ -22,7 +22,7 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 // state, so CI workers can run them concurrently.
 test.describe.configure({ mode: 'parallel' });
 import path from 'node:path';
-import { waitForViteReady } from './helpers';
+import { waitForViteReady, gotoVite } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -119,7 +119,7 @@ test.describe('Browser pill gate (browser.enabled = true)', () => {
   });
 
   test.beforeEach(async () => {
-    await page.goto(VITE_URL);
+    await gotoVite(page, VITE_URL);
     await page.waitForLoadState('load');
     await page.waitForSelector('text=Kangentic', { timeout: 15000 });
     await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -192,7 +192,7 @@ test.describe('Browser pill gate (browser.enabled = false)', () => {
   });
 
   test.beforeEach(async () => {
-    await page.goto(VITE_URL);
+    await gotoVite(page, VITE_URL);
     await page.waitForLoadState('load');
     await page.waitForSelector('text=Kangentic', { timeout: 15000 });
     await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

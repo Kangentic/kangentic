@@ -27,7 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, toastCountRightNow } from './helpers';
+import { waitForViteReady, toastCountRightNow, gotoVite } from './helpers';
 
 // Each test owns its page (separate launch / goto), so the file can fan out
 // across the UI workers safely.
@@ -123,7 +123,7 @@ async function launchWithState(): Promise<{ browser: Browser; page: Page }> {
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -212,7 +212,7 @@ async function launchWithMobileStreamedState(): Promise<{ browser: Browser; page
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -319,7 +319,7 @@ async function launchWithSecondProjectState(): Promise<{ browser: Browser; page:
     });
   `);
 
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

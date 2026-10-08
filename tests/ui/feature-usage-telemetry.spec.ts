@@ -31,7 +31,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { launchPage, createProject, waitForViteReady } from './helpers';
+import { launchPage, createProject, waitForViteReady, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -197,7 +197,7 @@ test.describe('Feature usage telemetry', () => {
       const page = await context.newPage();
       await page.addInitScript({ path: MOCK_SCRIPT });
       await page.addInitScript(preConfigScript);
-      await page.goto(VITE_URL);
+      await gotoVite(page, VITE_URL);
       await page.waitForLoadState('load');
       await page.waitForSelector('text=Kangentic', { timeout: 15000 });
       await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -298,7 +298,7 @@ test.describe('Feature usage telemetry', () => {
       const page = await context.newPage();
       await page.addInitScript({ path: MOCK_SCRIPT });
       await page.addInitScript(preConfigScript);
-      await page.goto(VITE_URL);
+      await gotoVite(page, VITE_URL);
       await page.waitForLoadState('load');
       await page.waitForSelector('text=Kangentic', { timeout: 15000 });
       await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });

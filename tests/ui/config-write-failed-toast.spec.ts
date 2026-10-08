@@ -14,7 +14,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, createProject } from './helpers';
+import { waitForViteReady, createProject, gotoVite } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -31,7 +31,7 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.goto(VITE_URL);
+  await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
