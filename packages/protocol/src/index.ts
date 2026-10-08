@@ -37,6 +37,7 @@ export { deriveSessionSlotId, derivePairingSlotId } from './crypto/slot';
 export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, CapabilityErrorCode, EventMessage } from './wire/messages';
 export {
   encodeMessage,
+  encodeMessageFailure,
   decodeMessage,
   UnsupportedVerbError,
   isUnsupportedVerbError,

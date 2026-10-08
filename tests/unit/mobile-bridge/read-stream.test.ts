@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 vi.mock('../../../src/main/db/database', () => ({
@@ -540,6 +540,15 @@ describe('handleReadStream', () => {
       describe('a response over the frame caps', () => {
         /** Over MAX_DECODED_LENGTH (4 MiB) of JSON, so the encode fails before any deflate. */
         const overCapSeed = 'x'.repeat(4.5 * 1024 * 1024);
+        let warnSpy: MockInstance<typeof console.warn>;
+
+        beforeEach(() => {
+          warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        });
+
+        afterEach(() => {
+          warnSpy.mockRestore();
+        });
 
         function activityEventsSent(session: BridgeSession): number {
           const sendMessage = session.sendMessage as unknown as ReturnType<typeof vi.fn>;
@@ -555,23 +564,18 @@ describe('handleReadStream', () => {
           holdBystanderTap();
           const before = captureSeedHolds(subscriptions);
           sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
-          const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-          try {
-            const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
 
-            // The code is what lets a phone tell this from a dead session.
-            expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: 'response-too-large' });
-            expect(captureSeedHolds(subscriptions)).toEqual(before);
-            expect(sessionManager.listenerCount('exit')).toBe(0);
-            sessionManager.emit('data-tap', 'sess-1', 'after the refusal');
-            expect(terminalDataSent(session)).toBe('');
-            expect(warnSpy.mock.calls.map((call) => String(call[0]))).toEqual([
-              expect.stringMatching(/^\[mobile-bridge\] read-stream\/subscribe req-1 from device-1 refused before subscribing: Encoded bridge message exceeds \d+ bytes before compression \(seed 4608k chars\)$/),
-            ]);
-          } finally {
-            warnSpy.mockRestore();
-          }
+          // The code is what lets a phone tell this from a dead session.
+          expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: 'response-too-large' });
+          expect(captureSeedHolds(subscriptions)).toEqual(before);
+          expect(sessionManager.listenerCount('exit')).toBe(0);
+          sessionManager.emit('data-tap', 'sess-1', 'after the refusal');
+          expect(terminalDataSent(session)).toBe('');
+          expect(warnSpy.mock.calls.map((call) => String(call[0]))).toEqual([
+            expect.stringMatching(/^\[mobile-bridge\] read-stream\/subscribe req-1 from device-1 refused before subscribing: Encoded bridge message exceeds \d+ bytes before compression \(seed 4608k chars\)$/),
+          ]);
         });
 
         it('a refused terminal upgrade leaves the list-only feed it would have replaced', async () => {
@@ -582,14 +586,9 @@ describe('handleReadStream', () => {
           const listFeed = captureSeedHolds(subscriptions);
           expect(listFeed).toEqual({ dataTapListeners: 0, tapRefs: 0, terminalMarker: false, streamSubscribed: true });
           sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
-          const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-          try {
-            const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
-            expect(response.ok).toBe(false);
-          } finally {
-            warnSpy.mockRestore();
-          }
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+          expect(response.ok).toBe(false);
 
           // The list feed was never replaced: still subscribed, still no
           // terminal tap or marker, and its activity pushes still arrive.
@@ -607,14 +606,9 @@ describe('handleReadStream', () => {
           const liveStream = captureSeedHolds(subscriptions);
           expect(liveStream).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
           sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
-          const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-          try {
-            const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
-            expect(response.ok).toBe(false);
-          } finally {
-            warnSpy.mockRestore();
-          }
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+          expect(response.ok).toBe(false);
 
           expect(captureSeedHolds(subscriptions)).toEqual(liveStream);
           expect(sessionManager.listenerCount('exit')).toBe(1);
