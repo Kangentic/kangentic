@@ -103,7 +103,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 | Adapter | `--model`? | Effort levels | Model list source | Notes |
 |---------|-----------|---------------|-------------------|-------|
 | Qwen Code | `--help` (`--model` / `-m`) | None | `~/.qwen/projects/<hash>/chats/*.jsonl` - assistant `model` + `ui_telemetry` `systemPayload.uiEvent.model` | Probes both shapes for schema-drift resilience. |
-| Gemini | `--help` (`--model` / `-m`) | None | `~/.gemini/tmp/<basename(cwd)>/chats/session-*.{json,jsonl}` - top-level `model` + each `messages[].model` | Reads single-document `.json` in full; head-scans `.jsonl`. |
+| Gemini | `--help` (`--model` / `-m`) | None | `~/.gemini/tmp/<project-dir>/chats/session-*.{json,jsonl}` across the 50 project dirs whose `chats/` changed most recently (3 newest files each), not only the current cwd's - top-level `model` + each `messages[].model` | Reads single-document `.json` in full; head-scans `.jsonl`. |
 | Codex | `--help` (`--model` / `-m`) | None | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` - `turn_context` events' `payload.model` | Codex effort is `config.toml` `model_reasoning_effort` only (no CLI flag), so effort stays empty. |
 | GitHub Copilot | `--help` (`--model <...>`) | `--help` `--reasoning-effort` / `--effort` line (commander.js `choices:` format, quotes stripped) | `~/.copilot/session-state/<id>/events.jsonl` (tail) - `session.shutdown` `data.currentModel` / `data.model` / `modelMetrics` keys | The only non-Claude adapter that discovers effort levels; scans the file tail because the model-bearing shutdown event lands last. |
 | Kimi | `--help` (`--model` / `-m`) | None | `~/.kimi/sessions/<md5(workdir)>/<uuid>/wire.jsonl` - top-level `model` + `message.payload.model` | Best-effort; upstream CLI research was quota-limited, so the payload probe is deliberately broad. |
@@ -374,10 +374,12 @@ claude --settings <mergedSettingsPath> --resume <uuid>
 |------|----------|
 | `plan` | `--permission-mode plan` |
 | `dontAsk` | `--permission-mode dontAsk` |
-| `default` | `--settings <path>` (uses project-settings) |
+| `default` | (no mode flag) |
 | `acceptEdits` | `--permission-mode acceptEdits` |
 | `auto` | `--permission-mode auto` |
 | `bypassPermissions` | `--dangerously-skip-permissions` |
+
+Every mode also passes `--settings <path>`, the merged settings file in the session directory, whenever the spawn has a status output path.
 
 #### Permission Mode Resolution (Priority Order)
 
@@ -742,7 +744,7 @@ Important shape constraints (verified against /anomalyco/opencode docs):
 
 ### Permission Modes
 
-The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` (label "Plan", OpenCode's built-in read-only agent) and `acceptEdits` (label "Build", full tool access). The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. Both entries are **informational** today - they produce the same CLI invocation. There is no `--dangerously-skip-permissions` flag in TUI mode (it exists only on the non-interactive `opencode run` subcommand), and no per-mode flag set. Historical values outside this list (`default`, `bypassPermissions`, `dontAsk`, `auto`) are still accepted by `mapPermissionModeToAgent` for backward compatibility with mixed-agent projects. Users who want auto-approval must enable it in `opencode.json`. The default mode is `acceptEdits`.
+The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` (label "Plan", OpenCode's built-in read-only agent) and `acceptEdits` (label "Build", full tool access). The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. On a fresh spawn the mode sets OpenCode's `--agent`: `plan` gives `--agent plan`, `acceptEdits` and `bypassPermissions` give `--agent build`, and `default`, `dontAsk` and `auto` give no flag, deferring to the user's `default_agent`. A resume passes only `--session <id>`, because the saved session already has an agent and the user may have switched it with Tab. There is no `--dangerously-skip-permissions` flag in TUI mode (it exists only on the non-interactive `opencode run` subcommand). `bypassPermissions`, `default`, `dontAsk` and `auto` sit outside the `permissions` list and are still accepted by `mapPermissionModeToAgent` for mixed-agent projects. Users who want auto-approval must enable it in `opencode.json`. The default mode is `acceptEdits`.
 
 ### Settings Merge
 

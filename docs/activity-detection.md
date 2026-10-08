@@ -421,9 +421,9 @@ Any of the three freezes the anchor at the last genuine hook / output growth / r
 
 **Fast heal for the heartbeat-forced case (30s, not 180s).** Freezing the anchor is only half the fix for `turnForcedByHeartbeat`: `lastSignalAt` is frozen at the moment output stopped growing, but the hold still waited the general 180s from there before task #331/#364's follow-up. A hook-less `--resume` resume-picker turn is a distinct class from a genuine `idle_hint`/`retryFailurePending` parked turn - it can never receive ANY confirming hook, so once `lastSignalAt` freezes there is nothing further to wait for. The stale-thinking hold's `effectiveThreshold` therefore checks `state.turnForcedByHeartbeat` FIRST (before the `idleHintPending` short grace) and, when set, uses `DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS` (30s) instead of `staleThinkingTimeoutMs` (180s). The anchor is unchanged (still `signal`), so this only shortens how long the net waits once frozen - a live reload that is still genuinely generating keeps refreshing `lastSignalAt` via output-token growth and never reaches the grace. The 30s value is reasoned, not empirically calibrated: it is safe because a too-aggressive heal self-corrects (the next output-growth status write re-triggers `forceThinking(sessionId, true)` via the same idle → thinking heartbeat recovery), so the worst case is a brief idle blip, not a stuck-wrong state. Reuses the stale-thinking hold's `timer:stale-thinking` trigger and `staleThinking` counter rather than adding a new one - a trace cannot distinguish the fast 30s heal from the slow 180s net except by the transition's timestamp relative to when output froze. Pinned by `session-024-fast-heal-hook-less-resume` (enabled vs. disabled-grace red-green) and `session-022-false-active-repainting-past-180s` (updated to assert the tighter 30s deadline).
 
-### 4. Stuck-pending-tools watchdog (5 min)
+### 4. Stuck-pending-tools watchdog (5 min, or 180s once an idle_hint is pending)
 
-Held by `pendingToolCount > 0` alone for 5 minutes. Common cause: user pressed Ctrl+C, the agent killed the bash, but `PostToolUseFailure` didn't propagate. Without this hatch the engine would be stuck in `thinking` forever - the stale-thinking watchdog requires `pendingToolCount === 0` to fire, the bg-shell holds require bg shells, and the Idle clamp only works when Idle actually fires.
+Held by `pendingToolCount > 0` alone for 5 minutes. When an `idle_hint` is pending, the 180s `staleAfterIdleHintMs` budget replaces the cap: the agent reported it is waiting for input while a tool is still pending, so that tool's PostToolUse was lost in an aborted or errored turn. Common cause: user pressed Ctrl+C, the agent killed the bash, but `PostToolUseFailure` didn't propagate. Without this hatch the engine would be stuck in `thinking` forever - the stale-thinking watchdog requires `pendingToolCount === 0` to fire, the bg-shell holds require bg shells, and the Idle clamp only works when Idle actually fires.
 
 Resets `pendingToolCount`, the stack, `currentTool`, AND `turnActive` (the matching Stop hook for this turn was lost along with the PostToolUse). Goes through the stability window for the same reason as the bg-shell holds.
 
@@ -583,14 +583,14 @@ A global setting under **Developer → Activity Engine Debug Overlay** enables a
 - Current activity + reason for each running session
 - Raw counters (tools, subagents, bg shells)
 - **Compensation counters** (`staleThinking`, `bgShellHatch`, `stuckPendingTools`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `duplicateSubagentStop`, `stuckSubagent`) - monotonic tallies of silent recovery events. In a clean session all nine read 0; any non-zero value flags a watchdog / forced transition / unattributable or discarded event that did not visibly flip the activity pill. (`ignoredInnerSubagentStop` is the benign exception: non-zero is normal on any session that ran subagents - it is the count of spurious empty-detail inner stops the engine correctly discarded. `duplicateSubagentStop` is benign too: it counts second named stops from re-prompted subagents, and late stops from agents whose slot a reset already released, task #759.)
-- Ring buffer of last 10 transitions
+- The last 5 transitions from the 50-entry ring buffer (the full ring is read through `kangentic_devtools_engine_state`)
 - **PTY chunk timeline** - bucketed PTY arrivals over the last ~120 seconds (100ms buckets) from `ActivityStatsSnapshot.recentPtyChunks`, rendered by `ActivityTimeline` alongside the watchdog deadline (`lastSignalAt + thresholdMs`). Empty in production builds where the trace recorder is dead-code-eliminated.
 
 Polls `getActivityStats(sessionId)` every 2 seconds. Hidden by default - power users discover via Developer settings; bug reporters can enable + screenshot.
 
 ### Reading a transition trace
 
-Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot` / the MCP `kangentic_devtools_engine_state` tool; the overlay renders the last 10) carries a `trigger` label naming what caused it. The label vocabulary (`TransitionTrigger` in `src/main/activity-engine/engine/shapes.ts`):
+Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot` / the MCP `kangentic_devtools_engine_state` tool; the overlay renders the last 5) carries a `trigger` label naming what caused it. The label vocabulary (`TransitionTrigger` in `src/main/activity-engine/engine/shapes.ts`):
 
 | Trigger | Meaning |
 |---------|---------|

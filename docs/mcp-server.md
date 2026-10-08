@@ -804,7 +804,7 @@ two groups (On enter and On exit), and each row has its own switch. Four types s
 |------|--------------|--------|
 | `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` / `deferred`) |
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (1 to 120, default 10, file only) |
-| `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx up to 3 times | `url`, `method`, `body`, `headers` |
+| `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
 | `notify` | Raises one desktop notification | `title`, `body` |
 
 Two names are accepted but not offered:

@@ -1,24 +1,18 @@
 ## What's New
 
-- The Knowledge Graph is a 3D map of your past task conversations, grouped into named regions. Open it from the brain icon in the title bar or with Mod+Shift+A. Filter it by region, time and outcome, and ask it questions. An answer names the tasks it drew on and narrows the map to them. Its first build shows real progress in one card, and task summaries are now written in every project, not only the open one.
-- Model pickers lead with a Latest group (Opus, Fable, Sonnet and Haiku for Claude). Pick one and a column, project default or task follows each new release instead of staying pinned to one version. A column pinned to an older version shows a mark in the Column Manager.
-- Moving a task to Done, back to To Do, or deleting it now stops the processes its agent left running in the task's folders, such as a detached dev server. A toast reports what was stopped, and its Review list keeps windows and tmux sessions running and lets you stop the rest one at a time. Turn it off with "Stop leftover processes" in Settings > Behavior.
-- The tool-calls popover adds Time and Tokens columns, reports correct durations, and opens where it belongs.
-- A newer desktop notification for a task replaces the older one in Windows Action Center or macOS Notification Center, instead of stacking beside it.
-- Settings > MCP Server lists its tools in collapsible groups by category. The Diagnostics group starts closed.
-- Creating a task worktree is about three times faster on Windows.
-- The mobile relay now connects through the system proxy, PAC settings and the OS certificate store, so it works behind a corporate proxy or a TLS-inspecting firewall.
-- On Linux desktops such as sway, i3 or WSLg with a keyring running, saved credentials are now encrypted and phone pairing works.
+- Kangentic Mobile is live on iOS and Android. An announcement in the app links to both stores, with a QR code for each.
+- From a paired phone you can now pause a running agent and resume a paused one. A phone Resume works like the desktop's Resume button and does not re-run the column's automations. The phone also shows when an agent is starting or resuming, and its session status updates live.
+- The Changes panel shows changed images as pictures instead of a binary placeholder. Compare the two versions side by side, with a slider, as an overlay, or as a pixel diff that reports how much changed. An SVG opens on its text diff, and the eye button previews it as an image.
+- The context bar's tool-call count and its per-tool table now carry across app restarts and pause and resume, instead of starting again at 0. The Session Summary's By tool table merges every run the same way.
+- Dictation has new presets: Best, Balanced and Light, each picking models for your language. Custom adds Parakeet unified, Parakeet v2 and Cohere Transcribe. The Dictation tab lists the running models with their licenses.
+- The Knowledge Graph's local model is now IBM's Granite embedding English R2 (Best) or bge-small (Light). An index built on a model that changed is rebuilt in the background after the update, and search answers by keyword until it finishes.
 
 ## Bug Fixes
 
-- Kangentic now runs on Electron 44.5.1, which fixes a crash on quit on Windows. macOS 13 is now the minimum. The installer refuses older versions, and Macs on macOS 12 no longer auto-update into a build that cannot open.
-- Per-user Windows installs no longer fail to start when the install folder's permissions lack the grant Electron 44.5 checks for.
-- A Windows shutdown no longer switches graphics acceleration off on a healthy GPU. It now turns off only after real GPU faults.
-- After a terminal closes, clicks no longer throw errors, and the terminal font size can no longer drop below 8.
-- A session resumed after a desktop restart comes back at the terminal size it last had, and opening a task on your phone no longer reshapes its terminal on the desktop.
-- A malformed kangentic.json no longer breaks applying the board, and one that cannot be read is never overwritten.
-- Each Browser pane keeps its own zoom level, and a download of unknown size shows an indeterminate progress bar.
-- Browser pane pages are kept out of crash reports, and home folder paths are scrubbed from the reports Kangentic sends.
-- The Changes panel shows a widened diff side by side again.
-- Agent project defaults in Settings follow the project switcher.
+- Changing a running task's model or effort now restarts its session with the new setting. Before, an effort change typed /effort into the agent's turn, where nothing could confirm it took.
+- The model pickers' Latest group and full version list now load on packaged Windows builds launched from the Start menu.
+- About a quarter of Claude's visible messages on Opus 5.5 were missing from board cards, the phone preview and the conversation viewer. They now show.
+- A task moved to Done no longer stops a server another task is still using over a local connection, such as an adb server or an emulator.
+- A task no longer shows as idle while a background subagent is still running after being re-prompted to hand back.
+- Phone connections are faster and steadier. The relay is dialed through Node first, which more than halved the slowest round trips, and the desktop no longer drops frames during a key rotation or when a connection hits its byte limit. A terminal too large to send whole now opens with less scrollback instead of failing to open.
+- On Linux, the Changes panel's file watcher no longer walks node_modules and .git, which used thousands of inotify watches and could exhaust the per-user limit.

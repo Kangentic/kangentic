@@ -77,7 +77,7 @@ Runs a script as an ordinary child process, in the task's worktree when it has o
 | Field | Type | Description |
 |-------|------|-------------|
 | `script` | string | The script body, with `{{placeholders}}`. Escaping is `shell` |
-| `timeoutMinutes` | number | Give up after this long. Default 10. Set in `kangentic.json` only, not in the Column Manager: an exit group is capped at 60 seconds in aggregate whatever this says, so the control could not tell the truth on half the rows it appeared on. The bound itself is not optional, because enter automations hold the task lock and `withTaskLock` has no timeout of its own |
+| `timeoutMinutes` | number | Give up after this long. Default 10, range 1 to 120. Set in `kangentic.json` only, not in the Column Manager: an exit group is capped at 60 seconds in aggregate whatever this says, so the control could not tell the truth on half the rows it appeared on. The bound itself is not optional, because enter automations hold the task lock and `withTaskLock` has no timeout of its own |
 
 Not a PTY. An interactive shell runs the script and then returns to its prompt and lives forever, so completion is unobservable and the exit code unobtainable; this adapter awaits the exit and records the code. The timeout kills the process TREE, because a bare kill reaches the shell only and leaves whatever it spawned running. No retry: a half-run script is not safe to repeat.
 
@@ -92,20 +92,20 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 | `body` | string | Request body. Escaping is `json`. Empty means the default JSON envelope |
 | `headers` | Record<string, string> | Extra headers, authored one per line as `Name: Value` |
 
-30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the shared `withBackoff`, honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
+30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the runner's retry loop (`delayBeforeRetry` in `src/main/automations/automation-runner.ts`), honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
 
 ### `notify` -- Notify me
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `title` | string | Default `{{title}}` |
-| `body` | string | Default `{{toColumn}}` |
+| `title` | string | Default `{{title}}`. Escaping is `none` |
+| `body` | string | Default `{{toColumn}}`. Escaping is `none` |
 
 One desktop notification through the same `showNotification` path `DesktopNotifier` uses, so it inherits click-to-task. No timeout, no retry.
 
 ### `spawn_agent` -- Start agent (legacy)
 
-The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them."
+The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
 
 `kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [configuration.md](configuration.md)).
 

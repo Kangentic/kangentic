@@ -811,7 +811,7 @@ Because Claude Code supports `--resume`, conversation context is fully preserved
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Graphics failures
 
