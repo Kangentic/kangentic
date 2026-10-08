@@ -32,7 +32,7 @@ import { isBridgeEvent, parseActivityEventPayload, type CapabilityRequestMessage
 import type { BrowserWindow } from 'electron';
 import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile-bridge/handlers/read-stream';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
-import { RESPONSE_TOO_LARGE_ERROR, type BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
+import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
 import { SubscriptionRegistry } from '../../../src/main/mobile-bridge/session/subscription-registry';
 import { createProgressCallback, emitSpawnProgress, __resetSpawnProgressForTest } from '../../../src/main/transition-engine/spawn-progress';
 
@@ -81,13 +81,14 @@ class FakeSessionManager extends EventEmitter {
   });
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
   // The mobile seed uses the parsed-grid serialized frame, not the raw replay.
-  getSerializedFrame = vi.fn(() => Promise.resolve('serialized-frame'));
+  // `scrollbackLines` is how much history the frame carries (undefined = full depth).
+  getSerializedFrame = vi.fn((_sessionId: string, _scrollbackLines?: number): Promise<string> => Promise.resolve('serialized-frame'));
   /** Parser offset the seed snapshot covers (see getSeedFrame). */
   seedBarrierOffset = 0;
   /** Runs while the seed request is in flight, after the barrier, to emit racing tap bytes. */
   duringSeed: (() => void) | null = null;
-  getSeedFrame = vi.fn(async (sessionId: string) => {
-    const frame = await this.getSerializedFrame(sessionId);
+  getSeedFrame = vi.fn(async (sessionId: string, scrollbackLines?: number) => {
+    const frame = await this.getSerializedFrame(sessionId, scrollbackLines);
     this.duringSeed?.();
     return { frame, barrierOffset: this.seedBarrierOffset, settleMs: 12, serializeMs: 3 };
   });
@@ -532,14 +533,17 @@ describe('handleReadStream', () => {
       });
 
       /**
-       * A seed whose response is over the protocol's frame caps is refused by
-       * the handler, BEFORE it subscribes. The service's own refusal comes too
-       * late: by then subscribeReadStream has registered the stream, its tap
-       * and the marker, and has already run the prior teardown on the key.
+       * A phone always gets a terminal. A seed whose response would be over the
+       * protocol's frame caps is shrunk (history scaled down, then the grid
+       * alone, then no seed) and answered ok, never refused: a refused
+       * subscribe reads to the phone as the session being gone. The check and
+       * the re-takes happen BEFORE subscribing, because subscribeReadStream's
+       * set() runs the prior teardown on the key.
        */
       describe('a response over the frame caps', () => {
         /** Over MAX_DECODED_LENGTH (4 MiB) of JSON, so the encode fails before any deflate. */
         const overCapSeed = 'x'.repeat(4.5 * 1024 * 1024);
+        const historyLinesFor = (scrollbackLines: number): string => 'x'.repeat(scrollbackLines * 1000);
         let warnSpy: MockInstance<typeof console.warn>;
 
         beforeEach(() => {
@@ -550,6 +554,10 @@ describe('handleReadStream', () => {
           warnSpy.mockRestore();
         });
 
+        function warnLines(): string[] {
+          return warnSpy.mock.calls.map((call) => String(call[0]));
+        }
+
         function activityEventsSent(session: BridgeSession): number {
           const sendMessage = session.sendMessage as unknown as ReturnType<typeof vi.fn>;
           return sendMessage.mock.calls
@@ -557,63 +565,165 @@ describe('handleReadStream', () => {
             .filter((message) => message.type === 'event' && message.event?.kind === 'activity').length;
         }
 
-        it('is refused before subscribing, leaving no stream, capture, tap, or marker behind', async () => {
+        /** Pseudo-random text over a 64-symbol alphabet from a fixed seed: deflate keeps about three quarters of it. */
+        function seededNoise(length: number): string {
+          const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+          let seed = 0x2545f491;
+          const symbols = new Array<string>(length);
+          for (let index = 0; index < length; index++) {
+            seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+            symbols[index] = alphabet[(seed >>> 16) & 63];
+          }
+          return symbols.join('');
+        }
+
+        it('answers ok with a shorter seed and registers the subscription, scaling the history by the overshoot', async () => {
           const context = { sessionManager } as unknown as IpcContext;
           const subscriptions = new SubscriptionRegistry();
           const session = fakeSession();
-          holdBystanderTap();
-          const before = captureSeedHolds(subscriptions);
-          sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? overCapSeed : historyLinesFor(scrollbackLines));
 
           const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
 
-          // The code is what lets a phone tell this from a dead session.
-          expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: 'response-too-large' });
-          expect(captureSeedHolds(subscriptions)).toEqual(before);
-          expect(sessionManager.listenerCount('exit')).toBe(0);
-          sessionManager.emit('data-tap', 'sess-1', 'after the refusal');
-          expect(terminalDataSent(session)).toBe('');
-          expect(warnSpy.mock.calls.map((call) => String(call[0]))).toEqual([
-            expect.stringMatching(/^\[mobile-bridge\] read-stream\/subscribe req-1 from device-1 refused before subscribing: Encoded bridge message exceeds \d+ bytes before compression \(seed 4608k chars\)$/),
+          expect(response.ok).toBe(true);
+          // 4.5 MiB against the 4 MiB cap is 1.125x, floored at 1.25x: 500 lines at 0.8 / 1.25.
+          expect(sessionManager.getSeedFrame.mock.calls).toEqual([['sess-1'], ['sess-1', 320]]);
+          expect((response.payload as { scrollback: string }).scrollback).toBe(historyLinesFor(320));
+          expect(captureSeedHolds(subscriptions)).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
+          sessionManager.emit('data-tap', 'sess-1', 'live output');
+          expect(terminalDataSent(session)).toBe('live output');
+          expect(warnLines()).toEqual([
+            '[mobile-bridge] read-stream/subscribe req-1 from device-1 shrank its terminal seed to fit the wire: 4608k chars to 313k chars (sent 320 history lines)',
           ]);
         });
 
-        it('a refused terminal upgrade leaves the list-only feed it would have replaced', async () => {
+        it('sends the grid alone when the scaled history still does not fit', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          const subscriptions = new SubscriptionRegistry();
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === 0 ? 'GRID' : overCapSeed);
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+
+          expect(response.ok).toBe(true);
+          expect(sessionManager.getSeedFrame.mock.calls).toEqual([['sess-1'], ['sess-1', 320], ['sess-1', 0]]);
+          expect((response.payload as { scrollback: string }).scrollback).toBe('GRID');
+          expect(subscriptions.has('stream:sess-1')).toBe(true);
+          expect(warnLines()).toEqual([
+            '[mobile-bridge] read-stream/subscribe req-1 from device-1 shrank its terminal seed to fit the wire: 4608k chars to 0k chars (sent the grid alone)',
+          ]);
+        });
+
+        it('sends an empty seed when even the grid does not fit, and still registers the subscription', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          const subscriptions = new SubscriptionRegistry();
+          const session = fakeSession();
+          sessionManager.getSerializedFrame.mockResolvedValue(overCapSeed);
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
+
+          expect(response.ok).toBe(true);
+          expect((response.payload as { scrollback: string }).scrollback).toBe('');
+          expect(captureSeedHolds(subscriptions)).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
+          sessionManager.emit('data-tap', 'sess-1', 'live output');
+          expect(terminalDataSent(session)).toBe('live output');
+          expect(warnLines()).toEqual([
+            '[mobile-bridge] read-stream/subscribe req-1 from device-1 shrank its terminal seed to fit the wire: 4608k chars to 0k chars (sent an empty seed)',
+          ]);
+        });
+
+        it('filters the tap by the barrier of the frame that is sent, not the first one taken', async () => {
+          const session = fakeSession();
+          const context = { sessionManager } as unknown as IpcContext;
+          sessionManager.seedBarrierOffset = 100;
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) => {
+            if (scrollbackLines === undefined) {
+              // Past the first snapshot's barrier, but inside the re-take's.
+              sessionManager.emit('data-tap', 'sess-1', 'FIRST', 120);
+              return overCapSeed;
+            }
+            sessionManager.seedBarrierOffset = 200;
+            sessionManager.emit('data-tap', 'sess-1', 'OLD', 150);
+            sessionManager.emit('data-tap', 'sess-1', 'MID', 203);
+            return historyLinesFor(scrollbackLines);
+          });
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+          expect(response.ok).toBe(true);
+          // Nothing may reach the phone ahead of the response the caller sends next.
+          expect(terminalDataSent(session)).toBe('');
+          await settleCoalesceTimer();
+
+          // FIRST and OLD are in the frame that was sent; MID is new output.
+          expect(terminalDataSent(session)).toBe('MID');
+        });
+
+        it('reads the pending prompt options from the first, full frame, not the shrunk one that is sent', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-9' });
+          // Over the 1 MiB wire cap even after deflate; the dialog is at the bottom.
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? `${seededNoise(1_800_000)}\r\n${permissionDialogFrame}` : 'shrunk, no dialog here');
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+          const payload = response.payload as { scrollback: string; awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null };
+          expect(response.ok).toBe(true);
+          expect(payload.scrollback).toBe('shrunk, no dialog here');
+          expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
+          expect(payload.awaitedPromptOptions).toEqual(permissionDialogOptions);
+        });
+
+        it('leaves a phone with a feed throughout: an over-cap terminal upgrade replaces the list-only feed with the terminal stream', async () => {
           const context = { sessionManager } as unknown as IpcContext;
           const subscriptions = new SubscriptionRegistry();
           const session = fakeSession();
           await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
-          const listFeed = captureSeedHolds(subscriptions);
-          expect(listFeed).toEqual({ dataTapListeners: 0, tapRefs: 0, terminalMarker: false, streamSubscribed: true });
-          sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
+          expect(captureSeedHolds(subscriptions)).toEqual({ dataTapListeners: 0, tapRefs: 0, terminalMarker: false, streamSubscribed: true });
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? overCapSeed : historyLinesFor(scrollbackLines));
 
           const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
-          expect(response.ok).toBe(false);
 
-          // The list feed was never replaced: still subscribed, still no
-          // terminal tap or marker, and its activity pushes still arrive.
-          expect(captureSeedHolds(subscriptions)).toEqual(listFeed);
+          expect(response.ok).toBe(true);
+          expect(captureSeedHolds(subscriptions)).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
           const activityBefore = activityEventsSent(session);
           sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'turn-ended' });
           expect(activityEventsSent(session)).toBe(activityBefore + 1);
         });
 
-        it('a refused terminal re-subscribe over a live terminal stream leaves that stream, its tap, and the marker in place', async () => {
+        it('an over-cap re-subscribe over a live terminal stream leaves exactly one stream, tap, and marker', async () => {
           const context = { sessionManager } as unknown as IpcContext;
           const subscriptions = new SubscriptionRegistry();
           const session = fakeSession();
           await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
-          const liveStream = captureSeedHolds(subscriptions);
-          expect(liveStream).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
-          sessionManager.getSerializedFrame.mockResolvedValueOnce(overCapSeed);
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? overCapSeed : historyLinesFor(scrollbackLines));
 
           const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, subscriptions);
-          expect(response.ok).toBe(false);
 
-          expect(captureSeedHolds(subscriptions)).toEqual(liveStream);
+          expect(response.ok).toBe(true);
+          expect(captureSeedHolds(subscriptions)).toEqual({ dataTapListeners: 1, tapRefs: 1, terminalMarker: true, streamSubscribed: true });
           expect(sessionManager.listenerCount('exit')).toBe(1);
-          sessionManager.emit('data-tap', 'sess-1', 'still live');
-          expect(terminalDataSent(session)).toBe('still live');
+        });
+
+        it('a session that ends during a re-take answers "No such session" and gives everything back', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          const subscriptions = new SubscriptionRegistry();
+          holdBystanderTap();
+          const before = captureSeedHolds(subscriptions);
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) => {
+            if (scrollbackLines === undefined) return overCapSeed;
+            sessionManager.getSession.mockReturnValue(undefined);
+            return historyLinesFor(scrollbackLines);
+          });
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, subscriptions);
+
+          expect(response).toEqual({ type: 'capability-response', requestId: 'req-1', ok: false, error: 'No such session: sess-1' });
+          expect(captureSeedHolds(subscriptions)).toEqual(before);
+          expect(sessionManager.listenerCount('exit')).toBe(0);
         });
       });
     });

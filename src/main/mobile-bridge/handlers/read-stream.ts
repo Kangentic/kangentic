@@ -1,5 +1,7 @@
 import {
   encodeMessageFailure,
+  MAX_DECODED_LENGTH,
+  MAX_FRAME_LENGTH,
   parseCapabilityRequestPayload,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
@@ -15,7 +17,8 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { IpcContext } from '../../ipc/ipc-context';
-import { responseTooLargeRefusal, type BridgeSession } from '../session/bridge-session';
+import type { BridgeSession } from '../session/bridge-session';
+import { SERIALIZED_SCROLLBACK_LINES } from '../../pty/host/protocol';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
@@ -644,6 +647,32 @@ function subscribeReadStream(
   })();
 }
 
+/**
+ * A seed shrink keeps this fraction of what a straight proportion allows. The
+ * viewport does not shrink with the history, so a frame cut by exactly its
+ * overshoot would still be a little over; the margin makes the first retry
+ * usually the last. It only has to be close: each rung is verified.
+ */
+const SEED_SHRINK_FIT_MARGIN = 0.8;
+
+/** Floor on the overshoot a shrink scales by, so a frame barely over the cap still loses history. */
+const SEED_SHRINK_MIN_OVERSHOOT = 1.25;
+
+/**
+ * History rows to re-take a seed with after `response` (carrying the full
+ * seed) did not fit the frame caps. Scaled from how far the response overshot
+ * the cap that refused it: the pre-compression cap when the raw JSON is over
+ * that one, else the wire cap, which raw JSON approximates from above (deflate
+ * only helps), so a compressible frame loses a little more history than it
+ * strictly had to. Zero or less means no scaled retry is worth taking.
+ */
+function scaledSeedHistoryLines(response: CapabilityResponseMessage): number {
+  const rawBytes = Buffer.byteLength(JSON.stringify(response), 'utf8');
+  const limit = rawBytes > MAX_DECODED_LENGTH ? MAX_DECODED_LENGTH : MAX_FRAME_LENGTH;
+  const overshoot = Math.max(rawBytes / limit, SEED_SHRINK_MIN_OVERSHOOT);
+  return Math.floor((SERIALIZED_SCROLLBACK_LINES * SEED_SHRINK_FIT_MARGIN) / overshoot);
+}
+
 export async function handleReadStream(
   request: CapabilityRequestMessage,
   session: BridgeSession,
@@ -718,7 +747,12 @@ export async function handleReadStream(
       // Marker only - see subscribeReadStream.
     });
   }
+  // The frame the response carries. It starts as the full-depth seed and is
+  // replaced by a shorter one when that does not fit the wire (see below).
   let scrollback = '';
+  // The first, full-depth frame, kept for the prompt-option probe: a dialog is
+  // read from the deepest frame taken even when a shallower one is sent.
+  let fullFrame = '';
   let seedCoverage: SeedCoverage | null = null;
   // Tapped BEFORE the seed is asked for, and held until subscribeReadStream
   // holds its own tap. The host forwards a session's bytes only while a tap
@@ -741,6 +775,7 @@ export async function handleReadStream(
       const seedStartedAt = performance.now();
       const seed = await context.sessionManager.getSeedFrame(payload.sessionId);
       scrollback = seed.frame;
+      fullFrame = seed.frame;
       seedCoverage = { barrierOffset: seed.barrierOffset, racedChunks };
       noteRequestSpan(
         session.deviceId,
@@ -748,67 +783,117 @@ export async function handleReadStream(
         `seed ${Math.round(performance.now() - seedStartedAt)} ms (settle ${seed.settleMs} ms, serialize ${seed.serializeMs} ms), ${Math.round(scrollback.length / 1024)}k chars`,
       );
     }
+
+    // The prompt-option probe reads the first, full-depth frame, whichever
+    // frame is sent. Read once: a shrink retries the build, not the probe.
+    let promptOptionsFromFullFrame: string[] | null | undefined;
+    // Everything in the response but the seed, read fresh from the registry on
+    // every build. Null when the session is gone.
+    //
     // Re-read the row now rather than trusting `liveSession`. The session can
-    // exit DURING the await above. Registering the subscription then would be
-    // post-mortem: its own onExit teardown never fires (the exit already
-    // happened), so the listeners and the marker above would leak until the
-    // device disconnects - and the dead id would ride the terminal-streamed set
-    // into the renderer indefinitely. And a queue promotion inside that await
+    // exit DURING the awaits above or below. Registering the subscription then
+    // would be post-mortem: its own onExit teardown never fires (the exit
+    // already happened), so the listeners and the marker above would leak until
+    // the device disconnects - and the dead id would ride the terminal-streamed
+    // set into the renderer indefinitely. And a queue promotion inside an await
     // replaces the registry row (session-spawn-flow.ts), so `liveSession` can
     // still say 'queued' while the registry says 'running'. The snapshot's
     // status, and the baseline the live `status` push dedupes against, both
     // come from this read. A list-only subscribe has no await, so this reads
-    // the same row it already had.
-    const snapshotSession = context.sessionManager.getSession(payload.sessionId);
-    if (!snapshotSession) {
-      return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` };
-    }
-    const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
-    const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
-    const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;
-    const awaitedPromptId = currentAwaitedPromptId(context, payload.sessionId);
+    // the same row it already had. A shrink re-takes the seed, which is another
+    // await, so it builds again afterwards.
+    const buildResponse = (): { response: CapabilityResponseMessage; snapshotSession: Session; resumable: boolean; awaitedPromptId: string | null } | null => {
+      const snapshotSession = context.sessionManager.getSession(payload.sessionId);
+      if (!snapshotSession) return null;
+      const activityState = context.sessionManager.getActivityCache()[payload.sessionId] ?? null;
+      const activityReason = context.sessionManager.getActivityReason(payload.sessionId);
+      const usage = context.sessionManager.getUsageCache()[payload.sessionId] ?? null;
+      const awaitedPromptId = currentAwaitedPromptId(context, payload.sessionId);
 
-    const ptyDimensions = toTerminalDimensionsWire(context.sessionManager.getDimensions(payload.sessionId));
-    // The prompt was outstanding before this subscribe, so its dialog is
-    // already painted into the frame we just serialized - probe that frame
-    // directly instead of a second read. Null = no numbered dialog parsed;
-    // the phone falls back to its blind approve/deny keystrokes.
-    const awaitedPromptOptions = awaitedPromptId ? extractPromptOptions(scrollback, ptyDimensions) : null;
-    const resumable = isSessionResumable(context, snapshotSession);
-    const responsePayload: ReadStreamResponsePayload = {
-      scrollback,
-      activity: {
-        state: activityState,
-        reason: activityReason ? toActivityReasonWire(activityReason) : null,
-      },
-      usage: usage ? toSessionUsageWire(usage) : null,
-      awaitedPromptId,
-      ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
-      ...(ptyDimensions ? { ptyDimensions } : {}),
-      sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
-      resuming: snapshotSession.resuming,
-      resumable,
+      const ptyDimensions = toTerminalDimensionsWire(context.sessionManager.getDimensions(payload.sessionId));
+      // The prompt was outstanding before this subscribe, so its dialog is
+      // already painted into the frame we serialized - probe that frame
+      // directly instead of a second read. Null = no numbered dialog parsed;
+      // the phone falls back to its blind approve/deny keystrokes.
+      let awaitedPromptOptions: string[] | null = null;
+      if (awaitedPromptId) {
+        if (promptOptionsFromFullFrame === undefined) promptOptionsFromFullFrame = extractPromptOptions(fullFrame, ptyDimensions);
+        awaitedPromptOptions = promptOptionsFromFullFrame;
+      }
+      const resumable = isSessionResumable(context, snapshotSession);
+      const responsePayload: ReadStreamResponsePayload = {
+        scrollback,
+        activity: {
+          state: activityState,
+          reason: activityReason ? toActivityReasonWire(activityReason) : null,
+        },
+        usage: usage ? toSessionUsageWire(usage) : null,
+        awaitedPromptId,
+        ...(awaitedPromptId ? { awaitedPromptOptions } : {}),
+        ...(ptyDimensions ? { ptyDimensions } : {}),
+        sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
+        resuming: snapshotSession.resuming,
+        resumable,
+      };
+      const response: CapabilityResponseMessage = { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
+      return { response, snapshotSession, resumable, awaitedPromptId };
     };
+    const sessionGone = (): CapabilityResponseMessage =>
+      ({ type: 'capability-response', requestId: request.requestId, ok: false, error: `No such session: ${payload.sessionId}` });
 
-    const response: CapabilityResponseMessage = { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
-    // Checked BEFORE subscribing. A response over the frame caps is refused,
-    // and the phone must then hold no subscription it was told failed. Nothing
-    // downstream can undo one: subscribeReadStream's set() has already run the
-    // prior teardown on this key, so a refusal after it would take the phone's
-    // list-only feed for this session down with the failed terminal upgrade.
-    // Returning here leaves the stream key untouched, and the finally below
-    // gives back the seed capture, the seed tap and any marker this call added.
-    const encodeFailure = encodeMessageFailure(response);
+    let built = buildResponse();
+    if (!built) return sessionGone();
+
+    // A phone always gets a terminal. A response over the frame caps is
+    // answered with a shorter seed, never a refusal: a user who opens a session
+    // is there to watch or work with an agent, and a refusal reads to the phone
+    // as the session being gone. The size is checked BEFORE subscribing for the
+    // same reason it is shrunk here and not later: subscribeReadStream's set()
+    // runs the prior teardown on this key, which would take the phone's
+    // list-only feed down, and nothing after it can put that back.
+    //
+    // Three rungs, each verified with the exact check: the history scaled down
+    // by how far the frame overshot, then the grid alone, then no seed at all.
+    // The grid is always whole at the first two, so a shorter seed is a shorter
+    // history and never a broken screen. The empty seed cannot overflow: the
+    // rest of the payload is a few hundred bytes. Each re-take is its own
+    // snapshot with its own barrier, and the barrier of the frame that is sent
+    // is the one subscribeReadStream filters the tap by. The seed tap and the
+    // capture listener stay up across every rung, so nothing is lost between
+    // snapshots. The empty seed keeps the last snapshot's barrier.
+    let encodeFailure = wantsTerminal ? encodeMessageFailure(built.response) : null;
     if (encodeFailure !== null) {
+      const shrinkStartedAt = performance.now();
+      const originalChars = scrollback.length;
+      const scaledLines = scaledSeedHistoryLines(built.response);
+      let heldRung: string | null = null;
+      for (const historyLines of scaledLines > 0 ? [scaledLines, 0] : [0]) {
+        const retake = await context.sessionManager.getSeedFrame(payload.sessionId, historyLines);
+        scrollback = retake.frame;
+        seedCoverage = { barrierOffset: retake.barrierOffset, racedChunks };
+        built = buildResponse();
+        if (!built) return sessionGone();
+        encodeFailure = encodeMessageFailure(built.response);
+        if (encodeFailure === null) {
+          heldRung = historyLines === 0 ? 'sent the grid alone' : `sent ${historyLines} history lines`;
+          break;
+        }
+      }
+      if (encodeFailure !== null) {
+        scrollback = '';
+        built = buildResponse();
+        if (!built) return sessionGone();
+        heldRung = 'sent an empty seed';
+      }
+      noteRequestSpan(session.deviceId, request.requestId, `seed shrink ${Math.round(performance.now() - shrinkStartedAt)} ms`);
       console.warn(
-        `[mobile-bridge] read-stream/subscribe ${request.requestId} from ${session.deviceId.slice(0, 8)} refused before subscribing: ${encodeFailure} (seed ${Math.round(scrollback.length / 1024)}k chars)`,
+        `[mobile-bridge] read-stream/subscribe ${request.requestId} from ${session.deviceId.slice(0, 8)} shrank its terminal seed to fit the wire: ${Math.round(originalChars / 1024)}k chars to ${Math.round(scrollback.length / 1024)}k chars (${heldRung})`,
       );
-      return responseTooLargeRefusal(request.requestId);
     }
 
-    subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
+    subscribeReadStream(payload.sessionId, built.snapshotSession, built.resumable, built.awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
     subscribed = true;
-    return response;
+    return built.response;
   } finally {
     // Every exit, a throw included, lets go of the seed capture. On success
     // this runs after subscribeReadStream took its own tap, so the host never

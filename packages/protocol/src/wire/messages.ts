@@ -43,10 +43,10 @@ export interface CapabilityRequestMessage {
  * - `response-too-large`: the answer would not fit the frame caps
  *   (MAX_DECODED_LENGTH before compression, MAX_FRAME_LENGTH after), so the
  *   desktop refused instead of sending it. The request was valid and its
- *   target still exists: a `read-stream` subscribe refused this way is a live
- *   session whose terminal seed is too large, not a dead one, and the desktop
- *   registered no subscription for it. A client must not treat it as the
- *   session ending.
+ *   target still exists, so a client must not read it as the target being
+ *   gone (a session ending, a project removed). It is a backstop: a desktop
+ *   shrinks a `read-stream` terminal seed to fit rather than refuse it, so a
+ *   phone's terminal subscribe is never answered with this code.
  */
 export type CapabilityErrorCode = 'unsupported-verb' | 'response-too-large';
 

@@ -107,8 +107,8 @@ export function encodeMessage(message: BridgeMessage): Uint8Array {
 /**
  * Why `encodeMessage` would throw for `message`, or null when it would not,
  * without keeping the frame. A sender with side effects asks this BEFORE
- * committing them, so a message it cannot send is refused with nothing left
- * behind.
+ * committing them, so it can send something smaller instead of committing to
+ * a message it cannot send (the desktop re-takes a shorter terminal seed).
  *
  * Exact, not an estimate. Raw UTF-8 JSON at or under MAX_FRAME_LENGTH always
  * fits, because `encodeMessage` only switches to deflate when deflate is
