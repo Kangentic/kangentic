@@ -176,6 +176,30 @@ describe('proxy decision for the relay origin', () => {
     expect(resolveProxy.mock.calls.map((call) => call[0])).toEqual(['http://relay.example.com:8080', 'https://relay.example.com']);
   });
 
+  // The cache is per origin and shared: every paired device owns a RelayClient
+  // with its own fallback object, and all of them dial the same relay at app
+  // start, before the first answer has come back.
+  it('shares one in-flight lookup between callers, so dials made before the answer arrives ask once', async () => {
+    const resolveProxy = vi.fn((_url: string) => Promise.resolve('PROXY proxy.corp.example:8080; DIRECT'));
+    mockReadyElectron(resolveProxy);
+    const { resolveRelayChromiumFallback } = await loadModule();
+    const firstDevice = resolveRelayChromiumFallback('wss://relay.example.com')?.isPreferred;
+    const secondDevice = resolveRelayChromiumFallback('wss://relay.example.com')?.isPreferred;
+    if (!firstDevice || !secondDevice) throw new Error('expected a chromium fallback with an isPreferred() check');
+
+    // Three dials, none of which has an answer yet, so all go out unproxied.
+    expect(firstDevice()).toBe(false);
+    expect(secondDevice()).toBe(false);
+    expect(firstDevice()).toBe(false);
+    expect(resolveProxy).toHaveBeenCalledTimes(1);
+
+    // Once the one lookup lands, every caller sees it and nothing more is asked.
+    await flushPromises();
+    expect(firstDevice()).toBe(true);
+    expect(secondDevice()).toBe(true);
+    expect(resolveProxy).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     { label: 'a list that leads with DIRECT', proxyList: 'DIRECT; PROXY proxy.corp.example:8080', proxied: false },
     { label: 'a list that leads with a proxy and ends in DIRECT', proxyList: 'PROXY proxy.corp.example:8080; DIRECT', proxied: true },
