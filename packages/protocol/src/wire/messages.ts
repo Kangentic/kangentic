@@ -34,13 +34,21 @@ export interface CapabilityRequestMessage {
 
 /**
  * A stable key a client can branch on, beside the human-readable `error`.
- * Today the one member is the refusal a desktop sends for a verb its build
- * does not know (see `UnsupportedVerbError` in framing.ts), so a newer phone
- * can tell "desktop is old" from "desktop is unreachable" and show the right
- * copy. A union rather than a bare string so a second code is a deliberate
- * addition here, not a typo at a call site.
+ * A union rather than a bare string so a new code is a deliberate addition
+ * here, not a typo at a call site.
+ *
+ * - `unsupported-verb`: the desktop's build does not know the verb (see
+ *   `UnsupportedVerbError` in framing.ts), so a newer phone can tell "desktop
+ *   is old" from "desktop is unreachable" and show the right copy.
+ * - `response-too-large`: the answer would not fit the frame caps
+ *   (MAX_DECODED_LENGTH before compression, MAX_FRAME_LENGTH after), so the
+ *   desktop refused instead of sending it. The request was valid and its
+ *   target still exists: a `read-stream` subscribe refused this way is a live
+ *   session whose terminal seed is too large, not a dead one, and the desktop
+ *   registered no subscription for it. A client must not treat it as the
+ *   session ending.
  */
-export type CapabilityErrorCode = 'unsupported-verb';
+export type CapabilityErrorCode = 'unsupported-verb' | 'response-too-large';
 
 export interface CapabilityResponseMessage {
   type: 'capability-response';

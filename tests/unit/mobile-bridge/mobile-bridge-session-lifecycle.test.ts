@@ -177,7 +177,7 @@ vi.mock('../../../src/main/mobile-bridge/handlers', async (importOriginal) => {
 });
 
 const { MobileBridgeService, resetForcedRedialTelemetryForTests } = await import('../../../src/main/mobile-bridge/mobile-bridge-service');
-const { MessageEncodeError } = await import('../../../src/main/mobile-bridge/session/bridge-session');
+const { MessageEncodeError, RESPONSE_TOO_LARGE_ERROR } = await import('../../../src/main/mobile-bridge/session/bridge-session');
 const { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
 const { trackEvent } = await import('../../../src/main/analytics/analytics');
 const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
@@ -428,7 +428,7 @@ describe('MobileBridgeService session-lifecycle wiring', () => {
     await flushMicrotasks();
 
     expect(session.sendMessage).toHaveBeenCalledTimes(2);
-    expect(session.sendMessage).toHaveBeenLastCalledWith({ type: 'capability-response', requestId: 'bigreq-1', ok: false, error: 'Response too large to send' });
+    expect(session.sendMessage).toHaveBeenLastCalledWith({ type: 'capability-response', requestId: 'bigreq-1', ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: 'response-too-large' });
     expect(
       warnSpy.mock.calls.some((call) =>
         String(call[0]).includes('response to read-board bigreq-1 from device-A not sent: Encoded bridge message exceeds 1048576 bytes; answered with a refusal'),

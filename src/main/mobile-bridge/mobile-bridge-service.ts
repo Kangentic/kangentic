@@ -31,7 +31,7 @@ import {
 } from './roster-store';
 import { PairingService, sanitizeDeviceName } from './pairing/pairing-service';
 import { createTransport } from './transport/transport-factory';
-import { BridgeSession, MessageEncodeError, type RekeyHoldReleaseReason } from './session/bridge-session';
+import { BridgeSession, MessageEncodeError, responseTooLargeRefusal, type RekeyHoldReleaseReason } from './session/bridge-session';
 import { startMainLoopBlockProbe, takeRequestSpans } from './request-spans';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from './session/forced-redial-reason';
 import { SubscriptionRegistry } from './session/subscription-registry';
@@ -725,7 +725,7 @@ export class MobileBridgeService extends EventEmitter {
       if (error instanceof MessageEncodeError) {
         console.warn(`[mobile-bridge] response to ${describeRequest(session, request)} not sent: ${error.message}; answered with a refusal`);
         try {
-          session.sendMessage({ type: 'capability-response', requestId: request.requestId, ok: false, error: 'Response too large to send' });
+          session.sendMessage(responseTooLargeRefusal(request.requestId));
         } catch {
           // The session dropped between the two sends; the phone's own timeout covers it.
         }

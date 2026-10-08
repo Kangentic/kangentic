@@ -14,7 +14,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { BridgeSession } from '../session/bridge-session';
+import { messageEncodeFailure, responseTooLargeRefusal, type BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
 import { buildPermissionPromptId } from './permission-prompt-id';
@@ -789,9 +789,25 @@ export async function handleReadStream(
       resumable,
     };
 
+    const response: CapabilityResponseMessage = { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
+    // Checked BEFORE subscribing. A response over the frame caps is refused,
+    // and the phone must then hold no subscription it was told failed. Nothing
+    // downstream can undo one: subscribeReadStream's set() has already run the
+    // prior teardown on this key, so a refusal after it would take the phone's
+    // list-only feed for this session down with the failed terminal upgrade.
+    // Returning here leaves the stream key untouched, and the finally below
+    // gives back the seed capture, the seed tap and any marker this call added.
+    const encodeFailure = messageEncodeFailure(response);
+    if (encodeFailure !== null) {
+      console.warn(
+        `[mobile-bridge] read-stream/subscribe ${request.requestId} from ${session.deviceId.slice(0, 8)} refused before subscribing: ${encodeFailure} (seed ${Math.round(scrollback.length / 1024)}k chars)`,
+      );
+      return responseTooLargeRefusal(request.requestId);
+    }
+
     subscribeReadStream(payload.sessionId, snapshotSession, resumable, awaitedPromptId, session, context, subscriptions, wantsTerminal, seedCoverage);
     subscribed = true;
-    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
+    return response;
   } finally {
     // Every exit, a throw included, lets go of the seed capture. On success
     // this runs after subscribeReadStream took its own tap, so the host never

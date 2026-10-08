@@ -39,6 +39,9 @@ const DEFLATE_HEADER_LENGTH = 5;
 /** The `code` a desktop puts on its refusal of a verb its build does not know. */
 export const UNSUPPORTED_VERB_ERROR_CODE: CapabilityErrorCode = 'unsupported-verb';
 
+/** The `code` a desktop puts on its refusal of a response that would not fit the frame caps above. */
+export const RESPONSE_TOO_LARGE_ERROR_CODE: CapabilityErrorCode = 'response-too-large';
+
 const UNSUPPORTED_VERB_ERROR_NAME = 'UnsupportedVerbError';
 
 /**
