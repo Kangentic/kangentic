@@ -1583,15 +1583,18 @@ describe('Transcript-fallback handoff', () => {
       statusFileReader: { handleStatusChange(id: string): void };
     };
 
-    // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(true);
+    // Wait for the fire-and-forget eager attach (it awaits the mocked locate)
+    // AND its first transcript read. Polled, not a fixed wait: a fixed 30 ms
+    // saw the attach but not the read on a loaded CI runner.
+    await vi.waitFor(() => {
+      expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(true);
+      expect(manager.getUsageCache()[session.id]?.model.displayName).toBe('Opus 4.8');
+    });
     // The fallback populated the card model + token occupancy from the
     // transcript, but NO window (it is not derivable from a model id): window
     // stays the 0 "unknown size" sentinel and the percentage stays 0, so the
     // card shows the model name only until status.json flows.
     const fallbackUsage = manager.getUsageCache()[session.id];
-    expect(fallbackUsage?.model.displayName).toBe('Opus 4.8');
     expect(fallbackUsage?.contextWindow.usedTokens).toBe(5000);
     expect(fallbackUsage?.contextWindow.contextWindowSize).toBe(0);
     expect(fallbackUsage?.contextWindow.usedPercentage).toBe(0);
