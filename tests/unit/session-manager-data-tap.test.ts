@@ -367,9 +367,13 @@ describe('SessionManager data-tap', () => {
     const output = 'seed me';
     feedData(output);
     const liveSeed = await manager.getSeedFrame(session.id);
-    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, true);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, true, undefined);
     expect(liveSeed.barrierOffset).toBe(output.length);
     expect(liveSeed.frame).toContain(output);
+
+    // A history depth rides through to the host with the same settle.
+    await manager.getSeedFrame(session.id, 0);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, true, 0);
 
     // Suspend keeps the registry row but drops its PTY. Check that precondition
     // directly, so a suspend that deleted the row cannot turn this into the
@@ -384,11 +388,11 @@ describe('SessionManager data-tap', () => {
     expect(suspendedRow?.pty).toBeFalsy();
 
     await manager.getSeedFrame(session.id);
-    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith(session.id, false, undefined);
 
     // A session the registry has never heard of takes the same no-settle path.
     await manager.getSeedFrame('no-such-session');
-    expect(getSeedFrameSpy).toHaveBeenLastCalledWith('no-such-session', false);
+    expect(getSeedFrameSpy).toHaveBeenLastCalledWith('no-such-session', false, undefined);
   });
 
   it('getPipelineStats reports focused: false by default and true only for the session passed to setFocusedSessions', async () => {

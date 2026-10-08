@@ -452,8 +452,8 @@ export class PtyHostClient {
     return this.transport.request('getSerializedFrame', { sessionId, settle });
   }
 
-  getSeedFrame(sessionId: string, settle: boolean): Promise<SeedFrameResult> {
-    return this.transport.request('getSeedFrame', { sessionId, settle });
+  getSeedFrame(sessionId: string, settle: boolean, scrollbackLines?: number): Promise<SeedFrameResult> {
+    return this.transport.request('getSeedFrame', { sessionId, settle, scrollbackLines });
   }
 
   getRawScrollback(sessionId: string, timeoutMs?: number): Promise<string> {

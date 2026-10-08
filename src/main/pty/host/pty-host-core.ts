@@ -254,11 +254,11 @@ export class PtyHostCore {
    * slow-request line: a slow open caused by the repaint settle is not fixed by
    * serializing fewer rows, and one caused by the serialize is.
    */
-  async getSeedFrame(sessionId: string, settle: boolean): Promise<SeedFrameResult> {
+  async getSeedFrame(sessionId: string, settle: boolean, scrollbackLines?: number): Promise<SeedFrameResult> {
     const settleStartedAt = performance.now();
     if (settle) await this.bufferManager.waitForResizeRepaint(sessionId);
     const serializeStartedAt = performance.now();
-    const seed = await this.bufferManager.getSeedFrame(sessionId);
+    const seed = await this.bufferManager.getSeedFrame(sessionId, scrollbackLines);
     return {
       ...seed,
       settleMs: Math.round(serializeStartedAt - settleStartedAt),
@@ -319,8 +319,8 @@ export class PtyHostCore {
         return this.getSerializedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
       }
       case 'getSeedFrame': {
-        const { sessionId, settle } = params as PtyHostRequestMap['getSeedFrame']['params'];
-        return this.getSeedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
+        const { sessionId, settle, scrollbackLines } = params as PtyHostRequestMap['getSeedFrame']['params'];
+        return this.getSeedFrame(sessionId, settle, scrollbackLines) as Promise<PtyHostRequestMap[M]['result']>;
       }
       case 'getRawScrollback':
         return this.getRawScrollback((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];

@@ -154,6 +154,22 @@ describe('PtyHostCore', () => {
     expect(seed.serializeMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('getSeedFrame passes its history depth to the serialize: 0 is the grid alone, and no depth is the full seed', async () => {
+    vi.useRealTimers();
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    // 100 rows on the 30-row grid: rows 1 to 70 scroll into history.
+    fake.feed(Array.from({ length: 100 }, (_, index) => `row-${String(index + 1).padStart(3, '0')}`).join('\r\n'));
+
+    const full = await core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: false });
+    const gridAlone = await core.handleRequest('getSeedFrame', { sessionId: 'session-1', settle: false, scrollbackLines: 0 });
+
+    expect(full.frame).toContain('row-001');
+    expect(gridAlone.frame).not.toContain('row-070');
+    expect(gridAlone.frame).toContain('row-071');
+    expect(gridAlone.frame).toContain('row-100');
+  });
+
   it('getSeedFrame with settle waits for the resize repaint before it serializes, and times that wait', async () => {
     // Real timers: the headless parser's write barrier and the settle timing
     // both run on them.

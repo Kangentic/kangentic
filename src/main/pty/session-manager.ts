@@ -2513,9 +2513,14 @@ export class SessionManager extends EventEmitter {
    * every 'data-tap' chunk ending at or before `barrierOffset` (the seed
    * holds it) and slices the one that straddles it, so output racing the seed
    * reaches the phone exactly once.
+   *
+   * `scrollbackLines` caps the history rows above the grid (default
+   * SERIALIZED_SCROLLBACK_LINES; 0 is the grid alone), for a seed that would
+   * not fit the wire at full depth. Each call is its own snapshot with its own
+   * `barrierOffset`.
    */
-  async getSeedFrame(sessionId: string): Promise<SeedFrameResult> {
-    return this.host.getSeedFrame(sessionId, !!this.registry.get(sessionId)?.pty);
+  async getSeedFrame(sessionId: string, scrollbackLines?: number): Promise<SeedFrameResult> {
+    return this.host.getSeedFrame(sessionId, !!this.registry.get(sessionId)?.pty, scrollbackLines);
   }
 
   /**
