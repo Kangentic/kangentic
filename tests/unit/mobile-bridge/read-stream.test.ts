@@ -28,8 +28,9 @@ vi.mock('../../../src/main/retrieval/retrieval-client', async () => (
   (await import('../helpers/in-process-retrieval-client')).inProcessRetrievalClientModule()
 ));
 
-import { isBridgeEvent, parseActivityEventPayload, type CapabilityRequestMessage, type JsonValue } from '@kangentic/protocol';
+import { isBridgeEvent, MAX_DECODED_LENGTH, MAX_FRAME_LENGTH, parseActivityEventPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue } from '@kangentic/protocol';
 import type { BrowserWindow } from 'electron';
+import { SERIALIZED_SCROLLBACK_LINES } from '../../../src/main/pty/host/protocol';
 import { handleReadStream, terminalStreamKeyFor } from '../../../src/main/mobile-bridge/handlers/read-stream';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
@@ -535,7 +536,7 @@ describe('handleReadStream', () => {
       /**
        * A phone always gets a terminal. A seed whose response would be over the
        * protocol's frame caps is shrunk (history scaled down, then the grid
-       * alone, then no seed) and answered ok, never refused: a refused
+       * alone, then no seed) and answered ok, never refused. A refused
        * subscribe reads to the phone as the session being gone. The check and
        * the re-takes happen BEFORE subscribing, because subscribeReadStream's
        * set() runs the prior teardown on the key.
@@ -575,6 +576,31 @@ describe('handleReadStream', () => {
             symbols[index] = alphabet[(seed >>> 16) & 63];
           }
           return symbols.join('');
+        }
+
+        /** The 0.8 keep-margin and 1.25 overshoot floor the shrink scales by (read-stream.ts). */
+        const SHRINK_FIT_MARGIN = 0.8;
+        const SHRINK_MIN_OVERSHOOT = 1.25;
+
+        /**
+         * The history depth the first re-take should ask for, worked out from the
+         * wire sizes rather than read off the handler. `sentResponse` is the
+         * response that was returned (it carries `sentFrame`); the response the
+         * shrink measured differs from it only in that field, so its size is the
+         * sent size with the sent frame's JSON swapped for the full frame's.
+         * `refusingCap` is the cap that response overshot, named by each test.
+         */
+        function expectedFirstRetakeDepth(
+          sentResponse: CapabilityResponseMessage,
+          fullFrame: string,
+          sentFrame: string,
+          refusingCap: number,
+        ): number {
+          const fullResponseBytes = Buffer.byteLength(JSON.stringify(sentResponse), 'utf8')
+            - Buffer.byteLength(JSON.stringify(sentFrame), 'utf8')
+            + Buffer.byteLength(JSON.stringify(fullFrame), 'utf8');
+          const overshoot = Math.max(fullResponseBytes / refusingCap, SHRINK_MIN_OVERSHOOT);
+          return Math.floor((SERIALIZED_SCROLLBACK_LINES * SHRINK_FIT_MARGIN) / overshoot);
         }
 
         it('answers ok with a shorter seed and registers the subscription, scaling the history by the overshoot', async () => {
@@ -633,6 +659,32 @@ describe('handleReadStream', () => {
           ]);
         });
 
+        it('filters the tap by the last re-take\'s barrier when it sends an empty seed', async () => {
+          const session = fakeSession();
+          const context = { sessionManager } as unknown as IpcContext;
+          sessionManager.seedBarrierOffset = 100;
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) => {
+            // The grid-alone re-take is the last snapshot; it moves the barrier forward.
+            if (scrollbackLines === 0) {
+              sessionManager.seedBarrierOffset = 200;
+              sessionManager.emit('data-tap', 'sess-1', 'OLD', 150);
+              sessionManager.emit('data-tap', 'sess-1', 'NEW', 205);
+            }
+            return overCapSeed;
+          });
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+          expect(response.ok).toBe(true);
+          expect((response.payload as { scrollback: string }).scrollback).toBe('');
+          // Nothing may reach the phone ahead of the response the caller sends next.
+          expect(terminalDataSent(session)).toBe('');
+          await settleCoalesceTimer();
+
+          // OLD is inside the last snapshot (its barrier is 200, not the first one's 100); NEW is past it.
+          expect(terminalDataSent(session)).toBe('NEW');
+        });
+
         it('filters the tap by the barrier of the frame that is sent, not the first one taken', async () => {
           const session = fakeSession();
           const context = { sessionManager } as unknown as IpcContext;
@@ -663,14 +715,60 @@ describe('handleReadStream', () => {
           const context = { sessionManager } as unknown as IpcContext;
           sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-9' });
           // Over the 1 MiB wire cap even after deflate; the dialog is at the bottom.
+          const fullFrame = `${seededNoise(1_800_000)}\r\n${permissionDialogFrame}`;
           sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
-            scrollbackLines === undefined ? `${seededNoise(1_800_000)}\r\n${permissionDialogFrame}` : 'shrunk, no dialog here');
+            scrollbackLines === undefined ? fullFrame : 'shrunk, no dialog here');
 
           const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
 
           const payload = response.payload as { scrollback: string; awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null };
           expect(response.ok).toBe(true);
           expect(payload.scrollback).toBe('shrunk, no dialog here');
+          expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
+          expect(payload.awaitedPromptOptions).toEqual(permissionDialogOptions);
+
+          // The raw JSON is between the two caps (over 1 MiB, under 4 MiB), so
+          // the overshoot is measured against the wire cap, not the decoded one.
+          const expectedDepth = expectedFirstRetakeDepth(response, fullFrame, 'shrunk, no dialog here', MAX_FRAME_LENGTH);
+          // Measured against the 4 MiB cap it would floor at 1.25x and ask for 320.
+          expect(expectedDepth).toBeLessThan(320);
+          expect(sessionManager.getSeedFrame.mock.calls).toEqual([['sess-1'], ['sess-1', expectedDepth]]);
+        });
+
+        it('scales the re-take by the overshoot of the decoded cap when the raw JSON is far over it', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          // 8 MiB of frame against the 4 MiB cap is about 2.0x, above the 1.25x floor.
+          const fullFrame = 'x'.repeat(8 * 1024 * 1024);
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) =>
+            scrollbackLines === undefined ? fullFrame : historyLinesFor(scrollbackLines));
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+          expect(response.ok).toBe(true);
+          const sentFrame = (response.payload as { scrollback: string }).scrollback;
+          const expectedDepth = expectedFirstRetakeDepth(response, fullFrame, sentFrame, MAX_DECODED_LENGTH);
+          // Roughly 500 * 0.8 / 2.0, and not the 320 a barely-over frame gets.
+          expect(expectedDepth).toBeLessThan(320);
+          expect(sessionManager.getSeedFrame.mock.calls).toEqual([['sess-1'], ['sess-1', expectedDepth]]);
+          expect(sentFrame).toBe(historyLinesFor(expectedDepth));
+        });
+
+        it('reads the prompt options from the re-take when the prompt rose during the shrink', async () => {
+          const context = { sessionManager } as unknown as IpcContext;
+          // No prompt when the full frame is taken, so that frame is not probed.
+          const dialogAtBottom = `${'x'.repeat(1000)}\r\n${permissionDialogFrame}`;
+          sessionManager.getSerializedFrame.mockImplementation(async (_sessionId, scrollbackLines) => {
+            if (scrollbackLines === undefined) return overCapSeed;
+            // The prompt rises while the re-take is being taken, and its dialog is in that frame.
+            sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-9' });
+            return dialogAtBottom;
+          });
+
+          const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+
+          const payload = response.payload as { scrollback: string; awaitedPromptId: string | null; awaitedPromptOptions?: string[] | null };
+          expect(response.ok).toBe(true);
+          expect(payload.scrollback).toBe(dialogAtBottom);
           expect(payload.awaitedPromptId).toBe('sess-1:tool-9');
           expect(payload.awaitedPromptOptions).toEqual(permissionDialogOptions);
         });

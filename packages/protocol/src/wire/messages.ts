@@ -44,7 +44,7 @@ export interface CapabilityRequestMessage {
  *   (MAX_DECODED_LENGTH before compression, MAX_FRAME_LENGTH after), so the
  *   desktop refused instead of sending it. The request was valid and its
  *   target still exists, so a client must not read it as the target being
- *   gone (a session ending, a project removed). It is a backstop: a desktop
+ *   gone (a session ending, a project removed). It is a backstop. A desktop
  *   shrinks a `read-stream` terminal seed to fit rather than refuse it, so a
  *   phone's terminal subscribe is never answered with this code.
  */
