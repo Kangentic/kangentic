@@ -201,6 +201,17 @@ export interface HostProcessInfo {
 }
 
 /**
+ * Scrollback rows the headless parser retains and a seed frame includes by
+ * default. The CURRENT on-screen grid is always serialized in full regardless
+ * of this value; these rows give the phone a little history above the fold.
+ * A few hundred lines is ample for a phone seed and keeps both the retained
+ * buffer and the per-serialize cost bounded. It is shared so the phone's
+ * read-stream handler can ask for fewer rows when a seed would not fit the
+ * wire (`getSeedFrame`'s `scrollbackLines`) and scale that request from this.
+ */
+export const SERIALIZED_SCROLLBACK_LINES = 500;
+
+/**
  * The phone's seed frame with the parser offset its snapshot covers, so tap
  * chunks at or before `barrierOffset` can be dropped as already seeded, and
  * the time spent in the repaint settle and in the serialize.
@@ -219,8 +230,10 @@ export interface PtyHostRequestMap {
   getScrollback: { params: { sessionId: string; settle: boolean }; result: string };
   /** The parsed-grid frame, with the same settle (the prompt-options probe). */
   getSerializedFrame: { params: { sessionId: string; settle: boolean }; result: string };
-  /** The phone's seed frame, with the same settle (see SeedFrameResult). */
-  getSeedFrame: { params: { sessionId: string; settle: boolean }; result: SeedFrameResult };
+  /** The phone's seed frame, with the same settle (see SeedFrameResult).
+   *  `scrollbackLines` caps the history rows above the grid (default
+   *  SERIALIZED_SCROLLBACK_LINES); 0 serializes the grid alone. */
+  getSeedFrame: { params: { sessionId: string; settle: boolean; scrollbackLines?: number }; result: SeedFrameResult };
   getRawScrollback: { params: { sessionId: string }; result: string };
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };

@@ -1,15 +1,7 @@
 import { Terminal, type ITerminalAddon } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { activateUnicode11 } from '../../../shared/xterm-unicode11';
-
-/**
- * Scrollback rows retained by the headless parser and included in a serialized
- * mobile seed frame. The CURRENT on-screen grid is always serialized in full
- * regardless of this value; these rows give the phone a little history above
- * the fold. A few hundred lines is ample for a phone seed and keeps both the
- * retained buffer and the per-serialize cost bounded.
- */
-const SERIALIZED_SCROLLBACK_LINES = 500;
+import { SERIALIZED_SCROLLBACK_LINES } from '../host/protocol';
 
 /**
  * `@xterm/headless` declares its OWN `ITerminalAddon` (structurally identical
@@ -156,8 +148,17 @@ export class HeadlessFrameBuffer {
    * `scrollRegionSuffix` appends it (and the cursor restore DECSTBM would
    * otherwise clobber). That suffix is the frame's TAIL by construction; do not
    * append anything after it that assumes a home cursor.
+   *
+   * `scrollbackLines` is how many history rows above the grid the frame
+   * carries (default SERIALIZED_SCROLLBACK_LINES, which is also what the
+   * parser retains, so a larger value adds nothing). 0 serializes the grid
+   * alone. The grid, the modes and the scroll region are whole at every
+   * value, so a smaller frame is a shorter history and never a broken screen.
    */
-  async serialize(): Promise<string> {
+  async serialize(scrollbackLines: number = SERIALIZED_SCROLLBACK_LINES): Promise<string> {
+    const historyRows = Number.isFinite(scrollbackLines)
+      ? Math.min(SERIALIZED_SCROLLBACK_LINES, Math.max(0, Math.floor(scrollbackLines)))
+      : SERIALIZED_SCROLLBACK_LINES;
     return new Promise<string>((resolve, reject) => {
       this.terminal.write('', () => {
         // The callback runs inside xterm's parse loop, so a throw here (e.g. a
@@ -165,7 +166,7 @@ export class HeadlessFrameBuffer {
         // main-process exception instead of rejecting this promise.
         try {
           resolve(
-            this.serializer.serialize({ scrollback: SERIALIZED_SCROLLBACK_LINES })
+            this.serializer.serialize({ scrollback: historyRows })
               + this.scrollRegionSuffix(),
           );
         } catch (error) {

@@ -1714,6 +1714,33 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
       expect(await manager.getSeedFrame(SESSION)).toEqual({ frame: '', barrierOffset: 0 });
     });
+
+    it('getSeedFrame takes a history depth: each depth is its own snapshot of the same grid, and its barrier is read at that call', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      // 100 rows on a 24-row grid: rows 1 to 76 are history, 77 to 100 the grid.
+      const rowLabel = (rowNumber: number): string => `row-${String(rowNumber).padStart(3, '0')}`;
+      const firstChunk = Array.from({ length: 100 }, (_, index) => rowLabel(index + 1)).join('\r\n');
+      manager.onData(SESSION, firstChunk);
+
+      const full = await manager.getSeedFrame(SESSION);
+      expect(full.frame).toContain(rowLabel(1));
+      expect(full.barrierOffset).toBe(firstChunk.length);
+
+      // More output lands between two snapshots of a shrink ladder.
+      const laterChunk = '\r\nlater-row';
+      manager.onData(SESSION, laterChunk);
+      const gridAlone = await manager.getSeedFrame(SESSION, 0);
+
+      expect(gridAlone.frame).not.toContain(rowLabel(1));
+      expect(gridAlone.frame).toContain(rowLabel(100));
+      expect(gridAlone.frame).toContain('later-row');
+      // The later snapshot's barrier covers what was fed since the first one,
+      // so a phone filtering by it drops those bytes as already in the seed.
+      expect(gridAlone.barrierOffset).toBe(firstChunk.length + laterChunk.length);
+
+      manager.removeSession(SESSION);
+    });
   });
 
   describe('getReplaySnapshot (desktop replay payload)', () => {

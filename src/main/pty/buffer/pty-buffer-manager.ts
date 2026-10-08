@@ -1298,12 +1298,15 @@ export class PtyBufferManager {
    * slices the one that straddles it, so a byte that races the seed arrives
    * exactly once. Unlike the desktop's replay sampling, this drains nothing:
    * a desktop terminal on the same session keeps every byte it was owed.
+   *
+   * `scrollbackLines` caps the history rows included above the grid (see
+   * HeadlessFrameBuffer.serialize); the grid itself is always whole.
    */
-  async getSeedFrame(sessionId: string): Promise<Pick<SeedFrameResult, 'frame' | 'barrierOffset'>> {
+  async getSeedFrame(sessionId: string, scrollbackLines?: number): Promise<Pick<SeedFrameResult, 'frame' | 'barrierOffset'>> {
     const state = this.buffers.get(sessionId);
     if (!state) return { frame: '', barrierOffset: 0 };
     const barrierOffset = state.parserWrittenChars;
-    return { frame: await state.headless.serialize(), barrierOffset };
+    return { frame: await state.headless.serialize(scrollbackLines), barrierOffset };
   }
 
   /**

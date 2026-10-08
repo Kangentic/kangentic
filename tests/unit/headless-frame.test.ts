@@ -76,6 +76,49 @@ describe('HeadlessFrameBuffer', () => {
       buffer.dispose();
     });
 
+    describe('history depth', () => {
+      // 100 numbered rows on a 24-row grid: rows 1 to 76 scroll into history,
+      // rows 77 to 100 are the grid.
+      const rowLabel = (rowNumber: number): string => `row-${String(rowNumber).padStart(3, '0')}`;
+      const rows = Array.from({ length: 100 }, (_, index) => rowLabel(index + 1));
+
+      async function serializeWith(scrollbackLines?: number): Promise<string> {
+        const buffer = new HeadlessFrameBuffer(80, 24);
+        buffer.write(rows.join('\r\n'));
+        const frame = await buffer.serialize(scrollbackLines);
+        buffer.dispose();
+        return frame;
+      }
+
+      it('carries the whole retained history by default', async () => {
+        const frame = await serializeWith();
+        expect(frame).toContain(rowLabel(1));
+        expect(frame).toContain(rowLabel(100));
+      });
+
+      it('0 history rows serializes the grid alone, whole', async () => {
+        const frame = await serializeWith(0);
+        expect(frame).not.toContain(rowLabel(76));
+        for (let rowNumber = 77; rowNumber <= 100; rowNumber++) expect(frame).toContain(rowLabel(rowNumber));
+      });
+
+      it('N history rows carries exactly the N rows above the grid', async () => {
+        const frame = await serializeWith(10);
+        expect(frame).not.toContain(rowLabel(66));
+        expect(frame).toContain(rowLabel(67));
+        expect(frame).toContain(rowLabel(100));
+      });
+
+      it('a negative depth is the grid alone, and a non-finite or oversized one is the retained history', async () => {
+        const gridAlone = await serializeWith(0);
+        expect(await serializeWith(-5)).toBe(gridAlone);
+        const retained = await serializeWith();
+        expect(await serializeWith(Number.NaN)).toBe(retained);
+        expect(await serializeWith(Number.POSITIVE_INFINITY)).toBe(retained);
+        expect(await serializeWith(1_000_000)).toBe(retained);
+      });
+    });
+
     it('a never-alt session serializes as a pure normal-buffer frame with its scrollback', async () => {
       const buffer = new HeadlessFrameBuffer(80, 24);
       // 40 numbered lines on a 24-row grid: the first ones scroll off into
