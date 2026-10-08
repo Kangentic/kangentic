@@ -5,6 +5,7 @@ import {
   encodeMessage,
   isUnsupportedVerbError,
   MAX_DECODED_LENGTH,
+  RESPONSE_TOO_LARGE_ERROR_CODE,
   UNSUPPORTED_VERB_ERROR_CODE,
   UnsupportedVerbError,
 } from '../../../packages/protocol/src/wire/framing';
@@ -224,14 +225,11 @@ describe('wire message framing', () => {
     expect(UnsupportedVerbErrorFromEntry).toBe(UnsupportedVerbError);
   });
 
-  it('round-trips a capability-response carrying an error code', () => {
-    const message: BridgeMessage = {
-      type: 'capability-response',
-      requestId: 'req-1',
-      ok: false,
-      error: 'Unsupported verb: time-travel',
-      code: UNSUPPORTED_VERB_ERROR_CODE,
-    };
+  it.each([
+    ['unsupported-verb', 'Unsupported verb: time-travel', UNSUPPORTED_VERB_ERROR_CODE],
+    ['response-too-large', 'Response too large to send', RESPONSE_TOO_LARGE_ERROR_CODE],
+  ] as const)('round-trips a capability-response carrying the %s error code', (_label, error, code) => {
+    const message: BridgeMessage = { type: 'capability-response', requestId: 'req-1', ok: false, error, code };
     expect(decodeMessage(encodeMessage(message))).toEqual(message);
   });
 

@@ -6,11 +6,14 @@ import {
   encodeMessage,
   FrameTag,
   isUnsupportedVerbError,
+  MAX_FRAME_LENGTH,
+  RESPONSE_TOO_LARGE_ERROR_CODE,
   SessionFrameKind,
   UNSUPPORTED_VERB_ERROR_CODE,
   unwrapSessionFrame,
   wrapSessionFrame,
   type BridgeMessage,
+  type CapabilityResponseMessage,
   type CapabilitySet,
   type HandshakeState,
   type SecretstreamDirectionPair,
@@ -142,6 +145,40 @@ export class MessageEncodeError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause));
     this.name = 'MessageEncodeError';
+  }
+}
+
+/** The error a capability response carries when the response it replaces was over the frame caps. */
+export const RESPONSE_TOO_LARGE_ERROR = 'Response too large to send';
+
+/**
+ * The refusal sent in place of a response over the frame caps. It carries
+ * the `response-too-large` code so a phone can tell it from a refusal that
+ * means the target is gone: a phone that reads every refused `read-stream`
+ * subscribe as a dead session shows a live one as ended.
+ */
+export function responseTooLargeRefusal(requestId: string): CapabilityResponseMessage {
+  return { type: 'capability-response', requestId, ok: false, error: RESPONSE_TOO_LARGE_ERROR, code: RESPONSE_TOO_LARGE_ERROR_CODE };
+}
+
+/**
+ * Why `message` cannot be encoded, or null when it can: the same verdict
+ * `sendMessage` reaches, without sealing or sending. A handler with side
+ * effects asks this BEFORE committing them, so a response it cannot send is
+ * refused with nothing left behind.
+ *
+ * Exact, not an estimate. Raw UTF-8 JSON at or under MAX_FRAME_LENGTH always
+ * fits, because `encodeMessage` only switches to deflate when deflate is
+ * smaller, so that common case costs one stringify. Only a larger message pays
+ * for the real encode and its deflate.
+ */
+export function messageEncodeFailure(message: BridgeMessage): string | null {
+  if (Buffer.byteLength(JSON.stringify(message), 'utf8') <= MAX_FRAME_LENGTH) return null;
+  try {
+    encodeMessage(message);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
 

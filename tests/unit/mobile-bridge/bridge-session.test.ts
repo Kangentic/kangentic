@@ -27,7 +27,7 @@ import {
   type Transport,
   type TransportState,
 } from '@kangentic/protocol';
-import { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
+import { BridgeSession, messageEncodeFailure } from '../../../src/main/mobile-bridge/session/bridge-session';
 import type { BridgeIdentity } from '../../../src/main/mobile-bridge/identity';
 import type { RedialOptions } from '../../../src/main/mobile-bridge/transport/relay-client';
 import { FORCED_REDIAL_DESCRIPTIONS, type ForcedRedialReason } from '../../../src/main/mobile-bridge/session/forced-redial-reason';
@@ -363,6 +363,48 @@ class ReestablishingResponder {
     this.transport.send(wrapSessionFrame(SessionFrameKind.Application, this.streams.send.seal(encodeMessage(message))));
   }
 }
+
+/**
+ * The handler-side size check (read-stream refuses an over-cap seed before it
+ * subscribes) must reach the same verdict sendMessage would, or a handler
+ * either refuses a response that would have gone out or subscribes for one
+ * that will not.
+ */
+describe('messageEncodeFailure', () => {
+  function responseCarrying(text: string): BridgeMessage {
+    return { type: 'capability-response', requestId: 'req-1', ok: true, payload: { scrollback: text } };
+  }
+
+  /** What encodeMessage itself throws for this message, or null when it encodes. */
+  function encodeMessageVerdict(message: BridgeMessage): string | null {
+    try {
+      encodeMessage(message);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** Base64 of random bytes: barely compressible, so deflate cannot bring it under 1 MiB. */
+  function incompressibleText(length: number): string {
+    let text = '';
+    while (text.length < length) text += Buffer.from(Array.from({ length: 3072 }, () => Math.floor(Math.random() * 256))).toString('base64');
+    return text.slice(0, length);
+  }
+
+  it.each([
+    ['a message under 1 MiB of raw JSON fits', () => responseCarrying('x'.repeat(512 * 1024)), false],
+    ['a compressible 2 MiB message fits through deflate', () => responseCarrying('x'.repeat(2 * 1024 * 1024)), false],
+    ['an incompressible 2 MiB message fails the 1 MiB compressed cap', () => responseCarrying(incompressibleText(2 * 1024 * 1024)), true],
+    ['a message over 4 MiB fails the decoded cap', () => responseCarrying('x'.repeat(4.5 * 1024 * 1024)), true],
+  ])('%s, matching encodeMessage', (_label, makeMessage, shouldFail) => {
+    const message = makeMessage();
+    const failure = messageEncodeFailure(message);
+
+    expect(failure).toBe(encodeMessageVerdict(message));
+    expect(failure !== null).toBe(shouldFail);
+  });
+});
 
 describe('BridgeSession', () => {
   it('establishes a KK session with a responder and exchanges an application message', async () => {
