@@ -286,6 +286,16 @@ describe('retrievalService - task records follow the board', () => {
     expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
   });
 
+  it('ignores a Command Terminal change, which names a session and no task record', async () => {
+    const boardEvents = new BoardEventBus();
+    retrievalService.attach(makeContext(new FakeSessionManager(), boardEvents));
+
+    boardEvents.emitBoardChanged({ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] });
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(taskIndexerMock.sweepTaskRecords).not.toHaveBeenCalled();
+  });
+
   it('re-reads an open graph when a project finishes embedding, so its Index shares are current', () => {
     retrievalService.attach(makeContext(new FakeSessionManager()));
     const listener = embedEngineMock.setOnRecordsEmbedded.mock.calls.at(-1)?.[0] as ((projectId: string) => void) | undefined;

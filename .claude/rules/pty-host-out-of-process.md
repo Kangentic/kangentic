@@ -36,6 +36,12 @@ at the Windows timer floor.
 - **One host, forked once, built in two places only.** `register-all.ts` constructs the
   `UtilityPtyHostTransport`; `SessionManager.createInProcessHost` is the only place the core runs in
   main, as the unit tests' host and as the fallback after five host crashes.
+- **A shell that exits on its own has its leftovers ended in the host (Windows).** The host core
+  asks the agent the dead shell left running to exit through that shell's still-open console, then
+  terminates what is left after the grace, by parentage and creation time (`dead-root-orphans.ts`,
+  see [[pty-teardown-grace]]). Main sends each session's exit sequence in the spawn params for it.
+  Only the utility host is given the Windows API (`loadOrphanApi` in `pty-host-entry.ts`), so the
+  in-process core, the tests' and the post-crash fallback's, never runs it.
 - **A host crash ends its PTYs and recovery resumes them.** Main first stops each lost PTY's
   process tree by pid (`stopLostPtyTree`, which only the utility transport implements): a closed
   pseudo console or a hangup usually ends the agent, but nothing guarantees it, and one left running

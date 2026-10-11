@@ -32,8 +32,12 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
-import { commandTerminalTitle } from '../../../shared/command-terminal-name';
+import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { resolveProjectRoot } from '../../../shared/git-utils';
+import { selectLiveCommandTerminalSlots } from '../../stores/session-store/transient-session-slice';
+
+/** Re-exported for the title bar; the cap itself is main's (command-terminal-name.ts). */
+export { MAX_COMMAND_TERMINALS };
 
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
@@ -49,17 +53,75 @@ const COMMAND_LAYER_OPTIONS: WindowManagerLayerOptions = {
   minSize: { width: 750, height: 500 },
 };
 
-/** How many Command Terminals can run at once (per project). The slot allocator
- *  and the title-bar "New terminal" button both honor this cap. */
-export const MAX_COMMAND_TERMINALS = 4;
+/**
+ * Slots a new window must not take: the anchors of the windows already open
+ * (some may still be spawning, with no session yet), plus every slot the current
+ * project's live terminals hold. A phone can start a terminal while this layer
+ * is closed, and main gives it a slot this layer has no window for; asking main
+ * for that slot again would be refused.
+ */
+function occupiedCommandTerminalSlots(): Set<string> {
+  const slots = new Set(
+    Object.values(commandWindowManager.store.getState().windows).map((managedWindow) => managedWindow.anchor),
+  );
+  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  for (const slot of selectLiveCommandTerminalSlots(useSessionStore.getState().sessions, projectId)) slots.add(slot);
+  return slots;
+}
 
-/** Lowest free `slot-N` among the windows already open, or null at the cap. */
+/** Lowest free `slot-N`, or null at the cap. */
 function nextFreeSlot(usedSlots: Set<string>): string | null {
   for (let index = 1; index <= MAX_COMMAND_TERMINALS; index += 1) {
-    const slot = `slot-${index}`;
+    const slot = commandTerminalSlotId(index);
     if (!usedSlots.has(slot)) return slot;
   }
   return null;
+}
+
+/**
+ * Close the window anchored at `slot`, for an end the window did not start: a
+ * phone's Stop, or main ending a terminal whose agent exited (or whose PTY
+ * died). Works on the module-singleton store whether the layer is mounted or
+ * not; when that was the last window, `useHideLayerWhenEmpty` hides the layer,
+ * as it does after Stop.
+ */
+export function closeCommandTerminalWindowInSlot(slot: string): void {
+  const store = commandWindowManager.store;
+  const managedWindow = Object.values(store.getState().windows).find((candidate) => candidate.anchor === slot);
+  if (managedWindow) store.getState().closeWindow(managedWindow.id);
+}
+
+/**
+ * Close a Command Terminal's window when MAIN ends it. A desktop Stop, or a
+ * branch switch, ends its own terminal and scrubs its (project, slot) entry
+ * BEFORE the kill (`killTransientSessionBySlot`), so when the removal push
+ * arrives, an entry that still points at the removed session means the end
+ * came from elsewhere: a phone's Stop, the agent exiting (C2), or the PTY
+ * dying. Its window closes the way Stop closes it. The entry is dropped for
+ * every project, and the window closed only for the current one, whose
+ * population the window store holds.
+ *
+ * Its own `sessions.onRemoved` subscription, beside App.tsx's: that handler
+ * only drops the replica row (session-replica-contract.md), and this one only
+ * touches the Command Terminal pairing. Mounted by AppLayout, so it runs while
+ * the layer is hidden.
+ */
+export function useCloseCommandWindowOnRemoval(): void {
+  useEffect(() => {
+    const onRemoved = window.electronAPI?.sessions?.onRemoved;
+    if (typeof onRemoved !== 'function') return;
+    // agent-focus-ok: this push only CLOSES a window and opens nothing.
+    return onRemoved((sessionId, session) => {
+      if (session && session.transient !== true) return;
+      const entry = Object.values(useSessionStore.getState().transientSessions)
+        .find((candidate) => candidate.sessionId === sessionId);
+      if (!entry) return;
+      useSessionStore.getState().clearTransientSessionById(sessionId);
+      if (entry.projectId === (useProjectStore.getState().currentProject?.id ?? null)) {
+        closeCommandTerminalWindowInSlot(entry.slot);
+      }
+    });
+  }, []);
 }
 
 /** Open a Command Terminal in a specific slot and SPLIT it into the existing
@@ -122,11 +184,7 @@ function openCommandTerminalWindowInSlot(slot: string): void {
  *  on the module-singleton store, so the title-bar button can call it whether or
  *  not the layer is currently mounted. Returns false if already at the cap. */
 export function spawnAdditionalCommandTerminal(): boolean {
-  const store = commandWindowManager.store;
-  const usedSlots = new Set(
-    Object.values(store.getState().windows).map((managedWindow) => managedWindow.anchor),
-  );
-  const slot = nextFreeSlot(usedSlots);
+  const slot = nextFreeSlot(occupiedCommandTerminalSlots());
   if (!slot) return false;
 
   openCommandTerminalWindowInSlot(slot);

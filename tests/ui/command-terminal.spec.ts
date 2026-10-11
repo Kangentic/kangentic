@@ -1318,6 +1318,107 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    test('a terminal main ends (a phone\'s Stop, its agent exiting) closes just its own window', async () => {
+      // Main announces every end as a removal push. An end the window did not
+      // start leaves its (project, slot) entry in place, which is how the
+      // removal subscriber knows to close that window as Stop would.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('quick-session-new-terminal').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
+
+        const entries = await transientEntriesFor(page, MULTI_PROJECT_ID);
+        const ended = entries.find((entry) => entry.slot === 'slot-1')!;
+        await page.evaluate(({ sessionId, projectId }) => {
+          const win = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+          win.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true, commandTerminalSlot: 'slot-1' }, projectId);
+        }, { sessionId: ended.sessionId, projectId: MULTI_PROJECT_ID });
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        expect(await commandWindowAnchors(page)).toEqual(['slot-2']);
+        expect((await transientEntriesFor(page, MULTI_PROJECT_ID)).map((entry) => entry.slot)).toEqual(['slot-2']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('when main ends the last terminal, the layer hides as it does after Stop', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+
+        const [only] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+        await page.evaluate(({ sessionId, projectId }) => {
+          const win = window as unknown as { __mockFireRemoved: (id: string, session: unknown, projectId: string) => void };
+          win.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true }, projectId);
+        }, { sessionId: only.sessionId, projectId: MULTI_PROJECT_ID });
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        await expect(page.getByTestId('command-window-backdrop')).not.toBeVisible({ timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a desktop Stop closes exactly its own window, even with main\'s removal push arriving mid-kill', async () => {
+      // Real main announces the removal while the kill IPC is in flight. The
+      // window let go of its entry first, so the push is not read as an end
+      // main started, and nothing closes a second window.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('quick-session-new-terminal').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+
+        await page.evaluate((projectId) => {
+          const win = window as unknown as {
+            __mockFireRemoved: (id: string, session: unknown, projectId: string) => void;
+            electronAPI: { sessions: { killTransient: (sessionId: string) => Promise<void> } };
+          };
+          win.electronAPI.sessions.killTransient = async (sessionId: string) => {
+            win.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true }, projectId);
+          };
+        }, MULTI_PROJECT_ID);
+
+        await page.getByTestId('command-terminal-window').first().getByTestId('command-bar-terminate-button').click();
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        // Settle, then confirm the survivor stays.
+        await expect.poll(async () => (await commandWindowAnchors(page)).length, { timeout: 2000 }).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('New terminal skips a slot a phone-started terminal already holds', async () => {
+      // Main gave a phone's terminal slot-2 with this layer showing only
+      // slot-1. Asking main for slot-2 again would be refused, so the next free
+      // slot reads the project's live terminals as well as the open windows.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        await injectRunningTerminal(page, { id: 'phone-started-terminal', projectId: MULTI_PROJECT_ID, slot: 'slot-2' });
+        await page.getByTestId('quick-session-new-terminal').click();
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        expect(await commandWindowAnchors(page)).toEqual(['slot-1', 'slot-3']);
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('the title-bar New terminal button disables at the cap (MAX_COMMAND_TERMINALS = 4)', async () => {
       // When 4 windows are open (the cap), the "New terminal" button disables.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
@@ -3383,6 +3484,47 @@ test.describe('Command Terminal', () => {
           const last = calls[calls.length - 1];
           return last?.sessionId;
         }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a branch switch keeps its window when main\'s removal push for the old terminal arrives mid-kill', async () => {
+      // Main ends the old terminal (endCommandTerminal) and announces the
+      // removal before the kill IPC returns. The window let go of its entry
+      // before the kill, so the removal subscriber does not read that push as
+      // an end main started and close the window the respawn is about to fill.
+      //
+      // Red-green: scrubbing the entry AFTER the kill IPC (the old order)
+      // closes the window here and the count drops to 0.
+      const { browser, page } = await launchWithState(branchSwitchPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+        await markFirstOutput(page, 'branch-switch-session-1');
+        await expect(page.getByTestId('command-bar-terminal-pane')).toBeAttached({ timeout: 8000 });
+
+        await page.evaluate((projectId) => {
+          const win = window as unknown as {
+            __mockFireRemoved: (id: string, session: unknown, projectId: string) => void;
+            electronAPI: { sessions: { killTransient: (sessionId: string) => Promise<void> } };
+          };
+          win.electronAPI.sessions.killTransient = async (sessionId: string) => {
+            win.__mockFireRemoved(sessionId, { id: sessionId, projectId, transient: true, commandTerminalSlot: 'slot-1' }, projectId);
+          };
+        }, BRANCH_SWITCH_PROJECT_ID);
+
+        await page.getByTestId('branch-picker-chip').click();
+        const developButton = page.locator('button:has-text("develop")');
+        await developButton.waitFor({ state: 'visible' });
+        await developButton.click();
+
+        await expect.poll(async () => {
+          const entries = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
+          return entries[0]?.sessionId;
+        }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
       } finally {
         await browser.close();
       }

@@ -172,10 +172,10 @@ describe('planTransientRecovery', () => {
     expect(recovered![`${PROJECT_A}::slot-2`].sessionId).toBe('unslotted');
   });
 
-  it('restores the derived label main retained for a survivor', () => {
-    // Without this the terminal comes back as "Command Terminal N" and the
-    // auto-namer, whose in-renderer guard the reload also cleared, renames it
-    // from whatever prompt the user types next.
+  it('re-pairs a named survivor without copying its name: the window title reads the session row', () => {
+    // Main names a Command Terminal and keeps the name on its session row, so
+    // the pairing entry carries none and a recovered terminal keeps its name
+    // through the replica alone.
     const recovered = planTransientRecovery({
       sessions: [
         transientSession({ id: 'named', commandTerminalSlot: 'slot-1', commandTerminalLabel: 'Fix the parser' }),
@@ -183,33 +183,24 @@ describe('planTransientRecovery', () => {
       transientSessions: {},
     });
 
-    expect(recovered![`${PROJECT_A}::slot-1`].label).toBe('Fix the parser');
-  });
-
-  it('leaves an unnamed survivor without a label key', () => {
-    const recovered = planTransientRecovery({
-      sessions: [transientSession({ id: 'unnamed', commandTerminalSlot: 'slot-1' })],
-      transientSessions: {},
-    });
-
+    expect(recovered![`${PROJECT_A}::slot-1`].sessionId).toBe('named');
     expect(recovered![`${PROJECT_A}::slot-1`]).not.toHaveProperty('label');
   });
 
-  it('preserves the derived label on an already-paired entry', () => {
-    // syncSessions is Pattern B, so this now runs on every Fast Refresh.
-    // setTransientSessionLabel is first-prompt-wins, so a clobbered label is gone
-    // for good.
+  it('preserves an already-paired entry verbatim, including the branch the HEAD tracker corrected', () => {
+    // syncSessions is Pattern B, so this runs on every Fast Refresh, and
+    // rewriting the entry from the row would put the spawn-time branch back.
     const recovered = planTransientRecovery({
       sessions: [
-        transientSession({ id: 'labelled', commandTerminalSlot: 'slot-1' }),
+        transientSession({ id: 'paired', commandTerminalSlot: 'slot-1', commandTerminalBranch: 'main' }),
         transientSession({ id: 'orphan', commandTerminalSlot: 'slot-2' }),
       ],
       transientSessions: transientMap([
-        { projectId: PROJECT_A, slot: 'slot-1', sessionId: 'labelled', branch: 'main', label: 'Fix the parser' },
+        { projectId: PROJECT_A, slot: 'slot-1', sessionId: 'paired', branch: 'feature/live-head' },
       ]),
     });
 
-    expect(recovered![`${PROJECT_A}::slot-1`].label).toBe('Fix the parser');
+    expect(recovered![`${PROJECT_A}::slot-1`].branch).toBe('feature/live-head');
   });
 
   it('frees a stale entry slot for a survivor that claims it', () => {

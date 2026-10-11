@@ -113,7 +113,7 @@ interface MockContext {
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
   boardConfigManager: { getDefaultBaseBranchForPath: ReturnType<typeof vi.fn> };
   mcpServerHandle: null;
-  sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn> };
+  sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn>; listSessions: ReturnType<typeof vi.fn> };
 }
 
 function createMockContext(): MockContext {
@@ -144,6 +144,8 @@ function createMockContext(): MockContext {
       // The handler reads the PTY shell for quoting and shim resolution
       // (see transient-session-spawn-shim-launch.test.ts for that wiring).
       getShell: vi.fn(async () => 'bash'),
+      // No live terminals: the slot allocation (startCommandTerminal) reads it.
+      listSessions: vi.fn(() => []),
     },
   };
 }
@@ -226,5 +228,13 @@ describe('SESSION_SPAWN_TRANSIENT handler: ensureTrust runs before buildCommand'
     expect(ensureTrustMock).toHaveBeenCalledWith(PROJECT_ROOT);
     expect(buildCommandMock).toHaveBeenCalledTimes(1);
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the agent to report its prompt text, which the namer names the terminal from', async () => {
+    const resultPromise = callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+    await vi.waitFor(() => expect(ensureTrustMock).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    ensureTrustDeferred.resolve();
+    await resultPromise;
+    expect(buildCommandMock).toHaveBeenCalledWith(expect.objectContaining({ capturePromptText: true }));
   });
 });

@@ -1,27 +1,27 @@
 /**
- * Auto-name-from-prompt scheduler. Three pure-ish functions wired into the
- * renderer's session listener:
+ * Auto-name-from-prompt scheduler for TASKS. Two pure-ish functions wired into
+ * the renderer's session listener:
  *
  *   - `scheduleAutoNameSuggestion(session)` schedules a 30-second timer that
  *     fires a "Rename to <X>?" toast for placeholder-titled tasks.
- *   - `maybeLabelTransientSession(sessionId, event)` derives a label for a
- *     command-bar transient session from its first prompt event.
  *   - `markAutoNameAsked(taskId)` records that a task has been offered a
  *     suggestion and persists it so the next launch does not re-ask.
  *
- * The module owns three Sets/Maps of mutable state:
+ * A Command Terminal is named in main instead (`command-terminal-namer.ts`),
+ * because a terminal a phone started, or one in a project this renderer does
+ * not have open, has no renderer code watching its prompts.
+ *
+ * The module owns two Sets/Maps of mutable state:
  *
  *   - `autoNameTimers`       taskId -> setTimeout handle
  *   - `autoNameAsked`        taskIds we have asked about this app run
- *   - `autoNameLabeledTransient`  sessionIds whose label we have already set
  *
  * The HMR preservation block at the bottom (no-op in vitest, where
- * `import.meta.hot` is undefined) keeps `autoNameAsked` and the labeled set
- * across hot reloads so a renderer module replacement does not double-fire
- * timers or re-prompt tasks already considered.
+ * `import.meta.hot` is undefined) keeps `autoNameAsked` across hot reloads so a
+ * renderer module replacement does not double-fire timers or re-prompt tasks
+ * already considered.
  */
-import type { Session, SessionEvent } from '../../shared/types';
-import { EventType } from '../../shared/types';
+import type { Session } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
@@ -31,12 +31,11 @@ import { isPlaceholderTitle } from './placeholder-title';
 
 // @ts-expect-error -- Vite handles import.meta.hot
 const preservedAutoName = import.meta.hot?.data?.autoNameState as
-  | { askedTaskIds: string[]; labeledTransientIds: string[] }
+  | { askedTaskIds: string[] }
   | undefined;
 
 export const autoNameTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const autoNameAsked = new Set<string>(preservedAutoName?.askedTaskIds ?? []);
-export const autoNameLabeledTransient = new Set<string>(preservedAutoName?.labeledTransientIds ?? []);
 
 /** Add a taskId to the asked set and persist to AppConfig. Idempotent. */
 export function markAutoNameAsked(taskId: string): void {
@@ -133,50 +132,12 @@ export function scheduleAutoNameSuggestion(session: Session): void {
   autoNameTimers.set(session.taskId, timer);
 }
 
-/** When a transient session emits its first user-prompt event, derive a label
- *  from the prompt text. Skips sessions we have already labeled. */
-export function maybeLabelTransientSession(sessionId: string, event: SessionEvent): void {
-  if (event.type !== EventType.Prompt) return;
-  if (autoNameLabeledTransient.has(sessionId)) return;
-
-  const transientSessions = useSessionStore.getState().transientSessions;
-  const owningEntry = Object.values(transientSessions).find((entry) => entry.sessionId === sessionId);
-  if (!owningEntry) return;
-  // Already named, so this prompt is not the first one - the in-memory guard
-  // above only covers this renderer, and a reload clears it while recovery
-  // restores the label from main. Without this check the reloaded renderer pays
-  // a summarize call on the next prompt and `setTransientSessionLabel` discards
-  // the answer, since first-prompt-wins.
-  if (owningEntry.label) {
-    autoNameLabeledTransient.add(sessionId);
-    return;
-  }
-
-  const promptText = (event.detail ?? '').trim();
-  if (!promptText) return;
-
-  if (!projectAgentCanSummarize(owningEntry.projectId)) return;
-
-  autoNameLabeledTransient.add(sessionId);
-
-  void window.electronAPI.agent
-    .summarize({ prompt: promptText })
-    .then((result) => {
-      if (!result.ok || !result.title) return;
-      useSessionStore.getState().setTransientSessionLabel(sessionId, result.title);
-    })
-    .catch(() => {
-      // Best-effort - label stays on the fallback "Command Terminal".
-    });
-}
-
 /** Cancel pending timers and clear all in-memory state. Intended for HMR dispose
  *  and for unit tests that need a fresh module state between cases. */
 export function cancelAutoNameTimersAndClear(): void {
   for (const timer of autoNameTimers.values()) clearTimeout(timer);
   autoNameTimers.clear();
   autoNameAsked.clear();
-  autoNameLabeledTransient.clear();
 }
 
 // HMR persistence: clear pending timers on dispose, save the in-memory sets so a
@@ -190,7 +151,6 @@ if (import.meta.hot) {
     autoNameTimers.clear();
     data.autoNameState = {
       askedTaskIds: [...autoNameAsked],
-      labeledTransientIds: [...autoNameLabeledTransient],
     };
   });
 }

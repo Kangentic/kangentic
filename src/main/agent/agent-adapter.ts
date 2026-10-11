@@ -174,6 +174,14 @@ export interface CommandOptions {
   statusOutputPath?: string; // path where the status bridge writes JSON
   eventsOutputPath?: string; // path where the event bridge appends JSONL
   /**
+   * Carry the submitted prompt's text in the Prompt event's `detail`. Set only
+   * by a Command Terminal start, whose namer (`command-terminal-namer.ts`)
+   * names the terminal from its first prompt. A task spawn never sets it, so
+   * task sessions' events keep no prompt text. An adapter whose prompt hook
+   * payload carries no text ignores it.
+   */
+  capturePromptText?: boolean;
+  /**
    * Target shell name. Controls quoting style (single vs double quotes). The
    * spawn chokepoints also use it to swap a `.cmd` / `.bat` head for the
    * sibling shim that shell can run before the builder sees `agentPath`
@@ -197,11 +205,12 @@ export interface CommandOptions {
    */
   launchOptions?: Record<string, boolean>;
   /**
-   * The task's `KANGENTIC_TASK_ID` value (src/main/pty/process-tag/). Every task
+   * The session's `KANGENTIC_TASK_ID` value (src/main/pty/process-tag/). Every
    * session's PTY already carries it in its env, and every process the agent
-   * starts inherits it, which is how a terminal transition finds what the task
-   * left running. Set by the two task spawn chokepoints and never by a Command
-   * Terminal. An adapter whose CLI can strip inherited variables from the
+   * starts inherits it, which is how a terminal transition (or a Command
+   * Terminal's end) finds what the agent left running. Set by the two task
+   * spawn chokepoints and by `startCommandTerminal`, with the terminal's own
+   * made-up task id. An adapter whose CLI can strip inherited variables from the
    * shells it starts (Codex's `shell_environment_policy`) re-injects it here.
    */
   taskProcessTag?: string;

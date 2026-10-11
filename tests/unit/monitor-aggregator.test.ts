@@ -199,6 +199,7 @@ function makeManagedSummary(overrides: {
   transient?: boolean;
   commandTerminalSlot?: string | null;
   commandTerminalBranch?: string | null;
+  commandTerminalLabel?: string | null;
 }): ManagedSessionSummary {
   return {
     id: overrides.id,
@@ -212,6 +213,7 @@ function makeManagedSummary(overrides: {
     transient: overrides.transient ?? false,
     commandTerminalSlot: overrides.commandTerminalSlot ?? null,
     commandTerminalBranch: overrides.commandTerminalBranch ?? null,
+    commandTerminalLabel: overrides.commandTerminalLabel ?? null,
   };
 }
 
@@ -440,6 +442,25 @@ describe('buildMonitorSnapshot', () => {
     const snapshot = await buildMonitorSnapshot(context);
 
     expect(snapshot.rows[0].taskTitle).toBe('Command Terminal');
+  });
+
+  it('shows a Command Terminal\'s derived name once main has one, as its window title does', async () => {
+    registerHealthyProject('project-a');
+    const context = makeContext([
+      makeManagedSummary({
+        id: 'session-ct-named',
+        projectId: 'project-a',
+        taskId: 'made-up-uuid',
+        transient: true,
+        status: 'running',
+        commandTerminalSlot: 'slot-2',
+        commandTerminalLabel: 'Audit Unused Feature Flags',
+      }),
+    ]);
+
+    const snapshot = await buildMonitorSnapshot(context);
+
+    expect(snapshot.rows[0].taskTitle).toBe('Audit Unused Feature Flags');
   });
 
   it('drops a non-transient session whose task row is gone (deleted while the session lives)', async () => {

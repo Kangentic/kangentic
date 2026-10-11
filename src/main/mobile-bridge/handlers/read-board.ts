@@ -3,8 +3,10 @@ import {
   type BoardTaskWire,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
+  type CommandTerminalWire,
   type ReadBoardArchivedResponsePayload,
   type ReadBoardResponsePayload,
+  type ReadBoardSnapshotResponsePayload,
   type SessionSummaryWire,
 } from '@kangentic/protocol';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -14,6 +16,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Task } from '../../../shared/types';
 import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
+import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
@@ -22,7 +25,7 @@ import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
 import { resolveKnownProject } from './known-project';
-import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
+import { toActivityReasonWire, toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
 
 function subscriptionKeyFor(projectId: string): string {
   return `board:${projectId}`;
@@ -30,6 +33,39 @@ function subscriptionKeyFor(projectId: string): string {
 
 /** Page size when the phone names none. The repository clamps to 100 regardless. */
 const ARCHIVED_PAGE_DEFAULT_LIMIT = 25;
+
+/**
+ * The project's live Command Terminals, by slot. A terminal's row leaves the
+ * registry when it ends (SessionManager.endCommandTerminal and the PTY-exit
+ * end), so a running transient row is exactly a live terminal. A `queued` one
+ * (the desktop's concurrency limit was full when it started) is listed too:
+ * it already holds its slot against the cap, and `read-stream` reports its
+ * status and its promotion. Activity is the snapshot's seed for a first
+ * paint; the phone's per-session `read-stream` carries it live from there.
+ */
+function listCommandTerminalWires(context: IpcContext, projectId: string): CommandTerminalWire[] {
+  const activityCache = context.sessionManager.getActivityCache();
+  const terminals: CommandTerminalWire[] = [];
+  for (const terminalSession of context.sessionManager.listSessions()) {
+    if (!terminalSession.transient || terminalSession.projectId !== projectId) continue;
+    if (terminalSession.status !== 'running' && terminalSession.status !== 'queued') continue;
+    const slotNumber = commandTerminalSlotNumber(terminalSession.commandTerminalSlot);
+    if (slotNumber === null) continue;
+    const reason = context.sessionManager.getActivityReason(terminalSession.id);
+    terminals.push({
+      sessionId: terminalSession.id,
+      projectId,
+      slot: slotNumber,
+      name: commandTerminalDisplayName(terminalSession.commandTerminalLabel, terminalSession.commandTerminalSlot),
+      named: Boolean(terminalSession.commandTerminalLabel),
+      activity: {
+        state: activityCache[terminalSession.id] ?? null,
+        reason: reason ? toActivityReasonWire(reason) : null,
+      },
+    });
+  }
+  return terminals.sort((left, right) => left.slot - right.slot);
+}
 
 /** Non-archived tasks per column. TaskRepository.list() already excludes archived, so every task here counts. */
 function countTasksByColumnId(tasks: BoardTaskWire[]): Record<string, number> {
@@ -147,7 +183,7 @@ export async function handleReadBoard(
   const sessionTasksOnly = view === 'sessions';
   const backlog = view === undefined ? new BacklogRepository(getProjectDb(projectId)).list().map(toBacklogItemWire) : undefined;
 
-  const responsePayload: ReadBoardResponsePayload = {
+  const responsePayload: ReadBoardSnapshotResponsePayload = {
     projectId,
     columns: swimlaneRows.map(toBoardColumnWire),
     tasks: sessionTasksOnly ? allTasks.filter(drawnOnAgentFeed) : allTasks,
@@ -161,6 +197,14 @@ export async function handleReadBoard(
     // column has to know the column's real length, which it cannot get from a
     // task list that dropped everything without a session on it.
     ...(sessionTasksOnly ? { taskCountsByColumnId: countTasksByColumnId(allTasks) } : {}),
+    // Both projections: the Board header's Terminals button reads the full
+    // one, and the Agents feed lists every project's terminals from its
+    // sessions one. A command-terminals-changed board event says to re-read.
+    commandTerminals: listCommandTerminalWires(context, projectId),
+    // The phone keeps no grant list, so it learns here whether to offer the
+    // Terminals button at all: this desktop serves the verb (it is reading
+    // this field) and the device holds it.
+    commandTerminalsOffered: session.capabilities.has('command-terminal'),
   };
 
   const listener = (event: BoardChangedEvent): void => {
@@ -168,7 +212,9 @@ export async function handleReadBoard(
     sendEvent(session, {
       kind: 'board',
       projectId,
-      taskId: event.ids[0],
+      // A Command Terminal change names a session, and the envelope's taskId
+      // is for a task; it rides only in `ids`.
+      ...(event.change === 'command-terminals-changed' ? {} : { taskId: event.ids[0] }),
       payload: { change: event.change, ids: event.ids },
     });
   };

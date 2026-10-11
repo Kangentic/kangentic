@@ -13,6 +13,7 @@ import type { BoardChangedEvent } from '../../../src/main/mobile-bridge/board-ev
 class FakeSessionManager extends EventEmitter {
   getSessionTaskId = vi.fn((): string | undefined => 'task-1');
   getSessionProjectId = vi.fn((): string | undefined => 'proj-1');
+  getSession = vi.fn((): Record<string, unknown> | undefined => sessionFixture());
 }
 
 function sessionFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -131,5 +132,59 @@ describe('SessionLifecycleBoardFeed', () => {
     expect(sessionManager.listenerCount('session-changed')).toBe(1);
     expect(sessionManager.listenerCount('session-removed')).toBe(1);
     expect(sessionManager.listenerCount('exit')).toBe(1);
+  });
+
+  describe('Command Terminals', () => {
+    function terminalFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return sessionFixture({
+        id: 'term-1',
+        taskId: 'made-up-uuid',
+        transient: true,
+        commandTerminalSlot: 'slot-1',
+        commandTerminalLabel: null,
+        ...overrides,
+      });
+    }
+
+    it('never emits task-updated for a terminal: its task id names no board row', () => {
+      sessionManager.getSession.mockReturnValue(terminalFixture());
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      sessionManager.emit('exit', 'term-1', 0, false);
+      sessionManager.emit('session-removed', 'term-1', terminalFixture({ status: 'exited' }));
+      vi.advanceTimersByTime(5000);
+      expect(eventsEmitted().some((event) => event.change === 'task-updated')).toBe(false);
+      expect(eventsEmitted().some((event) => event.ids.includes('made-up-uuid'))).toBe(false);
+    });
+
+    it('announces a start once, with the session id, and stays quiet on a status-only change', () => {
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      // An agent session id captured, say: same label, no news for the phone.
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      expect(eventsEmitted()).toEqual([{ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] }]);
+      vi.advanceTimersByTime(5000);
+      expect(eventsEmitted()).toHaveLength(1);
+    });
+
+    it('announces a rename when the derived name arrives', () => {
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      sessionManager.emit('session-changed', 'term-1', terminalFixture({ commandTerminalLabel: 'Audit Unused Feature Flags' }));
+      expect(eventsEmitted()).toEqual([
+        { projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] },
+        { projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] },
+      ]);
+    });
+
+    it('announces the end on removal, and a terminal reusing the id later counts as a new start', () => {
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      sessionManager.emit('session-removed', 'term-1', terminalFixture({ status: 'exited' }));
+      expect(eventsEmitted()).toHaveLength(2);
+      expect(eventsEmitted()[1]).toEqual({ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] });
+      sessionManager.emit('session-changed', 'term-1', terminalFixture());
+      expect(eventsEmitted()).toHaveLength(3);
+    });
+
+    it('does not subscribe to activity: a terminal\'s activity rides its own read-stream', () => {
+      expect(sessionManager.listenerCount('activity')).toBe(0);
+    });
   });
 });

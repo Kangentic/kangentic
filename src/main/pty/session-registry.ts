@@ -36,14 +36,15 @@ export interface ManagedSession {
   resuming: boolean;
   transient: boolean;
   /**
-   * For a transient (Command Terminal) session, the renderer's durable window
-   * SLOT id (`slot-1`, `slot-2`, ...). Undefined for task agents.
+   * For a transient (Command Terminal) session, its durable SLOT id (`slot-1`,
+   * `slot-2`, ...) within its project. Undefined for task agents.
    *
-   * Main has no way to derive this: slots are allocated by the Command Terminal
-   * window layer, so the renderer sends it at spawn. It exists here purely so the
-   * Agent Monitor can NAME a terminal the same way its own window title bar does.
-   * Deriving a monitor-side ordinal instead (say, by startedAt) produces a number
-   * that disagrees with the window as soon as a terminal is closed and its slot
+   * Main allocates it (`startCommandTerminal`, transient-sessions.ts), honoring a
+   * slot the desktop's window layer asks for when it is free, because a phone can
+   * start a terminal with that layer closed and the two must never share a slot.
+   * The Agent Monitor, the window title bar and the phone all NAME a terminal by
+   * it. Deriving an ordinal instead (say, by startedAt) produces a number that
+   * disagrees with the window as soon as a terminal is closed and its slot
    * reused. See src/shared/command-terminal-name.ts.
    */
   commandTerminalSlot?: string | null;
@@ -64,13 +65,22 @@ export interface ManagedSession {
    * For a transient session, the name auto-derived from its first prompt.
    * Undefined for task agents and until one is derived.
    *
-   * Main does not compute this and does not use it: the renderer derives it (via
-   * the adapter's `summarize`) and pushes it here so it OUTLIVES the renderer.
-   * The pairing map that holds it is renderer-only memory, so without this a
-   * reload loses every terminal's name, and the auto-namer then re-derives from
-   * whatever prompt comes next. Same reason the slot and branch live here.
+   * Derived here in main (`CommandTerminalNamer`, through the session's own
+   * agent's `summarize`), so a terminal a phone started, or one in a project
+   * the desktop does not have open, is named too. First write wins. Every
+   * surface reads it from here: the window title, the Agent Monitor row, a
+   * phone's snapshot, and the push notification.
    */
   commandTerminalLabel?: string | null;
+  /**
+   * For a transient session, epoch ms of the agent's own SessionEnd hook (a
+   * `/exit`), cleared by a later SessionStart (a `/clear` ends and starts in
+   * one go). While it is set the agent-absence sweep may judge the session
+   * inside its spawn grace and is asked to look soon, so a terminal whose agent
+   * exited ends within seconds instead of a minute or more. The process tree
+   * stays the judge: a set stamp never ends a terminal whose agent still runs.
+   */
+  agentEndSignaledAt?: number | null;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at
@@ -195,6 +205,9 @@ export interface ManagedSessionSummary {
   /** Branch a Command Terminal is running on, for the monitor card's eyebrow.
    *  Null for task agents. */
   commandTerminalBranch: string | null;
+  /** A Command Terminal's derived name, so the monitor row shows what the
+   *  window title shows. Null for task agents and until one is derived. */
+  commandTerminalLabel: string | null;
 }
 
 /**
@@ -483,6 +496,7 @@ export class SessionRegistry {
       transient: session.transient,
       commandTerminalSlot: session.commandTerminalSlot ?? null,
       commandTerminalBranch: session.commandTerminalBranch ?? null,
+      commandTerminalLabel: session.commandTerminalLabel ?? null,
     }));
   }
 

@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import simpleGit, { type SimpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
+import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { fetchIfStale } from '../../git/fetch-throttle';
 import { resolveProjectDefaultBaseBranch } from '../helpers/default-base-branch';
 import { trackFeatureUsed } from '../../analytics/usage';
@@ -14,6 +15,7 @@ import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
+  SpawnTransientSessionResult,
   PermissionMode,
   SessionInjectSettingsInput,
   SessionInjectSettingsResult,
@@ -22,17 +24,164 @@ import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import type { IpcContext } from '../ipc-context';
 
 /**
- * Transient sessions are ephemeral Claude Code terminals spawned from the
- * command bar (Ctrl+Shift+P). They run at the project root with no task
- * association, no DB persistence, and no resume capability.
+ * How long a phone's fetch may take. The phone gives every verb 10 s, and the
+ * start answers only once the session exists, so the fetch cannot take the
+ * 15 s `fetchIfStale` allows a desk user.
  */
-export function registerTransientSessionHandlers(context: IpcContext): void {
-  ipcMain.handle(IPC.SESSION_SPAWN_TRANSIENT, async (_, input: SpawnTransientSessionInput) => {
-    if (!context.currentProjectId) throw new Error('Cannot spawn transient session: no project is currently open');
+const UNATTENDED_FETCH_TIMEOUT_MS = 5_000;
 
-    const project = context.projectRepo.getById(input.projectId);
-    if (!project) throw new Error('Cannot spawn transient session: project not found');
+/**
+ * The whole git phase of a phone's start (fetch, the dirty-tree probe, the
+ * checkout and the fast-forward) gets this much. A step that has not begun by
+ * then is skipped and the terminal starts on whatever HEAD is checked out, the
+ * same fallback a git failure takes, so a large repo can delay a phone's start
+ * but never fail it. A step already running is never cut short: abandoning a
+ * checkout halfway would leave the working tree half switched.
+ */
+const UNATTENDED_GIT_BUDGET_MS = 6_000;
 
+/**
+ * Why a Command Terminal start was refused. The codes the mobile bridge reports
+ * to a phone come straight from here; `slot-taken` is internal (a desktop window
+ * asked for a slot a phone's terminal holds) and only ever reaches the
+ * renderer's toast.
+ */
+export type CommandTerminalStartErrorCode = 'unknown-project' | 'command-terminal-limit' | 'slot-taken';
+
+export class CommandTerminalStartError extends Error {
+  readonly code: CommandTerminalStartErrorCode;
+
+  constructor(code: CommandTerminalStartErrorCode, message: string) {
+    super(message);
+    this.name = 'CommandTerminalStartError';
+    this.code = code;
+  }
+}
+
+export interface StartCommandTerminalInput extends SpawnTransientSessionInput {
+  /**
+   * Nobody is at the desk (a phone started it). The start runs the same steps
+   * as the desktop's New terminal, made unable to block: the fetch is
+   * non-interactive and short, the git phase has one deadline, and it never
+   * checks out under another agent that is live in the project folder.
+   */
+  unattended?: boolean;
+}
+
+/**
+ * Slots a start in flight has claimed but not yet spawned into, per project.
+ * Filled synchronously on entry, before the first await, so two starts racing
+ * through detect, fetch and checkout cannot both take the same slot or both
+ * pass the cap.
+ */
+const reservedSlotsByProject = new Map<string, Set<string>>();
+
+/** Forget every in-flight reservation (for tests). */
+export function clearCommandTerminalReservations(): void {
+  reservedSlotsByProject.clear();
+}
+
+function normalizeComparablePath(rawPath: string): string {
+  const resolved = path.resolve(resolveProjectRoot(rawPath));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Claim a slot for a new Command Terminal in `projectId`, or throw the refusal.
+ *
+ * Occupied means a live transient row of the project (main removes a terminal's
+ * row when it ends, so every row is live) or another start's reservation. The
+ * cap counts the same set, so a crashed terminal never holds a phone at the cap.
+ * Returns the claimed slot and the function that releases the reservation.
+ */
+function reserveCommandTerminalSlot(
+  context: IpcContext,
+  projectId: string,
+  requestedSlot: string | undefined,
+): { slot: string; release: () => void } {
+  const reserved = reservedSlotsByProject.get(projectId) ?? new Set<string>();
+  const occupied = new Set<string>(reserved);
+  let liveCount = 0;
+  for (const session of context.sessionManager.listSessions()) {
+    if (!session.transient || session.projectId !== projectId || session.status === 'exited') continue;
+    liveCount += 1;
+    if (session.commandTerminalSlot) occupied.add(session.commandTerminalSlot);
+  }
+
+  if (liveCount + reserved.size >= MAX_COMMAND_TERMINALS) {
+    throw new CommandTerminalStartError(
+      'command-terminal-limit',
+      `This project already has ${MAX_COMMAND_TERMINALS} Command Terminals running.`,
+    );
+  }
+
+  let slot: string | null = null;
+  if (requestedSlot) {
+    if (occupied.has(requestedSlot)) {
+      throw new CommandTerminalStartError('slot-taken', `${commandTerminalTitle(requestedSlot)} is already running.`);
+    }
+    slot = requestedSlot;
+  } else {
+    for (let slotNumber = 1; slotNumber <= MAX_COMMAND_TERMINALS; slotNumber += 1) {
+      const candidate = commandTerminalSlotId(slotNumber);
+      if (!occupied.has(candidate)) {
+        slot = candidate;
+        break;
+      }
+    }
+  }
+  if (!slot) {
+    throw new CommandTerminalStartError(
+      'command-terminal-limit',
+      `This project already has ${MAX_COMMAND_TERMINALS} Command Terminals running.`,
+    );
+  }
+
+  reserved.add(slot);
+  reservedSlotsByProject.set(projectId, reserved);
+  const claimedSlot = slot;
+  return {
+    slot: claimedSlot,
+    release: () => {
+      const current = reservedSlotsByProject.get(projectId);
+      if (!current) return;
+      current.delete(claimedSlot);
+      if (current.size === 0) reservedSlotsByProject.delete(projectId);
+    },
+  };
+}
+
+/**
+ * Whether another live session already runs in this project folder: a sibling
+ * Command Terminal, or a task agent with no worktree. An unattended start must
+ * not move HEAD under it.
+ */
+function projectRootIsShared(context: IpcContext, projectRoot: string): boolean {
+  const comparableRoot = normalizeComparablePath(projectRoot);
+  return context.sessionManager.listSessions().some((session) =>
+    (session.status === 'running' || session.status === 'queued')
+    && normalizeComparablePath(session.cwd) === comparableRoot);
+}
+
+/**
+ * Start a Command Terminal: the project's default agent at the project root,
+ * with no task and no database row. The desktop's Ctrl+Shift+P layer and a
+ * phone's `command-terminal` start both come through here, so the cap, the slot
+ * allocation, the checkout, and the spawn are the same for both.
+ *
+ * Works for any known project, open on the desktop or not: every input is read
+ * from the named project (its path, config, agent, MCP URL), never from the
+ * desktop's current one.
+ */
+export async function startCommandTerminal(
+  context: IpcContext,
+  input: StartCommandTerminalInput,
+): Promise<SpawnTransientSessionResult> {
+  const project = context.projectRepo.getById(input.projectId);
+  if (!project) throw new CommandTerminalStartError('unknown-project', 'Cannot spawn transient session: project not found');
+
+  const reservation = reserveCommandTerminalSlot(context, input.projectId, input.slot);
+  try {
     const projectRoot = resolveProjectRoot(project.path);
     const config = context.configManager.getEffectiveConfig(projectRoot);
 
@@ -48,61 +197,9 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
 
-    // Fetch latest from origin and checkout the requested branch before spawning.
-    // This ensures Claude Code loads up-to-date commands/skills from the remote.
-    // This runs on a COLD spawn only: reattaching to a live PTY never touches
-    // git, so a reattach can never move HEAD out from under a running agent.
-    const git = simpleGit(projectRoot);
-    // The board-overlaid default, the same chain every task spawn and the
-    // renderer's branch pill resolve, so main's checkout target and the pill's
-    // default cannot disagree when kangentic.json sets the base.
-    const targetBranch = input.branch || resolveProjectDefaultBaseBranch(context, projectRoot);
-
-    // Best-effort fetch from origin (throttled, network-failure-safe)
-    const startPoint = await fetchIfStale(git, projectRoot, targetBranch);
-
-    let branch: string;
-    let checkoutError: string | undefined;
-    try {
-      const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-      // An AUTO checkout (no branch picked) has no user gesture behind it beyond
-      // opening a terminal, and a plain `git checkout` carries non-conflicting
-      // uncommitted changes onto the base branch silently, so someone with work
-      // in progress on a feature branch would find it sitting on the base. Stay
-      // put when tracked files are modified. An explicit picker choice keeps
-      // git's own behavior (and the failure toast below). Probed only when a
-      // switch is actually due; untracked files do not count, matching
-      // WorktreeManager.checkoutBranch.
-      const stayPut = currentBranch !== targetBranch && !input.branch && (await hasTrackedChanges(git));
-      if (stayPut) {
-        branch = currentBranch;
-        checkoutError = `Staying on "${currentBranch}": the working tree has uncommitted changes, so this terminal did not switch to "${targetBranch}".`;
-      } else {
-        if (currentBranch !== targetBranch) {
-          await git.checkout(targetBranch);
-        }
-        branch = targetBranch;
-
-        // Fast-forward merge to incorporate fetched remote changes. Skipped on
-        // the stay-put path above: it would fast-forward the WRONG branch.
-        if (startPoint.startsWith('origin/')) {
-          try {
-            await git.merge([startPoint, '--ff-only']);
-          } catch {
-            // ff-only failed (dirty tree, diverged history) - use local state
-          }
-        }
-      }
-    } catch (error) {
-      // Checkout may fail (dirty working tree, branch doesn't exist locally)
-      // Fall back to whatever branch is currently checked out
-      try {
-        branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-      } catch {
-        branch = 'unknown';
-      }
-      const reason = error instanceof Error ? error.message : String(error);
-      checkoutError = `Could not switch to "${targetBranch}" - staying on "${branch}". ${reason}`;
+    const { branch, checkoutError } = await checkOutStartBranch(context, projectRoot, input);
+    if (checkoutError && input.unattended) {
+      console.log(`[COMMAND_TERMINAL] phone start in ${input.projectId.slice(0, 8)}: ${checkoutError}`);
     }
 
     // Create session directory for status/events bridge files so the
@@ -110,11 +207,12 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', transientTaskId);
     // sync-write-ok: this must throw, not degrade, for the same reason as
     // prepare-spawn.ts's session directory - a Command Terminal with no
-    // session directory has nowhere to write status/events. This handler
-    // already throws plain Errors above for earlier preconditions (no
-    // project open, CLI not found), and both of spawnTransientSession's
-    // renderer callers (CommandTerminalWindow.tsx) already catch and toast
-    // any rejection of this invoke.
+    // session directory has nowhere to write status/events. This function
+    // already throws plain Errors above for earlier preconditions (unknown
+    // project, the cap, CLI not found), and both callers catch the rejection:
+    // the desktop's spawnTransientSession callers (CommandTerminalWindow.tsx)
+    // toast it, and the mobile bridge's command-terminal handler answers the
+    // phone with `command-terminal-start-failed`.
     fs.mkdirSync(sessionDirectory, { recursive: true });
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
@@ -140,6 +238,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       projectRoot,
       statusOutputPath,
       eventsOutputPath,
+      // The namer (command-terminal-namer.ts) names the terminal from its
+      // first prompt's text, which a prompt hook reports only when asked.
+      capturePromptText: true,
+      // The terminal's own KANGENTIC_TASK_ID, for an agent CLI that strips
+      // inherited variables from its tool shells (Codex). The PTY carries it
+      // from performSpawn; its leftovers are reaped when the terminal ends.
+      taskProcessTag: transientTaskId,
       shell,
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
@@ -162,7 +267,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       statusOutputPath,
       eventsOutputPath,
       transient: true,
-      commandTerminalSlot: input.slot ?? null,
+      commandTerminalSlot: reservation.slot,
       // The RESOLVED branch, not `input.branch`: the checkout above falls back to
       // whatever is actually checked out when the requested branch cannot be
       // switched to, and the monitor must report where the terminal really is.
@@ -178,48 +283,147 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     // adoption from this feature; the old transient_session_spawn event was a
     // third answer to the same question and was removed rather than renamed.
     trackFeatureUsed('command_terminal');
-    return { session, branch, checkoutError };
-  });
+    return { session, slot: reservation.slot, branch, ...(checkoutError ? { checkoutError } : {}) };
+  } finally {
+    // The spawned row now holds the slot itself (it is in the registry), and a
+    // failed start must free it.
+    reservation.release();
+  }
+}
 
-  // Retain the renderer-derived terminal name on the live session. Purely so it
-  // survives a renderer reload: the pairing map that normally holds it is
-  // renderer-only memory, and `planTransientRecovery` reads this back off the
-  // session row to restore the name with the slot and branch.
-  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_LABEL, (_, sessionId: string, label: string) => {
-    context.sessionManager.setCommandTerminalLabel(sessionId, label);
+/**
+ * Fetch and check out the branch a COLD start runs on, and report where it
+ * actually landed. Reattaching to a live PTY never comes through here, so a
+ * reattach can never move HEAD out from under a running agent.
+ *
+ * Never throws: every failure falls back to whatever is checked out, with the
+ * reason in `checkoutError`, because a terminal that will not launch over a git
+ * problem is worse than one on the wrong branch.
+ */
+async function checkOutStartBranch(
+  context: IpcContext,
+  projectRoot: string,
+  input: StartCommandTerminalInput,
+): Promise<{ branch: string; checkoutError?: string }> {
+  const git = simpleGit(projectRoot);
+  // The board-overlaid default, the same chain every task spawn and the
+  // renderer's branch pill resolve, so main's checkout target and the pill's
+  // default cannot disagree when kangentic.json sets the base.
+  const targetBranch = input.branch || resolveProjectDefaultBaseBranch(context, projectRoot);
+  const unattended = input.unattended === true;
+  const gitDeadline = Date.now() + UNATTENDED_GIT_BUDGET_MS;
+  const pastDeadline = (): boolean => unattended && Date.now() > gitDeadline;
+
+  const readCurrentBranch = async (): Promise<string> => {
+    try {
+      return (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+    } catch {
+      return 'unknown';
+    }
+  };
+
+  // A phone start never moves HEAD under another live agent in this folder.
+  // Nobody is at the desk to see the branch change under it, so it starts
+  // where that agent is working instead.
+  if (unattended && projectRootIsShared(context, projectRoot)) {
+    const currentBranch = await readCurrentBranch();
+    if (currentBranch === targetBranch) return { branch: currentBranch };
+    return {
+      branch: currentBranch,
+      checkoutError: `Staying on "${currentBranch}": another agent is running in the project folder, so this terminal did not switch to "${targetBranch}".`,
+    };
+  }
+
+  // Fetch latest from origin and checkout the requested branch before spawning.
+  // This ensures Claude Code loads up-to-date commands/skills from the remote.
+  // Best-effort and throttled; an unattended fetch can neither prompt nor run
+  // past the phone's budget.
+  const startPoint = unattended
+    ? await fetchIfStale(git, projectRoot, targetBranch, {
+      nonInteractive: true,
+      signal: AbortSignal.timeout(UNATTENDED_FETCH_TIMEOUT_MS),
+    })
+    : await fetchIfStale(git, projectRoot, targetBranch);
+
+  try {
+    const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+    if (currentBranch !== targetBranch && pastDeadline()) {
+      return {
+        branch: currentBranch,
+        checkoutError: `Staying on "${currentBranch}": git took too long, so this terminal did not switch to "${targetBranch}".`,
+      };
+    }
+    // An AUTO checkout (no branch picked) has no user gesture behind it beyond
+    // opening a terminal, and a plain `git checkout` carries non-conflicting
+    // uncommitted changes onto the base branch silently, so someone with work
+    // in progress on a feature branch would find it sitting on the base. Stay
+    // put when tracked files are modified. An explicit picker choice keeps
+    // git's own behavior (and the failure toast below). Probed only when a
+    // switch is actually due; untracked files do not count, matching
+    // WorktreeManager.checkoutBranch.
+    const stayPut = currentBranch !== targetBranch && !input.branch && (await hasTrackedChanges(git));
+    if (stayPut) {
+      return {
+        branch: currentBranch,
+        checkoutError: `Staying on "${currentBranch}": the working tree has uncommitted changes, so this terminal did not switch to "${targetBranch}".`,
+      };
+    }
+    if (currentBranch !== targetBranch) {
+      if (pastDeadline()) {
+        return {
+          branch: currentBranch,
+          checkoutError: `Staying on "${currentBranch}": git took too long, so this terminal did not switch to "${targetBranch}".`,
+        };
+      }
+      await git.checkout(targetBranch);
+    }
+
+    // Fast-forward merge to incorporate fetched remote changes. Skipped on
+    // the stay-put paths above: it would fast-forward the WRONG branch.
+    if (startPoint.startsWith('origin/') && !pastDeadline()) {
+      try {
+        await git.merge([startPoint, '--ff-only']);
+      } catch {
+        // ff-only failed (dirty tree, diverged history) - use local state
+      }
+    }
+    return { branch: targetBranch };
+  } catch (error) {
+    // Checkout may fail (dirty working tree, branch doesn't exist locally)
+    // Fall back to whatever branch is currently checked out
+    const branch = await readCurrentBranch();
+    const reason = error instanceof Error ? error.message : String(error);
+    return { branch, checkoutError: `Could not switch to "${targetBranch}" - staying on "${branch}". ${reason}` };
+  }
+}
+
+/**
+ * Transient sessions are ephemeral Claude Code terminals spawned from the
+ * command bar (Ctrl+Shift+P) or a paired phone. They run at the project root
+ * with no task association, no DB persistence, and no resume capability.
+ */
+export function registerTransientSessionHandlers(context: IpcContext): void {
+  ipcMain.handle(IPC.SESSION_SPAWN_TRANSIENT, async (_, input: SpawnTransientSessionInput) => {
+    // The desktop layer only ever spawns for the project it shows. A phone's
+    // start goes straight to startCommandTerminal and needs no open project.
+    if (!context.currentProjectId) throw new Error('Cannot spawn transient session: no project is currently open');
+    return startCommandTerminal(context, input);
   });
 
   // The branch the terminal's checkout is actually on, re-derived from live
-  // HEAD by the renderer. Same passive-holder shape as the label, but last
-  // write wins: the Monitor row and a post-reload adopt read it back.
+  // HEAD by the renderer. A passive holder, last write wins: the Monitor row
+  // and a post-reload adopt read it back.
   ipcMain.handle(IPC.SESSION_SET_TRANSIENT_BRANCH, (_, sessionId: string, branch: string) => {
     context.sessionManager.setCommandTerminalBranch(sessionId, branch);
   });
 
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
-    // Capture session info before removal for cleanup
-    const session = context.sessionManager.getSession(sessionId);
-    // kill, capture the exit, THEN remove: awaitExit resolves at once for a
-    // row that is gone, and a young session's kill waits out its exit-sequence
-    // grace (SessionManager.kill). The handler still returns now - the window
-    // closes at once; only the directory delete waits for the shell.
-    context.sessionManager.kill(sessionId);
-    const sessionExited = context.sessionManager.awaitExit(sessionId);
-    context.sessionManager.remove(sessionId);
-
-    // Clean up the transient session directory on disk once the process is
-    // gone. Deleting it under a still-exiting Claude made its SessionEnd hook
-    // write into a missing directory.
-    if (session?.transient) {
-      const sessionDirectory = path.join(session.cwd, '.kangentic', 'sessions', session.taskId);
-      void sessionExited.then(() => {
-        try {
-          fs.rmSync(sessionDirectory, { recursive: true, force: true });
-        } catch {
-          // Best-effort cleanup
-        }
-      });
-    }
+    // The handler returns at once - the window closes at once - and only the
+    // session directory's delete waits for the shell (endCommandTerminal). An
+    // id with no live row is a no-op, as it always was; a task's session is
+    // refused, since this channel ends a Command Terminal and nothing else.
+    const outcome = context.sessionManager.endCommandTerminal(sessionId);
+    if (outcome === 'not-command-terminal') throw new Error('Not a Command Terminal session');
   });
 
   // Session-keyed model/effort injection for transient (command-terminal)

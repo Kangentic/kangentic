@@ -19,6 +19,7 @@ import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
 import { trackFeatureUsed } from '../analytics/usage';
 import { trackEvent } from '../analytics/analytics';
 import { validateRelayUrl } from '../../shared/relay';
+import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
 import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
 import { DevQuickPair } from './dev-quick-pair';
 import { DiffWatcher } from '../git/diff-watcher';
@@ -295,6 +296,17 @@ export class MobileBridgeService extends EventEmitter {
         const projectId = context.sessionManager.getSessionProjectId(sessionId);
         const taskId = context.sessionManager.getSessionTaskId(sessionId);
         if (!projectId || !taskId) return null;
+        // A Command Terminal has no task row: its name is the title, and the
+        // discriminator tells the phone to open the terminal, not a task.
+        const liveSession = context.sessionManager.getSession(sessionId);
+        if (liveSession?.transient) {
+          return {
+            projectId,
+            taskId,
+            taskTitle: commandTerminalDisplayName(liveSession.commandTerminalLabel, liveSession.commandTerminalSlot),
+            sessionKind: 'command-terminal',
+          };
+        }
         let taskTitle = '';
         try {
           taskTitle = getProjectRepos(context, projectId).tasks.getById(taskId)?.title ?? '';

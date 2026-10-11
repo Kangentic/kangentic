@@ -2,9 +2,9 @@ import type { IpcContext } from '../../ipc/ipc-context';
 
 /**
  * The project a phone's request names, or null when the desktop does not know
- * it. `read-board`, `read-diff`, `move-task`, `start-session` and
- * `pause-session` resolve the project they name here, before any repository
- * read.
+ * it. `read-board`, `read-diff`, `move-task`, `start-session`,
+ * `pause-session` and a `command-terminal` start resolve the project they name
+ * here, before any repository read.
  *
  * `resolveProjectContext` is not enough on its own for a phone: it returns any
  * non-empty id as given, and `getProjectDb` then creates and migrates a

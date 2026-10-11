@@ -232,7 +232,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `automation:runFailed` | on | Push event when a run failed or was interrupted, rationed per automation |
 | `automation:runsInterrupted` | on | Push event after the project-open sweep, one summary per open |
 
-### Sessions (43 channels)
+### Sessions (42 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -273,10 +273,9 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `session:listSummaries` | invoke | Get summaries of multiple sessions |
 | `session:getToolBreakdown` | invoke | Fetch the per-tool call breakdown for an active session across its runs: the stored rows of its earlier records (same task and isolated swimlane) merged with the in-memory accumulator |
 | `session:getToolResultTokens` | invoke | Fetch estimated per-tool result tokens for an active session across its runs: the earlier records' estimates, filled from each run's own transcript window where a record has none, plus the live run's, read in the retrieval worker (null when no run has an estimate); the tool-call popover replaces each row's Tokens with them |
-| `session:spawnTransient` | invoke | Spawn an ephemeral Command Terminal session (no task, no DB) at the project root. A cold spawn with no branch picked checks out the project's default base (board default, then config, then `main`) and fast-forwards it; when tracked files are modified it stays on the current branch instead and says so through `checkoutError`, since a checkout with no gesture behind it would carry that work onto the base. A picked branch keeps git's own behavior. Reattaching to a live PTY never runs any of this |
-| `session:killTransient` | invoke | Kill a transient session and clean up session directory |
-| `session:setTransientLabel` | invoke | Record a Command Terminal's auto-derived name on its live registry row (first write wins). The renderer derives the name and has already applied it locally; main retains it purely so it survives a renderer reload, alongside the slot and branch that `toSession` carries. |
-| `session:setTransientBranch` | invoke | Record the branch a Command Terminal's checkout is actually on, re-derived from live HEAD by the renderer, on its live registry row. Last write wins, unlike the label: HEAD moves, and the newest reading is the true one. Main holds it passively for the Monitor row and a post-reload adopt. |
+| `session:spawnTransient` | invoke | Spawn an ephemeral Command Terminal session (no task, no DB) at the project root, through `startCommandTerminal` (the same function a phone's `command-terminal` start runs). Main owns the 4-per-project cap and the slot: the window asks for the slot it is anchored to and main refuses one a live terminal holds. A cold spawn with no branch picked checks out the project's default base (board default, then config, then `main`) and fast-forwards it; when tracked files are modified it stays on the current branch instead and says so through `checkoutError`, since a checkout with no gesture behind it would carry that work onto the base. A picked branch keeps git's own behavior. Reattaching to a live PTY never runs any of this. Returns `{ session, slot, branch, checkoutError? }` |
+| `session:killTransient` | invoke | End a Command Terminal through `SessionManager.endCommandTerminal` (kill, await the exit, remove, then delete its session directory). Refuses a session that is not a Command Terminal |
+| `session:setTransientBranch` | invoke | Record the branch a Command Terminal's checkout is actually on, re-derived from live HEAD by the renderer, on its live registry row. Last write wins: HEAD moves, and the newest reading is the true one. Main holds it passively for the Monitor row and a post-reload adopt. A terminal's NAME has no channel: main derives it (`CommandTerminalNamer`) and announces it on `session:status`. |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 
 ### Usage Stats (1 channel)

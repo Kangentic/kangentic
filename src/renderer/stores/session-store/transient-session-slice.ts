@@ -9,11 +9,12 @@ import { withoutSessionsIndexed } from './session-index';
 /**
  * One transient (Command Terminal) session, owned by a single command-terminal
  * window. `projectId` + `slot` are embedded in the value (not just the composite
- * key) so value-iterating consumers (the focused set, the exit handler, the
- * auto-name scheduler) can filter by project without parsing the key.
+ * key) so value-iterating consumers (the focused set, the removal subscriber)
+ * can filter by project without parsing the key.
  *
- * `label` is the auto-derived display name (from the first prompt event); when
- * absent the command bar falls back to "Command Terminal".
+ * The terminal's NAME is not here: main derives it and stamps it on the session
+ * row (`Session.commandTerminalLabel`), which the window title reads from the
+ * replica.
  */
 export interface TransientSessionEntry {
   projectId: string;
@@ -22,7 +23,6 @@ export interface TransientSessionEntry {
   slot: string;
   sessionId: string;
   branch: string | null;
-  label?: string;
 }
 
 /**
@@ -49,14 +49,11 @@ export function transientKey(projectId: string, slot: string): string {
  *
  * Shared by the only two paths that re-pair a survivor - `adoptTransientSession`
  * below and `planTransientRecovery`'s pairing pass - because they have to agree on
- * which fields an entry carries, and they did not. The adopt path built the entry
- * by hand and omitted `label`, so a terminal recovered through it came back as
- * "Command Terminal N"; recovery's pass 1 then kept that label-less entry verbatim,
- * the auto-namer re-derived a name from a LATER prompt, and main refused the mirror
- * because first-write-wins. One builder is what stops that drifting again.
+ * which fields an entry carries. They once did not (the adopt path dropped the
+ * terminal's name), and one builder is what stops that drifting again.
  *
  * `spawnTransientSession` deliberately does NOT use this: a fresh spawn takes its
- * branch from the spawn RESULT rather than the session row, and has no label yet.
+ * branch from the spawn RESULT rather than the session row.
  */
 export function buildTransientSessionEntry(
   projectId: string,
@@ -68,8 +65,23 @@ export function buildTransientSessionEntry(
     slot,
     sessionId: session.id,
     branch: session.commandTerminalBranch ?? null,
-    ...(session.commandTerminalLabel ? { label: session.commandTerminalLabel } : {}),
   };
+}
+
+/**
+ * The live Command Terminal slots a project holds, from the unscoped session
+ * replica. A phone can start a terminal with the desktop layer closed, and main
+ * gives it a slot, so the layer's "next free slot" must skip those as well as
+ * its own windows' slots, or it would ask main for a slot main already gave out.
+ */
+export function selectLiveCommandTerminalSlots(sessions: readonly Session[], projectId: string | null): Set<string> {
+  const slots = new Set<string>();
+  if (!projectId) return slots;
+  for (const session of sessions) {
+    if (!session.transient || session.projectId !== projectId || session.status !== 'running') continue;
+    if (session.commandTerminalSlot) slots.add(session.commandTerminalSlot);
+  }
+  return slots;
 }
 
 /** Every transient session id for a project, in map order. Drives the focused-set
@@ -185,8 +197,6 @@ export interface TransientSessionSlice {
   clearTransientSessionById: (sessionId: string) => void;
   /** Kill ALL of a project's transient sessions and clean up (project delete / relocate). */
   killTransientSessionForProject: (projectId: string) => Promise<void>;
-  /** Set the derived label on a transient session entry (first prompt wins). */
-  setTransientSessionLabel: (sessionId: string, label: string) => void;
   /** Re-derive every one of a project's Command Terminal branches from the
    *  checkout's live HEAD, and mirror each change to main.
    *
@@ -243,9 +253,9 @@ export function createTransientSessionSlice(preserved: {
       if (!currentProject) throw new Error('No project is currently open');
       const result = await window.electronAPI.sessions.spawnTransient({
         projectId: currentProject.id,
-        // Slots are allocated here, so main cannot derive one. It is forwarded
-        // purely so the Agent Monitor names this terminal the same way its own
-        // window title bar does.
+        // The window is anchored to this slot before it spawns, so it asks main
+        // for it. Main owns the allocation (a phone may hold slots too) and
+        // refuses a slot that is taken; the caller's catch toasts that.
         slot,
         branch,
         cols: grid?.cols,
@@ -286,16 +296,21 @@ export function createTransientSessionSlice(preserved: {
       // No entry means no PTY to address. Nothing was killed, and saying so is the
       // point: this path issues no IPC and the caller cannot otherwise tell.
       if (!entry) return 'no-session';
-      let outcome: TransientKillOutcome = 'killed';
+      // Scrubbed BEFORE the kill, not after. Main announces the removal while the
+      // kill is still in flight, and the removal subscriber
+      // (useCloseCommandWindowOnRemoval) closes the window of any terminal whose
+      // entry still points at the removed session. That close is for an end main
+      // started (a phone's Stop, the agent exiting). This end is the window's
+      // own: Stop closes the window itself, and a branch switch respawns into it.
+      get().clearTransientSessionById(entry.sessionId);
       try {
         await window.electronAPI.sessions.killTransient(entry.sessionId);
       } catch {
-        // Still scrub below - the renderer must not keep pointing at a PTY it can no
-        // longer address - but report the failure rather than passing as a kill.
-        outcome = 'failed';
+        // The renderer already let go of a PTY it can no longer address; report
+        // the failure rather than passing as a kill.
+        return 'failed';
       }
-      get().clearTransientSessionById(entry.sessionId);
-      return outcome;
+      return 'killed';
     },
 
     clearTransientSessionById: (sessionId) => {
@@ -338,34 +353,6 @@ export function createTransientSessionSlice(preserved: {
           ...withoutSessionsIndexed(state, entries.map((entry) => entry.sessionId)),
           transientSessions,
         };
-      });
-    },
-
-    setTransientSessionLabel: (sessionId, label) => {
-      const trimmed = label.trim();
-      if (!trimmed) return;
-      let applied = false;
-      set((state) => {
-        const next = { ...state.transientSessions };
-        for (const [key, entry] of Object.entries(next)) {
-          if (entry.sessionId === sessionId) {
-            // Only set the label once (first prompt wins). Don't overwrite a
-            // user-set or earlier-derived label on subsequent prompts.
-            if (entry.label) return state;
-            next[key] = { ...entry, label: trimmed };
-            applied = true;
-            return { transientSessions: next };
-          }
-        }
-        return state;
-      });
-      // Mirror to main so the name outlives this renderer. Only on a real apply,
-      // so a no-op (already labelled, or no owning entry) issues no IPC. Main
-      // holds it passively; nothing here waits on it, and a rejection costs only
-      // the name after a future reload.
-      if (!applied) return;
-      void window.electronAPI.sessions.setTransientLabel(sessionId, trimmed).catch(() => {
-        // Best-effort - the label is already applied locally.
       });
     },
 

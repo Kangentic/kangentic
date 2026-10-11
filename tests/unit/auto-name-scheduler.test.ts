@@ -2,10 +2,12 @@
  * Unit tests for the auto-name scheduler module
  * (`src/renderer/lib/auto-name-scheduler.ts`).
  *
- * Covers items #12-#15 from the prior coverage audit:
+ * Covers items #12, #13 and #15 from the prior coverage audit:
  *   - `markAutoNameAsked` (idempotent + persistence call shape)
  *   - `scheduleAutoNameSuggestion` (every precheck + timer body)
- *   - `maybeLabelTransientSession` (event-type filter, dedupe, capability gate)
+ *
+ * A Command Terminal is named in main now; that namer's tests are in
+ * tests/unit/command-terminal-namer.test.ts.
  *
  * Strategy: mock all the Zustand stores and `window.electronAPI` directly. The
  * scheduler module reads stores via `getState()` and writes via `addToast`, so
@@ -17,8 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Session, SessionEvent, AppConfig, AgentDetectionInfo } from '../../src/shared/types';
-import { EventType } from '../../src/shared/types';
+import type { Session, AppConfig, AgentDetectionInfo } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted store mocks - declared via vi.hoisted so the factory closures below
@@ -45,13 +46,11 @@ const { useProjectStore, useBoardStore, useConfigStore, useSessionStore, useToas
 // (undefined in vitest, harmless).
 import {
   scheduleAutoNameSuggestion,
-  maybeLabelTransientSession,
   markAutoNameAsked,
   projectAgentCanSummarize,
   cancelAutoNameTimersAndClear,
   autoNameTimers,
   autoNameAsked,
-  autoNameLabeledTransient,
 } from '../../src/renderer/lib/auto-name-scheduler';
 
 // ---------------------------------------------------------------------------
@@ -125,10 +124,8 @@ function setupStores(options: {
   sessionSequence?: Array<Session | null>;
   agents?: AgentDetectionInfo[];
   projects?: Array<{ id: string; default_agent: string | null }>;
-  transientSessions?: Record<string, { projectId: string; slot: string; sessionId: string; branch: string | null; label?: string }>;
   config?: ConfigFixture;
   updateConfig?: ReturnType<typeof vi.fn>;
-  setTransientSessionLabel?: ReturnType<typeof vi.fn>;
   addToast?: ReturnType<typeof vi.fn>;
   updateTask?: ReturnType<typeof vi.fn>;
 }) {
@@ -152,8 +149,6 @@ function setupStores(options: {
       sessionCallIndex += 1;
       return snapshot ? [snapshot] : [];
     })(),
-    transientSessions: options.transientSessions ?? {},
-    setTransientSessionLabel: options.setTransientSessionLabel ?? vi.fn(),
   }));
 
   useConfigStore.getState.mockReturnValue({
@@ -430,139 +425,7 @@ describe('scheduleAutoNameSuggestion - timer body', () => {
 });
 
 // ---------------------------------------------------------------------------
-// #14: maybeLabelTransientSession
-// ---------------------------------------------------------------------------
-
-describe('maybeLabelTransientSession', () => {
-  function makePromptEvent(detail: string): SessionEvent {
-    return { ts: Date.now(), type: EventType.Prompt, detail };
-  }
-
-  it('only fires for EventType.Prompt - other event types are ignored', () => {
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-      setTransientSessionLabel,
-    });
-    setupSummarizeApi(() => ({ ok: true, title: 'should not fire' }));
-
-    const nonPromptEvent: SessionEvent = { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' };
-    maybeLabelTransientSession('transient-1', nonPromptEvent);
-
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(false);
-    expect(setTransientSessionLabel).not.toHaveBeenCalled();
-  });
-
-  it('skips sessions already in the labeled set (first prompt wins)', async () => {
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-      setTransientSessionLabel,
-    });
-    setupSummarizeApi(() => ({ ok: true, title: 'derived' }));
-
-    autoNameLabeledTransient.add('transient-1');
-    maybeLabelTransientSession('transient-1', makePromptEvent('hello'));
-    await vi.runAllTimersAsync();
-
-    expect(setTransientSessionLabel).not.toHaveBeenCalled();
-  });
-
-  it('marks an already-labelled entry as done without deriving a new name', () => {
-    // The reload-recovery shape: recovery restored the label from main onto the
-    // entry, but the in-memory `autoNameLabeledTransient` guard was cleared by the
-    // reload itself, so the entry's `label` is the only signal left that this
-    // session is already named. Falling through here would pay a summarize call
-    // on this later prompt and then discard the result, since setTransientSessionLabel
-    // is first-prompt-wins - leaving the renderer's derivation attempt and main's
-    // retained name permanently disagreeing about which prompt "won".
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: {
-        'project-1::slot-1': {
-          projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null, label: 'Already Named',
-        },
-      },
-      setTransientSessionLabel,
-    });
-    const summarize = setupSummarizeApi(() => ({ ok: true, title: 'should not fire' }));
-
-    maybeLabelTransientSession('transient-1', makePromptEvent('a later prompt'));
-
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(true);
-    expect(summarize).not.toHaveBeenCalled();
-    expect(setTransientSessionLabel).not.toHaveBeenCalled();
-  });
-
-  it('skips when sessionId is not in the transient sessions map', () => {
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'other-session', branch: null } },
-    });
-    maybeLabelTransientSession('unknown-session', makePromptEvent('hello'));
-
-    expect(autoNameLabeledTransient.has('unknown-session')).toBe(false);
-  });
-
-  it('skips when prompt detail is empty/whitespace', () => {
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-    });
-    maybeLabelTransientSession('transient-1', makePromptEvent('   '));
-    maybeLabelTransientSession('transient-1', makePromptEvent(''));
-
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(false);
-  });
-
-  it('skips when the owning project agent does not support summarize', () => {
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-      agents: [makeAdapter({ supportsSummarize: false })],
-      setTransientSessionLabel,
-    });
-    setupSummarizeApi(() => ({ ok: true, title: 'should not fire' }));
-
-    maybeLabelTransientSession('transient-1', makePromptEvent('hello world'));
-
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(false);
-    expect(setTransientSessionLabel).not.toHaveBeenCalled();
-  });
-
-  it('calls setTransientSessionLabel with the suggested title on summarize success', async () => {
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-      setTransientSessionLabel,
-    });
-    setupSummarizeApi(() => ({ ok: true, title: 'Add Logging To Auth Module' }));
-
-    maybeLabelTransientSession('transient-1', makePromptEvent('add logging to the auth module'));
-    await vi.runAllTimersAsync();
-
-    expect(setTransientSessionLabel).toHaveBeenCalledTimes(1);
-    expect(setTransientSessionLabel).toHaveBeenCalledWith('transient-1', 'Add Logging To Auth Module');
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(true);
-  });
-
-  it('does not call setTransientSessionLabel when summarize returns ok:false', async () => {
-    const setTransientSessionLabel = vi.fn();
-    setupStores({
-      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
-      setTransientSessionLabel,
-    });
-    setupSummarizeApi(() => ({ ok: false, reason: 'rate limited' }));
-
-    maybeLabelTransientSession('transient-1', makePromptEvent('test prompt'));
-    await vi.runAllTimersAsync();
-
-    expect(setTransientSessionLabel).not.toHaveBeenCalled();
-    // The session is still added to the labeled set so we don't retry on the next prompt.
-    expect(autoNameLabeledTransient.has('transient-1')).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// projectAgentCanSummarize - direct unit test (used by both schedulers)
+// projectAgentCanSummarize - direct unit test
 // ---------------------------------------------------------------------------
 
 describe('projectAgentCanSummarize', () => {

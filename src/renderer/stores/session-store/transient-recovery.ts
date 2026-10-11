@@ -136,10 +136,8 @@ export function planTransientRecovery(input: {
     next ??= { ...transientSessions };
     // Shared with `adoptTransientSession`, the other path that re-pairs a
     // survivor, so the two cannot disagree about which fields an entry carries.
-    // The label is the one that matters: main retains the derived name for
-    // exactly this moment, and without it a recovered terminal falls back to
-    // "Command Terminal N" and the auto-namer renames it from a LATER prompt,
-    // since it fires per prompt event.
+    // The name is not one of them: main holds it on the session row, which
+    // the window title reads, so a recovered terminal keeps it with no help.
     next[transientKey(projectId, slot)] = buildTransientSessionEntry(projectId, slot, session);
   };
 
@@ -147,11 +145,10 @@ export function planTransientRecovery(input: {
     const liveSessionIds = new Set(liveSessions.map((session) => session.id));
 
     // Pass 1: keep what is already paired, VERBATIM. An entry pointing at a
-    // still-running session owns its slot, and rewriting it would drop the
-    // `label` that `setTransientSessionLabel` derived from the first prompt -
-    // first-prompt-wins, so a clobbered label never comes back. This matters
-    // because syncSessions is Pattern B (re-run on every Fast Refresh), not just
-    // on the hard reload this module is named for.
+    // still-running session owns its slot, and rewriting it would replace the
+    // branch the layer's HEAD tracker last corrected with the spawn-time stamp.
+    // This matters because syncSessions is Pattern B (re-run on every Fast
+    // Refresh), not just on the hard reload this module is named for.
     const claimedSlots = new Set<string>();
     const pairedSessionIds = new Set<string>();
     for (const entry of entriesByProject.get(projectId) ?? []) {

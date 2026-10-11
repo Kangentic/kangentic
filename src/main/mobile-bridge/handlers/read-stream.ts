@@ -205,9 +205,13 @@ function subscribeReadStream(
   seedCoverage: SeedCoverage | null = null,
 ): void {
   const taskId = snapshotSession.taskId;
-  // A session with no owning project (a Command Terminal session carries
-  // none) has no transcript to stream. This used to open the database named
-  // '' instead, which creates a stray `projects/.db` file.
+  // A session with no owning project has no transcript to stream; reading
+  // one used to open the database named '' instead, which creates a stray
+  // `projects/.db` file. Every live session has a project, a Command Terminal
+  // included (its spawn stamps the project it runs in), so this guards only a
+  // row that has already gone. A Command Terminal's transcript read still finds
+  // nothing: its made-up task id has no session record, so the worker returns
+  // an empty window and the phone's Chat tab draws from the live terminal.
   const ownerProjectId = resolveProjectIdForSession(context, sessionId);
   // The transcript diff runs in the retrieval worker, which keeps this
   // subscription's sync state under this id (`transcript.mobileSync`).

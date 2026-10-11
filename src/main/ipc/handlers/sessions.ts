@@ -434,7 +434,13 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   context.sessionManager.on('session-changed', (sessionId: string, session: Session) => {
     if (session.status === 'running') {
-      sessionStartTimes.set(sessionId, Date.now());
+      // Stamped once, on the first running emit. 'session-changed' also fires
+      // for a running session whose status did not change (an agent session id
+      // captured, a Command Terminal named), and re-stamping there would
+      // restart the exit's duration mid-session. Session ids are minted once
+      // per spawn and the exit below clears the entry, so this is the
+      // transition into running.
+      if (!sessionStartTimes.has(sessionId)) sessionStartTimes.set(sessionId, Date.now());
 
       // Analytics: track spawn intent on the first running transition. Model
       // is not known yet (arrives later via status.json) and is omitted here -

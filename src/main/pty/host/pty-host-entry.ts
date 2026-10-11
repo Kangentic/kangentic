@@ -19,6 +19,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
 import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
+import { loadWin32OrphanApi } from '../process-tag/win32-reader';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
 import { setMainExecutable } from './host-exec';
@@ -99,6 +100,7 @@ function initialize(message: PtyHostInitMessage): void {
     transcriptSinkFor,
     closeProject: (projectId) => closeProjectDb(projectId),
     coalesceMs: COALESCE_MS,
+    loadOrphanApi: () => loadWin32OrphanApi(),
   });
   if (__KANGENTIC_DEV__) {
     relaySlowSyncSpans((label, elapsedMs) => post({ type: 'slow-span', label, ms: Math.round(elapsedMs) }));

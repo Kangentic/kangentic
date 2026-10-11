@@ -3,16 +3,16 @@
  * TransientSessionSlice.
  *
  * `buildTransientSessionEntry` is the single builder shared by `adoptTransientSession`
- * (here) and `planTransientRecovery`'s pairing pass (tests/unit/transient-recovery.test.ts).
- * Before the extraction, `adoptTransientSession` built its pairing entry by hand and
- * omitted `label`, so a terminal recovered through the adopt path lost its derived
- * name. These tests pin that both fields - `branch` and `label` - survive the trip
- * from a live `Session` row into the pairing entry, at both the pure-builder level
- * and through the slice's observable store behavior.
+ * (here) and `planTransientRecovery`'s pairing pass (tests/unit/transient-recovery.test.ts),
+ * so the two cannot disagree about which fields an entry carries. They once did:
+ * the adopt path dropped the terminal's name. The name no longer rides the entry
+ * at all (main stamps it on the session row, which the window title reads), so
+ * these pin that the entry is exactly the pairing: project, slot, session, and
+ * the branch from the live row.
  *
- * We instantiate the slice directly via `createTransientSessionSlice`, following the
- * same set/get harness as tests/unit/transient-session-label.test.ts, so no Zustand
- * store instance or `useProjectStore` import is needed.
+ * We instantiate the slice directly via `createTransientSessionSlice`, with a
+ * minimal set/get harness, so no Zustand store instance or `useProjectStore`
+ * import is needed.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -107,23 +107,20 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
 // ---------------------------------------------------------------------------
 
 describe('buildTransientSessionEntry', () => {
-  it('carries both branch and label from the session row', () => {
+  it('carries the branch from the session row and no name, which the row keeps', () => {
     const entry = buildTransientSessionEntry(
       'proj-abc',
       'slot-1',
       makeSession({ id: 'sess-1', commandTerminalBranch: 'feature/x', commandTerminalLabel: 'Fix the parser' }),
     );
 
-    expect(entry).toEqual({
-      projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/x', label: 'Fix the parser',
-    });
+    expect(entry).toEqual({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/x' });
   });
 
-  it('defaults branch to null and omits label when the session carries neither', () => {
+  it('defaults branch to null when the session carries none', () => {
     const entry = buildTransientSessionEntry('proj-abc', 'slot-1', makeSession({ id: 'sess-1' }));
 
     expect(entry.branch).toBeNull();
-    expect(entry).not.toHaveProperty('label');
   });
 });
 
@@ -132,7 +129,7 @@ describe('buildTransientSessionEntry', () => {
 // ---------------------------------------------------------------------------
 
 describe('adoptTransientSession', () => {
-  it('writes a pairing entry carrying both branch and label from the survivor session', () => {
+  it('writes a pairing entry carrying the branch from the survivor session', () => {
     const { slice, getState } = makeSliceStore();
 
     slice.adoptTransientSession(
@@ -142,37 +139,23 @@ describe('adoptTransientSession', () => {
     );
 
     expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]).toEqual({
-      projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/x', label: 'Fix the parser',
+      projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/x',
     });
-  });
-
-  it('defaults branch to null and leaves label absent for an unnamed survivor', () => {
-    const { slice, getState } = makeSliceStore();
-
-    slice.adoptTransientSession('proj-abc', 'slot-1', makeSession({ id: 'sess-1' }));
-
-    const entry = getState().transientSessions[transientKey('proj-abc', 'slot-1')];
-    expect(entry?.branch).toBeNull();
-    expect(entry).not.toHaveProperty('label');
   });
 
   it('overwrites any existing entry at the same slot with the adopted session', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
         [transientKey('proj-abc', 'slot-1')]: {
-          projectId: 'proj-abc', slot: 'slot-1', sessionId: 'stale-session', branch: 'main', label: 'Stale',
+          projectId: 'proj-abc', slot: 'slot-1', sessionId: 'stale-session', branch: 'main',
         },
       },
     });
 
-    slice.adoptTransientSession(
-      'proj-abc',
-      'slot-1',
-      makeSession({ id: 'sess-1', commandTerminalBranch: 'feature/y', commandTerminalLabel: 'New Name' }),
-    );
+    slice.adoptTransientSession('proj-abc', 'slot-1', makeSession({ id: 'sess-1', commandTerminalBranch: 'feature/y' }));
 
     expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]).toEqual({
-      projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/y', label: 'New Name',
+      projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', branch: 'feature/y',
     });
   });
 });

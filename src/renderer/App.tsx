@@ -40,7 +40,6 @@ import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager } fro
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
-  maybeLabelTransientSession,
 } from './lib/auto-name-scheduler';
 import {
   enqueueUsage,
@@ -522,13 +521,13 @@ export function App() {
         // defense-in-depth fallback. See session-spawn-flow.ts onExit.
         if (intentional || currentSession?.status === 'suspended') return;
 
-        // Transient sessions (command terminal) are ephemeral - skip toasts and notifications
+        // Transient sessions (command terminal) are ephemeral - skip toasts and
+        // notifications. Main ends the terminal right after this exit and
+        // announces the removal; the removal subscriber
+        // (useCloseCommandWindowOnRemoval) drops the (project, slot) entry and
+        // closes the window then, so the entry is left for it to find.
         if (currentSession?.transient) {
           updateSessionStatus(sessionId, { status: 'exited', exitCode });
-          // Remove this transient session's renderer state (its (project, slot)
-          // map entry + per-session dicts). Works whether the session belongs to
-          // the current project or another project's still-tracked terminal.
-          useSessionStore.getState().clearTransientSessionById(sessionId);
           return;
         }
 
@@ -784,7 +783,6 @@ export function App() {
         if (!projectId || !activeProjectId || projectId === activeProjectId) {
           enqueueEvent(sessionId, event);
         }
-        maybeLabelTransientSession(sessionId, event);
       }));
     }
 

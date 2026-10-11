@@ -233,4 +233,86 @@ describe('handleReadDiff', () => {
     expect(response.ok).toBe(false);
     expect(getFileContent).not.toHaveBeenCalled();
   });
+
+  describe('the project folder, for a Command Terminal (no taskId, protocol 0.20.0)', () => {
+    function projectContext(boardDefault: string | undefined, configDefault = 'main'): IpcContext {
+      return {
+        projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path: '/projects/proj-1' })) },
+        boardConfigManager: { getDefaultBaseBranchForPath: vi.fn(() => boardDefault) },
+        configManager: { getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: configDefault } })) },
+      } as unknown as IpcContext;
+    }
+
+    it('diffs the project root against the project\'s effective default base, reading no task', async () => {
+      getDiffFiles.mockResolvedValue({ files: [], totalInsertions: 0, totalDeletions: 0 });
+      const bridgeDiffWatcher = fakeDiffWatcher();
+      const subscriptions = new SubscriptionRegistry();
+
+      const response = await handleReadDiff(
+        fakeRequest({ projectId: 'proj-1' }),
+        fakeSession(),
+        projectContext('develop'),
+        subscriptions,
+        bridgeDiffWatcher,
+      );
+
+      expect(response.ok).toBe(true);
+      expect(tasksGetById).not.toHaveBeenCalled();
+      expect(getDiffFiles).toHaveBeenCalledWith({ worktreePath: undefined, projectPath: '/projects/proj-1', baseBranch: 'develop', scope: undefined });
+      expect(bridgeDiffWatcher.subscribe).toHaveBeenCalledWith('/projects/proj-1', expect.any(Function));
+      expect(subscriptions.has('diff:project:proj-1')).toBe(true);
+    });
+
+    it('falls back to the config default when the board sets none', async () => {
+      getDiffFiles.mockResolvedValue({ files: [], totalInsertions: 0, totalDeletions: 0 });
+
+      await handleReadDiff(fakeRequest({ projectId: 'proj-1' }), fakeSession(), projectContext(undefined, 'trunk'), new SubscriptionRegistry(), fakeDiffWatcher());
+
+      expect(getDiffFiles).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'trunk' }));
+    });
+
+    it('pings a change with the project id, not a task id', async () => {
+      getDiffFiles.mockResolvedValue({ files: [], totalInsertions: 0, totalDeletions: 0 });
+      let onChange: (() => void) | undefined;
+      const bridgeDiffWatcher = {
+        subscribe: vi.fn((_path: string, callback: () => void) => {
+          onChange = callback;
+          return vi.fn();
+        }),
+        unsubscribe: vi.fn(),
+      } as unknown as DiffWatcher;
+      const session = fakeSession();
+
+      await handleReadDiff(fakeRequest({ projectId: 'proj-1' }), session, projectContext(undefined), new SubscriptionRegistry(), bridgeDiffWatcher);
+      onChange?.();
+
+      expect(session.sendMessage).toHaveBeenCalledWith({ type: 'event', event: { kind: 'diff', projectId: 'proj-1', payload: null } });
+    });
+
+    it('reads a file only when it is in the project folder\'s diff', async () => {
+      getDiffFiles.mockResolvedValue({ files: [], totalInsertions: 0, totalDeletions: 0 });
+
+      const response = await handleReadDiff(
+        fakeRequest({ projectId: 'proj-1', filePath: '../../outside/.ssh/id_rsa' }),
+        fakeSession(),
+        projectContext(undefined),
+        new SubscriptionRegistry(),
+        fakeDiffWatcher(),
+      );
+
+      expect(response.ok).toBe(false);
+      expect(getFileContent).not.toHaveBeenCalled();
+    });
+
+    it('unsubscribes the project-folder feed by its own key', async () => {
+      const subscriptions = new SubscriptionRegistry();
+      const teardown = vi.fn();
+      subscriptions.set('diff:project:proj-1', teardown);
+
+      await handleReadDiff(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), fakeSession(), {} as IpcContext, subscriptions, fakeDiffWatcher());
+
+      expect(teardown).toHaveBeenCalledTimes(1);
+      expect(subscriptions.has('diff:project:proj-1')).toBe(false);
+    });
+  });
 });

@@ -23,17 +23,16 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
 
 ## The rule
 
-- **Only a task session spawn sets the tag.** `performSpawn` (`session-spawn-flow.ts`) adds it
-  through `addTaskProcessTag` for a non-transient session, with the task id, and lists it in
-  `WSLENV` on a WSL shell. A Command Terminal is the user's own shell and gets no tag of its own;
-  it inherits only what main's environment holds (a tag naming the outer task when Kangentic itself
-  runs from a task's terminal). Do not set `KANGENTIC_TASK_ID` anywhere else, and do not let a
-  spawn path that bypasses
-  `performSpawn` start task work untagged.
+- **Only `performSpawn` sets the tag, and it tags every session.** `performSpawn`
+  (`session-spawn-flow.ts`) adds it through `addTaskProcessTag` with the session's task id and lists
+  it in `WSLENV` on a WSL shell. A Command Terminal runs an agent, so it is tagged too, with its own
+  made-up task id, which no other session shares; that replaces any tag main's environment carries
+  (Kangentic run from a task's terminal). Do not set `KANGENTIC_TASK_ID` anywhere else, and do not
+  let a spawn path that bypasses `performSpawn` start agent work untagged.
 - **An agent CLI that can strip inherited variables from its tool shells re-injects the tag.**
-  The two task spawn chokepoints pass `taskProcessTag` (the task id) on `CommandOptions`; a
-  Command Terminal never does. The adapter turns it into its CLI's own mechanism, inside
-  `adapters/` (Codex: `-c shell_environment_policy.set.KANGENTIC_TASK_ID=<id>`).
+  The two task spawn chokepoints pass `taskProcessTag` (the task id) on `CommandOptions`, and
+  `startCommandTerminal` passes the terminal's own task id. The adapter turns it into its CLI's own
+  mechanism, inside `adapters/` (Codex: `-c shell_environment_policy.set.KANGENTIC_TASK_ID=<id>`).
 - **Every terminal transition calls `reapTaskLeftovers(context, projectPath, tasks)` after the
   task's sessions have exited and before any worktree removal.** Today that is the Done branch of
   `handleTaskMove`, `cleanupTaskSession` (To Do, Backlog demote, task and bulk delete, unarchive
@@ -43,6 +42,14 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   stopping on, `reapTaskLeftovers` first stops a `/preview` running in each task worktree through
   the launcher's stop file (`src/devtools/main/worktree-preview-stop.ts`), so its Electron quits
   through the real quit path instead of outliving a terminate on a dead dev server.
+- **A Command Terminal's end reaps its leftovers, after any exiting agent has finished.**
+  `CommandTerminalLeftoverReaper` (`ipc/helpers/command-terminal-leftovers.ts`) calls
+  `reapTaskLeftovers` with the terminal's folder and its own task id, named for the report, on its
+  `session-removed`, `COMMAND_TERMINAL_REAP_DELAY_MS` later: longer than the pty host's orphan grace
+  and Claude's own exit after a Stop, so the reap never force-kills an agent mid-exit (see
+  [[pty-teardown-grace]]). Its folder is never passed as a worktree, because a project root is
+  shared with every task that has no worktree (so the dev-preview stop above, keyed on a task's
+  worktree, never applies to one). Nothing is reaped during a quit, as for tasks.
 - **A kill needs the tag AND the task's directory, and nothing in `reap-plan.ts` may relax that.**
   In the host reap, a process is killed only when it carries the task's tag, works inside the task's project or
   worktree, nothing under it shows it is shared (a readable descendant without this task's tag, or
@@ -110,6 +117,19 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
   returns the same code and pass (`StopProcessResult`), and main reports it as stage `stop`. A
   refusal or a survivor is an answer, and main never reports it.
+- **The dead-shell orphan cleanup is a second kill path with its own identity, not a reap.** When a
+  session's shell exits on its own on Windows, `host/dead-root-orphans.ts` finds the shell's
+  children created between its spawn and its exit, and their descendants created after their own
+  parent, through `loadWin32OrphanApi` (`win32-reader.ts`): own session and user only, never a
+  protected pid (the host, main, a live PTY root), and no environment, command line or working
+  directory read. It asks the agent to exit first (see [[pty-teardown-grace]]) and terminates
+  only what is still alive after the grace, re-checking the creation time on the terminating
+  handle. Parentage plus creation time is what names the shell's own processes, so it needs no
+  tag. Whatever of that tree outlives the
+  grace, a dev server the agent started included, is terminated whatever `stopLeftoverProcesses`
+  says, as `stopLostPtyTree` does for a crashed host: the session is over, not parked. Do not add
+  tag or directory matching to it, and do not use it as a reap: what an agent detached from its
+  tree is still the reap's to find.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
   terminates through. A scan that cannot read the caller's own session or user fails, so the reap
@@ -132,11 +152,13 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `tests/unit/session-wsl-reap-live-task.test.ts` that the in-distro WSL reap leaves out a task
   with a live or starting session (the sweep takes no task lock) and that its `wsl.exe` carries no
   task tag. Runs in CI.
-- **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, its
-  absence on a transient one, and `WSLENV`. `transition-engine.test.ts` and
+- **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, a
+  Command Terminal's own tag, and `WSLENV`. `transition-engine.test.ts` and
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,
-  `transient-session-spawn-shim-launch.test.ts` pins its absence on a Command Terminal, and
-  `codex-adapter.test.ts` pins the Codex override.
+  `transient-session-spawn-shim-launch.test.ts` pins it on a Command Terminal (its spawn's task
+  id), and `codex-adapter.test.ts` pins the Codex override.
+  `tests/unit/command-terminal-leftovers.test.ts` pins the terminal reap's delay past the orphan
+  grace, its folder and tag, its report name, and that a task's removal or a quit reaps nothing.
 - **Test (report and stop):** `tests/unit/task-tagged-reap.test.ts` pins the report (stopped
   roots only, survivors as not stopped, kept windows, stopping off kills nothing, each request
   gets its own tasks, a report-only request never joins a killing batch) and `stopProcessTree`
@@ -151,7 +173,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   reader on a fake API on every OS: no handle for another session's process, no
   `PROCESS_VM_READ` for another user's or an untagged one, a failed scan when the caller's own
   session or user cannot be read, a kill only through a handle whose creation time matches, and
-  every handle closed. It also walks a 32-bit (WOW64) PEB laid out
+  every handle closed, and the same gates for the orphan stop's `loadWin32OrphanApi`. It also walks a 32-bit (WOW64) PEB laid out
   from Windows' own offsets, caps an environment read at 1 MiB whatever size the PEB claims, and
   expands an 8.3 working directory. It reads a fake TCP table laid out from iphlpapi's headers,
   opening no process, and fails as `connection_list` when the call fails. A window makes a visible

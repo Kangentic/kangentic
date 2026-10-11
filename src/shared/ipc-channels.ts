@@ -143,7 +143,6 @@ export const IPC = {
   SESSION_GET_TOOL_RESULT_TOKENS: 'session:getToolResultTokens',
   SESSION_SPAWN_TRANSIENT: 'session:spawnTransient',
   SESSION_KILL_TRANSIENT: 'session:killTransient',
-  SESSION_SET_TRANSIENT_LABEL: 'session:setTransientLabel',
   SESSION_SET_TRANSIENT_BRANCH: 'session:setTransientBranch',
   SESSION_SET_FOCUSED: 'session:setFocused',
   SESSION_SET_MOUNTED: 'session:setMounted',

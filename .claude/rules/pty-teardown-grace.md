@@ -22,6 +22,12 @@ behind. This shipped: a Command Terminal stopped inside its first seconds, and e
 on the dogfooding machine printed the fallback line. The 1500 ms `suspend()` already gave every
 session is what `kill()` now gives a young one.
 
+That 100 ms was measured on Claude Code 2.1.268. Remeasured on 2.1.294 (Windows 11 build 26200,
+node-pty 1.1.0, a mature idle session): closing the console made Claude run its SessionEnd hook
+(reason `other`) and exit 585 ms later with its transcript whole, as `/exit` does (hook at 191 ms,
+exit at 622 ms). The grace stays: the young-session case was not remeasured, and an older Claude
+still gets the 100 ms.
+
 ## The rule
 
 - **Every force-kill of a session PTY goes through `SessionManager.kill()`, `suspend()`, or
@@ -38,6 +44,21 @@ session is what `kill()` now gives a young one.
   host carries out, and the grace timer stays on main. The host's own `kill` handling is the one
   allowlisted `.kill()` in `pty-host-core.ts`, and its `shutdown` kills nothing, so a parked
   PTY's grace is never cut short there.
+- **An agent whose shell exited on its own is asked to exit before anything is terminated
+  (Windows).** node-pty never closes the pseudoconsole after a natural exit (microsoft/node-pty#965),
+  so the agent the shell started keeps running with no session. The pty host ends it in
+  `host/dead-root-orphans.ts`: it writes the session's exit sequence into the dead shell's
+  still-open console input (`spawn/exited-console-input.ts`, the one channel that reaches it),
+  waits up to `DEAD_ROOT_ORPHAN_EXIT_GRACE_MS` (10 s) for the processes it found to exit by
+  themselves, and only then terminates what is left, by identity, each through a handle whose
+  creation time is re-checked. Measured on Claude Code 2.1.294: asked this way, Claude ran its
+  SessionEnd hook and exited about 600 ms after the write with its transcript whole; terminated,
+  it runs no SessionEnd hook and writes no exit records. `IPty.write()` after the exit, `kill()`
+  after the exit, and terminating the console host all leave it running, so none of them can
+  replace the ask. Do not shorten the grace below Claude's SessionEnd budget (1.5 s by default,
+  raised by a hook's own timeout). It runs in the utility host only (never the in-process core,
+  whose fake PTYs carry real-looking pids), and never after a kill the host was sent, during a
+  quit, or for a WSL root.
 - **A caller that touches the session's cwd or process tree after a kill waits for the process,
   not for the call.** `kill(id)`, then capture `awaitExit(id)`, THEN `remove(id)` (the row must
   still exist when the promise is made), then await it before any `rmSync`, `removeWorktree`, or
@@ -83,7 +104,10 @@ session is what `kill()` now gives a young one.
   `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env, its graceful exit, and its
   no-key-into-a-dialog guards;
   `tests/unit/claude-json-lock.test.ts` pins the file lock's acquire, wait, stale break, and
-  ELOCKED skip.
+  ELOCKED skip. `tests/unit/dead-root-orphans.test.ts` pins the orphan cleanup's identity window,
+  that it asks before it terminates and terminates nothing that exits within the grace, and that a
+  kill, a quit, a WSL root, POSIX and the in-process core never run it;
+  `tests/unit/exited-console-input.test.ts` pins the node-pty fields the ask writes through.
 - **Review:** the `awaitExit` ordering is control flow the scan cannot see; `/code-review` flags a
   kill followed by filesystem work with no exit barrier.
 

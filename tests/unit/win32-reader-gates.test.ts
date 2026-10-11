@@ -37,6 +37,10 @@
  * - `connections` reads the TCP table (both families, owner pids) without
  *   opening any process, and fails as `connection_list`, never as an empty
  *   read, when the call fails or the table keeps outgrowing its buffer.
+ * - The dead-shell orphan stop (`loadWin32OrphanApi`) reads a creation time
+ *   only for a same-session, same-user process above pid 4, never opens
+ *   PROCESS_VM_READ, terminates only through a handle whose creation time still
+ *   matches, and fails to load when the caller's own session cannot be read.
  *
  * Each refusal is asserted next to a positive control (the open that the gate
  * does allow), so a fake that silently stopped answering cannot pass for free.
@@ -47,6 +51,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   Win32TaggedProcessReader,
+  loadWin32OrphanApi,
   userVisibleWindowPids,
   windowSize,
   type WindowRect,
@@ -1035,5 +1040,66 @@ describe('Win32TaggedProcessReader.connections: the TCP table', () => {
     growing.tcpTableGrowths = 100;
     await expect(readerFor(growing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list' });
     expect(growing.tcpTableCalls.length).toBeLessThan(10);
+  });
+});
+
+describe('loadWin32OrphanApi: what a dead shell left running', () => {
+  it('reads an identity only for a same-session, same-user process above pid 4, and never opens PROCESS_VM_READ', async () => {
+    const fake = new FakeWin32([
+      { pid: 4, image: 'System' },
+      { pid: 300, session: SERVICES_SESSION },
+      { pid: 310, sessionLookupFails: true },
+      { pid: 320, sid: OTHER_SID },
+      { pid: 330, creationUnreadable: true },
+      { pid: 700, image: 'claude.exe' },
+    ]);
+    const api = await loadWin32OrphanApi(async () => fake.api);
+
+    for (const refused of [4, 300, 310, 320, 330]) expect(api.identityOf(refused)).toBeNull();
+    // Positive control: the same process shape in the caller's session and user is read.
+    expect(api.identityOf(700)).toEqual({ startKey: fake.startKeyOf(700), startedAtMs: expect.any(Number) });
+
+    expect(fake.openedPids()).not.toContain(4);
+    expect(fake.openedPids()).not.toContain(300);
+    expect(fake.openedPids()).not.toContain(310);
+    expect(fake.openedPids()).toContain(320);
+    expect(fake.openedPids(PROCESS_VM_READ)).toEqual([]);
+    expect(fake.leakedHandleIds()).toEqual([]);
+  });
+
+  it('lists every process with its parent and image, opening none', async () => {
+    const fake = new FakeWin32([{ pid: 700, ppid: 500, image: 'claude.exe' }, { pid: 710, ppid: 700, image: 'node.exe' }]);
+    const api = await loadWin32OrphanApi(async () => fake.api);
+    const processOpensBefore = fake.openedPids().length;
+    await expect(api.listProcesses()).resolves.toEqual([
+      { pid: 700, ppid: 500, image: 'claude.exe' },
+      { pid: 710, ppid: 700, image: 'node.exe' },
+    ]);
+    expect(fake.openedPids().length).toBe(processOpensBefore);
+  });
+
+  it('terminates only through a handle whose creation time still matches, and closes it either way', async () => {
+    const fake = new FakeWin32([{ pid: 700, image: 'claude.exe' }]);
+    const api = await loadWin32OrphanApi(async () => fake.api);
+    const identity = api.identityOf(700);
+    expect(identity).not.toBeNull();
+    const target = { pid: 700, ppid: 500, image: 'claude.exe', ...(identity as { startKey: string; startedAtMs: number }) };
+
+    expect(api.terminate({ ...target, startKey: (creationOf(700) - 1n).toString() })).toBe(false);
+    // Positive control: the refusal came after a terminate-capable open, so it is the creation check.
+    expect(fake.openedPids(PROCESS_TERMINATE)).toEqual([700]);
+    expect(fake.terminatedHandleIds).toEqual([]);
+
+    expect(api.terminate(target)).toBe(true);
+    expect(fake.terminatedHandleIds).toHaveLength(1);
+    expect(api.terminate({ ...target, startKey: '' })).toBe(false);
+    expect(fake.leakedHandleIds()).toEqual([]);
+  });
+
+  it('fails to load, opening no process, when its own session cannot be read', async () => {
+    const fake = new FakeWin32([{ pid: 700 }]);
+    fake.ownSessionLookupFails = true;
+    await expect(loadWin32OrphanApi(async () => fake.api)).rejects.toThrow('could not read its own session');
+    expect(fake.openedPids()).toEqual([]);
   });
 });

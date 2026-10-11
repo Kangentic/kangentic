@@ -1,6 +1,18 @@
 import { EventEmitter } from 'node:events';
 
-export type BoardChange = 'task-created' | 'task-updated' | 'task-deleted' | 'swimlane-updated' | 'backlog-changed';
+/**
+ * Mirrors `BoardEventPayload.change` in @kangentic/protocol. `command-terminals-changed`
+ * names a Command Terminal's session id, not a task: it says one of the project's
+ * terminals started, ended, or was named (session-lifecycle-feed.ts). A
+ * subscriber that only cares about tasks skips it.
+ */
+export type BoardChange =
+  | 'task-created'
+  | 'task-updated'
+  | 'task-deleted'
+  | 'swimlane-updated'
+  | 'backlog-changed'
+  | 'command-terminals-changed';
 
 export interface BoardChangedEvent {
   projectId: string;

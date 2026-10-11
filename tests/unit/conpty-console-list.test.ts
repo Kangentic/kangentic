@@ -33,7 +33,11 @@ describe('skipConsoleListHelper', () => {
       expect(WindowsPtyAgent.prototype._getConsoleProcessList).not.toBe(original);
       const agent = Object.create(WindowsPtyAgent.prototype) as InstanceType<typeof WindowsPtyAgent>;
       agent._innerPid = 4242;
+      agent._exitCode = undefined;
       await expect(agent._getConsoleProcessList()).resolves.toEqual([4242]);
+      // Once the shell has exited its pid may name an unrelated process: kill nothing by pid.
+      agent._exitCode = 0;
+      await expect(agent._getConsoleProcessList()).resolves.toEqual([]);
     } finally {
       WindowsPtyAgent.prototype._getConsoleProcessList = original;
     }

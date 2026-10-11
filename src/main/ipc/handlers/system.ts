@@ -15,6 +15,7 @@ import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { agentCliNotFoundMessage } from '../../agent/shared/agent-cli-not-found';
+import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { resolveRelayUrl } from '../../../shared/relay';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
@@ -368,15 +369,6 @@ export function registerSystemHandlers(context: IpcContext): void {
     }
   });
 
-  // Sliding-window rate limit for summarize calls. Each entry is a Date.now()
-  // timestamp. We expire entries older than 1 hour on every check. A burst of
-  // task creation can otherwise spam the agent CLI and burn the user's
-  // subscription quota; this caps the damage. The window is in-memory only -
-  // a restart clears the limit, which is the correct behavior (the user has
-  // explicitly chosen to start a new session).
-  const summarizeRateLimitWindow: number[] = [];
-  const ONE_HOUR_MS = 60 * 60 * 1000;
-
   // Summarize a free-form prompt into a short task title via the active
   // project's default agent (or `input.agentName` if provided). Returns a
   // discriminated result so renderer code can show a graceful error toast
@@ -392,21 +384,14 @@ export function registerSystemHandlers(context: IpcContext): void {
         const { agentRegistry } = await import('../../agent/agent-registry');
         const config = context.configManager.load();
 
-        // Apply the sliding-window rate limit before doing any work.
+        // Apply the sliding-window rate limit before doing any work. Shared
+        // with main's Command Terminal namer (summarize-rate-limit.ts).
         const limit = config.autoNameRateLimitPerHour ?? 60;
-        if (limit > 0) {
-          const now = Date.now();
-          const cutoff = now - ONE_HOUR_MS;
-          while (summarizeRateLimitWindow.length > 0 && summarizeRateLimitWindow[0] < cutoff) {
-            summarizeRateLimitWindow.shift();
-          }
-          if (summarizeRateLimitWindow.length >= limit) {
-            return {
-              ok: false,
-              reason: `rate limit reached (${limit}/hour); try again later or raise the cap in Settings`,
-            };
-          }
-          summarizeRateLimitWindow.push(now);
+        if (!tryAcquireSummarizeSlot(limit)) {
+          return {
+            ok: false,
+            reason: `rate limit reached (${limit}/hour); try again later or raise the cap in Settings`,
+          };
         }
 
         // Resolve which adapter to ask. Caller may name a specific agent

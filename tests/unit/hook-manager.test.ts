@@ -93,6 +93,8 @@ describe('hook-manager', () => {
       // watcher's transcript drain (background-shell-transcript.ts).
       expect(hooks.UserPromptSubmit).toHaveLength(1);
       expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain('prompt');
+      // A task session's events never carry the prompt's text.
+      expect(hooks.UserPromptSubmit[0].hooks[0].command).not.toContain(extractDetail(['prompt']));
 
       // Stop: idle
       expect(hooks.Stop).toHaveLength(1);
@@ -180,6 +182,18 @@ describe('hook-manager', () => {
 
       // Total: 18 hook event keys
       expect(Object.keys(hooks)).toHaveLength(18);
+    });
+
+    it('carries the prompt text only for a session that asks for it (a Command Terminal)', () => {
+      const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {}, { capturePromptText: true });
+      expect(hooks.UserPromptSubmit).toHaveLength(1);
+      expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain(extractDetail(['prompt']));
+      // Only the prompt hook changes.
+      const plainHooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+      for (const hookEvent of Object.keys(plainHooks)) {
+        if (hookEvent === 'UserPromptSubmit') continue;
+        expect(hooks[hookEvent]).toEqual(plainHooks[hookEvent]);
+      }
     });
 
     it('preserves existing user hooks', () => {

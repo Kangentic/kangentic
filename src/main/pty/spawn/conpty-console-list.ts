@@ -20,6 +20,12 @@
  * pid alone. This returns that same list at once, with no child process.
  * A terminal transition's `reapTaskLeftovers` still kills what the task's
  * agents left running, by their `KANGENTIC_TASK_ID` tag.
+ *
+ * Once the shell has exited (node-pty records `_exitCode` about a second
+ * before it reports the exit), the list is empty: that pid may already belong
+ * to an unrelated process, and node-pty would `process.kill` it
+ * (microsoft/node-pty#967). What the dead shell left running is ended by the
+ * pty host instead (`host/dead-root-orphans.ts`).
  */
 import { WindowsPtyAgent } from 'node-pty/lib/windowsPtyAgent';
 
@@ -30,6 +36,6 @@ export function skipConsoleListHelper(): void {
   if (installed || process.platform !== 'win32') return;
   installed = true;
   WindowsPtyAgent.prototype._getConsoleProcessList = function shellPidOnly(this: WindowsPtyAgent): Promise<number[]> {
-    return Promise.resolve([this._innerPid]);
+    return Promise.resolve(this._exitCode === undefined ? [this._innerPid] : []);
   };
 }

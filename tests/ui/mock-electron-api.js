@@ -2428,6 +2428,17 @@
       spawnTransient: async function (input) {
         var id = crypto.randomUUID();
         var branch = input.branch || 'main';
+        // Mirrors main's allocation (startCommandTerminal): a requested slot is
+        // honored, and a start that names none takes the project's lowest free one.
+        var slot = input.slot || null;
+        if (!slot) {
+          var usedSlots = sessions
+            .filter(function (existing) { return existing.transient && existing.projectId === input.projectId && existing.status !== 'exited'; })
+            .map(function (existing) { return existing.commandTerminalSlot; });
+          for (var slotNumber = 1; slotNumber <= 4 && !slot; slotNumber += 1) {
+            if (usedSlots.indexOf('slot-' + slotNumber) === -1) slot = 'slot-' + slotNumber;
+          }
+        }
         var session = {
           id: id,
           taskId: id,
@@ -2444,30 +2455,19 @@
           // the renderer re-pairs a surviving PTY to its window by that slot after
           // a reload. Omitting them here would let a UI test pass against a row
           // shape production never produces.
-          commandTerminalSlot: input.slot || null,
+          commandTerminalSlot: slot,
           commandTerminalBranch: branch,
           commandTerminalLabel: null,
           isolatedSwimlaneId: null,
           agentSessionId: null,
         };
         sessions.push(session);
-        return { session: session, branch: branch };
-      },
-      setTransientLabel: async function (sessionId, label) {
-        // Mirrors main: retained on the session row (first write wins) so a
-        // recovered terminal keeps its derived name. Trims and rejects a blank
-        // for the same reason main does - the store already trims before it
-        // calls, so a mock without this guard only diverges for a test that
-        // drives the API directly, which is exactly when the divergence lies.
-        var session = sessions.find(function (session) { return session.id === sessionId; });
-        var trimmed = (label || '').trim();
-        if (trimmed && session && session.transient && !session.commandTerminalLabel) {
-          session.commandTerminalLabel = trimmed;
-        }
+        return { session: session, slot: slot, branch: branch };
       },
       setTransientBranch: async function (sessionId, branch) {
         // Mirrors main: the renderer re-derives the branch from live HEAD and
-        // main records the newest reading (LAST write wins, unlike the label).
+        // main records the newest reading (LAST write wins; main names a
+        // terminal itself, first write wins).
         // Call log for assertions: window.__mockSetTransientBranchCalls.
         if (typeof window !== 'undefined') {
           window.__mockSetTransientBranchCalls = window.__mockSetTransientBranchCalls || [];
@@ -2481,7 +2481,13 @@
       },
       killTransient: async function (sessionId) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
-        if (index !== -1) sessions.splice(index, 1);
+        if (index === -1) return;
+        var removed = sessions.splice(index, 1)[0];
+        // Mirrors main's endCommandTerminal, whose remove() announces the
+        // removal, so a spec sees the push a desktop Stop really produces.
+        if (typeof window !== 'undefined' && window.__mockFireRemoved) {
+          window.__mockFireRemoved(sessionId, removed, removed.projectId);
+        }
       },
       // Call log for test assertions. Each entry is the string[] of session IDs
       // passed to setFocused. Reset between tests via:
@@ -4204,6 +4210,7 @@
         'read-stream', 'read-board', 'read-diff', 'send-user-message', 'move-task',
         'answer-permission-prompt', 'interactive-terminal', 'board-tool-read',
         'board-tool-write', 'register-push', 'start-session', 'pause-session',
+        'command-terminal',
       ];
 
       if (typeof window !== 'undefined') {

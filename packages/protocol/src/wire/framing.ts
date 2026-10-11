@@ -42,6 +42,24 @@ export const UNSUPPORTED_VERB_ERROR_CODE: CapabilityErrorCode = 'unsupported-ver
 /** The `code` a desktop puts on its refusal of a response that would not fit the frame caps above. */
 export const RESPONSE_TOO_LARGE_ERROR_CODE: CapabilityErrorCode = 'response-too-large';
 
+/** The `code` on a refusal that named a project this desktop does not have. */
+export const UNKNOWN_PROJECT_ERROR_CODE: CapabilityErrorCode = 'unknown-project';
+
+/** The `code` on a refusal that named a session id that is not live. */
+export const UNKNOWN_SESSION_ERROR_CODE: CapabilityErrorCode = 'unknown-session';
+
+/** The `code` on a `command-terminal` start refused at the per-project cap. */
+export const COMMAND_TERMINAL_LIMIT_ERROR_CODE: CapabilityErrorCode = 'command-terminal-limit';
+
+/** The `code` on a `command-terminal` stop that named a session which is not a Command Terminal. */
+export const NOT_COMMAND_TERMINAL_ERROR_CODE: CapabilityErrorCode = 'not-command-terminal';
+
+/** The `code` on a start refused because the project's agent CLI is not installed. */
+export const AGENT_UNAVAILABLE_ERROR_CODE: CapabilityErrorCode = 'agent-unavailable';
+
+/** The `code` on a `command-terminal` start that failed for any other reason. */
+export const COMMAND_TERMINAL_START_FAILED_ERROR_CODE: CapabilityErrorCode = 'command-terminal-start-failed';
+
 const UNSUPPORTED_VERB_ERROR_NAME = 'UnsupportedVerbError';
 
 /**
@@ -158,7 +176,8 @@ export function decodeMessage(bytes: Uint8Array): BridgeMessage {
 /**
  * Per-kind event validation. Each kind has a different required key set
  * (transcript/activity/terminal are session-scoped, board is project-scoped
- * with an optional task, diff is task-scoped) - there is no single field
+ * with an optional task, diff is task-scoped or, for a project-folder diff,
+ * project-scoped) - there is no single field
  * (e.g. a universal "taskId") every event kind carries, so this cannot be a
  * single shared check.
  */
@@ -181,7 +200,11 @@ function validateEvent(event: Record<string, unknown>): BridgeEvent {
       return event as unknown as BridgeEvent;
     }
     case 'diff': {
-      if (typeof event.taskId !== 'string') throw new Error('"diff" event is missing "taskId"');
+      if (event.taskId !== undefined && typeof event.taskId !== 'string') throw new Error('"diff" event has a non-string "taskId"');
+      if (event.projectId !== undefined && typeof event.projectId !== 'string') throw new Error('"diff" event has a non-string "projectId"');
+      if ((event.taskId === undefined) === (event.projectId === undefined)) {
+        throw new Error('"diff" event must carry exactly one of "taskId" and "projectId"');
+      }
       return event as unknown as BridgeEvent;
     }
     default:
