@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { promises as fsPromises } from 'node:fs';
+import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
 
@@ -41,6 +42,7 @@ import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
 import type { HostExecRequest, HostExecResult, PtyHostEvent, SeedFrameResult } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
+import { EventType } from '../../shared/types';
 import type {
   PermissionMode,
   Session,
@@ -75,6 +77,20 @@ const SUSPEND_SCROLLBACK_SCAN_TIMEOUT_MS = 2_000;
 /** How long a teardown waits for a spawn it cancelled to settle, matching
  *  awaitExit's own safety timeout for a PTY that never reports its exit. */
 const SPAWN_SETTLE_TIMEOUT_MS = 10_000;
+
+/** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
+function commandTerminalSessionDirectory(session: ManagedSession): string {
+  return path.join(session.cwd, '.kangentic', 'sessions', session.taskId);
+}
+
+/** Best-effort: the directory only holds the bridges' status and event files. */
+async function removeCommandTerminalDirectory(sessionDirectory: string): Promise<void> {
+  try {
+    await fsPromises.rm(sessionDirectory, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup
+  }
+}
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
 interface InFlightSpawn {
@@ -438,7 +454,10 @@ export class SessionManager extends EventEmitter {
       // only new information is which reason to draw.
       onReasonChange: (sessionId, activity, reason) =>
         this.emit('activity-reason', sessionId, activity, reason),
-      onEvent: (sessionId, event) => this.emit('event', sessionId, event),
+      onEvent: (sessionId, event) => {
+        this.noteCommandTerminalAgentEvent(sessionId, event);
+        this.emit('event', sessionId, event);
+      },
       onIdleTimeout: (sessionId) => {
         const session = this.registry.get(sessionId);
         if (session) this.emit('idle-timeout', sessionId, session.taskId, this.telemetry.idleTimeoutMinutes);
@@ -1450,6 +1469,7 @@ export class SessionManager extends EventEmitter {
         const inFlight = this.spawnsInFlight.get(sessionId);
         if (inFlight) inFlight.abandonedPtyExit = ptyExited;
       },
+      onPtyExited: (sessionId) => this.endCommandTerminalAfterPtyExit(sessionId),
     });
   }
 
@@ -1970,6 +1990,56 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * End a Command Terminal for good: the desktop's Stop, a phone's
+   * `command-terminal` stop, and the agent-absence sweep finding its agent gone
+   * (C2) all come through here. Refuses a task session, which this path must
+   * never tear down.
+   *
+   * kill, capture the exit, THEN remove: awaitExit resolves at once for a row
+   * that is gone, and a young session's kill waits out its exit-sequence grace
+   * (see kill()). The call returns now, so a window closes at once; only the
+   * session directory's delete waits for the shell, because deleting it under a
+   * still-exiting Claude made its SessionEnd hook write into a missing
+   * directory. `remove()` emits `session-removed`, which is how the renderer
+   * closes the terminal's window and a subscribed phone gets `session-ended`.
+   *
+   * `immediate` skips the exit-sequence grace for a caller that knows the agent
+   * is already gone (the sweep), where the sequence would only reach a shell.
+   */
+  endCommandTerminal(sessionId: string, options?: { immediate?: boolean }): 'ended' | 'not-found' | 'not-command-terminal' {
+    const session = this.registry.get(sessionId);
+    if (!session) return 'not-found';
+    if (!session.transient) return 'not-command-terminal';
+    const sessionDirectory = commandTerminalSessionDirectory(session);
+    this.kill(sessionId, options);
+    const sessionExited = this.awaitExit(sessionId);
+    this.remove(sessionId);
+    void sessionExited.then(() => removeCommandTerminalDirectory(sessionDirectory));
+    return 'ended';
+  }
+
+  /**
+   * A Command Terminal whose PTY exited on its own (a crash, a shell that
+   * ended, the pty host lost) ends too: its row and directory go, its window
+   * closes, and its slot frees, so a transient row exists exactly while its
+   * PTY runs. Called by the spawn flow AFTER the PTY's 'exit' has been
+   * emitted, so every exit listener (the crash push, a phone's
+   * `session-ended`, the renderer's status patch) has already read the row.
+   *
+   * Skipped during quit: `killAll()` exits every terminal, and its bounded
+   * drain (synchronous-shutdown.md) is no place for removals and broadcasts.
+   * A row a Stop already removed is not found and costs nothing.
+   */
+  private endCommandTerminalAfterPtyExit(sessionId: string): void {
+    if (isShuttingDown()) return;
+    const session = this.registry.get(sessionId);
+    if (!session?.transient) return;
+    const sessionDirectory = commandTerminalSessionDirectory(session);
+    this.remove(sessionId);
+    void removeCommandTerminalDirectory(sessionDirectory);
+  }
+
+  /**
    * Kill what the given tasks left running: every process carrying a task's
    * `KANGENTIC_TASK_ID` tag and working inside that task's project or worktree
    * (see `process-tag/reap-plan.ts` for what is spared: shared processes,
@@ -2122,10 +2192,14 @@ export class SessionManager extends EventEmitter {
    * this PTY?"); every session-shaped arm lives here. Each one excludes a case
    * where "no agent process under the shell" is NOT a fault:
    *
-   * - `transient`: a Command Terminal IS a bare shell. It has no agent by
-   *   design, and it is registered with the watcher exactly like a task agent,
-   *   so without this arm the sweep would retire every one on open. This is the
-   *   highest-cost false positive in the design.
+   * A Command Terminal IS judged. It runs the project's agent CLI typed into its
+   *   shell exactly as a task session does (`startCommandTerminal`), so "no agent
+   *   under the shell" means its agent exited and only a bare shell is left. Its
+   *   retirement ENDS the terminal (`endCommandTerminal`) rather than keeping an
+   *   exited row: a phone must never be left typing into that shell. A transient
+   *   session whose agent signalled its own end (`agentEndSignaledAt`) skips the
+   *   spawn grace below, so a `/exit` inside the first 30 s still ends promptly.
+   *
    * - no `agentParser`: nothing was ever meant to run an agent CLI under this
    *   PTY (a `run_script` session, a bare-shell spawn).
    * - a WSL shell: the premise "the agent is a Win32 descendant of the PTY
@@ -2143,7 +2217,6 @@ export class SessionManager extends EventEmitter {
   private isAgentAbsenceCandidate(sessionId: string): boolean {
     const session = this.registry.get(sessionId);
     if (!session) return false;
-    if (session.transient) return false;
     if (!session.agentParser) return false;
     // A WSL session's PTY root is `wsl.exe`, and the agent is NOT a Win32
     // descendant of it either way: a distro-native CLI is a Linux process in
@@ -2159,9 +2232,38 @@ export class SessionManager extends EventEmitter {
     const shellSpec = session.shell.toLowerCase();
     if (shellSpec.startsWith('wsl ') || shellSpec.startsWith('wsl.exe ')) return false;
     if (session.status !== 'running' || session.pty === null) return false;
+    // The agent said it is ending, so it demonstrably ran: the grace, which
+    // exists for an agent that has not started yet, no longer applies.
+    if (session.transient && typeof session.agentEndSignaledAt === 'number') return true;
     const startedAtMs = Date.parse(session.startedAt);
     if (!Number.isFinite(startedAtMs)) return false;
     return Date.now() - startedAtMs >= AGENT_SPAWN_GRACE_MS;
+  }
+
+  /**
+   * A Command Terminal's agent hooks report its own lifecycle. A SessionEnd
+   * (a `/exit`) asks the agent-absence sweep to look now rather than at its
+   * next 60 s turn, so the terminal ends within seconds of the agent leaving
+   * and no bare shell lingers. A SessionStart clears the stamp: `/clear` sends
+   * both, with the agent still running, and the sweep's process-tree check is
+   * what keeps such a terminal alive either way.
+   *
+   * Task sessions are untouched: the sweep's slower cadence is fine for a row
+   * that only needs its status corrected.
+   */
+  private noteCommandTerminalAgentEvent(sessionId: string, event: SessionEvent): void {
+    if (event.type !== EventType.SessionEnd && event.type !== EventType.SessionStart) return;
+    const session = this.registry.get(sessionId);
+    if (!session?.transient) return;
+    if (event.type === EventType.SessionStart) {
+      session.agentEndSignaledAt = null;
+      return;
+    }
+    // The synthetic SessionEnd a kill emits finds no live PTY and is no
+    // candidate; only a running terminal's own end is worth a look.
+    if (session.status !== 'running' || session.pty === null) return;
+    session.agentEndSignaledAt = Date.now();
+    this.telemetry.requestAgentAbsenceCheck(sessionId);
   }
 
   /**
@@ -2200,6 +2302,15 @@ export class SessionManager extends EventEmitter {
     // raises the notice; the ring survives the kill, so ordering here is for
     // clarity rather than correctness.
     this.emit('agent-absent', sessionId, toSession(session));
+    // A Command Terminal ENDS when its agent exits (desktop and phone alike):
+    // its window closes as it does on Stop, and no shell is left for a phone's
+    // `interactive-terminal` to type into. It has no record to resume and no
+    // task to report on, so the exit-code override and the kept `exited` row
+    // below do not apply.
+    if (session.transient) {
+      this.endCommandTerminal(sessionId, { immediate: true });
+      return;
+    }
     session.overrideExitCode = 0;
     // Immediate: the agent is already gone, so the exit-sequence grace would
     // only type `/exit` into a bare shell, and the `exited` stamp below would
@@ -2668,21 +2779,22 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Record a Command Terminal's auto-derived name so it outlives the renderer.
+   * Record a Command Terminal's auto-derived name (`CommandTerminalNamer`).
    *
-   * Main is a passive holder here: the renderer derives the name and has already
-   * applied it locally, and nothing in main reads it back except `toSession`,
-   * which hands it to the next renderer that has to rebuild the pairing map.
-   * First write wins, matching the renderer's own first-prompt-wins rule, so a
-   * later re-derivation cannot silently rename a terminal the user already knows
-   * by name. Unknown or non-transient sessions are ignored.
+   * First write wins, so a later re-derivation cannot silently rename a
+   * terminal the user already knows by name. An applied name is announced on
+   * 'session-changed', which carries it to the renderer's replica (the window
+   * title reads it there), the Agent Monitor, and a phone's board feed.
+   * Returns whether it applied; unknown or non-transient sessions are ignored.
    */
-  setCommandTerminalLabel(sessionId: string, label: string): void {
+  setCommandTerminalLabel(sessionId: string, label: string): boolean {
     const session = this.registry.get(sessionId);
-    if (!session?.transient || session.commandTerminalLabel) return;
+    if (!session?.transient || session.commandTerminalLabel) return false;
     const trimmed = label.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     session.commandTerminalLabel = trimmed;
+    this.emit('session-changed', sessionId, toSession(session));
+    return true;
   }
 
   /**

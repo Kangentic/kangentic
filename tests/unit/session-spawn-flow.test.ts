@@ -341,11 +341,11 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
     expect(spawnEnvAt(1).KANGENTIC_TASK_ID).toBe('task-tagged');
   });
 
-  it('never tags a Command Terminal: it is the user\'s own shell, not task work', async () => {
+  it('tags a Command Terminal with its own made-up task id, so its leftovers can be reaped when it ends', async () => {
     const context = makeContext();
-    await performSpawn(makeInput({ taskId: 'transient-slot-1', transient: true }), context);
+    await performSpawn(makeInput({ taskId: 'transient-task-uuid', transient: true }), context);
 
-    expect('KANGENTIC_TASK_ID' in spawnEnvAt(0)).toBe(false);
+    expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('transient-task-uuid');
   });
 
   it('shares the tag into the distro through WSLENV on a WSL shell', async () => {
@@ -1493,6 +1493,42 @@ describe('performSpawn - onExit fallback ordering: branch-pushed before pr-candi
 
     expect(emitMock.mock.calls[branchPushedIndex]).toEqual(['branch-pushed', input.id, 'feature/pending-branch']);
     expect(emitMock.mock.calls[prCandidateIndex]).toEqual(['pr-candidate', input.id, 'scrollback bytes']);
+  });
+});
+
+describe('performSpawn - onPtyExited runs after every exit listener', () => {
+  // SessionManager ends a Command Terminal in onPtyExited (its row and
+  // directory go). It must run AFTER the 'exit' emit: the crash push, a
+  // phone's session-ended and the renderer's status patch all read the row
+  // while handling that exit.
+  //
+  // Red-green: calling onPtyExited before `context.emit('exit', ...)` fails the
+  // order assertion; dropping the call fails the call assertion.
+
+  beforeEach(() => {
+    ptyExitHarness.onExitCallback = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls onPtyExited with the session id, after the exit has been announced', async () => {
+    const context = makeContext();
+    const order: string[] = [];
+    (context.emit as unknown as ReturnType<typeof vi.fn>).mockImplementation((event: string) => { order.push(`emit:${event}`); });
+    const onPtyExited = vi.fn((sessionId: string) => { order.push(`onPtyExited:${sessionId}`); });
+    (context as { onPtyExited?: (sessionId: string) => void }).onPtyExited = onPtyExited;
+
+    const input = makeInput({ transient: true });
+    await performSpawn(input, context);
+    order.length = 0;
+
+    ptyExitHarness.onExitCallback!({ exitCode: 1 });
+
+    expect(onPtyExited).toHaveBeenCalledWith(input.id);
+    expect(order.indexOf('emit:exit')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(`onPtyExited:${input.id}`)).toBeGreaterThan(order.indexOf('emit:exit'));
   });
 });
 

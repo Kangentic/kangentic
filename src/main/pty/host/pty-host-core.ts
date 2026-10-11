@@ -25,6 +25,8 @@ import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { HostProcessTable } from './host-process-table';
+import { endDeadRootOrphans, type DeadRootOrphanApi } from './dead-root-orphans';
+import { writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary, runHostExec } from './host-exec';
 import { HostCliProcesses } from './host-cli-processes';
@@ -85,6 +87,21 @@ export interface PtyHostCoreDeps {
   spawnChild?: ConstructorParameters<typeof HostCliProcesses>[1];
   /** The task-tag reader; the platform's own unless a test swaps it. */
   createTaggedProcessReader?: () => TaggedProcessReader | null;
+  /**
+   * Ends what a session's shell left running when it exited on its own
+   * (`dead-root-orphans.ts`). Only the utility host passes it: the in-process
+   * core runs the unit tests' fake PTYs, whose pids name real processes.
+   */
+  loadOrphanApi?: () => Promise<DeadRootOrphanApi>;
+  /** Defaults to `process.platform`; the orphan cleanup runs only on win32. */
+  platform?: NodeJS.Platform;
+  /** Defaults to `Date.now`. */
+  now?: () => number;
+}
+
+/** A root whose children are Linux processes Win32 cannot see. */
+function isWslRoot(file: string): boolean {
+  return /(^|[\\/])wsl(\.exe)?$/i.test(file.trim());
 }
 
 interface HostSession {
@@ -111,6 +128,14 @@ interface PtyEntry {
    *  corrupts its heap on Windows. */
   killed: boolean;
   disposables: nodePty.IDisposable[];
+  /** The shell's pid, kept after its exit for the orphan cleanup. */
+  rootPid: number;
+  /** Wall clock just before the spawn: a child of this shell was created after it. */
+  spawnedAtMs: number;
+  /** A WSL root: the orphan cleanup has nothing to look at. */
+  wslRoot: boolean;
+  /** Written to an agent the shell left running, so it exits on its own. */
+  exitSequence: string[];
 }
 
 interface CoalesceState {
@@ -145,9 +170,13 @@ export class PtyHostCore {
   private readonly transcriptWriter: TranscriptWriter;
   private readonly backpressure: BackpressureController;
   private readonly spawnPty: typeof nodePty.spawn;
+  private readonly now: () => number;
+  /** Set by `shutdown`: a quit's exits are main's kills, and a cleanup in flight stops waiting. */
+  private shuttingDown = false;
 
   constructor(private readonly deps: PtyHostCoreDeps) {
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
+    this.now = deps.now ?? Date.now;
     this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild);
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data, endOffset) => {
@@ -197,6 +226,7 @@ export class PtyHostCore {
     const previousGeometry = carrySource ? this.bufferManager.getCarryoverGeometry(carrySource) : null;
 
     let pty: nodePty.IPty;
+    const spawnedAtMs = this.now();
     try {
       refuseOwnExecutable(params.file);
       pty = this.spawnPty(params.file, params.args, {
@@ -231,7 +261,18 @@ export class PtyHostCore {
       params.transient,
     );
 
-    const entry: PtyEntry = { ptyId: params.ptyId, sessionId: params.sessionId, pty, exited: false, killed: false, disposables: [] };
+    const entry: PtyEntry = {
+      ptyId: params.ptyId,
+      sessionId: params.sessionId,
+      pty,
+      exited: false,
+      killed: false,
+      disposables: [],
+      rootPid: pty.pid,
+      spawnedAtMs,
+      wslRoot: isWslRoot(params.file),
+      exitSequence: params.exitSequence ?? ['\x03'],
+    };
     this.ptys.set(params.ptyId, entry);
     entry.disposables.push(pty.onData((data: string) => timeSyncWork('pty:data', () => this.onPtyData(entry, data))));
     entry.disposables.push(pty.onExit(({ exitCode }: { exitCode: number }) => this.onPtyExit(entry, exitCode)));
@@ -440,6 +481,7 @@ export class PtyHostCore {
         // Main's killAll has already posted every kill, a young session's
         // after its exit-sequence grace (pty-teardown-grace), so killing here
         // would cut that grace short. Nothing writes the transcripts after this.
+        this.shuttingDown = true;
         this.transcriptWriter.finalizeAll();
         this.disposeProcessTable();
         // Raw PTYs are probes nobody waits on; end them now so the exit wait
@@ -711,6 +753,57 @@ export class PtyHostCore {
     // exit handler did.
     this.transcriptWriter.finalize(entry.sessionId);
     this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode });
+    this.endOrphansOf(entry);
+  }
+
+  /**
+   * The shell exited on its own, so whatever it was running (the agent) is
+   * still attached to a console nobody will close (`dead-root-orphans.ts`).
+   * The agent is asked to exit through that console first and terminated only
+   * if it is still running after the grace. A kill we sent closed the console
+   * itself, and a quit's exits are main's kills, so neither is looked at.
+   */
+  private endOrphansOf(entry: PtyEntry): void {
+    const loadOrphanApi = this.deps.loadOrphanApi;
+    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return;
+    if (entry.killed || this.shuttingDown || entry.wslRoot || entry.rootPid <= 0) return;
+    const exitedAtMs = this.now();
+    void this.runOrphanCleanup(entry, exitedAtMs, loadOrphanApi);
+  }
+
+  private async runOrphanCleanup(entry: PtyEntry, exitedAtMs: number, loadOrphanApi: () => Promise<DeadRootOrphanApi>): Promise<void> {
+    const session = entry.sessionId.slice(0, 8);
+    try {
+      const result = await endDeadRootOrphans(
+        await loadOrphanApi(),
+        {
+          rootPid: entry.rootPid,
+          spawnedAtMs: entry.spawnedAtMs,
+          exitedAtMs,
+          protectedPids: new Set([process.pid, process.ppid, ...this.liveRootPids()]),
+        },
+        {
+          askToExit: () => writeToExitedConsole(entry.pty, entry.exitSequence),
+          sleep: (ms) => new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, ms);
+            timer.unref?.();
+          }),
+          now: this.now,
+          isStopping: () => this.shuttingDown,
+        },
+      );
+      if (result.found.length === 0) return;
+      console.log(
+        `[pty-host] session ${session}'s shell exited on its own, leaving ${result.found.join(', ')} running;`
+        + ` ${result.asked ? 'asked it to exit' : 'could not ask it to exit'}; exited by themselves: ${result.exitedByThemselves.length};`
+        + ` terminated after the grace: ${result.terminated.length}${result.terminated.length > 0 ? ` (${result.terminated.join(', ')})` : ''}`,
+      );
+      if (result.notTerminated > 0) {
+        console.warn(`[pty-host] session ${session}: ${result.notTerminated} process(es) its exited shell left running could not be terminated`);
+      }
+    } catch (error) {
+      console.warn(`[pty-host] could not end what session ${session}'s exited shell left running:`, error instanceof Error ? error.message : String(error));
+    }
   }
 
   /**

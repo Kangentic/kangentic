@@ -193,8 +193,20 @@ export interface TerminalResizeEvent {
   payload: TerminalDimensionsWire;
 }
 
+/**
+ * `command-terminals-changed` (protocol 0.20.0): one of the project's Command
+ * Terminals started, ended, or was named. `ids` holds the terminal's session id
+ * and the envelope carries no `taskId`, since a Command Terminal belongs to no
+ * task. The phone re-reads `commandTerminals` from the next snapshot. A change
+ * of activity does not fire it: the terminal's state and reason ride its own
+ * `read-stream` activity events, as a task agent's do, and the snapshot's
+ * `CommandTerminalWire.activity` covers the first paint.
+ *
+ * The union is closed, so a phone built before a kind existed drops that event
+ * (`isBridgeEvent` returns false) and keeps the rest of its feed.
+ */
 export interface BoardEventPayload {
-  change: 'task-created' | 'task-updated' | 'task-deleted' | 'swimlane-updated' | 'backlog-changed';
+  change: 'task-created' | 'task-updated' | 'task-deleted' | 'swimlane-updated' | 'backlog-changed' | 'command-terminals-changed';
   ids: string[];
 }
 
@@ -205,15 +217,28 @@ export interface BoardEvent {
   payload: BoardEventPayload;
 }
 
+/**
+ * "Re-read the diff." A task's diff names its `taskId`. A project-folder diff
+ * (a `read-diff` request with no `taskId`, protocol 0.20.0, for a Command
+ * Terminal's Changes tab) names its `projectId` instead. Exactly one is set.
+ */
 export interface DiffEvent {
   kind: 'diff';
-  taskId: string;
+  taskId?: string;
+  projectId?: string;
   payload: null;
 }
 
 export type BridgeEvent = TranscriptEvent | ActivityEvent | TerminalEvent | TerminalResizeEvent | BoardEvent | DiffEvent;
 
-const BOARD_CHANGES: readonly string[] = ['task-created', 'task-updated', 'task-deleted', 'swimlane-updated', 'backlog-changed'];
+const BOARD_CHANGES: readonly string[] = [
+  'task-created',
+  'task-updated',
+  'task-deleted',
+  'swimlane-updated',
+  'backlog-changed',
+  'command-terminals-changed',
+];
 
 /**
  * Narrows an activity event's payload to its typed union. Throws on a
@@ -319,8 +344,14 @@ export function isBridgeEvent(value: unknown): value is BridgeEvent {
       if (typeof change !== 'string' || !BOARD_CHANGES.includes(change)) return false;
       return Array.isArray(value.payload.ids) && value.payload.ids.every((id) => typeof id === 'string');
     }
-    case 'diff':
-      return typeof value.taskId === 'string' && value.payload === null;
+    case 'diff': {
+      if (value.payload !== null) return false;
+      const hasTaskId = typeof value.taskId === 'string';
+      const hasProjectId = typeof value.projectId === 'string';
+      if (value.taskId !== undefined && !hasTaskId) return false;
+      if (value.projectId !== undefined && !hasProjectId) return false;
+      return hasTaskId !== hasProjectId;
+    }
     default:
       return false;
   }

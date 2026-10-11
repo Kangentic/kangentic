@@ -43,7 +43,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { ICON_REGISTRY } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
-import { commandTerminalTitle } from '../../../shared/command-terminal-name';
+import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
@@ -248,15 +248,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   );
 
   const projectId = useProjectStore((s) => s.currentProject?.id ?? null);
-  const transientLabel = useSessionStore((state) =>
-    projectId ? state.transientSessions[transientKey(projectId, slot)]?.label ?? null : null,
-  );
-  // The auto-derived label (summarized from the first prompt) wins when it
-  // exists; until then the slot number is what makes two terminals tellable
-  // apart, since every other fact in this header (agent, model, branch, cwd) is
-  // identical across a project's terminals by construction. `commandTerminalTitle`
-  // is shared with the Agent Monitor so both surfaces print the same name.
-  const windowTitle = transientLabel ?? commandTerminalTitle(slot);
+  // Main derives the terminal's name from its first prompt and stamps it on the
+  // session row, so it is read from the replica, not from window state.
+  const transientLabel = useSessionStore((state) => {
+    if (!sessionId) return null;
+    return state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null;
+  });
+  // The derived name wins when it exists; until then the slot number is what
+  // makes two terminals tellable apart, since every other fact in this header
+  // (agent, model, branch, cwd) is identical across a project's terminals by
+  // construction. `commandTerminalDisplayName` is shared with the Agent Monitor,
+  // a phone's snapshot and the push alert, so every surface prints the same name.
+  const windowTitle = commandTerminalDisplayName(transientLabel, slot);
   // The branch is read from the pairing map, never held here: every path that
   // used to set it locally (spawn, adopt, a picker switch) already writes the
   // map entry, and the layer's HEAD tracker (`useTrackHeadBranch`) corrects

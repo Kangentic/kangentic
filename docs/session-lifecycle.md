@@ -381,12 +381,68 @@ capability and no agent-name branching. Two things make it correct rather than m
   past a 30s spawn grace; and the session being a `SessionManager`-approved candidate.
 
 `SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
-session knowledge. It requires a `running`, non-transient session with a live PTY, an agent adapter,
-a non-WSL shell, and an elapsed spawn grace. The **transient exclusion is load-bearing**: a Command Terminal is a
-bare shell BY DESIGN and is registered with the watcher like any task agent, so without it the sweep
-would retire every Command Terminal the moment it opened. A slow-STARTING agent is not excluded by
-the grace and does not need to be - its process exists, it just has not drawn yet, which is exactly
-why the process tree is a safer signal than a first-output timeout.
+session knowledge. It requires a `running` session with a live PTY, an agent adapter, a non-WSL
+shell, and an elapsed spawn grace. A slow-STARTING agent is not excluded by the grace and does not
+need to be - its process exists, it just has not drawn yet, which is exactly why the process tree is
+a safer signal than a first-output timeout.
+
+**Command Terminals are judged too, and ended rather than kept.** A Command Terminal runs the
+project's agent CLI in a shell at the project root, the same shape as a task session, so the tree
+signal reads it the same way. Its row used to be excluded, which left a bare shell at the project
+root after `/exit` for anyone holding the session's input, a paired phone included. Now
+`retireAgentlessSession` emits `agent-absent` for it and then calls
+`SessionManager.endCommandTerminal(id, { immediate: true })`: the PTY is killed, the row is removed
+(a `session-removed` push, which closes the desktop window), and the session directory is deleted
+after the exit. A terminal has no task to resume into, so there is nothing to keep.
+
+The sweep's cadence alone would leave the shell for 1 to 2.5 minutes, so a Command Terminal has a
+fast path. The agent's SessionEnd hook (`onEvent` in `session-manager.ts`) stamps
+`agentEndSignaledAt` on the row and calls `requestAgentAbsenceCheck`, which makes the watcher
+enumerate for that session on its next base-cadence cycles regardless of the sweep interval, and
+the stamp waives the 30s spawn grace. The process tree still decides and the two-observation
+confirm still holds, so the end lands about 4s after `/exit`. `/clear` fires SessionEnd too, but its
+process stays alive, so the sweep sees a descendant and keeps the terminal; the following
+SessionStart clears the stamp. An agent with no SessionEnd hook falls back to the plain sweep.
+
+A Command Terminal whose PTY exits on its own (a crash, or the shell killed) also ends: after the
+`exit` emit, the spawn flow's `onPtyExited` hook removes the row and deletes the directory, so a
+transient registry row exists exactly while its PTY runs. That removal is skipped while
+SessionManager is shutting down, which keeps it out of the bounded quit drain.
+
+The inverse case, a shell that exits while its agent keeps running, is the pty host's to clean up,
+for task sessions and Command Terminals alike. On Windows node-pty never closes the pseudoconsole
+after a natural exit (microsoft/node-pty#965), so nothing ended the agent: measured in a preview, a
+killed shell's `claude.exe` was still running a minute later.
+
+How Claude Code itself takes each way of ending it, measured on 2.1.294 (Windows 11 build 26200,
+node-pty 1.1.0, a mature idle session, a SessionEnd hook recording when it ran):
+
+- `/exit` written while the shell lives: hook at 191 ms (`prompt_input_exit`), exit at 622 ms,
+  three exit records added to the transcript, every line whole.
+- The console closed (`kill()` on a mature session): hook at 131 ms (`other`), exit at 585 ms,
+  transcript whole.
+- `suspend()` (the exit sequence, then the close at 1500 ms): hook at 169 ms
+  (`prompt_input_exit`), Claude gone before the close.
+- Shell dead, `/exit` written to the dead shell's console input: hook ran (`prompt_input_exit`),
+  exit about 600 ms after the write, three exit records, transcript whole.
+- Shell dead, then TerminateProcess: no hook and no exit records; the transcript up to the last
+  finished message intact.
+- Shell dead, then `IPty.write()`, `kill()`, or terminating the console host: Claude kept running.
+
+So the host asks first (`src/main/pty/host/dead-root-orphans.ts`): it writes the session's exit
+sequence into the dead shell's console, waits up to 10 s for the processes it found to exit, and
+terminates only what is left, each through a handle whose creation time is re-checked (see
+`.claude/rules/pty-teardown-grace.md` and `.claude/rules/task-process-tag.md`). What outlives the
+grace, a dev server the agent started included, is terminated, as a crashed pty host's tree stop
+does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits,
+which should end a foreground agent; that has not been observed on a real PTY here.
+
+The dead shell's `conhost.exe` stays until the pty host exits, one per PTY that exits on its own
+(about 1.5 MB private each). That is the same node-pty bug: its native exit path drops its record
+of the pseudoconsole without closing it, so a later `kill()` finds nothing to close. It needs the
+upstream fix, microsoft/node-pty#990. With that fix the console's close also sends a still-attached
+agent `CTRL_CLOSE_EVENT`, which Claude Code 2.1.294 handles gracefully (the console-close row
+above), so the host's ask and the close then work together rather than against each other.
 
 The **WSL exclusion covers a different failure than the others**: there the tree signal is
 UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32

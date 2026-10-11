@@ -23,6 +23,14 @@
  * session exactly as the desktop's Pause button does, without moving the task,
  * and keeps the conversation for a later `start-session` Resume. Gate it on
  * `BoardTaskWire.pausable`.
+ *
+ * `command-terminal` starts or stops a Command Terminal: an AGENT CLI the
+ * desktop launches at a project's root, the same session the desktop's
+ * Ctrl+Shift+P terminal runs. It is not a shell verb. The phone names no
+ * command, branch, model or effort, and the desktop ends the session when its
+ * agent exits, so no bare shell is left behind for `interactive-terminal` to
+ * reach. Stop accepts only a Command Terminal's session. Gate the phone's
+ * Terminals button on `ReadBoardSnapshotResponsePayload.commandTerminalsOffered`.
  */
 export const CAPABILITY_VERBS = [
   'read-stream',
@@ -37,6 +45,7 @@ export const CAPABILITY_VERBS = [
   'register-push',
   'start-session',
   'pause-session',
+  'command-terminal',
 ] as const;
 
 export type CapabilityVerb = (typeof CAPABILITY_VERBS)[number];

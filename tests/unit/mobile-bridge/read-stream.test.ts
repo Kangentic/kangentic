@@ -129,9 +129,11 @@ describe('handleReadStream', () => {
     __resetSpawnProgressForTest();
   });
 
-  it('subscribes to a live session with no owning project without opening a database', async () => {
-    // A Command Terminal session carries no project. The subscription used to
-    // open the database named '', which creates a stray `projects/.db` file.
+  it('subscribes to a session whose project cannot be resolved without opening a database', async () => {
+    // Every live session has a project (a Command Terminal's spawn stamps the
+    // one it runs in), so this is a row that went away mid-subscribe. The
+    // subscription used to open the database named '' then, which creates a
+    // stray `projects/.db` file.
     const { getProjectDb } = await import('../../../src/main/db/database');
     vi.mocked(getProjectDb).mockClear();
     sessionManager.getSessionProjectId.mockReturnValue(undefined as never);
@@ -1596,17 +1598,55 @@ describe('handleReadStream', () => {
     });
 
     it('a Command Terminal session never treats another session as its successor', async () => {
-      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: '', status: 'running', resuming: false, transient: true });
+      // The production shape: a real project and a made-up task id per terminal.
+      sessionManager.getSession.mockReturnValue({ id: 'sess-1', taskId: 'made-up-uuid-1', status: 'running', resuming: false, transient: true });
       const session = fakeSession();
       const context = { sessionManager } as unknown as IpcContext;
       const subscriptions = new SubscriptionRegistry();
       await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
 
       sessionManager.getSession.mockReturnValue(undefined);
-      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: '', status: 'running', resuming: false, transient: true });
+      sessionManager.emit('session-changed', 'sess-2', { id: 'sess-2', taskId: 'made-up-uuid-1', status: 'running', resuming: false, transient: true });
 
       expect(sentActivityPayloads(session)).toEqual([]);
       expect(subscriptions.has('stream:sess-1')).toBe(true);
+    });
+
+    describe('a Command Terminal\'s end reaches a subscribed phone, which backs out on it', () => {
+      const terminalRow = { id: 'sess-1', taskId: 'made-up-uuid-1', status: 'running', resuming: false, transient: true };
+
+      async function subscribeTerminal() {
+        sessionManager.getSession.mockReturnValue({ ...terminalRow });
+        const session = fakeSession();
+        const subscriptions = new SubscriptionRegistry();
+        const context = { sessionManager } as unknown as IpcContext;
+        await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, context, subscriptions);
+        return { session, subscriptions };
+      }
+
+      it('a Stop or its agent exiting (C2) removes the row: session-ended, intentional', async () => {
+        const { session, subscriptions } = await subscribeTerminal();
+
+        // endCommandTerminal: the removal is announced before the row goes,
+        // and the PTY's own exit arrives after it with nobody listening.
+        sessionManager.emit('session-removed', 'sess-1', { ...terminalRow });
+        sessionManager.getSession.mockReturnValue(undefined);
+        sessionManager.emit('exit', 'sess-1', 0, true);
+
+        expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: true }]);
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+        expectPhoneAcceptsEveryActivityEvent(session);
+      });
+
+      it('a crash ends the feed as unintentional, before main removes the row', async () => {
+        const { session, subscriptions } = await subscribeTerminal();
+
+        sessionManager.emit('exit', 'sess-1', 1, false);
+        sessionManager.emit('session-removed', 'sess-1', { ...terminalRow, status: 'exited' });
+
+        expect(sentActivityPayloads(session)).toEqual([{ type: 'session-ended', intentional: false }]);
+        expect(subscriptions.has('stream:sess-1')).toBe(false);
+      });
     });
 
     describe('with the feed\'s own row already gone from the registry', () => {

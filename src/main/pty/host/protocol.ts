@@ -48,6 +48,10 @@ export interface PtyHostSpawnParams {
   /** The agent's own session id is already known (caller-owned id), so the
    *  host need not scan the output for one. */
   agentSessionIdKnown: boolean;
+  /** The adapter's exit sequence (Claude: Ctrl+C then `/exit`), the one main's
+   *  kill and suspend write. The host writes it to an agent its shell left
+   *  running (`dead-root-orphans.ts`), so that agent exits on its own. */
+  exitSequence?: string[];
 }
 
 /** A thrown error, flattened for the wire. */

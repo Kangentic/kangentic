@@ -62,6 +62,11 @@ import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
+import { CommandTerminalNamer } from '../agent/shared/command-terminal-namer';
+import { CommandTerminalLeftoverReaper } from './helpers/command-terminal-leftovers';
+import { reapTaskLeftovers } from './helpers/task-cleanup';
+import { isShuttingDown } from '../shutdown-state';
+import { agentRegistry } from '../agent/agent-registry';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { getOpenProjectDb, getProjectDb } from '../db/database';
 import { TranscriptRepository } from '../db/repositories/transcript-repository';
@@ -265,6 +270,30 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     getStore: (projectId) => new ActivityIntervalStore(getProjectDb(projectId)),
   });
   activityIntervalRecorder.start();
+
+  // Command Terminals are named here, from the first prompt, so a terminal a
+  // phone started (or one in a project not open on the desktop) gets a name.
+  const commandTerminalNamer = new CommandTerminalNamer({
+    sessionManager,
+    getAdapter: (agentName) => agentRegistry.get(agentName),
+    readConfig: (projectRoot, agentName) => {
+      const config = requireContext().configManager.getEffectiveConfig(projectRoot);
+      return {
+        rateLimitPerHour: config.autoNameRateLimitPerHour ?? 60,
+        cliPathOverride: config.agent.cliPaths[agentName] ?? null,
+      };
+    },
+  });
+  commandTerminalNamer.start();
+
+  // What a Command Terminal's agent detached is reaped (and reported) once the
+  // terminal ends and any agent still exiting has finished.
+  const commandTerminalLeftovers = new CommandTerminalLeftoverReaper({
+    sessionManager,
+    reap: (projectPath, task) => reapTaskLeftovers(requireContext(), projectPath, [task]),
+    isShuttingDown,
+  });
+  commandTerminalLeftovers.start();
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({

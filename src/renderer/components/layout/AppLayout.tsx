@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -9,7 +9,13 @@ import { BacklogView } from '../backlog/BacklogView';
 import { BacklogDialogs } from '../backlog/BacklogDialogs';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { CommandTerminalLayer, MAX_COMMAND_TERMINALS, spawnAdditionalCommandTerminal } from '../command-bar/CommandTerminalLayer';
+import {
+  CommandTerminalLayer,
+  MAX_COMMAND_TERMINALS,
+  spawnAdditionalCommandTerminal,
+  useCloseCommandWindowOnRemoval,
+} from '../command-bar/CommandTerminalLayer';
+import { selectLiveCommandTerminalSlots } from '../../stores/session-store/transient-session-slice';
 import { commandWindowManager } from '../../window-manager';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
@@ -146,10 +152,23 @@ export function AppLayout() {
   // Destructured for the callback's dep list: `open`/`close` are stable, `isOpen` changes;
   // depending on the fresh `commandBar` object would rebuild the callback every render.
   const { isOpen: commandBarIsOpen, open: openCommandBar, close: closeCommandBar } = commandBar;
-  // Live count of Command Terminal windows (the store is a module singleton that
-  // outlives the layer's mount), so the title-bar "New terminal" button disables
-  // at the cap without needing the layer mounted.
-  const commandWindowCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
+  // Slots in use for the current project: the Command Terminal windows (the store
+  // is a module singleton that outlives the layer's mount) plus the project's live
+  // terminals, which include any a phone started with the layer closed. The
+  // title-bar "New terminal" button disables at the cap main enforces. Each read
+  // is one joined string, so `Object.is` re-renders this root only on a real change.
+  const commandWindowSlotKey = commandWindowManager.store((state) =>
+    Object.values(state.windows).map((managedWindow) => managedWindow.anchor).sort().join('|'));
+  const liveCommandTerminalSlotKey = useSessionStore((s) =>
+    [...selectLiveCommandTerminalSlots(s.sessions, currentProjectId)].sort().join('|'));
+  const commandTerminalSlotsInUse = useMemo(() => {
+    const slots = new Set<string>();
+    for (const slot of `${commandWindowSlotKey}|${liveCommandTerminalSlotKey}`.split('|')) if (slot) slots.add(slot);
+    return slots.size;
+  }, [commandWindowSlotKey, liveCommandTerminalSlotKey]);
+  // Closes a terminal's window when main ends it (a phone's Stop, the agent
+  // exiting), mounted here so it runs while the layer is hidden.
+  useCloseCommandWindowOnRemoval();
   // The title-bar terminal button is a plain open/close toggle, so there is always
   // a discoverable one-click way to hide the layer even when a window is maximized
   // over the backdrop. "Spawn another terminal" is a separate, adjacent title-bar
@@ -425,7 +444,7 @@ export function AppLayout() {
         onOpenSearch={searchPalette.open}
         commandBarOpen={commandBar.isOpen}
         onSpawnAdditionalTerminal={spawnAdditionalCommandTerminal}
-        canSpawnMoreTerminals={commandWindowCount < MAX_COMMAND_TERMINALS}
+        canSpawnMoreTerminals={commandTerminalSlotsInUse < MAX_COMMAND_TERMINALS}
       />
 
       {/* `data-dismiss-layer`: the board layer owns this whole subtree, so a clean click on

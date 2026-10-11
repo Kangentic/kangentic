@@ -59,7 +59,7 @@
  *
  * A DeviceNotRegistered ticket drops the registration.
  */
-import { hexToBytes, sealPushEnvelope, type PushCategory, type PushEnvelopePlaintext } from '@kangentic/protocol';
+import { hexToBytes, sealPushEnvelope, type PushCategory, type PushEnvelopePlaintext, type PushSessionKind } from '@kangentic/protocol';
 import type { ActivityReason, ActivityState, MobileDeviceConnectionState } from '../../../shared/types';
 import type { SessionManager } from '../../pty/session-manager';
 import type { PushRegistration, PushRegistrationStore } from './push-registration-store';
@@ -102,7 +102,10 @@ const PLACEHOLDER_BODIES: Record<PushCategory, string> = {
 export interface PushTaskContext {
   projectId: string;
   taskId: string;
+  /** The task's title, or a Command Terminal's name. */
   taskTitle: string;
+  /** Set for a session that is not a task's agent, so the phone routes the tap to it. */
+  sessionKind?: PushSessionKind;
 }
 
 /**
@@ -342,6 +345,7 @@ export class PushNotifier {
         taskTitle: taskContext.taskTitle,
         detail,
         sentAt: now,
+        ...(taskContext.sessionKind ? { sessionKind: taskContext.sessionKind } : {}),
       };
       let sealedBlob: string;
       try {

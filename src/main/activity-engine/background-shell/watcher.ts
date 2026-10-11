@@ -105,11 +105,11 @@ export interface BgShellWatcherCallbacks {
    * May the agent-absence sweep judge this session at all?
    *
    * The watcher decides only what the PROCESS TREE says; every session-shaped
-   * arm of the decision (is it a task agent, is it running, has its spawn grace
-   * elapsed) lives behind this callback so the watcher needs no session
-   * knowledge. The critical exclusion is a transient Command Terminal, which is
-   * a bare shell BY DESIGN: it is registered here like any other session, so
-   * without this the sweep would retire every one the moment it opened.
+   * arm of the decision (is it running, does it have an agent adapter, has its
+   * spawn grace elapsed) lives behind this callback so the watcher needs no
+   * session knowledge. A Command Terminal is judged like any task agent: it
+   * runs the project's agent CLI, and the session manager ENDS it on a confirmed
+   * absence rather than keeping an exited row.
    *
    * Returning false also resets the session's absence counter, so a session
    * that becomes a candidate later starts from a clean slate.
@@ -381,6 +381,17 @@ export const AGENT_ABSENCE_SWEEP_INTERVAL_MS = 60_000;
  */
 export const AGENT_ABSENCE_CONFIRM_CYCLES = 2;
 
+/**
+ * How many enumerating cycles a `requestAgentAbsenceCheck` keeps the sweep due
+ * for its session. Several, not one: the request follows the agent's own
+ * SessionEnd hook, which fires as the CLI BEGINS to exit, so the first look
+ * can still see the process. At the 2 s base cadence this is about 10 s of
+ * looking, after which the session waits for the ordinary 60 s sweep again
+ * (an agent that ended and started again, as `/clear` does, is simply seen
+ * alive on every one of these cycles).
+ */
+export const AGENT_ABSENCE_REQUEST_CYCLES = 5;
+
 export class BgShellWatcher {
   private readonly callbacks: BgShellWatcherCallbacks;
   private readonly probe: ProcessTreeProbe;
@@ -401,6 +412,9 @@ export class BgShellWatcher {
   // counts as this sweep's turn and no extra snapshot is taken behind it.
   // 0 = never enumerated, so the first candidate sweeps immediately.
   private lastAgentAbsenceSweepAt = 0;
+  // Sessions a caller asked to have judged now (requestAgentAbsenceCheck), with
+  // the enumerating cycles each request has left.
+  private readonly absenceCheckRequests = new Map<string, number>();
 
   constructor(options: BgShellWatcherOptions) {
     this.callbacks = options.callbacks;
@@ -451,7 +465,22 @@ export class BgShellWatcher {
   /** Remove a session from watching. */
   unregisterSession(sessionId: string): void {
     this.states.delete(sessionId);
+    this.absenceCheckRequests.delete(sessionId);
     if (this.states.size === 0) this.stopPolling();
+  }
+
+  /**
+   * Judge this session's agent on the next few cycles instead of waiting for
+   * the 60 s sweep: its agent just reported its own end (a Command Terminal's
+   * `/exit`), so a bare shell is likely. The base-cadence poll resumes at once
+   * and each of the next `AGENT_ABSENCE_REQUEST_CYCLES` cycles enumerates for
+   * it. Nothing else changes: the session must still be a candidate, and two
+   * consecutive empty observations are still what retires it.
+   */
+  requestAgentAbsenceCheck(sessionId: string): void {
+    if (this.disposed || !this.states.has(sessionId)) return;
+    this.absenceCheckRequests.set(sessionId, AGENT_ABSENCE_REQUEST_CYCLES);
+    this.resetPollBackoff();
   }
 
   /**
@@ -660,6 +689,11 @@ export class BgShellWatcher {
       for (const sessionId of sessionIds) {
         await this.cycleSession(sessionId, byParent, allProcessPids);
       }
+      // Each enumerating cycle spends one look of every pending request.
+      for (const [sessionId, cyclesLeft] of this.absenceCheckRequests) {
+        if (cyclesLeft <= 1) this.absenceCheckRequests.delete(sessionId);
+        else this.absenceCheckRequests.set(sessionId, cyclesLeft - 1);
+      }
 
       // A live deficit is a state transition worth watching closely: snap back
       // to the base cadence so the Tier B 2-cycle natural-exit confirmation runs
@@ -707,10 +741,15 @@ export class BgShellWatcher {
    * Is the agent-absence sweep due, and is there anything for it to look at?
    *
    * Both arms matter. The interval keeps the expensive enumeration rare; the
-   * candidate check means a board with nothing to judge (only Command Terminals,
-   * only freshly-spawned sessions) never pays for a snapshot at all.
+   * candidate check means a board with nothing to judge (only freshly-spawned
+   * sessions, only WSL sessions) never pays for a snapshot at all.
    */
   private isAgentAbsenceSweepDue(sessionIds: string[]): boolean {
+    // A requested check is due on every cycle until its looks run out,
+    // whatever the interval says.
+    for (const sessionId of this.absenceCheckRequests.keys()) {
+      if (this.callbacks.isAgentAbsenceCandidate(sessionId)) return true;
+    }
     if (Date.now() - this.lastAgentAbsenceSweepAt < this.agentAbsenceSweepIntervalMs) {
       return false;
     }

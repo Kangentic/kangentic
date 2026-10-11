@@ -46,7 +46,26 @@ import {
 const noSpawnProgressFeed = { onTaskSpawnProgressChanged: vi.fn(() => vi.fn()) };
 
 /** What the fake session registry lists; `resumable` reads it once per snapshot. */
-let registryRows: Array<{ id: string; taskId: string; status: string; transient?: boolean }> = [];
+let registryRows: Array<{
+  id: string;
+  taskId: string;
+  status: string;
+  transient?: boolean;
+  projectId?: string;
+  commandTerminalSlot?: string | null;
+  commandTerminalLabel?: string | null;
+}> = [];
+/** The fake activity engine's state and reason per session id. */
+let activityStates: Record<string, string> = {};
+let activityReasons: Record<string, unknown> = {};
+
+function fakeSessionManager(): Record<string, unknown> {
+  return {
+    listSessions: () => registryRows,
+    getActivityCache: () => activityStates,
+    getActivityReason: (sessionId: string) => activityReasons[sessionId] ?? null,
+  };
+}
 
 /** A spawn-progress feed whose listener the test can fire, and whose release it can observe. */
 function controllableSpawnProgressFeed(): {
@@ -76,8 +95,8 @@ function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage
   return { type: 'capability-request', requestId: 'req-1', verb: 'read-board', payload };
 }
 
-function fakeSession(): BridgeSession {
-  return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn() } as unknown as BridgeSession;
+function fakeSession(capabilities: readonly string[] = ['read-board', 'command-terminal']): BridgeSession {
+  return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn(), capabilities: new Set(capabilities) } as unknown as BridgeSession;
 }
 
 /** The context the view, resumable and spawn-progress suites share; the session registry lists `registryRows`. */
@@ -85,7 +104,7 @@ function boardContext(): IpcContext {
   return {
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
     boardEvents: { onBoardChanged: vi.fn(() => vi.fn()) },
-    sessionManager: { listSessions: () => registryRows },
+    sessionManager: fakeSessionManager(),
     configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
   } as unknown as IpcContext;
 }
@@ -104,6 +123,8 @@ describe('handleReadBoard', () => {
     // by one test would decorate another's snapshot.
     __resetSpawnProgressForTest();
     registryRows = [];
+    activityStates = {};
+    activityReasons = {};
   });
 
   it('with no projectId, returns the project bootstrap list (with derived accent colors, group and position) and never touches task repos', async () => {
@@ -158,7 +179,7 @@ describe('handleReadBoard', () => {
     const context = {
       projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged },
-      sessionManager: { listSessions: () => registryRows },
+      sessionManager: fakeSessionManager(),
       configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: false })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
@@ -174,6 +195,8 @@ describe('handleReadBoard', () => {
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
+      commandTerminals: [],
+      commandTerminalsOffered: true,
     });
     const snapshot = response.payload as { columns: object[]; tasks: object[]; backlog: object[] };
     expect(snapshot.tasks[0]).not.toHaveProperty('detail_view_state');
@@ -262,7 +285,7 @@ describe('handleReadBoard', () => {
     const context = {
       projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', name: 'Alpha', path: 'C:/projects/alpha' })) },
       boardEvents: { onBoardChanged: vi.fn(() => unsubscribe) },
-      sessionManager: { listSessions: () => registryRows },
+      sessionManager: fakeSessionManager(),
       configManager: { getEffectiveConfig: vi.fn(() => ({ showTaskNumbers: true })) },
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
@@ -594,6 +617,92 @@ describe('handleReadBoard', () => {
 
       await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, second.feed);
       expect(second.release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Command Terminals (protocol 0.20.0)', () => {
+    beforeEach(() => {
+      registryRows = [
+        { id: 'term-2', taskId: 'uuid-2', status: 'running', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-2', commandTerminalLabel: null },
+        { id: 'term-1', taskId: 'uuid-1', status: 'running', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1', commandTerminalLabel: 'Audit Unused Feature Flags' },
+        // Another project's terminal, and a task's agent: neither is listed.
+        { id: 'term-other', taskId: 'uuid-3', status: 'running', transient: true, projectId: 'proj-OTHER', commandTerminalSlot: 'slot-1', commandTerminalLabel: null },
+        { id: 'sess-1', taskId: 't-1', status: 'running', projectId: 'proj-1' },
+      ];
+      activityStates = { 'term-1': 'permission', 'term-2': 'thinking' };
+      activityReasons = { 'term-1': { kind: 'permission', since: 1234 }, 'term-2': { kind: 'tool', pendingCount: 1, currentTool: 'Bash' } };
+    });
+
+    it.each(['full', 'sessions'] as const)("the '%s' view lists the project's live terminals by slot, with name and activity", async (view) => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const snapshot = response.payload as { commandTerminals: unknown[]; commandTerminalsOffered: boolean };
+      expect(snapshot.commandTerminals).toEqual([
+        {
+          sessionId: 'term-1',
+          projectId: 'proj-1',
+          slot: 1,
+          name: 'Audit Unused Feature Flags',
+          named: true,
+          activity: { state: 'permission', reason: { kind: 'permission', since: 1234 } },
+        },
+        {
+          sessionId: 'term-2',
+          projectId: 'proj-1',
+          slot: 2,
+          name: 'Command Terminal 2',
+          named: false,
+          activity: { state: 'thinking', reason: { kind: 'tool', pendingCount: 1, currentTool: 'Bash' } },
+        },
+      ]);
+      expect(snapshot.commandTerminalsOffered).toBe(true);
+    });
+
+    it('a terminal that is not running is not listed', async () => {
+      registryRows = [{ id: 'term-1', taskId: 'uuid-1', status: 'exited', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([]);
+    });
+
+    it('a queued terminal is listed, since it already holds its slot against the cap', async () => {
+      registryRows = [{ id: 'term-3', taskId: 'uuid-3', status: 'queued', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-3', commandTerminalLabel: null }];
+      activityStates = {};
+      activityReasons = {};
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([
+        { sessionId: 'term-3', projectId: 'proj-1', slot: 3, name: 'Command Terminal 3', named: false, activity: { state: null, reason: null } },
+      ]);
+    });
+
+    it('offers the verb only to a device that holds it', async () => {
+      const response = await handleReadBoard(
+        fakeRequest({ projectId: 'proj-1', view: 'full' }),
+        fakeSession(['read-board']),
+        boardContext(),
+        new SubscriptionRegistry(),
+        noSpawnProgressFeed,
+      );
+      expect((response.payload as { commandTerminalsOffered: boolean }).commandTerminalsOffered).toBe(false);
+    });
+
+    it('a Command Terminal change reaches the phone by session id, with no task id on the envelope', async () => {
+      let capturedListener: ((event: unknown) => void) | undefined;
+      const context = {
+        ...boardContext(),
+        boardEvents: {
+          onBoardChanged: vi.fn((listener: (event: unknown) => void) => {
+            capturedListener = listener;
+            return vi.fn();
+          }),
+        },
+      } as unknown as IpcContext;
+      const session = fakeSession();
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      capturedListener?.({ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] });
+      expect(session.sendMessage).toHaveBeenCalledWith({
+        type: 'event',
+        event: { kind: 'board', projectId: 'proj-1', payload: { change: 'command-terminals-changed', ids: ['term-1'] } },
+      });
     });
   });
 });

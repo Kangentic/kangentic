@@ -640,6 +640,36 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
     return exitCall[1] as Record<string, string | number | boolean>;
   }
 
+  it('a running re-emit (a Command Terminal named mid-session) does not restart the exit\'s duration', () => {
+    // session-changed fires for a running session whose status did not change
+    // (an agent session id captured, main naming a Command Terminal). The
+    // start time is stamped on the first running emit only.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-11T12:00:00.000Z'));
+      const sessionId = 'analytics-exit-duration-restamp-099';
+      const context = createMockContext(sessionId, 'claude');
+      context.sessionManager.getUsageCache.mockReturnValue({});
+      context.sessionManager.getToolCallCount.mockReturnValue(0);
+      registerSessionHandlers(context as never);
+      const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+      const exitHandler = capturedSessionEventHandlers.get('exit');
+      if (!sessionChangedHandler || !exitHandler) throw new Error('session handlers were not registered');
+
+      sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+      vi.setSystemTime(new Date('2026-10-11T12:01:00.000Z'));
+      sessionChangedHandler(sessionId, makeRunningSession(sessionId)); // the rename
+      vi.setSystemTime(new Date('2026-10-11T12:02:00.000Z'));
+      vi.mocked(trackEvent).mockClear();
+      exitHandler(sessionId, 0, true);
+
+      const exitCall = vi.mocked(trackEvent).mock.calls.find((call) => call[0] === 'session_exit');
+      expect((exitCall?.[1] as { durationSeconds: number }).durationSeconds).toBe(120);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('marks session_exit intentional:true when the exit listener\'s third arg is true', () => {
     // kill()/suspend tag the exit intentional (session-spawn-flow.ts); a
     // force-killed or user-stopped session must not read as a crash.

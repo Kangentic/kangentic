@@ -38,7 +38,11 @@ describe('MOBILE_CAPABILITY_VERBS <-> protocol CAPABILITY_VERBS parity', () => {
   });
 
   it('has no shell, file, or arbitrary-command verb (mirrors the protocol-side guarantee)', () => {
-    const suspicious = MOBILE_CAPABILITY_VERBS.filter((verb) => /shell|file|exec|command|run/i.test(verb));
+    // `command-terminal` is the one reviewed exception: it starts the project's
+    // agent CLI, not a shell, and the desktop ends it when the agent exits (see
+    // REVIEWED_VERB_NAMES in tests/unit/protocol/capabilities.test.ts).
+    const reviewedVerbNames: readonly string[] = ['command-terminal'];
+    const suspicious = MOBILE_CAPABILITY_VERBS.filter((verb) => /shell|file|exec|command|run/i.test(verb) && !reviewedVerbNames.includes(verb));
     expect(suspicious).toEqual([]);
   });
 

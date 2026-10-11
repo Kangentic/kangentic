@@ -463,6 +463,33 @@ export interface BoardTaskWire {
   pausable?: boolean | null;
 }
 
+/**
+ * One live Command Terminal of a project (protocol 0.20.0): an agent the
+ * desktop runs at the project root with no task, started from the desktop's
+ * Ctrl+Shift+P layer or by a phone's `command-terminal` start. It listed
+ * beside a project's tasks in a read-board snapshot (`commandTerminals`), and
+ * the Agents feed draws it with a "Command Terminal" pill.
+ *
+ * - `slot` is the terminal's durable number in its project, 1 to 4. It never
+ *   renumbers while siblings start and stop.
+ * - `name` is what to show: the terminal's own name once it has one, else
+ *   "Command Terminal N". `named` is true once it has its own name (the
+ *   desktop derives one from the first prompt), which is when the phone's
+ *   session header adds its pill.
+ * - `activity` is the raw state and reason, the same shape `read-stream`
+ *   reports, so the phone formats the line ("Running Bash", "Awaiting
+ *   permission") with the formatter it already uses for a task's agent. Both
+ *   are null until the desktop's activity engine has classified the session.
+ */
+export interface CommandTerminalWire {
+  sessionId: string;
+  projectId: string;
+  slot: number;
+  name: string;
+  named: boolean;
+  activity: { state: ActivityStateWire | null; reason: ActivityReasonWire | null };
+}
+
 /** Phone-needed subset of the desktop's BacklogTask row. */
 export interface BacklogItemWire {
   id: string;
@@ -767,6 +794,27 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
     pausable: nullableBoolean(value, 'pausable'),
+  };
+}
+
+/**
+ * Narrows one Command Terminal row. Throws on a malformed required field. An
+ * unrecognized activity state or reason reads as null rather than throwing, so
+ * a reason kind a newer desktop adds costs the line, not the whole snapshot.
+ */
+export function parseCommandTerminalWire(value: JsonValue): CommandTerminalWire {
+  if (!isRecord(value)) throw new Error('command terminal must be an object');
+  const activity = isRecord(value.activity) ? value.activity : {};
+  return {
+    sessionId: requireString(value, 'sessionId', 'command terminal'),
+    projectId: requireString(value, 'projectId', 'command terminal'),
+    slot: requireNumber(value, 'slot', 'command terminal'),
+    name: requireString(value, 'name', 'command terminal'),
+    named: requireBoolean(value, 'named', 'command terminal'),
+    activity: {
+      state: isActivityStateWire(activity.state) ? activity.state : null,
+      reason: isActivityReasonWire(activity.reason) ? activity.reason : null,
+    },
   };
 }
 

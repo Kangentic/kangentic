@@ -116,7 +116,7 @@ interface MockContext {
   configManager: { getEffectiveConfig: ReturnType<typeof vi.fn> };
   boardConfigManager: { getDefaultBaseBranchForPath: ReturnType<typeof vi.fn> };
   mcpServerHandle: null;
-  sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn> };
+  sessionManager: { spawn: ReturnType<typeof vi.fn>; getShell: ReturnType<typeof vi.fn>; listSessions: ReturnType<typeof vi.fn> };
 }
 
 function createMockContext(): MockContext {
@@ -145,6 +145,8 @@ function createMockContext(): MockContext {
     sessionManager: {
       spawn: vi.fn(async () => ({ id: 'session-1' })),
       getShell: vi.fn(async () => PWSH),
+      // No live terminals: the slot allocation (startCommandTerminal) reads it.
+      listSessions: vi.fn(() => []),
     },
   };
 }
@@ -201,10 +203,12 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('never hands the builder a task process tag: a Command Terminal is not task work', async () => {
+  it('hands the builder the terminal\'s own process tag, the task id its PTY is spawned with', async () => {
     await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 
-    expect(buildCommandMock.mock.calls[0][0]).not.toHaveProperty('taskProcessTag');
+    const commandOptions = buildCommandMock.mock.calls[0][0] as { taskProcessTag?: string };
+    const spawnInput = vi.mocked(context.sessionManager.spawn).mock.calls[0][0] as { taskId: string };
+    expect(commandOptions.taskProcessTag).toBe(spawnInput.taskId);
   });
 
   it('resolves after ensureTrust and before buildCommand', async () => {

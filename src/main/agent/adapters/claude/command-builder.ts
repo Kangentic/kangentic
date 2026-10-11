@@ -324,7 +324,9 @@ export class CommandBuilder {
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     if (eventsPath) {
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
+        capturePromptText: options.capturePromptText === true,
+      });
     }
 
     // Default Claude's TUI renderer to fullscreen (alt-screen) for the embedded

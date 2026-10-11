@@ -80,6 +80,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
+import { resetSummarizeRateLimit } from '../../src/main/agent/shared/summarize-rate-limit';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,6 +158,9 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     mockRegistryAdapters = [];
+    // The window is shared with main's Command Terminal namer, so it outlives
+    // a handler registration; each case starts from an empty one.
+    resetSummarizeRateLimit();
   });
 
   it('rejects empty prompts', async () => {

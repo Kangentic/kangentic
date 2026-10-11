@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BgShellWatcher,
   AGENT_ABSENCE_CONFIRM_CYCLES,
+  AGENT_ABSENCE_REQUEST_CYCLES,
   NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES,
   POLL_BACKOFF_STAGE_ONE_TREE_CYCLES,
   POLL_BACKOFF_STAGE_TWO_TREE_CYCLES,
@@ -2870,16 +2871,16 @@ describe('BgShellWatcher', () => {
       watcher.dispose();
     });
 
-    it('never judges a session that is not a candidate (the transient Command Terminal guard)', async () => {
-      // A Command Terminal is a bare shell BY DESIGN and is registered with the
-      // watcher exactly like a task agent, so its tree is legitimately empty.
-      // Without the candidate gate the sweep would retire every one of them the
-      // moment it opened - the highest-cost false positive in this design.
+    it('never judges a session that is not a candidate', async () => {
+      // The candidate gate is SessionManager's (isAgentAbsenceCandidate): a
+      // session with no agent adapter, a WSL shell, one inside its spawn
+      // grace. Such a session's tree can be legitimately empty, so without the
+      // gate the sweep would retire it on sight.
       const { watcher, probe, rootPids, log } = makeWatcher(); // no candidates
-      rootPids.set('command-terminal', 1234);
+      rootPids.set('bare-shell', 1234);
       probe.alive.add(1234);
-      probe.trees.set(1234, []); // a bare shell: nothing under it, ever
-      watcher.registerSession('command-terminal');
+      probe.trees.set(1234, []); // nothing under it, ever
+      watcher.registerSession('bare-shell');
 
       await watcher.pollNow();
       await watcher.pollNow();
@@ -3033,6 +3034,73 @@ describe('BgShellWatcher', () => {
       // interval would have stretched to 200ms after five and produced ~7.
       await vi.advanceTimersByTimeAsync(1000);
       expect(probe.listAllCalls).toBeGreaterThanOrEqual(9);
+      watcher.dispose();
+    });
+
+    /**
+     * A Command Terminal's agent reports its own `/exit` (its SessionEnd hook),
+     * and the terminal must end within seconds, not at the next 60 s sweep.
+     * `requestAgentAbsenceCheck` keeps the sweep due for that session for a
+     * few cycles; the process tree and the two-observation confirm still decide.
+     */
+    it('a requested check judges the session on the next cycles, whatever the interval', async () => {
+      const { watcher, probe, log } = makeAbsenceSession([], { agentAbsenceSweepIntervalMs: 10 * 60_000 });
+
+      await watcher.pollNow(); // anchoring cycle: absent #1, stamps the sweep
+      probe.listAllCalls = 0;
+      await watcher.pollNow();
+      expect(probe.listAllCalls).toBe(0); // not due for ten minutes
+
+      watcher.requestAgentAbsenceCheck('s1');
+      await watcher.pollNow(); // due because requested: absent #2
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('a requested check never retires an agent that is still running (a /clear ends and starts again)', async () => {
+      const { watcher, probe, log } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      await watcher.pollNow(); // anchor
+      probe.listAllCalls = 0;
+
+      watcher.requestAgentAbsenceCheck('s1');
+      for (let cycle = 0; cycle < AGENT_ABSENCE_REQUEST_CYCLES + 3; cycle += 1) await watcher.pollNow();
+
+      expect(log.agentAbsent).toHaveLength(0);
+      // The request spends its looks, then the session waits for the ordinary
+      // interval again rather than enumerating on every cycle forever.
+      expect(probe.listAllCalls).toBe(AGENT_ABSENCE_REQUEST_CYCLES);
+      watcher.dispose();
+    });
+
+    it('a requested check outlasts an agent still exiting at the first look', async () => {
+      const { watcher, probe, log } = makeAbsenceSession(
+        [{ pid: 48848, ppid: 1234, comm: 'claude' }],
+        { agentAbsenceSweepIntervalMs: 10 * 60_000 },
+      );
+      await watcher.pollNow(); // anchor
+
+      watcher.requestAgentAbsenceCheck('s1');
+      await watcher.pollNow(); // the CLI is still on its way out
+      probe.trees.set(1234, []);
+      await watcher.pollNow(); // absent #1
+      await watcher.pollNow(); // absent #2
+
+      expect(log.agentAbsent).toEqual(['s1']);
+      watcher.dispose();
+    });
+
+    it('ignores a request for a session it does not watch', async () => {
+      const { watcher, probe } = makeAbsenceSession([{ pid: 48848, ppid: 1234, comm: 'claude' }], { agentAbsenceSweepIntervalMs: 10 * 60_000 });
+      await watcher.pollNow();
+      probe.listAllCalls = 0;
+
+      watcher.requestAgentAbsenceCheck('not-watched');
+      await watcher.pollNow();
+
+      expect(probe.listAllCalls).toBe(0);
       watcher.dispose();
     });
   });

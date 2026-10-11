@@ -30,6 +30,7 @@ import {
   parsePauseSessionResponsePayload,
   parseStartSessionResponsePayload,
   parseTranscriptWindowResponsePayload,
+  parseCommandTerminalStartResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
 
@@ -691,6 +692,65 @@ describe('read-* response parsers', () => {
     expect(() => parsePauseSessionResponsePayload({ ok: 'yes' })).toThrow(/ok/);
     expect(() => parsePauseSessionResponsePayload(null)).toThrow(/object/);
   });
+
+  it('parses a command-terminal start response to exactly its four fields', () => {
+    expect(parseCommandTerminalStartResponsePayload({ ok: true, sessionId: 's-1', slot: 2, name: 'Command Terminal 2', extra: 1 }))
+      .toEqual({ ok: true, sessionId: 's-1', slot: 2, name: 'Command Terminal 2' });
+  });
+
+  it('rejects a command-terminal start response with a missing id or name, or a slot that is not a positive integer', () => {
+    expect(() => parseCommandTerminalStartResponsePayload({ ok: true, slot: 1, name: 'x' })).toThrow(/sessionId/);
+    expect(() => parseCommandTerminalStartResponsePayload({ ok: true, sessionId: 's', slot: 1 })).toThrow(/name/);
+    expect(() => parseCommandTerminalStartResponsePayload({ ok: true, sessionId: 's', slot: 0, name: 'x' })).toThrow(/slot/);
+    expect(() => parseCommandTerminalStartResponsePayload({ ok: true, sessionId: 's', slot: 1.5, name: 'x' })).toThrow(/slot/);
+    expect(() => parseCommandTerminalStartResponsePayload({ ok: false, sessionId: 's', slot: 1, name: 'x' })).toThrow(/ok/);
+  });
+
+  it('parses a snapshot\'s Command Terminals and the offered flag (protocol 0.20.0)', () => {
+    const parsed = parseReadBoardResponsePayload({
+      projectId: 'p-1',
+      columns: [],
+      tasks: [],
+      commandTerminals: [
+        {
+          sessionId: 's-1',
+          projectId: 'p-1',
+          slot: 1,
+          name: 'Audit Unused Feature Flags',
+          named: true,
+          activity: { state: 'permission', reason: { kind: 'permission', since: 10 } },
+        },
+        { sessionId: 's-2', projectId: 'p-1', slot: 2, name: 'Command Terminal 2', named: false, activity: { state: null, reason: null } },
+      ],
+      commandTerminalsOffered: true,
+    });
+    expect(parsed).toMatchObject({
+      commandTerminalsOffered: true,
+      commandTerminals: [
+        { sessionId: 's-1', slot: 1, named: true, activity: { state: 'permission', reason: { kind: 'permission', since: 10 } } },
+        { sessionId: 's-2', slot: 2, named: false, activity: { state: null, reason: null } },
+      ],
+    });
+  });
+
+  it('reads an unknown activity state or reason on a Command Terminal as null rather than failing the snapshot', () => {
+    const parsed = parseReadBoardResponsePayload({
+      projectId: 'p-1',
+      columns: [],
+      tasks: [],
+      commandTerminals: [{ sessionId: 's-1', projectId: 'p-1', slot: 1, name: 'x', named: false, activity: { state: 'dreaming', reason: { kind: 'future-kind' } } }],
+    });
+    expect(parsed).toMatchObject({ commandTerminals: [{ activity: { state: null, reason: null } }] });
+  });
+
+  it('leaves both Command Terminal fields absent for an older desktop, and rejects malformed ones', () => {
+    const parsed = parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [] });
+    expect('commandTerminals' in parsed).toBe(false);
+    expect('commandTerminalsOffered' in parsed).toBe(false);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminals: {} })).toThrow(/commandTerminals/);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminalsOffered: 'yes' })).toThrow(/commandTerminalsOffered/);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminals: [{ sessionId: 's-1' }] })).toThrow(/command terminal/);
+  });
 });
 
 describe('parseTranscriptEventPayload', () => {
@@ -756,7 +816,16 @@ describe('isBridgeEvent', () => {
     expect(isBridgeEvent({ kind: 'terminal', sessionId: 's', taskId: 't', payload: { data: 'bytes' } })).toBe(true);
     expect(isBridgeEvent({ kind: 'terminal-resize', sessionId: 's', taskId: 't', payload: { cols: 48, rows: 26 } })).toBe(true);
     expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'task-updated', ids: ['t-1'] } })).toBe(true);
+    expect(isBridgeEvent({ kind: 'board', projectId: 'p', payload: { change: 'command-terminals-changed', ids: ['s-1'] } })).toBe(true);
     expect(isBridgeEvent({ kind: 'diff', taskId: 't', payload: null })).toBe(true);
+    // A project-folder diff (protocol 0.20.0) names the project instead.
+    expect(isBridgeEvent({ kind: 'diff', projectId: 'p', payload: null })).toBe(true);
+  });
+
+  it('rejects a diff event that names neither or both of task and project', () => {
+    expect(isBridgeEvent({ kind: 'diff', payload: null })).toBe(false);
+    expect(isBridgeEvent({ kind: 'diff', taskId: 't', projectId: 'p', payload: null })).toBe(false);
+    expect(isBridgeEvent({ kind: 'diff', projectId: 7, payload: null })).toBe(false);
   });
 
   it('rejects malformed events', () => {

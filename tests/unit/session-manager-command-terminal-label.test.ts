@@ -1,13 +1,12 @@
 /**
  * Unit tests for SessionManager.setCommandTerminalLabel.
  *
- * Main is a passive holder for the Command Terminal's auto-derived name: the
- * renderer computes it and has already applied it locally, and nothing in main
- * reads it back except `toSession`, which hands it to the next renderer that has
- * to rebuild the pairing map after a reload.
+ * Main derives a Command Terminal's name (`CommandTerminalNamer`) and records it
+ * here; an applied name is announced on 'session-changed', which is how the
+ * renderer's window title, the Agent Monitor and a phone's board feed learn it.
  *
- * The guards matter because the caller is a fire-and-forget IPC that no one
- * awaits: a bad sessionId, a task agent, or a second derivation must not corrupt
+ * The guards matter because the namer is fire-and-forget: a session that ended
+ * during the summarize, a task agent, or a second derivation must not corrupt
  * or overwrite a name the user already knows the terminal by.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -101,8 +100,24 @@ describe('SessionManager.setCommandTerminalLabel', () => {
   });
 
   it('ignores an unknown session instead of throwing', () => {
-    // The caller is a fire-and-forget IPC, so a session that exited during the
-    // round trip is routine rather than exceptional.
+    // The namer is fire-and-forget, so a session that exited during the
+    // summarize is routine rather than exceptional.
     expect(() => manager.setCommandTerminalLabel('gone', 'Fix the parser')).not.toThrow();
+    expect(manager.setCommandTerminalLabel('gone', 'Fix the parser')).toBe(false);
+  });
+
+  it('announces an applied name once on session-changed, carrying it on the row', () => {
+    register(manager, { id: 'term-1' });
+    const announced: Array<{ id: string; label: string | null | undefined }> = [];
+    manager.on('session-changed', (id: string, session: { commandTerminalLabel?: string | null }) => {
+      announced.push({ id, label: session.commandTerminalLabel });
+    });
+
+    expect(manager.setCommandTerminalLabel('term-1', 'Fix the parser')).toBe(true);
+    // First write wins, and a refused write announces nothing.
+    expect(manager.setCommandTerminalLabel('term-1', 'Another name')).toBe(false);
+    manager.setCommandTerminalLabel('term-1', '   ');
+
+    expect(announced).toEqual([{ id: 'term-1', label: 'Fix the parser' }]);
   });
 });

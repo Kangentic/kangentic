@@ -25,7 +25,9 @@ model, and the honest relay-metadata statement.
   phone: it is a liveness/intent signal, not the security boundary. It opens only if both peers
   completed the same handshake transcript, which is exactly the property the SAS comparison
   already vouches for - the human's comparison remains the actual defense.
-- No shell, file, or arbitrary-command verb exists in the protocol.
+- No shell, file, or arbitrary-command verb exists in the protocol. `command-terminal` starts the
+  project's agent CLI at the project root with no command, branch, or model named by the phone, and
+  the desktop ends the session when that agent exits.
 
 This package has not undergone a third-party security audit. Report suspected vulnerabilities
 per the repository's security policy rather than filing a public issue.

@@ -350,6 +350,57 @@ describe('PushNotifier', () => {
     expect(sealedCategories()).toEqual(['session-failed', 'session-failed']);
   });
 
+  describe('a Command Terminal (protocol 0.20.0)', () => {
+    const TERMINAL_CONTEXT = {
+      projectId: 'proj-Zq1xK',
+      taskId: 'made-up-uuid',
+      taskTitle: 'Audit Unused Feature Flags',
+      sessionKind: 'command-terminal' as const,
+    };
+
+    it('seals its name as the title and the session kind, so the tap opens the terminal', async () => {
+      buildNotifier({ resolveTaskContext: () => ({ ...TERMINAL_CONTEXT }) });
+      sessionManager.emit('activity', 'term-1', 'permission', { kind: 'permission' });
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const sealedPlaintext = sealSpy.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(sealedPlaintext).toMatchObject({
+        category: 'input-required',
+        sessionId: 'term-1',
+        taskTitle: 'Audit Unused Feature Flags',
+        sessionKind: 'command-terminal',
+      });
+    });
+
+    it('a task alert carries no session kind at all', async () => {
+      buildNotifier();
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(sealSpy.mock.calls[0]?.[2]).not.toHaveProperty('sessionKind');
+    });
+
+    it('an intentional end (a Stop, or its agent exiting under C2) sends no "Session stopped"; a crash still does', () => {
+      buildNotifier({ resolveTaskContext: () => ({ ...TERMINAL_CONTEXT }) });
+
+      // Both deliberate ends reach the notifier as an intentional exit: kill()
+      // marks it, and the sweep's end goes through kill() too.
+      sessionManager.emit('exit', 'term-1', 0, true);
+      expect(sealSpy).not.toHaveBeenCalled();
+
+      sessionManager.emit('exit', 'term-2', 1, false);
+      expect(sealedCategories()).toEqual(['session-failed']);
+    });
+
+    it('an end whose row is already gone resolves no context and sends nothing', () => {
+      buildNotifier({ resolveTaskContext: () => null });
+
+      sessionManager.emit('exit', 'term-1', 1, false);
+
+      expect(sealSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it('presence suppression: a connected device is never pinged', async () => {
     fakeSessions.set('device-1', { connectionState: 'connected' });
     buildNotifier();

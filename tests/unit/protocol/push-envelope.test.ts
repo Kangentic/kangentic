@@ -10,7 +10,9 @@ import {
   openPushEnvelope,
   sealPushEnvelope,
   isPushCategory,
+  isPushSessionKind,
   PUSH_CATEGORIES,
+  PUSH_SESSION_KINDS,
   PUSH_ENVELOPE_MAX_AGE_MS,
   PUSH_ENVELOPE_MAX_FUTURE_SKEW_MS,
   type PushEnvelopePlaintext,
@@ -98,5 +100,31 @@ describe('push envelope', () => {
     expect(isPushCategory('permission_needed')).toBe(false);
     expect(isPushCategory('')).toBe(false);
     expect(isPushCategory(null)).toBe(false);
+  });
+
+  it('round-trips a Command Terminal alert with its session kind (protocol 0.20.0)', () => {
+    const plaintext = plaintextFixture({ taskTitle: 'Audit Unused Feature Flags', sessionKind: 'command-terminal' });
+    const blob = sealPushEnvelope(pushKey, recipientKey, plaintext);
+    expect(openPushEnvelope(pushKey, recipientKey, blob)).toEqual(plaintext);
+  });
+
+  it('opens a task alert with no session kind at all', () => {
+    const blob = sealPushEnvelope(pushKey, recipientKey, plaintextFixture());
+    expect('sessionKind' in openPushEnvelope(pushKey, recipientKey, blob)).toBe(false);
+  });
+
+  it('drops a session kind it does not know instead of rejecting the alert', () => {
+    // A newer desktop may add a kind; the notification must still open, and
+    // its tap then routes as a task alert would.
+    const fromNewerDesktop = { ...plaintextFixture(), sessionKind: 'future-kind' } as unknown as PushEnvelopePlaintext;
+    const opened = openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, fromNewerDesktop));
+    expect('sessionKind' in opened).toBe(false);
+    expect(opened.taskTitle).toBe('Fix the bug');
+  });
+
+  it('isPushSessionKind accepts exactly the known kinds', () => {
+    for (const kind of PUSH_SESSION_KINDS) expect(isPushSessionKind(kind)).toBe(true);
+    expect(isPushSessionKind('task')).toBe(false);
+    expect(isPushSessionKind(undefined)).toBe(false);
   });
 });

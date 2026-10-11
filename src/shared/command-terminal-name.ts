@@ -32,6 +32,20 @@
 export const COMMAND_TERMINAL_BASE_TITLE = 'Command Terminal';
 
 /**
+ * How many Command Terminals one project may run at once. Main owns the cap and
+ * the slot allocation (`startCommandTerminal` in transient-sessions.ts), because
+ * a phone can start a terminal while the desktop's own layer is closed. The
+ * renderer's "New terminal" button reads the same number so it disables at the
+ * same point main would refuse.
+ */
+export const MAX_COMMAND_TERMINALS = 4;
+
+/** The durable slot id for slot number `slotNumber` (1-based). */
+export function commandTerminalSlotId(slotNumber: number): string {
+  return `slot-${slotNumber}`;
+}
+
+/**
  * Numeric suffix of a `slot-N` id, or null when it is absent or unparseable.
  *
  * Unparseable is a real case, not defensive padding: main learns the slot from
@@ -49,4 +63,15 @@ export function commandTerminalSlotNumber(slot: string | null | undefined): numb
 export function commandTerminalTitle(slot: string | null | undefined): string {
   const slotNumber = commandTerminalSlotNumber(slot);
   return slotNumber === null ? COMMAND_TERMINAL_BASE_TITLE : `${COMMAND_TERMINAL_BASE_TITLE} ${slotNumber}`;
+}
+
+/**
+ * What every surface calls a Command Terminal: its own name once main has
+ * derived one from the first prompt, else the slot title. Shared by the window
+ * title bar, the Agent Monitor row, a phone's snapshot and start answer, and the
+ * push notification, so all of them print the same words.
+ */
+export function commandTerminalDisplayName(label: string | null | undefined, slot: string | null | undefined): string {
+  const trimmed = label?.trim();
+  return trimmed ? trimmed : commandTerminalTitle(slot);
 }

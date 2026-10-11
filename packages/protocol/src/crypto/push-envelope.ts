@@ -34,6 +34,20 @@ export const PUSH_ENVELOPE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const PUSH_ENVELOPE_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 /**
+ * What kind of session a notification is about, when it is not a task's
+ * agent (protocol 0.20.0). `command-terminal`: a Command Terminal, so the tap
+ * opens that terminal's screen by `sessionId` (its `taskId` names no board
+ * task) and `taskTitle` carries the terminal's name.
+ */
+export const PUSH_SESSION_KINDS = ['command-terminal'] as const;
+
+export type PushSessionKind = (typeof PUSH_SESSION_KINDS)[number];
+
+export function isPushSessionKind(value: unknown): value is PushSessionKind {
+  return typeof value === 'string' && (PUSH_SESSION_KINDS as readonly string[]).includes(value);
+}
+
+/**
  * The real notification content, visible only on the sealing desktop and
  * the opening device. Everything the OS-visible push payload carries
  * instead is a static placeholder.
@@ -43,10 +57,13 @@ export interface PushEnvelopePlaintext {
   projectId: string;
   taskId: string;
   sessionId: string;
+  /** The task's title, or for a `command-terminal` session the terminal's name. */
   taskTitle: string;
   detail: string;
   /** Wall-clock ms at seal time; openPushEnvelope enforces the freshness window from it. */
   sentAt: number;
+  /** Absent for a task's agent. See PUSH_SESSION_KINDS. */
+  sessionKind?: PushSessionKind;
 }
 
 function requireEnvelopeString(record: Record<string, unknown>, field: string): string {
@@ -70,6 +87,9 @@ export function parsePushEnvelopePlaintext(value: unknown): PushEnvelopePlaintex
     taskTitle: requireEnvelopeString(value, 'taskTitle'),
     detail: requireEnvelopeString(value, 'detail'),
     sentAt: value.sentAt,
+    // An unknown kind (from a newer desktop) is dropped, not rejected, so the
+    // notification still opens; the tap then routes as a task's would.
+    ...(isPushSessionKind(value.sessionKind) ? { sessionKind: value.sessionKind } : {}),
   };
 }
 

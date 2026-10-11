@@ -115,6 +115,13 @@ export interface SpawnFlowContext {
    * until then, so a teardown that removes the directory waits on it.
    */
   onSpawnAbandoned?: (sessionId: string, ptyExited: Promise<void>) => void;
+  /**
+   * The PTY's exit has been handled and announced: every 'exit' listener has
+   * run against the still-registered row. SessionManager ends a Command
+   * Terminal here (its row goes, its window closes). A context built without
+   * this keeps every exited row.
+   */
+  onPtyExited?: (sessionId: string) => void;
 }
 
 /**
@@ -283,18 +290,17 @@ export async function performSpawn(
   if (input.eventsOutputPath) {
     spawnEnv.KANGENTIC_EVENTS_PATH = input.eventsOutputPath;
   }
-  // Tag every process this task's agent starts, so a terminal transition can
-  // kill what it left running however it detached (see process-tag/). A
-  // Command Terminal is the user's own shell, not task work, so it gets no tag
-  // of its own. It still inherits main's environment, which carries a tag when
-  // Kangentic itself was started from a task's terminal; that tag names the
-  // outer task, whose reap should stop this app and its shells anyway.
-  if (!input.transient) {
-    spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
-      wslShell: parseWslShellSpec(shell) !== null,
-      inheritedWslEnv: process.env.WSLENV,
-    });
-  }
+  // Tag every process this session's agent starts, so the end of its task, or
+  // of its Command Terminal, can stop what it left running however it detached
+  // (see process-tag/). A Command Terminal runs an agent too, so it is tagged
+  // with its own made-up task id, which no other session shares; its leftovers
+  // are reaped when the terminal ends (`command-terminal-leftovers.ts`). That
+  // replaces any tag inherited from main's environment (Kangentic started from
+  // a task's terminal), whose outer reap still stops this app's own tree.
+  spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
+    wslShell: parseWslShellSpec(shell) !== null,
+    inheritedWslEnv: process.env.WSLENV,
+  });
   const cleanEnv = buildSpawnEnv(spawnEnv);
 
   // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts.
@@ -362,6 +368,7 @@ export async function performSpawn(
     rows: spawnRows,
     carryoverFromSessionId: carryoverSource?.id ?? null,
     agentSessionIdKnown: !!input.agentSessionId,
+    exitSequence: input.exitSequence ?? ['\x03'],
   });
 
   // Torn down during the host round trip. Ahead of every outcome branch: a
@@ -672,6 +679,8 @@ export async function performSpawn(
 
     context.emit('exit', id, resolvedExitCode, intentional);
     context.sessionQueue.notifySlotFreed();
+    // Last: it may remove the row the listeners above just read.
+    context.onPtyExited?.(id);
   });
 
   // Retain the exit listener's disposable so the synchronous shutdown path

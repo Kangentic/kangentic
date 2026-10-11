@@ -922,7 +922,8 @@ export const retrievalService = {
     // every move; a plain desktop edit of a task's text is caught by the
     // refresh a question asks for (`refreshTaskRecords`).
     context.boardEvents.onBoardChanged((event) => {
-      if (event.change === 'swimlane-updated') return;
+      // A column change touches no task record, and a Command Terminal has none.
+      if (event.change === 'swimlane-updated' || event.change === 'command-terminals-changed') return;
       scheduleTaskRecordSweep(context, event.projectId);
     });
   },

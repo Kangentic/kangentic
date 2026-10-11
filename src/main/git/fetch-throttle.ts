@@ -179,12 +179,18 @@ function fetchCacheKey(projectPath: string, branch: string): string {
  * bare `<branch>` says nothing about why. Callers that surface staleness
  * (spawn-progress notes, warning toasts) key off the outcome, never the
  * return value.
+ *
+ * `options.nonInteractive` runs the fetch with `nonInteractiveGitEnv()`, for a
+ * fetch with nobody at the desk to answer a prompt (a Command Terminal a phone
+ * starts): a credential dialog then fails the fetch, which falls back to the
+ * local branch like every other failure, instead of waiting on a window no one
+ * will click.
  */
 export async function fetchIfStale(
   _git: SimpleGit,
   projectPath: string,
   branch: string,
-  options?: { signal?: AbortSignal; onOutcome?: (outcome: FetchIfStaleOutcome) => void },
+  options?: { signal?: AbortSignal; onOutcome?: (outcome: FetchIfStaleOutcome) => void; nonInteractive?: boolean },
 ): Promise<string> {
   const key = fetchCacheKey(projectPath, branch);
   const lastFetch = fetchCache.get(key);
@@ -204,6 +210,7 @@ export async function fetchIfStale(
     await runGitWithTimeout(projectPath, ['fetch', '--no-auto-gc', 'origin', branch], {
       timeoutMs: FETCH_TIMEOUT_MS,
       signal: options?.signal,
+      ...(options?.nonInteractive ? { env: nonInteractiveGitEnv() } : {}),
     });
     fetchCache.set(key, Date.now());
     reportOutcome(options?.onOutcome, { kind: 'fetched' });

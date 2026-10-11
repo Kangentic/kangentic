@@ -1069,9 +1069,9 @@ export interface Session {
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
-   * For a transient session, the durable Command Terminal window SLOT id
-   * (`slot-1`, ...) the renderer allocated at spawn. Null for task agents and for
-   * a transient spawned by a path that sends none.
+   * For a transient session, the durable Command Terminal SLOT id (`slot-1`, ...)
+   * main allocated at spawn (honoring the slot a desktop window asked for). Null
+   * for task agents.
    *
    * On this DTO for CORRECTNESS, which is what separates it from `agentName`
    * (deliberately kept off, as a diagnostic - see `listManagedSummaries` in
@@ -1090,11 +1090,10 @@ export interface Session {
   /** For a transient session, the name auto-derived from its first prompt. Null
    *  until one is derived, and for task agents.
    *
-   *  Derived in the renderer (`auto-name-scheduler.ts`) and pushed to main purely
-   *  so it survives a reload, alongside the slot and branch. Without that, a
-   *  recovered terminal drops back to "Command Terminal N" AND the auto-namer
-   *  re-fires on the next prompt, renaming it after whatever the user happened to
-   *  type second. */
+   *  Derived in main (`command-terminal-namer.ts`), so a terminal started from a
+   *  phone, or in a project the desktop does not have open, is named too. Main
+   *  announces the name on `session-changed`, and the window title, the Agent
+   *  Monitor and the phone all read it from this row. */
   commandTerminalLabel?: string | null;
   /**
    * Parallel-session discriminator for the terminal badge. Null/undefined (main
@@ -3785,8 +3784,9 @@ export interface AppConfig {
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
   /** Stop what a task's agent left running in the task's own folder when the
-   *  task reaches Done or To Do, or is deleted. Off: nothing is stopped, and a
-   *  toast still lists what kept running. Default true. */
+   *  task reaches Done or To Do, or is deleted, and what a Command Terminal's
+   *  agent left running in its folder when the terminal ends. Off: nothing is
+   *  stopped, and a toast still lists what kept running. Default true. */
   stopLeftoverProcesses: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `focused`. */
   windowLightDismiss: WindowLightDismiss;
@@ -4472,7 +4472,7 @@ export interface ImportCheckCliResult {
 // shapes as plain, self-contained types rather than importing them -- keep
 // MOBILE_CAPABILITY_VERBS in sync with packages/protocol/src/capabilities/verbs.ts
 // (CAPABILITY_VERBS) by hand; there is no shell/file/arbitrary-command verb
-// in the protocol, by design.
+// in the protocol, by design (`command-terminal` starts an agent, not a shell).
 export const MOBILE_CAPABILITY_VERBS = [
   'read-stream',
   'read-board',
@@ -4486,6 +4486,7 @@ export const MOBILE_CAPABILITY_VERBS = [
   'register-push',
   'start-session',
   'pause-session',
+  'command-terminal',
 ] as const;
 export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 
@@ -5460,9 +5461,9 @@ export interface SpawnSessionInput {
   resuming?: boolean;
   /** True for ephemeral command terminal sessions. */
   transient?: boolean;
-  /** For a transient session, the renderer's durable Command Terminal window slot
-   *  (`slot-1`, ...). Recorded so the Agent Monitor names the terminal exactly as
-   *  its own window title bar does. See src/shared/command-terminal-name.ts. */
+  /** For a transient session, its durable Command Terminal slot (`slot-1`, ...),
+   *  as `startCommandTerminal` allocated it. Recorded so every surface names the
+   *  terminal the same way. See src/shared/command-terminal-name.ts. */
   commandTerminalSlot?: string | null;
   /** For a transient session, the branch it was actually spawned on (the RESOLVED
    *  branch, after any checkout fallback). Recorded so the monitor can tell you
@@ -5522,16 +5523,26 @@ export interface SpawnSessionInput {
 
 export interface SpawnTransientSessionInput {
   projectId: string;
-  /** The window's durable slot id (`slot-1`, `slot-2`, ...). Slots are allocated by
-   *  the renderer's Command Terminal layer, so main cannot derive this; it is sent
-   *  purely so the Agent Monitor can name the terminal the same way its window
-   *  does. Optional so an older caller still spawns, just unnumbered. */
+  /** The window's durable slot id (`slot-1`, `slot-2`, ...). A desktop window is
+   *  anchored to its slot before it spawns, so it asks for that one; main grants
+   *  it when the project has no live terminal in it and refuses otherwise. Omitted,
+   *  main allocates the lowest free slot (how a phone's start is numbered). */
   slot?: string;
   /** Branch to checkout before spawning. If omitted, uses the project's default base branch. */
   branch?: string;
   /** See `SpawnSessionInput.cols`/`rows` - the same seed-the-real-grid escape hatch. */
   cols?: number;
   rows?: number;
+}
+
+export interface SpawnTransientSessionResult {
+  session: Session;
+  /** The slot main gave the terminal (`slot-N`). */
+  slot: string;
+  /** The branch the terminal actually started on, after any checkout fallback. */
+  branch: string;
+  /** Why the start stayed on a branch other than the one it aimed for, when it did. */
+  checkoutError?: string;
 }
 
 export interface NotificationInput {
@@ -6259,12 +6270,8 @@ export interface ElectronAPI {
      * run has an estimate. Replaces `getToolBreakdown`'s rows' `resultTokens`.
      */
     getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
-    spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
+    spawnTransient: (input: SpawnTransientSessionInput) => Promise<SpawnTransientSessionResult>;
     killTransient: (sessionId: string) => Promise<void>;
-    /** Record a transient session's auto-derived name on main, so it survives a
-     *  renderer reload. Fire-and-forget: the renderer has already applied it
-     *  locally, and main only retains it for recovery. */
-    setTransientLabel: (sessionId: string, label: string) => Promise<void>;
     /** Mirror where a Command Terminal's checkout actually sits, re-derived
      *  from live HEAD by the renderer, onto its live registry row so the
      *  Monitor row and a post-reload adopt agree with the pill. Last write

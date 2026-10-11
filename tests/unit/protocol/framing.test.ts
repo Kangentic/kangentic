@@ -151,9 +151,30 @@ describe('wire message framing', () => {
     expect(decodeMessage(encodeMessage(message))).toEqual(message);
   });
 
-  it('rejects a diff event missing taskId', () => {
-    const bytes = new TextEncoder().encode(JSON.stringify({ type: 'event', event: { kind: 'diff', payload: null } }));
-    expect(() => decodeMessage(bytes)).toThrow();
+  it('round-trips a project-folder diff event message (protocol 0.20.0)', () => {
+    const message: BridgeMessage = {
+      type: 'event',
+      event: { kind: 'diff', projectId: 'project-1', payload: null },
+    };
+    expect(decodeMessage(encodeMessage(message))).toEqual(message);
+  });
+
+  it('rejects a diff event that names neither a task nor a project, or both', () => {
+    const neither = new TextEncoder().encode(JSON.stringify({ type: 'event', event: { kind: 'diff', payload: null } }));
+    expect(() => decodeMessage(neither)).toThrow();
+    const both = new TextEncoder().encode(JSON.stringify({ type: 'event', event: { kind: 'diff', taskId: 't', projectId: 'p', payload: null } }));
+    expect(() => decodeMessage(both)).toThrow();
+  });
+
+  it('round-trips a capability response carrying a command-terminal refusal code', () => {
+    const message: BridgeMessage = {
+      type: 'capability-response',
+      requestId: 'r-1',
+      ok: false,
+      error: 'This project already has 4 Command Terminals running.',
+      code: 'command-terminal-limit',
+    };
+    expect(decodeMessage(encodeMessage(message))).toEqual(message);
   });
 
   it('round-trips an activity event with a discriminated permission payload', () => {

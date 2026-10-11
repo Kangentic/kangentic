@@ -5,6 +5,8 @@ paths:
   - "src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx"
   - "src/renderer/components/layout/TitleBar.tsx"
   - "src/main/ipc/handlers/transient-sessions.ts"
+  - "src/main/agent/shared/command-terminal-namer.ts"
+  - "src/main/mobile-bridge/handlers/command-terminal.ts"
 ---
 # Rule: the Command Terminal layer is slot-keyed, its geometry is global, and its population is per-project
 
@@ -28,6 +30,37 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   and `slot` so consumers can filter by project. The map is preserved across HMR via
   `import.meta.hot.data`; on a hard reload `syncSessions()` best-effort re-pairs surviving
   transient PTYs to slots.
+- **MAIN owns the cap and the slot allocation.** `startCommandTerminal`
+  (`transient-sessions.ts`) is the one start path, run by the desktop's `session:spawnTransient`
+  and the bridge's `command-terminal` verb alike. It counts the project's non-exited transient
+  rows plus a synchronous reservation map, so a phone start and a desktop New in flight together
+  cannot pass the cap or share a slot. The renderer proposes a slot only for a window it is
+  opening, from the union of window anchors and the replica's live transient rows, and handles a
+  `slot-taken` throw. Never pick or cap slots from the window store alone: a phone terminal has
+  no window.
+- **A terminal ENDS when its agent exits, and every end goes through
+  `SessionManager.endCommandTerminal`.** It kills, awaits the exit, removes the row and deletes
+  the session directory, and refuses a task's session. The agent-absence sweep judges Command
+  Terminals (do not reintroduce a transient exclusion in `isAgentAbsenceCandidate`), a SessionEnd
+  hook fast-paths it, and a PTY that exits on its own removes its row in the spawn flow's
+  `onPtyExited`. A Command Terminal must never be left as a bare shell a paired phone can type
+  into.
+- **The desktop window follows a main-initiated end through ONE removal subscriber.**
+  `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`) closes the slot's window when a
+  `session-removed` push names a session the `transientSessions` map still points at. A
+  renderer-initiated end (Stop, a branch switch) must scrub its map entry BEFORE it sends the
+  kill, or the subscriber closes the window a second time (a branch switch would lose its window).
+  Do not move this into App.tsx's removal handler, whose mapping the replica convergence test pins.
+- **Naming runs in MAIN**, by `CommandTerminalNamer` with the session's own agent and project
+  folder. Display reads `commandTerminalLabel` off the registry row through
+  `commandTerminalDisplayName`; there is no renderer-side label. The namer needs the prompt's
+  text on the Prompt event, so `startCommandTerminal` passes `capturePromptText` and an adapter
+  whose hooks are per-session (Claude) copies its prompt payload into `detail`. Never set that
+  flag on a task spawn: task events stay free of prompt text.
+- **An unattended (phone) start never blocks and never moves HEAD under a live session.** Its
+  fetch is non-interactive with a 5 s abort, its git phase has one 6 s budget, and it stays on the
+  current branch when another running or queued session's cwd is the project root. Every failure
+  falls back to the current HEAD and still launches. Desktop New keeps its existing behavior.
 - **A reattach NEVER fetches or checks out.** Hiding the layer (Ctrl+Shift+P, Ctrl+Shift+W,
   backdrop click) keeps every PTY alive; reopening reattaches each slot. The default-base
   checkout, plus its dirty-tree stay-put guard, runs on a COLD spawn only, because moving HEAD
@@ -62,7 +95,7 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   open/close TOGGLE (`quick-session-button`) that never spawns, so there is always a one-click
   way to hide the layer even when a window is maximized over the backdrop; and, rendered only
   while the layer is open, a "New terminal" button to its LEFT (`quick-session-new-terminal`),
-  disabled at `MAX_COMMAND_TERMINALS`. Only the TOGGLE carries the aggregate activity tone; "New
+  disabled once windows and live terminals together hold `MAX_COMMAND_TERMINALS` slots. Only the TOGGLE carries the aggregate activity tone; "New
   terminal" is hardcoded `tone="rest"`, since it represents an action, not the state of any
   existing terminal. A thin divider mounts and unmounts together with the button. This pair is
   the LEFT-MOST icons in the title bar's right-aligned button row: that row is right-anchored,
@@ -91,10 +124,18 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
 - **Test (spawn and branch):** `tests/unit/transient-session-spawn-dirty-guard.test.ts`,
   `transient-session-spawn-ensure-trust.test.ts`, `transient-session-branch.test.ts`,
   `transient-session-adopt.test.ts`, and the two `session-manager-command-terminal-*` tests pin
-  the cold-spawn checkout guard, the trust write, and the branch and label round-trips.
+  the cold-spawn checkout guard, the trust write, and the branch and label round-trips. The
+  dirty-guard file also pins main's slot allocation, the cap, concurrent reservations and the
+  unattended start's guards.
+- **Test (ending):** `tests/unit/session-manager-end-command-terminal.test.ts` (the end order and
+  the task-session refusal), `session-manager-agent-absence.test.ts` (terminals are judged and
+  ended, the SessionEnd fast path, `/clear` survives), `session-spawn-flow.test.ts` (the PTY-exit
+  removal), `transient-session-kill-by-slot.test.ts` (scrub before kill), and
+  `command-terminal-namer.test.ts`.
 - **Test (UI):** `tests/ui/command-terminal.spec.ts`, `command-terminal-branch.spec.ts`, and
   `sidebar-command-terminals.spec.ts` cover the window chrome, the branch pill, and the sidebar
-  indicator.
+  indicator. `command-terminal.spec.ts` also covers a removal push closing its window and a
+  branch switch keeping it.
 - **Review:** the header layout ordering and the title-bar button placement are visual
   conventions with no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
 

@@ -63,6 +63,7 @@ import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess, splitWindowsCommandLine } from './process-label';
 import { ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
 import { ScanStepError, seedsAndDescendants, type KillStrength, type LocalConnectionRead, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from './process-scan';
+import type { DeadRootOrphanApi } from '../host/dead-root-orphans';
 
 /** The part of koffi this reader uses. */
 type KoffiApi = Pick<typeof import('koffi'), 'load' | 'struct' | 'array' | 'sizeof' | 'address' | 'proto' | 'register' | 'unregister' | 'pointer'>;
@@ -472,6 +473,55 @@ async function enumerateProcesses(api: Win32Api): Promise<Win32ProcessRow[]> {
  */
 export async function listWin32Processes(loadApi: () => Promise<Win32Api> = sharedWin32Api): Promise<Win32ProcessRow[]> {
   return enumerateProcesses(await loadApi());
+}
+
+/**
+ * The calls the dead-shell orphan stop (`host/dead-root-orphans.ts`) makes,
+ * over the same Toolhelp listing and handle reads the reap uses. It reads a
+ * creation time and an owner, never an environment, a command line or a
+ * working directory, and opens a process only in the caller's own Windows
+ * session and owned by the caller's user. A terminate re-checks the creation
+ * time on the handle it terminates through, as the reap's kill does.
+ */
+export async function loadWin32OrphanApi(loadApi: () => Promise<Win32Api> = sharedWin32Api): Promise<DeadRootOrphanApi> {
+  const api = await loadApi();
+  const ownSession = [0];
+  if (api.processIdToSessionId(process.pid, ownSession) === 0) {
+    throw new Error('the Windows reader could not read its own session');
+  }
+  const ownSid = readTokenUserSid(api, api.getCurrentProcess());
+  if (ownSid === null) throw new Error('the Windows reader could not read its own user');
+
+  return {
+    listProcesses: () => enumerateProcesses(api),
+    identityOf: (pid) => {
+      if (pid <= 4) return null;
+      const sessionId = [0];
+      if (api.processIdToSessionId(pid, sessionId) === 0 || sessionId[0] !== ownSession[0]) return null;
+      const handle = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+      if (isNullHandle(api, handle)) return null;
+      try {
+        const creation = readCreationTime(api, handle);
+        const sid = readTokenUserSid(api, handle);
+        if (creation === null || sid === null || !sid.equals(ownSid)) return null;
+        return { startKey: creation.toString(), startedAtMs: filetimeToEpochMs(creation) };
+      } finally {
+        api.closeHandle(handle);
+      }
+    },
+    terminate: (target) => {
+      if (!target.startKey) return false;
+      const handle = api.openProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, 0, target.pid);
+      if (isNullHandle(api, handle)) return false;
+      try {
+        const creation = readCreationTime(api, handle);
+        if (creation === null || creation.toString() !== target.startKey) return false;
+        return api.terminateProcess(handle, 1) !== 0;
+      } finally {
+        api.closeHandle(handle);
+      }
+    },
+  };
 }
 
 function tcpStateOf(state: number): SocketRow['state'] {

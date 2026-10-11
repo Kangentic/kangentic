@@ -29,7 +29,7 @@ import type {
   SessionEvent,
   SessionUsage,
 } from '../../shared/types';
-import { commandTerminalTitle } from '../../shared/command-terminal-name';
+import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
@@ -191,7 +191,7 @@ export async function buildMonitorSnapshot(context: IpcContext): Promise<Monitor
       projectId: managed.projectId,
       projectName: project.projectName,
       taskId: managed.taskId,
-      taskTitle: task?.title ?? commandTerminalTitle(managed.commandTerminalSlot),
+      taskTitle: task?.title ?? commandTerminalDisplayName(managed.commandTerminalLabel, managed.commandTerminalSlot),
       // Seeded on every snapshot (below, from the pty host) so the row is
       // self-consistent and an idle session that never emits still shows
       // something. Live updates between snapshots ride MONITOR_PEEK.
