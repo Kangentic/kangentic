@@ -33,19 +33,36 @@ function plannedTask(key: string, title: string): Record<string, unknown> {
  * for the first and the third free, so a link onto the third is drawn (a link
  * the chain already implies is left out of the drawing). `started`: a running
  * workflow of two tasks in To Do, the second waiting for the first.
+ * `two-drafts`: the `draft` workflow, listed first so it opens, and a second
+ * draft whose three planned tasks carry the SAME keys (a planned task's key is
+ * only unique within its workflow), so a save aimed at the wrong workflow
+ * places the wrong cards instead of missing.
  */
-function seedScript(seed: 'draft' | 'started'): string {
-  const workflows = seed === 'draft'
-    ? [{
-      workflow: {
-        id: 'wf-draft', title: 'Theme tokens', state: 'draft',
-        draft: {
-          tasks: [plannedTask('task-1', 'Token table'), plannedTask('task-2', 'Token picker'), plannedTask('task-3', 'Token docs')],
-          links: [{ blocker: 'task-1', blocked: 'task-2' }],
-        },
+type Seed = 'draft' | 'started' | 'two-drafts';
+
+function seedScript(seed: Seed): string {
+  const draftWorkflow = {
+    workflow: {
+      id: 'wf-draft', title: 'Theme tokens', state: 'draft',
+      draft: {
+        tasks: [plannedTask('task-1', 'Token table'), plannedTask('task-2', 'Token picker'), plannedTask('task-3', 'Token docs')],
+        links: [{ blocker: 'task-1', blocked: 'task-2' }],
       },
-    }]
-    : [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null } }];
+    },
+  };
+  const otherDraftWorkflow = {
+    workflow: {
+      id: 'wf-other', title: 'Relay notes', state: 'draft',
+      draft: {
+        tasks: [plannedTask('task-1', 'Note table'), plannedTask('task-2', 'Note picker'), plannedTask('task-3', 'Note docs')],
+        links: [],
+      },
+    },
+  };
+  let workflows: unknown[];
+  if (seed === 'started') workflows = [{ workflow: { id: 'wf-running', title: 'Relay reconnect', state: 'running', draft: null } }];
+  else if (seed === 'two-drafts') workflows = [draftWorkflow, otherDraftWorkflow];
+  else workflows = [draftWorkflow];
   const links = seed === 'started'
     ? [{ workflow_id: 'wf-running', blocker_task_id: 'run-task-1', blocked_task_id: 'run-task-2' }]
     : [];
@@ -84,7 +101,7 @@ function seedScript(seed: 'draft' | 'started'): string {
  * the test pauses them (`page.clock.pauseAt`), so a test can hold a timed
  * window open for as long as its assertions need.
  */
-async function launch(seed: 'draft' | 'started', options: { fakeClock?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(seed: Seed, options: { fakeClock?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1600, height: 950 } })).newPage();
@@ -444,6 +461,44 @@ test.describe('Workflows canvas gestures', () => {
         { key: 'task-2', placed: false },
         { key: 'task-3', placed: true },
       ]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('arrow-key places still waiting when another workflow is picked are saved to the workflow they were made on', async () => {
+    // Picking another workflow selects it in the store, which empties the canvas
+    // and unmounts it; the unmount is what saves the places waiting for the keys
+    // to rest. That save used to address the workflow now selected, so the moved
+    // card kept no place and the other workflow's card with the same key got one.
+    // The page's clock is paused before the keys go down, so the 400ms rest can
+    // never be what saves them: only the unmount can.
+    const { browser, page } = await launch('two-drafts', { fakeClock: true });
+    try {
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+      await card(page, 'task-3').click();
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      await page.clock.pauseAt(new Date(Date.now() + 1000));
+
+      const placedKeys = (workflowId: string) => page.evaluate(async ({ projectId, id }) => {
+        const detail = await window.electronAPI.workflows.get(projectId, id);
+        return detail.tasks.filter((task) => task.canvasX !== null && task.canvasY !== null).map((task) => task.key);
+      }, { projectId: PROJECT_ID, id: workflowId });
+
+      const beforeMove = await translateOf(page, 'task-3');
+      await page.keyboard.press('ArrowRight');
+      await expect.poll(() => translateOf(page, 'task-3')).not.toEqual(beforeMove);
+      // The card moved and nothing is saved: the rest timer is paused with the clock.
+      expect(await placedKeys('wf-draft')).toEqual([]);
+
+      await byTestId(page, 'workflow-picker').click();
+      await page.locator('[data-testid="workflow-picker-option"][data-workflow-id="wf-other"]').click();
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Relay notes');
+
+      // The place the keys made lands on the workflow it was made on...
+      await expect.poll(() => placedKeys('wf-draft'), { timeout: 5_000 }).toEqual(['task-3']);
+      // ...and the workflow picked in the meantime is left as it was.
+      expect(await placedKeys('wf-other')).toEqual([]);
     } finally {
       await browser.close();
     }

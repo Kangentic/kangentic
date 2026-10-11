@@ -36,6 +36,7 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
 import { openTestDatabase } from './helpers/test-database';
 
 interface ExecuteOptions {
@@ -355,6 +356,57 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(2);
       expect(skippedRows()).toHaveLength(2);
+    });
+  });
+
+  // A turn end holds no task lock, so its check has no time limit, but it is
+  // bound to the pass: a move that supersedes the pass must stop the check, or
+  // the check keeps running (and holding one of the two check slots) for a
+  // pass that will act on nothing.
+  describe('the Condition check a pass makes', () => {
+    beforeEach(() => {
+      hoisted.rows = [row({ condition: 'The review is clean' })];
+      enterColumnAt(secondsAgo(60));
+    });
+
+    it('is handed an abort signal that is live while the pass runs', async () => {
+      let signalSeen: AbortSignal | undefined;
+      let abortedWhenAsked: boolean | undefined;
+      hoisted.checkConditions.mockImplementationOnce(async (_input: unknown, limits?: { signal?: AbortSignal }) => {
+        signalSeen = limits?.signal;
+        abortedWhenAsked = limits?.signal?.aborted;
+        return { ok: true, answers: new Map() };
+      });
+
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(signalSeen).toBeInstanceOf(AbortSignal);
+      expect(abortedWhenAsked).toBe(false);
+    });
+
+    it('is stopped when a move supersedes the pass, and the pass runs no row after it', async () => {
+      let signalSeen: AbortSignal | undefined;
+      let finishCheck!: () => void;
+      hoisted.checkConditions.mockImplementationOnce((_input: unknown, limits?: { signal?: AbortSignal }) => new Promise((resolve) => {
+        signalSeen = limits?.signal;
+        finishCheck = () => resolve({ ok: true, answers: new Map([['row-on-to-testing', { met: true, reason: 'Clean.' }]]) });
+      }));
+
+      // The pass is out on its check when this returns (see the file header).
+      await endTurn();
+      expect(signalSeen).toBeInstanceOf(AbortSignal);
+      expect(signalSeen!.aborted).toBe(false);
+
+      // The task is moved: what the move path calls to stop the column's turn-end work.
+      supersedeTurnEndWork(taskId);
+
+      expect(signalSeen!.aborted).toBe(true);
+      // The check answers anyway, as a CLI run that was already out does; the pass has stopped caring.
+      finishCheck();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.countRuns('row-on-to-testing', taskId)).toBe(0);
     });
   });
 });

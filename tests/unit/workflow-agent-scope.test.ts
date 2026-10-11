@@ -76,6 +76,51 @@ describe('workflow agent MCP scope', () => {
     expect(received[0].workflow).toBe('wf-1');
   });
 
+  describe('kangentic_get_workflow, which only defaults to the agent\'s own workflow', () => {
+    function registerGetWorkflow(): { tool: CapturedTool; received: Array<Record<string, unknown>> } {
+      const { server, tools } = captureServer();
+      const scoped = scopeServerToWorkflowAgent(server, 'wf-1');
+      const received: Array<Record<string, unknown>> = [];
+      scoped.registerTool(
+        'kangentic_get_workflow',
+        {
+          annotations: READ_ONLY,
+          inputSchema: z.object({ workflow: z.string(), project: z.string().optional() }),
+        },
+        (args) => { received.push(args); return null; },
+      );
+      return { tool: tools[0], received };
+    }
+
+    it('reads the workflow it names, with the project it names, instead of its own', () => {
+      const { tool, received } = registerGetWorkflow();
+      tool.callback({ workflow: 'Release train', project: 'kangentic-mobile' }, {});
+      // Passed through unchanged: neither the workflow nor the project is replaced.
+      expect(received).toEqual([{ workflow: 'Release train', project: 'kangentic-mobile' }]);
+    });
+
+    it('reads its own workflow, in its own project, when it names none', () => {
+      const { tool, received } = registerGetWorkflow();
+      tool.callback({ project: 'kangentic-mobile' }, {});
+      expect(received).toEqual([{ workflow: 'wf-1', project: undefined }]);
+    });
+
+    it('treats a blank workflow as none', () => {
+      const { tool, received } = registerGetWorkflow();
+      tool.callback({ workflow: '   ', project: 'kangentic-mobile' }, {});
+      expect(received).toEqual([{ workflow: 'wf-1', project: undefined }]);
+    });
+
+    it('lets the agent leave `workflow` out, and still lets it name a project', () => {
+      const { tool } = registerGetWorkflow();
+      const schema = tool.config.inputSchema as z.ZodObject;
+      expect(schema.safeParse({}).success).toBe(true);
+      expect(schema.safeParse({ workflow: 'Release train', project: 'kangentic-mobile' }).success).toBe(true);
+      expect(Object.keys(schema.shape)).toContain('project');
+      expect(Object.keys(schema.shape)).toContain('workflow');
+    });
+  });
+
   it('leaves an ordinary read-only tool as registered', () => {
     const { server, tools } = captureServer();
     const scoped = scopeServerToWorkflowAgent(server, 'wf-1');

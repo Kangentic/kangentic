@@ -118,10 +118,21 @@ export async function automationAgentUnavailableReason(deps: ConditionCheckDeps)
   return resolved.ok ? null : resolved.reason;
 }
 
-async function resolveCheckAgent(deps: ConditionCheckDeps): Promise<
+type ResolvedCheckAgent =
   | { ok: true; adapter: AgentAdapter; agentName: string; cliPath: string; model: string | null; effort: string | null }
-  | { ok: false; reason: string }
-> {
+  | { ok: false; reason: string };
+
+/** Which agent answers, and with what. A setup step that throws (a CLI probe that fails to spawn) is a check that could not run. */
+async function resolveCheckAgent(deps: ConditionCheckDeps): Promise<ResolvedCheckAgent> {
+  try {
+    return await resolveCheckAgentOrThrow(deps);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, reason: `The Automation agent could not be set up, so the condition was not checked: ${detail}` };
+  }
+}
+
+async function resolveCheckAgentOrThrow(deps: ConditionCheckDeps): Promise<ResolvedCheckAgent> {
   const config = deps.loadConfig();
   const choice = automationAgentChoice(config.automation);
   const registered = await deps.listAgents();
@@ -201,7 +212,11 @@ export async function checkAutomationConditions(
     : 'The condition check was stopped because the task moved on.');
 
   try {
-    const resolved = await resolveCheckAgent(deps);
+    // Inside the bound too: finding the agent can probe its CLI, and a probe
+    // that hangs must not hold the move's task lock past the limit.
+    const settledAgent = await untilAborted(resolveCheckAgent(deps), stop.signal);
+    if (!settledAgent) return { ok: false, reason: stoppedReason() };
+    const resolved = settledAgent.value;
     if (!resolved.ok) return resolved;
     if (stop.signal.aborted) return { ok: false, reason: stoppedReason() };
 

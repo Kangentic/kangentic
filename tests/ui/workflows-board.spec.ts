@@ -715,6 +715,81 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  // The overlay re-watches the board's cards (a ResizeObserver per card) after
+  // the board's tasks change. These two tests count `observe` calls on board
+  // cards across writes landing inside ONE page task, so every write is before
+  // the next frame. The re-observe is an animation frame callback the first
+  // write registers; ours is registered after it, so it has run by the first
+  // frame the page waits for, and three are waited for.
+  test.describe('the overlay re-watching the cards after board changes', () => {
+    /** The two stores the page-side counter drives: a board write gives `tasks` a new array, which is what the overlay re-observes on. */
+    interface RewatchWindow {
+      __zustandStores: {
+        board: {
+          getState: () => { tasks: unknown[] };
+          setState: (partial: { tasks: unknown[] }) => void;
+        };
+        workflow: WorkflowStoreHandle;
+      };
+    }
+
+    /** Write the board's tasks `writes` times in one task, optionally close the overlay in that same task, and count the card watches over the next three frames. */
+    const cardWatchesAfterWrites = (page: Page, writes: number, closeOverlay: boolean) => page.evaluate(async ({ writeCount, close }) => {
+      let watched = 0;
+      const observe = ResizeObserver.prototype.observe;
+      ResizeObserver.prototype.observe = function patchedObserve(this: ResizeObserver, target: Element, options?: ResizeObserverOptions) {
+        if (target.hasAttribute('data-task-id') && target.closest('[data-board-lanes]')) watched += 1;
+        return observe.call(this, target, options);
+      };
+      try {
+        const stores = (window as unknown as RewatchWindow).__zustandStores;
+        for (let write = 0; write < writeCount; write += 1) stores.board.setState({ tasks: [...stores.board.getState().tasks] });
+        if (close) stores.workflow.getState().clearLinks();
+        for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => requestAnimationFrame(resolve));
+      } finally {
+        ResizeObserver.prototype.observe = observe;
+      }
+      return watched;
+    }, { writeCount: writes, close: closeOverlay });
+
+    test('board changes landing inside one frame re-watch the cards once, not once per change', async () => {
+      const { browser, page } = await launch();
+      try {
+        await keepLinks(page, 't417');
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-phase', 'shown');
+
+        // One change re-watches the board's cards (the overlay did re-observe,
+        // so the count below is not equal for want of a pass).
+        const forOneWrite = await cardWatchesAfterWrites(page, 1, false);
+        expect(forOneWrite).toBeGreaterThan(0);
+        // Six changes in the same frame cost the same single pass.
+        expect(await cardWatchesAfterWrites(page, 6, false)).toBe(forOneWrite);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a re-watch still waiting when the overlay closes is cancelled, so it never watches the cards again', async () => {
+      const { browser, page } = await launch();
+      try {
+        // With reduced motion the overlay leaves at once instead of fading out,
+        // so closing it unmounts its observer in the same turn.
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await keepLinks(page, 't417');
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-phase', 'shown');
+
+        // The same write with the overlay left open does re-watch the cards...
+        expect(await cardWatchesAfterWrites(page, 1, false)).toBeGreaterThan(0);
+        // ...and closed in the same turn it does not: the pass that was waiting
+        // went with the observer it would have handed every card again.
+        expect(await cardWatchesAfterWrites(page, 1, true)).toBe(0);
+        await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
   // Board 8c: resting the pointer on a card previews its links until the
   // pointer leaves the card; a refused move keeps them. Each test asserts an
   // end state, never that a crossing did not flash: under load a pointer can

@@ -40,7 +40,12 @@ export function checkWorkflowMove(
     if (!workflow) return null;
     workflowTitle = workflow.title;
     workflowState = workflow.state;
-  } catch {
+  } catch (error) {
+    // Fails open on purpose. A home database that cannot be read cannot run
+    // the workflow either, so nothing moves the task on, and refusing every
+    // hand move would leave it stuck where it is. Logged, so the allow is
+    // never silent.
+    console.warn(`[WORKFLOW-LOCK] Could not read workflow ${task.workflow_id} for task ${task.id.slice(0, 8)}, so the move is allowed:`, error);
     return null;
   }
   const swimlanes = new SwimlaneRepository(getProjectDb(args.projectId)).list();

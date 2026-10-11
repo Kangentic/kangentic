@@ -207,6 +207,7 @@ describe('the workflow step and the turn it judged', () => {
       expect.objectContaining({
         task: expect.objectContaining({ title: 'Add the export button', prMergeReadiness: readiness }),
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 

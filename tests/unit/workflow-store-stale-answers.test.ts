@@ -328,6 +328,69 @@ describe('previewLinks and endPreview', () => {
   });
 });
 
+// A task detail's panel watches its workflow and reloads it on every push. The
+// store drops a workflow's bookkeeping when its last watcher leaves, so a read
+// that was in flight at that moment must not be mistaken for the newest read of
+// the next watch of the same workflow.
+describe('watchDetail', () => {
+  const state = () => useWorkflowStore.getState();
+  // A late answer is a microtask away from landing. There is nothing to poll for
+  // when it must NOT land, so let every pending microtask run, then assert.
+  const settleAnswers = () => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+
+  beforeEach(() => {
+    useWorkflowStore.setState({ watchedDetails: {} });
+  });
+
+  it('keeps the newer read when the last watcher leaves and the workflow is watched again', async () => {
+    const bridge = installBridge();
+    const staleRead = deferred<WorkflowDetail>();
+    const freshRead = deferred<WorkflowDetail>();
+    bridge.get.mockReturnValueOnce(staleRead.promise).mockReturnValueOnce(freshRead.promise);
+
+    const unwatchFirst = state().watchDetail('p', 'w-late');
+    expect(bridge.get).toHaveBeenCalledTimes(1);
+    // The panel closes with its read still out, then a new panel watches the same workflow.
+    unwatchFirst();
+    expect(state().watchedDetails['w-late']).toBeUndefined();
+    const unwatchSecond = state().watchDetail('p', 'w-late');
+    expect(bridge.get).toHaveBeenCalledTimes(2);
+
+    // The newer read answers first, then the older one answers late.
+    freshRead.resolve(detailOf('w-late', [viewTask('fresh')]));
+    await vi.waitFor(() => {
+      expect(state().watchedDetails['w-late']?.detail?.tasks.map((task) => task.key)).toEqual(['fresh']);
+    });
+    staleRead.resolve(detailOf('w-late', [viewTask('stale')]));
+    await settleAnswers();
+
+    expect(state().watchedDetails['w-late']?.detail?.tasks.map((task) => task.key)).toEqual(['fresh']);
+    unwatchSecond();
+  });
+
+  it('keeps the newer read when the older one answers first and the workflow was dropped between', async () => {
+    const bridge = installBridge();
+    const staleRead = deferred<WorkflowDetail>();
+    const freshRead = deferred<WorkflowDetail>();
+    bridge.get.mockReturnValueOnce(staleRead.promise).mockReturnValueOnce(freshRead.promise);
+
+    state().watchDetail('p', 'w-early')();
+    const unwatchSecond = state().watchDetail('p', 'w-early');
+
+    // The older read answers into the new watch before the newer one does: it
+    // must not land, so the panel never shows it.
+    staleRead.resolve(detailOf('w-early', [viewTask('stale')]));
+    await settleAnswers();
+    expect(state().watchedDetails['w-early']?.detail).toBeNull();
+
+    freshRead.resolve(detailOf('w-early', [viewTask('fresh')]));
+    await vi.waitFor(() => {
+      expect(state().watchedDetails['w-early']?.detail?.tasks.map((task) => task.key)).toEqual(['fresh']);
+    });
+    unwatchSecond();
+  });
+});
+
 describe('setPositions', () => {
   function placed(canvasX: number | null, canvasY: number | null): WorkflowDetail {
     return detailOf('w', [viewTask('a', canvasX, canvasY)]);

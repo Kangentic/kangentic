@@ -207,9 +207,11 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     pendingAccess.set(workflowId, pending);
     return;
   }
+  let suspended = false;
   try {
     captureSpend(context, session);
     await context.sessionManager.suspend(session.id);
+    suspended = true;
     // A Pause pressed while it stopped is the user's, and stands. The resume
     // reads the grant from the workflow row; only this one line is not said.
     if (userPaused.has(workflowId)) return;
@@ -219,8 +221,9 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
   } catch (error) {
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
     // A suspend that failed leaves the agent running without the access it was
-    // promised. Owe it again, so its next idle edge retries.
-    if (findWorkflowAgentSession(context, workflowId)?.status === 'running' && !pendingAccess.has(workflowId)) {
+    // promised. Owe it again, so its next idle edge retries. A start that threw
+    // after its spawn left an agent that has the access, so nothing is owed.
+    if (!suspended && findWorkflowAgentSession(context, workflowId)?.status === 'running' && !pendingAccess.has(workflowId)) {
       pendingAccess.set(workflowId, pending);
     }
   }
@@ -525,6 +528,10 @@ async function startWorkflowAgent(
     cols: grid.cols,
     rows: grid.rows,
   });
+  // What the spawned agent reads, recorded before anything below can throw:
+  // it has these checkouts from here on, and a later grant compares against them.
+  grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
+  lastGrid.set(workflow.id, grid);
   for (const replacedId of replacedSessionIds) {
     if (replacedId === session.id) continue;
     forgetWorkflowAgentEffort(replacedId);
@@ -548,8 +555,6 @@ async function startWorkflowAgent(
     // fails too starts over again, which says it again.
     startedOverSessions.delete(workflow.id);
   }
-  grantedDirectories.set(workflow.id, new Set(readable.map((entry) => entry.path)));
-  lastGrid.set(workflow.id, grid);
   return { session, unavailable: null };
 }
 

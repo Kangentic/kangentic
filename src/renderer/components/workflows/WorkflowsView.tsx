@@ -14,7 +14,7 @@ import { describeIpcError } from '../../lib/ipc-error';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { boardTaskFilter, isOpenFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
-import { WorkflowCanvas } from './WorkflowCanvas';
+import { WorkflowCanvas, type WorkflowCanvasTarget } from './WorkflowCanvas';
 import { WorkflowHeader } from './WorkflowHeader';
 import { WorkflowInspector } from './WorkflowInspector';
 import { DeleteWorkflowDialog, RemoveTaskDialog, RenameWorkflowDialog, StartWorkflowDialog } from './WorkflowDialogs';
@@ -123,6 +123,7 @@ export function WorkflowsView() {
   const selectWorkflow = useWorkflowStore((state) => state.selectWorkflow);
   const selectTask = useWorkflowStore((state) => state.selectTask);
   const setPositions = useWorkflowStore((state) => state.setPositions);
+  const setPositionsIn = useWorkflowStore((state) => state.setPositionsIn);
   const setLink = useWorkflowStore((state) => state.setLink);
   const setRoute = useWorkflowStore((state) => state.setRoute);
   const addTask = useWorkflowStore((state) => state.addTask);
@@ -305,9 +306,13 @@ export function WorkflowsView() {
     if (useWorkflowStore.getState().detail?.tasks.find((task) => task.key === key)?.task) setCardMenu({ key, position });
   }, []);
 
-  const moveCards = useCallback((positions: Array<{ key: string; x: number; y: number }>) => {
-    void setPositions(positions);
-  }, [setPositions]);
+  const moveCards = useCallback((positions: Array<{ key: string; x: number; y: number }>, workflow: WorkflowCanvasTarget) => {
+    // Places saved as the canvas leaves a workflow arrive after the switch has
+    // selected the next one: they go to their own workflow, and draw nothing.
+    const { projectId, selectedWorkflowId } = useWorkflowStore.getState();
+    if (workflow.workflowId === selectedWorkflowId && workflow.homeProjectId === projectId) void setPositions(positions);
+    else void setPositionsIn(workflow.homeProjectId, workflow.workflowId, positions);
+  }, [setPositions, setPositionsIn]);
 
   const link = useCallback((blockerKey: string, blockedKey: string) => {
     void setLink(blockerKey, blockedKey, true).then((ok) => {

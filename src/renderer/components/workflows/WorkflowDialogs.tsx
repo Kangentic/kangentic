@@ -69,14 +69,14 @@ export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
       : <p>Deletes the agent conversation. Nothing else changes.</p>;
   } else {
     const unfinished = summary.taskCount - summary.doneCount;
+    let staysText: string;
+    if (unfinished === 0) staysText = 'Its tasks are done and stay where they are.';
+    else if (unfinished === 1) staysText = 'Its 1 unfinished task stays where it is, as an ordinary task.';
+    else staysText = `Its ${unfinished} unfinished tasks stay where they are, as ordinary tasks.`;
     message = (
       <>
         <p>
-          {unfinished === 0
-            ? 'Its tasks are done and stay where they are.'
-            : unfinished === 1
-              ? 'Its 1 unfinished task stays where it is, as an ordinary task.'
-              : `Its ${unfinished} unfinished tasks stay where they are, as ordinary tasks.`}
+          {staysText}
           {' '}The agent conversation is deleted.
         </p>
         {state === 'paused' && unfinished > 0 && (

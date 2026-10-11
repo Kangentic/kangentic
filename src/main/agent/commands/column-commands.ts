@@ -30,7 +30,8 @@ const DEFAULT_SESSION_SPAWN_STRATEGY: SessionSpawnStrategy = 'create_or_resume';
 /**
  * The message this column actually sends, for the `autoCommand` field these
  * tools echo back. Goes through the same resolver the engine uses, so what a
- * caller reads is what the column will deliver.
+ * caller reads is what the column will deliver. A row with a Condition or a
+ * Frequency limit is delivered only when both pass.
  */
 function readColumnMessage(db: Database.Database, swimlaneId: string): string | null {
   return resolveColumnMessage(new AutomationRepository(db).listForColumn(swimlaneId))?.message ?? null;

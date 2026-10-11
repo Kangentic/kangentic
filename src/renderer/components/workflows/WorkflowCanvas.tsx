@@ -118,6 +118,12 @@ function reseedNodes(current: WorkflowFlowNode[], derived: WorkflowFlowNode[]): 
   });
 }
 
+/** A workflow by its home project and id. */
+export interface WorkflowCanvasTarget {
+  homeProjectId: string;
+  workflowId: string;
+}
+
 interface WorkflowCanvasProps {
   detail: WorkflowDetail;
   selectedTaskKey: string | null;
@@ -127,7 +133,8 @@ interface WorkflowCanvasProps {
   planHeld: boolean;
   onSelectTask: (key: string | null) => void;
   onOpenTask: (key: string) => void;
-  onMoveCards: (positions: Array<{ key: string; x: number; y: number }>) => void;
+  /** Save card places on the workflow they were made on, which may have left the canvas since. */
+  onMoveCards: (positions: Array<{ key: string; x: number; y: number }>, workflow: WorkflowCanvasTarget) => void;
   onLink: (blockerKey: string, blockedKey: string) => void;
   /** Tasks the board's search and filter leave showing; null shows all. A hidden card keeps its place. */
   visibleKeys: ReadonlySet<string> | null;
@@ -347,26 +354,32 @@ export function WorkflowCanvas({
 
   // A card moved with the arrow keys is saved the way a drag stop saves it,
   // once the keys rest. Each waiting place is kept per card, with the workflow
-  // it was made on: another workflow on the canvas drops them, leaving the view
-  // saves them, and a drag or Auto layout supersedes them.
-  const pendingKeyMoves = useRef<{ workflowId: string; positions: Map<string, { x: number; y: number }>; timer: number } | null>(null);
+  // it was made on, and is saved to that workflow: another workflow on the
+  // canvas and leaving the view both save them there, and a drag or Auto layout
+  // supersedes them. A workflow switch unmounts the canvas after the store has
+  // already selected the next workflow, so the save cannot ask the store whose
+  // places these are.
+  const pendingKeyMoves = useRef<{ workflow: WorkflowCanvasTarget; positions: Map<string, { x: number; y: number }>; timer: number } | null>(null);
   const onMoveCardsRef = useRef(onMoveCards);
   useEffect(() => { onMoveCardsRef.current = onMoveCards; }, [onMoveCards]);
-  const takeKeyMoves = useCallback((): Map<string, { x: number; y: number }> => {
+  const takeKeyMoves = useCallback(() => {
     const pending = pendingKeyMoves.current;
     pendingKeyMoves.current = null;
-    if (!pending) return new Map();
+    if (!pending) return null;
     window.clearTimeout(pending.timer);
-    return pending.positions;
+    return pending;
   }, []);
   const saveKeyMoves = useCallback(() => {
-    const positions = takeKeyMoves();
-    if (positions.size > 0) onMoveCardsRef.current([...positions].map(([key, position]) => ({ key, ...position })));
+    const pending = takeKeyMoves();
+    if (pending && pending.positions.size > 0) {
+      onMoveCardsRef.current([...pending.positions].map(([key, position]) => ({ key, ...position })), pending.workflow);
+    }
   }, [takeKeyMoves]);
   const workflowId = detail.workflow.id;
+  const homeProjectId = detail.homeProjectId;
   useEffect(() => {
-    if (pendingKeyMoves.current !== null && pendingKeyMoves.current.workflowId !== workflowId) takeKeyMoves();
-  }, [workflowId, takeKeyMoves]);
+    if (pendingKeyMoves.current !== null && pendingKeyMoves.current.workflow.workflowId !== workflowId) saveKeyMoves();
+  }, [workflowId, saveKeyMoves]);
   useEffect(() => saveKeyMoves, [saveKeyMoves]);
 
   const handleDragStart = useCallback<OnNodeDrag<WorkflowFlowNode>>(() => {
@@ -383,10 +396,10 @@ export function WorkflowCanvas({
     // is that, at the drop, so the drag's start renders nothing.
     onSelectTask(draggedNode.id);
     // One save: any arrow-key place still waiting, then the drag's own places over it.
-    const positions = takeKeyMoves();
+    const positions = takeKeyMoves()?.positions ?? new Map<string, { x: number; y: number }>();
     for (const movedNode of moved) positions.set(movedNode.id, { x: movedNode.position.x, y: movedNode.position.y });
-    onMoveCards([...positions].map(([key, position]) => ({ key, ...position })));
-  }, [onMoveCards, onSelectTask, takeKeyMoves]);
+    onMoveCards([...positions].map(([key, position]) => ({ key, ...position })), { homeProjectId, workflowId });
+  }, [onMoveCards, onSelectTask, takeKeyMoves, homeProjectId, workflowId]);
   const handleAutoLayout = useCallback(() => {
     // Auto layout puts every card back, so an arrow-key place still waiting must not land after it.
     takeKeyMoves();
@@ -420,8 +433,8 @@ export function WorkflowCanvas({
     if (pending) window.clearTimeout(pending.timer);
     const positions = pending?.positions ?? new Map<string, { x: number; y: number }>();
     positions.set(selectedTaskKey, { x: node.position.x, y: node.position.y });
-    pendingKeyMoves.current = { workflowId, positions, timer: window.setTimeout(saveKeyMoves, KEY_MOVE_SAVE_DELAY_MS) };
-  }, [onSelectTask, selectedTaskKey, reactFlow, workflowId, saveKeyMoves]);
+    pendingKeyMoves.current = { workflow: { homeProjectId, workflowId }, positions, timer: window.setTimeout(saveKeyMoves, KEY_MOVE_SAVE_DELAY_MS) };
+  }, [onSelectTask, selectedTaskKey, reactFlow, homeProjectId, workflowId, saveKeyMoves]);
 
   return (
     // data-no-dismiss: the pane's grab cursor is an action, so a click on empty

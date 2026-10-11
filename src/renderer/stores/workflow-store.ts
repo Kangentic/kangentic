@@ -72,6 +72,8 @@ interface WorkflowStore {
   setLinkIn: (homeProjectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
   setRouteIn: (homeProjectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<boolean>;
   removeTaskIn: (homeProjectId: string, workflowId: string, key: string) => Promise<boolean>;
+  /** Card places for a workflow no longer on the canvas: saved, with nothing drawn. */
+  setPositionsIn: (homeProjectId: string, workflowId: string, positions: WorkflowCanvasPosition[]) => Promise<boolean>;
 
   /**
    * The unfinished workflows of OTHER projects that have a task on this board,
@@ -155,7 +157,12 @@ let linkGeneration = 0; // hmr-safe: as above; the overlay is cleared on leaving
  * for subscribers, and the two are always written together.
  */
 let pendingLinks: { taskId: string; kept: boolean } | null = null; // hmr-safe: as above; a reset only drops a load in flight.
-/** The same, per watched workflow (a task detail's panel). */
+/**
+ * The same, per watched workflow (a task detail's panel), dropped when its last
+ * watcher leaves. The numbers come from one counter, so a dropped workflow that
+ * is watched again never reuses a number an older answer still carries.
+ */
+let watchedGeneration = 0; // hmr-safe: as above.
 const watchedGenerations = new Map<string, number>(); // hmr-safe: as above; a reset only discards in-flight answers.
 
 function currentProjectId(): string | null {
@@ -286,7 +293,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     const watched = get().watchedDetails[workflowId];
     if (!watched) return;
     // Two pushes in a row can answer out of order: only the newest read lands.
-    const generation = (watchedGenerations.get(workflowId) ?? 0) + 1;
+    const generation = ++watchedGeneration;
     watchedGenerations.set(workflowId, generation);
     let detail: WorkflowDetail;
     try {
@@ -511,6 +518,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         const current = get().watchedDetails[workflowId];
         if (!current) return;
         const { [workflowId]: _removed, ...rest } = get().watchedDetails;
+        if (current.watchers <= 1) watchedGenerations.delete(workflowId);
         set({ watchedDetails: current.watchers <= 1 ? rest : { ...rest, [workflowId]: { ...current, watchers: current.watchers - 1 } } });
       };
     },
@@ -649,6 +657,9 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     setRouteIn: (homeProjectId, workflowId, key, swimlaneIds) =>
       onWorkflow('Could not change the route', () => window.electronAPI.workflows.setRoute(homeProjectId, workflowId, key, swimlaneIds)),
+
+    setPositionsIn: (homeProjectId, workflowId, positions) =>
+      onWorkflow('Could not save the layout', () => window.electronAPI.workflows.setPositions(homeProjectId, workflowId, positions)),
 
     setPositions: async (positions) => {
       const detail = get().detail;

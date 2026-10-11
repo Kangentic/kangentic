@@ -121,12 +121,13 @@ function EndRow({ end, current, color, icon, name }: {
   const rail = end === 'todo'
     ? <Rail above={false} below aboveColor={RAIL_AHEAD} belowColor={current ? RAIL_AHEAD : RAIL_DONE} node={<RailNode kind={current ? 'current' : 'done'} color={color} />} />
     : <Rail above below={false} aboveColor={current ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind={current ? 'current' : 'end'} color={color} />} />;
+  const elsewhereState = end === 'todo' ? 'done' : 'ahead';
   return (
     <div
       className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
       style={current ? { background: tint(color, 10) } : undefined}
       data-testid={`workflow-route-${end}`}
-      data-step-state={current ? 'current' : end === 'todo' ? 'done' : 'ahead'}
+      data-step-state={current ? 'current' : elsewhereState}
     >
       {rail}
       <ColumnGlyph column={{ icon, role: end }} size={14} color={color} />

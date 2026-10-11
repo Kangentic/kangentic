@@ -17,6 +17,8 @@ import { z } from 'zod/v4';
  * any agent on the project, it can list the project's workflows and read their
  * plans and agents' conversations (`kangentic_get_transcript` with `workflow`).
  * Reading another plan changes nothing, and planning across workflows can need it.
+ * `kangentic_get_workflow` only defaults to its own workflow: left out, `workflow`
+ * is filled in; named, the call reads the workflow it names.
  */
 
 /** Tools that shape the plan, on top of the read-only ones. */
@@ -42,6 +44,8 @@ const EXCLUDED_PREFIXES = ['kangentic_browser_'];
 
 const OWN_WORKFLOW_DESCRIPTION = 'Leave out: these tools act on the workflow you are planning.';
 
+const OWN_WORKFLOW_READ_DESCRIPTION = 'The workflow\'s id, or its exact title (case-insensitive). Leave out to read the workflow you are planning.';
+
 /** The part of a tool's registration this scope reads. */
 interface ScopedToolConfig {
   inputSchema?: unknown;
@@ -63,6 +67,12 @@ function scopedSchema(inputSchema: unknown): unknown {
   return withoutProject.extend({ workflow: z.string().optional().describe(OWN_WORKFLOW_DESCRIPTION) });
 }
 
+/** A read about one workflow keeps `project`, and its `workflow` becomes optional. */
+function ownReadSchema(inputSchema: unknown): unknown {
+  if (!(inputSchema instanceof z.ZodObject)) return inputSchema;
+  return inputSchema.extend({ workflow: z.string().optional().describe(OWN_WORKFLOW_READ_DESCRIPTION) });
+}
+
 /**
  * The server's `registerTool`, wrapped: a tool the agent may not use is never
  * registered, and a tool about its workflow is bound to it. Every
@@ -75,7 +85,16 @@ export function scopeServerToWorkflowAgent(server: McpServer, workflowId: string
       return (name: string, config: ScopedToolConfig, callback: ScopedToolCallback) => {
         const readOnly = config.annotations?.readOnlyHint === true;
         if (!workflowAgentMayUse(name, readOnly)) return null;
-        if (!WORKFLOW_AGENT_PLANNING_TOOLS.has(name) && !OWN_WORKFLOW_READS.has(name)) {
+        if (OWN_WORKFLOW_READS.has(name)) {
+          // Its own workflow lives in its home project, so a default drops any `project` too.
+          const defaultedCallback: ScopedToolCallback = (args, extra) => (
+            typeof args.workflow === 'string' && args.workflow.trim() !== ''
+              ? callback(args, extra)
+              : callback({ ...args, workflow: workflowId, project: undefined }, extra)
+          );
+          return Reflect.apply(target.registerTool, target, [name, { ...config, inputSchema: ownReadSchema(config.inputSchema) }, defaultedCallback]);
+        }
+        if (!WORKFLOW_AGENT_PLANNING_TOOLS.has(name)) {
           return Reflect.apply(target.registerTool, target, [name, config, callback]);
         }
         const boundCallback: ScopedToolCallback = (args, extra) => callback({ ...args, workflow: workflowId, project: undefined }, extra);

@@ -291,8 +291,11 @@ async function runRows(
   let runnable = pending;
   if (conditional.length > 0) {
     const templateVars = engine.resolveGroupTemplateVars(task, column, 'turn_end', { agentReply });
+    // No time limit, since a turn end holds no lock, but a move that supersedes
+    // this pass stops the check, so it does not hold a check slot for nothing.
     const outcome = await engine.checkConditions(
       engine.conditionCheckInput(task, column, 'turn_end', conditional, templateVars, { agentReply }),
+      { signal: controller.signal },
     );
     if (outcome.ok) {
       for (const [automationId, answer] of outcome.answers) answers.set(automationId, answer);

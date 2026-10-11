@@ -92,7 +92,7 @@ export async function runWorkflowStep(
     move: null,
     agentReply,
     rows: [{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route) }],
-  });
+  }, { signal: input.signal });
   // No Automation agent, or it could not run: a human gate until one can.
   if (!outcome.ok) return;
   if (input.signal.aborted) return;

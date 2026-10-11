@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as ConditionCheckModule from '../../src/main/automations/condition-check/condition-check';
-import type { ConditionCheckDeps } from '../../src/main/automations/condition-check/condition-check';
+import type { ConditionCheckDeps, ConditionCheckOutcome } from '../../src/main/automations/condition-check/condition-check';
 import { buildConditionPrompt, parseConditionReply, type ConditionPromptInput } from '../../src/main/automations/condition-check/condition-prompt';
 import { describeAutomationGuards } from '../../src/shared/automation-describe';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
@@ -157,13 +157,20 @@ interface HeldAnswer {
  * left pending until the test answers it, which is what lets a test hold a slot
  * open for as long as it needs.
  */
-function createHeldAgent(): { deps: ConditionCheckDeps; held: HeldAnswer[] } {
+function createHeldAgent(
+  overrides: {
+    /** Replaces the CLI probe, which finds the fake CLI at once by default. */
+    detect?: () => Promise<{ found: boolean; path: string | null }>;
+    /** Replaces the agent list, which names the fake agent by default. */
+    listAgents?: ConditionCheckDeps['listAgents'];
+  } = {},
+): { deps: ConditionCheckDeps; held: HeldAnswer[] } {
   const held: HeldAnswer[] = [];
   const adapter = {
     name: 'fake-agent',
     displayName: 'Fake Agent',
     answerCapabilities: { streaming: false, search: false, model: false, effort: false },
-    detect: async () => ({ found: true, path: '/mock/fake-agent' }),
+    detect: overrides.detect ?? (async () => ({ found: true, path: '/mock/fake-agent' })),
     answerFromContext: (prompt: string) => new Promise<string>((resolve) => {
       held.push({ prompt, answer: resolve });
     }),
@@ -173,7 +180,7 @@ function createHeldAgent(): { deps: ConditionCheckDeps; held: HeldAnswer[] } {
       automation: { agent: 'fake-agent', model: null, effort: null },
       agent: { cliPaths: {} },
     }) as unknown as AppConfig,
-    listAgents: async () => [{ name: 'fake-agent', adapter }],
+    listAgents: overrides.listAgents ?? (async () => [{ name: 'fake-agent', adapter }]),
   };
   return { deps, held };
 }
@@ -262,6 +269,68 @@ describe('checkAutomationConditions limits', () => {
     await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
 
     await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON });
+  });
+
+  describe('finding the Automation agent, which runs inside the bound too', () => {
+    /** A CLI probe that never answers, as one that hangs on a locked or unreachable binary. */
+    const hangingDetect = (): Promise<{ found: boolean; path: string | null }> => new Promise(() => undefined);
+
+    it('gives up with the did-not-answer-in-time reason when the CLI probe outlasts timeoutMs', async () => {
+      agent = createHeldAgent({ detect: hangingDetect });
+      // The outcome is captured rather than awaited, so a stop that fails to
+      // land fails this test at its assertion instead of hanging it.
+      let outcome: ConditionCheckOutcome | undefined;
+      void check(agent.deps, input(), { timeoutMs: 1_000 }).then((settled) => {
+        outcome = settled;
+      });
+      await settle();
+      expect(outcome).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(outcome).toEqual({ ok: false, reason: TIMED_OUT_REASON });
+      expect(agent.held).toHaveLength(0);
+    });
+
+    it('stops with the task-moved-on reason when the signal aborts while the CLI probe is out', async () => {
+      agent = createHeldAgent({ detect: hangingDetect });
+      const controller = new AbortController();
+      let outcome: ConditionCheckOutcome | undefined;
+      void check(agent.deps, input(), { signal: controller.signal, timeoutMs: BACKSTOP_MS }).then((settled) => {
+        outcome = settled;
+      });
+      await settle();
+      expect(outcome).toBeUndefined();
+
+      controller.abort();
+      await settle();
+
+      expect(outcome).toEqual({ ok: false, reason: STOPPED_REASON });
+      expect(agent.held).toHaveLength(0);
+    });
+
+    const setupFailures: Array<{ step: string; overrides: Parameters<typeof createHeldAgent>[0]; message: string }> = [
+      {
+        step: 'the CLI probe',
+        overrides: { detect: async () => { throw new Error('spawn EACCES'); } },
+        message: 'spawn EACCES',
+      },
+      {
+        step: 'the agent list',
+        overrides: { listAgents: async () => { throw new Error('registry unavailable'); } },
+        message: 'registry unavailable',
+      },
+    ];
+
+    it.each(setupFailures)('resolves not ok, saying why, when $step throws, instead of rejecting', async ({ overrides, message }) => {
+      agent = createHeldAgent(overrides);
+
+      await expect(check(agent.deps, input())).resolves.toEqual({
+        ok: false,
+        reason: `The Automation agent could not be set up, so the condition was not checked: ${message}`,
+      });
+      expect(agent.held).toHaveLength(0);
+    });
   });
 
   describe('the slot queue (two checks run at once)', () => {
