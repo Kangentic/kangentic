@@ -529,6 +529,12 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       const task = state.tasks.find((candidate) => candidate.id === taskId);
       if (!task) return;
 
+      // The card's own kept links followed it through the drag. Flying into
+      // Done it has no card on the board to draw them to, so they end here
+      // rather than leave the board dimmed with no lines for the flight.
+      const workflowState = useWorkflowStore.getState();
+      if (workflowState.linkFocus?.taskId === taskId) workflowState.clearLinks();
+
       // Hide the card from its source column synchronously. On release dnd-kit
       // restores the original sortable card to full opacity in its source lane;
       // tasksPerLane filters completingTaskIds, so adding it now drops the card

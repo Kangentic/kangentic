@@ -708,9 +708,22 @@ test.describe('Workflow tasks on the board', () => {
       try {
         const button = linksButton(page, 't414');
         const overlay = overlayOf(page);
-        await button.click();
+        // The fade runs: as the overlay mounts, its lines and a dimmed card each
+        // carry a running opacity transition. Read from the click's own task, on
+        // the frames until the overlay is there, so it is caught while it runs.
+        const easing = await button.evaluate(async (element) => {
+          (element as HTMLElement).click();
+          const runningOpacity = (target: Element | null) => (target?.getAnimations() ?? [])
+            .some((animation) => animation.playState === 'running' && (animation as CSSTransition).transitionProperty === 'opacity');
+          for (let frame = 0; frame < 30; frame += 1) {
+            const svg = document.querySelector('[data-testid="workflow-links-overlay"]');
+            if (svg) return { lines: runningOpacity(svg), dimmedCard: runningOpacity(document.querySelector('[data-board-lanes] [data-task-id="t419"]')) };
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          }
+          return null;
+        });
+        expect(easing).toEqual({ lines: true, dimmedCard: true });
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
-        // The lines and a dimmed card ease, rather than switching in one frame.
         await expect(overlay).toHaveCSS('transition-duration', '0.18s');
         await expect.poll(() => boardCard(page, 't419').evaluate((element) => getComputedStyle(element).transitionProperty)).toContain('opacity');
 

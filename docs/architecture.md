@@ -1120,7 +1120,7 @@ src/renderer/utils/
 ```
 
 - **One store** (`workflow-store.ts`): the project's summaries (each carries `boardTasks`, every
-  card's waiting-for and human-gate exit), other projects' summaries for cards on this board, the
+  card's waiting-for, human-gate exit and whether it has links), other projects' summaries for cards on this board, the
   selected workflow's detail, task panels' watched details, and the links overlay. Edits address a
   workflow by home project and id (`setRouteIn`, `setLinkIn`, `removeTaskIn`), so task detail acts
   on the task's own workflow whatever the view shows. A reload keeps unchanged objects
