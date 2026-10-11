@@ -26,7 +26,7 @@
       "autoSpawn": true,
       "permissionMode": "auto",
       "modelOverride": "opus",
-      "effortOverride": "high"
+      "effortOverride": "xhigh"
     },
     {
       "id": "623a36ef-9045-4437-b9c8-f67312dc5437",
@@ -36,7 +36,7 @@
       "autoSpawn": true,
       "permissionMode": "auto",
       "modelOverride": "opus",
-      "effortOverride": "high",
+      "effortOverride": "xhigh",
       "sessionTarget": "isolated",
       "sessionSpawnStrategy": "always_spawn_new",
       "automations": {
