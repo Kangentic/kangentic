@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Pause, Workflow as WorkflowIcon } from 'lucide-react';
 import type { AppConfig, Task } from '../../../shared/types';
@@ -10,12 +10,12 @@ import { boardWaiting, boardWorkflowSource, toBoardWorkflow, type BoardWorkflow 
 import { workflowColor } from '../workflows/workflow-graph';
 import { WorkflowCardStrip, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
-import { useLinksPreview, WorkflowLinksButton } from './WorkflowLinksButton';
+import { useCardLinksPreview } from './card-links-preview';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
- * (its workflow's icon in the workflow's color, the name, the step track, the
- * links button), then the board's own card, whose footer says what a task in To Do
+ * (its workflow's icon in the workflow's color, the name, the step track),
+ * then the board's own card, whose footer says what a task in To Do
  * waits for. The track's current step is a bar here, not the column's marker
  * the Workflows canvas draws: the lane the card sits in already names it. Mounted only for a task in a workflow, so an ordinary card pays
  * for none of these subscriptions.
@@ -51,7 +51,9 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
   interactive: boolean;
 }) {
   const workflow = useBoardWorkflow(task);
-  const hover = useLinksPreview(task.id, workflow, interactive);
+  // Resting on the card shows its workflow links; the strip anchors the card it is in.
+  const stripRef = useRef<HTMLDivElement>(null);
+  useCardLinksPreview(stripRef, task.id, workflow, interactive);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   // The board store keeps an unchanged task's object across reloads, so this
   // recomputes on a real change to the row or the board's columns only.
@@ -63,7 +65,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
     <div
       className={`${density === 'comfortable' ? '-mx-3 -mt-3' : '-mx-2.5 -mt-2.5'} mb-2 rounded-t-[5px] overflow-hidden`}
       data-workflow-id={workflow.workflowId}
-      {...hover}
+      ref={stripRef}
     >
       <WorkflowCardStrip
         leading={(
@@ -81,7 +83,6 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
         place={place}
         // The lane the card sits in names its column, so the board keeps the bar.
         currentStep="bar"
-        trailing={<WorkflowLinksButton taskId={task.id} displayId={task.display_id} workflow={workflow} interactive={interactive} />}
       />
     </div>
   );
@@ -97,7 +98,7 @@ interface WorkflowTaskCardBodyProps {
   task: Task;
   view: TaskCardViewModel;
   density: AppConfig['cardDensity'];
-  /** False on the drag overlay's and the flying card's copies: the strip is drawn, and does nothing. */
+  /** False on the drag overlay's and the flying card's copies: drawn, but a hover on them shows nothing. */
   interactive: boolean;
 }
 

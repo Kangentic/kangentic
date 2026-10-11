@@ -1336,5 +1336,8 @@ if (import.meta.env.DEV) {
     // happens to toast verbatim (`config:writeFailed`), which drags unrelated
     // setup into a test about toasts.
     toast: useToastStore,
+    // So a UI test can open and clear the board's links overlay in the same
+    // task it then reads, to catch the overlay's fade while it runs.
+    workflow: useWorkflowStore,
   };
 }

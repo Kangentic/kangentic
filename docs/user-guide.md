@@ -599,8 +599,8 @@ to the next column on its route, and the last one to Done; not done leaves it wh
 that finishes a plan moves on when you approve the plan. Without an Automation agent, or in a
 column with no agent, you drag the card on yourself.
 
-**On the board.** A workflow task's card carries a strip with its workflow's name, a step track
-and a links button, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
+**On the board.** A workflow task's card carries a strip with its workflow's name and a step
+track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
 task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps
 one length for the task's whole life. The stops it has passed are grey, where it is now is wider
 and in its column's color, and the stops ahead are bars in their columns' colors, so even a task
@@ -608,13 +608,13 @@ that has not started says which columns it will visit. On the Workflows canvas t
 column: where the task is shows as that column's icon on a tint of its color (a dot when the column
 has no icon), and hovering it names the column. The strip's left side names the task's project.
 
-**A card's links.** Rest the pointer on a board card's strip for a moment and lines fade in from
-what the card waits for and to what waits for it; move off the strip and they fade out. Click the
-strip's links button to keep them on screen while you scroll to follow a line; the button stays
-outlined until you click it again. While links are kept, resting on another strip shows nothing,
-and clicking another card's button moves them there. Show workflow links in the card's right-click
-menu keeps them too, after Open workflow. Escape or a click on empty board space clears them. A
-card with no links yet has its button and menu row disabled. Task detail has a Workflow panel (the linked-cards button
+**A card's links.** Rest the pointer on a workflow card for a moment and lines fade in from what
+it waits for and to what waits for it, drawn as the Workflows canvas draws a selected card's; move
+off the card and they fade out. Dragging the card keeps them until you let go. To keep them on
+screen while you scroll to follow a line, choose Show workflow links in the card's right-click
+menu, after Open workflow; while they are kept, resting on another card shows nothing. Escape or a
+click on empty board space clears them. A card with no links yet has that menu row disabled. Task
+detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector.
 

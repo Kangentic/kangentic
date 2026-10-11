@@ -92,8 +92,8 @@ interface WorkflowStore {
 
   /**
    * The board's links overlay: the card it is on, that card's workflow, and
-   * whether the links are kept (the card's links button, its menu, a refused
-   * move) or only previewed while the pointer rests on the card's strip.
+   * whether the links are kept (the card's menu, a refused move) or only
+   * previewed while the pointer rests on the card.
    */
   linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail; kept: boolean } | null;
   /**
@@ -104,14 +104,9 @@ interface WorkflowStore {
   linkFocusLoading: boolean;
   /** Keep a card's links on the board until they are cleared (its menu, a refused move). */
   showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
-  /**
-   * The card's links button: keep its links, or clear them when they are
-   * already kept. Previewed links are kept as they are, with no reload.
-   */
-  toggleKeptLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
-  /** The pointer rests on a card's strip: show its links until it leaves. Kept links win. */
+  /** The pointer rests on a card: show its links until it leaves. Kept links win. */
   previewLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
-  /** The pointer left that card's strip: its preview goes, kept links stay. */
+  /** The pointer left that card: its preview goes, kept links stay. */
   endPreview: (taskId: string) => void;
   clearLinks: () => void;
 
@@ -260,11 +255,10 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
   /**
    * Load a card's workflow for the links overlay. A clear (Escape, a click on
-   * empty board, the pointer leaving a previewed strip) or a newer load while
+   * empty board, the pointer leaving a previewed card) or a newer load while
    * this one waits wins: a late answer must not bring the overlay back. A
    * superseded load returns without touching `linkFocusLoading`: whatever
-   * superseded it owns the flag now. A keep made while the load waits
-   * (`toggleKeptLinks` on a previewed card) lands it kept.
+   * superseded it owns the flag now.
    */
   async function loadLinks(taskId: string, homeProjectId: string, workflowId: string, kept: boolean): Promise<void> {
     const generation = ++linkGeneration;
@@ -273,9 +267,8 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     try {
       const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
       if (generation !== linkGeneration) return;
-      const landsKept = pendingLinks?.kept ?? kept;
       pendingLinks = null;
-      set({ linkFocus: { taskId, homeProjectId, detail, kept: landsKept }, linkFocusLoading: false });
+      set({ linkFocus: { taskId, homeProjectId, detail, kept }, linkFocusLoading: false });
     } catch (error) {
       console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
       if (generation !== linkGeneration) return;
@@ -477,22 +470,6 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     showLinks: (taskId, homeProjectId, workflowId) => loadLinks(taskId, homeProjectId, workflowId, true),
-
-    toggleKeptLinks: async (taskId, homeProjectId, workflowId) => {
-      const { linkFocus, linkFocusLoading } = get();
-      const loadingHere = linkFocusLoading && pendingLinks?.taskId === taskId;
-      if ((linkFocus?.taskId === taskId && linkFocus.kept) || (loadingHere && pendingLinks?.kept)) {
-        get().clearLinks();
-        return;
-      }
-      if (linkFocus?.taskId === taskId) {
-        // Its preview is on screen: keep it as it is. A reload of it in flight lands kept too.
-        if (loadingHere) pendingLinks = { taskId, kept: true };
-        set({ linkFocus: { ...linkFocus, kept: true } });
-        return;
-      }
-      await loadLinks(taskId, homeProjectId, workflowId, true);
-    },
 
     previewLinks: async (taskId, homeProjectId, workflowId) => {
       const { linkFocus, linkFocusLoading } = get();

@@ -6,8 +6,7 @@ import { trackStops, type TrackStop } from './workflow-track';
 /**
  * The strip on top of a workflow task's card: on the left whatever the card
  * belongs to (its workflow on the board; its project on the Workflows
- * canvas), on the right the step track, and on the board the links button
- * after it. On the canvas the column is named by the track itself:
+ * canvas), on the right the step track. On the canvas the column is named by the track itself:
  * its current step is the column's own marker, and the name is the marker's
  * tooltip and accessible name. On the board the lane names the column, so the
  * current step stays a bar. The title row under the strip is the board's,
@@ -125,21 +124,16 @@ interface WorkflowCardStripProps {
   place: WorkflowTaskPlace;
   /** How the stop the task is at is drawn: the column's marker, or the board's bar. */
   currentStep?: CurrentStepStyle;
-  /** Drawn after the track: the board's links button. The canvas draws every link, so it has none. */
-  trailing?: React.ReactNode;
 }
 
-export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker', trailing = null }: WorkflowCardStripProps) {
+export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker' }: WorkflowCardStripProps) {
   return (
     <div
       className="h-[29px] px-2.5 flex items-center justify-between gap-2 border-b border-edge bg-surface/30 shrink-0"
       data-testid="workflow-card-strip"
     >
       {leading ?? <span aria-hidden="true" />}
-      <span className="inline-flex items-center gap-[7px] shrink-0">
-        <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />
-        {trailing}
-      </span>
+      <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />
     </div>
   );
 });

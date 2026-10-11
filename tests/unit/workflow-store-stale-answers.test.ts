@@ -231,13 +231,14 @@ describe('showLinks and clearLinks', () => {
   });
 });
 
-// The strip's hover previews a card's links and its links button keeps them
-// (#732 board 8c). Kept links outrank a preview, a preview ends with the
-// pointer leaving its strip, and each keeps its mode through a reload.
-describe('previewLinks, endPreview and toggleKeptLinks', () => {
+// Resting the pointer on a card previews its links, and Show workflow links in
+// its menu keeps them (#732 board 8c). Kept links outrank a preview, a preview
+// ends with the pointer leaving its card, and each keeps its mode through a
+// reload.
+describe('previewLinks and endPreview', () => {
   const state = () => useWorkflowStore.getState();
 
-  it('previews a card\'s links unkept, and leaving its strip ends them', async () => {
+  it('previews a card\'s links unkept, and leaving the card ends them', async () => {
     const bridge = installBridge();
     bridge.get.mockResolvedValue(detailOf('w'));
 
@@ -248,7 +249,7 @@ describe('previewLinks, endPreview and toggleKeptLinks', () => {
     expect(state().linkFocus).toBeNull();
   });
 
-  it('leaving a strip before its preview loads cancels the load, so its answer draws nothing', async () => {
+  it('leaving a card before its preview loads cancels the load, so its answer draws nothing', async () => {
     const bridge = installBridge();
     const answer = deferred<WorkflowDetail>();
     bridge.get.mockReturnValue(answer.promise);
@@ -265,7 +266,7 @@ describe('previewLinks, endPreview and toggleKeptLinks', () => {
   it('previews nothing while links are kept, its own or another card\'s', async () => {
     const bridge = installBridge();
     bridge.get.mockResolvedValue(detailOf('w'));
-    await state().toggleKeptLinks('t1', 'p', 'w');
+    await state().showLinks('t1', 'p', 'w');
     bridge.get.mockClear();
 
     await state().previewLinks('t2', 'p', 'w');
@@ -273,7 +274,7 @@ describe('previewLinks, endPreview and toggleKeptLinks', () => {
 
     expect(bridge.get).not.toHaveBeenCalled();
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
-    // Leaving a strip never ends kept links.
+    // Leaving a card never ends kept links.
     state().endPreview('t1');
     state().endPreview('t2');
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
@@ -284,7 +285,7 @@ describe('previewLinks, endPreview and toggleKeptLinks', () => {
     const kept = deferred<WorkflowDetail>();
     bridge.get.mockReturnValueOnce(kept.promise);
 
-    const keeping = state().toggleKeptLinks('t1', 'p', 'w');
+    const keeping = state().showLinks('t1', 'p', 'w');
     await state().previewLinks('t2', 'p', 'w');
     kept.resolve(detailOf('w'));
     await keeping;
@@ -293,60 +294,19 @@ describe('previewLinks, endPreview and toggleKeptLinks', () => {
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
   });
 
-  it('the button keeps a previewed card\'s links as they are, with no reload', async () => {
-    const bridge = installBridge();
-    bridge.get.mockResolvedValue(detailOf('w'));
-    await state().previewLinks('t1', 'p', 'w');
-    const previewedDetail = state().linkFocus?.detail;
-    bridge.get.mockClear();
-
-    await state().toggleKeptLinks('t1', 'p', 'w');
-
-    expect(bridge.get).not.toHaveBeenCalled();
-    expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
-    expect(state().linkFocus?.detail).toBe(previewedDetail);
-  });
-
-  it('a keep made while the card\'s preview loads lands kept', async () => {
+  it('a keep from the menu while the card\'s preview loads lands kept, and leaving the card keeps it', async () => {
     const bridge = installBridge();
     const answer = deferred<WorkflowDetail>();
     bridge.get.mockReturnValueOnce(answer.promise).mockResolvedValue(detailOf('w'));
 
     const previewed = state().previewLinks('t1', 'p', 'w');
-    const keeping = state().toggleKeptLinks('t1', 'p', 'w');
+    const keeping = state().showLinks('t1', 'p', 'w');
     answer.resolve(detailOf('w'));
     await Promise.all([previewed, keeping]);
 
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
-    // The pointer leaving the strip afterwards leaves them up.
     state().endPreview('t1');
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
-  });
-
-  it('a second press hides kept links, and a press on another card moves them there', async () => {
-    const bridge = installBridge();
-    bridge.get.mockResolvedValue(detailOf('w'));
-
-    await state().toggleKeptLinks('t1', 'p', 'w');
-    await state().toggleKeptLinks('t2', 'p', 'w');
-    expect(state().linkFocus).toMatchObject({ taskId: 't2', kept: true });
-
-    await state().toggleKeptLinks('t2', 'p', 'w');
-    expect(state().linkFocus).toBeNull();
-    expect(state().linkFocusLoading).toBe(false);
-  });
-
-  it('a press while its own keep loads cancels it', async () => {
-    const bridge = installBridge();
-    const answer = deferred<WorkflowDetail>();
-    bridge.get.mockReturnValueOnce(answer.promise);
-
-    const keeping = state().toggleKeptLinks('t1', 'p', 'w');
-    await state().toggleKeptLinks('t1', 'p', 'w');
-    answer.resolve(detailOf('w'));
-    await keeping;
-
-    expect(state().linkFocus).toBeNull();
   });
 
   it('a change push reloads the links on screen in the mode they had', async () => {

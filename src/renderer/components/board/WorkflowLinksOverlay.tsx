@@ -15,10 +15,10 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  * The board's links overlay for one workflow card (#732 board 8): lines from
  * what it waits for into it, and from it to what waits for it, and the card
  * itself in the accent border the canvas gives its selected card. No other
- * card changes, as on the canvas. The pointer resting on a card's strip previews
- * it until the pointer leaves; the strip's links button, Show workflow links in
- * the card's menu and a refused move keep it (`WorkflowLinksButton`). The lines
- * are the whole overlay: nothing is added to the toolbar.
+ * card changes, as on the canvas. The pointer resting on a card previews it
+ * until the pointer leaves the card (`card-links-preview.ts`); Show workflow
+ * links in the card's menu and a refused move keep it. The lines are the whole
+ * overlay: nothing is added to the toolbar.
  *
  * The cards are found by `data-task-id` inside the board's lanes only (the
  * drag overlay, the flying card and task windows carry the attribute too). A

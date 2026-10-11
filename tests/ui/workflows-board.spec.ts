@@ -234,7 +234,7 @@ async function dragToColumn(page: Page, id: string, columnName: string): Promise
 }
 
 test.describe('Workflow tasks on the board', () => {
-  test('a workflow card carries the strip with its workflow, step track and links button; an ordinary card does not', async () => {
+  test('a workflow card carries the strip with its workflow and step track; an ordinary card does not', async () => {
     const { browser, page } = await launch();
     try {
       const strip = boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]');
@@ -273,13 +273,11 @@ test.describe('Workflow tasks on the board', () => {
       await expect(toDoTrack.locator('[data-step-state="current"]')).toHaveAttribute('data-step-end', 'todo');
       await expect(toDoTrack.locator('[data-step-state="ahead"]')).toHaveCount(6);
       await expect(toDoTrack.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
-      // The links button ends the strip, where a lock once was (board 8c): the
-      // drag's refusal says a card is locked, so the strip no longer does.
-      const linksButton = strip.locator('[data-testid="workflow-links-button"]');
-      await expect(linksButton).toHaveAttribute('aria-label', 'Show workflow links');
-      await expect(linksButton).toHaveAttribute('aria-pressed', 'false');
-      await expect(linksButton).not.toHaveAttribute('aria-disabled', 'true');
+      // The strip ends at the track (board 8c): no lock, since a locked card's
+      // drag stays in its column, and no links button, since resting on the
+      // card shows its links.
       await expect(page.locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
+      await expect(strip.locator('button')).toHaveCount(0);
       await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
       await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);
     } finally {
@@ -365,14 +363,13 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('a canvas card\'s strip has no lock and no links button: the canvas draws every link', async () => {
+  test('a canvas card\'s strip has no lock: the canvas draws every link', async () => {
     const { browser, page } = await launch();
     try {
       await byTestId(page, 'view-toggle-workflows').click();
       const strip = page.locator('[data-testid="workflow-canvas-card"][data-workflow-task-key="t414"] [data-testid="workflow-card-strip"]');
       await expect(strip).toBeVisible();
       await expect(strip.locator('[data-testid="workflow-step-track"]')).toHaveCount(1);
-      await expect(page.locator('[data-testid="workflow-canvas-card"] [data-testid="workflow-links-button"]')).toHaveCount(0);
       await expect(page.locator('[data-testid="workflow-canvas-card"] [data-testid="workflow-card-lock"]')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -383,7 +380,8 @@ test.describe('Workflow tasks on the board', () => {
     const { browser, page } = await launch();
     try {
       // #414 runs in Executing, so only its workflow moves it. Its links are kept.
-      await boardCard(page, 't414').locator('[data-testid="workflow-links-button"]').click();
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-show-workflow-links').click();
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
 
@@ -603,119 +601,117 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  // Board 8c, option C: resting the pointer on a card's strip previews its
-  // links until the pointer leaves the strip, and the strip's links button
-  // keeps them. Each test asserts an end state, never that a crossing did not
-  // flash: under load a pointer can rest longer than the test meant it to.
-  test.describe('Show workflow links from the card\'s strip', () => {
+  // Board 8c: resting the pointer on a card previews its links until the
+  // pointer leaves the card, and Show workflow links in its menu keeps them.
+  // Each test asserts an end state, never that a crossing did not flash: under
+  // load a pointer can rest longer than the test meant it to.
+  test.describe('Show workflow links by resting on a card', () => {
     const overlayOf = (page: Page) => byTestId(page, 'workflow-links-overlay');
-    const linksButton = (page: Page, id: string) => boardCard(page, id).locator('[data-testid="workflow-links-button"]');
 
-    /** Rest the pointer on a card's strip, over its workflow's name. */
-    async function restOnStrip(page: Page, id: string): Promise<void> {
-      const strip = boardCard(page, id).locator('[data-testid="workflow-card-strip"]');
-      await strip.scrollIntoViewIfNeeded();
-      const box = await strip.boundingBox();
-      if (!box) throw new Error(`No strip on #${id}`);
-      await page.mouse.move(box.x + 24, box.y + box.height / 2, { steps: 4 });
+    /** Rest the pointer on a card's body, below its strip, where its description is. */
+    async function restOnCard(page: Page, id: string): Promise<void> {
+      const card = boardCard(page, id);
+      await card.scrollIntoViewIfNeeded();
+      const box = await card.boundingBox();
+      if (!box) throw new Error(`No card #${id}`);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.6, { steps: 4 });
     }
 
-    /** Past the strip's 400ms rest, so a preview that was going to show has shown. */
+    /** Past the 400ms rest, so a preview that was going to show has shown. */
     async function waitPastTheRest(page: Page): Promise<void> {
       await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
     }
 
-    test('resting on a strip previews the card\'s links with its button in the accent, and leaving hides them', async () => {
+    async function keepFromMenu(page: Page, id: string): Promise<void> {
+      await openMenu(page, id);
+      await byTestId(page, 'context-show-workflow-links').click();
+    }
+
+    test('resting anywhere on a card previews its links, and leaving the card hides them', async () => {
       const { browser, page } = await launch();
       try {
-        await restOnStrip(page, 't414');
+        await restOnCard(page, 't414');
         const overlay = overlayOf(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
         await expect(overlay.locator('[data-link="out:t417"]')).toHaveCount(1);
-        const button = linksButton(page, 't414');
-        await expect(button).toHaveAttribute('data-links-state', 'shown');
-        await expect(button).toHaveAttribute('aria-pressed', 'false');
-        await expect(button).toHaveCSS('color', await tokenColor(page, 'var(--color-accent-fg)'));
+        // The card wears the canvas's selected border while its links show.
+        await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
+        // No button on the strip: the card itself is the way in.
+        await expect(page.locator('[data-testid="workflow-links-button"]')).toHaveCount(0);
 
-        // Off the strip, over the page's top corner: the preview goes.
+        // Off the card, over the page's top corner: the preview goes.
         await page.mouse.move(2, 2, { steps: 4 });
         await expect(overlay).toHaveCount(0);
-        await expect(button).toHaveAttribute('data-links-state', 'off');
-        await expect(button).toHaveCSS('color', await tokenColor(page, 'var(--color-fg-faint)'));
       } finally {
         await browser.close();
       }
     });
 
-    test('the button keeps the links, pressed and outlined, through the pointer leaving; a second click hides them', async () => {
+    test('a previewed card keeps its lines while it is dragged, and they go when it is let go away from it', async () => {
       const { browser, page } = await launch();
       try {
-        const button = linksButton(page, 't414');
-        await button.click();
+        await restOnCard(page, 't414');
         const overlay = overlayOf(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
-        await expect(button).toHaveAttribute('aria-pressed', 'true');
-        await expect(button).toHaveAttribute('data-links-state', 'kept');
-        await expect(button).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)');
-        // The click is the button's own: the card did not open its task.
-        await expect(byTestId(page, 'task-detail-dialog')).toHaveCount(0);
 
-        await page.mouse.move(2, 2, { steps: 4 });
-        await waitPastTheRest(page);
+        // A press and a drag: the pointer leaves the card with the button held.
+        const box = await boardCard(page, 't414').boundingBox();
+        const codeReview = await page.locator('[data-board-lanes] [data-testid="swimlane"][data-swimlane-name="Code Review"]').boundingBox();
+        if (!box || !codeReview) throw new Error('No box for the drag');
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.6 + 12, { steps: 3 });
+        await expect(page.locator('.drag-overlay')).toBeVisible({ timeout: 2000 });
+        await page.mouse.move(codeReview.x + codeReview.width / 2, codeReview.y + 160, { steps: 10 });
+        // Still up, not fading out: read past the length of a fade.
+        await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 400)));
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
 
-        await button.click();
+        // Let go away from it: the preview ends with the drag.
+        await page.mouse.up();
         await expect(overlay).toHaveCount(0);
-        await expect(button).toHaveAttribute('aria-pressed', 'false');
-        // The pointer resting on the strip after the click brings no preview back.
-        await waitPastTheRest(page);
-        await expect(overlay).toHaveCount(0);
+        await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
       } finally {
         await browser.close();
       }
     });
 
-    test('while links are kept, another strip previews nothing, and its button moves them there', async () => {
+    test('the menu keeps the links through the pointer leaving, and while they are kept another card previews nothing', async () => {
       const { browser, page } = await launch();
       try {
-        await linksButton(page, 't414').click();
+        await keepFromMenu(page, 't414');
         const overlay = overlayOf(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
 
-        await restOnStrip(page, 't413');
+        await page.mouse.move(2, 2, { steps: 4 });
         await waitPastTheRest(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
-        await expect(linksButton(page, 't413')).toHaveAttribute('data-links-state', 'off');
 
-        await linksButton(page, 't413').click();
+        await restOnCard(page, 't413');
+        await waitPastTheRest(page);
+        await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
+
+        // The menu on another card moves them there.
+        await keepFromMenu(page, 't413');
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
-        await expect(linksButton(page, 't413')).toHaveAttribute('aria-pressed', 'true');
-        await expect(linksButton(page, 't414')).toHaveAttribute('aria-pressed', 'false');
       } finally {
         await browser.close();
       }
     });
 
-    test('a card with no links yet keeps its button, disabled with the reason, and its menu row says the same', async () => {
+    test('a card with no links yet previews nothing, and its menu row says why', async () => {
       const { browser, page } = await launch({ unlinkedTask: true });
       try {
-        const button = linksButton(page, 't420');
-        await expect(button).toHaveAttribute('aria-disabled', 'true');
-        await expect(button).toHaveAttribute('title', '#420 has no links yet.');
-        await expect(button).toHaveCSS('cursor', 'not-allowed');
-        // `force`: Playwright will not click an aria-disabled control on its own.
-        await button.click({ force: true });
-        await restOnStrip(page, 't420');
+        await restOnCard(page, 't420');
         await waitPastTheRest(page);
         await expect(overlayOf(page)).toHaveCount(0);
-        await expect(byTestId(page, 'task-detail-dialog')).toHaveCount(0);
 
         await openMenu(page, 't420');
         const row = byTestId(page, 'context-show-workflow-links');
         await expect(row).toHaveAttribute('aria-disabled', 'true');
         await expect(row).toHaveAttribute('title', '#420 has no links yet.');
+        // `force`: Playwright will not click an aria-disabled control on its own.
         await row.click({ force: true });
         await expect(byTestId(page, 'task-context-menu')).toBeVisible();
         await expect(overlayOf(page)).toHaveCount(0);
@@ -727,14 +723,15 @@ test.describe('Workflow tasks on the board', () => {
     test('the overlay fades in and out, and switches at once with motion off', async () => {
       const { browser, page } = await launch();
       try {
-        const button = linksButton(page, 't414');
         const overlay = overlayOf(page);
+        interface WorkflowStoreHandle { getState: () => { showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>; clearLinks: () => void } }
         // The fade runs: as the overlay mounts, its lines carry a running opacity
         // transition and the focused card a running border one. Read from the
-        // click's own task, on the frames until the overlay is there, so it is
-        // caught while it runs.
-        const easing = await button.evaluate(async (element) => {
-          (element as HTMLElement).click();
+        // same task that opens it, on the frames until the overlay is there, so
+        // it is caught while it runs.
+        const easing = await page.evaluate(async (projectId) => {
+          const store = (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow;
+          void store.getState().showLinks('t414', projectId, 'wf-usage');
           const running = (target: Element | null, property: string) => (target?.getAnimations() ?? [])
             .some((animation) => animation.playState === 'running' && (animation as CSSTransition).transitionProperty.startsWith(property));
           for (let frame = 0; frame < 30; frame += 1) {
@@ -743,26 +740,27 @@ test.describe('Workflow tasks on the board', () => {
             await new Promise((resolve) => requestAnimationFrame(resolve));
           }
           return null;
-        });
+        }, PROJECT_ID);
         expect(easing).toEqual({ lines: true, focusedCard: true });
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
         await expect(overlay).toHaveCSS('transition-duration', '0.16s');
 
-        // Hidden, it stays up, fading, then goes. Read in the click's own task:
+        // Cleared, it stays up, fading, then goes. Read a tick after the clear:
         // the fade lasts longer than that, so this is not a race.
-        const hide = () => button.evaluate(async (element) => {
-          (element as HTMLElement).click();
-          await Promise.resolve();
+        const clear = () => page.evaluate(async () => {
+          const store = (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow;
+          store.getState().clearLinks();
+          await new Promise((resolve) => setTimeout(resolve, 0));
           return document.querySelector('[data-testid="workflow-links-overlay"]')?.getAttribute('data-phase') ?? 'gone';
         });
-        expect(await hide()).toBe('exit');
+        expect(await clear()).toBe('exit');
         await expect(overlay).toHaveCount(0);
 
         await page.emulateMedia({ reducedMotion: 'reduce' });
-        await button.click();
+        await keepFromMenu(page, 't414');
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
         await expect(overlay).toHaveCSS('transition-duration', '0s');
-        expect(await hide()).toBe('gone');
+        expect(await clear()).toBe('gone');
       } finally {
         await browser.close();
       }
