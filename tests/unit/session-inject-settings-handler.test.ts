@@ -111,6 +111,7 @@ interface MockContext {
     remove: ReturnType<typeof vi.fn>;
     getSession: ReturnType<typeof vi.fn>;
     getSessionAgentName: ReturnType<typeof vi.fn>;
+    listSessions: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
 }
@@ -139,6 +140,8 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       remove: vi.fn(),
       getSession: vi.fn(() => undefined as MockSession | undefined),
       getSessionAgentName: vi.fn(() => undefined as string | undefined),
+      // startCommandTerminal counts the project's live terminals for its cap.
+      listSessions: vi.fn(() => []),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
     ...overrides,
