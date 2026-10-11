@@ -556,11 +556,12 @@ describe('rows the caller already delivered', () => {
     // question, so the row most boards actually have cannot be the one missing
     // from it.
     expect(rows).toHaveLength(2);
-    const greeted = rows.find((row) => row.id === 'run-already-sent' || row.detail?.includes('keystrokes'));
+    const greeted = rows.find((row) => row.id === 'run-already-sent' || row.detail?.includes('with the move'));
     expect(greeted?.status).toBe('succeeded');
     // "Sent", not "Delivered", and it names who sent it: the confirmed outcome
-    // arrives separately on the task's own auto-command channel.
-    expect(greeted?.detail).toBe("Sent with the move's own keystrokes.");
+    // arrives separately on the task's own auto-command channel. It does not
+    // say keystrokes: a message with line breaks rides the move as a paste.
+    expect(greeted?.detail).toBe('Sent with the move.');
     expect(summary.outcomes.map((outcome) => outcome.name).sort()).toEqual(['Greet', 'Tell me']);
   });
 

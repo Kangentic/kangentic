@@ -235,10 +235,12 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     //
     // "Sent", not "Delivered", for the same reason every other enter message
     // says so: the burst was handed to the scheduler, and the confirmed outcome
-    // arrives separately on the task's own auto-command channel.
+    // arrives separately on the task's own auto-command channel. Not "with the
+    // move's keystrokes" either: a message with line breaks rides the move as a
+    // paste, and this runner cannot tell which the move used.
     if (options.alreadyDelivered?.has(automation.id)) {
-      runs.recordDeliveredByCaller(started, "Sent with the move's own keystrokes.");
-      record('succeeded', "Sent with the move's own keystrokes.");
+      runs.recordDeliveredByCaller(started, "Sent with the move.");
+      record('succeeded', "Sent with the move.");
       continue;
     }
 
