@@ -4,6 +4,7 @@ import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handle
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import { PERMISSION_MODES, RUN_MODES } from '../../../shared/workflow-run-settings';
+import { MAX_WORKFLOW_TASKS } from '../../workflows/workflow-service';
 
 /**
  * The workflow tools (#732): a workflow is a set of linked tasks that run
@@ -87,7 +88,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
         workflow: z.string().optional().describe(`${WORKFLOW_DESCRIPTION} Omit to create a new workflow.`),
         title: z.string().max(200).optional().describe('The workflow\'s name. Give a new workflow one when you first save it.'),
         brief: z.string().max(40_000).optional().describe('For a new workflow only: what it was made from.'),
-        tasks: z.array(PLANNED_TASK_SCHEMA).max(60).describe('Every planned task, in run order for tasks that can start together.'),
+        tasks: z.array(PLANNED_TASK_SCHEMA).max(MAX_WORKFLOW_TASKS).describe(`Every planned task (at most ${MAX_WORKFLOW_TASKS}), in run order for tasks that can start together.`),
         links: z.array(z.object({
           blocker: z.string().describe('The key of the task that must reach Done first.'),
           blocked: z.string().describe('The key of the task that waits for it.'),

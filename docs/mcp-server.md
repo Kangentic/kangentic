@@ -1025,7 +1025,7 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 | `workflow` | string | No | The workflow to replace the plan of. Omit to create a new one. |
 | `title` | string | No | Its name. |
 | `brief` | string | No | A new workflow only: the text it was made from. |
-| `tasks` | array | Yes | Every planned task (at most 60). See below. |
+| `tasks` | array | Yes | Every planned task (at most 100). See below. |
 | `links` | array | No | `{ blocker, blocked }` by key: blocked waits for blocker to reach Done. |
 | `revision` | number | No | The revision `kangentic_get_workflow` reported. A save over a newer one is refused, so the user's edits win. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
