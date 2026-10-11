@@ -231,8 +231,8 @@ describe('showLinks and clearLinks', () => {
   });
 });
 
-// Resting the pointer on a card previews its links, and Show workflow links in
-// its menu keeps them (#732 board 8c). Kept links outrank a preview, a preview
+// Resting the pointer on a card previews its links, and a refused move keeps
+// them (#732 board 8c). Kept links outrank a preview, a preview
 // ends with the pointer leaving its card, and each keeps its mode through a
 // reload.
 describe('previewLinks and endPreview', () => {
@@ -294,7 +294,7 @@ describe('previewLinks and endPreview', () => {
     expect(state().linkFocus).toMatchObject({ taskId: 't1', kept: true });
   });
 
-  it('a keep from the menu while the card\'s preview loads lands kept, and leaving the card keeps it', async () => {
+  it('a keep (a refused move) while the card\'s preview loads lands kept, and leaving the card keeps it', async () => {
     const bridge = installBridge();
     const answer = deferred<WorkflowDetail>();
     bridge.get.mockReturnValueOnce(answer.promise).mockResolvedValue(detailOf('w'));

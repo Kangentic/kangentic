@@ -92,17 +92,17 @@ interface WorkflowStore {
 
   /**
    * The board's links overlay: the card it is on, that card's workflow, and
-   * whether the links are kept (the card's menu, a refused move) or only
+   * whether the links are kept (a refused move's, until cleared) or only
    * previewed while the pointer rests on the card.
    */
   linkFocus: { taskId: string; homeProjectId: string; detail: WorkflowDetail; kept: boolean } | null;
   /**
-   * A "Show workflow links" load is in flight. The overlay listens for Escape
+   * A links load is in flight. The overlay listens for Escape
    * and a press on empty board space from here, so a clear made before the
    * first answer lands still cancels it.
    */
   linkFocusLoading: boolean;
-  /** Keep a card's links on the board until they are cleared (its menu, a refused move). */
+  /** Keep a card's links on the board until they are cleared (a refused move). */
   showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
   /** The pointer rests on a card: show its links until it leaves. Kept links win. */
   previewLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;

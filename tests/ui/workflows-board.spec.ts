@@ -169,6 +169,19 @@ async function launch(options: Options = {}): Promise<{ browser: Browser; page: 
 const boardCard = (page: Page, id: string) => page.locator(`[data-board-lanes] [data-task-id="${id}"]`);
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 
+/**
+ * Keep a card's links on the board, as a refused move does, through the store
+ * the dev build exposes. Not awaited in the page, so a held load stays held.
+ */
+async function keepLinks(page: Page, id: string): Promise<void> {
+  await page.evaluate(({ taskId, projectId }) => {
+    const store = (window as unknown as {
+      __zustandStores: { workflow: { getState: () => { showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void> } } };
+    }).__zustandStores.workflow;
+    void store.getState().showLinks(taskId, projectId, 'wf-usage');
+  }, { taskId: id, projectId: PROJECT_ID });
+}
+
 /** A theme token's color as the page computes it, to compare against a computed style. */
 async function tokenColor(page: Page, token: string): Promise<string> {
   return page.evaluate((value) => {
@@ -192,7 +205,7 @@ interface HeldWorkflowGetWindow {
   __mockReleaseWorkflowGet?: () => void;
 }
 
-/** Make the next `workflows.get` wait for `releaseHeldWorkflowGet`, which is the answer a "Show workflow links" load is waiting on. */
+/** Make the next `workflows.get` wait for `releaseHeldWorkflowGet`, which is the answer a links load is waiting on. */
 async function holdNextWorkflowGet(page: Page): Promise<void> {
   await page.evaluate(() => {
     const win = window as unknown as HeldWorkflowGetWindow;
@@ -311,7 +324,8 @@ test.describe('Workflow tasks on the board', () => {
       await openMenu(page, 't414');
       const menu = byTestId(page, 'task-context-menu');
       await expect(menu.locator('[data-testid="context-open-workflow"]')).toBeVisible();
-      await expect(menu.locator('[data-testid="context-show-workflow-links"]')).toBeVisible();
+      // A card's links show by resting on it, so the menu offers nothing for them.
+      await expect(menu.locator('[data-testid="context-show-workflow-links"]')).toHaveCount(0);
       const moveRows = menu.locator('[data-testid="context-move-to"]');
       await expect(moveRows).toHaveCount(5);
       for (const row of await moveRows.all()) await expect(row).toHaveAttribute('aria-disabled', 'true');
@@ -388,8 +402,7 @@ test.describe('Workflow tasks on the board', () => {
     const { browser, page } = await launch();
     try {
       // #414 runs in Executing, so only its workflow moves it. Its links are kept.
-      await openMenu(page, 't414');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't414');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
 
@@ -520,11 +533,10 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('Show workflow links draws the overlay; a press on empty board space clears it', async () => {
+  test('kept links draw the overlay; a press on empty board space clears them', async () => {
     const { browser, page } = await launch();
     try {
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
       // #413 holds up #415 and #416.
@@ -547,8 +559,7 @@ test.describe('Workflow tasks on the board', () => {
   test('the overlay draws a link as the canvas draws a selected task\'s: flowing, in its colors, and under the header row', async () => {
     const { browser, page } = await launch();
     try {
-      await openMenu(page, 't414');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't414');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
       const line = overlay.locator('[data-link="out:t417"] path.workflow-link-flow');
@@ -597,8 +608,7 @@ test.describe('Workflow tasks on the board', () => {
       // A blocker not done yet is the canvas's muted grey: #418 waits on #417 in To Do.
       await page.keyboard.press('Escape');
       await expect(overlay).toHaveCount(0);
-      await openMenu(page, 't418');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't418');
       await expect(overlay.locator('[data-link="in:t417"] path.workflow-link-flow')).toHaveAttribute('stroke', 'var(--color-fg-muted)');
 
       // With reduced motion the dashes hold still, as on the canvas.
@@ -610,10 +620,10 @@ test.describe('Workflow tasks on the board', () => {
   });
 
   // Board 8c: resting the pointer on a card previews its links until the
-  // pointer leaves the card, and Show workflow links in its menu keeps them.
-  // Each test asserts an end state, never that a crossing did not flash: under
-  // load a pointer can rest longer than the test meant it to.
-  test.describe('Show workflow links by resting on a card', () => {
+  // pointer leaves the card; a refused move keeps them. Each test asserts an
+  // end state, never that a crossing did not flash: under load a pointer can
+  // rest longer than the test meant it to.
+  test.describe('a card\'s links, by resting on it', () => {
     const overlayOf = (page: Page) => byTestId(page, 'workflow-links-overlay');
 
     /** Rest the pointer on a card's body, below its strip, where its description is. */
@@ -628,11 +638,6 @@ test.describe('Workflow tasks on the board', () => {
     /** Past the 400ms rest, so a preview that was going to show has shown. */
     async function waitPastTheRest(page: Page): Promise<void> {
       await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
-    }
-
-    async function keepFromMenu(page: Page, id: string): Promise<void> {
-      await openMenu(page, id);
-      await byTestId(page, 'context-show-workflow-links').click();
     }
 
     test('resting anywhere on a card previews its links, and leaving the card hides them', async () => {
@@ -734,10 +739,10 @@ test.describe('Workflow tasks on the board', () => {
       }
     });
 
-    test('the menu keeps the links through the pointer leaving, and while they are kept another card previews nothing', async () => {
+    test('kept links (a refused move\'s) outlast the pointer leaving, and while they are kept another card previews nothing', async () => {
       const { browser, page } = await launch();
       try {
-        await keepFromMenu(page, 't414');
+        await keepLinks(page, 't414');
         const overlay = overlayOf(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
 
@@ -748,29 +753,16 @@ test.describe('Workflow tasks on the board', () => {
         await restOnCard(page, 't413');
         await waitPastTheRest(page);
         await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
-
-        // The menu on another card moves them there.
-        await keepFromMenu(page, 't413');
-        await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
       } finally {
         await browser.close();
       }
     });
 
-    test('a card with no links yet previews nothing, and its menu row says why', async () => {
+    test('a card with no links yet previews nothing', async () => {
       const { browser, page } = await launch({ unlinkedTask: true });
       try {
         await restOnCard(page, 't420');
         await waitPastTheRest(page);
-        await expect(overlayOf(page)).toHaveCount(0);
-
-        await openMenu(page, 't420');
-        const row = byTestId(page, 'context-show-workflow-links');
-        await expect(row).toHaveAttribute('aria-disabled', 'true');
-        await expect(row).toHaveAttribute('title', '#420 has no links yet.');
-        // `force`: Playwright will not click an aria-disabled control on its own.
-        await row.click({ force: true });
-        await expect(byTestId(page, 'task-context-menu')).toBeVisible();
         await expect(overlayOf(page)).toHaveCount(0);
       } finally {
         await browser.close();
@@ -814,7 +806,7 @@ test.describe('Workflow tasks on the board', () => {
         await expect(overlay).toHaveCount(0);
 
         await page.emulateMedia({ reducedMotion: 'reduce' });
-        await keepFromMenu(page, 't414');
+        await keepLinks(page, 't414');
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
         await expect(overlay).toHaveCSS('transition-duration', '0s');
         expect(await clear()).toBe('gone');
@@ -827,8 +819,7 @@ test.describe('Workflow tasks on the board', () => {
   test('a board drag clears the overlay as it starts', async () => {
     const { browser, page } = await launch();
     try {
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
 
@@ -855,11 +846,10 @@ test.describe('Workflow tasks on the board', () => {
   // the first's (or on a change push). The answer that lands after the clear
   // must not bring the overlay back.
   test.describe('a clear while a workflow is still loading', () => {
-    /** #413's "Show workflow links" is waiting on its workflow, and nothing is drawn yet. */
+    /** #413's links are waiting on its workflow, and nothing is drawn yet. */
     async function showLinksWhileFirstLoadHeld(page: Page): Promise<void> {
       await holdNextWorkflowGet(page);
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       await expectWorkflowGetHeld(page);
       await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
     }
@@ -920,15 +910,13 @@ test.describe('Workflow tasks on the board', () => {
       }
     });
 
-    /** #413's overlay is up, and #414's "Show workflow links" is waiting on its workflow. */
+    /** #413's overlay is up, and #414's links are waiting on their workflow. */
     async function showLinksOnWhileLoadingAnother(page: Page): Promise<void> {
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-focus-task-id', 't413');
 
       await holdNextWorkflowGet(page);
-      await openMenu(page, 't414');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't414');
       await expectWorkflowGetHeld(page);
       // The new card's links have not landed, so #413's overlay is still the one up.
       await expect(byTestId(page, 'workflow-links-overlay')).toHaveAttribute('data-focus-task-id', 't413');
@@ -979,8 +967,7 @@ test.describe('Workflow tasks on the board', () => {
       const { browser, page } = await launch();
       try {
         await holdNextWorkflowGet(page);
-        await openMenu(page, 't413');
-        await byTestId(page, 'context-show-workflow-links').click();
+        await keepLinks(page, 't413');
         await expectWorkflowGetHeld(page);
         await expect(byTestId(page, 'workflow-links-overlay')).toHaveCount(0);
 
@@ -996,8 +983,7 @@ test.describe('Workflow tasks on the board', () => {
   test('a link another path already covers is left out, as the canvas leaves it out', async () => {
     const { browser, page } = await launch({ impliedLink: true });
     try {
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
       await expect(overlay.locator('[data-link="out:t415"]')).toHaveCount(1);
@@ -1018,8 +1004,7 @@ test.describe('Workflow tasks on the board', () => {
     const { browser, page } = await launch({ newerCompleted: 15 });
     try {
       await expect(boardCard(page, 't411')).toHaveCount(0);
-      await openMenu(page, 't413');
-      await byTestId(page, 'context-show-workflow-links').click();
+      await keepLinks(page, 't413');
       const overlay = byTestId(page, 'workflow-links-overlay');
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't413');
       // #413 holds up #415 and #416, both on the board; it waits for #411, which is not drawn.

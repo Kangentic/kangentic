@@ -152,7 +152,7 @@ Clicking a completed task opens a session summary showing: duration, model, cost
 ### Task Card Context Menu
 
 Right-click any task card on the board to open a context menu with:
-- **Open workflow** and **Show workflow links** - first, on a task in a workflow (see [Workflows](#workflows))
+- **Open workflow** - first, on a task in a workflow (see [Workflows](#workflows))
 - **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
 - **Edit** - opens the task detail dialog in edit mode
 - **Move to** - submenu listing all other columns as move targets
@@ -610,11 +610,10 @@ has no icon), and hovering it names the column. The strip's left side names the 
 
 **A card's links.** Rest the pointer on a workflow card for a moment and lines fade in from what
 it waits for and to what waits for it, drawn as the Workflows canvas draws a selected card's; move
-off the card and they fade out. Dragging the card keeps them through the whole drag, and after you let go while the pointer stays on the card. To keep them on
-screen while you scroll to follow a line, choose Show workflow links in the card's right-click
-menu, after Open workflow; while they are kept, resting on another card shows nothing. Escape or a
-click on empty board space clears them. A card with no links yet has that menu row disabled. Task
-detail has a Workflow panel (the linked-cards button
+off the card and they fade out. Dragging the card keeps them through the whole drag, and after you
+let go while the pointer stays on the card. A refused move shows them too, and keeps them until
+Escape or a click on empty board space. Open workflow in the card's right-click menu shows every
+link on the Workflows canvas. Task detail has a Workflow panel (the linked-cards button
 in its header, or in the form a To Do task opens in) with the same route, links and guards as the
 inspector.
 

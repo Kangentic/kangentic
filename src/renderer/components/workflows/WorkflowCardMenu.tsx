@@ -15,7 +15,7 @@ import { TaskContextMenu } from '../board/TaskContextMenu';
  * A canvas card's right-click menu (#732 board 1d): the board's own
  * `TaskContextMenu`, so a task has one menu wherever it is right-clicked, with
  * Open on board in its `leading` slot (the Agent Monitor's item, icon and
- * words). No Show workflow links: the canvas draws every link.
+ * words). Nothing for a card's links: the canvas draws every link.
  *
  * Rendered by the view, outside React Flow. A task on this board acts through
  * the board store, as its board card does. A task on another board reads that

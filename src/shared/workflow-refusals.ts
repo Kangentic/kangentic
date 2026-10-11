@@ -36,8 +36,6 @@ export const WORKFLOW_REFUSALS = {
   pausedStart: (label: string, workflowTitle: string) => `${label} is in ${workflowTitle}, which is paused. Resume the workflow to start its tasks again.`,
   /** Sending a workflow task to the backlog or the archive. */
   removeFirst: (label: string, workflowTitle: string) => `Remove ${label} from ${workflowTitle} first.`,
-  /** Showing the links of a card that has none (a task just added to a running workflow). */
-  noLinks: (label: string) => `${label} has no links yet.`,
 } as const;
 
 /** How a task is named in a refusal: its number once it exists, its title before Start. */

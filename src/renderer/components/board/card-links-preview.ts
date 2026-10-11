@@ -5,9 +5,10 @@ import type { BoardWorkflow } from '../../utils/board-workflow';
 /**
  * A board card shows its workflow links while the pointer rests on it (#732
  * board 8c): after `LINKS_PREVIEW_DWELL_MS` on any part of the card the links
- * fade in, and leaving the card fades them out. Show workflow links in the
- * card's menu keeps them on screen, for following a line while scrolling, or
- * without a pointer. The overlay itself is `WorkflowLinksOverlay`.
+ * fade in, and leaving the card fades them out. This is the board's one way to
+ * a card's links; a refused move also shows them, and keeps them until Escape
+ * or a click on empty board. Every link is also on the Workflows canvas and in
+ * task detail's workflow panel. The overlay itself is `WorkflowLinksOverlay`.
  *
  * The listeners go on the card's root (the element carrying `data-task-id`)
  * as native events, attached from the workflow card's own body, so an
@@ -27,8 +28,8 @@ const DROP_LANDING_MS = 300;
 /**
  * Preview the links of the card that holds `anchorRef`. Mouse only (touch has
  * no hover), never starting with a button held, and nothing for a card with no
- * links. Kept links (the menu, a refused move) win over a preview, which the
- * store decides.
+ * links. Kept links (a refused move's) win over a preview, which the store
+ * decides.
  *
  * A press on the card holds the preview until the button comes up, wherever
  * the pointer goes meanwhile, so a dragged card keeps its lines all the way
