@@ -140,6 +140,11 @@ export class WorkflowEngineHost {
     const failure: FailedStart = { workflowId: intent.workflowId, attempts, retryAt: Date.now() + delayMs, timer: null, reason };
     failure.timer = setTimeout(() => {
       failure.timer = null;
+      // Due now. A timer can fire a little before `Date.now()` reaches the
+      // `retryAt` read above (libuv times it from its cached loop clock), and
+      // a wake that still finds the task backing off plans nothing and arms
+      // nothing, so the task would wait in To Do for an unrelated wake.
+      failure.retryAt = Date.now();
       this.wake();
     }, delayMs);
     // A pending retry never keeps the app from quitting.

@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { SessionResumedPayload } from '../../src/main/pty/session-manager';
+import type { SessionResumedPayload, TurnEndedPayload } from '../../src/main/pty/session-manager';
 
 const hoisted = vi.hoisted(() => ({
   runWorkflowStep: vi.fn(),
@@ -248,5 +248,104 @@ describe('a resumed workflow task and its unjudged reply', () => {
     await catchUpAfterResume(context, resumed());
 
     expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  // The runner keeps one pass per task, and ONE request queued behind it. What
+  // fills that slot decides which pass runs next, so it is pinned from both
+  // directions: the two ways a "last wins" or a "first wins" slot goes wrong.
+  describe('a request that arrives while a pass for the same task is running', () => {
+    /** When the turn began: after the task entered Executing, so the pass judges it. */
+    const TURN_STARTED_AT = Date.parse(VISIT_STARTED_AT) + 10_000;
+
+    function turnEnded(): TurnEndedPayload {
+      return {
+        sessionId: SESSION_ID,
+        taskId,
+        projectId: PROJECT_ID,
+        agentSessionId: 'agent-session-1',
+        isolatedSwimlaneId: null,
+        turnStartedAt: TURN_STARTED_AT,
+        workSerial: RESUMED_WORK_SERIAL,
+      };
+    }
+
+    /**
+     * Holds the next pass open at its wait for the agent to settle, and returns
+     * what lets it go. Released as 'timeout', the held pass ends having done
+     * nothing, so every effect the test then sees belongs to the queued pass.
+     */
+    function holdNextPassOpen(): () => void {
+      let release!: () => void;
+      const held = new Promise<string>((resolve) => {
+        release = () => resolve('timeout');
+      });
+      hoisted.waitForTurnCompletion.mockImplementationOnce(() => held);
+      return release;
+    }
+
+    /** The turn-ended listener hands off through setImmediate; this lets that hand-off land. */
+    function untilTurnEndedListenerHasRun(): Promise<void> {
+      return new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+
+    /** The queued pass was the real turn end: the column's rows and the step ran, for that turn. */
+    function expectOnlyTheTurnEndRan() {
+      // The held pass, then exactly one queued pass: the slot holds one request.
+      expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(2);
+      // Only a turn end runs the column's rows, and only a catch-up reads the reply itself.
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+      const [, input] = hoisted.runWorkflowStep.mock.calls[0] as [unknown, { payload: TurnEndedPayload }];
+      // A catch-up carries no turn start; the turn end carries its own.
+      expect(input.payload.turnStartedAt).toBe(TURN_STARTED_AT);
+    }
+
+    it('lets a real turn end replace a catch-up already queued behind the pass', async () => {
+      const release = holdNextPassOpen();
+      const heldPass = catchUpAfterResume(context, resumed());
+      // Queued behind the held pass. Resolves at once: it only fills the slot.
+      await catchUpAfterResume(context, resumed());
+      sessionManager.emit('turn-ended', turnEnded());
+      await untilTurnEndedListenerHasRun();
+
+      release();
+      await heldPass;
+
+      expectOnlyTheTurnEndRan();
+    });
+
+    it('does not let a catch-up replace a real turn end already queued behind the pass', async () => {
+      const release = holdNextPassOpen();
+      const heldPass = catchUpAfterResume(context, resumed());
+      sessionManager.emit('turn-ended', turnEnded());
+      await untilTurnEndedListenerHasRun();
+      await catchUpAfterResume(context, resumed());
+
+      release();
+      await heldPass;
+
+      expectOnlyTheTurnEndRan();
+    });
+
+    it('runs a catch-up queued behind the pass when nothing outranks it', async () => {
+      // The control for the two above: a queued request does run, so "the catch-up
+      // did not run" in them means it lost the slot rather than never being queued.
+      const release = holdNextPassOpen();
+      const heldPass = catchUpAfterResume(context, resumed());
+      await catchUpAfterResume(context, resumed());
+
+      release();
+      await heldPass;
+
+      expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(2);
+      expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+      const [, input] = hoisted.runWorkflowStep.mock.calls[0] as [unknown, { payload: TurnEndedPayload }];
+      expect(input.payload.turnStartedAt).toBeNull();
+    });
   });
 });

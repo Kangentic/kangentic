@@ -216,7 +216,7 @@ describe('a workflow\'s own agent starting over', () => {
     await agent.endWorkflowAgent(context, workflowId);
     vi.restoreAllMocks();
     // After the end: it reads the home database to record the agent's spend.
-    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    for (const database of harness.dbs.values()) (database as Database.Database).close();
     harness.dbs.clear();
     fs.rmSync(root, { recursive: true, force: true });
   });

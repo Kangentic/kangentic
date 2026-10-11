@@ -79,10 +79,16 @@ function seedScript(seed: 'draft' | 'started'): string {
   `;
 }
 
-async function launch(seed: 'draft' | 'started'): Promise<{ browser: Browser; page: Page }> {
+/**
+ * `fakeClock`: the page's timers are Playwright's, which run at real speed until
+ * the test pauses them (`page.clock.pauseAt`), so a test can hold a timed
+ * window open for as long as its assertions need.
+ */
+async function launch(seed: 'draft' | 'started', options: { fakeClock?: boolean } = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1600, height: 950 } })).newPage();
+  if (options.fakeClock) await page.clock.install();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(seedScript(seed));
   await gotoVite(page, VITE_URL);
@@ -115,6 +121,51 @@ async function centerOf(page: Page, locator: ReturnType<Page['locator']>): Promi
   const box = await locator.boundingBox();
   if (!box || box.width === 0) throw new Error('element not laid out');
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/** Where React Flow has put a card, from the translate it writes on the node: state, not a measured box. */
+async function translateOf(page: Page, key: string): Promise<{ x: number; y: number }> {
+  const style = await node(page, key).evaluate((element) => (element as HTMLElement).style.transform);
+  const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(style);
+  if (!match) throw new Error(`card ${key} has no translate: "${style}"`);
+  return { x: Number(match[1]), y: Number(match[2]) };
+}
+
+/** Make a card `extra` pixels taller than it is now (0 puts it back), the way new content would: React Flow's observer measures it. */
+async function growCard(page: Page, key: string, extra: number): Promise<void> {
+  await card(page, key).evaluate((element, added) => {
+    const target = element as HTMLElement;
+    if (added === 0) {
+      target.style.minHeight = '';
+      return;
+    }
+    target.style.minHeight = `${target.offsetHeight + added}px`;
+  }, extra);
+}
+
+/** Animation frames in the page: a resize observer reports, and a render commits, within a few of them. */
+async function waitFrames(page: Page, count: number): Promise<void> {
+  await page.evaluate(async (frames) => {
+    for (let frame = 0; frame < frames; frame += 1) await new Promise((resolve) => requestAnimationFrame(resolve));
+  }, count);
+}
+
+/**
+ * How many animation frames pass before a card's place on the canvas changes,
+ * or -1 if it never does within `limit` frames. Started before the change it
+ * counts for, so it can only count more frames than the change took.
+ */
+async function framesUntilMoved(page: Page, key: string, limit = 300): Promise<number> {
+  return page.evaluate(async ({ nodeKey, maxFrames }) => {
+    const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${nodeKey}"]`);
+    if (!element) return -1;
+    const before = element.style.transform;
+    for (let frame = 1; frame <= maxFrames; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (element.style.transform !== before) return frame;
+    }
+    return -1;
+  }, { nodeKey: key, maxFrames: limit });
 }
 
 /**
@@ -264,6 +315,110 @@ test.describe('Workflows canvas gestures', () => {
       await expect(page.locator('.react-flow__node.dragging')).toHaveCount(0);
       await expect(node(page, 'task-3').locator('.workflow-node')).toHaveCSS('box-shadow', 'none');
       await expect(node(page, 'task-3')).toHaveCSS('cursor', 'pointer');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('grabbing a card while Auto layout slides the cards ends the slide at once', async () => {
+    // The slide ends on its own after 340ms, which would end it with or without
+    // the grab. So the page's clock is paused once a card is placed by hand:
+    // from then on nothing but the grab can take `data-arranging` off.
+    const { browser, page } = await launch('draft', { fakeClock: true });
+    try {
+      const canvas = byTestId(page, 'workflow-canvas');
+      const placed = await card(page, 'task-3').boundingBox();
+      if (!placed || placed.width === 0) throw new Error('card not laid out');
+      await page.mouse.move(placed.x + placed.width / 2, placed.y + 60);
+      await page.mouse.down();
+      await page.mouse.move(placed.x + placed.width / 2 + 60, placed.y + 140, { steps: 8 });
+      await page.mouse.up();
+      await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
+
+      await page.clock.pauseAt(new Date(Date.now() + 1000));
+      await byTestId(page, 'workflow-auto-layout').click();
+      // The new places land through the mock's own zero-delay timer: advance the
+      // paused clock a few milliseconds at a time, far short of the slide's 340.
+      await expect.poll(async () => {
+        await page.clock.runFor(20);
+        return canvas.getAttribute('data-arranging');
+      }, { timeout: 10_000 }).toBe('');
+
+      // The slide is on. Grab a card that is not sliding, and move it.
+      const grabbed = await card(page, 'task-1').boundingBox();
+      if (!grabbed || grabbed.width === 0) throw new Error('card not laid out');
+      await page.mouse.move(grabbed.x + grabbed.width / 2, grabbed.y + 60);
+      await page.mouse.down();
+      await page.mouse.move(grabbed.x + grabbed.width / 2 + 40, grabbed.y + 100, { steps: 6 });
+      await expect(node(page, 'task-1')).toHaveClass(/\bdragging\b/);
+      await expect(canvas).not.toHaveAttribute('data-arranging');
+      await page.mouse.up();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a card that grows while another is dragged re-spaces its column at the drop, not mid-drag', async () => {
+    // Column one stacks Token table over Token docs, and column two centres
+    // Token picker against that stack. So Token table growing by G pushes
+    // Token docs down by G and Token picker down by G / 2, once the layout
+    // reads the new height.
+    const { browser, page } = await launch('draft');
+    try {
+      const GROWTH = 120;
+      const near = (actual: number, expected: number) => Math.abs(actual - expected) <= 1;
+      const rest = { picker: await translateOf(page, 'task-2'), docs: await translateOf(page, 'task-3') };
+
+      // Control: with no drag, the same growth re-lays the column, and putting
+      // it back puts the column back. This is what the drag below must differ
+      // from, and how long the layout took here sets how long the drag waits.
+      const counting = framesUntilMoved(page, 'task-2');
+      await growCard(page, 'task-1', GROWTH);
+      const framesToRelayout = await counting;
+      expect(framesToRelayout, 'the grown card never re-laid its column when idle').toBeGreaterThan(0);
+      await expect.poll(async () => near((await translateOf(page, 'task-2')).y, rest.picker.y + GROWTH / 2)).toBe(true);
+      expect(near((await translateOf(page, 'task-3')).y, rest.docs.y + GROWTH)).toBe(true);
+      await growCard(page, 'task-1', 0);
+      await expect.poll(async () => near((await translateOf(page, 'task-2')).y, rest.picker.y)).toBe(true);
+      await expect.poll(async () => near((await translateOf(page, 'task-3')).y, rest.docs.y)).toBe(true);
+
+      // Press Token docs, move it off its slot, and hold.
+      const pressed = await card(page, 'task-3').boundingBox();
+      if (!pressed || pressed.width === 0) throw new Error('card not laid out');
+      await page.mouse.move(pressed.x + pressed.width / 2, pressed.y + 60);
+      await page.mouse.down();
+      await page.mouse.move(pressed.x + pressed.width / 2 + 60, pressed.y + 140, { steps: 8 });
+      await expect(node(page, 'task-3')).toHaveClass(/\bdragging\b/);
+      const held = await translateOf(page, 'task-3');
+      expect(near(held.y, rest.docs.y)).toBe(false);
+
+      // Token table grows under the held card. A frame budget on purpose: a
+      // layout that did not happen cannot be polled for. It is three times what
+      // the idle control took (ten frames at least), so the observer has
+      // reported and a render would have committed if the layout were going to run.
+      await growCard(page, 'task-1', GROWTH);
+      await waitFrames(page, Math.max(10, framesToRelayout * 3));
+      expect(await translateOf(page, 'task-3')).toEqual(held);
+      expect(await translateOf(page, 'task-2')).toEqual(rest.picker);
+
+      // Let go: the column reads the new height now, and the card stays where it was dropped.
+      await node(page, 'task-3').evaluate((element) => {
+        const recorded = window as unknown as { __droppedTransforms: string[] };
+        recorded.__droppedTransforms = [];
+        new MutationObserver(() => { recorded.__droppedTransforms.push((element as HTMLElement).style.transform); })
+          .observe(element, { attributes: true, attributeFilter: ['style'] });
+      });
+      await page.mouse.up();
+      await expect.poll(async () => near((await translateOf(page, 'task-2')).y, rest.picker.y + GROWTH / 2)).toBe(true);
+      const dropped = await translateOf(page, 'task-3');
+      expect(near(dropped.x, held.x) && near(dropped.y, held.y)).toBe(true);
+      // Never drawn back in its slot on the way: every place it was given is the drop's.
+      const seen = await page.evaluate(() => (window as unknown as { __droppedTransforms: string[] }).__droppedTransforms);
+      for (const transform of seen) {
+        const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(transform);
+        expect(match, transform).not.toBeNull();
+        expect(near(Number(match![1]), held.x) && near(Number(match![2]), held.y), transform).toBe(true);
+      }
     } finally {
       await browser.close();
     }

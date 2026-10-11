@@ -16,9 +16,13 @@ import { useCardLinksPreview } from './card-links-preview';
  * A workflow task's card content on the board: the workflow strip on top
  * (its workflow's icon in the workflow's color, the name, the step track),
  * then the board's own card, whose footer says what a task in To Do
- * waits for. The track's current step is a bar here, not the column's marker
- * the Workflows canvas draws: the lane the card sits in already names it. Mounted only for a task in a workflow, so an ordinary card pays
- * for none of these subscriptions.
+ * waits for.
+ *
+ * The track's current step is a bar here, not the column's marker the
+ * Workflows canvas draws: the lane the card sits in already names it.
+ *
+ * Mounted only for a task in a workflow, so an ordinary card pays for none of
+ * these subscriptions.
  *
  * The strip and the footer are memoized on the task row: dnd-kit re-renders
  * every card when a drag starts, and they skip that pass. Measured with

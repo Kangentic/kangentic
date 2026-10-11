@@ -15,6 +15,11 @@ export interface TrackStop {
   state: 'done' | 'current' | 'ahead';
 }
 
+/** A task still at its journey's start: planned, or waiting in To Do. */
+export function isAtToDo(place: WorkflowTaskPlace): boolean {
+  return place === 'planned' || place === 'todo';
+}
+
 /**
  * The stops a card's track draws, in board order (sign-off R2 and T2,
  * 2026-10-07): To Do, each column on the route (skipped ones are not drawn),
@@ -28,7 +33,7 @@ export function trackStops(
 ): TrackStop[] {
   const stops: TrackStop[] = [];
   if (ends?.todo) {
-    stops.push({ ...ends.todo, end: 'todo', state: place === 'planned' || place === 'todo' ? 'current' : 'done' });
+    stops.push({ ...ends.todo, end: 'todo', state: isAtToDo(place) ? 'current' : 'done' });
   }
   for (const step of steps) {
     if (step.state === 'skipped') continue;

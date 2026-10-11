@@ -149,7 +149,11 @@ let homeGeneration = 0; // hmr-safe: as above.
 let supersessionGeneration = 0; // hmr-safe: as above.
 /** The same, for the board's links overlay: a clear outranks a load still in flight. */
 let linkGeneration = 0; // hmr-safe: as above; the overlay is cleared on leaving the board.
-/** Whose links the load in flight is for, and whether they land kept. */
+/**
+ * Whose links the load in flight is for, and whether they land kept. The one
+ * record of a load in flight: `linkFocusLoading` mirrors `pendingLinks !== null`
+ * for subscribers, and the two are always written together.
+ */
 let pendingLinks: { taskId: string; kept: boolean } | null = null; // hmr-safe: as above; a reset only drops a load in flight.
 /** The same, per watched workflow (a task detail's panel). */
 const watchedGenerations = new Map<string, number>(); // hmr-safe: as above; a reset only discards in-flight answers.
@@ -472,15 +476,15 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     showLinks: (taskId, homeProjectId, workflowId) => loadLinks(taskId, homeProjectId, workflowId, true),
 
     previewLinks: async (taskId, homeProjectId, workflowId) => {
-      const { linkFocus, linkFocusLoading } = get();
-      if (linkFocus?.kept || (linkFocusLoading && pendingLinks?.kept)) return;
-      if (linkFocus?.taskId === taskId || (linkFocusLoading && pendingLinks?.taskId === taskId)) return;
+      const { linkFocus } = get();
+      if (linkFocus?.kept || pendingLinks?.kept) return;
+      if (linkFocus?.taskId === taskId || pendingLinks?.taskId === taskId) return;
       await loadLinks(taskId, homeProjectId, workflowId, false);
     },
 
     endPreview: (taskId) => {
-      const { linkFocus, linkFocusLoading } = get();
-      if (linkFocusLoading && pendingLinks?.taskId === taskId && !pendingLinks.kept) {
+      const { linkFocus } = get();
+      if (pendingLinks?.taskId === taskId && !pendingLinks.kept) {
         get().clearLinks();
         return;
       }
@@ -556,7 +560,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (linkFocus && linkFocus.detail.workflow.id === event.workflowId) {
         // Reload what is on screen, kept or previewed as it is, unless a load
         // for another card is under way: that one replaces it anyway.
-        const loadingAnother = get().linkFocusLoading && pendingLinks !== null && pendingLinks.taskId !== linkFocus.taskId;
+        const loadingAnother = pendingLinks !== null && pendingLinks.taskId !== linkFocus.taskId;
         if (!loadingAnother) {
           void loadLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId, pendingLinks?.kept ?? linkFocus.kept);
         }

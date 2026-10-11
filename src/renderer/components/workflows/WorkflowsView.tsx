@@ -95,7 +95,14 @@ function EmptyWorkflowWelcome() {
 async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<void> {
   if (taskProjectId === useProjectStore.getState().currentProject?.id) {
     const session = useSessionStore.getState()._sessionByTaskId.get(task.id);
-    if (session) await useSessionStore.getState().killSession(session.id);
+    if (session) {
+      try {
+        await useSessionStore.getState().killSession(session.id);
+      } catch (error) {
+        useToastStore.getState().addToast({ message: `Failed to delete "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });
+        return;
+      }
+    }
     // The board store reports its own failure.
     await useBoardStore.getState().deleteTask(task.id).catch(() => undefined);
     return;

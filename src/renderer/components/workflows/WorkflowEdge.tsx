@@ -67,15 +67,18 @@ interface LinkLook {
   width: number;
   opacity: number;
   flowing: boolean;
+  /** `data-link-state`: a fresh link outranks its blocker being done, as its look does. */
+  state: 'fresh' | 'satisfied' | 'pending';
 }
 
 function lookOf(satisfied: boolean, relation: WorkflowLinkRelation, fresh: boolean): LinkLook {
-  if (fresh) return { color: 'accent', width: 2, opacity: 1, flowing: false };
-  if (relation === 'blocker') return { color: satisfied ? 'active' : 'muted', width: 2, opacity: 1, flowing: true };
-  if (relation === 'dependent') return { color: 'accent', width: 2, opacity: 1, flowing: true };
+  if (fresh) return { color: 'accent', width: 2, opacity: 1, flowing: false, state: 'fresh' };
+  const state = satisfied ? 'satisfied' : 'pending';
+  if (relation === 'blocker') return { color: satisfied ? 'active' : 'muted', width: 2, opacity: 1, flowing: true, state };
+  if (relation === 'dependent') return { color: 'accent', width: 2, opacity: 1, flowing: true, state };
   const color: MarkerColor = satisfied ? 'active' : 'faint';
-  if (relation === 'muted') return { color, width: 1.5, opacity: 0.2, flowing: false };
-  return { color, width: 1.5, opacity: satisfied ? 0.45 : 0.7, flowing: false };
+  if (relation === 'muted') return { color, width: 1.5, opacity: 0.2, flowing: false, state };
+  return { color, width: 1.5, opacity: satisfied ? 0.45 : 0.7, flowing: false, state };
 }
 
 export const WorkflowEdge = React.memo(function WorkflowEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps<WorkflowFlowEdge>) {
@@ -94,7 +97,7 @@ export const WorkflowEdge = React.memo(function WorkflowEdge({ id, sourceX, sour
       path={smoothPath(points, arrowheadLength(look.width))}
       className={look.flowing ? 'workflow-link-flow' : undefined}
       markerEnd={`url(#workflow-link-${look.color})`}
-      data-link-state={fresh ? 'fresh' : satisfied ? 'satisfied' : 'pending'}
+      data-link-state={look.state}
       data-link-relation={relation ?? 'none'}
       style={{
         stroke: MARKER_COLORS[look.color],

@@ -42,6 +42,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode } from '../../../shared/types';
+import { motionReduced } from '../../utils/motion-reduced';
 
 /** Layout coordinates arrive in the unit box; spread them over a world cube of
  *  this size so camera distances and point sizes are in comfortable units. */
@@ -177,17 +178,6 @@ const STYLE_TRANSITION_MS = 380;
 /** Ease-out cubic: fast at first, so the change starts at once, then settling. */
 function easeOut(progress: number): number {
   return 1 - (1 - progress) ** 3;
-}
-
-/**
- * The app's Animations setting (`.no-motion` on the root) and the OS's reduced
- * motion preference both mean snap, as every other motion in the app does.
- */
-function motionReduced(): boolean {
-  if (typeof document === 'undefined') return true;
-  if (document.documentElement.classList.contains('no-motion')) return true;
-  return typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export interface KnowledgeGraphSceneOptions {

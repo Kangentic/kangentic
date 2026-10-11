@@ -352,6 +352,13 @@ export interface PtyEchoReassertAttempts {
   lastScheduledAt: number;
 }
 
+/** A PTY resize main echoed back: the dims the PTY now has, and who asked for them. */
+export interface PtyEcho {
+  cols: number;
+  rows: number;
+  origin: PtyResizeOrigin;
+}
+
 export type PtyEchoSkipReason =
   | 'in-sync'
   | 'foreign-hold'
@@ -647,7 +654,7 @@ export function useTerminal(options: UseTerminalOptions) {
   /** The last PTY grid main announced for this session. Echoes arrive in order
    *  and only on a real change, so this is the PTY's grid as far as this
    *  terminal knows. */
-  const lastPtyEchoRef = useRef<{ cols: number; rows: number; origin: PtyResizeOrigin } | null>(null);
+  const lastPtyEchoRef = useRef<PtyEcho | null>(null);
   /** A divergence was deferred to the replay in flight, so that replay's settle
    *  owes it a second judgment (see isPtyEchoDeferredToReplaySettle). */
   const ptyEchoRecheckOwedRef = useRef(false);
@@ -1746,7 +1753,7 @@ export function useTerminal(options: UseTerminalOptions) {
      *  re-assert when they disagree. Shared by the echo and by the second
      *  judgment a settling replay owes, so both spend the same budget. */
     const judgePtyEcho = (
-      echo: { cols: number; rows: number; origin: PtyResizeOrigin },
+      echo: PtyEcho,
       trigger: 'echo' | 'replay-settle',
     ): void => {
       const terminal = xtermRef.current;
@@ -1791,7 +1798,7 @@ export function useTerminal(options: UseTerminalOptions) {
     };
     const cleanup = window.electronAPI.sessions.onPtyResized((resizedSessionId, cols, rows, origin) => {
       if (resizedSessionId !== sessionId) return;
-      const echo = { cols, rows, origin };
+      const echo: PtyEcho = { cols, rows, origin };
       lastPtyEchoRef.current = echo;
       // A newer echo is judged on its own, so it replaces any earlier deferral.
       ptyEchoRecheckOwedRef.current = false;

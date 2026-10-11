@@ -7,8 +7,9 @@
  * - a request is granted at once and kept on the workflow, and a running agent
  *   picks it up at its next idle, or at once when it is idle already;
  * - that restart waits out a turn the user started in the tick before it ran
- *   (the access stays owed), and leaves a Pause the user pressed while the
- *   agent was stopping standing.
+ *   (the access stays owed), leaves a Pause the user pressed while the
+ *   agent was stopping standing, and stays owed when the suspend fails, so
+ *   the next idle edge retries it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -93,7 +94,7 @@ describe('the workflow agent\'s reads across projects', () => {
   });
 
   afterEach(() => {
-    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    for (const database of harness.dbs.values()) (database as Database.Database).close();
     harness.dbs.clear();
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -200,6 +201,37 @@ describe('the workflow agent\'s reads across projects', () => {
       manager.emit('activity', 'session-reprompted', 'idle');
       await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
       expect(suspend).toHaveBeenCalledWith('session-reprompted');
+    });
+
+    it('owes the restart again when its suspend fails, so the next idle edge retries it and starts the agent', async () => {
+      const workflowId = idleAgent('session-suspend-fails');
+      const suspendFailure = new Error('the session would not suspend');
+      suspend.mockRejectedValueOnce(suspendFailure);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'mobile').when).toBe('now');
+
+        // The catch that logs is the one that owes the restart again, so waiting
+        // on the log means the access is owed before the next edge is emitted.
+        await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Could not restart with the new project access'),
+          suspendFailure,
+        ));
+        expect(suspend).toHaveBeenCalledTimes(1);
+        expect(startAttempts).not.toHaveBeenCalled();
+
+        // The fake's suspend leaves the row running, as the real one does when it fails.
+        // Its next idle edge is the retry.
+        manager.emit('activity', 'session-suspend-fails', 'idle');
+
+        await vi.waitFor(() => expect(startAttempts).toHaveBeenCalledTimes(1));
+        expect(suspend).toHaveBeenCalledTimes(2);
+        expect(suspend).toHaveBeenLastCalledWith('session-suspend-fails');
+        // The retry's own start fails here (the MCP server is off) and logs; let it settle before the spy goes.
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
 
     it('does not start the agent again when the user paused it while it was being suspended', async () => {

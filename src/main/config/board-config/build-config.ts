@@ -206,22 +206,25 @@ function serializeGroup(
 
 /**
  * Put back the rows of a type this build does not know, each right after the
- * row it followed in the file (or first, when it led the list). Order is the
- * run order, so appending them at the end would change what runs first.
+ * nearest earlier row in the file that is still in the list (or first, when
+ * none is). Order is the run order, so appending them at the end would change
+ * what runs first, and so would anchoring on a row the user since deleted.
  */
 function carryUnknownRows(group: BoardAutomationConfig[], existingGroup: unknown[]): BoardAutomationConfig[] {
   const merged = group.slice();
-  let previousName: string | null = null;
+  let anchorName: string | null = null;
   for (const candidate of existingGroup) {
     if (!isPlainObject(candidate)) continue;
     const candidateType = typeof candidate.type === 'string' ? candidate.type : '';
     const candidateName = typeof candidate.name === 'string' ? candidate.name : null;
     const known = isAutomationType(candidateType) || candidateType === 'send_command' || isRetiredActionType(candidateType);
     if (!known && candidateName) {
-      const anchorIndex = previousName === null ? -1 : merged.findIndex((row) => row.name === previousName);
+      const anchorIndex = anchorName === null ? -1 : merged.findIndex((row) => row.name === anchorName);
       merged.splice(anchorIndex + 1, 0, candidate as BoardAutomationConfig);
+      anchorName = candidateName;
+    } else if (candidateName && merged.some((row) => row.name === candidateName)) {
+      anchorName = candidateName;
     }
-    if (candidateName) previousName = candidateName;
   }
   return merged;
 }

@@ -122,7 +122,7 @@ describe('AutomationRepository', () => {
       const [inThisColumn] = automations.replaceForColumn(columnId, [webhook('Ping')]);
 
       expect(inThisColumn.id).not.toBe(inOtherColumn.id);
-      expect((database.prepare('SELECT COUNT(*) as c FROM column_automations').get() as { c: number }).c).toBe(2);
+      expect((database.prepare('SELECT COUNT(*) as rowCount FROM column_automations').get() as { rowCount: number }).rowCount).toBe(2);
     });
 
     // One write per case, so the name index (unique per column, case-blind) never
@@ -242,7 +242,7 @@ describe('AutomationRepository', () => {
     lanes.delete(created.id);
 
     expect(automations.listForColumn(created.id)).toEqual([]);
-    expect((database.prepare('SELECT COUNT(*) as c FROM column_automations').get() as { c: number }).c).toBe(0);
+    expect((database.prepare('SELECT COUNT(*) as rowCount FROM column_automations').get() as { rowCount: number }).rowCount).toBe(0);
   });
 
   it('treats an unparseable config blob as empty rather than failing the column', () => {

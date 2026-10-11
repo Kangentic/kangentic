@@ -6,7 +6,7 @@ import {
   resolveColumnMessage,
   applyProfileToLane,
 } from '../../src/main/transition-engine/column-strategy';
-import type { BoardProfile, BoardProfileEntry, Swimlane } from '../../src/shared/types';
+import type { BoardProfile, BoardProfileEntry, ColumnAutomation, Swimlane } from '../../src/shared/types';
 import type { LaneStrategyFields } from '../../src/main/transition-engine/column-strategy';
 
 /** A base column that pins a full strategy, so "inherit" and "clear" are distinguishable. */
@@ -325,7 +325,7 @@ describe('resolveColumnMessage', () => {
       { id: 'row-2', type: 'send_message', trigger: 'enter', enabled: true, position: 1, config: { message: '/second' } },
       { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { message: '/first' } },
     ]);
-    expect(message).toEqual({ id: 'row-1', message: '/first', mode: 'immediate' });
+    expect(message).toEqual({ id: 'row-1', message: '/first', mode: 'immediate', guarded: false });
   });
 
   it('skips a switched-off row, an exit row, and another type', () => {
@@ -349,6 +349,74 @@ describe('resolveColumnMessage', () => {
       { id: 'row-1', type: 'send_message', trigger: 'enter', enabled: true, position: 0, config: { command: '/legacy' } },
     ]);
     expect(message?.message).toBe('/legacy');
+  });
+
+  // `guarded` tells a caller that delivers the message itself (the warm live
+  // injection) to leave the row to the runner, because only the runner applies
+  // a Condition or a Frequency limit. Every assertion uses toBe(true/false), not
+  // a truthiness matcher: before the field existed it read `undefined`, which a
+  // falsy matcher would accept as "not guarded".
+  describe('guarded: a row with a Condition or a Frequency limit', () => {
+    function enterRow(overrides: Partial<ColumnAutomation> = {}) {
+      return {
+        id: 'row-1',
+        type: 'send_message' as const,
+        trigger: 'enter' as const,
+        enabled: true,
+        position: 0,
+        config: { message: '/review' },
+        ...overrides,
+      };
+    }
+
+    it('is guarded when the row has a non-blank Condition', () => {
+      const message = resolveColumnMessage([enterRow({ condition: 'The PR is ready to merge.' })]);
+      expect(message?.guarded).toBe(true);
+    });
+
+    it('is guarded when the row has a Frequency limit', () => {
+      const message = resolveColumnMessage([enterRow({ max_runs: 1 })]);
+      expect(message?.guarded).toBe(true);
+    });
+
+    it('is guarded by a Frequency limit of zero, which is still a limit', () => {
+      // typeof 0 is 'number'. A truthiness check on max_runs would read 0 as no limit.
+      const message = resolveColumnMessage([enterRow({ max_runs: 0 })]);
+      expect(message?.guarded).toBe(true);
+    });
+
+    it('is not guarded by a blank or whitespace-only Condition', () => {
+      expect(resolveColumnMessage([enterRow({ condition: '' })])?.guarded).toBe(false);
+      expect(resolveColumnMessage([enterRow({ condition: '   \n ' })])?.guarded).toBe(false);
+    });
+
+    it('is not guarded when the Condition and the Frequency limit are both null', () => {
+      const message = resolveColumnMessage([enterRow({ condition: null, max_runs: null })]);
+      expect(message?.guarded).toBe(false);
+    });
+
+    it('is not guarded when the row carries neither field at all', () => {
+      // A row read from somewhere that predates the columns, or built by hand.
+      expect(resolveColumnMessage([enterRow()])?.guarded).toBe(false);
+    });
+
+    it('reads the guard off the FIRST message row, not a later one', () => {
+      const message = resolveColumnMessage([
+        enterRow({ id: 'row-1', position: 0 }),
+        enterRow({ id: 'row-2', position: 1, condition: 'Only when asked.', max_runs: 1 }),
+      ]);
+      expect(message?.id).toBe('row-1');
+      expect(message?.guarded).toBe(false);
+    });
+
+    it('reads the guard off the first ENABLED row when an earlier guarded row is switched off', () => {
+      const message = resolveColumnMessage([
+        enterRow({ id: 'off', position: 0, enabled: false, condition: 'Never.' }),
+        enterRow({ id: 'row-2', position: 1 }),
+      ]);
+      expect(message?.id).toBe('row-2');
+      expect(message?.guarded).toBe(false);
+    });
   });
 });
 

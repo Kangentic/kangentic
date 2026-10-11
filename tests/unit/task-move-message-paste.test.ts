@@ -24,12 +24,24 @@ interface MessageRow {
   id: string;
   message: string;
   mode: AutoCommandMode;
+  /** The row's Condition, as the automations repository lists it. Absent: none. */
+  condition?: string | null;
+  /** The row's Frequency limit, as the automations repository lists it. Absent: none. */
+  max_runs?: number | null;
 }
 
 const hoisted = vi.hoisted(() => ({
   turnWaits: [] as Array<{ sessionId: string; signal: AbortSignal | undefined; resolve: (result: TurnCompletionResult) => void }>,
   /** Send message rows per `${laneId}:${trigger}`. */
   rows: new Map<string, MessageRow[]>(),
+  /** Every group the stub runner was asked to run, with the skip list the move handed it. */
+  engineRuns: [] as Array<{ trigger: 'enter' | 'exit'; alreadyDelivered: ReadonlySet<string> | undefined }>,
+  /**
+   * Rows the REAL runner would skip after its own checks: a Condition the
+   * Automation agent answered no, or a spent Frequency limit. The stub honors
+   * them after the `alreadyDelivered` check, in the real runner's order.
+   */
+  runnerSkips: new Set<string>(),
   /** The per-row signal the stub runner hands an exit row, so a test can stop it. */
   exitRowController: null as AbortController | null,
   rowErrors: [] as string[],
@@ -147,8 +159,12 @@ function makeEngine() {
         deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
       },
     ) => {
+      hoisted.engineRuns.push({ trigger, alreadyDelivered: runOptions.alreadyDelivered });
       for (const row of hoisted.rows.get(`${lane.id}:${trigger}`) ?? []) {
+        // Checked first, as the real runner does: a row named here is recorded
+        // as sent and never reaches its Condition or Frequency checks.
         if (runOptions.alreadyDelivered?.has(row.id)) continue;
+        if (hoisted.runnerSkips.has(row.id)) continue;
         // The real runner hands each row its own signal (the move's, combined
         // with this row's slice of the exit budget) and isolates its failure.
         let rowSignal = runOptions.signal;
@@ -253,6 +269,8 @@ function listForColumn(laneId: string) {
     position: index,
     enabled: true,
     config: { message: row.message, mode: row.mode },
+    condition: row.condition ?? null,
+    max_runs: row.max_runs ?? null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
   }));
@@ -333,6 +351,11 @@ async function settle(): Promise<void> {
   for (let tick = 0; tick < 10; tick++) await Promise.resolve();
 }
 
+/** The enter group the move ran, with the skip list it was handed. */
+function enterRun() {
+  return hoisted.engineRuns.find((run) => run.trigger === 'enter');
+}
+
 /** The texts of every keystroke burst scheduled, one array per burst. */
 function scheduledBursts(context: ReturnType<typeof makeHarness>['context']): string[][] {
   return context.terminalSubmitScheduler.scheduleKeystrokes.mock.calls.map(
@@ -349,6 +372,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   hoisted.turnWaits.length = 0;
   hoisted.rows.clear();
+  hoisted.engineRuns.length = 0;
+  hoisted.runnerSkips.clear();
   hoisted.exitRowController = null;
   hoisted.rowErrors.length = 0;
   hoisted.reports.length = 0;
@@ -439,6 +464,10 @@ describe('On task enter, warm move: the column message and the rows after it', (
     await settle();
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
     expect(hoisted.turnWaits).toHaveLength(0);
+    // The unguarded control for the describe below: the burst carries the
+    // message, and the enter group is told to skip the row it carried.
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
   });
 
   it('a settings change restarts the session, and the message is neither typed nor pasted into the old one', async () => {
@@ -513,5 +542,94 @@ describe('On task enter, warm move: the column message and the rows after it', (
     expect(hoisted.turnWaits[0].signal?.aborted).toBe(false);
     hoisted.turnWaits[0].resolve('completed');
     await vi.waitFor(() => expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1));
+  });
+});
+
+// The warm move used to bundle the column's first message into its injection
+// burst and name that row `alreadyDelivered`, which the runner honors BEFORE its
+// Condition and Frequency checks. A row guarded by either was therefore sent on
+// every warm move, whatever the Condition said and however often it had run.
+// Now `resolveColumnMessage` reports `guarded`, and the move leaves a guarded
+// row to the runner: nothing is bundled and nothing is pre-delivered.
+describe('On task enter, warm move: a first message with a Condition or a Frequency limit is the runner\'s to send', () => {
+  const GUARDED_ROW_CASES: Array<{ label: string; guard: Pick<MessageRow, 'condition' | 'max_runs'> }> = [
+    { label: 'a Condition', guard: { condition: 'The PR is ready to merge.' } },
+    { label: 'a Frequency limit', guard: { max_runs: 1 } },
+    { label: 'a Frequency limit of zero', guard: { max_runs: 0 } },
+  ];
+
+  it.each(GUARDED_ROW_CASES)('does not bundle a one-line message with $label into the burst, and pre-delivers nothing', async ({ guard }) => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate', ...guard }]);
+    // The runner checks the guard and says no: the Condition is not met, or the
+    // Frequency limit is spent.
+    hoisted.runnerSkips.add('row-first');
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+    await settle();
+
+    // Red before the fix: the plan was built with '/code-review', the burst typed
+    // it into the live session, and the group was told to skip the row.
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(enterRun()).toBeDefined();
+    expect(enterRun()?.alreadyDelivered).toBeUndefined();
+    // The runner skipped the row, so the message reached the agent by no path.
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(hoisted.turnWaits).toHaveLength(0);
+  });
+
+  it('sends the message once, through the group, when the runner lets a guarded row run', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [
+      { id: 'row-first', message: '/code-review', mode: 'immediate', condition: 'The PR is ready to merge.' },
+    ]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(enterRun()?.alreadyDelivered).toBeUndefined();
+    // Exactly one delivery, and it is the group's own, not the injection's.
+    expect(scheduledBursts(context)).toEqual([['/code-review']]);
+  });
+
+  it('pastes a guarded multi-line message once, through the group, after the turn ends', async () => {
+    hoisted.rows.set(`${LANE_B}:enter`, [
+      { id: 'row-first', message: MULTI_LINE, mode: 'immediate', max_runs: 2 },
+    ]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(enterRun()?.alreadyDelivered).toBeUndefined();
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(hoisted.turnWaits).toHaveLength(1));
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+
+    hoisted.turnWaits[0].resolve('completed');
+    await vi.waitFor(() => expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1));
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledWith(SESSION_ID, MULTI_LINE, expect.anything());
+    await settle();
+    // One delivery only: the injection pasted nothing of its own.
+    expect(hoisted.turnWaits).toHaveLength(1);
+  });
+
+  const UNGUARDED_ROW_CASES: Array<{ label: string; guard: Pick<MessageRow, 'condition' | 'max_runs'> }> = [
+    { label: 'no Condition and no Frequency limit', guard: {} },
+    { label: 'a blank Condition and a null Frequency limit', guard: { condition: '   ', max_runs: null } },
+  ];
+
+  it.each(UNGUARDED_ROW_CASES)('still bundles the message into the burst and pre-delivers it with $label', async ({ guard }) => {
+    hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: '/code-review', mode: 'immediate', ...guard }]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+    await settle();
+
+    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
+    // One burst, the injection's; the group skipped the row it carried.
+    expect(scheduledBursts(context)).toEqual([['/code-review']]);
   });
 });

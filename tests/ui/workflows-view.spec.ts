@@ -52,11 +52,20 @@ const OTHER_DONE_COLOR = '#a855f7';
 /**
  * `paused`: board 11's pair, the running workflow paused yesterday at 18:20
  * beside the draft. `across-boards`: the running workflow with one more task,
- * #420, in Done on another board.
+ * #420, in Done on another board. `all-done`: the running workflow with every
+ * task in Done, which has nothing left to run and is still listed.
  */
-type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards';
+type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards' | 'all-done';
 
-function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null): string {
+/** What a test adds to a seed beyond its workflows; each is off unless asked for. */
+interface SeedExtras {
+  /** A running agent session on this task of the running workflow, as a started task has. */
+  sessionTaskId?: string;
+  /** The "Delete task" confirm is skipped, as after its "Don't ask again". */
+  skipDeleteConfirm?: boolean;
+}
+
+function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | null = null, extras: SeedExtras = {}): string {
   const draft = {
     workflow: {
       id: 'wf-draft', title: 'Theme tokens', state: 'draft', color_slot: 2,
@@ -71,8 +80,8 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     },
   };
   const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5 } };
-  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards';
-  const workflows = seed === 'running' || seed === 'across-boards' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
+  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards' || seed === 'all-done';
+  const workflows = seed === 'running' || seed === 'across-boards' || seed === 'all-done' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
   // A task row and a Done column tagged with the other project are on its board.
   const otherBoard = seed === 'across-boards'
     ? `state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts });
@@ -89,7 +98,15 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
   const links = hasRunning
     ? RUNNING_LINKS.map(([blocker, blocked]) => ({ workflow_id: 'wf-usage', blocker_task_id: `t${blocker}`, blocked_task_id: `t${blocked}` }))
     : [];
-  const tasks = hasRunning ? RUNNING_TASKS : [];
+  // Lane 6 is Done: `all-done` puts every one of the running workflow's tasks there.
+  const tasks = seed === 'all-done' ? RUNNING_TASKS.map(([number, title]) => [number, title, 6]) : hasRunning ? RUNNING_TASKS : [];
+  const sessionSeed = extras.sessionTaskId
+    ? `state.tasks.find(function (task) { return task.id === '${extras.sessionTaskId}'; }).session_id = 'sess-${extras.sessionTaskId}';
+       state.sessions.push({
+         id: 'sess-${extras.sessionTaskId}', taskId: '${extras.sessionTaskId}', projectId: '${PROJECT_ID}',
+         pid: 9414, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: ts, exitCode: null,
+       });`
+    : '';
   // Yesterday at 18:20 in the page's own time zone, so the note's day is the page's.
   const pausedAt = seed === 'paused'
     ? `var pausedAt = new Date(); pausedAt.setDate(pausedAt.getDate() - 1); pausedAt.setHours(18, 20, 0, 0);
@@ -103,6 +120,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
       var ts = new Date().toISOString();
       state.config.sidebar = { width: ${sidebarWidth} };
       state.config.sidebarVisible = true;
+      ${extras.skipDeleteConfirm ? 'state.config.skipDeleteConfirm = true;' : ''}
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-' + index, position: index, created_at: ts }));
@@ -119,17 +137,21 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
         });
       });
       ${otherBoard}
+      ${sessionSeed}
       return { currentProjectId: '${PROJECT_ID}' };
     });
   `;
 }
 
-async function launch(seed: Seed, options: { width?: number; sidebarWidth?: number; iconlessColumn?: string } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(seed: Seed, options: { width?: number; sidebarWidth?: number; iconlessColumn?: string } & SeedExtras = {}): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: options.width ?? 1600, height: 950 } })).newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240, options.iconlessColumn ?? null));
+  await page.addInitScript(seedScript(seed, options.sidebarWidth ?? 240, options.iconlessColumn ?? null, {
+    sessionTaskId: options.sessionTaskId,
+    skipDeleteConfirm: options.skipDeleteConfirm,
+  }));
   await gotoVite(page, VITE_URL);
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('[data-testid="view-toggle-workflows"]').click();
@@ -140,16 +162,34 @@ async function launch(seed: Seed, options: { width?: number; sidebarWidth?: numb
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 const card = (page: Page, key: string) => page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${key}"]`);
 
-/** A CSS color as the page computes it, so a token, a hex and an element's own color compare as one string. */
-async function computedColor(page: Page, cssColor: string): Promise<string> {
-  return page.evaluate((value) => {
+/**
+ * A CSS color as the page computes it, so a token, a hex and an element's own
+ * color compare as one string. `property` is the style property the value is
+ * resolved through: `color` by default, `backgroundColor` to compare a fill.
+ */
+async function computedColor(page: Page, cssColor: string, property: 'color' | 'backgroundColor' = 'color'): Promise<string> {
+  return page.evaluate(({ value, styleProperty }) => {
     const probe = document.createElement('span');
-    probe.style.color = value;
+    probe.style[styleProperty] = value;
     document.body.appendChild(probe);
-    const color = getComputedStyle(probe).color;
+    const resolved = getComputedStyle(probe)[styleProperty];
     probe.remove();
-    return color;
-  }, cssColor);
+    return resolved;
+  }, { value: cssColor, styleProperty: property });
+}
+
+/**
+ * Presses a canvas card and drags it by hand: a stepped move down and to the
+ * right, then release. The pointer is read from the card's live box right
+ * before the press (`.claude/rules/cross-platform-parity.md`).
+ */
+async function dragCardByHand(page: Page, key: string): Promise<void> {
+  const box = await card(page, key).boundingBox();
+  if (!box || box.width === 0) throw new Error('card not laid out');
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + 120, { steps: 8 });
+  await page.mouse.up();
 }
 
 test.describe('Workflows header', () => {
@@ -395,6 +435,21 @@ test.describe('Workflows header', () => {
     }
   });
 
+  test('Delete on a workflow whose tasks are all done says they stay, and counts no unfinished tasks', async () => {
+    const { browser, page } = await launch('all-done');
+    try {
+      // The premise: every task is done and the workflow is still listed, with Delete live.
+      await expect(byTestId(page, 'workflow-progress')).toHaveText('9 of 9 done');
+      await byTestId(page, 'workflow-delete').click();
+      const confirm = byTestId(page, 'workflow-delete-confirm');
+      await expect(confirm).toContainText('Delete Usage budgets?');
+      await expect(confirm).toContainText('Its tasks are done and stay where they are. The agent conversation is deleted.');
+      await expect(confirm).not.toContainText('unfinished');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the picker lists each unfinished workflow with its state and switches the canvas', async () => {
     const { browser, page } = await launch('two');
     try {
@@ -623,6 +678,53 @@ test.describe('Workflows inspector', () => {
       await menu.locator('[data-testid="workflow-card-menu-open-on-board"]').click();
       await expect(page.locator('[data-swimlane-name="To Do"]').first()).toBeVisible();
       await expect(page.locator('[data-testid="task-detail-dialog"] [data-testid="task-title-text"]')).toHaveText('Refuse to spawn past the hard cap');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Delete from a card whose session will not stop warns, keeps the task, and raises no unhandled rejection', async () => {
+    // #414 works in Executing with a running session, so Delete must stop that
+    // session first. The confirm is skipped: this is about the kill that fails,
+    // and both confirm paths reach the same delete.
+    const { browser, page } = await launch('running', { sessionTaskId: 't414', skipDeleteConfirm: true });
+    try {
+      // A rejection that nothing catches is a promise event, not a window error:
+      // count both where the page raises them.
+      const pageErrors: string[] = [];
+      page.on('pageerror', (error) => pageErrors.push(error.message));
+      await page.evaluate(() => {
+        const rejectionWindow = window as unknown as { __unhandledRejections: string[]; __killCalls: string[] };
+        rejectionWindow.__unhandledRejections = [];
+        rejectionWindow.__killCalls = [];
+        window.addEventListener('unhandledrejection', (event) => { rejectionWindow.__unhandledRejections.push(String(event.reason)); });
+        // Armed here, after boot, so nothing else can spend the refusal: the next
+        // kill fails, the way a PTY that is already gone does.
+        const kill = window.electronAPI.sessions.kill;
+        let refused = false;
+        window.electronAPI.sessions.kill = async (sessionId: string): Promise<void> => {
+          rejectionWindow.__killCalls.push(sessionId);
+          if (!refused) {
+            refused = true;
+            throw new Error('The session did not stop');
+          }
+          return kill(sessionId);
+        };
+      });
+
+      await card(page, 't414').click({ button: 'right' });
+      await expect(byTestId(page, 'workflow-card-menu')).toBeVisible();
+      await byTestId(page, 'workflow-card-menu').locator('[data-testid="context-delete-task"]').click();
+
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to delete' });
+      await expect(toast).toHaveText('Failed to delete "Refuse to spawn past the hard cap": The session did not stop');
+      // The refusal is the kill the delete asked for, and the delete went no further.
+      expect(await page.evaluate(() => (window as unknown as { __killCalls: string[] }).__killCalls)).toEqual(['sess-t414']);
+      expect(await page.evaluate(() => (window as unknown as { __mockTaskDeleteCallCount?: Record<string, number> }).__mockTaskDeleteCallCount?.t414 ?? 0)).toBe(0);
+      expect(await page.evaluate(async () => (await window.electronAPI.tasks.list()).some((task) => task.id === 't414'))).toBe(true);
+      await expect(card(page, 't414')).toBeVisible();
+      expect(await page.evaluate(() => (window as unknown as { __unhandledRejections: string[] }).__unhandledRejections)).toEqual([]);
+      expect(pageErrors).toEqual([]);
     } finally {
       await browser.close();
     }
@@ -993,12 +1095,7 @@ test.describe('Workflows canvas tools and search', () => {
     try {
       await expect(byTestId(page, 'workflow-auto-layout')).toBeDisabled();
       await expect(byTestId(page, 'workflow-auto-layout')).toHaveAttribute('title', 'No card has been moved');
-      const box = await card(page, 'task-3').boundingBox();
-      if (!box) throw new Error('no card to move');
-      await page.mouse.move(box.x + box.width / 2, box.y + 40);
-      await page.mouse.down();
-      await page.mouse.move(box.x + box.width / 2 + 60, box.y + 120, { steps: 8 });
-      await page.mouse.up();
+      await dragCardByHand(page, 'task-3');
       await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
       await byTestId(page, 'workflow-auto-layout').click();
       await expect(byTestId(page, 'workflow-auto-layout')).toBeDisabled();
@@ -1011,17 +1108,12 @@ test.describe('Workflows canvas tools and search', () => {
   async function moveByHandAndWatchTheSlide(page: Page): Promise<string> {
     const flowNode = page.locator('.react-flow__node[data-id="task-3"]');
     const home = await flowNode.evaluate((element) => (element as HTMLElement).style.transform);
-    const box = await card(page, 'task-3').boundingBox();
-    if (!box || box.width === 0) throw new Error('card not laid out');
-    await page.mouse.move(box.x + box.width / 2, box.y + 40);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 60, box.y + 120, { steps: 8 });
-    await page.mouse.up();
+    await dragCardByHand(page, 'task-3');
     await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
     await byTestId(page, 'workflow-canvas').evaluate((element) => {
-      const win = window as unknown as { __arranging: boolean };
-      win.__arranging = false;
-      new MutationObserver(() => { if (element.hasAttribute('data-arranging')) win.__arranging = true; })
+      const arrangingWindow = window as unknown as { __arranging: boolean };
+      arrangingWindow.__arranging = false;
+      new MutationObserver(() => { if (element.hasAttribute('data-arranging')) arrangingWindow.__arranging = true; })
         .observe(element, { attributes: true, attributeFilter: ['data-arranging'] });
     });
     return home;
@@ -1088,14 +1180,7 @@ test.describe('Workflows canvas tools and search', () => {
         const style = getComputedStyle(element);
         return { color: style.color, background: style.backgroundColor };
       });
-      const raised = await page.evaluate(() => {
-        const probe = document.createElement('span');
-        probe.style.backgroundColor = 'var(--color-surface-raised)';
-        document.body.appendChild(probe);
-        const value = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return value;
-      });
+      const raised = await computedColor(page, 'var(--color-surface-raised)', 'backgroundColor');
       expect((await look('workflow-start')).background).toBe(accentEmphasis);
       for (const testId of ['workflow-add-task', 'workflow-open-task']) {
         const tinted = await look(testId);

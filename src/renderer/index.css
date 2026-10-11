@@ -586,9 +586,9 @@
   }
 }
 
-/* The selected task's own links flow from blocker to dependent (sign-off,
-   2026-10-07; WorkflowEdge.tsx): the dashes travel toward the arrow, so which
-   way the work goes reads at a glance. They hold still under reduced motion
+/* The selected task's own links flow from blocker to dependent
+   (WorkflowEdge.tsx): the dashes travel toward the arrow, so which way the
+   work goes reads at a glance. They hold still under reduced motion
    or with the Animations setting off. The board's links overlay
    (WorkflowLinksOverlay.tsx) draws its lines the same way, so a link looks
    the same on the board as on the canvas. */
@@ -607,11 +607,11 @@
 }
 /* A dash offset is not a composited property, so each frame repaints the
    link. React Flow draws each edge in its own <svg>; giving a flowing one its
-   own layer keeps that repaint off the viewport's layer (decision 54), whose
-   tiles hold the cards. A precaution, not a measured win (decision 155): at
-   100 cards, in runs that tried both, a pan missed 12 or more refreshes once
-   in 15 without it and never with it, and the layer cost nothing measurable
-   and stays sharp at 2x zoom. */
+   own layer keeps that repaint off the viewport's layer, whose tiles hold the
+   cards. A precaution, not a measured win: at 100 cards, in runs that tried
+   both, a pan missed 12 or more refreshes once in 15 without it and never
+   with it, and the layer cost nothing measurable and stays sharp at 2x zoom.
+   The runs are in docs/board-drag-perf-audit.md. */
 .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
   will-change: transform;
 }

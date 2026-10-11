@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Funnel, Info, Repeat, Settings, Zap } from 'lucide-react';
 import {
   AUTOMATION_MANIFEST,
+  AUTOMATION_TRIGGER_LABELS,
   AUTOMATION_TRIGGERS,
   EXIT_GROUP_BUDGET_MS,
   automationFieldUnavailableReason,
@@ -24,7 +25,6 @@ import { AutomationColumnPicker, type AutomationColumnChoice } from './Automatio
 import { AutomationIcon } from './automation-icons';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
-  TRIGGER_LABELS,
   findNameConflict,
   formatHeaderLines,
   parseHeaderLines,
@@ -72,7 +72,7 @@ const TYPE_INFO = 'What runs. Each type brings its own fields.';
  */
 const TRIGGER_OPTIONS: SegmentedControlOption<AutomationTrigger>[] = AUTOMATION_TRIGGERS.map((trigger) => ({
   value: trigger,
-  label: TRIGGER_LABELS[trigger],
+  label: AUTOMATION_TRIGGER_LABELS[trigger],
   testId: `edit-automation-trigger-${trigger}`,
 }));
 

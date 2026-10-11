@@ -6,7 +6,7 @@ import type {
   BoardColumnConfig,
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
-import { normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
+import { isWholeMaxRuns, normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -226,6 +226,13 @@ function readRow(
   const rawMaxRuns: unknown = entry.maxRuns;
   if (rawMaxRuns !== undefined && rawMaxRuns !== null && typeof rawMaxRuns !== 'number') {
     warnings.push(`Automation "${name}" on "${columnName}" has a maxRuns that is not a number. It runs without a limit.`);
+  } else if (typeof rawMaxRuns === 'number' && !isWholeMaxRuns(rawMaxRuns)) {
+    // A number the MCP writer refuses (0, -1, 2.5) is read, not refused, and said so.
+    const readAs = normalizeMaxRuns(rawMaxRuns);
+    warnings.push(
+      `Automation "${name}" on "${columnName}" has a maxRuns of ${rawMaxRuns}, which is not a whole number of at least 1. `
+      + (readAs === null ? 'It runs without a limit.' : `Its limit is read as ${readAs}.`),
+    );
   }
   return {
     name,

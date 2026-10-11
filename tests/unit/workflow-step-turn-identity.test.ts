@@ -16,6 +16,10 @@
  *
  * The same re-check after the check also reads the workflow's state: a Pause
  * pressed while the check was out moves the task nowhere.
+ *
+ * The run-log row a successful step writes waits for the move's outcome, so it
+ * names a move that happened (or the one that failed), never one only intended.
+ * The check's input also carries the PR's merge readiness.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -94,6 +98,7 @@ describe('the workflow step and the turn it judged', () => {
       labels: [],
       pr_url: null,
       pr_state: null,
+      pr_merge_readiness: 'ready',
       archived_at: null,
       session_id: SESSION_ID,
       swimlane_id: 'lane-executing',
@@ -120,10 +125,10 @@ describe('the workflow step and the turn it judged', () => {
     } as unknown as IpcContext;
   });
 
-  function runStep(): Promise<void> {
+  function runStep(columnId = 'lane-executing'): Promise<void> {
     return runWorkflowStep(context, {
       payload: PAYLOAD,
-      columnId: 'lane-executing',
+      columnId,
       signal: new AbortController().signal,
       readAgentReply: async () => 'Done. The export button is in.',
     });
@@ -186,5 +191,94 @@ describe('the workflow step and the turn it judged', () => {
     // A run-log line saying "Moving on to Code Review" for a move that never
     // happens would be false, so the step writes nothing either.
     expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  // The Automation agent judges a Condition from the task facts it is handed.
+  // The PR's merge readiness is one of them, so a step that dropped it would ask
+  // "is the PR ready to merge?" with the answer missing from the input.
+  it.each(['ready', 'running', null] as const)('hands the check the PR merge readiness (%s) with the rest of the task', async (readiness) => {
+    hoisted.task = { ...hoisted.task, pr_merge_readiness: readiness };
+
+    await runStep();
+
+    expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
+    expect(hoisted.checkAutomationConditions).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        task: expect.objectContaining({ title: 'Add the export button', prMergeReadiness: readiness }),
+      }),
+    );
+  });
+
+  describe('the step\'s run-log row records the move\'s outcome, not its intent', () => {
+    it('writes the succeeded row only after the move resolves', async () => {
+      let finishMove: () => void = () => {};
+      hoisted.handleTaskMove.mockImplementation(() => new Promise<void>((resolve) => { finishMove = resolve; }));
+
+      const stepping = runStep();
+      await vi.waitFor(() => expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1));
+
+      // The move is still in flight. Red before the fix: the row already said
+      // "Moving on to Code Review" here, before the move had an outcome.
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+
+      finishMove();
+      await stepping;
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: 'task-1',
+        swimlaneId: 'lane-executing',
+        workflowId: 'workflow-1',
+        met: true,
+        detail: 'Step done. Moved on to Code Review.',
+      }));
+    });
+
+    it('says the task moved to Done when the next column on the route is Done', async () => {
+      hoisted.task = { ...hoisted.task, swimlane_id: 'lane-review' };
+
+      await runStep('lane-review');
+
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: 'task-1', targetSwimlaneId: 'lane-done' }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.anything(),
+      );
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: true,
+        detail: 'Step done. The route is finished, so the task moved to Done.',
+      }));
+    });
+
+    it('records the failure and rethrows when the move is refused', async () => {
+      hoisted.handleTaskMove.mockRejectedValueOnce(new Error('Column is full.'));
+
+      await expect(runStep()).rejects.toThrow('Column is full.');
+
+      // One row, and it names the failure. Red before the fix: the row was
+      // written ahead of the move and said "Moving on to Code Review", so a
+      // refused move left a log that claimed the task had moved.
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: true,
+        detail: 'Step done, but the move to Code Review failed: Column is full.',
+      }));
+    });
+
+    it('records a refusal that is not an Error by its text', async () => {
+      hoisted.handleTaskMove.mockRejectedValueOnce('The board is read-only.');
+
+      await expect(runStep()).rejects.toBe('The board is read-only.');
+
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        detail: 'Step done, but the move to Code Review failed: The board is read-only.',
+      }));
+    });
   });
 });

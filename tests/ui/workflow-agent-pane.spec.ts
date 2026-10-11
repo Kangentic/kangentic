@@ -391,6 +391,53 @@ test('dragging the pane\'s edge widens it, and the width is kept', async () => {
   }
 });
 
+test('a width that fails to save snaps back to the stored width, with no unhandled rejection', async () => {
+  const { browser, page } = await launch();
+  try {
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-floating', 'false');
+    const widthOf = () => pane.evaluate((element) => element.getBoundingClientRect().width);
+    const before = await widthOf();
+
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.evaluate(() => {
+      // A rejection that nothing catches is a promise event, not a window error,
+      // so `dragPaneEdge`'s error listener cannot see it.
+      const watched = window as unknown as { __unhandledRejections: string[]; __refusedWidthSaves: number[] };
+      watched.__unhandledRejections = [];
+      watched.__refusedWidthSaves = [];
+      window.addEventListener('unhandledrejection', (event) => { watched.__unhandledRejections.push(String(event.reason)); });
+      // Armed here, after boot, for the pane's own save only: the first
+      // `agentPaneWidth` write fails, the way a refused config write does.
+      const set = window.electronAPI.config.set;
+      window.electronAPI.config.set = async (partial) => {
+        const requested = partial.workflows?.agentPaneWidth;
+        if (requested !== undefined && watched.__refusedWidthSaves.length === 0) {
+          watched.__refusedWidthSaves.push(requested);
+          throw new Error('The settings file is read only');
+        }
+        return set(partial);
+      };
+    });
+
+    expect(await dragPaneEdge(page, 120)).toEqual([]);
+    // The drag asked for a wider pane, and that save was the one refused.
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __refusedWidthSaves: number[] }).__refusedWidthSaves.length)).toBe(1);
+    const refused = await page.evaluate(() => (window as unknown as { __refusedWidthSaves: number[] }).__refusedWidthSaves[0]);
+    expect(refused).toBeGreaterThan(before + 100);
+    // Nothing was stored, so the pane is back at the width it had.
+    await expect.poll(async () => Math.abs((await widthOf()) - before) <= 1).toBe(true);
+    expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).workflows?.agentPaneWidth ?? null)).toBeNull();
+    // Two frames past the snap-back, for the page to report a rejection nobody caught.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await page.evaluate(() => (window as unknown as { __unhandledRejections: string[] }).__unhandledRejections)).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a docked drag stops where the canvas keeps its minimum, so the pane stays docked', async () => {
   const { browser, page } = await launch();
   try {

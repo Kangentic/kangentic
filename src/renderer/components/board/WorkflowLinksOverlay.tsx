@@ -24,7 +24,8 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  * related card that is not rendered (pushed out of the Done column's list)
  * draws no line. The lines are measured on the frame the overlay opens, then
  * at most once per animation frame on a scroll, a resize, a card changing
- * height, or a board change.
+ * height, or a board change, and every frame while the focused card is
+ * dragged and for `DROP_SETTLE_MS` after its drop.
  *
  * The lines read as the Workflows canvas draws a selected task's links: the
  * same colors, arrowheads and flowing dashes (`workflow-link-flow` in
@@ -35,8 +36,9 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  * of view keeps running toward it, and is clipped to the lanes below the
  * header row: it leaves view under the headers, the way a scrolled card does,
  * and never paints over a column's name, the toolbar or the panel below.
- * A board drag clears it (`useBoardDragDrop`), so a refused drop never leaves
- * it measuring under the next drag. Escape or a pointer press on empty board
+ * A drag of any other card clears it (`useBoardDragDrop`), so a refused drop
+ * never leaves it measuring under the next drag; a drag of the focused card
+ * keeps it, and its lines follow the card. Escape or a pointer press on empty board
  * space clears it too, from the moment its load starts.
  *
  * The lines are an SVG drawn from measured card boxes, not an icon, as the
@@ -186,6 +188,8 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
   const [ports, setPorts] = useState<Port[]>(NO_PORTS);
   const [clip, setClip] = useState<ClipArea | null>(null);
 
+  // The live focus. `drawnRelations` below is what is on screen, which outlives
+  // it while the overlay fades out.
   const relations = useMemo(
     () => (focusTaskId && focusDetail ? relationsOf(focusTaskId, focusDetail) : null),
     [focusTaskId, focusDetail],
@@ -219,8 +223,7 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
 
   const measure = useCallback(() => {
     const board = boardRef.current;
-    const relations = drawnRelations;
-    if (!relations || !board) {
+    if (!drawnRelations || !board) {
       setSegments(NO_SEGMENTS);
       setPorts(NO_PORTS);
       return;
@@ -231,7 +234,7 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
       const card = lanes?.querySelector(`[data-task-id="${CSS.escape(id)}"]`);
       return card ? boxOf(card, origin) : null;
     };
-    const focusBox = cardBox(relations.focusId);
+    const focusBox = cardBox(drawnRelations.focusId);
     if (!focusBox) {
       setSegments(NO_SEGMENTS);
       setPorts(NO_PORTS);
@@ -240,24 +243,24 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
     // A related card that is not rendered (out of the Done column's list) has no box, and no line.
     const requests: LinkRequest[] = [];
     const looks: Array<Pick<Segment, 'color' | 'marker'>> = [];
-    for (const blocker of relations.blockers) {
+    for (const blocker of drawnRelations.blockers) {
       const box = cardBox(blocker.id);
       if (!box) continue;
-      requests.push({ key: `in:${blocker.id}`, fromId: blocker.id, from: box, toId: relations.focusId, to: focusBox });
+      requests.push({ key: `in:${blocker.id}`, fromId: blocker.id, from: box, toId: drawnRelations.focusId, to: focusBox });
       looks.push(blocker.done ? { color: COLORS.done, marker: 'done' } : { color: COLORS.pending, marker: 'pending' });
     }
-    for (const id of relations.dependents) {
+    for (const id of drawnRelations.dependents) {
       const box = cardBox(id);
       if (!box) continue;
-      requests.push({ key: `out:${id}`, fromId: relations.focusId, from: focusBox, toId: id, to: box });
+      requests.push({ key: `out:${id}`, fromId: drawnRelations.focusId, from: focusBox, toId: id, to: box });
       looks.push({ color: COLORS.dependent, marker: 'dependent' });
     }
     const next = linkPaths(requests, arrowheadLength(LINE_WIDTH)).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
     setSegments((previous) => (sameSegments(previous, next) ? previous : next));
     // A port is drawn where the canvas draws one, where a new link could start
     // or end; a line still meets a card with no ring at that same point.
-    const nextPorts = linkPorts(requests).filter((port) => (port.outgoing && relations.canGive.has(port.cardId))
-      || (port.incoming && relations.canTake.has(port.cardId)));
+    const nextPorts = linkPorts(requests).filter((port) => (port.outgoing && drawnRelations.canGive.has(port.cardId))
+      || (port.incoming && drawnRelations.canTake.has(port.cardId)));
     setPorts((previous) => (samePorts(previous, nextPorts) ? previous : nextPorts));
 
     // Every lane's card list starts at the bottom of the header row.
@@ -310,12 +313,16 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
       for (const card of board.querySelectorAll('[data-board-lanes] [data-task-id]')) resizeObserver.observe(card);
     };
     observeCards();
+    // One re-observe per frame however many board changes land in it, and
+    // cancelled with the rest: a pass that ran after the cleanup would hand
+    // the disconnected observer every card again, measuring a focus that left.
+    let observeFrame = 0;
     board.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
     const unsubscribe = useBoardStore.subscribe((state, previous) => {
       if (state.tasks !== previous.tasks || state.swimlanes !== previous.swimlanes || state.archivedTasks !== previous.archivedTasks) {
         // The cards just re-rendered: watch the ones on the board now.
-        requestAnimationFrame(observeCards);
+        if (!observeFrame) observeFrame = requestAnimationFrame(() => { observeFrame = 0; observeCards(); });
         schedule();
       }
     });
@@ -325,6 +332,7 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
       unsubscribe();
       resizeObserver.disconnect();
       if (frame) cancelAnimationFrame(frame);
+      if (observeFrame) cancelAnimationFrame(observeFrame);
     };
   }, [boardRef, drawnRelations, measure]);
 

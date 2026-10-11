@@ -218,6 +218,11 @@ async function restartWithAccess(context: IpcContext, workflowId: string): Promi
     await startOnce(context, pending.homeProjectId, workflowId, lastGrid.get(workflowId) ?? {}, pending.message);
   } catch (error) {
     console.error('[WORKFLOW-AGENT] Could not restart with the new project access:', error);
+    // A suspend that failed leaves the agent running without the access it was
+    // promised. Owe it again, so its next idle edge retries.
+    if (findWorkflowAgentSession(context, workflowId)?.status === 'running' && !pendingAccess.has(workflowId)) {
+      pendingAccess.set(workflowId, pending);
+    }
   }
 }
 

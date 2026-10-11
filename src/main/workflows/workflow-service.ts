@@ -283,6 +283,24 @@ function routeColumnId(lanes: Swimlane[], name: string | null | undefined, field
   return lane.id;
 }
 
+/**
+ * Refuse a route that starts after it ends. An empty route sends a task
+ * straight to Done when its blockers clear, with no agent having worked it,
+ * so every writer of a route checks this, not only the plan.
+ */
+function refuseReversedRoute(lanes: Swimlane[], routeStart: string | null, routeLast: string | null, taskLabel: string): void {
+  if (!routeStart || !routeLast) return;
+  const candidates = routeCandidates(lanes);
+  if (candidates.findIndex((lane) => lane.id === routeStart) > candidates.findIndex((lane) => lane.id === routeLast)) {
+    throw new WorkflowRequestError(`${taskLabel}: routeStart comes after routeLast on this board.`);
+  }
+}
+
+/** The text labels of an agent's input, dropping anything that is not text. */
+function textLabels(labels: unknown): string[] {
+  return Array.isArray(labels) ? labels.filter((label): label is string => typeof label === 'string') : [];
+}
+
 // ---------------------------------------------------------------------------
 // A planned task's run settings
 // ---------------------------------------------------------------------------
@@ -564,10 +582,7 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
     const routeStart = routeColumnId(lanes, entry.routeStart, 'routeStart', label);
     const routeLast = routeColumnId(lanes, entry.routeLast, 'routeLast', label);
     const skipped = (entry.skip ?? []).map((name) => routeColumnId(lanes, name, 'skip', label)!).filter(Boolean);
-    const candidates = routeCandidates(lanes);
-    if (routeStart && routeLast && candidates.findIndex((lane) => lane.id === routeStart) > candidates.findIndex((lane) => lane.id === routeLast)) {
-      throw new WorkflowRequestError(`${label}: routeStart comes after routeLast on this board.`);
-    }
+    refuseReversedRoute(lanes, routeStart, routeLast, label);
 
     const runSettings = resolvePlannedRunSettings(context, projectId, entry, `${label}: `);
     // A task taken in keeps the settings it has on its board; Start only adds it to the workflow.
@@ -586,7 +601,7 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
       route_start_swimlane_id: routeStart,
       route_last_swimlane_id: routeLast,
       skipped_swimlane_ids: [...new Set(skipped)],
-      labels: Array.isArray(entry.labels) ? entry.labels.filter((label_): label_ is string => typeof label_ === 'string') : [],
+      labels: textLabels(entry.labels),
       priority: typeof entry.priority === 'number' ? entry.priority : 0,
       canvas_x: null,
       canvas_y: null,
@@ -993,6 +1008,8 @@ function applyTaskRoute(
   const place = placeOf(resolved);
   if (place === 'done') throw new WorkflowRequestError(WORKFLOW_REFUSALS.doneStays(label));
   const lanes = resolved.lanes;
+  // Checked on the merged route: changing one end can reverse it against the other.
+  refuseReversedRoute(lanes, next.route_start_swimlane_id, next.route_last_swimlane_id, label);
 
   if (place === 'working') {
     const current = lanes.find((lane) => lane.id === resolved.task.swimlane_id);
@@ -1047,6 +1064,7 @@ export function addWorkflowTask(
     canvas_x: null,
     canvas_y: null,
   };
+  refuseReversedRoute(lanes, membership.route_start_swimlane_id, membership.route_last_swimlane_id, label);
   const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
   // Resolve the blockers before anything is written.
   const blockers = (input.waitsFor ?? []).map((selector) => resolveWorkflowTask(context, homeProjectId, workflow, selector));
@@ -1054,7 +1072,7 @@ export function addWorkflowTask(
     title: input.title.trim(),
     description: typeof input.description === 'string' ? input.description : '',
     swimlane_id: todo.id,
-    labels: Array.isArray(input.labels) ? input.labels : [],
+    labels: textLabels(input.labels),
     priority: typeof input.priority === 'number' ? input.priority : 0,
     ...runSettingsCreateInput(runSettings),
     workflow: membership,

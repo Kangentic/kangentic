@@ -1105,9 +1105,12 @@ export async function handleTaskMove(
           // enter automation rather than in `swimlanes.auto_command`. Read
           // through the same resolver the spawn paths use, so a warm move and a
           // cold spawn cannot disagree about what the column sends.
-          const columnMessage = toLane
+          const resolvedColumnMessage = toLane
             ? resolveColumnMessage(getProjectRepos(context, resolvedProjectId).automations.listForColumn(toLane.id))
             : null;
+          // A row with a Condition or a Frequency limit rides no burst: the
+          // enter group sends it after checking both.
+          const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
           const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, columnMessage?.message);
           const interpolatedAuto = effectiveAutoCommand?.trim()
             ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({

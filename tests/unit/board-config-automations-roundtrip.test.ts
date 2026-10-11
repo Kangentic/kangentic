@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
-import type { BoardColumnAutomations, BoardColumnConfig, BoardConfig } from '../../src/shared/types';
+import type { AutomationWriteInput, BoardColumnAutomations, BoardColumnConfig, BoardConfig } from '../../src/shared/types';
 
 /** The one database every module under test shares, swapped per test. */
 const harness = vi.hoisted(() => ({ db: null as unknown }));
@@ -255,14 +255,13 @@ describe('kangentic.json automations round-trip', () => {
       expect(plan.warnings[0]).toContain('onTurnEnd must be a list');
     });
 
-    it('reads a blank condition and a maxRuns below 1 as off, and floors a fraction', () => {
+    it('reads a blank condition as off with no warning, and a maxRuns of the wrong type as off with one', () => {
       const plan = planColumnAutomations({
         name: 'Code Review',
         automations: {
           onTurnEnd: [
-            { name: 'Blank', type: 'notify', condition: '   ', maxRuns: 0 },
+            { name: 'Blank', type: 'notify', condition: '   ' },
             { name: 'Text limit', type: 'notify', maxRuns: '3' as unknown as number },
-            { name: 'Fraction', type: 'notify', maxRuns: 2.7 },
           ],
         },
       });
@@ -270,12 +269,83 @@ describe('kangentic.json automations round-trip', () => {
       expect(plan.rows.map((row) => [row.name, row.condition, row.max_runs])).toEqual([
         ['Blank', null, null],
         ['Text limit', null, null],
-        ['Fraction', null, 2],
       ]);
-      // A blank or a zero is a deliberate "off"; a guard of the wrong type is not.
+      // A blank condition is a deliberate "off"; a guard of the wrong type is not.
       expect(plan.warnings).toEqual([
         'Automation "Text limit" on "Code Review" has a maxRuns that is not a number. It runs without a limit.',
       ]);
+    });
+
+    // The MCP writer refuses a maxRuns that is not a whole number of at least 1,
+    // so a file carrying one was hand-edited. It used to be read quietly: a 0 ran
+    // the row with no limit and nothing said so, in a loop whose limit exists to
+    // stop it.
+    describe('a numeric maxRuns that is not a whole number of at least 1', () => {
+      function planForMaxRuns(maxRuns: number) {
+        return planColumnAutomations({
+          name: 'Code Review',
+          automations: { onTurnEnd: [{ name: 'Loop', type: 'notify', maxRuns }] },
+        });
+      }
+
+      it('warns that a 0 runs without a limit, and stores no limit', () => {
+        const plan = planForMaxRuns(0);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([null]);
+        expect(plan.warnings).toEqual([
+          'Automation "Loop" on "Code Review" has a maxRuns of 0, which is not a whole number of at least 1. It runs without a limit.',
+        ]);
+      });
+
+      it.each([-1, 0.5])('warns that a %s runs without a limit, and stores no limit', (maxRuns) => {
+        const plan = planForMaxRuns(maxRuns);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([null]);
+        expect(plan.warnings).toEqual([
+          `Automation "Loop" on "Code Review" has a maxRuns of ${maxRuns}, which is not a whole number of at least 1. It runs without a limit.`,
+        ]);
+      });
+
+      it('warns that a 2.5 is read as 2, and stores 2', () => {
+        const plan = planForMaxRuns(2.5);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([2]);
+        expect(plan.warnings).toEqual([
+          'Automation "Loop" on "Code Review" has a maxRuns of 2.5, which is not a whole number of at least 1. Its limit is read as 2.',
+        ]);
+      });
+
+      it('warns about nothing for a whole number of at least 1', () => {
+        const plan = planForMaxRuns(3);
+
+        expect(plan.rows.map((row) => row.max_runs)).toEqual([3]);
+        expect(plan.warnings).toEqual([]);
+      });
+
+      it('reaches the apply result and the database, not just the planner', () => {
+        const { lanes, automations } = freshDatabase();
+        const config = build();
+        columnNamed(config, 'Code Review')!.automations = {
+          onTurnEnd: [
+            { name: 'Unlimited', type: 'notify', maxRuns: 0 },
+            { name: 'Floored', type: 'notify', maxRuns: 2.5 },
+            { name: 'Whole', type: 'notify', maxRuns: 3 },
+          ],
+        };
+
+        const { warnings } = applyBoardConfigToDb('p1', config);
+
+        const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+        expect(automations.listForColumn(codeReview.id).map((row) => [row.name, row.max_runs])).toEqual([
+          ['Unlimited', null],
+          ['Floored', 2],
+          ['Whole', 3],
+        ]);
+        expect(warnings.filter((warning) => warning.includes('maxRuns'))).toEqual([
+          'Automation "Unlimited" on "Code Review" has a maxRuns of 0, which is not a whole number of at least 1. It runs without a limit.',
+          'Automation "Floored" on "Code Review" has a maxRuns of 2.5, which is not a whole number of at least 1. Its limit is read as 2.',
+        ]);
+      });
     });
 
     it('warns about a condition that is not text, and keeps the row without one', () => {
@@ -343,6 +413,73 @@ describe('kangentic.json automations round-trip', () => {
         { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' },
       ]);
       expect(automations?.onPullRequestMerged).toEqual([{ name: 'Close the loop', type: 'notify' }]);
+    });
+
+    // Where the unknown row lands once the row it followed is gone. The file's
+    // order is the run order, so a wrong spot changes what runs first.
+    describe('placing an unknown row when a neighbor was deleted', () => {
+      const setup = { name: 'Setup', type: 'run_script', script: 'npm ci' };
+      const ping = { name: 'Ping', type: 'webhook', url: 'https://hooks.example.com/abc' };
+      const postToChat = { name: 'Post to chat', type: 'post_chat_message', channel: 'builds' };
+      const announce = { name: 'Announce', type: 'announce_build', target: 'builds' };
+
+      const setupInDatabase: AutomationWriteInput = {
+        name: 'Setup', type: 'run_script', trigger: 'enter', enabled: true, config: { script: 'npm ci' },
+      };
+      const pingInDatabase: AutomationWriteInput = {
+        name: 'Ping', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://hooks.example.com/abc' },
+      };
+
+      /**
+       * The file on disk (a newer build's, onEnter in the order given) and then the
+       * database the user edited down to `keptInDatabase`. Returns the exported
+       * onEnter names, in order.
+       */
+      function exportAfterKeeping(
+        fileOnEnter: Array<Record<string, unknown>>,
+        keptInDatabase: AutomationWriteInput[],
+      ): unknown[] {
+        const { executing, automations } = seedExecuting();
+        const file: BoardConfig = {
+          version: 1,
+          columns: [{
+            id: executing.id,
+            name: 'Executing',
+            automations: { onEnter: fileOnEnter } as unknown as BoardColumnAutomations,
+          }],
+        };
+        automations.replaceForColumn(executing.id, keptInDatabase);
+
+        const exported = buildBoardConfigFromDb({ projectId: 'p1', existingTeamConfig: file, fingerprint: 'test' });
+        const onEnter = columnNamed(exported, 'Executing')?.automations?.onEnter as Array<Record<string, unknown>>;
+        return onEnter.map((row) => row.name);
+      }
+
+      it('puts it after the nearest earlier row that is still there, not first, when the row it followed was deleted', () => {
+        // The file reads [Setup, Ping, Post to chat]. Ping is deleted, so the
+        // export writes [Setup, Post to chat]. Anchored on the deleted Ping, the
+        // lookup finds nothing and the unknown row used to land first.
+        expect(exportAfterKeeping([setup, ping, postToChat], [setupInDatabase])).toEqual(['Setup', 'Post to chat']);
+      });
+
+      it('walks back past more than one deleted row to the nearest one that is left', () => {
+        expect(exportAfterKeeping([setup, ping, { ...ping, name: 'Ping 2' }, postToChat], [setupInDatabase]))
+          .toEqual(['Setup', 'Post to chat']);
+      });
+
+      it('keeps two unknown rows that followed a deleted row together and in order', () => {
+        expect(exportAfterKeeping([setup, ping, postToChat, announce], [setupInDatabase]))
+          .toEqual(['Setup', 'Post to chat', 'Announce']);
+      });
+
+      it('keeps an unknown row that led the list first, even with the row after it deleted', () => {
+        expect(exportAfterKeeping([postToChat, setup, ping], [pingInDatabase])).toEqual(['Post to chat', 'Ping']);
+      });
+
+      it('leaves the order alone when nothing was deleted', () => {
+        expect(exportAfterKeeping([setup, postToChat, ping], [setupInDatabase, pingInDatabase]))
+          .toEqual(['Setup', 'Post to chat', 'Ping']);
+      });
     });
 
     it('keeps them across a second apply and export, so they survive every save', () => {

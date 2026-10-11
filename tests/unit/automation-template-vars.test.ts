@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
+import { TransitionEngine, type TransitionEngineServices } from '../../src/main/transition-engine/transition-engine';
 import { interpolateAutomationConfig } from '../../src/main/automations/interpolate-config';
 import { AUTOMATION_MANIFEST } from '../../src/shared/automation-manifest';
 import type { ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
@@ -108,6 +108,8 @@ function makeAutomation(overrides: Partial<ColumnAutomation> = {}): ColumnAutoma
 function makeEngine(options: {
   automations: ColumnAutomation[];
   attachmentPaths?: string[];
+  /** The Automation agent stand-in an enter or exit Condition is checked on. */
+  checkConditions?: TransitionEngineServices['checkConditions'];
 }) {
   const runs: Array<{ id: string; status: string; detail: string | null }> = [];
   const automationRunRepo = {
@@ -138,6 +140,7 @@ function makeEngine(options: {
     { getPathsForTask: vi.fn(() => options.attachmentPaths ?? []) } as never,
     { getForTrigger: vi.fn(() => options.automations) } as never,
     automationRunRepo as never,
+    { checkConditions: options.checkConditions },
   );
 
   return { engine, runs };
@@ -280,6 +283,63 @@ describe('template variables reach an automation config through the engine', () 
     );
 
     expect(delivered).toEqual(['#42 off develop']);
+  });
+});
+
+describe('an enter Condition is checked with the task facts the engine hands the Automation agent', () => {
+  const CONDITION_ROW_ID = 'automation-conditioned';
+
+  // The engine's `conditionCheckInput` is one of two places that build the
+  // check's task facts (the other is the workflow step), and the PR's merge
+  // readiness is one of them. A Condition such as "the PR is ready to merge"
+  // reads the platform's verdict from here, so dropping the field would ask the
+  // question with the answer missing from the input.
+  it.each(['ready', 'running', null] as const)('passes the PR merge readiness (%s) with the rest of the task', async (readiness) => {
+    const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
+      ok: true,
+      answers: new Map([[CONDITION_ROW_ID, { met: true, reason: 'The PR can merge.' }]]),
+      agentName: 'Mock agent',
+    }));
+    const delivered: string[] = [];
+    const { engine } = makeEngine({
+      automations: [makeAutomation({
+        id: CONDITION_ROW_ID,
+        condition: 'The PR is ready to merge.',
+        config: { message: 'merge it', mode: 'immediate' },
+      })],
+      checkConditions,
+    });
+
+    const summary = await engine.executeTransition(
+      makeTask({
+        pr_url: 'https://example.test/owner/repo/pull/7',
+        pr_state: 'open',
+        pr_merge_readiness: readiness,
+      }),
+      makeColumn(COLUMN_ID, 'Code Review'),
+      'enter',
+      {
+        signal: new AbortController().signal,
+        fromColumn: null,
+        toColumn: makeColumn(COLUMN_ID, 'Code Review'),
+        deliverToAgent: async (message: string) => { delivered.push(message); },
+        showNotification: vi.fn(),
+      } as never,
+    );
+
+    expect(summary.failures).toEqual([]);
+    expect(checkConditions).toHaveBeenCalledTimes(1);
+    const checkedInput = checkConditions.mock.calls[0][0];
+    expect(checkedInput.task).toMatchObject({
+      title: 'Fix the login flow',
+      prUrl: 'https://example.test/owner/repo/pull/7',
+      prState: 'open',
+      prMergeReadiness: readiness,
+    });
+    expect(checkedInput.trigger).toBe('enter');
+    expect(checkedInput.rows.map((row) => row.automationId)).toEqual([CONDITION_ROW_ID]);
+    // The answer was yes, so the row ran: the check really gated this delivery.
+    expect(delivered).toEqual(['merge it']);
   });
 });
 

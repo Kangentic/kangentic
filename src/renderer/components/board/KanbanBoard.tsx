@@ -18,6 +18,7 @@ import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useHmrGeneration } from '../../utils/hmr-generation';
+import { motionReduced } from '../../utils/motion-reduced';
 import { boardTaskFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
 import type { Task } from '../../../shared/types';
 
@@ -172,9 +173,7 @@ function FlyingCard() {
   // .no-motion to the root) collapses the fly to a short opacity fade. The
   // .no-motion class only zeroes CSS keyframe durations, not inline
   // transitions, so it must be checked here in JS rather than relied on via CSS.
-  const reduceMotion =
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    || document.documentElement.classList.contains('no-motion');
+  const reduceMotion = motionReduced();
   const flying = flight !== null;
   const delta = flight ?? { dx: 0, dy: 0 };
 

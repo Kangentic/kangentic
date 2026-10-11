@@ -1,11 +1,11 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AutomationIcon, AutomationMarks } from './automation-icons';
-import { TRIGGER_LABELS, describeDraft, pickerTypes, type AutomationDraft } from './automation-drafts';
+import { describeDraft, pickerTypes, type AutomationDraft } from './automation-drafts';
 
 /**
  * The one way to add an automation: a picker with two groups.
@@ -196,7 +196,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
                 </span>
                 <span className="block truncate text-[11px] text-fg-faint">{describeDraft(draft)}</span>
                 <span className="block text-[11px] text-fg-muted">
-                  {column.name}, {TRIGGER_LABELS[draft.trigger].toLowerCase()}
+                  {column.name}, {AUTOMATION_TRIGGER_LABELS[draft.trigger].toLowerCase()}
                 </span>
               </span>
             </button>

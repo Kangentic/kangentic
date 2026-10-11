@@ -21,6 +21,7 @@ import {
   unlinkRefusal,
   workflowColor,
 } from './workflow-graph';
+import { isAtToDo } from './workflow-track';
 import { WorkflowStateChip } from './WorkflowPicker';
 
 /**
@@ -106,6 +107,42 @@ function Rail({ above, below, aboveColor, belowColor, node }: { above: boolean; 
 }
 
 /**
+ * One end of the rail: the board's To Do column on top, its Done column at the
+ * bottom. Locked on, since every route starts and ends there. Current while the
+ * task is at that end; otherwise To Do reads as left behind and Done as ahead.
+ */
+function EndRow({ end, current, color, icon, name }: {
+  end: 'todo' | 'done';
+  current: boolean;
+  color: string;
+  icon: string | null;
+  name: string;
+}) {
+  const rail = end === 'todo'
+    ? <Rail above={false} below aboveColor={RAIL_AHEAD} belowColor={current ? RAIL_AHEAD : RAIL_DONE} node={<RailNode kind={current ? 'current' : 'done'} color={color} />} />
+    : <Rail above below={false} aboveColor={current ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind={current ? 'current' : 'end'} color={color} />} />;
+  return (
+    <div
+      className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
+      style={current ? { background: tint(color, 10) } : undefined}
+      data-testid={`workflow-route-${end}`}
+      data-step-state={current ? 'current' : end === 'todo' ? 'done' : 'ahead'}
+    >
+      {rail}
+      <ColumnGlyph column={{ icon, role: end }} size={14} color={color} />
+      <span className="flex-1 min-w-0 truncate text-fg-secondary">{name}</span>
+      <ToggleSwitch
+        checked
+        onChange={() => undefined}
+        disabled
+        title={end === 'todo' ? `Every route starts in ${name}` : `Every route ends in ${name}`}
+        ariaLabel={name}
+      />
+    </div>
+  );
+}
+
+/**
  * The task's journey as a rail, the same stops its card's track draws
  * (sign-off T2, 2026-10-07): the board's To Do column, one row per route
  * column (a skipped one struck through, with its switch off), the board's Done
@@ -125,27 +162,14 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
   const reached = task.place === 'done'
     ? steps.length - 1
     : steps.findIndex((step) => step.state === 'current');
-  const atToDo = task.place === 'planned' || task.place === 'todo';
   const todo = ends?.todo ?? null;
-  const todoColor = todo?.color ?? 'var(--color-fg-faint)';
-  const doneName = ends?.done?.name ?? 'Done';
   // With a To Do row on top the rail runs through every row, the skipped ones
   // before the first column on the route included.
   const railFrom = todo ? 0 : firstOn;
   return (
     <div className="-mx-2">
       {todo && (
-        <div
-          className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
-          style={atToDo ? { background: tint(todoColor, 10) } : undefined}
-          data-testid="workflow-route-todo"
-          data-step-state={atToDo ? 'current' : 'done'}
-        >
-          <Rail above={false} below aboveColor={RAIL_AHEAD} belowColor={atToDo ? RAIL_AHEAD : RAIL_DONE} node={<RailNode kind={atToDo ? 'current' : 'done'} color={todoColor} />} />
-          <ColumnGlyph column={{ icon: todo.icon, role: 'todo' }} size={14} color={todoColor} />
-          <span className="flex-1 min-w-0 truncate text-fg-secondary">{todo.name}</span>
-          <ToggleSwitch checked onChange={() => undefined} disabled title={`Every route starts in ${todo.name}`} ariaLabel={todo.name} />
-        </div>
+        <EndRow end="todo" current={isAtToDo(task.place)} color={todo.color ?? 'var(--color-fg-faint)'} icon={todo.icon} name={todo.name} />
       )}
       {steps.map((step, index) => {
         const on = step.state !== 'skipped';
@@ -192,17 +216,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
           </div>
         );
       })}
-      <div
-        className="flex items-center gap-2.5 w-full h-[34px] px-2 rounded-md text-[13px]"
-        style={task.place === 'done' ? { background: tint(doneColumnColor, 10) } : undefined}
-        data-testid="workflow-route-done"
-        data-step-state={task.place === 'done' ? 'current' : 'ahead'}
-      >
-        <Rail above below={false} aboveColor={task.place === 'done' ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind={task.place === 'done' ? 'current' : 'end'} color={doneColumnColor} />} />
-        <ColumnGlyph column={{ icon: ends?.done?.icon ?? null, role: 'done' }} size={14} color={doneColumnColor} />
-        <span className="flex-1 min-w-0 truncate text-fg-secondary">{doneName}</span>
-        <ToggleSwitch checked onChange={() => undefined} disabled title={`Every route ends in ${doneName}`} ariaLabel={doneName} />
-      </div>
+      <EndRow end="done" current={task.place === 'done'} color={doneColumnColor} icon={ends?.done?.icon ?? null} name={ends?.done?.name ?? 'Done'} />
     </div>
   );
 }

@@ -132,15 +132,22 @@ export async function runWorkflowStep(
     record(true, 'Done, with nowhere left to go on this board.');
     return;
   }
-  record(true, next.role === 'done' ? 'Step done. The route is finished, so the task moves to Done.' : `Step done. Moving on to ${next.name}.`);
   const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
-  await handleTaskMove(
-    context,
-    { taskId: task.id, targetSwimlaneId: next.id, targetPosition: repos.tasks.list(next.id).length },
-    'workflow',
-    payload.projectId,
-    projectPath,
-    // The step runs inside the turn-end group, which its own move must not stop.
-    { moveReason: 'Step done', fromTurnEndGroup: true },
-  );
+  // Recorded once the move has an outcome, so the log never says a task moved
+  // when the move was refused. Either way the row marks this reply as judged.
+  try {
+    await handleTaskMove(
+      context,
+      { taskId: task.id, targetSwimlaneId: next.id, targetPosition: repos.tasks.list(next.id).length },
+      'workflow',
+      payload.projectId,
+      projectPath,
+      // The step runs inside the turn-end group, which its own move must not stop.
+      { moveReason: 'Step done', fromTurnEndGroup: true },
+    );
+  } catch (error) {
+    record(true, `Step done, but the move to ${next.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+  record(true, next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`);
 }

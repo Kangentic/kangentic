@@ -85,7 +85,7 @@ describe('showLinks and clearLinks', () => {
     await useWorkflowStore.getState().showLinks('t1', 'p', 'w');
 
     expect(useWorkflowStore.getState().linkFocus?.taskId).toBe('t1');
-    // The menu and a refused move keep the links until something clears them.
+    // A refused move keeps the links until something clears them.
     expect(useWorkflowStore.getState().linkFocus?.kept).toBe(true);
   });
 

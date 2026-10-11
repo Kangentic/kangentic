@@ -3,7 +3,7 @@ import { Columns3Cog, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AUTOMATION_MANIFEST, canTriggerRun } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS, canTriggerRun } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
@@ -14,7 +14,6 @@ import { AutomationIcon, AutomationMarks } from './automation-icons';
 import { SectionCard, GroupHeading, DisabledSectionNotice } from './form-layout';
 import {
   TRIGGERS,
-  TRIGGER_LABELS,
   canRunRow,
   columnFacts,
   dropIndexFor,
@@ -293,7 +292,7 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
 
   return (
     <section data-testid="column-automation-group" data-trigger={trigger}>
-      <GroupHeading label={TRIGGER_LABELS[trigger]} />
+      <GroupHeading label={AUTOMATION_TRIGGER_LABELS[trigger]} />
       {blockedReason !== null && rows.length === 0 ? (
         <p data-testid="column-automation-group-blocked" className="text-xs text-fg-faint py-1">
           {blockedReason}

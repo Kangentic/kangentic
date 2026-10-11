@@ -70,7 +70,7 @@ describe('workflow operations', () => {
   });
 
   afterEach(() => {
-    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    for (const database of harness.dbs.values()) (database as Database.Database).close();
     harness.dbs.clear();
     vi.restoreAllMocks();
   });
@@ -332,6 +332,110 @@ describe('workflow operations', () => {
     const updated = service.setTaskRoute(context, 'home', workflow.id, { task: String(ui.display_id), skip: ['Testing'] });
     const testing = lanesOf('home').find((lane) => lane.name === 'Testing')!;
     expect(updated.skipped_swimlane_ids).toEqual([testing.id]);
+  });
+
+  describe('a route that starts after it ends', () => {
+    // An empty route sends a task straight to Done when its blockers clear, with
+    // no agent having worked it, so every writer of a route refuses this order.
+    const REVERSED = /routeStart comes after routeLast/;
+
+    const laneNamed = (name: string) => lanesOf('home').find((lane) => lane.name === name)!;
+
+    /** A started workflow (the plan's three tasks), with its Budgets UI task waiting in To Do and no route set. */
+    async function startedWithUiInTodo() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      await service.startWorkflow(context, 'home', workflow.id);
+      const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+      return { workflow, ui };
+    }
+
+    const storedRoute = (taskId: string) => {
+      const task = tasksOf('home').getById(taskId)!;
+      return { start: task.route_start_swimlane_id, last: task.route_last_swimlane_id, skipped: task.skipped_swimlane_ids };
+    };
+
+    const titlesOf = (workflowId: string) => tasksOf('home').listByWorkflow(workflowId).map((task) => task.title).sort();
+
+    it('refuses setTaskRoute with both ends given in reverse order on a task in To Do, and stores nothing', async () => {
+      const { workflow, ui } = await startedWithUiInTodo();
+      expect(storedRoute(ui.id)).toEqual({ start: null, last: null, skipped: [] });
+
+      expect(() => service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeStart: 'Code Review',
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+      expect(storedRoute(ui.id)).toEqual({ start: null, last: null, skipped: [] });
+
+      // The same two columns in board order are accepted, so the order is what was refused.
+      service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeStart: 'Planning',
+        routeLast: 'Code Review',
+      });
+      expect(storedRoute(ui.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+
+    it('refuses setTaskRoute naming only routeLast when it falls before the routeStart already stored, and keeps the stored route', async () => {
+      const { workflow, ui } = await startedWithUiInTodo();
+      // Valid on its own: with no last column set there is nothing to reverse against.
+      service.setTaskRoute(context, 'home', workflow.id, { task: String(ui.display_id), routeStart: 'Code Review' });
+      const stored = storedRoute(ui.id);
+      expect(stored).toEqual({ start: laneNamed('Code Review').id, last: null, skipped: [] });
+
+      expect(() => service.setTaskRoute(context, 'home', workflow.id, {
+        task: String(ui.display_id),
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+
+      expect(storedRoute(ui.id)).toEqual(stored);
+    });
+
+    it('refuses addWorkflowTask with the route reversed, creating no task', async () => {
+      const { workflow } = await startedWithUiInTodo();
+      const titlesBefore = titlesOf(workflow.id);
+
+      expect(() => service.addWorkflowTask(context, 'home', workflow.id, {
+        key: 'extra',
+        title: 'Reversed extra',
+        routeStart: 'Code Review',
+        routeLast: 'Planning',
+      })).toThrow(REVERSED);
+
+      expect(titlesOf(workflow.id)).toEqual(titlesBefore);
+      expect(titlesOf(workflow.id)).not.toContain('Reversed extra');
+
+      // The same two columns in board order create the task, so the order is what was refused.
+      const created = service.addWorkflowTask(context, 'home', workflow.id, {
+        key: 'extra',
+        title: 'Ordered extra',
+        routeStart: 'Planning',
+        routeLast: 'Code Review',
+      });
+      expect(storedRoute(created.id)).toEqual({ start: laneNamed('Planning').id, last: laneNamed('Code Review').id, skipped: [] });
+    });
+  });
+
+  it('keeps only the text labels of an added task: a label that is not text never reaches the task row', async () => {
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+
+    const created = service.addWorkflowTask(context, 'home', workflow.id, {
+      key: 'extra',
+      title: 'Labelled extra',
+      // An agent's input is not checked against the type: numbers and nulls arrive from the tool call.
+      labels: ['ui', 1, null, 'api'] as unknown as string[],
+    });
+
+    expect(created.labels).toEqual(['ui', 'api']);
+    // Read the column itself: the repository's read path drops non-text entries too,
+    // so a re-read through it would pass whatever was written.
+    const row = (harness.dbs.get('home') as Database.Database)
+      .prepare('SELECT labels FROM tasks WHERE id = ?')
+      .get(created.id) as { labels: string };
+    expect(JSON.parse(row.labels)).toEqual(['ui', 'api']);
   });
 
   it('deletes a started workflow, leaving its unfinished tasks as ordinary tasks', async () => {

@@ -169,15 +169,26 @@ async function launch(options: Options = {}): Promise<{ browser: Browser; page: 
 const boardCard = (page: Page, id: string) => page.locator(`[data-board-lanes] [data-task-id="${id}"]`);
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 
+/** The workflow store the dev build exposes on `window.__zustandStores`, as far as these tests drive it. */
+interface WorkflowStoreHandle {
+  getState: () => {
+    showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>;
+    clearLinks: () => void;
+  };
+}
+
+/** The `window` an evaluate reads the workflow store from: one cast, shared by every caller. */
+interface WorkflowStoreWindow {
+  __zustandStores: { workflow: WorkflowStoreHandle };
+}
+
 /**
  * Keep a card's links on the board, as a refused move does, through the store
  * the dev build exposes. Not awaited in the page, so a held load stays held.
  */
 async function keepLinks(page: Page, id: string): Promise<void> {
   await page.evaluate(({ taskId, projectId }) => {
-    const store = (window as unknown as {
-      __zustandStores: { workflow: { getState: () => { showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void> } } };
-    }).__zustandStores.workflow;
+    const store = (window as unknown as WorkflowStoreWindow).__zustandStores.workflow;
     void store.getState().showLinks(taskId, projectId, 'wf-usage');
   }, { taskId: id, projectId: PROJECT_ID });
 }
@@ -208,9 +219,9 @@ interface HeldWorkflowGetWindow {
 /** Make the next `workflows.get` wait for `releaseHeldWorkflowGet`, which is the answer a links load is waiting on. */
 async function holdNextWorkflowGet(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const win = window as unknown as HeldWorkflowGetWindow;
-    delete win.__mockReleaseWorkflowGet;
-    win.__mockHoldNextWorkflowGet = true;
+    const windowHandle = window as unknown as HeldWorkflowGetWindow;
+    delete windowHandle.__mockReleaseWorkflowGet;
+    windowHandle.__mockHoldNextWorkflowGet = true;
   });
 }
 
@@ -275,14 +286,7 @@ test.describe('Workflow tasks on the board', () => {
       await expect(current).toHaveCSS('height', '6px');
       await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
       // A stop it has passed is the faint grey, whatever its column's color.
-      const faint = await page.evaluate(() => {
-        const probe = document.createElement('span');
-        probe.style.color = 'var(--color-fg-faint)';
-        document.body.appendChild(probe);
-        const color = getComputedStyle(probe).color;
-        probe.remove();
-        return color;
-      });
+      const faint = await tokenColor(page, 'var(--color-fg-faint)');
       await expect(strip.locator('[data-step-state="done"]')).toHaveCount(2);
       for (const passed of await strip.locator('[data-step-state="done"]').all()) await expect(passed).toHaveCSS('background-color', faint);
       // A stop still ahead carries its column's color, so it is not the grey.
@@ -619,6 +623,98 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('a card above the focused one growing moves the focused card\'s lines, with no scroll, resize or board change to say so', async () => {
+    /** The board store's lists the overlay re-measures on when one changes. */
+    interface BoardLists {
+      tasks: unknown;
+      swimlanes: unknown;
+      archivedTasks: unknown;
+    }
+    /** What fired on the page after the baseline. The overlay re-measures on a scroll, a resize or a board change, none of which a card growing in place causes. */
+    interface RemeasureTriggers {
+      scroll: number;
+      resize: number;
+      boardChange: number;
+    }
+    interface RemeasureTriggersWindow {
+      __remeasureTriggers: RemeasureTriggers;
+      __zustandStores: {
+        board: {
+          subscribe: (listener: (state: BoardLists, previous: BoardLists) => void) => () => void;
+        };
+      };
+    }
+
+    const { browser, page } = await launch();
+    try {
+      // #417 waits on #414 and holds up #418 in its own column, and #416 sits
+      // directly above it in To Do with no link to it. A card the focused one
+      // is not linked to has to be watched too, or nothing re-measures.
+      await keepLinks(page, 't417');
+      const overlay = byTestId(page, 'workflow-links-overlay');
+      await expect(overlay).toHaveAttribute('data-focus-task-id', 't417');
+      await expect(overlay).toHaveAttribute('data-phase', 'shown');
+
+      // #417's one port, on its right: #414's line arrives there and its own
+      // line to #418 leaves from it. Both ends are read in the overlay's
+      // coordinates, as the port check above reads them.
+      const portAgainstTitleRow = () => page.evaluate(() => {
+        const svg = document.querySelector('[data-testid="workflow-links-overlay"]');
+        const port = svg?.querySelector('[data-testid="workflow-link-port"][data-port="t417:right"]');
+        const titleRow = document.querySelector('[data-board-lanes] [data-task-id="t417"] [data-card-title-row]');
+        if (!svg || !port || !titleRow) return null;
+        const titleRowRect = titleRow.getBoundingClientRect();
+        return {
+          portY: Number(port.getAttribute('cy')),
+          titleRowMiddle: titleRowRect.top + titleRowRect.height / 2 - svg.getBoundingClientRect().top,
+        };
+      });
+      await expect.poll(async () => {
+        const reading = await portAgainstTitleRow();
+        return reading !== null && Math.abs(reading.portY - reading.titleRowMiddle) < 1;
+      }).toBe(true);
+      const baseline = await portAgainstTitleRow();
+      if (!baseline) throw new Error('No port for #417');
+
+      // Count what else could re-measure, from here on. Chromium's scroll
+      // anchoring adjusts a scrolled lane when a card above its anchor grows,
+      // which is a real scroll event that would re-measure on its own and let
+      // this pass with the card observer gone.
+      await page.evaluate(() => {
+        const triggers: RemeasureTriggers = { scroll: 0, resize: 0, boardChange: 0 };
+        const windowHandle = window as unknown as RemeasureTriggersWindow;
+        windowHandle.__remeasureTriggers = triggers;
+        document.addEventListener('scroll', () => { triggers.scroll += 1; }, true);
+        window.addEventListener('resize', () => { triggers.resize += 1; });
+        windowHandle.__zustandStores.board.subscribe((state, previous) => {
+          if (state.tasks !== previous.tasks || state.swimlanes !== previous.swimlanes || state.archivedTasks !== previous.archivedTasks) triggers.boardChange += 1;
+        });
+      });
+
+      // #416 grows by 120px in place: nothing but its own height changes.
+      const growth = 120;
+      await boardCard(page, 't416').evaluate((card, extraHeight) => {
+        card.style.minHeight = `${card.getBoundingClientRect().height + extraHeight}px`;
+      }, growth);
+
+      // #417 moved down with it, and its port followed.
+      await expect.poll(async () => {
+        const reading = await portAgainstTitleRow();
+        if (!reading) return null;
+        return {
+          moved: reading.titleRowMiddle - baseline.titleRowMiddle > growth / 2,
+          followed: Math.abs(reading.portY - reading.titleRowMiddle) < 1,
+        };
+      }, { timeout: 5000 }).toEqual({ moved: true, followed: true });
+
+      // Only the card growing could have said so.
+      expect(await page.evaluate(() => (window as unknown as RemeasureTriggersWindow).__remeasureTriggers))
+        .toEqual({ scroll: 0, resize: 0, boardChange: 0 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   // Board 8c: resting the pointer on a card previews its links until the
   // pointer leaves the card; a refused move keeps them. Each test asserts an
   // end state, never that a crossing did not flash: under load a pointer can
@@ -773,13 +869,12 @@ test.describe('Workflow tasks on the board', () => {
       const { browser, page } = await launch();
       try {
         const overlay = overlayOf(page);
-        interface WorkflowStoreHandle { getState: () => { showLinks: (taskId: string, homeProjectId: string, workflowId: string) => Promise<void>; clearLinks: () => void } }
         // The fade runs: as the overlay mounts, its lines carry a running opacity
         // transition and the focused card a running border one. Read from the
         // same task that opens it, on the frames until the overlay is there, so
         // it is caught while it runs.
         const easing = await page.evaluate(async (projectId) => {
-          const store = (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow;
+          const store = (window as unknown as WorkflowStoreWindow).__zustandStores.workflow;
           void store.getState().showLinks('t414', projectId, 'wf-usage');
           const running = (target: Element | null, property: string) => (target?.getAnimations() ?? [])
             .some((animation) => animation.playState === 'running' && (animation as CSSTransition).transitionProperty.startsWith(property));
@@ -797,7 +892,7 @@ test.describe('Workflow tasks on the board', () => {
         // Cleared, it stays up, fading, then goes. Read a tick after the clear:
         // the fade lasts longer than that, so this is not a race.
         const clear = () => page.evaluate(async () => {
-          const store = (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow;
+          const store = (window as unknown as WorkflowStoreWindow).__zustandStores.workflow;
           store.getState().clearLinks();
           await new Promise((resolve) => setTimeout(resolve, 0));
           return document.querySelector('[data-testid="workflow-links-overlay"]')?.getAttribute('data-phase') ?? 'gone';

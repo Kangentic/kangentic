@@ -430,9 +430,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // enter automation rather than in `swimlanes.auto_command`. The task's own
       // MCP-set command still outranks it, which is the precedence
       // `resolveEffectiveAutoCommand` exists to keep identical on every path.
-      const columnMessage = resolveColumnMessage(
+      const resolvedColumnMessage = resolveColumnMessage(
         getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id),
       );
+      // A handoff runs no enter group, so nothing here can check a row's
+      // Condition or Frequency. Sending a guarded row would skip both; it is
+      // left unsent, as the runner leaves a row it cannot check.
+      const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
+      if (resolvedColumnMessage?.guarded) {
+        console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the column's message has a Condition or Frequency limit, so it is not sent.`);
+      }
       const taskOverride = currentTask.auto_command?.trim();
       const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
       if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {

@@ -176,6 +176,11 @@ function automationIdentity(name: string, type: string, trigger: string): string
 }
 
 /** A Frequency limit is a whole number of at least 1; anything else is no limit. */
+/** A Frequency limit as written is one a writer accepts unchanged: a whole number of at least 1. */
+export function isWholeMaxRuns(maxRuns: number): boolean {
+  return Number.isInteger(maxRuns) && maxRuns >= 1;
+}
+
 export function normalizeMaxRuns(maxRuns: number | null | undefined): number | null {
   if (typeof maxRuns !== 'number' || !Number.isFinite(maxRuns)) return null;
   const whole = Math.floor(maxRuns);

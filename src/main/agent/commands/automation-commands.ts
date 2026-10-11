@@ -15,6 +15,7 @@
 
 import {
   AutomationRepository,
+  isWholeMaxRuns,
   normalizeCondition,
   normalizeMaxRuns,
   type AutomationWriteInput,
@@ -45,9 +46,6 @@ import type {
 
 /** How many run rows one read returns before the caller has to narrow. */
 const RUN_HISTORY_LIMIT = 50;
-
-/** The group headings the listing prints: the Automations pane's own words. */
-const TRIGGER_HEADINGS = AUTOMATION_TRIGGER_LABELS;
 
 export const handleListAutomations: CommandHandler = (
   params: Record<string, unknown>,
@@ -81,7 +79,7 @@ export const handleListAutomations: CommandHandler = (
         .filter((row) => row.trigger === trigger)
         .sort((left, right) => left.position - right.position);
       if (group.length === 0) continue;
-      lines.push(`  ${TRIGGER_HEADINGS[trigger]}:`);
+      lines.push(`  ${AUTOMATION_TRIGGER_LABELS[trigger]}:`);
       for (const row of group) {
         // `canColumnRun` is the same predicate the runner uses, so a row this
         // says is blocked is a row that will be recorded skipped. Reporting it
@@ -222,7 +220,7 @@ export const handleSetAutomations: CommandHandler = (
       return { success: false, error: `${where}: condition must be text (or null to always run). Nothing was saved.` };
     }
     if (entry.maxRuns !== undefined && entry.maxRuns !== null
-      && (typeof entry.maxRuns !== 'number' || !Number.isInteger(entry.maxRuns) || entry.maxRuns < 1)) {
+      && (typeof entry.maxRuns !== 'number' || !isWholeMaxRuns(entry.maxRuns))) {
       return { success: false, error: `${where}: maxRuns must be a whole number of at least 1 (or null for no limit). Nothing was saved.` };
     }
 
@@ -266,7 +264,7 @@ export const handleSetAutomations: CommandHandler = (
   context.onSwimlaneUpdated(swimlane);
 
   const counts = AUTOMATION_TRIGGERS
-    .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${TRIGGER_HEADINGS[trigger].toLowerCase()}`)
+    .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${AUTOMATION_TRIGGER_LABELS[trigger].toLowerCase()}`)
     .join(', ');
   return {
     success: true,

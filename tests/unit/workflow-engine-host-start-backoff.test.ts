@@ -9,7 +9,9 @@
  * simulated milliseconds, never a real sleep.
  *
  * The backoff is 30 s, 60 s, 120 s, then 300 s after each further failure. A
- * wake before the backoff ends starts nothing. A success, a task that leaves To
+ * wake before the backoff ends starts nothing, but the retry timer's own wake
+ * counts as the backoff ended, even when the clock has not quite reached the
+ * stored retry time. A success, a task that leaves To
  * Do, a workflow that is done, or a deleted task drops it; Resume (through
  * `wakeWorkflowEngine(workflowId)`) clears that workflow's entries so the next
  * pass retries at once; Pause keeps them. The failure toast is `notifySpawnBlocked`
@@ -172,7 +174,7 @@ describe('the workflow engine host', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    for (const db of harness.dbs.values()) (db as Database.Database).close();
+    for (const database of harness.dbs.values()) (database as Database.Database).close();
     harness.dbs.clear();
   });
 
@@ -203,6 +205,34 @@ describe('the workflow engine host', () => {
           expect(startTimes).toHaveLength(attempt + 1);
         }
       }
+    });
+
+    it('is retried when its timer fires before the clock reaches the stored retry time, because the timer\'s own wake treats the retry as due', async () => {
+      const { taskIds: [taskId] } = runningWorkflow('Usage budgets');
+      moveFails();
+      await advance(DEBOUNCE_MS * 2);
+      expect(startTimes).toHaveLength(1);
+      // Only the retry timer is pending, so the clock step below moves nothing else.
+      expect(vi.getTimerCount()).toBe(1);
+      const originalRetryAt = engine.failedStart('home', taskId)!.retryAt;
+      const remainingMs = originalRetryAt - Date.now();
+
+      // The system clock steps back. Pending timers keep their remaining time, so
+      // the retry timer now fires with Date.now() clockStepMs short of the stored
+      // retry time. The step is larger than DEBOUNCE_MS on purpose: the wake the
+      // timer arms evaluates that long after it fires, so a smaller step would be
+      // absorbed by the debounce and the stored time would be reached anyway.
+      const clockStepMs = 1_000;
+      expect(clockStepMs).toBeGreaterThan(DEBOUNCE_MS);
+      vi.setSystemTime(Date.now() - clockStepMs);
+      await advance(remainingMs + DEBOUNCE_MS);
+
+      // The start was tried again by that wake. With the stored time left alone,
+      // the pass would find the task still backing off, plan nothing, and arm
+      // no timer, leaving the task in To Do until an unrelated wake.
+      expect(startTimes).toHaveLength(2);
+      expect(startTimes[1]).toBeLessThan(originalRetryAt);
+      expect(engine.failedStart('home', taskId)?.attempts).toBe(2);
     });
 
     it('is cleared by a later success, which starts the task once and leaves nothing to retry', async () => {

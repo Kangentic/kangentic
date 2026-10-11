@@ -164,7 +164,7 @@ describe('the Workflows view operations', () => {
     (harness.dbs.get('mobile') as Database.Database).prepare("UPDATE swimlanes SET color = ? WHERE role = 'done'").run('#a855f7');
     const homeDone = lanesOf('home').find((lane) => lane.role === 'done')!.color;
     expect(homeDone).not.toBe('#a855f7');
-    const doneColors = (projectIds: string[]) => {
+    const checkEndsAndReadDoneColors = (projectIds: string[]) => {
       const ends = view.readWorkflowDetail(context, 'home', workflow.id).boardEnds;
       expect(Object.keys(ends).sort()).toEqual([...projectIds].sort());
       // Each board names both ends, with its own columns.
@@ -176,14 +176,14 @@ describe('the Workflows view operations', () => {
     };
     const workflow = service.createWorkflow('home', {});
     // A workflow on one board carries that board's alone.
-    expect(doneColors(['home'])).toEqual({ home: homeDone });
+    expect(checkEndsAndReadDoneColors(['home'])).toEqual({ home: homeDone });
     service.savePlan(context, 'home', workflow.id, {
       tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' }],
       links: [],
     });
-    expect(doneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
+    expect(checkEndsAndReadDoneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
     await service.startWorkflow(context, 'home', workflow.id);
-    expect(doneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
+    expect(checkEndsAndReadDoneColors(['home', 'mobile'])).toEqual({ home: homeDone, mobile: '#a855f7' });
   });
 
   it('removes a planned task with its links', () => {

@@ -1300,8 +1300,7 @@ Operates on the workflow's home project DB.
 | `listAll()` | Every workflow, newest first. MCP's `kangentic_list_workflows` with `includeFinished` |
 | `listOpen()` | Every workflow not finished, newest first: the picker's rows |
 | `listSupersessions()` | Every task a started workflow (running, paused or done) replaced at Start, as `{ sourceTaskId, workflowId, title, colorSlot }` with the workflow's current title. Read from `task_moves`: the source's latest move into a Done column must be Start's (origin `workflow`, reason beginning `SUPERSEDED_MOVE_REASON_PREFIX`, at or after `started_at`), credited to the workflow that started last at or before it. A source that left To Do before Start and was completed by hand is not listed |
-| `hasRunning()` / `hasActive()` | One indexed probe each (running; running or paused), the engine's fast path for a board with no workflow to read |
-| `listRunning()` | Running workflows, oldest start first |
+| `hasActive()` | One indexed probe for a running or paused workflow, the engine's fast path for a board with no workflow to read |
 | `create({ title, brief, sourceTaskId })` | A new not-started workflow with an empty plan, "Untitled workflow" when no title, and the first free color slot |
 | `saveDraft(id, draft, { title, expectedRevision })` | Replace a not-started workflow's plan (and title). A stale `expectedRevision` throws `StaleWorkflowRevisionError`, so the user's edits since the caller read it win |
 | `writeDraftLayout(id, draft)` | Store where hands placed a not-started workflow's cards, leaving the revision alone: a card move changes no plan |

@@ -52,10 +52,10 @@ function seedScript(): string {
       { workflow_id: 'wf-fit', blocker_task_id: 't413', blocked_task_id: 't415' },
     ];
     window.__mockPreConfigure(function (state) {
-      var ts = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-      state.projects.push({ id: '${PROJECT_ID}', name: 'card-fit', path: '/mock/card-fit', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
+      var seededAt = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+      state.projects.push({ id: '${PROJECT_ID}', name: 'card-fit', path: '/mock/card-fit', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: seededAt, created_at: seededAt });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
-        state.swimlanes.push(Object.assign({}, swimlane, { id: 'fit-lane-' + index, position: index, created_at: ts }));
+        state.swimlanes.push(Object.assign({}, swimlane, { id: 'fit-lane-' + index, position: index, created_at: seededAt }));
       });
       ${JSON.stringify(TASKS)}.forEach(function (spec, index) {
         var sessionId = spec.session ? 'fit-sess-' + spec.id : null;
@@ -65,13 +65,13 @@ function seedScript(): string {
           pr_number: spec.pr || null, pr_url: spec.pr ? 'https://github.com/example/repo/pull/' + spec.pr : null,
           pr_state: spec.pr ? 'open' : null, pr_merge_readiness: spec.pr ? 'ready' : null,
           base_branch: null, use_worktree: 0, labels: spec.labels, priority: 0, attachment_count: 0,
-          archived_at: spec.lane === 6 ? ts : null, workflow_id: 'wf-fit', workflow_project_id: '${PROJECT_ID}',
+          archived_at: spec.lane === 6 ? seededAt : null, workflow_id: 'wf-fit', workflow_project_id: '${PROJECT_ID}',
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
-          created_at: ts, updated_at: ts,
+          created_at: seededAt, updated_at: seededAt,
         };
         if (task.archived_at) state.archivedTasks.push(task); else state.tasks.push(task);
         if (spec.session) {
-          state.sessions.push({ id: sessionId, taskId: task.id, projectId: '${PROJECT_ID}', pid: 4000 + spec.id, status: 'running', shell: 'bash', cwd: '/mock/card-fit', startedAt: ts, exitCode: null, resuming: false, agentSessionId: 'agent-' + spec.id });
+          state.sessions.push({ id: sessionId, taskId: task.id, projectId: '${PROJECT_ID}', pid: 4000 + spec.id, status: 'running', shell: 'bash', cwd: '/mock/card-fit', startedAt: seededAt, exitCode: null, resuming: false, agentSessionId: 'agent-' + spec.id });
           state.activityCache[sessionId] = spec.session.activity;
           state.messageTrailCache[sessionId] = spec.session.trail.map(function (text, line) { return { uuid: sessionId + '-' + line, ts: line + 1, text: text }; });
         }
