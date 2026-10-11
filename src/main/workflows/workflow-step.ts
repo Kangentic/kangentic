@@ -86,7 +86,7 @@ export async function runWorkflowStep(
   const { task, column } = subject;
   const route = describeStepRoute(getProjectRepos(context, payload.projectId).swimlanes.list(), task, column.id);
   const outcome = await checkAutomationConditions(conditionCheckDeps(context), {
-    task: { title: task.title, description: task.description, labels: task.labels, prUrl: task.pr_url, prState: task.pr_state },
+    task: { title: task.title, description: task.description, labels: task.labels, prUrl: task.pr_url, prState: task.pr_state, prMergeReadiness: task.pr_merge_readiness },
     column: column.name,
     trigger: 'turn_end',
     move: null,

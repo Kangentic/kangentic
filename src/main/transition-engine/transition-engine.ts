@@ -307,6 +307,7 @@ export class TransitionEngine {
         labels: task.labels,
         prUrl: task.pr_url,
         prState: task.pr_state,
+        prMergeReadiness: task.pr_merge_readiness,
       },
       column: column.name,
       trigger,

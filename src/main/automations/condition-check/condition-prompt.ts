@@ -1,4 +1,4 @@
-import type { AutomationTrigger } from '../../../shared/types';
+import type { AutomationTrigger, PRMergeReadiness, PRState } from '../../../shared/types';
 import { defusePromptTags, promptTagPattern } from '../../retrieval/prompt-tags';
 
 /**
@@ -32,7 +32,13 @@ export interface ConditionPromptInput {
     description: string;
     labels: ReadonlyArray<string>;
     prUrl: string | null;
-    prState: string | null;
+    prState: PRState | null;
+    /**
+     * Whether the PR can merge, as the board card's chip shows it, so a
+     * Condition such as "the PR is ready" reads the platform's verdict rather
+     * than only what the agent last said.
+     */
+    prMergeReadiness: PRMergeReadiness | null;
   };
   /** The column the automations belong to. */
   column: string;
@@ -77,6 +83,21 @@ function defuse(text: string): string {
   return defusePromptTags(text, CONDITION_TAG_PATTERN);
 }
 
+const MERGE_READINESS_WORDS: Record<PRMergeReadiness, string> = {
+  ready: 'ready to merge',
+  blocked: 'blocked from merging',
+  conflicting: 'has merge conflicts',
+  queued: 'checks queued',
+  running: 'checks running',
+  unknown: 'merge readiness unknown',
+};
+
+/** The PR's state and, while it can still merge, its readiness: "open, ready to merge". */
+function pullRequestFacts(state: PRState | null, readiness: PRMergeReadiness | null): string {
+  const canMerge = state !== 'merged' && state !== 'closed';
+  return [state, canMerge && readiness ? MERGE_READINESS_WORDS[readiness] : null].filter(Boolean).join(', ');
+}
+
 const TRIGGER_MOMENT: Record<AutomationTrigger, string> = {
   enter: 'The task just entered the column.',
   turn_end: "The column's agent just finished a turn.",
@@ -88,7 +109,10 @@ export function buildConditionPrompt(input: ConditionPromptInput): string {
   const description = collapse(input.task.description, DESCRIPTION_CHARS);
   if (description) taskLines.push(`Description: ${description}`);
   if (input.task.labels.length > 0) taskLines.push(`Labels: ${input.task.labels.join(', ')}`);
-  if (input.task.prUrl) taskLines.push(`Pull request: ${input.task.prUrl}${input.task.prState ? ` (${input.task.prState})` : ''}`);
+  if (input.task.prUrl) {
+    const facts = pullRequestFacts(input.task.prState, input.task.prMergeReadiness);
+    taskLines.push(`Pull request: ${input.task.prUrl}${facts ? ` (${facts})` : ''}`);
+  }
   taskLines.push(`Column: ${input.column}`);
 
   const sections = [`<task>\n${defuse(taskLines.join('\n'))}\n</task>`];
