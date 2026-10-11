@@ -13,7 +13,10 @@
  * - the reap leaves alone what it must: a tagged process still under the
  *   reaping process (a live session), another task, a cleared tag, a tagged
  *   process working outside the task's directories, a process shielded by a
- *   cleared-tag child, a tmux server, and (on CI) a window the agent opened.
+ *   cleared-tag child, a tmux server, and (on CI) a window the agent opened;
+ * - a program in a Windows Terminal tab IS reaped, its shell included, though
+ *   Terminal owns a window above it and shows one for the tab (with a portable
+ *   Terminal, which the workflow unpacks).
  *
  * Every process is started from inside a fake project, as an agent's are.
  * Nothing here touches the developer's own processes: tmux runs on a private
@@ -33,6 +36,8 @@ import { reapTaggedOnce, stopProcessTree } from '../../src/main/pty/process-tag/
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 import { resolveTaskDirectories } from '../../src/main/pty/process-tag/task-directories';
 import { buildWslReapInvocation } from '../../src/main/pty/process-tag/wsl-reap';
+import { isInsideDirectory } from '../../src/main/pty/process-tag/reap-plan';
+import type { ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const execFileAsync = promisify(execFile);
 const APPEAR_TIMEOUT_MS = 20_000;
@@ -262,6 +267,15 @@ function hasCommand(command: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The portable Windows Terminal's wt.exe the Windows Terminal case drives, or null to skip it. */
+const windowsTerminal = process.platform === 'win32' ? (process.env.KANGENTIC_WINDOWS_TERMINAL ?? null) : null;
+
+/** Every running WindowsTerminal.exe, by pid. */
+function windowsTerminalPids(): number[] {
+  const listing = execFileSync('tasklist.exe', ['/FI', 'IMAGENAME eq WindowsTerminal.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+  return [...listing.matchAll(/"WindowsTerminal\.exe","(\d+)"/gi)].map((match) => Number(match[1]));
 }
 
 // Without a reader the whole suite below skips; on the workflow's runners that
@@ -497,10 +511,16 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
   }, 60_000);
 
   // Windows only on CI: opening one on a developer's desktop is not a test's
-  // business. Notepad on Windows, xterm under xvfb on Linux, Chrome on macOS.
+  // business. Character Map on Windows, xterm under xvfb on Linux, Chrome on macOS.
   const guiLaunch = ((): { command: string; args: (profile: string) => string[] } | null => {
     if (!process.env.CI) return null;
-    if (process.platform === 'win32') return { command: 'notepad.exe', args: () => [] };
+    if (process.platform === 'win32') {
+      // Character Map is a classic Win32 app. On a Windows 11 desktop notepad.exe
+      // is a packaged app's alias whose spawned pid exits at once, so the case
+      // would fail there; Notepad stays the fallback for an image without it.
+      const charmap = process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'charmap.exe') : null;
+      return { command: charmap && fs.existsSync(charmap) ? charmap : 'notepad.exe', args: () => [] };
+    }
     if (process.platform === 'linux' && process.env.DISPLAY && hasCommand('xterm')) return { command: 'xterm', args: () => ['-e', 'sleep 120'] };
     const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
     if (process.platform === 'darwin' && fs.existsSync(chrome)) {
@@ -533,12 +553,71 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(isProcessAlive(appPid)).toBe(true);
   }, 60_000);
 
+  // Windows only, and only with a portable Windows Terminal (KANGENTIC_WINDOWS_TERMINAL
+  // names its wt.exe; task-reap-real-processes.yml unpacks one): it opens a terminal
+  // window, and a separate instance is one the test may close. The shape a /preview left
+  // running at Done: Terminal owns a real window and is the parent of every tab's shell,
+  // and it shows a 0 by 0 pseudo console window for each tab that Windows attributes to
+  // the tab's shell. Either one read as a visible app protected everything the tab ran.
+  it.runIf(windowsTerminal !== null)('reaps what the agent started in a Windows Terminal tab, the tab\'s shell included', async () => {
+    const scratch = makeScratch();
+    const testStartedAt = Date.now();
+    const terminalsBefore = windowsTerminalPids();
+    // Terminal itself starts untagged and outside the project, as the user's own does.
+    // Started by the tagged launch below instead, it would be an app the agent opened.
+    spawn(windowsTerminal!, ['-w', 'kangentic-reap-test'], { cwd: os.tmpdir(), env: envWithTag(null), stdio: 'ignore', detached: true }).unref();
+    let hostPid: number | null = null;
+    const hostBy = Date.now() + APPEAR_TIMEOUT_MS;
+    while (hostPid === null && Date.now() < hostBy) {
+      hostPid = windowsTerminalPids().find((pid) => !terminalsBefore.includes(pid)) ?? null;
+      if (hostPid === null) await new Promise((resolve) => { setTimeout(resolve, 250); });
+    }
+    expect(hostPid, 'the portable Windows Terminal never started').not.toBeNull();
+    startedPids.push(hostPid!);
+    // Its window must exist before the tab is asked for, or the tagged wt.exe starts a second, tagged Terminal.
+    await new Promise((resolve) => { setTimeout(resolve, 3000); });
+
+    // wt.exe hands a new tab its caller's environment (measured on Terminal 1.24), so the tab's shell carries the tag.
+    spawn(windowsTerminal!, ['-w', 'kangentic-reap-test', 'new-tab', '-d', scratch.worktree, 'cmd', '/c', 'ping', '-t', '127.0.0.1'], {
+      cwd: scratch.worktree, env: envWithTag(TASK_ID), stdio: 'ignore', detached: true,
+    }).unref();
+    const inWorktree = (scanned: ScannedProcess) => scanned.tagValue === TASK_ID
+      && typeof scanned.workingDirectory === 'string'
+      && isInsideDirectory(scanned.workingDirectory, scratch.worktree);
+    let host: ScannedProcess | undefined;
+    let shell: ScannedProcess | undefined;
+    let ping: ScannedProcess | undefined;
+    const tabBy = Date.now() + APPEAR_TIMEOUT_MS;
+    while (!ping && Date.now() < tabBy) {
+      const scan = await reader!.scan();
+      host = scan.processes.find((scanned) => scanned.pid === hostPid);
+      shell = scan.processes.find((scanned) => scanned.ppid === hostPid && inWorktree(scanned));
+      ping = shell ? scan.processes.find((scanned) => scanned.ppid === shell!.pid && inWorktree(scanned)) : undefined;
+      if (!ping) await new Promise((resolve) => { setTimeout(resolve, 250); });
+    }
+    expect(ping, 'no tagged cmd and ping under the portable Windows Terminal').toBeDefined();
+    startedPids.push(shell!.pid, ping!.pid);
+    // Positive controls: Terminal is the untagged host this test started, and the tab's shell is its child.
+    expect(host).toMatchObject({ tagValue: null });
+    expect(host!.startedAtMs).toBeGreaterThanOrEqual(testStartedAt - 1000);
+    expect(host!.role).toBeUndefined();
+    expect(shell!.role).toBeUndefined();
+
+    const result = await reap(scratch);
+    expect(result.killedPids).toEqual(expect.arrayContaining([shell!.pid, ping!.pid]));
+    expect(await waitUntilDead([shell!.pid, ping!.pid])).toEqual([]);
+  }, 60_000);
+
   // task-reap-real-processes.yml provisions tmux and a GUI app on every runner
   // and sets this flag, so a case that would skip there fails the job instead
   // of reading as a pass. CI's unit tier has neither and does not set it.
   it.runIf(process.env.KANGENTIC_REAP_REQUIRE_ALL_CASES === '1')('ran every case this runner was provisioned for', () => {
     if (process.platform !== 'win32') expect(hasCommand('tmux'), 'tmux is not installed, so the tmux case skipped').toBe(true);
     expect(guiLaunch, 'no GUI app could be launched, so the visible-app case skipped').not.toBeNull();
+    if (process.platform === 'win32') {
+      expect(windowsTerminal, 'KANGENTIC_WINDOWS_TERMINAL is not set, so the Windows Terminal case skipped').not.toBeNull();
+      expect(fs.existsSync(windowsTerminal!), `KANGENTIC_WINDOWS_TERMINAL names no file: ${windowsTerminal}`).toBe(true);
+    }
   });
 
   // On a user's Mac, SIP hides the environment of Apple's own tools from the
