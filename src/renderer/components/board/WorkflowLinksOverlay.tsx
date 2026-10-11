@@ -4,6 +4,7 @@ import { useWorkflowStore } from '../../stores/workflow-store';
 import type { WorkflowDetail } from '../../../shared/types';
 import { motionReduced } from '../../utils/motion-reduced';
 import { transitiveReduction } from '../workflows/workflow-layout';
+import { canBlock, canWait } from '../workflows/workflow-graph';
 import { ARROWHEAD_PATH, ARROWHEAD_STROKES, PORT_RADIUS, arrowheadLength, linkPaths, linkPorts, type CardBox, type LinkRequest, type Port } from './workflow-links-geometry';
 
 /** The colored line's width; its halo is wider. */
@@ -12,9 +13,9 @@ const CLIP_ID = 'workflow-links-overlay-clip';
 
 /**
  * The board's links overlay for one workflow card (#732 board 8): lines from
- * what it waits for into it, and from it to what waits for it, with those
- * cards ringed and every other card dimmed, the Done drop zone and the
- * Completed header with them. The pointer resting on a card's strip previews
+ * what it waits for into it, and from it to what waits for it, and the card
+ * itself in the accent border the canvas gives its selected card. No other
+ * card changes, as on the canvas. The pointer resting on a card's strip previews
  * it until the pointer leaves; the strip's links button, Show workflow links in
  * the card's menu and a refused move keep it (`WorkflowLinksButton`). The lines
  * are the whole overlay: nothing is added to the toolbar.
@@ -28,9 +29,10 @@ const CLIP_ID = 'workflow-links-overlay-clip';
  *
  * The lines read as the Workflows canvas draws a selected task's links: the
  * same colors, arrowheads and flowing dashes (`workflow-link-flow` in
- * index.css), and the same ports: one ring per side of a card at its title
- * row, which every line on that side leaves or reaches, so a link looks the
- * same on both. A line to a card scrolled out
+ * index.css), the same trimmed set (a link another path covers is left out),
+ * and the same ports: one point per side of a card at its title row, which
+ * every line on that side leaves or reaches, drawn as a ring only where the
+ * canvas draws one. So a link looks the same on both. A line to a card scrolled out
  * of view keeps running toward it, and is clipped to the lanes below the
  * header row: it leaves view under the headers, the way a scrolled card does,
  * and never paints over a column's name, the toolbar or the panel below.
@@ -90,6 +92,10 @@ interface Relations {
   blockers: Array<{ id: string; done: boolean }>;
   /** Tasks that wait for the focus. */
   dependents: string[];
+  /** Cards that draw an outgoing port, as on the canvas: any not yet done (`canBlock`). */
+  canGive: ReadonlySet<string>;
+  /** Cards that draw an incoming port, as on the canvas: only those not yet started (`canWait`). */
+  canTake: ReadonlySet<string>;
 }
 
 /**
@@ -107,6 +113,8 @@ function relationsOf(focusId: string, detail: WorkflowDetail): Relations {
       .filter((link) => link.blockedKey === focusId)
       .map((link) => ({ id: link.blockerKey, done: placeOf.get(link.blockerKey) === 'done' })),
     dependents: drawn.filter((link) => link.blockerKey === focusId).map((link) => link.blockedKey),
+    canGive: new Set(detail.tasks.filter(canBlock).map((task) => task.key)),
+    canTake: new Set(detail.tasks.filter(canWait).map((task) => task.key)),
   };
 }
 
@@ -129,48 +137,32 @@ function boxOf(card: Element, origin: DOMRect): CardBox {
 }
 
 /**
- * The overlay fades in and out over this long, lines, rings and dimming
- * together, so a look at a card's links eases onto the board rather than
- * flashing it dark. Motion off, it switches at once.
+ * The overlay fades in and out over this long, the lines, their ports and the
+ * focused card's border together, so a look at a card's links eases onto the
+ * board. The canvas eases a link's change over the same 160ms (index.css).
+ * Motion off, it switches at once.
  */
-const FADE_MS = 180;
+const FADE_MS = 160;
 
 /**
- * Where the fade is. `enter` puts the rules in place with nothing visible yet
- * (the rings transparent, the cards at their own opacity); a frame later
- * `shown` sets the look, which the rules' transitions ease into. `exit` takes
- * the look away under the same transitions, and the overlay unmounts after.
+ * Where the fade is. `enter` puts the rule in place with nothing visible yet;
+ * once the layout is read, `shown` sets the look, which the transitions ease
+ * into. `exit` takes the look away under the same transitions, and the
+ * overlay unmounts after.
  */
 type Phase = 'enter' | 'shown' | 'exit';
 
 /**
- * CSS that rings the focus and its relations and dims the rest of the board:
- * every other lane card, the Completed header, and the Done drop zone as one
- * piece. A drop zone holding a related card (one still flying into Done)
- * stays lit and dims its other cards one by one instead, so no card is dimmed
- * twice over. Outside `shown` the same rules carry only their transitions, so
- * the look eases in and out: the rings go from and to transparent, and a
- * dimmed card from and to its own opacity.
+ * CSS that marks the focused card as the Workflows canvas marks its selected
+ * card: the accent border (`WorkflowCanvasCard`'s `SELECTED_BORDER_CLASS`).
+ * The cards it is linked to get no ring and no card fades, as on the canvas:
+ * the lines and their ports show the links. Outside `shown` the rule carries
+ * only its transition, so the border eases in and out with the lines.
  */
 function focusStyle(relations: Relations, phase: Phase, motion: boolean): string {
-  const shown = phase === 'shown';
-  const ease = motion ? ` transition: opacity ${FADE_MS}ms ease-out, outline-color ${FADE_MS}ms ease-out;` : '';
-  const dim = `${shown ? 'opacity: 0.3 !important;' : ''}${ease}`;
-  const ring = (width: number, color: string) => `outline: ${width}px solid ${shown ? color : 'transparent'}; outline-offset: 1px;${ease}`;
-  const related = [relations.focusId, ...relations.blockers.map((blocker) => blocker.id), ...relations.dependents];
-  const quoted = (id: string) => `[data-task-id="${CSS.escape(id)}"]`;
-  const keep = related.map((id) => `:not(${quoted(id)})`).join('');
-  const anyRelated = related.map(quoted).join(', ');
-  const dropZone = '[data-board-lanes] [data-done-drop-zone]';
-  return [
-    `[data-board-lanes] [data-task-id]${keep}:not([data-done-drop-zone] *) { ${dim} }`,
-    `${dropZone}:not(:has(${anyRelated})) { ${dim} }`,
-    `${dropZone}:has(${anyRelated}) [data-task-id]${keep} { ${dim} }`,
-    `[data-board-lanes] [data-done-completed-header] { ${dim} }`,
-    `[data-board-lanes] ${quoted(relations.focusId)} { ${ring(2, 'color-mix(in srgb, var(--color-fg-muted) 75%, transparent)')} }`,
-    ...relations.blockers.map((blocker) => `[data-board-lanes] ${quoted(blocker.id)} { ${ring(1, `color-mix(in srgb, ${blocker.done ? COLORS.done : COLORS.pending} 60%, transparent)`)} }`),
-    ...relations.dependents.map((id) => `[data-board-lanes] ${quoted(id)} { ${ring(1, `color-mix(in srgb, ${COLORS.dependent} 55%, transparent)`)} }`),
-  ].join('\n');
+  const ease = motion ? ` transition: border-color ${FADE_MS}ms ease-out;` : '';
+  const border = phase === 'shown' ? 'border-color: var(--color-accent) !important;' : '';
+  return `[data-board-lanes] [data-task-id="${CSS.escape(relations.focusId)}"] { ${border}${ease} }`;
 }
 
 interface Drawn {
@@ -263,7 +255,10 @@ export function WorkflowLinksOverlay({ boardRef, dragging }: {
     }
     const next = linkPaths(requests, arrowheadLength(LINE_WIDTH)).map(({ key, path }, index): Segment => ({ key, path, ...looks[index] }));
     setSegments((previous) => (sameSegments(previous, next) ? previous : next));
-    const nextPorts = linkPorts(requests);
+    // A port is drawn where the canvas draws one, where a new link could start
+    // or end; a line still meets a card with no ring at that same point.
+    const nextPorts = linkPorts(requests).filter((port) => (port.outgoing && relations.canGive.has(port.cardId))
+      || (port.incoming && relations.canTake.has(port.cardId)));
     setPorts((previous) => (samePorts(previous, nextPorts) ? previous : nextPorts));
 
     // Every lane's card list starts at the bottom of the header row.

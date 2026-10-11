@@ -161,6 +161,18 @@ async function launch(options: Options = {}): Promise<{ browser: Browser; page: 
 const boardCard = (page: Page, id: string) => page.locator(`[data-board-lanes] [data-task-id="${id}"]`);
 const byTestId = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]`);
 
+/** A theme token's color as the page computes it, to compare against a computed style. */
+async function tokenColor(page: Page, token: string): Promise<string> {
+  return page.evaluate((value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, token);
+}
+
 async function openMenu(page: Page, id: string): Promise<void> {
   await boardCard(page, id).click({ button: 'right' });
   await byTestId(page, 'task-context-menu').waitFor({ state: 'visible' });
@@ -469,20 +481,18 @@ test.describe('Workflow tasks on the board', () => {
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
       // #417 waits for #414, and it is on the board.
       await expect(overlay.locator('[data-link="out:t417"]')).toHaveCount(1);
-      // A card with no relation to #414 is dimmed; #417 is not.
-      await expect.poll(() => boardCard(page, 't419').evaluate((element) => getComputedStyle(element).opacity)).toBe('0.3');
-      await expect.poll(() => boardCard(page, 't417').evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
-      // The Done column dims with the rest of the board: its drop zone and its Completed header.
-      await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '0.3');
-      await expect(page.locator('[data-board-lanes] [data-testid="expand-completed-btn"]')).toHaveCSS('opacity', '0.3');
-      // A dependent's line is drawn in the accent's foreground; the focused card's outline in the muted foreground.
+      // The focused card wears the accent border the canvas gives its selected
+      // card; no other card changes, the Done column included.
+      await expect(boardCard(page, 't414')).toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
+      for (const id of ['t419', 't417']) await expect(boardCard(page, id)).toHaveCSS('opacity', '1');
+      await expect(boardCard(page, 't417')).toHaveCSS('outline-style', 'none');
+      await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '1');
+      // A dependent's line is drawn in the accent's foreground.
       await expect(overlay.locator('[data-link="out:t417"] path').nth(1)).toHaveAttribute('stroke', 'var(--color-accent-fg)');
-      await expect.poll(() => byTestId(page, 'workflow-links-style').evaluate((element) => element.textContent ?? ''))
-        .toContain('[data-task-id="t414"] { outline: 2px solid color-mix(in srgb, var(--color-fg-muted) 75%');
 
       await page.keyboard.press('Escape');
       await expect(overlay).toHaveCount(0);
-      await expect(page.locator('[data-board-lanes] [data-done-drop-zone]')).toHaveCSS('opacity', '1');
+      await expect(boardCard(page, 't414')).not.toHaveCSS('border-top-color', await tokenColor(page, 'var(--color-accent)'));
     } finally {
       await browser.close();
     }
@@ -558,8 +568,12 @@ test.describe('Workflow tasks on the board', () => {
       expect(clip.applied).toBe('url(#workflow-links-overlay-clip)');
       expect(clip.linesInside).toBeGreaterThan(0);
 
-      // Ports, as the canvas draws them: one ring per side of a card, at the
-      // middle of its title row, which every line on that side shares.
+      // Ports, as the canvas draws them: one per side of a card, at the middle
+      // of its title row, which every line on that side shares, and a ring only
+      // where the canvas draws one. #414 has started, so it gives a link (its
+      // left port, toward #417) but takes none: #412's line from Done arrives
+      // at its right side with no ring, and #412, done, has none either. #417
+      // waits in To Do, so its incoming port is a ring.
       const portCheck = await page.evaluate(() => {
         const svg = document.querySelector('[data-testid="workflow-links-overlay"]')!;
         const origin = svg.getBoundingClientRect();
@@ -570,10 +584,9 @@ test.describe('Workflow tasks on the board', () => {
             .map((port) => ({ key: port.getAttribute('data-port') ?? '', cy: Number(port.getAttribute('cy')) })),
         };
       });
-      const focusPorts = portCheck.ports.filter((port) => port.key.startsWith('t414:'));
-      expect(focusPorts.length).toBeGreaterThan(0);
-      for (const port of focusPorts) expect(Math.abs(port.cy - portCheck.rowMiddle)).toBeLessThan(1);
-      expect(new Set(portCheck.ports.map((port) => port.key)).size).toBe(portCheck.ports.length);
+      expect(portCheck.ports.map((port) => port.key).sort()).toEqual(['t414:left', 't417:right']);
+      const focusPort = portCheck.ports.find((port) => port.key === 't414:left')!;
+      expect(Math.abs(focusPort.cy - portCheck.rowMiddle)).toBeLessThan(1);
 
       // A blocker not done yet is the canvas's muted grey: #418 waits on #417 in To Do.
       await page.keyboard.press('Escape');
@@ -612,17 +625,6 @@ test.describe('Workflow tasks on the board', () => {
       await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
     }
 
-    async function colorOf(page: Page, token: string): Promise<string> {
-      return page.evaluate((value) => {
-        const probe = document.createElement('span');
-        probe.style.color = value;
-        document.body.appendChild(probe);
-        const color = getComputedStyle(probe).color;
-        probe.remove();
-        return color;
-      }, token);
-    }
-
     test('resting on a strip previews the card\'s links with its button in the accent, and leaving hides them', async () => {
       const { browser, page } = await launch();
       try {
@@ -634,13 +636,13 @@ test.describe('Workflow tasks on the board', () => {
         const button = linksButton(page, 't414');
         await expect(button).toHaveAttribute('data-links-state', 'shown');
         await expect(button).toHaveAttribute('aria-pressed', 'false');
-        await expect(button).toHaveCSS('color', await colorOf(page, 'var(--color-accent-fg)'));
+        await expect(button).toHaveCSS('color', await tokenColor(page, 'var(--color-accent-fg)'));
 
         // Off the strip, over the page's top corner: the preview goes.
         await page.mouse.move(2, 2, { steps: 4 });
         await expect(overlay).toHaveCount(0);
         await expect(button).toHaveAttribute('data-links-state', 'off');
-        await expect(button).toHaveCSS('color', await colorOf(page, 'var(--color-fg-faint)'));
+        await expect(button).toHaveCSS('color', await tokenColor(page, 'var(--color-fg-faint)'));
       } finally {
         await browser.close();
       }
@@ -727,24 +729,24 @@ test.describe('Workflow tasks on the board', () => {
       try {
         const button = linksButton(page, 't414');
         const overlay = overlayOf(page);
-        // The fade runs: as the overlay mounts, its lines and a dimmed card each
-        // carry a running opacity transition. Read from the click's own task, on
-        // the frames until the overlay is there, so it is caught while it runs.
+        // The fade runs: as the overlay mounts, its lines carry a running opacity
+        // transition and the focused card a running border one. Read from the
+        // click's own task, on the frames until the overlay is there, so it is
+        // caught while it runs.
         const easing = await button.evaluate(async (element) => {
           (element as HTMLElement).click();
-          const runningOpacity = (target: Element | null) => (target?.getAnimations() ?? [])
-            .some((animation) => animation.playState === 'running' && (animation as CSSTransition).transitionProperty === 'opacity');
+          const running = (target: Element | null, property: string) => (target?.getAnimations() ?? [])
+            .some((animation) => animation.playState === 'running' && (animation as CSSTransition).transitionProperty.startsWith(property));
           for (let frame = 0; frame < 30; frame += 1) {
             const svg = document.querySelector('[data-testid="workflow-links-overlay"]');
-            if (svg) return { lines: runningOpacity(svg), dimmedCard: runningOpacity(document.querySelector('[data-board-lanes] [data-task-id="t419"]')) };
+            if (svg) return { lines: running(svg, 'opacity'), focusedCard: running(document.querySelector('[data-board-lanes] [data-task-id="t414"]'), 'border') };
             await new Promise((resolve) => requestAnimationFrame(resolve));
           }
           return null;
         });
-        expect(easing).toEqual({ lines: true, dimmedCard: true });
+        expect(easing).toEqual({ lines: true, focusedCard: true });
         await expect(overlay).toHaveAttribute('data-phase', 'shown');
-        await expect(overlay).toHaveCSS('transition-duration', '0.18s');
-        await expect.poll(() => boardCard(page, 't419').evaluate((element) => getComputedStyle(element).transitionProperty)).toContain('opacity');
+        await expect(overlay).toHaveCSS('transition-duration', '0.16s');
 
         // Hidden, it stays up, fading, then goes. Read in the click's own task:
         // the fade lasts longer than that, so this is not a race.
@@ -946,9 +948,9 @@ test.describe('Workflow tasks on the board', () => {
       await expect(overlay.locator('[data-link="out:t415"]')).toHaveCount(1);
       await expect(overlay.locator('[data-link="out:t416"]')).toHaveCount(1);
       // #418 already waits on #413 through #415, so the direct link is not drawn,
-      // and #418 is not lit as one of #413's.
+      // and #418 gets no port of #413's.
       await expect(overlay.locator('[data-link="out:t418"]')).toHaveCount(0);
-      await expect.poll(() => boardCard(page, 't418').evaluate((element) => getComputedStyle(element).opacity)).toBe('0.3');
+      await expect(overlay.locator('[data-port^="t418:"]')).toHaveCount(0);
       // Its footer still counts every task it waits for.
       await expect(boardCard(page, 't418').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by 5 tasks...');
     } finally {

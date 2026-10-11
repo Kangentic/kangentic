@@ -59,9 +59,12 @@ interface Point {
   y: number;
 }
 
-/** A port: its card, the side it is on, and its centre. */
+/** A port: its card, the side it is on, its centre, and whether lines leave it, arrive at it, or both. */
 export interface Port extends Point {
   key: string;
+  cardId: string;
+  outgoing: boolean;
+  incoming: boolean;
 }
 
 /** A card's port on one side: centred on that edge, at the title row. */
@@ -112,17 +115,24 @@ export function linkPaths(links: readonly LinkRequest[], endInset = 0): Array<{ 
   });
 }
 
-/** The ports these links meet, one per side of a card however many lines share it. */
+/**
+ * The ports these links meet, one per side of a card however many lines share
+ * it, each saying whether lines leave it (its card is a blocker there) or
+ * arrive at it (its card waits there). Which of them to draw is the caller's:
+ * the canvas draws a port only where it could take a new link.
+ */
 export function linkPorts(links: readonly LinkRequest[]): Port[] {
   const ports = new Map<string, Port>();
-  const add = (cardId: string, box: CardBox, side: Side) => {
+  const add = (cardId: string, box: CardBox, side: Side, role: 'outgoing' | 'incoming') => {
     const key = `${cardId}:${side}`;
-    if (!ports.has(key)) ports.set(key, { key, ...portOf(box, side) });
+    const port = ports.get(key) ?? { key, cardId, ...portOf(box, side), outgoing: false, incoming: false };
+    port[role] = true;
+    ports.set(key, port);
   };
   for (const link of links) {
     const sides = sidesOf(link.from, link.to);
-    add(link.fromId, link.from, sides.fromSide);
-    add(link.toId, link.to, sides.toSide);
+    add(link.fromId, link.from, sides.fromSide, 'outgoing');
+    add(link.toId, link.to, sides.toSide, 'incoming');
   }
   return [...ports.values()];
 }

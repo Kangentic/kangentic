@@ -38,7 +38,7 @@ describe('the links overlay geometry', () => {
     expect(paths).toEqual([{ x: 600 - PORT_RADIUS, y: 147 }, { x: 600 - PORT_RADIUS, y: 147 }]);
   });
 
-  it('draws one port per side of a card, however many lines meet it', () => {
+  it('gives one port per side of a card, however many lines meet it, saying whether lines leave or arrive there', () => {
     const links: LinkRequest[] = [
       // Two dependents to the left leave from the focus card's left port.
       { key: 'out:left-a', fromId: 'focus', from: FOCUS, toId: 'left-a', to: box(100, 300) },
@@ -49,8 +49,11 @@ describe('the links overlay geometry', () => {
     const ports = linkPorts(links);
     expect(ports.map((port) => port.key).sort()).toEqual(['blocker:left', 'focus:left', 'focus:right', 'left-a:right', 'left-b:right']);
     // Centred on the edge, at the title row.
-    expect(ports.find((port) => port.key === 'focus:left')).toEqual({ key: 'focus:left', x: 600, y: 147 });
-    expect(ports.find((port) => port.key === 'focus:right')).toEqual({ key: 'focus:right', x: 840, y: 147 });
+    expect(ports.find((port) => port.key === 'focus:left')).toEqual({ key: 'focus:left', cardId: 'focus', x: 600, y: 147, outgoing: true, incoming: false });
+    expect(ports.find((port) => port.key === 'focus:right')).toEqual({ key: 'focus:right', cardId: 'focus', x: 840, y: 147, outgoing: false, incoming: true });
+    // Each far end says what meets it there, for the caller to draw it as the canvas would.
+    expect(ports.find((port) => port.key === 'blocker:left')).toMatchObject({ outgoing: true, incoming: false });
+    expect(ports.find((port) => port.key === 'left-a:right')).toMatchObject({ outgoing: false, incoming: true });
   });
 
   it('stops each line one arrowhead short of the port it points at, whichever way it arrives', () => {
